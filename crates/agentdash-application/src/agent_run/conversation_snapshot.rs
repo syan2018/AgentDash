@@ -495,18 +495,6 @@ fn conversation_commands(
     let commands = vec![
         command_view(
             input,
-            ConversationCommandKind::StartDraft,
-            snapshot_id,
-            status == ConversationExecutionStatus::Draft && model_ready,
-            "当前 workspace 不是 draft start 状态。",
-            Some("command_unavailable"),
-            Some("enter"),
-            true,
-            "required",
-            vec![ConversationCommandPlacement::ComposerPrimary],
-        ),
-        command_view(
-            input,
             ConversationCommandKind::SubmitMessage,
             snapshot_id,
             submit_message,
@@ -665,7 +653,6 @@ pub fn conversation_execution_state_code(execution_state: &SessionExecutionState
 
 pub fn conversation_command_id_for(kind: ConversationCommandKind) -> &'static str {
     match kind {
-        ConversationCommandKind::StartDraft => "start_draft",
         ConversationCommandKind::SubmitMessage => "submit_message",
         ConversationCommandKind::PromoteMailboxMessage => "promote_mailbox_message",
         ConversationCommandKind::DeleteMailboxMessage => "delete_mailbox_message",
@@ -988,6 +975,20 @@ mod tests {
         assert_eq!(
             snapshot.commands.keyboard.ctrl_enter.as_deref(),
             Some("submit_message")
+        );
+    }
+
+    #[test]
+    fn runtime_snapshot_does_not_emit_draft_start_command() {
+        let snapshot =
+            AgentConversationSnapshotResolver::resolve(snapshot_input(SessionExecutionState::Idle));
+
+        assert!(
+            snapshot
+                .commands
+                .commands
+                .iter()
+                .all(|command| command.command_id != "start_draft")
         );
     }
 

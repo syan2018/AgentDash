@@ -38,7 +38,7 @@ export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
 export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
 
-export type ConversationCommandKind = "start_draft" | "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "resume_mailbox" | "cancel";
+export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "resume_mailbox" | "cancel";
 
 export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
 

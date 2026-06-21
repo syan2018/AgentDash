@@ -163,6 +163,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_permission_grant_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::permission::PermissionGrantRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_permission_grant_repo(repo);
+        self
+    }
+
     pub fn with_agent_run_mailbox_boundary(
         mut self,
         lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,

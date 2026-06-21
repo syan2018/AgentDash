@@ -1,4 +1,4 @@
-import type { ConversationCommandView } from "../../../../generated/workflow-contracts";
+import type { SessionChatCommand } from "../SessionChatViewTypes";
 
 interface ComposerSendButtonProps {
   isRunning: boolean;
@@ -6,16 +6,16 @@ interface ComposerSendButtonProps {
   isSending: boolean;
   isCancelling: boolean;
   cancelDisabled: boolean;
-  submitCommand?: ConversationCommandView;
-  onSubmit: (command: ConversationCommandView) => void;
+  submitCommand?: SessionChatCommand;
+  onSubmit: (command: SessionChatCommand) => void;
   onCancel: () => void;
 }
 
-function commandTitle(command: ConversationCommandView, fallback: string): string {
+function commandTitle(command: SessionChatCommand, fallback: string): string {
   if (!command.enabled) return command.unavailable_reason ?? fallback;
   switch (command.kind) {
     case "submit_message":
-    case "start_draft":
+    case "draft_start_local":
       return "发送";
     default:
       return fallback;
@@ -23,7 +23,7 @@ function commandTitle(command: ConversationCommandView, fallback: string): strin
 }
 
 function optionalCommandTitle(
-  command: ConversationCommandView | undefined,
+  command: SessionChatCommand | undefined,
   fallback: string,
 ): string {
   return command ? commandTitle(command, fallback) : fallback;

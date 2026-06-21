@@ -20,8 +20,7 @@ import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
 import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
-import type { SessionChatCommandState } from "./SessionChatViewTypes";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
+import type { SessionChatCommand, SessionChatCommandState } from "./SessionChatViewTypes";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
@@ -371,7 +370,7 @@ export function SessionChatComposer({
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
-  onCommandAction: (command: ConversationCommandView) => void;
+  onCommandAction: (command: SessionChatCommand) => void;
   onExecutorConfigExplicitChange?: (config: {
     providerId: string;
     modelId: string;
@@ -382,13 +381,14 @@ export function SessionChatComposer({
   onRemoveImage: (id: string) => void;
 }) {
   const enterCommandId = commandState.commands.keyboard.enter;
-  const submitCommand = commandState.commands.commands.find(
+  const runtimeSubmitCommand = commandState.commands.commands.find(
     (command) => command.command_id === enterCommandId,
   ) ?? commandState.commands.commands.find(
     (command) => command.placement.includes("composer_primary") && command.enabled,
   ) ?? commandState.commands.commands.find(
     (command) => command.placement.includes("composer_primary"),
   );
+  const submitCommand = commandState.localDraftAction ?? runtimeSubmitCommand;
   const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;

@@ -2,7 +2,6 @@ use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
     LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-    SubjectRef,
 };
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -15,21 +14,7 @@ use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryRuntimeSelectionPolicy {
-    CurrentDelivery {
-        run_id: Uuid,
-        agent_id: Uuid,
-    },
-    RunScopedLatest {
-        run_id: Uuid,
-        agent_id: Option<Uuid>,
-    },
-    LaunchPrimary {
-        run_id: Uuid,
-        agent_id: Uuid,
-    },
-    SubjectLatestObserved {
-        subject: SubjectRef,
-    },
+    CurrentDelivery { run_id: Uuid, agent_id: Uuid },
 }
 
 #[derive(Debug, Clone)]
@@ -91,13 +76,6 @@ pub enum DeliveryRuntimeSelectionError {
     LaunchFrameNotFound { frame_id: Uuid },
     #[error("Subject {kind}/{id} 不存在")]
     SubjectNotFound { kind: String, id: Uuid },
-    #[error("Subject {kind}/{id} 缺少 latest observed delivery history")]
-    SubjectDeliveryMissing { kind: String, id: Uuid },
-    #[error("run {run_id} 中没有匹配的 runtime delivery anchor")]
-    RuntimeDeliveryNotFound {
-        run_id: Uuid,
-        agent_id: Option<Uuid>,
-    },
     #[error(transparent)]
     Repository(#[from] DomainError),
 }
@@ -159,18 +137,6 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             DeliveryRuntimeSelectionPolicy::CurrentDelivery { run_id, agent_id } => {
                 self.select_current_delivery(run_id, agent_id).await
             }
-            DeliveryRuntimeSelectionPolicy::RunScopedLatest { run_id, agent_id } => {
-                self.select_run_scoped_latest(run_id, agent_id).await
-            }
-            DeliveryRuntimeSelectionPolicy::LaunchPrimary { run_id, agent_id } => {
-                self.select_launch_primary(run_id, agent_id).await
-            }
-            DeliveryRuntimeSelectionPolicy::SubjectLatestObserved { subject } => {
-                Err(DeliveryRuntimeSelectionError::SubjectDeliveryMissing {
-                    kind: subject.kind,
-                    id: subject.id,
-                })
-            }
         }
     }
 
@@ -208,49 +174,6 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         .await
     }
 
-    async fn select_run_scoped_latest(
-        &self,
-        run_id: Uuid,
-        agent_id: Option<Uuid>,
-    ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
-        self.ensure_run(run_id).await?;
-        if let Some(agent_id) = agent_id {
-            self.load_agent_for_run(run_id, agent_id).await?;
-        }
-        let anchor = self
-            .repos
-            .execution_anchors
-            .list_by_run(run_id)
-            .await?
-            .into_iter()
-            .filter(|anchor| agent_id.is_none_or(|id| anchor.agent_id == id))
-            .max_by_key(|anchor| anchor.updated_at)
-            .ok_or(DeliveryRuntimeSelectionError::RuntimeDeliveryNotFound { run_id, agent_id })?;
-        self.selection_from_raw_anchor(anchor).await
-    }
-
-    async fn select_launch_primary(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
-        self.ensure_run(run_id).await?;
-        self.load_agent_for_run(run_id, agent_id).await?;
-        let anchor = self
-            .repos
-            .execution_anchors
-            .list_by_agent(agent_id)
-            .await?
-            .into_iter()
-            .filter(|anchor| anchor.run_id == run_id)
-            .min_by_key(|anchor| anchor.created_at)
-            .ok_or(DeliveryRuntimeSelectionError::RuntimeDeliveryNotFound {
-                run_id,
-                agent_id: Some(agent_id),
-            })?;
-        self.selection_from_raw_anchor(anchor).await
-    }
-
     async fn ensure_run(&self, run_id: Uuid) -> Result<(), DeliveryRuntimeSelectionError> {
         self.repos
             .lifecycle_runs
@@ -279,29 +202,6 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             });
         }
         Ok(agent)
-    }
-
-    async fn selection_from_raw_anchor(
-        &self,
-        anchor: RuntimeSessionExecutionAnchor,
-    ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
-        let agent = self
-            .load_agent_for_run(anchor.run_id, anchor.agent_id)
-            .await?;
-        let current_frame_id =
-            agent
-                .current_frame_id
-                .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing {
-                    agent_id: anchor.agent_id,
-                })?;
-        let (status, observed_at) = agent
-            .current_delivery
-            .as_ref()
-            .filter(|binding| binding.runtime_session_id == anchor.runtime_session_id)
-            .map(|binding| (binding.status, binding.observed_at))
-            .unwrap_or((DeliveryBindingStatus::Ready, anchor.updated_at));
-        self.selection_from_anchor(agent, current_frame_id, anchor, status, observed_at)
-            .await
     }
 
     async fn selection_from_anchor(
@@ -380,7 +280,7 @@ mod tests {
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository, SubjectRef,
+        RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
@@ -606,122 +506,6 @@ mod tests {
         assert!(matches!(
             error,
             DeliveryRuntimeSelectionError::AnchorMismatch { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_run_scoped_latest_uses_raw_anchor_order_explicitly() {
-        let fixture = SelectionFixture::new();
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let launch_frame = AgentFrame::new_initial(agent.id);
-        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-        agent.set_current_frame(current_frame.id);
-        fixture.runs.create(&run).await.expect("run");
-        fixture
-            .frames
-            .create(&launch_frame)
-            .await
-            .expect("launch frame");
-        fixture
-            .frames
-            .create(&current_frame)
-            .await
-            .expect("current frame");
-        fixture.agents.create(&agent).await.expect("agent");
-
-        let mut older = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-old",
-            run.id,
-            launch_frame.id,
-            agent.id,
-        );
-        older.updated_at = Utc::now() - chrono::Duration::seconds(5);
-        let newer = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-new",
-            run.id,
-            launch_frame.id,
-            agent.id,
-        );
-        fixture.anchors.upsert(&older).await.expect("older");
-        fixture.anchors.upsert(&newer).await.expect("newer");
-
-        let selection = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::RunScopedLatest {
-                run_id: run.id,
-                agent_id: Some(agent.id),
-            })
-            .await
-            .expect("selection");
-
-        assert_eq!(selection.runtime_session_id, "runtime-new");
-        assert_eq!(selection.status, DeliveryBindingStatus::Ready);
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_launch_primary_uses_earliest_anchor() {
-        let fixture = SelectionFixture::new();
-        let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let launch_frame = AgentFrame::new_initial(agent.id);
-        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-        agent.set_current_frame(current_frame.id);
-        fixture.runs.create(&run).await.expect("run");
-        fixture
-            .frames
-            .create(&launch_frame)
-            .await
-            .expect("launch frame");
-        fixture
-            .frames
-            .create(&current_frame)
-            .await
-            .expect("current frame");
-        fixture.agents.create(&agent).await.expect("agent");
-
-        let mut primary = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-primary",
-            run.id,
-            launch_frame.id,
-            agent.id,
-        );
-        primary.created_at = Utc::now() - chrono::Duration::seconds(5);
-        let secondary = RuntimeSessionExecutionAnchor::new_dispatch(
-            "runtime-secondary",
-            run.id,
-            launch_frame.id,
-            agent.id,
-        );
-        fixture.anchors.upsert(&secondary).await.expect("secondary");
-        fixture.anchors.upsert(&primary).await.expect("primary");
-
-        let selection = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::LaunchPrimary {
-                run_id: run.id,
-                agent_id: agent.id,
-            })
-            .await
-            .expect("selection");
-
-        assert_eq!(selection.runtime_session_id, "runtime-primary");
-    }
-
-    #[tokio::test]
-    async fn delivery_runtime_selection_subject_latest_observed_is_boundary_only() {
-        let fixture = SelectionFixture::new();
-        let subject = SubjectRef::new("story", Uuid::new_v4());
-
-        let error = fixture
-            .service()
-            .select(DeliveryRuntimeSelectionPolicy::SubjectLatestObserved { subject })
-            .await
-            .expect_err("subject history not implemented");
-
-        assert!(matches!(
-            error,
-            DeliveryRuntimeSelectionError::SubjectDeliveryMissing { .. }
         ));
     }
 }

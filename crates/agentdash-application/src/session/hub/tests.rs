@@ -16,6 +16,10 @@ use agentdash_agent_protocol::{
     PlatformEvent, SourceInfo, TraceInfo, UserInputSubmissionKind,
 };
 use agentdash_domain::DomainError;
+use agentdash_domain::permission::{
+    GrantScope, GrantStatus, PermissionGrant, PermissionGrantRepository,
+    PermissionGrantStatusFilter, PolicyDecision, PolicyOutcome,
+};
 use agentdash_domain::workflow::{
     AgentFrame, AgentSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
     LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
@@ -33,6 +37,7 @@ use agentdash_spi::{
     SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, StopReason, ToolUpdateCallback,
 };
+use chrono::{DateTime, Utc};
 use futures::stream;
 use serde_json::json;
 use tokio::sync::Mutex as TokioMutex;
@@ -149,6 +154,142 @@ async fn current_frame_id(hub: &SessionRuntimeInner, agent_id: uuid::Uuid) -> Op
 #[derive(Default)]
 struct InMemoryLifecycleRunRepo {
     items: TokioMutex<Vec<LifecycleRun>>,
+}
+
+#[derive(Default)]
+struct InMemoryPermissionGrantRepo {
+    items: TokioMutex<Vec<PermissionGrant>>,
+}
+
+#[async_trait::async_trait]
+impl PermissionGrantRepository for InMemoryPermissionGrantRepo {
+    async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+        self.items.lock().await.push(grant.clone());
+        Ok(())
+    }
+
+    async fn update(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+        let mut items = self.items.lock().await;
+        if let Some(existing) = items.iter_mut().find(|item| item.id == grant.id) {
+            *existing = grant.clone();
+        } else {
+            items.push(grant.clone());
+        }
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: uuid::Uuid) -> Result<Option<PermissionGrant>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .find(|grant| grant.id == id)
+            .cloned())
+    }
+
+    async fn list_by_frame(
+        &self,
+        effect_frame_id: uuid::Uuid,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .filter(|grant| grant.effect_frame_id == Some(effect_frame_id))
+            .filter(|grant| permission_grant_status_matches(grant.status, status_filter))
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_run(
+        &self,
+        run_id: uuid::Uuid,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .filter(|grant| grant.run_id == run_id)
+            .filter(|grant| permission_grant_status_matches(grant.status, status_filter))
+            .cloned()
+            .collect())
+    }
+
+    async fn list_active_by_frame(
+        &self,
+        effect_frame_id: uuid::Uuid,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        self.list_by_frame(effect_frame_id, Some(PermissionGrantStatusFilter::Active))
+            .await
+    }
+
+    async fn list_active_by_run(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        self.list_by_run(run_id, Some(PermissionGrantStatusFilter::Active))
+            .await
+    }
+
+    async fn find_active_escalation_grant(
+        &self,
+        effect_frame_id: uuid::Uuid,
+        target_subject_kind: &str,
+    ) -> Result<Option<PermissionGrant>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .find(|grant| {
+                grant.effect_frame_id == Some(effect_frame_id)
+                    && grant.status == GrantStatus::Applied
+                    && grant
+                        .scope_escalation_intent
+                        .as_ref()
+                        .is_some_and(|intent| intent.target_subject_kind == target_subject_kind)
+            })
+            .cloned())
+    }
+
+    async fn list_overdue_active(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<PermissionGrant>, DomainError> {
+        Ok(self
+            .items
+            .lock()
+            .await
+            .iter()
+            .filter(|grant| grant.status.is_active())
+            .filter(|grant| grant.expires_at.is_some_and(|expires_at| expires_at < now))
+            .cloned()
+            .collect())
+    }
+}
+
+fn permission_grant_status_matches(
+    status: GrantStatus,
+    status_filter: Option<PermissionGrantStatusFilter>,
+) -> bool {
+    match status_filter {
+        Some(PermissionGrantStatusFilter::Exact(expected)) => status == expected,
+        Some(PermissionGrantStatusFilter::Pending) => matches!(
+            status,
+            GrantStatus::Created
+                | GrantStatus::PendingPolicy
+                | GrantStatus::PendingUserApproval
+                | GrantStatus::Approved
+        ),
+        Some(PermissionGrantStatusFilter::Active) => status.is_active(),
+        Some(PermissionGrantStatusFilter::Terminal) => status.is_terminal(),
+        None => true,
+    }
 }
 
 #[async_trait::async_trait]
@@ -710,6 +851,109 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
     assert!(
         apply_names.contains(&"mcp_agentdash_workflow_tools_upsert_lifecycle_tool"),
         "Apply capability state 解除 tool_policy 后必须重新暴露 upsert_lifecycle_tool schema"
+    );
+}
+
+#[tokio::test]
+async fn build_tools_consumes_tool_level_grant_projection_from_agent_run() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let workflow_server = agentdash_spi::RuntimeMcpServer {
+        name: "agentdash-workflow-tools-123".to_string(),
+        transport: agentdash_spi::McpTransportConfig::Http {
+            url: "http://relay/ignored".to_string(),
+            headers: vec![],
+        },
+        uses_relay: true,
+    };
+    let discovery = Arc::new(StaticMcpToolDiscovery {
+        tools: vec![
+            agentdash_spi::RelayMcpToolInfo {
+                server_name: workflow_server.name.clone(),
+                server: workflow_server.clone(),
+                tool_name: "list_workflows".to_string(),
+                description: "list".to_string(),
+                parameters_schema: json!({ "type": "object" }),
+            },
+            agentdash_spi::RelayMcpToolInfo {
+                server_name: workflow_server.name.clone(),
+                server: workflow_server.clone(),
+                tool_name: "upsert_workflow_tool".to_string(),
+                description: "upsert".to_string(),
+                parameters_schema: json!({ "type": "object" }),
+            },
+        ],
+    });
+    let grant_repo = Arc::new(InMemoryPermissionGrantRepo::default());
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()))
+        .with_permission_grant_repo(grant_repo.clone())
+        .with_mcp_tool_discovery(discovery);
+    let session = hub
+        .create_session("grant-projected-tools")
+        .await
+        .expect("create");
+    let frame = attach_test_lifecycle_frame(&hub, &session.id).await;
+    let anchor = hub
+        .execution_anchor_repo
+        .as_ref()
+        .expect("anchor repo")
+        .find_by_session(&session.id)
+        .await
+        .expect("anchor lookup")
+        .expect("anchor");
+    let mut grant = PermissionGrant::new(
+        anchor.run_id,
+        &session.id,
+        vec![
+            agentdash_domain::workflow::ToolCapabilityPath::parse(
+                "workflow_management::upsert_workflow_tool",
+            )
+            .expect("tool path"),
+        ],
+        "temporary workflow write admission",
+        GrantScope::AgentFrame,
+        None,
+    )
+    .with_effect_frame(frame.id);
+    grant.submit_for_policy().expect("submit");
+    grant
+        .apply_policy_decision(PolicyDecision {
+            outcome: PolicyOutcome::AutoApproved,
+            matched_rules: vec![],
+            reason: "auto".to_string(),
+        })
+        .expect("policy");
+    grant.mark_applied().expect("applied");
+    grant_repo.create(&grant).await.expect("persist grant");
+
+    let mut state = CapabilityState::default();
+    state.tool.mcp_servers = vec![workflow_server.clone()];
+    let context = agentdash_spi::ExecutionContext {
+        session: ExecutionSessionFrame {
+            turn_id: "turn-grant-projected-tools".to_string(),
+            working_directory: base.path().to_path_buf(),
+            environment_variables: HashMap::new(),
+            executor_config: AgentConfig::new("PI_AGENT"),
+            mcp_servers: vec![workflow_server],
+            vfs: Some(local_workspace_vfs(base.path())),
+            backend_execution: None,
+            identity: None,
+        },
+        turn: agentdash_spi::ExecutionTurnFrame {
+            capability_state: state,
+            ..Default::default()
+        },
+    };
+
+    let tools = hub
+        .assemble_tools_for_execution_context(&session.id, &context)
+        .await;
+    let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec!["mcp_agentdash_workflow_tools_upsert_workflow_tool"],
+        "tool-level Grant must be consumed by production tool assembly through AgentRun projection"
     );
 }
 

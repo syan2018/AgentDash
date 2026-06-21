@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
+    AgentLineage, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
     LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
     LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
@@ -233,7 +233,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
 
     Ok(assemble_lifecycle_run_view(
         run,
-        lifecycle_agent_views(repos, &agents).await?,
+        lifecycle_agent_views(&agents),
         subject_associations
             .iter()
             .map(association_to_view)
@@ -382,6 +382,10 @@ async fn resolve_association_history_agents(
     repos: &RepositorySet,
     association: &LifecycleSubjectAssociation,
 ) -> Result<Vec<LifecycleAgent>, DomainError> {
+    if !association_role_can_own_runtime_attempts(&association.role) {
+        return Ok(Vec::new());
+    }
+
     if let Some(agent_id) = association.anchor_agent_id {
         let agent = repos.lifecycle_agent_repo.get(agent_id).await?;
         return Ok(agent
@@ -389,10 +393,41 @@ async fn resolve_association_history_agents(
             .into_iter()
             .collect());
     }
-    repos
+    let agents = repos
         .lifecycle_agent_repo
         .list_by_run(association.anchor_run_id)
-        .await
+        .await?;
+    let lineages = repos
+        .agent_lineage_repo
+        .list_by_run(association.anchor_run_id)
+        .await?;
+    Ok(filter_whole_run_history_agents(agents, &lineages))
+}
+
+fn association_role_can_own_runtime_attempts(role: &str) -> bool {
+    matches!(role, "subject" | "task_execution")
+}
+
+fn filter_whole_run_history_agents(
+    agents: Vec<LifecycleAgent>,
+    lineages: &[AgentLineage],
+) -> Vec<LifecycleAgent> {
+    if lineages.is_empty() {
+        return if agents.len() == 1 {
+            agents
+        } else {
+            Vec::new()
+        };
+    }
+
+    let child_agent_ids = lineages
+        .iter()
+        .map(|lineage| lineage.child_agent_id)
+        .collect::<HashSet<_>>();
+    agents
+        .into_iter()
+        .filter(|agent| !child_agent_ids.contains(&agent.id))
+        .collect()
 }
 
 fn sort_subject_runtime_attempts(attempts: &mut [SubjectRuntimeAttemptView]) {
@@ -474,13 +509,7 @@ pub fn association_to_view(
 }
 
 pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> AgentRunView {
-    lifecycle_agent_to_view_with_delivery(agent, None)
-}
-
-fn lifecycle_agent_to_view_with_delivery(
-    agent: &LifecycleAgent,
-    delivery_runtime_session_id: Option<String>,
-) -> AgentRunView {
+    let current_delivery = agent.current_delivery.as_ref();
     AgentRunView {
         agent_ref: AgentRunRefView {
             run_id: agent.run_id.to_string(),
@@ -491,39 +520,17 @@ fn lifecycle_agent_to_view_with_delivery(
         project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
         status: agent.status.clone(),
         current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
-        delivery_runtime_ref: delivery_runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefView { runtime_session_id }),
-        last_delivery_status: None,
+        delivery_runtime_ref: current_delivery.map(|binding| RuntimeSessionRefView {
+            runtime_session_id: binding.runtime_session_id.clone(),
+        }),
+        last_delivery_status: current_delivery.map(|binding| binding.status.as_str().to_string()),
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     }
 }
 
-async fn lifecycle_agent_views(
-    repos: &RepositorySet,
-    agents: &[LifecycleAgent],
-) -> Result<Vec<AgentRunView>, DomainError> {
-    let mut views = Vec::with_capacity(agents.len());
-    for agent in agents {
-        let delivery_runtime_session_id =
-            resolve_agent_delivery_runtime_session_id(repos, agent).await?;
-        views.push(lifecycle_agent_to_view_with_delivery(
-            agent,
-            delivery_runtime_session_id,
-        ));
-    }
-    Ok(views)
-}
-
-async fn resolve_agent_delivery_runtime_session_id(
-    repos: &RepositorySet,
-    agent: &LifecycleAgent,
-) -> Result<Option<String>, DomainError> {
-    Ok(repos
-        .execution_anchor_repo
-        .latest_updated_anchor_for_agent(agent.id)
-        .await?
-        .map(|anchor| anchor.runtime_session_id))
+fn lifecycle_agent_views(agents: &[LifecycleAgent]) -> Vec<AgentRunView> {
+    agents.iter().map(lifecycle_agent_to_view).collect()
 }
 
 // ── Internal pure helpers ──────────────────────────────────────
@@ -780,9 +787,10 @@ mod tests {
     use serde_json::json;
 
     use agentdash_domain::workflow::{
-        AgentSource, LifecycleAgent, LifecycleRun, OrchestrationInstance, OrchestrationLimits,
-        OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNodeKind, RuntimeNodeState,
-        RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+        AgentLineage, AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun,
+        OrchestrationInstance, OrchestrationLimits, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
+        RuntimeSessionExecutionAnchor,
     };
 
     use super::*;
@@ -867,6 +875,104 @@ mod tests {
         assert_eq!(latest.runtime_node.node_id, "agent-node-2");
         assert_eq!(latest.artifacts["node_outputs"]["result"], "newer");
         assert!(attempts[0].observed_at > attempts[1].observed_at);
+    }
+
+    #[test]
+    fn whole_run_history_agents_exclude_lineage_children() {
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let root_agent =
+            LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let child_agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::Subagent);
+        let lineage = AgentLineage::new(
+            run.id,
+            Some(root_agent.id),
+            child_agent.id,
+            "delegated_task",
+            None,
+            None,
+        );
+
+        let agents =
+            filter_whole_run_history_agents(vec![root_agent.clone(), child_agent], &[lineage]);
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].id, root_agent.id);
+    }
+
+    #[test]
+    fn whole_run_history_agents_require_lineage_when_multiple_agents_exist() {
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let agent_a = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent_b = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+
+        let agents = filter_whole_run_history_agents(vec![agent_a, agent_b], &[]);
+
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn subject_runtime_attempt_roles_are_narrow() {
+        assert!(association_role_can_own_runtime_attempts("subject"));
+        assert!(association_role_can_own_runtime_attempts("task_execution"));
+        assert!(!association_role_can_own_runtime_attempts("source"));
+        assert!(!association_role_can_own_runtime_attempts(
+            "projection_target"
+        ));
+        assert!(!association_role_can_own_runtime_attempts("control_scope"));
+        assert!(!association_role_can_own_runtime_attempts("lineage"));
+    }
+
+    #[test]
+    fn lifecycle_agent_view_uses_current_delivery_not_raw_latest_anchor() {
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let launch_frame_id = Uuid::new_v4();
+        let current_frame_id = Uuid::new_v4();
+        agent.set_current_frame(current_frame_id);
+        let current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-current-delivery",
+            run.id,
+            launch_frame_id,
+            agent.id,
+        );
+        let raw_latest_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-raw-latest",
+            run.id,
+            launch_frame_id,
+            agent.id,
+        );
+        agent.bind_current_delivery_from_anchor(
+            &current_anchor,
+            DeliveryBindingStatus::Running,
+            current_anchor.updated_at,
+        );
+
+        let view = lifecycle_agent_to_view(&agent);
+
+        assert_eq!(
+            view.delivery_runtime_ref
+                .as_ref()
+                .map(|runtime_ref| runtime_ref.runtime_session_id.as_str()),
+            Some("runtime-current-delivery")
+        );
+        assert_ne!(
+            view.delivery_runtime_ref
+                .as_ref()
+                .map(|runtime_ref| runtime_ref.runtime_session_id.as_str()),
+            Some(raw_latest_anchor.runtime_session_id.as_str())
+        );
+        assert_eq!(view.last_delivery_status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn lifecycle_agent_view_has_no_delivery_ref_without_current_delivery() {
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+
+        let view = lifecycle_agent_to_view(&agent);
+
+        assert!(view.delivery_runtime_ref.is_none());
+        assert!(view.last_delivery_status.is_none());
     }
 
     fn runtime_node(

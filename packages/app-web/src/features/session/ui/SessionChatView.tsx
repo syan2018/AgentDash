@@ -11,7 +11,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
 import type { ExecutorConfig } from "../../../services/executor";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
@@ -36,7 +35,7 @@ import {
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type { SessionChatViewProps } from "./SessionChatViewTypes";
+import type { SessionChatCommand, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
@@ -44,10 +43,13 @@ import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 // eslint-disable-next-line react-refresh/only-export-components
 export { collectAllPlatformEvents as collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
 export type {
+  LocalDraftStartAction,
   PromptTemplate,
+  SessionChatCommand,
   SessionChatCommandState,
   SessionChatViewProps,
 } from "./SessionChatViewTypes";
+export { isLocalDraftStartAction } from "./SessionChatViewTypes";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -427,7 +429,7 @@ export function SessionChatView({
   const commandActionRef = useRef(onCommand);
   useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
 
-  const handleSubmit = useCallback(async (command: ConversationCommandView | undefined, deliveryIntent?: string) => {
+  const handleSubmit = useCallback(async (command: SessionChatCommand | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -488,10 +490,13 @@ export function SessionChatView({
     sessionId,
   ]);
 
-  const commandById = useCallback((commandId: string | undefined): ConversationCommandView | undefined => {
+  const commandById = useCallback((commandId: string | undefined): SessionChatCommand | undefined => {
     if (!commandId) return undefined;
+    if (commandState.localDraftAction?.command_id === commandId) {
+      return commandState.localDraftAction;
+    }
     return commandState.commands.commands.find((command) => command.command_id === commandId);
-  }, [commandState.commands.commands]);
+  }, [commandState.commands.commands, commandState.localDraftAction]);
 
   const handleCancel = useCallback(async () => {
     const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
@@ -533,13 +538,14 @@ export function SessionChatView({
       const keyboardCommandId = isSteer
         ? commandState.commands.keyboard.ctrl_enter
         : commandState.commands.keyboard.enter;
-      const command = commandById(keyboardCommandId);
+      const command = commandById(keyboardCommandId)
+        ?? (!isSteer ? commandState.localDraftAction : undefined);
       if (!command) return;
 
       e.preventDefault();
       void handleSubmit(command, isSteer ? "steer" : undefined);
     },
-    [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, fileRef, handleSubmit],
+    [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, commandState.localDraftAction, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）

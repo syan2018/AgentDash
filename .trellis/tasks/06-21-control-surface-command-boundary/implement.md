@@ -12,6 +12,7 @@
 - [ ] Hook mailbox NotFound fallback 收口。
 - [x] Extension backend target resolver 统一。
 - [x] Command availability core resolver 接入 ConversationSnapshot 与 workspace route policy。
+  - ProjectAgent draft start 归前端本地 draft action 与 ProjectAgent 创建入口；已 materialized AgentRun 的 backend availability 只发出 runtime workspace command。
 - [ ] Extension channel admission parity。
 
 ## Phase 3: Placement Boundaries

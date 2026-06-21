@@ -1,11 +1,14 @@
 import type {
   ConversationCommandSetView,
-  ConversationCommandView,
   ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
-import type { SessionChatCommandState } from "../features/session";
+import type {
+  LocalDraftStartAction,
+  SessionChatCommand,
+  SessionChatCommandState,
+} from "../features/session";
 import type { ExecutorConfig } from "../services/executor";
 import type { ConversationEffectiveExecutorConfigView } from "../generated/project-agent-contracts";
 
@@ -82,7 +85,7 @@ export function executorConfigFromConversationModel(
 }
 
 export function resolveExecutorConfigForConversationCommand(input: {
-  command: ConversationCommandView;
+  command: SessionChatCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }): ExecutorConfig | undefined {
@@ -129,7 +132,7 @@ function draftStartCommand(input: {
   agent: ProjectAgentSummary | null;
   projectionReady: boolean;
   modelConfig: ConversationModelConfigView;
-}): ConversationCommandView {
+}): LocalDraftStartAction {
   const missingDraft = !input.projectId || !input.agentKey || !input.agent;
   const unavailableReason = missingDraft
     ? "当前 Draft 尚未就绪。"
@@ -140,22 +143,15 @@ function draftStartCommand(input: {
         : "当前 Draft 正在加载。";
 
   return {
-    kind: "start_draft",
-    command_id: input.modelConfig.status === "resolved" ? "draft:start_draft:resolved" : "draft:start_draft:model_required",
+    source: "local_draft",
+    kind: "draft_start_local",
+    command_id: input.modelConfig.status === "resolved" ? "draft:start_local:resolved" : "draft:start_local:model_required",
     enabled: !unavailableReason,
     unavailable_reason: unavailableReason,
     disabled_code: unavailableReason ? (input.modelConfig.status === "model_required" ? "model_required" : "command_unavailable") : undefined,
     requires_input: true,
     executor_config_policy: "required",
-    placement: ["composer_primary"],
     shortcut: "enter",
-    stale_guard: {
-      snapshot_id: input.modelConfig.status === "resolved"
-        ? `draft:${input.projectId ?? "draft"}:${input.agentKey ?? "draft"}:resolved`
-        : `draft:${input.projectId ?? "draft"}:${input.agentKey ?? "draft"}:model_required`,
-      run_id: input.projectId ?? "draft",
-      agent_id: input.agentKey ?? "draft",
-    },
   };
 }
 
@@ -171,19 +167,11 @@ export function buildDraftSessionCommandState(input: {
     explicitExecutorConfigOverride: input.explicitExecutorConfigOverride,
   });
   const command = draftStartCommand({ ...input, modelConfig });
-  const commands: ConversationCommandSetView = {
-    commands: [command],
-    keyboard: command.enabled
-      ? {
-          enter: command.command_id,
-          ctrl_enter: command.command_id,
-        }
-      : {},
-  };
   return {
     mode: "draft",
     executionStatus: modelConfig.status === "model_required" ? "model_required" : "draft",
-    commands,
+    commands: emptyCommandSet(),
+    localDraftAction: command,
     modelConfig,
     helperText: command.unavailable_reason,
   };

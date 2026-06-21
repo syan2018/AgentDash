@@ -23,8 +23,27 @@ export interface SessionChatCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
   commands: ConversationCommandSetView;
+  localDraftAction?: LocalDraftStartAction;
   modelConfig: ConversationModelConfigView;
   helperText?: string;
+}
+
+export interface LocalDraftStartAction {
+  source: "local_draft";
+  kind: "draft_start_local";
+  command_id: string;
+  enabled: boolean;
+  unavailable_reason?: string;
+  disabled_code?: string;
+  shortcut: "enter";
+  requires_input: true;
+  executor_config_policy: "required";
+}
+
+export type SessionChatCommand = ConversationCommandView | LocalDraftStartAction;
+
+export function isLocalDraftStartAction(command: SessionChatCommand): command is LocalDraftStartAction {
+  return command.kind === "draft_start_local";
 }
 
 export interface SessionChatViewProps {
@@ -70,7 +89,7 @@ export interface SessionChatViewProps {
   commandState: SessionChatCommandState;
 
   onCommand: (
-    command: ConversationCommandView,
+    command: SessionChatCommand,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,

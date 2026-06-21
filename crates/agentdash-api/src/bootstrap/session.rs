@@ -161,6 +161,7 @@ pub(crate) async fn build_session_runtime(
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
+    .with_permission_grant_repo(repos.permission_grant_repo.clone())
     .with_agent_run_mailbox_boundary(
         repos.lifecycle_run_repo.clone(),
         repos.agent_run_command_receipt_repo.clone(),

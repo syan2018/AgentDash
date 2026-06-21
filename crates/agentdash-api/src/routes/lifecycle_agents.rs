@@ -4,7 +4,9 @@ use std::sync::Arc;
 use agentdash_application::agent_run::workspace as app_workspace;
 use agentdash_application::agent_run::{
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
 };
+use agentdash_application::repository_set::RepositorySet;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
     AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
@@ -827,17 +829,37 @@ async fn delivery_runtime_session_for_agent_run(
     run_id: Uuid,
     agent_id: Uuid,
 ) -> Result<Option<String>, ApiError> {
-    let anchors = state
-        .repos
-        .execution_anchor_repo
-        .list_by_run(run_id)
+    delivery_runtime_session_for_agent_run_from_repos(&state.repos, run_id, agent_id).await
+}
+
+async fn delivery_runtime_session_for_agent_run_from_repos(
+    repos: &RepositorySet,
+    run_id: Uuid,
+    agent_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    delivery_runtime_session_for_agent_run_from_selection(
+        DeliveryRuntimeSelectionService::from_repository_set(repos),
+        run_id,
+        agent_id,
+    )
+    .await
+}
+
+async fn delivery_runtime_session_for_agent_run_from_selection(
+    selection_service: DeliveryRuntimeSelectionService<'_>,
+    run_id: Uuid,
+    agent_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    match selection_service
+        .select_current_delivery(run_id, agent_id)
         .await
-        .map_err(ApiError::from)?;
-    Ok(anchors
-        .into_iter()
-        .filter(|anchor| anchor.agent_id == agent_id)
-        .max_by_key(|anchor| anchor.updated_at)
-        .map(|anchor| anchor.runtime_session_id))
+    {
+        Ok(selection) => Ok(Some(selection.runtime_session_id)),
+        Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
+        Err(error) => Err(ApiError::from(
+            agentdash_application::ApplicationError::from(error),
+        )),
+    }
 }
 
 async fn load_agent_run_workspace_snapshot(
@@ -1302,9 +1324,405 @@ fn command_policy_error(error: app_workspace::AgentRunWorkspaceCommandPolicyErro
 
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::workflow::{AgentSource, LifecycleRun};
+    use agentdash_application::agent_run::DeliveryRuntimeSelectionRepositories;
+    use agentdash_domain::DomainError;
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentFrameRepository, AgentSource, DeliveryBindingStatus, LifecycleAgent,
+        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    };
+    use tokio::sync::Mutex;
 
     use super::*;
+
+    #[derive(Default)]
+    struct MemoryLifecycleRunRepository {
+        runs: Mutex<Vec<LifecycleRun>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LifecycleRunRepository for MemoryLifecycleRunRepository {
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().await.push(run.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .await
+                .iter()
+                .find(|run| run.id == id)
+                .cloned())
+        }
+
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .await
+                .iter()
+                .filter(|run| ids.contains(&run.id))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .await
+                .iter()
+                .filter(|run| run.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            let mut runs = self.runs.lock().await;
+            if let Some(existing) = runs.iter_mut().find(|item| item.id == run.id) {
+                *existing = run.clone();
+            }
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.runs.lock().await.retain(|run| run.id != id);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryLifecycleAgentRepository {
+        agents: Mutex<Vec<LifecycleAgent>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
+        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            self.agents.lock().await.push(agent.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .await
+                .iter()
+                .find(|agent| agent.id == id)
+                .cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .await
+                .iter()
+                .filter(|agent| agent.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            let mut agents = self.agents.lock().await;
+            if let Some(existing) = agents.iter_mut().find(|item| item.id == agent.id) {
+                *existing = agent.clone();
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryAgentFrameRepository {
+        frames: Mutex<Vec<AgentFrame>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentFrameRepository for MemoryAgentFrameRepository {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.frames.lock().await.push(frame.clone());
+            Ok(())
+        }
+
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .await
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
+
+        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .await
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .max_by_key(|frame| frame.revision)
+                .cloned())
+        }
+
+        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .await
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn append_visible_canvas_mount(
+            &self,
+            frame_id: Uuid,
+            mount_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut frames = self.frames.lock().await;
+            let frame = frames
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.append_visible_canvas_mount(mount_id);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryRuntimeSessionExecutionAnchorRepository {
+        anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().await;
+            if let Some(existing) = anchors
+                .iter_mut()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                anchors.push(anchor.clone());
+            }
+            Ok(())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.anchors
+                .lock()
+                .await
+                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_updated_anchor_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
+        }
+    }
+
+    #[derive(Default)]
+    struct DeliverySelectionFixture {
+        runs: MemoryLifecycleRunRepository,
+        agents: MemoryLifecycleAgentRepository,
+        frames: MemoryAgentFrameRepository,
+        anchors: MemoryRuntimeSessionExecutionAnchorRepository,
+    }
+
+    impl DeliverySelectionFixture {
+        fn service(&self) -> DeliveryRuntimeSelectionService<'_> {
+            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+                lifecycle_runs: &self.runs,
+                lifecycle_agents: &self.agents,
+                agent_frames: &self.frames,
+                execution_anchors: &self.anchors,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn delivery_runtime_session_context_ignores_old_anchor_without_current_delivery() {
+        let fixture = DeliverySelectionFixture::default();
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let launch_frame = AgentFrame::new_initial(agent.id);
+        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
+        agent.set_current_frame(current_frame.id);
+        let old_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-old",
+            run.id,
+            launch_frame.id,
+            agent.id,
+        );
+
+        fixture.runs.create(&run).await.expect("run");
+        fixture
+            .frames
+            .create(&launch_frame)
+            .await
+            .expect("launch frame");
+        fixture
+            .frames
+            .create(&current_frame)
+            .await
+            .expect("current frame");
+        fixture.agents.create(&agent).await.expect("agent");
+        fixture
+            .anchors
+            .upsert(&old_anchor)
+            .await
+            .expect("old anchor");
+
+        let runtime_session_id = delivery_runtime_session_for_agent_run_from_selection(
+            fixture.service(),
+            run.id,
+            agent.id,
+        )
+        .await
+        .expect("selection result");
+
+        assert_eq!(runtime_session_id, None);
+    }
+
+    #[tokio::test]
+    async fn delivery_runtime_session_context_uses_current_delivery_not_latest_anchor() {
+        let fixture = DeliverySelectionFixture::default();
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let current_launch_frame = AgentFrame::new_initial(agent.id);
+        let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
+        agent.set_current_frame(current_frame.id);
+
+        let mut current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-current",
+            run.id,
+            current_launch_frame.id,
+            agent.id,
+        );
+        current_anchor.updated_at = Utc::now() - chrono::Duration::seconds(30);
+        let mut latest_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-latest-raw-evidence",
+            run.id,
+            current_launch_frame.id,
+            agent.id,
+        );
+        latest_anchor.updated_at = Utc::now();
+        agent.bind_current_delivery_from_anchor(
+            &current_anchor,
+            DeliveryBindingStatus::Running,
+            current_anchor.updated_at,
+        );
+
+        fixture.runs.create(&run).await.expect("run");
+        fixture
+            .frames
+            .create(&current_launch_frame)
+            .await
+            .expect("launch frame");
+        fixture
+            .frames
+            .create(&current_frame)
+            .await
+            .expect("current frame");
+        fixture.agents.create(&agent).await.expect("agent");
+        fixture
+            .anchors
+            .upsert(&latest_anchor)
+            .await
+            .expect("latest anchor");
+        fixture
+            .anchors
+            .upsert(&current_anchor)
+            .await
+            .expect("current anchor");
+
+        let runtime_session_id = delivery_runtime_session_for_agent_run_from_selection(
+            fixture.service(),
+            run.id,
+            agent.id,
+        )
+        .await
+        .expect("selection result");
+
+        assert_eq!(runtime_session_id.as_deref(), Some("runtime-current"));
+    }
 
     #[test]
     fn list_entry_from_projection_carries_source_and_count() {

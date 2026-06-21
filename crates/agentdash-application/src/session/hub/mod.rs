@@ -20,6 +20,7 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
+use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionExecutionAnchorRepository};
 use agentdash_spi::AgentConnector;
@@ -90,6 +91,7 @@ pub struct SessionRuntimeInner {
     /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
     pub(super) lifecycle_agent_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
+    pub(super) permission_grant_repo: Option<Arc<dyn PermissionGrantRepository>>,
     pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
     pub(super) lifecycle_gate_repo:

@@ -23,7 +23,8 @@ import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
 } from "../../../types";
-import type { SessionChatCommandState } from "../../session";
+import type { SessionChatCommand, SessionChatCommandState } from "../../session";
+import { isLocalDraftStartAction } from "../../session";
 import type { ImageAttachment } from "../../session/ui/composer/useImageAttachments";
 import {
   resolveAgentRunClientCommandId,
@@ -31,7 +32,7 @@ import {
 } from "./workspaceCommandState";
 
 interface ResolveExecutorConfigInput {
-  command: ConversationCommandView;
+  command: SessionChatCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }
@@ -64,7 +65,7 @@ export interface UseAgentRunWorkspaceCommandsOptions {
 
 export interface UseAgentRunWorkspaceCommandsResult {
   handleAgentRunCommand: (
-    command: ConversationCommandView,
+    command: SessionChatCommand,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
@@ -176,7 +177,7 @@ export function useAgentRunWorkspaceCommands(
   }, [refreshWorkspaceProjection]);
 
   const handleAgentRunCommand = useCallback(async (
-    command: ConversationCommandView,
+    command: SessionChatCommand,
     _sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
@@ -220,7 +221,7 @@ export function useAgentRunWorkspaceCommands(
     const commandKey = JSON.stringify({
       command_id: command.command_id,
       kind: command.kind,
-      stale_guard: command.stale_guard,
+      stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
       input: inputBlocks,
       executor_config: commandExecutorConfig ?? null,
     });
@@ -232,7 +233,7 @@ export function useAgentRunWorkspaceCommands(
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
     try {
-      if (command.kind === "start_draft") {
+      if (isLocalDraftStartAction(command)) {
         if (!draftProjectId || !draftProjectAgentKey || !draftReady) {
           throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
         }

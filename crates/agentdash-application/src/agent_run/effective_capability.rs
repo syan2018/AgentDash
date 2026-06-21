@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use agentdash_domain::permission::PermissionGrant;
-use agentdash_domain::workflow::AgentFrame;
-use agentdash_domain::workflow::ToolCapabilityPath;
+use agentdash_domain::permission::{PermissionGrant, PermissionGrantRepository};
+use agentdash_domain::workflow::{
+    AgentFrame, RuntimeSessionExecutionAnchorRepository, ToolCapabilityPath,
+};
+use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs};
 use uuid::Uuid;
 
@@ -37,6 +39,10 @@ pub struct AgentRunGrantProjection {
 impl AgentRunGrantProjection {
     pub fn empty() -> Self {
         Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.admitted_tools.is_empty()
     }
 
     pub fn from_active_grants(grants: &[PermissionGrant]) -> Self {
@@ -90,6 +96,45 @@ impl AgentRunGrantProjection {
         self.admitted_tools
             .get(&request.capability_key)
             .is_some_and(|tools| tools.contains(&request.tool_name))
+    }
+
+    pub fn apply_to_execution_capability_state(&self, state: &CapabilityState) -> CapabilityState {
+        if self.is_empty() {
+            return state.clone();
+        }
+
+        let mut next = state.clone();
+        for (capability_key, tool_names) in &self.admitted_tools {
+            let capability = ToolCapability::new(capability_key.clone());
+            let capability_was_visible = next.tool.capabilities.contains(&capability);
+            next.tool.capabilities.insert(capability.clone());
+            next.tool
+                .enabled_clusters
+                .extend(capability_to_tool_clusters(&capability));
+
+            if !capability_was_visible {
+                next.tool
+                    .tool_policy
+                    .entry(capability_key.clone())
+                    .or_default()
+                    .include_only
+                    .extend(tool_names.iter().cloned());
+                continue;
+            }
+
+            if let Some(filter) = next.tool.tool_policy.get_mut(capability_key) {
+                for tool_name in tool_names {
+                    filter.exclude.remove(tool_name);
+                    if !filter.include_only.is_empty() {
+                        filter.include_only.insert(tool_name.clone());
+                    }
+                }
+                if filter.is_empty() {
+                    next.tool.tool_policy.remove(capability_key);
+                }
+            }
+        }
+        next
     }
 }
 
@@ -225,6 +270,25 @@ impl AgentRunEffectiveCapabilityService {
             "tool `{}` is not admitted for capability `{}`",
             request.tool_name, request.capability_key
         ))
+    }
+
+    pub async fn execution_capability_state_for_runtime_session(
+        runtime_session_id: &str,
+        base_state: &CapabilityState,
+        execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        permission_grant_repo: &dyn PermissionGrantRepository,
+    ) -> Result<CapabilityState, agentdash_domain::DomainError> {
+        let Some(anchor) = execution_anchor_repo
+            .find_by_session(runtime_session_id)
+            .await?
+        else {
+            return Ok(base_state.clone());
+        };
+        let active_grants = permission_grant_repo
+            .list_active_by_run(anchor.run_id)
+            .await?;
+        let projection = AgentRunGrantProjection::from_active_grants(&active_grants);
+        Ok(projection.apply_to_execution_capability_state(base_state))
     }
 }
 
@@ -363,6 +427,44 @@ mod tests {
             ),
         );
         assert!(decision.allowed);
+    }
+
+    #[test]
+    fn grant_projection_expands_execution_state_for_tool_surface_only() {
+        let path = ToolCapabilityPath::parse("workflow_management::upsert_workflow_tool")
+            .expect("tool path");
+        let mut grant = PermissionGrant::new(
+            Uuid::new_v4(),
+            "session-a",
+            vec![path],
+            "temporary tool admission",
+            GrantScope::AgentFrame,
+            None,
+        );
+        grant.submit_for_policy().expect("submit");
+        grant
+            .apply_policy_decision(agentdash_domain::permission::PolicyDecision {
+                outcome: agentdash_domain::permission::PolicyOutcome::AutoApproved,
+                matched_rules: Vec::new(),
+                reason: "auto".to_string(),
+            })
+            .expect("policy");
+        grant.mark_applied().expect("applied");
+
+        let projection = AgentRunGrantProjection::from_active_grants(&[grant]);
+        let execution_state =
+            projection.apply_to_execution_capability_state(&CapabilityState::default());
+
+        assert!(execution_state.is_capability_tool_enabled(
+            "workflow_management",
+            "upsert_workflow_tool",
+            None
+        ));
+        assert!(!execution_state.is_capability_tool_enabled(
+            "workflow_management",
+            "get_workflow",
+            None
+        ));
     }
 
     #[test]

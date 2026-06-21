@@ -192,8 +192,10 @@ Agent requests unknown_capability
 | Integration | `PostgresPermissionGrantRepository::create` + `find_by_id` | Roundtrip preserves all fields |
 | Integration | `list_by_frame(..., Active)` filters non-active | Only Applied/ScopeEscalated returned |
 | Integration | `list_by_run(..., Pending/Terminal)` filters by status group | Pending and terminal groups do not rely on active-only query |
-| Integration | `list_overdue_active` finds old grants | Applied + expired grants are returned without mutating status |
+| Integration | `list_overdue_active` finds old grants | Applied + ScopeEscalated grants with overdue TTL are returned without mutating status |
 | Application | `PermissionGrantService::expire_overdue_with_agent_run_effects` | Reuses single-grant expiry classification; admission-only grants do not write AgentFrame revisions, surface-changing grants do |
+| Application | runtime tool assembly consumes tool-level grants | Approved tool-level Grant is projected through AgentRun admission into runtime tool surface without writing AgentFrame revision |
+| API | approve/revoke active-runtime adoption failure | Returns visible API error instead of reporting complete success |
 | API | `GET /permission-grants` without params | 400 error |
 | API | `POST /permission-grants/:id/approve` on Applied grant | 400 error |
 
@@ -240,6 +242,11 @@ Created ──submit_for_policy──→ PendingPolicy
     ↓     ↓     ↓        ↓
 Expired Revoked ScopeEscalated
  (term)  (term)    (active)
+                    │
+                  ┌─┴──────┐
+                  ↓        ↓
+              Expired   Revoked
+               (term)    (term)
 ```
 
 Active states: `Applied`, `ScopeEscalated`

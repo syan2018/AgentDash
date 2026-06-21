@@ -149,16 +149,16 @@ impl PermissionGrant {
         Ok(())
     }
 
-    /// Applied → Expired：TTL 到期。
+    /// Active → Expired：TTL 到期。
     pub fn expire(&mut self) -> Result<(), DomainError> {
-        self.require_status(GrantStatus::Applied, "expire")?;
+        self.require_active_status(GrantStatus::Expired)?;
         self.transition_to(GrantStatus::Expired);
         Ok(())
     }
 
-    /// Applied → Revoked：显式撤销。
+    /// Active → Revoked：显式撤销。
     pub fn revoke(&mut self) -> Result<(), DomainError> {
-        self.require_status(GrantStatus::Applied, "revoke")?;
+        self.require_active_status(GrantStatus::Revoked)?;
         self.transition_to(GrantStatus::Revoked);
         Ok(())
     }
@@ -182,6 +182,16 @@ impl PermissionGrant {
             return Err(DomainError::InvalidTransition {
                 from: self.status.as_str().to_string(),
                 to: expected.as_str().to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn require_active_status(&self, next: GrantStatus) -> Result<(), DomainError> {
+        if !self.status.is_active() {
+            return Err(DomainError::InvalidTransition {
+                from: self.status.as_str().to_string(),
+                to: next.as_str().to_string(),
             });
         }
         Ok(())
@@ -307,6 +317,29 @@ mod tests {
         grant.mark_applied().unwrap();
         grant.revoke().unwrap();
         assert_eq!(grant.status, GrantStatus::Revoked);
+        assert!(grant.status.is_terminal());
+    }
+
+    #[test]
+    fn expire_scope_escalated_grant() {
+        let mut grant = sample_grant().with_escalation_intent(ScopeEscalationIntent {
+            target_subject_kind: "story".to_string(),
+            unlocked_paths: vec![ToolCapabilityPath::parse("task").unwrap()],
+        });
+        grant.submit_for_policy().unwrap();
+        grant
+            .apply_policy_decision(PolicyDecision {
+                outcome: PolicyOutcome::AutoApproved,
+                matched_rules: vec![],
+                reason: "auto".into(),
+            })
+            .unwrap();
+        grant.mark_applied().unwrap();
+        grant.mark_scope_escalated().unwrap();
+
+        grant.expire().unwrap();
+
+        assert_eq!(grant.status, GrantStatus::Expired);
         assert!(grant.status.is_terminal());
     }
 }

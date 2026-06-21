@@ -4,7 +4,10 @@
 
 export {
   SessionChatView,
+  isLocalDraftStartAction,
+  type LocalDraftStartAction,
   type PromptTemplate,
+  type SessionChatCommand,
   type SessionChatCommandState,
   type SessionChatViewProps,
 } from "./SessionChatView";

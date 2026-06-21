@@ -11,9 +11,9 @@ use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDisco
 use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServer};
 use uuid::Uuid;
 
-use super::SessionRuntimeInner;
-use crate::agent_run::AgentFrameBuilder;
+use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::{AgentFrameBuilder, AgentRunEffectiveCapabilityService};
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::capability_state::project_capability_state_from_frame;
 use crate::session::tool_assembly::assemble_tools_for_execution_context;
@@ -251,7 +251,7 @@ impl SessionRuntimeInner {
         let context = ExecutionContext {
             session: session_frame,
             turn: agentdash_spi::ExecutionTurnFrame {
-                hook_runtime,
+                hook_runtime: hook_runtime.clone(),
                 capability_state: state.clone(),
                 ..Default::default()
             },
@@ -273,11 +273,35 @@ impl SessionRuntimeInner {
                     if let Some(turn) = runtime.turn_state.active_turn_mut() {
                         turn.session_frame.mcp_servers = mcp_servers.clone();
                         turn.session_frame.vfs = state.vfs.active.clone();
-                        turn.capability_state = state;
+                        turn.capability_state = state.clone();
                     }
                 }
             })
             .await;
+
+        if let Some(hook_runtime) = hook_runtime.as_ref() {
+            self.emit_adopted_runtime_context_transition(
+                hook_runtime,
+                LiveRuntimeContextTransitionInput {
+                    target_frame_id: adopted_frame.id,
+                    delivery_runtime_session_id: session_id.to_string(),
+                    turn_id: Some(turn_snapshot.turn_id.clone()),
+                    phase_node: adopted_frame.created_by_kind.clone(),
+                    run_id: None,
+                    lifecycle_key: None,
+                    before_state: Some(turn_snapshot.capability_state),
+                    after_state: state.clone(),
+                    capability_keys: state.capability_keys(),
+                    key_delta: agentdash_spi::SetDelta::default(),
+                    apply_mode: "persisted_revision_adopted",
+                },
+                &all_tools,
+            )
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!("已持久化 AgentFrame adoption 通知失败: {error}"))
+            })?;
+        }
 
         tracing::debug!(
             session_id,
@@ -389,9 +413,12 @@ impl SessionRuntimeInner {
         session_id: &str,
         context: &ExecutionContext,
     ) -> Vec<DynAgentTool> {
+        let context = self
+            .execution_context_with_agent_run_admission_projection(session_id, context)
+            .await;
         assemble_tools_for_execution_context(
             session_id,
-            context,
+            &context,
             self.runtime_tool_provider.as_deref(),
             self.mcp_tool_discovery.as_deref(),
         )
@@ -449,6 +476,9 @@ impl SessionRuntimeInner {
                 project_capability_state_from_frame(&frame),
             )
         };
+        let capability_state = self
+            .capability_state_with_agent_run_admission_projection(session_id, &capability_state)
+            .await;
         let discovery = self.mcp_tool_discovery.as_ref().ok_or_else(|| {
             ConnectorError::Runtime("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string())
         })?;
@@ -460,5 +490,51 @@ impl SessionRuntimeInner {
                 call_context: None,
             })
             .await
+    }
+
+    async fn execution_context_with_agent_run_admission_projection(
+        &self,
+        session_id: &str,
+        context: &ExecutionContext,
+    ) -> ExecutionContext {
+        let mut context = context.clone();
+        context.turn.capability_state = self
+            .capability_state_with_agent_run_admission_projection(
+                session_id,
+                &context.turn.capability_state,
+            )
+            .await;
+        context
+    }
+
+    async fn capability_state_with_agent_run_admission_projection(
+        &self,
+        session_id: &str,
+        capability_state: &CapabilityState,
+    ) -> CapabilityState {
+        let (Some(permission_grant_repo), Some(anchor_repo)) = (
+            self.permission_grant_repo.as_ref(),
+            self.execution_anchor_repo.as_ref(),
+        ) else {
+            return capability_state.clone();
+        };
+
+        match AgentRunEffectiveCapabilityService::execution_capability_state_for_runtime_session(
+            session_id,
+            capability_state,
+            anchor_repo.as_ref(),
+            permission_grant_repo.as_ref(),
+        )
+        .await
+        {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(
+                    session_id,
+                    "AgentRun execution capability projection skipped: {error}"
+                );
+                capability_state.clone()
+            }
+        }
     }
 }

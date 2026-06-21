@@ -216,8 +216,10 @@ describe("AgentRun workspace conversation command authority", () => {
 
     expect(state.executionStatus).toBe("model_required");
     expect(state.commands.keyboard.enter).toBeUndefined();
-    expect(state.commands.commands[0]?.enabled).toBe(false);
-    expect(state.commands.commands[0]?.disabled_code).toBe("model_required");
+    expect(state.commands.commands).toHaveLength(0);
+    expect(state.localDraftAction?.kind).toBe("draft_start_local");
+    expect(state.localDraftAction?.enabled).toBe(false);
+    expect(state.localDraftAction?.disabled_code).toBe("model_required");
   });
 
   it("enables draft submit after an explicit complete model override", () => {
@@ -244,7 +246,7 @@ describe("AgentRun workspace conversation command authority", () => {
       },
     });
 
-    const command = state.commands.commands[0];
+    const command = state.localDraftAction;
     expect(state.executionStatus).toBe("draft");
     expect(state.modelConfig.status).toBe("resolved");
     expect(state.modelConfig.effective_executor_config).toMatchObject({
@@ -254,7 +256,8 @@ describe("AgentRun workspace conversation command authority", () => {
       source: "user_override",
     });
     expect(command?.enabled).toBe(true);
-    expect(state.commands.keyboard.enter).toBe(command?.command_id);
+    expect(state.commands.commands).toHaveLength(0);
+    expect(state.commands.keyboard.enter).toBeUndefined();
   });
 
   it("keeps reasoning-capable model selection valid even without thinking level", () => {
@@ -281,7 +284,7 @@ describe("AgentRun workspace conversation command authority", () => {
     }).modelConfig.status).toBe("resolved");
   });
 
-  it("resolves start_draft payload executor_config from the explicit override", () => {
+  it("resolves local draft start payload executor_config from the explicit override", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-1",
       display_name: "Agent",
@@ -304,7 +307,7 @@ describe("AgentRun workspace conversation command authority", () => {
         model_id: "gpt-5.4-mini",
       },
     });
-    const command = state.commands.commands[0];
+    const command = state.localDraftAction;
     expect(command).toBeDefined();
     if (!command) return;
 

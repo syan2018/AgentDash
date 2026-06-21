@@ -230,7 +230,7 @@ pub async fn approve_grant(
     )
     .approve(id, &current_user.user_id)
     .await?;
-    adopt_effect_frame_if_present(&state, &result.grant, result.effect_frame.as_ref()).await;
+    adopt_grant_effect(&state, &result.grant, result.effect_frame.as_ref()).await?;
 
     Ok(Json(grant_to_dto(&result.grant)))
 }
@@ -271,33 +271,33 @@ pub async fn revoke_grant(
     )
     .revoke(id)
     .await?;
-    adopt_effect_frame_if_present(&state, &result.grant, result.effect_frame.as_ref()).await;
+    adopt_grant_effect(&state, &result.grant, result.effect_frame.as_ref()).await?;
 
     Ok(Json(grant_to_dto(&result.grant)))
 }
 
-async fn adopt_effect_frame_if_present(
+async fn adopt_grant_effect(
     state: &AppState,
     grant: &PermissionGrant,
     effect_frame: Option<&AgentFrame>,
-) {
-    let Some(effect_frame) = effect_frame else {
-        return;
+) -> Result<(), ApiError> {
+    let target_frame_id = effect_frame.map(|frame| frame.id).or(grant.effect_frame_id);
+    let Some(target_frame_id) = target_frame_id else {
+        return Ok(());
     };
-    if let Err(error) = state
+    state
         .services
         .session_capability
         .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
-            frame_id: effect_frame.id,
+            frame_id: target_frame_id,
             delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
         })
         .await
-    {
-        tracing::warn!(
-            grant_id = %grant.id,
-            effect_frame_id = %effect_frame.id,
-            delivery_runtime_session_id = grant.source_runtime_session_id,
-            "PermissionGrant effect frame active-runtime adoption skipped: {error}"
-        );
-    }
+        .map_err(|error| {
+            ApiError::Internal(format!(
+                "PermissionGrant active-runtime adoption failed for grant {}: {error}",
+                grant.id
+            ))
+        })?;
+    Ok(())
 }

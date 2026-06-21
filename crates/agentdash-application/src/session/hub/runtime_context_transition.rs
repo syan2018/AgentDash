@@ -138,6 +138,36 @@ impl SessionRuntimeInner {
             .map_err(|error| format!("Phase node Hook runtime target 对齐失败: {error}"))?
             .unwrap_or_else(|| hook_runtime.clone());
 
+        self.emit_runtime_context_transition_notifications(&effective_hook_runtime, &input, &tools)
+            .await
+    }
+
+    pub(crate) async fn emit_adopted_runtime_context_transition(
+        &self,
+        hook_runtime: &SharedHookRuntime,
+        input: LiveRuntimeContextTransitionInput,
+        tools: &[DynAgentTool],
+    ) -> Result<RuntimeContextTransitionOutcome, String> {
+        let state_changed = input.before_state.as_ref() != Some(&input.after_state);
+        if input.key_delta.is_empty() && !state_changed {
+            self.emit_runtime_context_changed_notice(hook_runtime, &input)
+                .await;
+            return Ok(RuntimeContextTransitionOutcome {
+                capability_delta: None,
+                emitted_capability_change: false,
+            });
+        }
+
+        self.emit_runtime_context_transition_notifications(hook_runtime, &input, tools)
+            .await
+    }
+
+    async fn emit_runtime_context_transition_notifications(
+        &self,
+        effective_hook_runtime: &SharedHookRuntime,
+        input: &LiveRuntimeContextTransitionInput,
+        tools: &[DynAgentTool],
+    ) -> Result<RuntimeContextTransitionOutcome, String> {
         let injections = self
             .collect_runtime_context_update_injections(
                 &input.delivery_runtime_session_id,

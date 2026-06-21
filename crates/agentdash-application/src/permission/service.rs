@@ -621,7 +621,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .filter(|grant| grant.status == GrantStatus::Applied)
+                .filter(|grant| grant.status.is_active())
                 .filter(|grant| grant.expires_at.is_some_and(|expires_at| expires_at < now))
                 .cloned()
                 .collect())
@@ -1067,5 +1067,37 @@ mod tests {
                 .expect("admission active grants")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn expire_overdue_with_agent_run_effects_expires_scope_escalated_grant() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let mut grant =
+            pending_grant_with_ttl(&grant_repo, initial_frame.id, "file_write", Some(1)).await;
+        grant.user_approve("user-1").expect("approve");
+        grant.mark_applied().expect("applied");
+        grant.mark_scope_escalated().expect("scope escalated");
+        grant_repo.update(&grant).await.expect("update grant");
+
+        let results = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+            .expire_overdue_with_agent_run_effects(Utc::now() + chrono::Duration::seconds(2))
+            .await
+            .expect("bulk expire");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].grant.status, GrantStatus::Expired);
+        let stored = grant_repo
+            .find_by_id(grant.id)
+            .await
+            .expect("lookup")
+            .expect("grant");
+        assert_eq!(stored.status, GrantStatus::Expired);
     }
 }

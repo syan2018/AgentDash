@@ -199,7 +199,7 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
     ) -> Result<Vec<PermissionGrant>, DomainError> {
         sqlx::query_as::<_, GrantRow>(
             "SELECT * FROM permission_grants \
-             WHERE status = 'applied' \
+             WHERE status IN ('applied', 'scope_escalated') \
                AND expires_at IS NOT NULL \
                AND expires_at < $1 \
              ORDER BY expires_at ASC, created_at ASC",

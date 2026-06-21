@@ -114,6 +114,7 @@ impl SessionRuntimeInner {
             agent_frame_repo: None,
             execution_anchor_repo: None,
             lifecycle_agent_repo: None,
+            permission_grant_repo: None,
             agent_run_mailbox_boundary_deps: None,
             lifecycle_gate_repo: None,
         }
@@ -190,6 +191,14 @@ impl SessionRuntimeInner {
         repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
     ) -> Self {
         self.lifecycle_agent_repo = Some(repo);
+        self
+    }
+
+    pub fn with_permission_grant_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::permission::PermissionGrantRepository>,
+    ) -> Self {
+        self.permission_grant_repo = Some(repo);
         self
     }
 
@@ -328,6 +337,9 @@ impl SessionRuntimeInner {
         }
         if self.lifecycle_agent_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 lifecycle_agent_repo".to_string());
+        }
+        if self.permission_grant_repo.is_none() {
+            return Err("SessionRuntimeInner 缺少 permission_grant_repo".to_string());
         }
         if self.agent_run_mailbox_boundary_deps.is_none() {
             return Err("SessionRuntimeInner 缺少 agent_run_mailbox_boundary_deps".to_string());

@@ -108,7 +108,7 @@ export interface ViewConfig {
   sort_by: string | null;
 }
 
-// ─── 项目事件流 ────────────────────────────────────────
+// ─── State change payload ─────────────────────────────
 
 export interface StateChange {
   id: number;
@@ -119,9 +119,3 @@ export interface StateChange {
   backend_id: string | null;
   created_at: string;
 }
-
-export type StreamEvent =
-  | { type: "Connected"; data: { last_event_id: number } }
-  | { type: "StateChanged"; data: StateChange }
-  | { type: "BackendRuntimeChanged"; data: { backend_id: string } }
-  | { type: "Heartbeat"; data: { timestamp: number } };

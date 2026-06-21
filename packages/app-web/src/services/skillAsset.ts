@@ -1,7 +1,5 @@
 import { api, authenticatedFetch } from "../api/client";
 import { buildApiPath } from "../api/origin";
-import { asRecord } from "../api/mappers";
-import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   CreateSkillAssetRequest,
   ImportRemoteSkillAssetRequest,
@@ -55,60 +53,6 @@ interface FrontmatterEntry {
   key: string | null;
   lines: string[];
   value: string | null;
-}
-
-function normalizeSource(value: unknown): SkillAssetSource {
-  if (value === "builtin_seed" || value === "github") return value;
-  return "user";
-}
-
-function mapSkillAssetFile(raw: unknown): SkillAssetFileDto {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("skill asset file 缺失或不是对象");
-  }
-  return {
-    path: String(value.path ?? ""),
-    content: value.content == null ? null : String(value.content),
-    content_kind: String(value.content_kind ?? "text"),
-    mime_type: value.mime_type == null ? null : String(value.mime_type),
-    size_bytes: Number(value.size_bytes ?? 0),
-    kind: value.kind == null ? null : String(value.kind),
-  };
-}
-
-export function mapSkillAsset(raw: Record<string, unknown>): SkillAssetDto {
-  const files = Array.isArray(raw.files) ? raw.files.map(mapSkillAssetFile) : [];
-  return {
-    id: String(raw.id ?? ""),
-    project_id: String(raw.project_id ?? ""),
-    key: String(raw.key ?? ""),
-    display_name: String(raw.display_name ?? raw.key ?? ""),
-    description: String(raw.description ?? ""),
-    source: normalizeSource(raw.source),
-    builtin_key:
-      raw.builtin_key === null || raw.builtin_key === undefined
-        ? null
-        : String(raw.builtin_key),
-    remote_source: mapRemoteSource(raw.remote_source),
-    installed_source: mapInstalledAssetSource(raw.installed_source),
-    disable_model_invocation: Boolean(raw.disable_model_invocation),
-    files,
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function mapRemoteSource(raw: unknown): SkillAssetDto["remote_source"] {
-  if (raw === null || raw === undefined) return null;
-  const value = asRecord(raw);
-  if (!value) return null;
-  return {
-    source_type: String(value.source_type ?? ""),
-    url: String(value.url ?? ""),
-    imported_at: String(value.imported_at ?? ""),
-    digest: String(value.digest ?? ""),
-  };
 }
 
 function parseFrontmatterValue(value: string): string {
@@ -413,19 +357,21 @@ export function dtoFilesFromDraft(draft: SkillAssetDraft): SkillAssetFileDto[] {
     key: draft.key.trim(),
     description: draft.description.trim(),
   };
+  const textContentKind: SkillAssetFileDto["content_kind"] = "text";
+  const skillContent = buildSkillMarkdown(normalized);
   return [
     {
       path: "SKILL.md",
-      content: buildSkillMarkdown(normalized),
-      content_kind: "text",
-      size_bytes: new TextEncoder().encode(buildSkillMarkdown(normalized)).length,
+      content: skillContent,
+      content_kind: textContentKind,
+      size_bytes: new TextEncoder().encode(skillContent).length,
     },
     ...normalized.files
       .filter((file) => normalizeSkillExtraPath(file.relative_path))
       .map((file) => ({
         path: normalizeSkillExtraPath(file.relative_path),
         content: file.content,
-        content_kind: "text",
+        content_kind: textContentKind,
         size_bytes: new TextEncoder().encode(file.content).length,
       })),
     ...normalized.binary_files,
@@ -522,21 +468,19 @@ export async function fetchProjectSkillAssets(
   const params = new URLSearchParams();
   if (query?.source) params.set("source", query.source);
   const qs = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(
+  return api.get<SkillAssetDto[]>(
     `/projects/${encodeURIComponent(projectId)}/skill-assets${qs}`,
   );
-  return raw.map(mapSkillAsset);
 }
 
 export async function createSkillAsset(
   projectId: string,
   input: CreateSkillAssetRequest,
 ): Promise<SkillAssetDto> {
-  const raw = await api.post<Record<string, unknown>>(
+  return api.post<SkillAssetDto>(
     `/projects/${encodeURIComponent(projectId)}/skill-assets`,
     input,
   );
-  return mapSkillAsset(raw);
 }
 
 export async function updateSkillAsset(
@@ -544,11 +488,10 @@ export async function updateSkillAsset(
   assetId: string,
   input: UpdateSkillAssetRequest,
 ): Promise<SkillAssetDto> {
-  const raw = await api.patch<Record<string, unknown>>(
+  return api.patch<SkillAssetDto>(
     `/projects/${encodeURIComponent(projectId)}/skill-assets/${encodeURIComponent(assetId)}`,
     input,
   );
-  return mapSkillAsset(raw);
 }
 
 export async function deleteSkillAsset(
@@ -564,11 +507,10 @@ export async function importRemoteSkillAsset(
   projectId: string,
   input: ImportRemoteSkillAssetRequest,
 ): Promise<SkillAssetDto> {
-  const raw = await api.post<Record<string, unknown>>(
+  return api.post<SkillAssetDto>(
     `/projects/${encodeURIComponent(projectId)}/skill-assets/import`,
     input,
   );
-  return mapSkillAsset(raw);
 }
 
 export async function uploadSkillAssets(
@@ -594,8 +536,8 @@ export async function uploadSkillAssets(
     const body = await response.json().catch(() => ({ error: response.statusText }));
     throw new Error(body.error || `HTTP ${response.status}`);
   }
-  const raw = await response.json() as Record<string, unknown>[];
-  return raw.map(mapSkillAsset);
+  const assets: SkillAssetDto[] = await response.json();
+  return assets;
 }
 
 export function validateSkillAssetUploadFiles(files: File[]): void {

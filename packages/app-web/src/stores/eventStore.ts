@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import type { StreamEvent } from '../types';
 import {
   connectProjectEventStream,
+  type ProjectEventStreamEnvelope,
   type ProjectEventStreamConnection,
 } from '../api/eventStream';
 import { registerStreamConnection } from '../api/streamRegistry';
@@ -24,7 +24,7 @@ interface EventState {
   disconnect: () => void;
 }
 
-export type ProjectEventListener = (event: StreamEvent) => void;
+export type ProjectEventListener = (event: ProjectEventStreamEnvelope) => void;
 
 const projectEventListeners = new Set<ProjectEventListener>();
 
@@ -35,7 +35,7 @@ export function subscribeProjectEvents(listener: ProjectEventListener): () => vo
   };
 }
 
-function publishProjectEvent(event: StreamEvent) {
+function publishProjectEvent(event: ProjectEventStreamEnvelope) {
   for (const listener of projectEventListeners) {
     listener(event);
   }
@@ -68,7 +68,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     let streamConnection: ProjectEventStreamConnection | null = null;
     streamConnection = connectProjectEventStream({
       projectId,
-      onEvent: (event: StreamEvent) => {
+      onEvent: (event) => {
         if (get().streamConnection !== streamConnection) return;
         switch (event.type) {
           case 'Connected':

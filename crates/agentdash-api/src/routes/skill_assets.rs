@@ -17,14 +17,15 @@ use agentdash_application::skill_asset::{
     import_remote_skill_url_to_project,
 };
 use agentdash_contracts::common_response::DeletedIdResponse;
+use agentdash_contracts::skill_asset::{
+    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery, SkillAssetDto,
+    SkillAssetFileContentKind, SkillAssetFileDto, SkillAssetSource, UpdateSkillAssetRequest,
+};
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::{
-    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery,
-    SkillAssetFileBlobQuery, SkillAssetFileDto, SkillAssetResponse, UpdateSkillAssetRequest,
-};
+use crate::dto::SkillAssetFileBlobQuery;
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +74,7 @@ pub async fn list_skill_assets(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSkillAssetsPath>,
     Query(query): Query<ListSkillAssetQuery>,
-) -> Result<Json<Vec<SkillAssetResponse>>, ApiError> {
+) -> Result<Json<Vec<SkillAssetDto>>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -85,18 +86,15 @@ pub async fn list_skill_assets(
 
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     let mut assets = service.list(project_id).await?;
-    match query.source.as_deref() {
-        Some("user") => assets.retain(|asset| asset.source.tag() == "user"),
-        Some("builtin_seed") => assets.retain(SkillAsset::is_builtin_seed),
-        Some("github") => assets.retain(|asset| asset.source.tag() == "github"),
-        Some("clawhub") => assets.retain(|asset| asset.source.tag() == "clawhub"),
-        Some("skills_sh") => assets.retain(|asset| asset.source.tag() == "skills_sh"),
-        Some(other) if !other.is_empty() => {
-            return Err(ApiError::BadRequest(format!(
-                "无效的 source 过滤值: {other}（可选 user | builtin_seed | github | clawhub | skills_sh）"
-            )));
+    match query.source {
+        Some(SkillAssetSource::User) => assets.retain(|asset| asset.source.tag() == "user"),
+        Some(SkillAssetSource::BuiltinSeed) => assets.retain(SkillAsset::is_builtin_seed),
+        Some(SkillAssetSource::Github) => assets.retain(|asset| asset.source.tag() == "github"),
+        Some(SkillAssetSource::Clawhub) => assets.retain(|asset| asset.source.tag() == "clawhub"),
+        Some(SkillAssetSource::SkillsSh) => {
+            assets.retain(|asset| asset.source.tag() == "skills_sh")
         }
-        _ => {}
+        None => {}
     }
 
     Ok(Json(assets.into_iter().map(Into::into).collect()))
@@ -107,7 +105,7 @@ pub async fn create_skill_asset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSkillAssetsPath>,
     Json(req): Json<CreateSkillAssetRequest>,
-) -> Result<Json<SkillAssetResponse>, ApiError> {
+) -> Result<Json<SkillAssetDto>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -124,8 +122,8 @@ pub async fn create_skill_asset(
             key: req.key,
             display_name: req.display_name,
             description: req.description,
-            disable_model_invocation: req.disable_model_invocation,
-            files: dto_files_to_input(req.files)?,
+            disable_model_invocation: req.disable_model_invocation.unwrap_or(false),
+            files: dto_files_to_input(req.files.unwrap_or_default())?,
         })
         .await?;
     Ok(Json(asset.into()))
@@ -135,7 +133,7 @@ pub async fn get_skill_asset(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<SkillAssetItemPath>,
-) -> Result<Json<SkillAssetResponse>, ApiError> {
+) -> Result<Json<SkillAssetDto>, ApiError> {
     let (_project_id, asset) = load_asset_with_project(
         state.as_ref(),
         &current_user,
@@ -151,7 +149,7 @@ pub async fn update_skill_asset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<SkillAssetItemPath>,
     Json(req): Json<UpdateSkillAssetRequest>,
-) -> Result<Json<SkillAssetResponse>, ApiError> {
+) -> Result<Json<SkillAssetDto>, ApiError> {
     let (_project_id, asset) = load_asset_with_project(
         state.as_ref(),
         &current_user,
@@ -233,7 +231,7 @@ pub async fn import_remote_skill_asset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSkillAssetsPath>,
     Json(req): Json<ImportRemoteSkillAssetRequest>,
-) -> Result<Json<SkillAssetResponse>, ApiError> {
+) -> Result<Json<SkillAssetDto>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -262,7 +260,7 @@ pub async fn upload_skill_assets(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSkillAssetsPath>,
     mut multipart: Multipart,
-) -> Result<Json<Vec<SkillAssetResponse>>, ApiError> {
+) -> Result<Json<Vec<SkillAssetDto>>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -352,16 +350,18 @@ fn dto_files_to_update_input(
         .map(|file| {
             let content = match file.content {
                 Some(content) => agentdash_domain::common::StoredFileContent::text(content),
-                None if file.content_kind == "binary" => existing_files
-                    .iter()
-                    .find(|existing| existing.path == file.path)
-                    .map(|existing| existing.content.clone())
-                    .ok_or_else(|| {
-                        ApiError::BadRequest(format!(
-                            "无法保留不存在的二进制 Skill 文件: {}",
-                            file.path
-                        ))
-                    })?,
+                None if matches!(file.content_kind, SkillAssetFileContentKind::Binary) => {
+                    existing_files
+                        .iter()
+                        .find(|existing| existing.path == file.path)
+                        .map(|existing| existing.content.clone())
+                        .ok_or_else(|| {
+                            ApiError::BadRequest(format!(
+                                "无法保留不存在的二进制 Skill 文件: {}",
+                                file.path
+                            ))
+                        })?
+                }
                 None => {
                     return Err(ApiError::BadRequest(format!(
                         "文本 Skill 文件 content 不能为空: {}",

@@ -5,7 +5,6 @@ import {
   buildSkillYamlFrontmatter,
   draftFromSkillAsset,
   dtoFilesFromDraft,
-  mapSkillAsset,
   parseSkillMarkdown,
   SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES,
   updateSkillMarkdownFrontmatter,
@@ -13,10 +12,11 @@ import {
   validateSkillAssetUploadFiles,
   type SkillAssetDraft,
 } from "./skillAsset";
+import type { SkillAssetDto } from "../types";
 
 describe("skillAsset", () => {
-  it("maps api dto and extracts editable draft from SKILL.md", () => {
-    const dto = mapSkillAsset({
+  it("extracts editable draft from generated api dto", () => {
+    const dto: SkillAssetDto = {
       id: "asset-1",
       project_id: "project-1",
       key: "research",
@@ -43,7 +43,6 @@ describe("skillAsset", () => {
         },
         {
           path: "assets/logo.png",
-          content: null,
           content_kind: "binary",
           mime_type: "image/png",
           size_bytes: 4,
@@ -52,7 +51,7 @@ describe("skillAsset", () => {
       ],
       created_at: "2026-05-12T00:00:00Z",
       updated_at: "2026-05-12T00:00:00Z",
-    });
+    };
 
     expect(dto.source).toBe("builtin_seed");
     const draft = draftFromSkillAsset(dto);
@@ -68,7 +67,6 @@ describe("skillAsset", () => {
       binary_files: [
         {
           path: "assets/logo.png",
-          content: null,
           content_kind: "binary",
           mime_type: "image/png",
           size_bytes: 4,

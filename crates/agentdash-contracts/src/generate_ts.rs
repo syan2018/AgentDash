@@ -131,6 +131,12 @@ use agentdash_contracts::shared_library::{
     ListLibraryAssetsQuery, McpServerTemplatePayloadDto, McpTransportTemplateDto,
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
+use agentdash_contracts::skill_asset::{
+    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery,
+    RemoteSkillAssetSourceDto, RemoteSkillAssetSourceType, SkillAssetDto,
+    SkillAssetFileContentKind, SkillAssetFileDto, SkillAssetFileKind, SkillAssetSource,
+    UpdateSkillAssetRequest,
+};
 use agentdash_contracts::story::{
     StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryTaskProjectionItem,
     StoryTaskProjectionResponse, StoryTaskProjectionSource, StoryTaskProjectionSourceKind,
@@ -557,6 +563,27 @@ fn main() {
             export_all::<McpServerTemplatePayloadDto>(dir);
             export_all::<PublishLibraryAssetRequest>(dir);
             export_all::<ProjectAssetSourceStatusDto>(dir);
+        },
+    );
+
+    // --- skill-asset-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "skill-asset-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<SkillAssetSource>(dir);
+            export_all::<RemoteSkillAssetSourceType>(dir);
+            export_all::<SkillAssetFileContentKind>(dir);
+            export_all::<SkillAssetFileKind>(dir);
+            export_all::<RemoteSkillAssetSourceDto>(dir);
+            export_all::<SkillAssetFileDto>(dir);
+            export_all::<SkillAssetDto>(dir);
+            export_all::<CreateSkillAssetRequest>(dir);
+            export_all::<UpdateSkillAssetRequest>(dir);
+            export_all::<ImportRemoteSkillAssetRequest>(dir);
+            export_all::<ListSkillAssetQuery>(dir);
         },
     );
 

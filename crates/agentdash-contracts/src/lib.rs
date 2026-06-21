@@ -32,6 +32,8 @@ pub mod session;
 pub mod settings;
 #[path = "integration/shared_library.rs"]
 pub mod shared_library;
+#[path = "integration/skill_asset.rs"]
+pub mod skill_asset;
 pub mod story;
 pub mod task;
 #[path = "surface/vfs.rs"]

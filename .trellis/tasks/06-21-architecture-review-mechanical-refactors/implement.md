@@ -5,7 +5,7 @@
 - [ ] M01 Project event NDJSON contract 化。
 - [x] M02 ProjectBackendAccess / BackendWorkspaceInventory contract 化。
 - [x] M03 Canvas CRUD contract 化。
-- [ ] M04 SkillAsset HTTP DTO contract 化。
+- [x] M04 SkillAsset HTTP DTO contract 化。
 - [x] M05 ExtensionManagement service 回到 generated DTO。
 - [x] M06 `workspace_module_presented` stream payload contract 化。
 - [ ] M07 Auth/current-user/identity-directory DTO contract 化或明确 route-local wrapper。
@@ -74,3 +74,8 @@ pnpm run frontend:check
 - M02, M08 已完成并通过检查。
 - M02 将 ProjectBackendAccess、BackendWorkspaceInventory、WorkspaceInventoryCandidate 和 WorkspaceBindingSyncResult 收口到 generated contracts；前端 backendAccess service 直接消费 generated DTO。
 - M08 将 capability、project、project-agent、routine、story/task 类型拆出 `types/index.ts`，并保留 barrel re-export 调用面。
+
+## Round 4 Completion Notes
+
+- M04 已完成，SkillAsset HTTP DTO 进入 generated contracts，frontend service 删除 raw mapper，仅保留 markdown/frontmatter editor draft mapper。
+- M01 完成非导出抢占部分：Project event stream 前端 route-local envelope/parser 已从 app-wide `types/acp.ts` 隔离；完整 contract 化仍需要后续 Rust contract/generated TS owner。

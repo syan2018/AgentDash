@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-06-20
+- **Total Sessions**: 22
+- **Last Active**: 2026-06-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~752 | Active |
+| `journal-1.md` | ~792 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-06-21 | 架构 review 机械重构收口 | `48e6378e`, `60790d25`, `33e6b66f`, `a0aaf1ec`, `792a5b2a`, `1f39b0ab`, `3aec3b14`, `f0e93844` | `main` |
 | 21 | 2026-06-20 | ContextFrame 事实域收束重构 | `7286ef13`, `b9a7ce16` | `main` |
 | 20 | 2026-06-18 | 收束 Agent 启动路径主轴 | `77f4fe7b` | `codex/companion-agent-authority-convergence` |
 | 19 | 2026-06-17 | 修复 PiAgent 上下文用量链路 | `6d01717d` | `main` |

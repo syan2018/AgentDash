@@ -750,3 +750,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 架构 review 机械重构收口
+
+**Date**: 2026-06-21
+**Task**: 架构 review 机械重构收口
+**Branch**: `main`
+
+### Summary
+
+组织主模块拓扑与耦合 review，拆分机械重构任务与设计耦合追踪，并通过六轮 subagent 并行/串行收口 M01-M19 机械重构项。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `48e6378e` | (see git log) |
+| `60790d25` | (see git log) |
+| `33e6b66f` | (see git log) |
+| `a0aaf1ec` | (see git log) |
+| `792a5b2a` | (see git log) |
+| `1f39b0ab` | (see git log) |
+| `3aec3b14` | (see git log) |
+| `f0e93844` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

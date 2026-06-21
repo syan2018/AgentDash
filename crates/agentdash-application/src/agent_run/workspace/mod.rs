@@ -11,10 +11,11 @@ pub use command_policy::{
 pub use projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
 pub use query::{AgentRunWorkspaceQueryService, mailbox_message_visible};
 pub use types::{
-    AgentRunListProjection, AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
-    AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
-    AgentRunWorkspaceProjectionModel, AgentRunWorkspaceQueryInput,
-    AgentRunWorkspaceRuntimeCommandStateModel, AgentRunWorkspaceRuntimeCommandStatus,
-    AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot, AgentRunWorkspaceStateCode,
-    AgentRunWorkspaceTraceMetaModel,
+    AgentRunListProjection, AgentRunResourceSurfaceCoordinateModel,
+    AgentRunResourceSurfaceSourceAnchorModel, AgentRunWorkspaceFrameRefModel,
+    AgentRunWorkspaceFrameRuntimeModel, AgentRunWorkspaceMailboxStateModel,
+    AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,
+    AgentRunWorkspaceQueryInput, AgentRunWorkspaceRuntimeCommandStateModel,
+    AgentRunWorkspaceRuntimeCommandStatus, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
+    AgentRunWorkspaceStateCode, AgentRunWorkspaceTraceMetaModel,
 };

@@ -56,6 +56,11 @@ impl SharedRuntimeVfs {
         self.inner.read().await.clone()
     }
 
+    pub async fn replace(&self, vfs: Vfs) {
+        let mut guard = self.inner.write().await;
+        *guard = vfs;
+    }
+
     pub async fn append_canvas_mount(&self, canvas: &agentdash_domain::canvas::Canvas) {
         let mut guard = self.inner.write().await;
         let mount = build_canvas_mount(canvas);

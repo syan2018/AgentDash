@@ -4,13 +4,14 @@ use agentdash_contracts::{
     vfs::ResolvedVfsSurface,
     workflow::{
         AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-        AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandPlacement,
-        ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-        ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-        ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-        ConversationMailboxSnapshotView, ConversationModelConfigSource,
-        ConversationModelConfigStatus, ConversationModelConfigView, LifecycleRunRefDto,
-        LifecycleSubjectAssociationDto, RuntimeSessionRefDto, ValidationSeverity,
+        AgentFrameRefDto, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
+        ConversationCommandKind, ConversationCommandPlacement, ConversationCommandSetView,
+        ConversationCommandStaleGuardView, ConversationCommandView, ConversationDiagnosticView,
+        ConversationEffectiveExecutorConfigView, ConversationExecutionStatus,
+        ConversationExecutionView, ConversationKeyboardMapView, ConversationMailboxSnapshotView,
+        ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+        LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
+        ValidationSeverity,
     },
 };
 use agentdash_domain::agent::ProjectAgent;
@@ -335,6 +336,7 @@ pub struct AgentConversationSnapshotInput {
     pub mailbox_paused: bool,
     pub mailbox_visible_message_count: usize,
     pub resource_surface: Option<ResolvedVfsSurface>,
+    pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateView>,
     pub resource_diagnostics: Vec<ConversationDiagnosticView>,
     pub model_config: ConversationModelConfigView,
 }
@@ -398,6 +400,7 @@ impl AgentConversationSnapshotResolver {
                 messages: Vec::new(),
             },
             resource_surface: input.resource_surface,
+            resource_surface_coordinate: input.resource_surface_coordinate,
             diagnostics,
         }
     }
@@ -745,6 +748,7 @@ mod tests {
         ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary,
         ResolvedVfsSurfaceSource,
     };
+    use agentdash_contracts::workflow::AgentRunResourceSurfaceSourceAnchorView;
 
     fn resolved_model_config() -> ConversationModelConfigView {
         ConversationModelConfigView {
@@ -769,6 +773,7 @@ mod tests {
             mailbox_paused: false,
             mailbox_visible_message_count: 0,
             resource_surface: None,
+            resource_surface_coordinate: None,
             resource_diagnostics: Vec::new(),
             model_config: resolved_model_config(),
         }
@@ -1069,6 +1074,45 @@ mod tests {
                 .iter()
                 .any(|mount| mount.id == "lifecycle" && mount.provider == "lifecycle_vfs")
         );
+    }
+
+    #[test]
+    fn snapshot_preserves_resource_surface_coordinate() {
+        let mut input = snapshot_input(SessionExecutionState::Idle);
+        let frame_id = input.frame_ref.expect("frame ref").0;
+        input.resource_surface = Some(lifecycle_surface());
+        input.resource_surface_coordinate = Some(AgentRunResourceSurfaceCoordinateView {
+            surface_frame_ref: AgentFrameRefDto {
+                agent_id: input.agent_id.to_string(),
+                frame_id: frame_id.to_string(),
+                revision: Some(1),
+            },
+            source_anchor: Some(AgentRunResourceSurfaceSourceAnchorView {
+                runtime_session_ref: RuntimeSessionRefDto {
+                    runtime_session_id: "runtime-1".to_string(),
+                },
+                launch_frame_id: "launch-frame-1".to_string(),
+                orchestration_id: Some("orchestration-1".to_string()),
+                node_path: Some("root.review".to_string()),
+                node_attempt: Some(2),
+                delivery_status: "running".to_string(),
+                observed_at: "2026-06-21T00:00:00+00:00".to_string(),
+            }),
+        });
+
+        let snapshot = AgentConversationSnapshotResolver::resolve(input);
+
+        let coordinate = snapshot
+            .resource_surface_coordinate
+            .expect("resource surface coordinate");
+        assert_eq!(coordinate.surface_frame_ref.frame_id, frame_id.to_string());
+        let source_anchor = coordinate.source_anchor.expect("source anchor");
+        assert_eq!(
+            source_anchor.runtime_session_ref.runtime_session_id,
+            "runtime-1"
+        );
+        assert_eq!(source_anchor.launch_frame_id, "launch-frame-1");
+        assert_eq!(source_anchor.node_attempt, Some(2));
     }
 
     #[test]

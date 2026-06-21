@@ -3,11 +3,10 @@
 //! 按能力服务拆分后的剩余范围：
 //! - [`facade`]：测试入口与少量 session 内部 helper。
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
-//! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
+//! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + 已持久化 AgentFrame adoption。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_unanchored_hook_auto_resume`。
-//! - [`runtime_context_transition`]：runtime context transition 的 live
-//!   apply、pending 入队与 next-turn 应用。
+//! - [`runtime_context_transition`]：AgentFrame adoption 通知、pending 入队与 next-turn 应用。
 //!
 //! 本模块最终只保留装配与 ready gate，tool / hook / transition / launch /
 //! effects 的内部实现应持续下沉到具体服务或明确依赖包。
@@ -40,8 +39,7 @@ pub(crate) use hook_dispatch::{HookTriggerDispatchResult, HookTriggerInput};
 pub(crate) use runtime_context_transition::PendingRuntimeContextTransitionInput;
 pub(crate) use runtime_context_transition::{
     ApplyPendingRuntimeContextTransitionInput, LiveRuntimeContextTransitionInput,
-    PendingRuntimeContextApplication, RuntimeContextTransitionOutcome,
-    build_initial_capability_state_frame,
+    PendingRuntimeContextApplication, build_initial_capability_state_frame,
 };
 
 #[derive(Clone)]

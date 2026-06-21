@@ -166,7 +166,8 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
-    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto, AgentRunView,
+    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
+    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
@@ -698,6 +699,8 @@ fn main() {
             export_all::<AgentRunWorkspaceShell>(dir);
             export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
             export_all::<AgentRunWorkspaceControlPlaneView>(dir);
+            export_all::<AgentRunResourceSurfaceSourceAnchorView>(dir);
+            export_all::<AgentRunResourceSurfaceCoordinateView>(dir);
             export_all::<ConversationExecutionStatus>(dir);
             export_all::<ConversationModelConfigStatus>(dir);
             export_all::<ConversationModelConfigSource>(dir);

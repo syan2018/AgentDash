@@ -12,6 +12,7 @@ use agentdash_spi::hooks::{
     SharedHookRuntime,
 };
 use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
+#[cfg(test)]
 use uuid::Uuid;
 
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
@@ -19,7 +20,6 @@ use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
-use crate::session::types::AgentFrameRuntimeTarget;
 #[cfg(test)]
 use crate::session::{
     AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeContextTransition,
@@ -32,14 +32,9 @@ use crate::session::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {
-    pub target_frame_id: Uuid,
     pub delivery_runtime_session_id: String,
     pub turn_id: Option<String>,
     pub phase_node: String,
-    #[allow(dead_code)]
-    pub run_id: Option<Uuid>,
-    #[allow(dead_code)]
-    pub lifecycle_key: Option<String>,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
     pub capability_keys: BTreeSet<String>,
@@ -100,48 +95,6 @@ pub(crate) fn build_initial_capability_state_frame(
 }
 
 impl SessionRuntimeInner {
-    pub(crate) async fn apply_live_runtime_context_transition(
-        &self,
-        hook_runtime: &SharedHookRuntime,
-        input: LiveRuntimeContextTransitionInput,
-    ) -> Result<RuntimeContextTransitionOutcome, String> {
-        let state_changed = input.before_state.as_ref() != Some(&input.after_state);
-        if input.key_delta.is_empty() && !state_changed {
-            self.emit_runtime_context_changed_notice(hook_runtime, &input)
-                .await;
-            return Ok(RuntimeContextTransitionOutcome {
-                capability_delta: None,
-                emitted_capability_change: false,
-            });
-        }
-
-        let runtime_target = AgentFrameRuntimeTarget {
-            frame_id: input.target_frame_id,
-            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
-        };
-        let tools = self
-            .replace_current_capability_state(runtime_target.clone(), input.after_state.clone())
-            .await
-            .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
-        let effective_runtime_target = AgentFrameRuntimeTarget {
-            frame_id: self
-                .resolve_runtime_session_frame_id(&input.delivery_runtime_session_id)
-                .await
-                .map_err(|error| format!("Phase node 当前 AgentFrame target 解析失败: {error}"))?,
-            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
-        };
-
-        let effective_hook_runtime = self
-            .hook_service()
-            .ensure_hook_runtime_for_target(&effective_runtime_target, input.turn_id.as_deref())
-            .await
-            .map_err(|error| format!("Phase node Hook runtime target 对齐失败: {error}"))?
-            .unwrap_or_else(|| hook_runtime.clone());
-
-        self.emit_runtime_context_transition_notifications(&effective_hook_runtime, &input, &tools)
-            .await
-    }
-
     pub(crate) async fn emit_adopted_runtime_context_transition(
         &self,
         hook_runtime: &SharedHookRuntime,
@@ -664,12 +617,9 @@ mod tests {
     #[test]
     fn live_context_frame_includes_tool_schema_delta_only() {
         let input = LiveRuntimeContextTransitionInput {
-            target_frame_id: Uuid::new_v4(),
             delivery_runtime_session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "apply".to_string(),
-            run_id: None,
-            lifecycle_key: None,
             before_state: None,
             after_state: CapabilityState::default(),
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
@@ -736,12 +686,9 @@ mod tests {
         let mut after_state = CapabilityState::default();
         after_state.companion.agents = vec![companion_agent];
         let input = LiveRuntimeContextTransitionInput {
-            target_frame_id: Uuid::new_v4(),
             delivery_runtime_session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "apply".to_string(),
-            run_id: None,
-            lifecycle_key: None,
             before_state: Some(CapabilityState::default()),
             after_state,
             capability_keys: BTreeSet::new(),
@@ -783,12 +730,9 @@ mod tests {
     #[test]
     fn capability_frame_includes_empty_companion_roster_when_collaboration_enabled() {
         let input = LiveRuntimeContextTransitionInput {
-            target_frame_id: Uuid::new_v4(),
             delivery_runtime_session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "bootstrap".to_string(),
-            run_id: None,
-            lifecycle_key: None,
             before_state: None,
             after_state: CapabilityState::default(),
             capability_keys: BTreeSet::from([CAP_COLLABORATION.to_string()]),
@@ -832,12 +776,9 @@ mod tests {
             .insert(agentdash_spi::ToolCapability::new(CAP_COLLABORATION));
         let after_state = before_state.clone();
         let input = LiveRuntimeContextTransitionInput {
-            target_frame_id: Uuid::new_v4(),
             delivery_runtime_session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "apply".to_string(),
-            run_id: None,
-            lifecycle_key: None,
             before_state: Some(before_state),
             after_state,
             capability_keys: BTreeSet::from([CAP_COLLABORATION.to_string()]),

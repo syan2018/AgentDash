@@ -14,7 +14,8 @@ use agentdash_contracts::agent_run_mailbox::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunLineageRef,
-    AgentRunListChild, AgentRunRefDto, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunListChild, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
+    AgentRunResourceSurfaceSourceAnchorView, AgentRunWorkspaceControlPlaneStatus,
     AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
     AgentRunWorkspaceShell, AgentRunWorkspaceView, ConversationExecutionStatus, LifecycleRunRefDto,
     RuntimeSessionRefDto, RuntimeSessionTraceMeta,
@@ -1002,6 +1003,9 @@ fn agent_run_workspace_view(
     let resource_surface = snapshot
         .resource_surface
         .map(vfs_surface_dto::surface_from_application);
+    let resource_surface_coordinate = snapshot
+        .resource_surface_coordinate
+        .map(resource_surface_coordinate_to_contract);
     let mailbox = workspace_mailbox_to_contract(snapshot.mailbox);
     let mailbox_messages = snapshot
         .mailbox_messages
@@ -1045,10 +1049,36 @@ fn agent_run_workspace_view(
             .map(subject_association_to_contract)
             .collect(),
         resource_surface,
+        resource_surface_coordinate,
         conversation: Some(conversation),
         // lineage 由 get_agent_run_workspace 单独填充（列表路径不需要，保持默认）。
         parent: None,
         children: Vec::new(),
+    }
+}
+
+fn resource_surface_coordinate_to_contract(
+    coordinate: app_workspace::AgentRunResourceSurfaceCoordinateModel,
+) -> AgentRunResourceSurfaceCoordinateView {
+    AgentRunResourceSurfaceCoordinateView {
+        surface_frame_ref: AgentFrameRefDto {
+            agent_id: coordinate.surface_frame_ref.agent_id,
+            frame_id: coordinate.surface_frame_ref.frame_id,
+            revision: coordinate.surface_frame_ref.revision,
+        },
+        source_anchor: coordinate.source_anchor.map(|anchor| {
+            AgentRunResourceSurfaceSourceAnchorView {
+                runtime_session_ref: RuntimeSessionRefDto {
+                    runtime_session_id: anchor.runtime_session_id,
+                },
+                launch_frame_id: anchor.launch_frame_id,
+                orchestration_id: anchor.orchestration_id,
+                node_path: anchor.node_path,
+                node_attempt: anchor.node_attempt,
+                delivery_status: anchor.delivery_status,
+                observed_at: anchor.observed_at,
+            }
+        }),
     }
 }
 

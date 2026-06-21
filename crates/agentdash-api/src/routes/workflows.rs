@@ -7,6 +7,15 @@ use axum::{
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+use agentdash_application::capability::tool_catalog::{
+    CapabilityCatalog as ApplicationCapabilityCatalog,
+    CapabilityCatalogEntry as ApplicationCapabilityCatalogEntry,
+    CapabilityCatalogScope as ApplicationCapabilityCatalogScope,
+    ToolCatalogCluster as ApplicationToolCatalogCluster,
+    ToolCatalogDescriptor as ApplicationToolCatalogDescriptor,
+    ToolCatalogPlatformMcpScope as ApplicationToolCatalogPlatformMcpScope,
+    ToolCatalogSource as ApplicationToolCatalogSource,
+};
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::lifecycle::{
     ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
@@ -17,17 +26,18 @@ use agentdash_application::workflow::{
     SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
-    AgentProcedureResponse, CapabilityCatalogResponse, ContinueLifecycleRunResponse,
-    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto, LifecycleRunView,
-    OpenedHumanGateDto, OrchestrationExecutorDrainResultDto, PreflightWorkflowScriptRequest,
+    AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
+    CapabilityScopeDto, ContinueLifecycleRunResponse, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse,
+    LaunchedAgentNodeDto, LifecycleRunView, OpenedHumanGateDto,
+    OrchestrationExecutorDrainResultDto, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
     PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
-    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
-    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
-    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
-    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse,
+    ValidationSeverity as ContractValidationSeverity, WorkflowGraphResponse,
+    WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
@@ -1056,6 +1066,88 @@ fn workflow_graph_ref_from_start_request(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_catalog_mapper_preserves_read_model_shape() {
+        let catalog = ApplicationCapabilityCatalog {
+            capabilities: vec![ApplicationCapabilityCatalogEntry {
+                key: "workspace_module".to_string(),
+                label: "Workspace Module".to_string(),
+                description: "模块创建、调用与展示，包含 Canvas".to_string(),
+                allowed_scopes: vec![
+                    ApplicationCapabilityCatalogScope::Project,
+                    ApplicationCapabilityCatalogScope::Story,
+                    ApplicationCapabilityCatalogScope::Task,
+                ],
+                auto_granted: true,
+                agent_can_grant: false,
+                workflow_can_grant: false,
+                tools: vec![
+                    ApplicationToolCatalogDescriptor {
+                        name: "workspace_module_present".to_string(),
+                        display_name: "Present workspace module".to_string(),
+                        description: "展示 workspace module UI".to_string(),
+                        source: ApplicationToolCatalogSource::Platform {
+                            cluster: ApplicationToolCatalogCluster::WorkspaceModule,
+                        },
+                        capability_key: "workspace_module".to_string(),
+                    },
+                    ApplicationToolCatalogDescriptor {
+                        name: "list_workflows".to_string(),
+                        display_name: "List workflows".to_string(),
+                        description: "列出 workflow".to_string(),
+                        source: ApplicationToolCatalogSource::PlatformMcp {
+                            scope: ApplicationToolCatalogPlatformMcpScope::Workflow,
+                        },
+                        capability_key: "workflow_management".to_string(),
+                    },
+                    ApplicationToolCatalogDescriptor {
+                        name: "mcp:code_analyzer".to_string(),
+                        display_name: "MCP: code_analyzer".to_string(),
+                        description: "运行时发现".to_string(),
+                        source: ApplicationToolCatalogSource::Mcp {
+                            server_name: "code_analyzer".to_string(),
+                        },
+                        capability_key: "mcp:code_analyzer".to_string(),
+                    },
+                ],
+            }],
+        };
+
+        let response = capability_catalog_to_contract(catalog);
+        let entry = response.capabilities.first().expect("catalog entry");
+        assert_eq!(entry.key, "workspace_module");
+        assert_eq!(
+            entry.allowed_scopes,
+            vec![
+                CapabilityScopeDto::Project,
+                CapabilityScopeDto::Story,
+                CapabilityScopeDto::Task,
+            ]
+        );
+        assert_eq!(entry.tools.len(), 3);
+        assert!(matches!(
+            &entry.tools[0].source,
+            ToolSourceDto::Platform {
+                cluster: ToolClusterDto::WorkspaceModule
+            }
+        ));
+        assert!(matches!(
+            &entry.tools[1].source,
+            ToolSourceDto::PlatformMcp {
+                scope: PlatformMcpScopeDto::Workflow
+            }
+        ));
+        assert!(matches!(
+            &entry.tools[2].source,
+            ToolSourceDto::Mcp { server_name } if server_name == "code_analyzer"
+        ));
+    }
+}
+
 pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> {
     let presets = hook_rule_preset_registry();
     let grouped = group_presets_by_trigger(presets)?;
@@ -1158,5 +1250,92 @@ pub async fn query_tool_catalog(
             .collect::<Vec<_>>()
     });
     let catalog = agentdash_application::capability::query_capability_catalog(keys.as_deref());
-    Json(catalog)
+    Json(capability_catalog_to_contract(catalog))
+}
+
+fn capability_catalog_to_contract(
+    catalog: ApplicationCapabilityCatalog,
+) -> CapabilityCatalogResponse {
+    CapabilityCatalogResponse {
+        capabilities: catalog
+            .capabilities
+            .into_iter()
+            .map(capability_catalog_entry_to_contract)
+            .collect(),
+    }
+}
+
+fn capability_catalog_entry_to_contract(
+    entry: ApplicationCapabilityCatalogEntry,
+) -> CapabilityCatalogEntryDto {
+    CapabilityCatalogEntryDto {
+        key: entry.key,
+        label: entry.label,
+        description: entry.description,
+        allowed_scopes: entry
+            .allowed_scopes
+            .into_iter()
+            .map(capability_scope_to_contract)
+            .collect(),
+        auto_granted: entry.auto_granted,
+        agent_can_grant: entry.agent_can_grant,
+        workflow_can_grant: entry.workflow_can_grant,
+        tools: entry
+            .tools
+            .into_iter()
+            .map(tool_descriptor_to_contract)
+            .collect(),
+    }
+}
+
+fn tool_descriptor_to_contract(descriptor: ApplicationToolCatalogDescriptor) -> ToolDescriptorDto {
+    ToolDescriptorDto {
+        name: descriptor.name,
+        display_name: descriptor.display_name,
+        description: descriptor.description,
+        source: tool_source_to_contract(descriptor.source),
+        capability_key: descriptor.capability_key,
+    }
+}
+
+fn tool_source_to_contract(source: ApplicationToolCatalogSource) -> ToolSourceDto {
+    match source {
+        ApplicationToolCatalogSource::Platform { cluster } => ToolSourceDto::Platform {
+            cluster: tool_cluster_to_contract(cluster),
+        },
+        ApplicationToolCatalogSource::PlatformMcp { scope } => ToolSourceDto::PlatformMcp {
+            scope: platform_mcp_scope_to_contract(scope),
+        },
+        ApplicationToolCatalogSource::Mcp { server_name } => ToolSourceDto::Mcp { server_name },
+    }
+}
+
+fn capability_scope_to_contract(scope: ApplicationCapabilityCatalogScope) -> CapabilityScopeDto {
+    match scope {
+        ApplicationCapabilityCatalogScope::Project => CapabilityScopeDto::Project,
+        ApplicationCapabilityCatalogScope::Story => CapabilityScopeDto::Story,
+        ApplicationCapabilityCatalogScope::Task => CapabilityScopeDto::Task,
+    }
+}
+
+fn tool_cluster_to_contract(cluster: ApplicationToolCatalogCluster) -> ToolClusterDto {
+    match cluster {
+        ApplicationToolCatalogCluster::Read => ToolClusterDto::Read,
+        ApplicationToolCatalogCluster::Write => ToolClusterDto::Write,
+        ApplicationToolCatalogCluster::Execute => ToolClusterDto::Execute,
+        ApplicationToolCatalogCluster::Workflow => ToolClusterDto::Workflow,
+        ApplicationToolCatalogCluster::Collaboration => ToolClusterDto::Collaboration,
+        ApplicationToolCatalogCluster::Task => ToolClusterDto::Task,
+        ApplicationToolCatalogCluster::WorkspaceModule => ToolClusterDto::WorkspaceModule,
+    }
+}
+
+fn platform_mcp_scope_to_contract(
+    scope: ApplicationToolCatalogPlatformMcpScope,
+) -> PlatformMcpScopeDto {
+    match scope {
+        ApplicationToolCatalogPlatformMcpScope::Relay => PlatformMcpScopeDto::Relay,
+        ApplicationToolCatalogPlatformMcpScope::Story => PlatformMcpScopeDto::Story,
+        ApplicationToolCatalogPlatformMcpScope::Workflow => PlatformMcpScopeDto::Workflow,
+    }
 }

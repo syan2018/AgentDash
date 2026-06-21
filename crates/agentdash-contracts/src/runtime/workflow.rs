@@ -899,6 +899,33 @@ pub struct AgentRunWorkspaceControlPlaneView {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunResourceSurfaceSourceAnchorView {
+    pub runtime_session_ref: RuntimeSessionRefDto,
+    pub launch_frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub orchestration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub node_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub node_attempt: Option<u32>,
+    pub delivery_status: String,
+    pub observed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunResourceSurfaceCoordinateView {
+    pub surface_frame_ref: AgentFrameRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_anchor: Option<AgentRunResourceSurfaceSourceAnchorView>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationExecutionStatus {
@@ -1128,6 +1155,9 @@ pub struct AgentConversationSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateView>,
     #[serde(default)]
     pub diagnostics: Vec<ConversationDiagnosticView>,
 }
@@ -1157,6 +1187,9 @@ pub struct AgentRunWorkspaceView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_surface: Option<ResolvedVfsSurface>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub conversation: Option<AgentConversationSnapshot>,

@@ -7,9 +7,9 @@ CB04 不再拆成 Trellis 子任务；所有执行入口收束在 Contract Bound
 | ID | Work Item | Status | Parallel Slot | Scope |
 | --- | --- | --- | --- | --- |
 | CB04-A | `A-mcp-preset-incoming-conversion` | completed | wave 1 | MCP preset request DTO 到 domain command/value 的 incoming conversion 迁到 API adapter/application command boundary |
-| CB04-B | `B-agentrun-workspace-snapshot-split` | blocked by runtime coordinate design | later | AgentRun workspace snapshot 从 generated contract DTO 拆出 application read model |
+| CB04-B | `B-agentrun-workspace-snapshot-split` | ready | next | AgentRun workspace snapshot 从 generated contract DTO 拆出 application read model |
 | CB04-C | `C-session-context-usage-projection` | completed | wave 1 | Session context usage 的 SPI `ContextFrame` 分析迁到 application projection，API/stream boundary 映射 DTO |
-| CB04-D | `D-capability-catalog-read-model` | blocked by AgentFrame exposure design | later | Capability catalog 从 contract DTO 返回值拆出 application read model |
+| CB04-D | `D-capability-catalog-read-model` | completed | wave 2 | Capability catalog 从 contract DTO 返回值拆出 application read model |
 | CB04-E | `E-routine-llm-settings-reverse-conversion` | completed | wave 1 | Routine / LLM Provider / Settings 的 request DTO reverse conversion 迁到对应 API route mapper |
 | CB04-F | `F-backend-access-command-conversion` | completed | wave 2 | Backend access update status/access_mode 的 route-local command parsing 清理 |
 | CB04-G | Session message ref command mapper | completed | tail cleanup | `SessionMessageRefDto -> MessageRef` fork command parsing 迁到 session API route mapper |
@@ -20,17 +20,16 @@ CB04 不再拆成 Trellis 子任务；所有执行入口收束在 Contract Bound
 - CB04-E completed Routine, LLM Provider and Settings in one owned route-mapper pass.
 - CB04-F completed as a small backend access route-local command parsing cleanup.
 - CB04-G completed after review found `SessionMessageRefDto -> MessageRef` was request-facing fork command parsing.
-- CB04-B waits for Runtime Coordinate current delivery binding / selection service to settle.
-- CB04-D waits for AgentFrame exposure/capability revision design to settle.
+- CB04-D completed the capability catalog application read model split; workflow API route now owns contract DTO mapping.
+- CB04-B is ready after Runtime Coordinate current delivery binding and resource surface coordinate settled.
 
-## Blocked Follow-Up Tracking
+## Ready Follow-Up Tracking
 
-| ID | Blocker | Owning Parent Task | Resume Condition | Next Action |
+| ID | Constraint | Owning Parent Task | Resume Condition | Next Action |
 | --- | --- | --- | --- | --- |
-| CB04-B | AgentRun workspace snapshot currently depends on runtime/session/current delivery selection semantics. | `.trellis/tasks/06-21-runtime-coordinate-convergence/` | `LifecycleAgent` current delivery binding and `DeliveryRuntimeSelectionService` design are implemented or at least stabilized as code-level contracts. | Re-open `B-agentrun-workspace-snapshot-split` and split application read model from generated workflow/session DTOs. |
-| CB04-D | Capability catalog read model depends on the runtime exposure fact source. | `.trellis/tasks/06-21-capability-exposure-fact-convergence/` | AgentFrame revision becomes the canonical capability/exposure fact and derived visibility reads from latest frame. | Re-open `D-capability-catalog-read-model` and move catalog query output to application read facts before API DTO mapping. |
+| CB04-B | AgentRun workspace snapshot split now depends on preserving the settled current delivery/resource surface coordinate semantics. | `.trellis/tasks/06-21-contract-boundary-ownership-audit/` | Ready after RC08 completed. | Implement `B-agentrun-workspace-snapshot-split` and keep `resource_surface_coordinate` mapped at the API adapter boundary. |
 
-These blockers are intentionally tracked here so Contract Boundary cleanup does not forget them while Runtime Coordinate and Capability Exposure converge.
+These follow-ups are tracked here so Contract Boundary cleanup can continue from the parent work-item queue without creating scattered Trellis tasks.
 
 ## Validation Baseline
 

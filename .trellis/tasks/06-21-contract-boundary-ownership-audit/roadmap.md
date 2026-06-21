@@ -11,8 +11,8 @@
 | Runtime Failure / Placement | `06-21-runtime-failure-placement-convergence` | completed | backend disconnect、session MCP fallback 与 standalone backend id 来源已按 lost/session-route-bound/显式 backend id 收束 |
 | Runtime Coordinate | `06-21-runtime-coordinate-convergence` | completed | current delivery binding 与 `CurrentDelivery` selection 已落地；raw anchor ordering 只作为 history evidence |
 | Control Surface | `06-21-control-surface-command-boundary` | completed | lifecycle create/continue、extension backend target、relay taxonomy、Terminal mount utility 与 command availability 边界已完成 |
-| Capability / Exposure | `06-21-capability-exposure-fact-convergence` | implementation_ready | AgentFrame revision 是 exposure fact；AgentRun effective capability/admission 是最终能力读取入口；CE03/CE04 仍按顺序推进 |
-| Contract Boundary | `06-21-contract-boundary-ownership-audit` | in_progress | CB04-A/C/E/F/G 已完成；CB04-B/D 等待 runtime/capability 上游事实稳定后再动 |
+| Capability / Exposure | `06-21-capability-exposure-fact-convergence` | in_progress | AgentFrame revision 是 exposure fact；AgentRun effective capability/admission 是最终能力读取入口；CE03 已完成，CE04 ready |
+| Contract Boundary | `06-21-contract-boundary-ownership-audit` | in_progress | CB04-A/C/D/E/F/G 已完成；CB04-B 已随 Runtime Coordinate 稳定转为 ready |
 
 ## 正在收口
 
@@ -22,13 +22,15 @@
 | RC SubjectExecutionView history | Runtime Coordinate | completed | whole-run association 只纳入可证明 root agent；agent view 的 delivery runtime ref 从 `LifecycleAgent.current_delivery` 投影 |
 | CS draft command cleanup | Control Surface | completed | 后端 command availability 不再暴露 draft start；前端 draft start 是本地 action，真正创建仍走 ProjectAgent run create command |
 | CE Grant/admission convergence | Capability / Exposure | completed | Grant 作为 AgentRun 授权系统投影为 final visible capability 或 admission decision；runtime hub 通过 AgentRun effective capability 边界获取执行用 tool surface |
+| CE03 Canvas exposure recovery | Capability / Exposure | completed | Canvas expose 收束为先写 AgentFrame revision，再由 persisted frame adoption 刷新 live VFS / hook runtime / WorkspaceModule presentation；旧 direct live write path 已拆除 |
+| RC08 resource surface coordinate | Runtime Coordinate | completed | AgentRun workspace/resource surface DTO 补充 current frame VFS 与 launch anchor source/evidence coordinate |
+| CB04-D capability catalog read model | Contract Boundary | completed | capability catalog 返回 application read model，由 workflow API adapter 映射 browser-facing contract DTO |
 
 ## 后续顺序
 
-1. 先完成当前 verifying 项的编译、contract 与 focused tests。
-2. CE03 先实现 AgentRun capability service 到 AgentFrame revision 的 exposure recovery。
-3. CE04 在 CE03 稳定后实现 WorkspaceModule visibility resolver。
-4. CB04-B/D 在 Runtime Coordinate 与 Capability / Exposure 的最终读取入口稳定后再迁移。
+1. CE04 可继续实现 WorkspaceModule visibility resolver。
+2. CB04-B 可继续拆 AgentRun workspace snapshot application read model，依赖的 Runtime Coordinate current delivery/resource coordinate 已稳定。
+3. 后续继续按父任务工作项推进，contracts 生成仍由主会话统一执行。
 
 ## 冲突规避
 

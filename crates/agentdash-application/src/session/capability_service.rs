@@ -1,5 +1,5 @@
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::hooks::SharedHookRuntime;
+use agentdash_domain::canvas::Canvas;
 use agentdash_spi::{RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
@@ -7,20 +7,21 @@ use std::io;
 use super::capability_projection::{
     SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
 };
+use super::capability_state::project_capability_state_from_frame;
 #[cfg(test)]
 use super::hub::PendingRuntimeContextTransitionInput;
 use super::hub::SessionRuntimeInner;
-use super::hub::{
-    ApplyPendingRuntimeContextTransitionInput, LiveRuntimeContextTransitionInput,
-    PendingRuntimeContextApplication, RuntimeContextTransitionOutcome,
-};
+use super::hub::{ApplyPendingRuntimeContextTransitionInput, PendingRuntimeContextApplication};
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
 use super::types::{AgentFrameRuntimeTarget, CapabilityState};
+use crate::agent_run::AgentFrameBuilder;
+use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
+use crate::vfs::append_canvas_mounts;
 
 #[derive(Clone)]
 pub struct SessionCapabilityService {
@@ -85,36 +86,58 @@ impl SessionCapabilityService {
             .map_err(|error| error.to_string())
     }
 
-    /// Canvas mount 写入 AgentFrame（通过 AgentFrameRepository 追加）。
-    pub(crate) async fn append_visible_canvas_mount_to_frame(
+    /// Canvas expose 的生产写入路径：先写新的 AgentFrame revision，再采用到 active runtime。
+    pub(crate) async fn expose_canvas_mount_revision_and_adopt(
         &self,
         session_id: &str,
-        mount_id: &str,
-    ) -> Result<(), String> {
-        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
-        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
-            format!("session `{session_id}` 无 AgentFrame repository，无法写入 canvas mount")
+        canvas: &Canvas,
+    ) -> Result<Vfs, String> {
+        let target = self.resolve_runtime_session_target(session_id).await?;
+        let frame_repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!("session `{session_id}` 无 AgentFrame repository，无法写入 Canvas exposure")
         })?;
-        repo.append_visible_canvas_mount(frame_id, mount_id)
+        let current_frame = frame_repo
+            .get(target.frame_id)
             .await
-            .map_err(|e| e.to_string())
-    }
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("AgentFrame `{}` 不存在", target.frame_id))?;
 
-    /// Workspace module ref 写入 AgentFrame（运行时动态 grant）。
-    pub(crate) async fn append_visible_workspace_module_ref_to_frame(
-        &self,
-        session_id: &str,
-        module_ref: &str,
-    ) -> Result<(), String> {
-        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
-        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
-            format!(
-                "session `{session_id}` 无 AgentFrame repository，无法写入 workspace module ref"
-            )
-        })?;
-        repo.append_visible_workspace_module_ref(frame_id, module_ref)
+        let before_state = project_capability_state_from_frame(&current_frame);
+        let mut after_state = before_state.clone();
+        let Some(mut active_vfs) = after_state.vfs.active.clone() else {
+            return Err(format!(
+                "AgentFrame `{}` 缺少 VFS surface，拒绝将 live VFS 作为 Canvas exposure 事实源",
+                current_frame.id
+            ));
+        };
+        append_canvas_mounts(&mut active_vfs, std::slice::from_ref(canvas));
+        after_state.vfs.active = Some(active_vfs.clone());
+        self.derive_skill_baseline_for_transition_state(Some(&before_state), &mut after_state)
+            .await;
+
+        let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
+            .with_capability_state(&after_state)
+            .with_created_by("canvas_expose", Some(current_frame.id.to_string()))
+            .with_runtime_session(session_id.to_string())
+            .build_uncommitted(frame_repo.as_ref())
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|error| error.to_string())?;
+        next_frame.append_visible_canvas_mount(&canvas.mount_id);
+        next_frame.append_visible_workspace_module_ref(&format!("canvas:{}", canvas.mount_id));
+        frame_repo
+            .create(&next_frame)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        self.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+            frame_id: next_frame.id,
+            delivery_runtime_session_id: session_id.to_string(),
+        })
+        .await?;
+
+        next_frame
+            .typed_vfs()
+            .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))
     }
 
     pub(crate) async fn visible_workspace_module_refs_from_frame(
@@ -175,59 +198,6 @@ impl SessionCapabilityService {
         self.hub
             .enqueue_pending_runtime_context_transition(input)
             .await
-    }
-
-    pub(crate) async fn apply_live_runtime_context_transition(
-        &self,
-        hook_runtime: &agentdash_spi::hooks::SharedHookRuntime,
-        mut input: LiveRuntimeContextTransitionInput,
-    ) -> Result<RuntimeContextTransitionOutcome, String> {
-        self.derive_skill_baseline_for_transition_state(
-            input.before_state.as_ref(),
-            &mut input.after_state,
-        )
-        .await;
-        self.hub
-            .apply_live_runtime_context_transition(hook_runtime, input)
-            .await
-    }
-
-    pub(crate) async fn apply_live_vfs_capability_state(
-        &self,
-        hook_runtime: &SharedHookRuntime,
-        target: AgentFrameRuntimeTarget,
-        before_state: CapabilityState,
-        active_vfs: Vfs,
-        phase_node: &str,
-        apply_mode: &'static str,
-    ) -> Result<RuntimeContextTransitionOutcome, String> {
-        let session_id = target.delivery_runtime_session_id.clone();
-        if hook_runtime.session_id() != session_id {
-            return Err(format!(
-                "Hook runtime session `{}` 与 delivery RuntimeSession `{session_id}` 不一致，拒绝热更新能力状态",
-                hook_runtime.session_id()
-            ));
-        }
-        let mut after_state = before_state.clone();
-        after_state.vfs.active = Some(active_vfs);
-        let capability_keys = after_state.capability_keys();
-        self.apply_live_runtime_context_transition(
-            hook_runtime,
-            LiveRuntimeContextTransitionInput {
-                target_frame_id: target.frame_id,
-                delivery_runtime_session_id: session_id,
-                turn_id: None,
-                phase_node: phase_node.to_string(),
-                run_id: None,
-                lifecycle_key: None,
-                before_state: Some(before_state),
-                after_state,
-                capability_keys,
-                key_delta: crate::session::SetDelta::default(),
-                apply_mode,
-            },
-        )
-        .await
     }
 
     async fn derive_skill_baseline_for_transition_state(

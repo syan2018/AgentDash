@@ -26,7 +26,7 @@
 
 - [x] SubjectExecutionView 增加 execution history：`runtime_attempts` 表达 run / agent / runtime session / frame / orchestration node / attempt / status / observed_at / artifacts。
 - [x] `latest_runtime_node` 从 history 首项派生。
-- [ ] AgentRun resource surface DTO 表达 frame/source coordinate。
+- [x] AgentRun resource surface DTO 表达 frame/source coordinate：`resource_surface_coordinate.surface_frame_ref` 表达当前可见/可编辑 surface 的 current frame，`source_anchor` 表达 current delivery 对应的 launch frame / runtime session / orchestration node 证据。
 
 ## Validation
 

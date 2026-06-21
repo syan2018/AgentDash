@@ -1,6 +1,8 @@
 use agentdash_contracts::vfs as contract_vfs;
 use agentdash_contracts::workflow::{
-    ConversationDiagnosticView, ConversationModelConfigSource, LifecycleSubjectAssociationDto,
+    AgentFrameRefDto, AgentRunResourceSurfaceCoordinateView,
+    AgentRunResourceSurfaceSourceAnchorView, ConversationDiagnosticView,
+    ConversationModelConfigSource, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
     SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::agent::ProjectAgent;
@@ -33,6 +35,7 @@ use crate::vfs::{
 
 use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
 use super::types::{
+    AgentRunResourceSurfaceCoordinateModel, AgentRunResourceSurfaceSourceAnchorModel,
     AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
     AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
     AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
@@ -102,6 +105,13 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 )
             }
             None => None,
+        };
+        let resource_surface_coordinate = match (resource_surface.as_ref(), frame.as_ref()) {
+            (Some(_), Some(frame)) => Some(resource_surface_coordinate_model(
+                frame,
+                current_delivery.as_ref(),
+            )),
+            _ => None,
         };
         let frame_runtime = match frame.as_ref() {
             Some(frame) => {
@@ -206,6 +216,9 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         })
         .view;
         let resource_surface_contract = resource_surface.clone().map(resolved_surface_to_contract);
+        let resource_surface_coordinate_contract = resource_surface_coordinate
+            .clone()
+            .map(resource_surface_coordinate_to_contract);
         let resource_diagnostics =
             workspace_resource_diagnostics(run.id, resource_surface.as_ref());
         let conversation =
@@ -222,6 +235,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 mailbox_paused: mailbox.paused,
                 mailbox_visible_message_count,
                 resource_surface: resource_surface_contract,
+                resource_surface_coordinate: resource_surface_coordinate_contract,
                 resource_diagnostics,
                 model_config,
             });
@@ -249,6 +263,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             mailbox,
             mailbox_messages: visible_mailbox_messages,
             resource_surface,
+            resource_surface_coordinate,
             conversation,
         })
     }
@@ -562,6 +577,28 @@ fn frame_runtime_model(
     }
 }
 
+fn resource_surface_coordinate_model(
+    frame: &AgentFrame,
+    current_delivery: Option<&DeliveryRuntimeSelection>,
+) -> AgentRunResourceSurfaceCoordinateModel {
+    AgentRunResourceSurfaceCoordinateModel {
+        surface_frame_ref: AgentRunWorkspaceFrameRefModel {
+            agent_id: frame.agent_id.to_string(),
+            frame_id: frame.id.to_string(),
+            revision: Some(frame.revision),
+        },
+        source_anchor: current_delivery.map(|selection| AgentRunResourceSurfaceSourceAnchorModel {
+            runtime_session_id: selection.runtime_session_id.clone(),
+            launch_frame_id: selection.launch_frame_id.to_string(),
+            orchestration_id: selection.orchestration_id.map(|id| id.to_string()),
+            node_path: selection.node_path.clone(),
+            node_attempt: selection.node_attempt,
+            delivery_status: selection.status.as_str().to_string(),
+            observed_at: selection.observed_at.to_rfc3339(),
+        }),
+    }
+}
+
 fn filter_agent_subject_associations(
     associations: Vec<LifecycleSubjectAssociationView>,
     agent_id: Uuid,
@@ -656,6 +693,31 @@ fn resolved_surface_to_contract(surface: ResolvedVfsSurface) -> contract_vfs::Re
             .map(mount_summary_to_contract)
             .collect(),
         default_mount_id: surface.default_mount_id,
+    }
+}
+
+fn resource_surface_coordinate_to_contract(
+    coordinate: AgentRunResourceSurfaceCoordinateModel,
+) -> AgentRunResourceSurfaceCoordinateView {
+    AgentRunResourceSurfaceCoordinateView {
+        surface_frame_ref: AgentFrameRefDto {
+            agent_id: coordinate.surface_frame_ref.agent_id,
+            frame_id: coordinate.surface_frame_ref.frame_id,
+            revision: coordinate.surface_frame_ref.revision,
+        },
+        source_anchor: coordinate.source_anchor.map(|anchor| {
+            AgentRunResourceSurfaceSourceAnchorView {
+                runtime_session_ref: RuntimeSessionRefDto {
+                    runtime_session_id: anchor.runtime_session_id,
+                },
+                launch_frame_id: anchor.launch_frame_id,
+                orchestration_id: anchor.orchestration_id,
+                node_path: anchor.node_path,
+                node_attempt: anchor.node_attempt,
+                delivery_status: anchor.delivery_status,
+                observed_at: anchor.observed_at,
+            }
+        }),
     }
 }
 

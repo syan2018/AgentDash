@@ -31,6 +31,7 @@ pub struct AgentRunWorkspaceSnapshot {
     pub mailbox: AgentRunWorkspaceMailboxStateModel,
     pub mailbox_messages: Vec<AgentRunMailboxMessage>,
     pub resource_surface: Option<ResolvedVfsSurface>,
+    pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
     pub conversation: AgentConversationSnapshot,
 }
 
@@ -109,6 +110,23 @@ pub struct AgentRunWorkspaceFrameRefModel {
     pub agent_id: String,
     pub frame_id: String,
     pub revision: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunResourceSurfaceCoordinateModel {
+    pub surface_frame_ref: AgentRunWorkspaceFrameRefModel,
+    pub source_anchor: Option<AgentRunResourceSurfaceSourceAnchorModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunResourceSurfaceSourceAnchorModel {
+    pub runtime_session_id: String,
+    pub launch_frame_id: String,
+    pub orchestration_id: Option<String>,
+    pub node_path: Option<String>,
+    pub node_attempt: Option<u32>,
+    pub delivery_status: String,
+    pub observed_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

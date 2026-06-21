@@ -12,14 +12,14 @@
 - [x] CE02a: PermissionGrant approve/revoke/expire remains AgentRun-scoped Grant system; tool-internal capability permission is read only through AgentRun admission projection and is consumed by production runtime tool assembly.
 - [x] CE02b: Classify grants that extend Agent toolset; only those model-visible effects write AgentFrame revision through AgentRun capability service.
 - [x] Shared helper: persist AgentFrame revision for surface-changing commands, then adopt that persisted revision into active runtime cache/tools/hook runtime and emit runtime context notifications when a delivery runtime exists.
-- [ ] CE03: Canvas expose writes AgentFrame revision first through AgentRun capability service, then reconstructs live VFS / hook runtime / WorkspaceModule presentation.
+- [x] CE03: Canvas expose writes AgentFrame revision first through AgentRun capability service, then reconstructs live VFS / hook runtime / WorkspaceModule presentation.
 - [ ] CE04: Extract WorkspaceModule visibility resolver from tool code; resolver reads final visible capability via AgentRun effective capability view and selected current frame.
 - [ ] Cleanup: fold replaced paths into AgentRun boundary, including active-grant resolver input, production row-update exposure append writers, live VFS-first Canvas exposure and local WorkspaceModule visibility bypass.
 
 ## Phase 2: Implementation Slices
 
 - [x] PermissionGrant approve/revoke/expire 与 AgentRun admission projection 一致；工具级 grant 进入生产 runtime tool assembly，工具集拓展类 grant 在改变模型可见 surface 时写 AgentFrame revision。
-- [ ] Canvas expose 从 AgentFrame exposure 派生 live VFS / hook runtime refresh。
+- [x] Canvas expose 从 AgentFrame exposure 派生 live VFS / hook runtime refresh。
 - [ ] WorkspaceModule visibility resolver 从 AgentFrame exposure 读取 runtime refs。
 - [ ] RuntimeGateway action/channel admission 对齐。
 
@@ -37,6 +37,12 @@
 - `SessionCapabilityService::adopt_persisted_agent_frame_revision` 是后续 Canvas expose / surface-changing command 的统一 active-runtime adoption 入口；CE02 不直接实现 Canvas expose。
 - PermissionGrant approve/revoke API 在 Grant effect 后调用 active-runtime adoption；connector/hook/runtime adoption failure 作为 API 错误暴露，避免授权状态与 live runtime surface 静默漂移。
 - CE03 可在此 helper 基础上实现 frame-first Canvas exposure recovery。
+
+## CE03 Completion Notes
+
+- Canvas create/present 生产路径不再先更新 live VFS，也不再调用 row-update append writer；`SessionCapabilityService::expose_canvas_mount_revision_and_adopt` 先基于当前 AgentFrame VFS surface 写入新的 `canvas_expose` revision。
+- 新 revision 同时携带 Canvas mount、visible canvas mount id、`canvas:{mount_id}` workspace module ref 与派生后的 skill baseline；缺少 AgentFrame VFS fact 时显式失败，避免把 live cache 作为事实源。
+- 持久化 revision 后复用 `adopt_persisted_agent_frame_revision` 同步 active runtime cache、connector tools、hook runtime 与 runtime context 通知；`workspace_module_present` 只在 Canvas exposure/adoption 成功后 emit `workspace_module_presented`。
 
 ## Validation
 

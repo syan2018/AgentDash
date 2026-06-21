@@ -53,9 +53,7 @@ use super::super::types::{
     PendingCapabilityStateTransition, RuntimeCapabilityTransition, UserPromptInput,
 };
 use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
-use super::{
-    LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
-};
+use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
@@ -1453,23 +1451,8 @@ fn canvas_skill_vfs() -> agentdash_spi::Vfs {
     }
 }
 
-fn canvas_skill_entry() -> agentdash_spi::context::capability::SkillEntry {
-    agentdash_spi::context::capability::SkillEntry {
-        name: "canvas-system".to_string(),
-        capability_key: "workspace/canvas-system".to_string(),
-        provider_key: "workspace".to_string(),
-        local_name: "canvas-system".to_string(),
-        display_name: None,
-        description: "Canvas authoring skill".to_string(),
-        file_path: "cvs-demo://skills/canvas-system/SKILL.md".to_string(),
-        base_dir: Some("cvs-demo://skills/canvas-system".to_string()),
-        exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
-        disable_model_invocation: false,
-    }
-}
-
 #[tokio::test]
-async fn replace_current_capability_state_requires_matching_frame_target() {
+async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
     let session = hub
@@ -1479,13 +1462,10 @@ async fn replace_current_capability_state_requires_matching_frame_target() {
     let frame = attach_test_frame(&hub, "another-session").await;
 
     let error = match hub
-        .replace_current_capability_state(
-            AgentFrameRuntimeTarget {
-                frame_id: frame.id,
-                delivery_runtime_session_id: session.id.clone(),
-            },
-            CapabilityState::default(),
-        )
+        .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+            frame_id: frame.id,
+            delivery_runtime_session_id: session.id.clone(),
+        })
         .await
     {
         Ok(_) => panic!("mismatched frame/session target should fail"),
@@ -1597,191 +1577,6 @@ async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_fr
         frame_count_after, frame_count_before,
         "adoption helper must not write another AgentFrame revision"
     );
-}
-
-#[tokio::test]
-async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let queries = Arc::new(TokioMutex::new(Vec::new()));
-    let hook_provider = Arc::new(StaticResolutionHookProvider {
-        queries,
-        resolution: HookResolution::default(),
-    });
-    let hub = test_hub(
-        base.path().to_path_buf(),
-        Arc::new(PendingConnector),
-        Some(hook_provider),
-    )
-    .with_vfs_service(skill_fixture_vfs_service())
-    .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
-    let session = hub
-        .create_session("canvas-skill-capability")
-        .await
-        .expect("create");
-    let frame = attach_test_lifecycle_frame(&hub, &session.id).await;
-    let _rx = hub.ensure_session(&session.id).await;
-    let hook_runtime =
-        ensure_hook_runtime_for_frame(&hub, &session.id, frame.id, "turn-canvas").await;
-
-    let mut before_state = CapabilityState::default();
-    before_state.vfs.active = Some(agentdash_spi::Vfs::default());
-    before_state
-        .tool
-        .capabilities
-        .insert(agentdash_spi::ToolCapability::new("workflow_management"));
-    let local_skill = agentdash_spi::context::capability::SkillEntry {
-        name: "local-review".to_string(),
-        capability_key: "integration-static/local-review".to_string(),
-        provider_key: "integration-static".to_string(),
-        local_name: "local-review".to_string(),
-        display_name: None,
-        description: "Local review skill".to_string(),
-        file_path: base
-            .path()
-            .join("skills/local-review/SKILL.md")
-            .to_string_lossy()
-            .to_string(),
-        base_dir: Some(
-            base.path()
-                .join("skills/local-review")
-                .to_string_lossy()
-                .to_string(),
-        ),
-        exposure: agentdash_spi::SkillContextExposure::DefaultExposed,
-        disable_model_invocation: false,
-    };
-    before_state.skill.skills = vec![local_skill.clone()];
-    let bundle_session_uuid = uuid::Uuid::new_v4();
-    hub.runtime_registry
-        .with_runtime_mut(&session.id, |runtime| {
-            let runtime = runtime.expect("session runtime should exist");
-            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
-                "turn-canvas".to_string(),
-                ExecutionSessionFrame {
-                    turn_id: "turn-canvas".to_string(),
-                    working_directory: base.path().to_path_buf(),
-                    environment_variables: HashMap::new(),
-                    executor_config: AgentConfig::new("PI_AGENT"),
-                    mcp_servers: vec![],
-                    vfs: before_state.vfs.active.clone(),
-                    backend_execution: None,
-                    identity: None,
-                },
-                before_state.clone(),
-                uuid::Uuid::new_v4(),
-                bundle_session_uuid,
-            )));
-        })
-        .await;
-
-    let active_vfs = canvas_skill_vfs();
-    let skills = vec![canvas_skill_entry()];
-    let mut after_state = before_state.clone();
-    after_state.vfs.active = Some(active_vfs.clone());
-    let capability_keys = after_state.capability_keys();
-
-    let outcome = hub
-        .capability_service()
-        .apply_live_runtime_context_transition(
-            &hook_runtime,
-            LiveRuntimeContextTransitionInput {
-                target_frame_id: frame.id,
-                delivery_runtime_session_id: session.id.clone(),
-                turn_id: None,
-                phase_node: "canvas".to_string(),
-                run_id: None,
-                lifecycle_key: None,
-                before_state: Some(before_state),
-                after_state,
-                capability_keys,
-                key_delta: agentdash_spi::SetDelta::default(),
-                apply_mode: "canvas_visible",
-            },
-        )
-        .await
-        .expect("live vfs capability update should apply");
-
-    assert!(outcome.emitted_capability_change);
-    assert_eq!(
-        outcome.capability_delta, None,
-        "hook runtime cache sync must not turn an unchanged base capability key into a user-visible delta"
-    );
-    let (turn, profile) = hub
-        .runtime_registry
-        .with_runtime(&session.id, |runtime| {
-            let runtime = runtime?;
-            Some((
-                runtime.turn_state.active_turn().cloned()?,
-                runtime.session_profile.clone()?,
-            ))
-        })
-        .await
-        .expect("current turn execution state");
-    assert_eq!(turn.capability_state.vfs.active, Some(active_vfs));
-    let expected_skills = vec![skills[0].clone(), local_skill];
-    assert_eq!(turn.capability_state.skill.skills, expected_skills);
-    assert_eq!(profile.capability_state, turn.capability_state);
-
-    let events = hub
-        .persistence
-        .list_all_events(&session.id)
-        .await
-        .expect("events should load");
-    let context_frame = events
-        .iter()
-        .find(|event| {
-            event.session_update_type == "platform_event"
-                && matches!(
-                    &event.notification.event,
-                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-                        if key == "context_frame"
-                            && value.get("kind").and_then(serde_json::Value::as_str)
-                                == Some("capability_state_delta")
-                )
-        })
-        .expect("capability state delta frame should exist");
-    match &context_frame.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
-            let capability_key_section = value["sections"]
-                .as_array()
-                .and_then(|sections| {
-                    sections.iter().find(|section| {
-                        section.get("kind").and_then(serde_json::Value::as_str)
-                            == Some("capability_key_delta")
-                    })
-                })
-                .expect("capability key delta section should exist");
-            assert_eq!(
-                capability_key_section
-                    .get("added_capabilities")
-                    .and_then(serde_json::Value::as_array)
-                    .map(Vec::len),
-                Some(0),
-                "Capability Keys 增量必须来自 CapabilityState before/after，而不是 hook runtime cache"
-            );
-            assert_eq!(
-                capability_key_section
-                    .get("effective_capabilities")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|values| values
-                        .iter()
-                        .filter_map(serde_json::Value::as_str)
-                        .collect::<Vec<_>>()),
-                Some(vec!["workflow_management"]),
-            );
-            let rendered = value
-                .get("rendered_text")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            assert!(rendered.contains("Skill Delta"));
-            assert!(rendered.contains("canvas-system"));
-            assert!(
-                !rendered.contains("Added Capabilities"),
-                "unchanged base capability key should not be rendered as newly added"
-            );
-        }
-        other => panic!("unexpected event: {other:?}"),
-    }
 }
 
 #[tokio::test]

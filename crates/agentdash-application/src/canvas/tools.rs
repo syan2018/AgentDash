@@ -8,7 +8,6 @@ use uuid::Uuid;
 
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::runtime_tools::SharedSessionToolServicesHandle;
-use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 
@@ -245,103 +244,25 @@ pub(crate) async fn expose_canvas_to_session(
     current_session_id: Option<&str>,
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
-    vfs.append_canvas_mount(canvas).await;
-    if let Some(session_services) = session_services_handle.get().await
-        && let Some(session_id) = current_session_id
-    {
-        let mount_id = canvas.mount_id.clone();
-        if let Err(error) = session_services
-            .capability
-            .append_visible_canvas_mount_to_frame(session_id, &mount_id)
-            .await
-        {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "Canvas mount 写入 AgentFrame 失败: {error}"
-            )));
-        }
-        let module_ref = format!("canvas:{}", canvas.mount_id);
-        if let Err(error) = session_services
-            .capability
-            .append_visible_workspace_module_ref_to_frame(session_id, &module_ref)
-            .await
-        {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "Canvas module ref 写入 AgentFrame 失败: {error}"
-            )));
-        }
-        sync_canvas_mount_capability_state_for_runtime_delivery(
-            vfs,
-            &session_services,
-            session_id,
-            canvas,
+    let session_services = session_services_handle.get().await.ok_or_else(|| {
+        AgentToolError::ExecutionFailed(
+            "Session services 尚未完成初始化，无法暴露 Canvas".to_string(),
         )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn sync_canvas_mount_capability_state_for_runtime_delivery(
-    vfs: &SharedRuntimeVfs,
-    session_services: &crate::runtime_tools::SessionToolServices,
-    session_id: &str,
-    canvas: &Canvas,
-) -> Result<(), AgentToolError> {
-    let Some(before_state) = session_services
-        .capability
-        .get_latest_capability_state(session_id)
-        .await
-    else {
-        tracing::debug!(
-            session_id = %session_id,
-            canvas_id = %canvas.mount_id,
-            "Canvas mount 已写入 VFS，但当前 session 尚无 CapabilityState 可同步"
-        );
-        return Ok(());
-    };
-
-    let target = session_services
-        .capability
-        .resolve_runtime_session_target(session_id)
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
-
-    let Some(hook_runtime) = session_services
-        .hooks
-        .get_hook_runtime_for_target(&target)
-        .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-    else {
-        tracing::debug!(
-            session_id = %session_id,
-            canvas_id = %canvas.mount_id,
-            "Canvas mount 已写入 VFS，但当前 session 尚无 Hook runtime 可接收能力状态热更新"
-        );
-        return Ok(());
-    };
-
-    sync_canvas_mount_capability_state(vfs, session_services, target, before_state, hook_runtime)
-        .await
-}
-
-async fn sync_canvas_mount_capability_state(
-    vfs: &SharedRuntimeVfs,
-    session_services: &crate::runtime_tools::SessionToolServices,
-    target: AgentFrameRuntimeTarget,
-    before_state: crate::session::CapabilityState,
-    hook_runtime: agentdash_spi::hooks::SharedHookRuntime,
-) -> Result<(), AgentToolError> {
-    let active_vfs = vfs.snapshot().await;
-    session_services
-        .capability
-        .apply_live_vfs_capability_state(
-            &hook_runtime,
-            target,
-            before_state,
-            active_vfs,
-            "canvas",
-            "canvas_visible",
+    })?;
+    let session_id = current_session_id.ok_or_else(|| {
+        AgentToolError::ExecutionFailed(
+            "当前工具调用缺少 RuntimeSession id，无法暴露 Canvas".to_string(),
         )
+    })?;
+    let active_vfs = session_services
+        .capability
+        .expose_canvas_mount_revision_and_adopt(session_id, canvas)
         .await
-        .map_err(AgentToolError::ExecutionFailed)?;
+        .map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "Canvas exposure 写入 AgentFrame 失败: {error}"
+            ))
+        })?;
+    vfs.replace(active_vfs).await;
     Ok(())
 }

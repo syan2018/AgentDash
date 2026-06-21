@@ -1652,7 +1652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_canvas_returns_module_descriptor_and_exposes_vfs_mount() {
+    async fn create_canvas_without_runtime_session_returns_diagnostic() {
         let project_id = Uuid::new_v4();
         let canvas_repo = Arc::new(FakeCanvasRepo::default());
         let shared_vfs =
@@ -1679,33 +1679,15 @@ mod tests {
                 CancellationToken::new(),
                 None,
             )
-            .await
-            .expect("create canvas module");
+            .await;
 
-        assert!(!result.is_error, "expected success, got {result:?}");
-        let details = result.details.expect("details");
-        assert_eq!(
-            details.get("module_id").and_then(serde_json::Value::as_str),
-            Some("canvas:sales-board")
-        );
-        assert_eq!(
-            details
-                .pointer("/descriptor/summary/module_id")
-                .and_then(serde_json::Value::as_str),
-            Some("canvas:sales-board")
-        );
-        assert_eq!(
-            details
-                .pointer("/descriptor/ui_entries/0/presentation_uri")
-                .and_then(serde_json::Value::as_str),
-            Some("canvas://sales-board")
-        );
-        assert!(details.get("presentation").is_none());
-
-        let vfs = shared_vfs.snapshot().await;
         assert!(
-            vfs.mounts.iter().any(|mount| mount.id == "cvs-sales-board"),
-            "workspace_module_create should expose the Canvas VFS mount"
+            matches!(
+                result,
+                Err(AgentToolError::ExecutionFailed(ref message))
+                    if message.contains("Session services")
+            ),
+            "Canvas expose must fail explicitly without a runtime session, got {result:?}"
         );
     }
 
@@ -1774,7 +1756,12 @@ mod tests {
             .expect("hook runtime should reload")
             .expect("hook runtime should exist");
         let stale_target = stale_runtime.control_target();
+        let mut frame_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        frame_state.workspace_module = WorkspaceModuleDimension::all();
+        frame_state.vfs.active = Some(local_workspace_vfs(base.path()));
         let switched_frame = AgentFrameBuilder::new(agent_id)
+            .with_capability_state(&frame_state)
             .with_created_by("test_frame_switch", Some("canvas_create".to_string()))
             .build(frame_repo.as_ref())
             .await
@@ -2009,7 +1996,12 @@ mod tests {
             .expect("hook runtime should reload")
             .expect("hook runtime should exist");
         let stale_target = stale_runtime.control_target();
+        let mut frame_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        frame_state.workspace_module = WorkspaceModuleDimension::all();
+        frame_state.vfs.active = Some(local_workspace_vfs(base.path()));
         let switched_frame = AgentFrameBuilder::new(agent_id)
+            .with_capability_state(&frame_state)
             .with_created_by("test_frame_switch", Some("canvas_present".to_string()))
             .build(frame_repo.as_ref())
             .await

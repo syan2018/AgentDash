@@ -253,8 +253,7 @@ pub(super) struct TurnExecution {
     /// 拿到 turn 生效的 session frame 重建工具集。
     pub session_frame: ExecutionSessionFrame,
     /// Turn 级 capability 投影缓存（AgentFrame 的内存视图）。
-    /// 权威数据源是 AgentFrame revision；此字段由 `replace_current_capability_state`
-    /// 在写入 frame revision 后同步更新。
+    /// 权威数据源是 AgentFrame revision；此字段在 adoption 已持久化 revision 时同步更新。
     pub capability_state: CapabilityState,
     /// 运行期 Hook 注入的增量片段（审计路径）。
     pub runtime_injection_fragments: Vec<ContextFragment>,

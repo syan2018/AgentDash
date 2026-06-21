@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { Tooltip } from "@agentdash/ui";
 import { CB } from "../bodies/cardBodyTokens";
 import { JsonTree } from "../bodies/JsonTree";
 import type {
@@ -288,23 +289,21 @@ function FragmentItem({ fragment }: { fragment: RuntimeContextFragmentEntry }) {
 }
 
 function CapabilityKeyDeltaBody({ section }: { section: CapabilityKeyDeltaSection }) {
-  const added = section.added_capabilities.map((value) => ({ label: "能力", value }));
-  const removed = section.removed_capabilities.map((value) => ({ label: "能力", value }));
-  const hasDiff = added.length + removed.length > 0;
+  const hasDiff = section.added_capabilities.length + section.removed_capabilities.length > 0;
 
   return (
     <div className="space-y-2">
       {hasDiff ? (
-        <div className="space-y-1">
-          {added.map((row, index) => (
-            <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+        <div className="space-y-0.5">
+          {section.added_capabilities.map((v, i) => (
+            <DeltaListItem key={`add-${i}`} symbol="+" label="能力" name={v} />
           ))}
-          {removed.map((row, index) => (
-            <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+          {section.removed_capabilities.map((v, i) => (
+            <DeltaListItem key={`rm-${i}`} symbol="−" label="能力" name={v} />
           ))}
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground/60">本次无能力 key 变更</p>
+        <p className={CB.meta}>本次无能力 key 变更</p>
       )}
       {section.effective_capabilities.length > 0 && (
         <EffectiveCapabilitiesBlock capabilities={section.effective_capabilities} />
@@ -314,78 +313,69 @@ function CapabilityKeyDeltaBody({ section }: { section: CapabilityKeyDeltaSectio
 }
 
 function ToolPathDeltaBody({ section }: { section: ToolPathDeltaSection }) {
-  const added: Array<{ label: string; value: string }> = [
-    ...section.unblocked_tool_paths.map((value) => ({ label: "解除屏蔽", value })),
-    ...section.whitelisted_tool_paths.map((value) => ({ label: "加入白名单", value })),
+  const items: Array<{ symbol: string; label: string; name: string }> = [
+    ...section.unblocked_tool_paths.map((v) => ({ symbol: "+", label: "解除屏蔽", name: v })),
+    ...section.whitelisted_tool_paths.map((v) => ({ symbol: "+", label: "加入白名单", name: v })),
+    ...section.blocked_tool_paths.map((v) => ({ symbol: "−", label: "屏蔽", name: v })),
+    ...section.removed_whitelist_paths.map((v) => ({ symbol: "−", label: "移出白名单", name: v })),
   ];
-  const removed: Array<{ label: string; value: string }> = [
-    ...section.blocked_tool_paths.map((value) => ({ label: "屏蔽", value })),
-    ...section.removed_whitelist_paths.map((value) => ({ label: "移出白名单", value })),
-  ];
-  const hasDiff = added.length + removed.length > 0;
 
-  if (!hasDiff) {
-    return <p className="text-xs text-muted-foreground/60">本次无工具路径变更</p>;
+  if (items.length === 0) {
+    return <p className={CB.meta}>本次无工具路径变更</p>;
   }
   return (
-    <div className="space-y-1">
-      {added.map((row, index) => (
-        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
-      ))}
-      {removed.map((row, index) => (
-        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+    <div className="space-y-0.5">
+      {items.map((row, i) => (
+        <DeltaListItem key={`${row.symbol}-${i}`} symbol={row.symbol} label={row.label} name={row.name} />
       ))}
     </div>
   );
 }
 
 function McpServerDeltaBody({ section }: { section: McpServerDeltaSection }) {
-  const added = section.added_mcp_servers.map((value) => ({ label: "MCP", value }));
-  const removed = section.removed_mcp_servers.map((value) => ({ label: "MCP", value }));
-  const changed = section.changed_mcp_servers.map((value) => ({ label: "MCP", value }));
-  const hasDiff = added.length + removed.length + changed.length > 0;
+  const hasDiff =
+    section.added_mcp_servers.length + section.removed_mcp_servers.length + section.changed_mcp_servers.length > 0;
 
   if (!hasDiff) {
-    return <p className="text-xs text-muted-foreground/60">本次无 MCP 变更</p>;
+    return <p className={CB.meta}>本次无 MCP 变更</p>;
   }
   return (
-    <div className="space-y-1">
-      {added.map((row, index) => (
-        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+    <div className="space-y-0.5">
+      {section.added_mcp_servers.map((v, i) => (
+        <DeltaListItem key={`add-${i}`} symbol="+" label="MCP" name={v} />
       ))}
-      {removed.map((row, index) => (
-        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+      {section.removed_mcp_servers.map((v, i) => (
+        <DeltaListItem key={`rm-${i}`} symbol="−" label="MCP" name={v} />
       ))}
-      {changed.map((row, index) => (
-        <DiffLine key={`ch-${index}`} symbol="↻" label={row.label} value={row.value} />
+      {section.changed_mcp_servers.map((v, i) => (
+        <DeltaListItem key={`ch-${i}`} symbol="↻" label="MCP" name={v} />
       ))}
     </div>
   );
 }
 
 function VfsDeltaBody({ section }: { section: VfsDeltaSection }) {
-  const added = section.vfs_mounts_added.map((value) => ({ label: "挂载", value }));
-  const removed = section.vfs_mounts_removed.map((value) => ({ label: "挂载", value }));
   const defaultMountChanged =
     (section.default_mount_before ?? null) !== (section.default_mount_after ?? null);
-  const hasDiff = added.length + removed.length > 0 || defaultMountChanged;
+  const hasDiff =
+    section.vfs_mounts_added.length + section.vfs_mounts_removed.length > 0 || defaultMountChanged;
 
   if (!hasDiff) {
-    return <p className="text-xs text-muted-foreground/60">本次无 VFS 变更</p>;
+    return <p className={CB.meta}>本次无 VFS 变更</p>;
   }
   return (
-    <div className="space-y-1">
-      {added.map((row, index) => (
-        <DiffLine key={`add-${index}`} symbol="+" label={row.label} value={row.value} />
+    <div className="space-y-0.5">
+      {section.vfs_mounts_added.map((v, i) => (
+        <DeltaListItem key={`add-${i}`} symbol="+" label="挂载" name={v} />
       ))}
-      {removed.map((row, index) => (
-        <DiffLine key={`rm-${index}`} symbol="−" label={row.label} value={row.value} />
+      {section.vfs_mounts_removed.map((v, i) => (
+        <DeltaListItem key={`rm-${i}`} symbol="−" label="挂载" name={v} />
       ))}
       {defaultMountChanged && (
-        <DiffLine
+        <DeltaListItem
           symbol="↻"
           label="默认挂载"
-          value={`${section.default_mount_before ?? "none"} → ${section.default_mount_after ?? "none"}`}
+          name={`${section.default_mount_before ?? "none"} → ${section.default_mount_after ?? "none"}`}
         />
       )}
     </div>
@@ -424,57 +414,47 @@ function EffectiveCapabilitiesBlock({ capabilities }: { capabilities: string[] }
   );
 }
 
-function DiffLine({
-  symbol,
-  label,
-  value,
-}: {
-  symbol: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <p className="flex items-start gap-2 text-xs leading-5">
-      <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
-      <span className="shrink-0 text-muted-foreground/80">{label}</span>
-      <span className="min-w-0 break-all font-mono text-foreground/80">{value}</span>
-    </p>
-  );
-}
 
 // ── 滚动列表容器 ──
 const SCROLL_LIST = "max-h-96 space-y-0.5 overflow-auto scrollbar-thin";
 
-/** 通用 delta 可展开行 — ToolSchema / Skill / 其他列表项共用 */
+/**
+ * 通用 delta 行 — 所有 ContextFrame delta section 共用
+ *
+ * 三种模式：
+ * - 单行：symbol + label? + name（CAP / VFS / MCP / ToolPath）
+ * - 双行：同上 + hover 时显示 description 第二行（Skills）
+ * - 可折叠：同上 + chevron，点击展开 body 内容（ToolSchema）
+ */
 function DeltaListItem({
   symbol,
   name,
-  description,
+  label,
   chips,
   meta,
+  hoverDesc,
   expandContent,
 }: {
   symbol: string;
   name: string;
-  description?: string;
+  label?: string;
   chips?: string[];
   meta?: string;
+  hoverDesc?: string;
   expandContent?: React.ReactNode;
 }) {
-  const hasDetail = Boolean(description || expandContent);
+  const clickable = expandContent != null;
   const [open, setOpen] = useState(false);
 
-  const symbolColor =
-    symbol === "+" ? "text-success" : symbol === "−" ? "text-destructive" : "text-warning";
-
   return (
-    <div>
+    <div className={`rounded-[6px] transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}>
       <button
         type="button"
-        onClick={hasDetail ? () => setOpen((v) => !v) : undefined}
-        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
+        onClick={clickable ? () => setOpen((v) => !v) : undefined}
+        className="flex w-full items-center gap-2 px-2 py-1 text-left"
       >
-        <span className={`shrink-0 w-3 select-none text-[10px] ${symbolColor}`}>{symbol}</span>
+        <span className="shrink-0 w-3 select-none text-[10px] text-muted-foreground/70">{symbol}</span>
+        {label && <span className="shrink-0 text-xs text-muted-foreground/80">{label}</span>}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/70">
           {name}
         </span>
@@ -486,15 +466,17 @@ function DeltaListItem({
           </span>
         )}
         {meta && <span className={CB.meta}>{meta}</span>}
-        {hasDetail && (
-          <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
-        )}
+        {clickable && <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>}
       </button>
-      {open && (
+      {hoverDesc && (
+        <Tooltip content={hoverDesc} side="bottom">
+          <p className="line-clamp-1 px-2 pb-0.5 pl-7 text-[10px] text-muted-foreground/40">
+            {hoverDesc}
+          </p>
+        </Tooltip>
+      )}
+      {open && expandContent && (
         <div className="px-2 py-1.5">
-          {description && (
-            <p className={`mb-1.5 ${CB.meta}`}>{description}</p>
-          )}
           {expandContent}
         </div>
       )}
@@ -516,12 +498,12 @@ function ToolSchemaDeltaBody({ section }: { section: ToolSchemaDeltaSection }) {
             key={tool.name}
             symbol="+"
             name={tool.name}
-            description={tool.description}
             chips={chips}
             meta={fieldNames.length > 0 ? `${fieldNames.length} params` : undefined}
+            hoverDesc={tool.description || undefined}
             expandContent={
               tool.parameters_schema != null ? (
-                <JsonTree data={tool.parameters_schema} defaultDepth={1} />
+                <JsonTree data={tool.parameters_schema} defaultDepth={3} />
               ) : undefined
             }
           />
@@ -555,8 +537,8 @@ function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
           key={`${symbol}-${identity}-${index}`}
           symbol={symbol}
           name={displayName}
-          description={skill.description || undefined}
           chips={chips}
+          hoverDesc={skill.description || undefined}
         />
       );
     });
@@ -581,37 +563,33 @@ function CompanionAgentRosterDeltaBody({
       section.changed_agents.length >
     0;
 
+  const agentItem = (agent: RuntimeCompanionAgentEntry, symbol: string, i: number) => {
+    const display = agent.display_name || agent.agent_key;
+    const chips = [`agent: ${agent.agent_key}`];
+    if (agent.executor) chips.push(`executor: ${agent.executor}`);
+    return (
+      <DeltaListItem
+        key={`${symbol}-${agent.agent_key}-${i}`}
+        symbol={symbol}
+        label="companion"
+        name={display}
+        chips={chips}
+      />
+    );
+  };
+
   return (
     <div className="space-y-2">
       {hasDelta ? (
-        <div className="space-y-1">
-          {section.added_agents.map((agent, index) => (
-            <CompanionAgentDiffLine
-              key={`add-${agent.agent_key}-${index}`}
-              symbol="+"
-              label="companion"
-              agent={agent}
-            />
+        <div className="space-y-0.5">
+          {section.added_agents.map((a, i) => agentItem(a, "+", i))}
+          {section.removed_agent_keys.map((key, i) => (
+            <DeltaListItem key={`rm-${key}-${i}`} symbol="−" label="companion" name={key} />
           ))}
-          {section.removed_agent_keys.map((agentKey, index) => (
-            <DiffLine
-              key={`rm-${agentKey}-${index}`}
-              symbol="−"
-              label="companion"
-              value={agentKey}
-            />
-          ))}
-          {section.changed_agents.map((agent, index) => (
-            <CompanionAgentDiffLine
-              key={`ch-${agent.agent_key}-${index}`}
-              symbol="↻"
-              label="companion"
-              agent={agent}
-            />
-          ))}
+          {section.changed_agents.map((a, i) => agentItem(a, "↻", i))}
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground/60">
+        <p className={CB.meta}>
           {section.effective_agents.length === 0
             ? "当前没有可用 companion agent"
             : "本次无 companion roster 变更"}
@@ -620,31 +598,6 @@ function CompanionAgentRosterDeltaBody({
       {section.effective_agents.length > 0 && (
         <EffectiveCompanionAgentsBlock agents={section.effective_agents} />
       )}
-    </div>
-  );
-}
-
-function CompanionAgentDiffLine({
-  symbol,
-  label,
-  agent,
-}: {
-  symbol: string;
-  label: string;
-  agent: RuntimeCompanionAgentEntry;
-}) {
-  const display = agent.display_name || agent.agent_key;
-  return (
-    <div className="space-y-1 space-y-0.5">
-      <p className="flex items-start gap-2 text-xs leading-5">
-        <span className="shrink-0 w-4 select-none text-muted-foreground/70">{symbol}</span>
-        <span className="shrink-0 text-muted-foreground/80">{label}</span>
-        <span className="min-w-0 break-all font-mono text-foreground/80">{display}</span>
-      </p>
-      <div className="flex flex-wrap gap-1.5 pl-8">
-        <Chip label={`agent: ${agent.agent_key}`} />
-        {agent.executor && <Chip label={`executor: ${agent.executor}`} />}
-      </div>
     </div>
   );
 }

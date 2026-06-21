@@ -13,6 +13,10 @@ use agentdash_contracts::agent_run_mailbox::{
     MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
     RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
+use agentdash_contracts::auth::{
+    AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
+    DirectoryUser, LoginCredentials, LoginFieldDescriptor, LoginMetadata, LoginMode, LoginResponse,
+};
 use agentdash_contracts::backend::{
     BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
@@ -209,6 +213,28 @@ fn main() {
     // Upstream registry: type_name -> import source (e.g. "./backbone-protocol").
     // Each domain strips types already claimed upstream and emits `import type` instead.
     let mut upstream: BTreeMap<String, String> = BTreeMap::new();
+
+    // --- auth-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "auth-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<AuthMode>(dir);
+            export_all::<AuthGroup>(dir);
+            export_all::<CurrentUser>(dir);
+            export_all::<LoginCredentials>(dir);
+            export_all::<LoginMode>(dir);
+            export_all::<LoginFieldDescriptor>(dir);
+            export_all::<LoginMetadata>(dir);
+            export_all::<AuthStartRequest>(dir);
+            export_all::<AuthStartResponse>(dir);
+            export_all::<LoginResponse>(dir);
+            export_all::<DirectoryUser>(dir);
+            export_all::<DirectoryGroup>(dir);
+        },
+    );
 
     // --- backbone-protocol.ts (canonical source for codex/agent-protocol types) ---
     emit_domain(

@@ -8,7 +8,7 @@
 | M04 | SkillAsset HTTP DTO contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M05 | ExtensionManagement service 回到 generated DTO | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M06 | `workspace_module_presented` stream payload contract 化 | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md`, `research/13-permission-frame-vfs-gateway-deep-dive.md` |
-| M07 | Auth/current-user/identity-directory DTO contract 化或明确 wrapper | Contract Surface | pending | `research/10-contract-boundary-deep-dive.md` |
+| M07 | Auth/current-user/identity-directory DTO contract 化或明确 wrapper | Contract Surface | completed | `research/10-contract-boundary-deep-dive.md` |
 | M08 | 拆分 `types/index.ts` | Residual Surface Cleanup | completed | `research/10-contract-boundary-deep-dive.md` |
 | M09 | 确认 SessionExecutionState 消费面 | Residual Surface Cleanup | completed | `research/10-contract-boundary-deep-dive.md` |
 | M10 | 移除或封装 `AgentRunSteeringService` | Residual Surface Cleanup | completed | `research/11-agentrun-control-deep-dive.md` |

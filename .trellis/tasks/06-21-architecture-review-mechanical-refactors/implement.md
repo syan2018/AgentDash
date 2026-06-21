@@ -8,7 +8,7 @@
 - [x] M04 SkillAsset HTTP DTO contract 化。
 - [x] M05 ExtensionManagement service 回到 generated DTO。
 - [x] M06 `workspace_module_presented` stream payload contract 化。
-- [ ] M07 Auth/current-user/identity-directory DTO contract 化或明确 route-local wrapper。
+- [x] M07 Auth/current-user/identity-directory DTO contract 化或明确 route-local wrapper。
 
 建议验证：
 
@@ -79,3 +79,9 @@ pnpm run frontend:check
 
 - M04 已完成，SkillAsset HTTP DTO 进入 generated contracts，frontend service 删除 raw mapper，仅保留 markdown/frontmatter editor draft mapper。
 - M01 完成非导出抢占部分：Project event stream 前端 route-local envelope/parser 已从 app-wide `types/acp.ts` 隔离；完整 contract 化仍需要后续 Rust contract/generated TS owner。
+
+## Round 5 Completion Notes
+
+- M07 已完成，Auth/current-user/identity-directory app-wide DTO 进入 `auth-contracts.ts`，API `/auth`、`/me` 与 `/directory` 输出 generated contract DTO。
+- `TokenQuery`、`RevokeTokenRequest`、`OidcCallbackQuery` 保留在 route-local transport wrapper，原因是它们只服务 token/query/callback 传输，不形成前端共享事实。
+- 前端 `auth`、`currentUser`、`directory` service/store 直接消费 generated DTO，移除 `/me` 手写字段级 mapper 与 `types/index.ts` 中的 auth/directory wire DTO 重声明。

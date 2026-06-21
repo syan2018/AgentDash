@@ -5,7 +5,7 @@ import type {
   LoginCredentials,
   LoginMetadata,
   LoginResponse,
-} from '../types';
+} from '../generated/auth-contracts';
 
 export async function fetchLoginMetadata(): Promise<LoginMetadata> {
   return api.get<LoginMetadata>('/auth/metadata');

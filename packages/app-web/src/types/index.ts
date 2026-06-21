@@ -31,98 +31,26 @@ export type {
 
 export type BackendConfig = BackendWithStatusResponse;
 export type BackendSafeConfig = BackendResponse;
-export type AuthMode = "personal" | "enterprise";
+export type {
+  AuthGroup,
+  AuthMode,
+  AuthStartRequest,
+  AuthStartResponse,
+  CurrentUser,
+  DirectoryGroup,
+  DirectoryUser,
+  LoginCredentials,
+  LoginFieldDescriptor,
+  LoginMetadata,
+  LoginMode,
+  LoginResponse,
+} from "../generated/auth-contracts";
 export type {
   BackendWorkspaceInventorySource,
   BackendWorkspaceInventoryStatus,
   ProjectBackendAccessMode,
   ProjectBackendAccessStatus,
 } from "../generated/backend-contracts";
-
-export function isAuthMode(value: unknown): value is AuthMode {
-  return value === "personal" || value === "enterprise";
-}
-
-// ─── 登录 / 认证 ──────────────────────────────────────
-
-export interface LoginFieldDescriptor {
-  name: string;
-  label: string;
-  field_type: string;
-  placeholder?: string | null;
-  required: boolean;
-}
-
-export interface LoginMetadata {
-  provider_type: string;
-  display_name: string;
-  description?: string | null;
-  fields: LoginFieldDescriptor[];
-  login_mode?: "form" | "redirect";
-  start_url?: string | null;
-  requires_login: boolean;
-}
-
-export interface AuthStartRequest {
-  return_to?: string | null;
-}
-
-export interface AuthStartResponse {
-  auth_url: string;
-  state: string;
-  expires_at_epoch_seconds: number;
-}
-
-export interface LoginCredentials {
-  username: string;
-  password: string;
-  extra?: unknown;
-}
-
-export interface LoginResponse {
-  access_token: string;
-  identity: CurrentUser;
-}
-
-// ─── 当前用户 / 身份 ─────────────────────────────────
-
-export interface AuthGroup {
-  group_id: string;
-  display_name?: string | null;
-}
-
-export interface CurrentUser {
-  auth_mode: AuthMode;
-  user_id: string;
-  subject: string;
-  display_name?: string | null;
-  email?: string | null;
-  avatar_url?: string | null;
-  groups: AuthGroup[];
-  is_admin: boolean;
-  provider?: string | null;
-  extra: unknown;
-}
-
-export interface DirectoryUser {
-  user_id: string;
-  subject: string;
-  auth_mode: string;
-  display_name?: string | null;
-  email?: string | null;
-  avatar_url?: string | null;
-  is_admin: boolean;
-  provider?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DirectoryGroup {
-  group_id: string;
-  display_name?: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
 // ─── Workspace ────────────────────────────────────────
 

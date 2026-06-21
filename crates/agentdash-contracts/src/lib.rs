@@ -1,5 +1,7 @@
 #[path = "agent/run_mailbox.rs"]
 pub mod agent_run_mailbox;
+#[path = "system/auth.rs"]
+pub mod auth;
 pub mod backend;
 #[path = "surface/canvas.rs"]
 pub mod canvas;

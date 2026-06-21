@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CurrentUser } from "../types";
+import type { CurrentUser } from "../generated/auth-contracts";
 import { fetchCurrentUser } from "../services/currentUser";
 
 interface CurrentUserState {

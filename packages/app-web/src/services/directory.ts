@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import type { DirectoryGroup, DirectoryUser } from "../types";
+import type { DirectoryGroup, DirectoryUser } from "../generated/auth-contracts";
 
 export async function fetchDirectoryUsers(): Promise<DirectoryUser[]> {
   return api.get<DirectoryUser[]>("/directory/users");

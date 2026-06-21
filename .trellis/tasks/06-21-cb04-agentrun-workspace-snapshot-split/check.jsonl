@@ -1,3 +1,0 @@
-{"file": ".trellis/tasks/06-21-contract-boundary-ownership-audit/owner-map.md", "reason": "Review expected owner boundary."}
-{"file": ".trellis/tasks/06-21-runtime-coordinate-convergence/design.md", "reason": "Review delivery selection dependency."}
-{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Review DTO boundary."}

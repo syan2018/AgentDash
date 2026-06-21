@@ -4,7 +4,7 @@
 
 本文件追踪 `research/followup-backlog.md` 中不适合直接机械执行的模块耦合问题。它们需要先讨论并确定事实源、控制面 owner、runtime 坐标语义或跨层 contract 形态，然后再拆成独立 Trellis task。
 
-机械性重构项已移入子任务：
+机械性重构项已收束到对应父任务的内部工作项：
 
 - `.trellis/tasks/06-21-architecture-review-mechanical-refactors/`
 
@@ -12,7 +12,7 @@
 
 | ID | Priority | Topic | Decision Needed | Current Recommendation | Status |
 | --- | --- | --- | --- | --- | --- |
-| D01 | P0 | application / contracts 边界 | application 是否允许构造 browser-facing contract DTO，还是 contract mapping 回到 API/application adapter 边界 | application read model 与 wire DTO owner 明确分层，按 CB04 子任务迁移 | decided |
+| D01 | P0 | application / contracts 边界 | application 是否允许构造 browser-facing contract DTO，还是 contract mapping 回到 API/application adapter 边界 | application read model 与 wire DTO owner 明确分层，按 Contract Boundary 父任务内 CB04 工作项迁移 | decided |
 | D02 | P0 | AgentRun delivery runtime resolver | run/agent/frame/node/attempt 的 delivery target selection policy 由谁拥有 | `LifecycleAgent` current delivery binding + application-level selection service | decided |
 | D03 | P0 | RuntimeSessionExecutionAnchor semantics | latest/primary/current-frame/run-scoped anchor 的语义如何统一 | Anchor 是 backlink/history evidence；business selection 由 service 解释 | decided |
 | D04 | P0 | Lifecycle start vs drain | public `start_lifecycle_run` 是否只创建 Ready run，drain 是否成为显式 command | create Ready run + explicit continue/drain + backend one-click composition command | decided |

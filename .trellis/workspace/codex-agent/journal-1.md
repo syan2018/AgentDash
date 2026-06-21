@@ -790,3 +790,49 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 多模块架构收敛与 Contract Boundary 收口
+
+**Date**: 2026-06-21
+**Task**: 多模块架构收敛与 Contract Boundary 收口
+**Branch**: `main`
+
+### Summary
+
+完成 runtime failure/coordinate/control/capability/contract boundary 收敛；AgentRun effective capability 成为运行态能力读取入口；AgentRun workspace snapshot 与 API DTO 映射分层；完成 06-21 架构 review/refactor 任务组归档收口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `469646c9` | (see git log) |
+| `3937a73b` | (see git log) |
+| `09860c73` | (see git log) |
+| `6e5be522` | (see git log) |
+| `40b52937` | (see git log) |
+| `1aed97bd` | (see git log) |
+| `c15b3fb1` | (see git log) |
+| `3ac57391` | (see git log) |
+| `1c1c1f8d` | (see git log) |
+| `27052e1a` | (see git log) |
+| `de0c7ff0` | (see git log) |
+| `8fbb523e` | (see git log) |
+| `7935c441` | (see git log) |
+| `f2a857ec` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

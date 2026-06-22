@@ -321,9 +321,7 @@ fn resolve_extension_invocation_workspace(
     vfs: &Option<Vfs>,
     backend_anchor: &RuntimeBackendAnchor,
 ) -> Option<ExtensionInvocationWorkspaceContext> {
-    let Some(vfs) = vfs.as_ref() else {
-        return None;
-    };
+    let vfs = vfs.as_ref()?;
     select_extension_invocation_workspace(vfs, backend_anchor)
 }
 

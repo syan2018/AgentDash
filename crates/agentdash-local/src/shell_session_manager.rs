@@ -274,7 +274,7 @@ impl ShellSessionManager {
 
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Ok(self.snapshot_now(session_id, after_seq, max_bytes).await?);
+                return self.snapshot_now(session_id, after_seq, max_bytes).await;
             }
             let _ = tokio::time::timeout(remaining, notify.notified()).await;
         }
@@ -611,17 +611,15 @@ impl ShellSessionManager {
             session.exited_at = Some(Instant::now());
             session.updated_at = Instant::now();
             session.notify.notify_waiters();
-            let event =
-                session
-                    .terminal_id
-                    .clone()
-                    .map(|terminal_id| TerminalStateChangedPayload {
-                        terminal_id,
-                        state: TerminalProcessState::Killed,
-                        exit_code: None,
-                        message: Some("timeout reached".to_string()),
-                    });
-            event
+            session
+                .terminal_id
+                .clone()
+                .map(|terminal_id| TerminalStateChangedPayload {
+                    terminal_id,
+                    state: TerminalProcessState::Killed,
+                    exit_code: None,
+                    message: Some("timeout reached".to_string()),
+                })
         };
         if let Some(payload) = event {
             let _ = self.event_tx.send(RelayMessage::EventTerminalStateChanged {

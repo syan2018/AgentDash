@@ -33,9 +33,10 @@ use agentdash_spi::hooks::{
 use agentdash_spi::{
     AgentConfig, AgentConnector, AgentTool, AgentToolError, AgentToolResult, CapabilityState,
     CompactionProjectionCommitResult, ConnectorError, ExecutionSessionFrame, MessageRef,
-    NewCompactionProjectionCommit, ProjectionOrigin, PromptPayload,
-    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, StopReason, ToolUpdateCallback,
+    NewCompactionProjectionCommit, ProjectionOrigin, PromptPayload, RuntimeBackendAnchor,
+    RuntimeBackendAnchorSource, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
+    SessionCompactionStatus, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    StopReason, ToolUpdateCallback,
 };
 use chrono::{DateTime, Utc};
 use futures::stream;
@@ -74,6 +75,12 @@ use crate::vfs::{
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
+
+fn local_runtime_backend_anchor(root: &std::path::Path) -> RuntimeBackendAnchor {
+    RuntimeBackendAnchor::new("local", RuntimeBackendAnchorSource::System)
+        .expect("local runtime backend anchor")
+        .with_root_ref(Some(root.to_string_lossy().to_string()))
+}
 
 fn test_hub(
     _mount_root: PathBuf,
@@ -798,7 +805,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
             mcp_servers: vec![workflow_server.clone()],
             vfs: Some(local_workspace_vfs(base.path())),
             backend_execution: None,
-            runtime_backend_anchor: None,
+            runtime_backend_anchor: Some(local_runtime_backend_anchor(base.path())),
             identity: None,
         },
         turn: agentdash_spi::ExecutionTurnFrame {
@@ -936,7 +943,7 @@ async fn build_tools_consumes_tool_level_grant_projection_from_agent_run() {
             mcp_servers: vec![workflow_server],
             vfs: Some(local_workspace_vfs(base.path())),
             backend_execution: None,
-            runtime_backend_anchor: None,
+            runtime_backend_anchor: Some(local_runtime_backend_anchor(base.path())),
             identity: None,
         },
         turn: agentdash_spi::ExecutionTurnFrame {

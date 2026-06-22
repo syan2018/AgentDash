@@ -877,3 +877,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: PiAgent MCP ToolSchema 上下文收束
+
+**Date**: 2026-06-22
+**Task**: PiAgent MCP ToolSchema 上下文收束
+**Branch**: `main`
+
+### Summary
+
+收束 PiAgent 主路径中 MCP ToolSchema 的事实源与 PromptText 展示路径：Application assembly 同源产出工具表和 RuntimeToolSchemaEntry，ContextFrame/transform_context 注入 MCP ToolSchema 原文，PiAgent 保持只持有可执行工具表。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e1cb0da58` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

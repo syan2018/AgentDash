@@ -1,0 +1,17 @@
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "验收 ToolExecutionEnd、ToolExecutionUpdate、CommandOutputDelta、CommandExecution 映射仍满足 PiAgent stream contract。"}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "验收 NDJSON backlog 与实时 stream 只发送 bounded notification。"}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "验收 ContextProjector、continuation、compaction 都只消费 preview/ref。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "验收 lifecycle ref path、offset/limit read、path normalization 和 NotFound/cache miss 行为。"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "验收 relay shell/terminal 输出与 lifecycle materialization 边界一致。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验收如涉及 schema 变化时使用新 migration，并保持 session_events payload 受控。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "验收 BackboneEnvelope、ThreadItem 和 PersistedSessionEvent 的协议字段一致。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "验收 Rust contract 与 generated TS 同步，前端不手写协议字段。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "验收 session stream reducer、rawEvents 与 frontend hydration 不保存原始大 payload。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验收前端 truncation/ref metadata 类型严格。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/piagent-tool-result-path.md", "reason": "对照工具 final result 和 update 路径确认无绕过点。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/terminal-output-path.md", "reason": "对照 shell/terminal 三条输出路径确认 retained buffer 与 live event 都被覆盖。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/lifecycle-vfs-ref-surface.md", "reason": "对照 lifecycle_vfs ref surface 确认 list/read/search/cache miss 行为。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/session-event-projection-risk.md", "reason": "对照 Postgres、API、NDJSON、前端、projection 风险确认 payload bounded。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/reference-codex-large-output.md", "reason": "对照 Codex 分层 cap、delta 不进 durable transcript、resume 重截断和 metadata index 经验检查实现完整性。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/reference-claude-code-large-output.md", "reason": "对照 Claude Code offload、per-message aggregate budget、replacement state 和 terminal owner file 经验检查实现完整性。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/agentdash-implementation-slice-map.md", "reason": "对照工作包 ownership、依赖、冲突文件和验收矩阵确认实现可派发且无遗漏。"}

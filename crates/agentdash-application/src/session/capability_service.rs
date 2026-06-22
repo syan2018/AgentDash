@@ -1,6 +1,6 @@
 use agentdash_agent_types::DynAgentTool;
 use agentdash_domain::canvas::Canvas;
-use agentdash_spi::{RuntimeMcpServer, Vfs};
+use agentdash_spi::{RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
 
@@ -45,6 +45,16 @@ impl SessionCapabilityService {
 
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         self.hub.get_latest_capability_state(session_id).await
+    }
+
+    pub async fn get_current_runtime_backend_anchor(
+        &self,
+        session_id: &str,
+    ) -> Result<RuntimeBackendAnchor, String> {
+        self.hub
+            .get_current_runtime_backend_anchor(session_id)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Delivery adapter: 把 RuntimeSession id 解析为对应的 AgentFrame id。

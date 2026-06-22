@@ -25,7 +25,7 @@ export type McpRuntimeBindingConfigDto = { mount_id?: string, bindings?: Array<M
 
 export type McpRuntimeBindingRuleDto = { source: McpRuntimeBindingSourceDto, target: McpRuntimeBindingTargetDto, required: boolean, };
 
-export type McpRuntimeBindingSourceDto = { "kind": "vfs_root_ref" } | { "kind": "vfs_backend_id" } | { "kind": "workspace_id" } | { "kind": "workspace_binding_id" } | { "kind": "workspace_identity", path: Array<string>, } | { "kind": "workspace_detected_fact", path: Array<string>, };
+export type McpRuntimeBindingSourceDto = { "kind": "vfs_root_ref" } | { "kind": "runtime_backend_anchor_backend_id" } | { "kind": "workspace_id" } | { "kind": "workspace_binding_id" } | { "kind": "workspace_identity", path: Array<string>, } | { "kind": "workspace_detected_fact", path: Array<string>, };
 
 export type McpRuntimeBindingTargetDto = { "kind": "http_query", name: string, } | { "kind": "http_header", name: string, } | { "kind": "stdio_env", name: string, } | { "kind": "stdio_cwd" };
 

@@ -415,7 +415,9 @@ fn mcp_runtime_binding_rule(rule: McpRuntimeBindingRuleDto) -> DomainMcpRuntimeB
 fn mcp_runtime_binding_source(source: McpRuntimeBindingSourceDto) -> DomainMcpRuntimeBindingSource {
     match source {
         McpRuntimeBindingSourceDto::VfsRootRef => DomainMcpRuntimeBindingSource::VfsRootRef,
-        McpRuntimeBindingSourceDto::VfsBackendId => DomainMcpRuntimeBindingSource::VfsBackendId,
+        McpRuntimeBindingSourceDto::RuntimeBackendAnchorBackendId => {
+            DomainMcpRuntimeBindingSource::RuntimeBackendAnchorBackendId
+        }
         McpRuntimeBindingSourceDto::WorkspaceId => DomainMcpRuntimeBindingSource::WorkspaceId,
         McpRuntimeBindingSourceDto::WorkspaceBindingId => {
             DomainMcpRuntimeBindingSource::WorkspaceBindingId

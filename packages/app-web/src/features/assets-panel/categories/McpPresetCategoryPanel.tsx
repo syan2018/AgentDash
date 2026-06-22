@@ -144,9 +144,9 @@ const RUNTIME_BINDING_SOURCE_OPTIONS = [
     source: { kind: "vfs_root_ref" },
   },
   {
-    value: "vfs_backend_id",
-    label: "VFS backend id",
-    source: { kind: "vfs_backend_id" },
+    value: "runtime_backend_anchor_backend_id",
+    label: "Runtime backend anchor",
+    source: { kind: "runtime_backend_anchor_backend_id" },
   },
   {
     value: "workspace_detected_fact:custom",

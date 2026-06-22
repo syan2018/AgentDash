@@ -101,7 +101,9 @@ fn required_runtime_binding_unsupported_reason(
 fn runtime_binding_source_path(source: &McpRuntimeBindingSource) -> String {
     match source {
         McpRuntimeBindingSource::VfsRootRef => "vfs.main.root_ref".to_string(),
-        McpRuntimeBindingSource::VfsBackendId => "vfs.main.backend_id".to_string(),
+        McpRuntimeBindingSource::RuntimeBackendAnchorBackendId => {
+            "runtime_backend_anchor.backend_id".to_string()
+        }
         McpRuntimeBindingSource::WorkspaceId => "workspace.id".to_string(),
         McpRuntimeBindingSource::WorkspaceBindingId => "workspace.binding_id".to_string(),
         McpRuntimeBindingSource::WorkspaceIdentity { path } => {

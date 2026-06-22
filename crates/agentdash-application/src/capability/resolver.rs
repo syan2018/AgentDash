@@ -985,7 +985,10 @@ mod tests {
         };
 
         let vfs = test_runtime_vfs();
-        let runtime_context = crate::mcp_preset::McpRuntimeBindingContext { vfs: Some(&vfs) };
+        let runtime_context = crate::mcp_preset::McpRuntimeBindingContext {
+            vfs: Some(&vfs),
+            backend_anchor: None,
+        };
         let mut input = base_input();
         input.mcp_runtime_context = Some(runtime_context);
         with_workflow_directives(

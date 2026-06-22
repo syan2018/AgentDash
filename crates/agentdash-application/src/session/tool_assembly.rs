@@ -37,6 +37,21 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
     }
 
     if let Some(discovery) = mcp_tool_discovery {
+        if let Err(error) = context
+            .session
+            .require_runtime_backend_anchor("tool_assembly", Some(session_id))
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %error,
+                "MCP 工具发现跳过：缺少 runtime backend anchor"
+            );
+            dedupe_tool_schemas(&mut all_schemas);
+            return AssembledToolSurface {
+                tools: all_tools,
+                schemas: all_schemas,
+            };
+        }
         let call_context = agentdash_spi::RelayMcpCallContext {
             session_id: session_id.to_string(),
             turn_id: Some(context.session.turn_id.clone()),

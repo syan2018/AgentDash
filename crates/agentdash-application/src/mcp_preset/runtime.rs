@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_spi::{McpEnvVar, McpHttpHeader, RuntimeMcpServer, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
@@ -20,6 +21,7 @@ pub fn preset_to_runtime_mcp_server(preset: &McpPreset) -> RuntimeMcpServer {
 #[derive(Debug, Clone, Copy)]
 pub struct McpRuntimeBindingContext<'a> {
     pub vfs: Option<&'a Vfs>,
+    pub backend_anchor: Option<&'a RuntimeBackendAnchor>,
 }
 
 #[derive(Debug, Error)]
@@ -43,6 +45,14 @@ pub enum McpRuntimeBindingError {
         "MCP preset `{preset_key}` runtime_binding[{rule_index}] source {source_path} 不是可绑定的标量值"
     )]
     InvalidSourceValue {
+        preset_key: String,
+        rule_index: usize,
+        source_path: String,
+    },
+    #[error(
+        "MCP preset `{preset_key}` runtime_binding[{rule_index}] 缺少 runtime backend anchor source {source_path}"
+    )]
+    MissingRuntimeBackendAnchor {
         preset_key: String,
         rule_index: usize,
         source_path: String,
@@ -112,14 +122,25 @@ fn apply_runtime_binding(
 
     for (rule_index, rule) in binding.bindings.iter().enumerate() {
         let source_path = source_path(&rule.source);
-        let Some(value) = read_source_value(mount, &rule.source).map_err(|_| {
-            McpRuntimeBindingError::InvalidSourceValue {
-                preset_key: preset_key.to_string(),
-                rule_index,
-                source_path: source_path.clone(),
+        let source_value = match read_source_value(context, mount, &rule.source) {
+            Ok(value) => value,
+            Err(SourceReadError::MissingRuntimeBackendAnchor) if !rule.required => None,
+            Err(SourceReadError::MissingRuntimeBackendAnchor) => {
+                return Err(McpRuntimeBindingError::MissingRuntimeBackendAnchor {
+                    preset_key: preset_key.to_string(),
+                    rule_index,
+                    source_path: source_path.clone(),
+                });
             }
-        })?
-        else {
+            Err(SourceReadError::InvalidScalar) => {
+                return Err(McpRuntimeBindingError::InvalidSourceValue {
+                    preset_key: preset_key.to_string(),
+                    rule_index,
+                    source_path: source_path.clone(),
+                });
+            }
+        };
+        let Some(value) = source_value else {
             if rule.required {
                 return Err(McpRuntimeBindingError::MissingRequiredSource {
                     preset_key: preset_key.to_string(),
@@ -136,12 +157,16 @@ fn apply_runtime_binding(
 }
 
 fn read_source_value(
+    context: &McpRuntimeBindingContext<'_>,
     mount: &agentdash_spi::Mount,
     source: &McpRuntimeBindingSource,
-) -> Result<Option<String>, ()> {
+) -> Result<Option<String>, SourceReadError> {
     match source {
         McpRuntimeBindingSource::VfsRootRef => Ok(non_empty_value(&mount.root_ref)),
-        McpRuntimeBindingSource::VfsBackendId => Ok(non_empty_value(&mount.backend_id)),
+        McpRuntimeBindingSource::RuntimeBackendAnchorBackendId => context
+            .backend_anchor
+            .map(|anchor| non_empty_value(anchor.backend_id()))
+            .ok_or(SourceReadError::MissingRuntimeBackendAnchor),
         McpRuntimeBindingSource::WorkspaceId => {
             scalar_json_to_string(mount.metadata.get("workspace_id"))
         }
@@ -155,6 +180,11 @@ fn read_source_value(
             read_json_path(mount.metadata.get("workspace_detected_facts"), path),
         ),
     }
+}
+
+enum SourceReadError {
+    InvalidScalar,
+    MissingRuntimeBackendAnchor,
 }
 
 fn non_empty_value(value: &str) -> Option<String> {
@@ -180,7 +210,9 @@ fn read_json_path<'a>(
     Some(current)
 }
 
-fn scalar_json_to_string(value: Option<&serde_json::Value>) -> Result<Option<String>, ()> {
+fn scalar_json_to_string(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<String>, SourceReadError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -189,7 +221,9 @@ fn scalar_json_to_string(value: Option<&serde_json::Value>) -> Result<Option<Str
         serde_json::Value::String(text) => Ok(non_empty_value(text)),
         serde_json::Value::Number(number) => Ok(Some(number.to_string())),
         serde_json::Value::Bool(flag) => Ok(Some(flag.to_string())),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Err(()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Err(SourceReadError::InvalidScalar)
+        }
     }
 }
 
@@ -317,7 +351,9 @@ fn validate_target_name<'a>(
 fn source_path(source: &McpRuntimeBindingSource) -> String {
     match source {
         McpRuntimeBindingSource::VfsRootRef => "vfs.main.root_ref".to_string(),
-        McpRuntimeBindingSource::VfsBackendId => "vfs.main.backend_id".to_string(),
+        McpRuntimeBindingSource::RuntimeBackendAnchorBackendId => {
+            "runtime_backend_anchor.backend_id".to_string()
+        }
         McpRuntimeBindingSource::WorkspaceId => "workspace.id".to_string(),
         McpRuntimeBindingSource::WorkspaceBindingId => "workspace.binding_id".to_string(),
         McpRuntimeBindingSource::WorkspaceIdentity { path } => {
@@ -435,7 +471,10 @@ mod tests {
     }
 
     fn runtime_context(vfs: &Vfs) -> McpRuntimeBindingContext<'_> {
-        McpRuntimeBindingContext { vfs: Some(vfs) }
+        McpRuntimeBindingContext {
+            vfs: Some(vfs),
+            backend_anchor: None,
+        }
     }
 
     fn http_preset(binding: McpRuntimeBindingConfig) -> McpPreset {
@@ -579,5 +618,67 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("p4-local"));
         assert!(message.contains("workspace.detected_facts.p4.missing"));
+    }
+
+    #[test]
+    fn runtime_binding_backend_source_reads_runtime_anchor_not_vfs_mount() {
+        let mut vfs = test_vfs();
+        vfs.mounts[0].backend_id = "stale-vfs-backend".to_string();
+        let anchor = RuntimeBackendAnchor::new(
+            "anchor-backend",
+            agentdash_domain::backend::RuntimeBackendAnchorSource::System,
+        )
+        .expect("anchor");
+        let context = McpRuntimeBindingContext {
+            vfs: Some(&vfs),
+            backend_anchor: Some(&anchor),
+        };
+        let preset = http_preset(McpRuntimeBindingConfig {
+            mount_id: None,
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::RuntimeBackendAnchorBackendId,
+                target: McpRuntimeBindingTarget::HttpHeader {
+                    name: "x-runtime-backend".to_string(),
+                },
+                required: true,
+            }],
+        });
+
+        let server =
+            resolve_preset_mcp_server(&preset, Some(&context)).expect("runtime binding resolves");
+
+        let McpTransportConfig::Http { headers, .. } = server.transport else {
+            panic!("expected http transport");
+        };
+        assert_eq!(
+            headers
+                .iter()
+                .find(|header| header.name == "x-runtime-backend")
+                .map(|header| header.value.as_str()),
+            Some("anchor-backend")
+        );
+    }
+
+    #[test]
+    fn required_runtime_anchor_source_fails_without_anchor() {
+        let vfs = test_vfs();
+        let context = runtime_context(&vfs);
+        let preset = http_preset(McpRuntimeBindingConfig {
+            mount_id: None,
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::RuntimeBackendAnchorBackendId,
+                target: McpRuntimeBindingTarget::HttpHeader {
+                    name: "x-runtime-backend".to_string(),
+                },
+                required: true,
+            }],
+        });
+
+        let error = resolve_preset_mcp_server(&preset, Some(&context)).expect_err("must fail");
+
+        assert!(matches!(
+            error,
+            McpRuntimeBindingError::MissingRuntimeBackendAnchor { .. }
+        ));
     }
 }

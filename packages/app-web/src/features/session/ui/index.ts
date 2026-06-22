@@ -4,13 +4,17 @@
 
 export {
   SessionChatView,
-  isLocalDraftStartAction,
-  type LocalDraftStartAction,
-  type PromptTemplate,
-  type SessionChatCommand,
-  type SessionChatCommandState,
-  type SessionChatViewProps,
 } from "./SessionChatView";
+export {
+  isLocalDraftStartAction,
+} from "./SessionChatViewTypes";
+export type {
+  LocalDraftStartAction,
+  PromptTemplate,
+  SessionChatCommand,
+  SessionChatCommandState,
+  SessionChatViewProps,
+} from "./SessionChatViewTypes";
 export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {

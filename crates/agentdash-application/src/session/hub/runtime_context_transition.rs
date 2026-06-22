@@ -6,10 +6,9 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, SetDelta,
-    SharedHookRuntime,
+    ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, RuntimeToolSchemaEntry,
+    SetDelta, SharedHookRuntime,
 };
 use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
 #[cfg(test)]
@@ -74,7 +73,7 @@ pub(crate) struct PendingRuntimeContextApplication {
 pub(crate) fn build_initial_capability_state_frame(
     capability_state: &CapabilityState,
     capability_keys: &BTreeSet<String>,
-    tools: &[DynAgentTool],
+    tool_schemas: &[RuntimeToolSchemaEntry],
 ) -> ContextFrame {
     let initial_delta = SetDelta {
         added: capability_keys.iter().cloned().collect(),
@@ -88,7 +87,7 @@ pub(crate) fn build_initial_capability_state_frame(
         capability_delta: &initial_delta,
         effective_capabilities: capability_keys,
         state_delta: Some(&state_delta),
-        tools,
+        tool_schemas,
         skill_entries: &capability_state.skill.skills,
         companion_agents: &capability_state.companion.agents,
     })
@@ -99,7 +98,7 @@ impl SessionRuntimeInner {
         &self,
         hook_runtime: &SharedHookRuntime,
         input: LiveRuntimeContextTransitionInput,
-        tools: &[DynAgentTool],
+        tool_schemas: &[RuntimeToolSchemaEntry],
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let state_changed = input.before_state.as_ref() != Some(&input.after_state);
         if input.key_delta.is_empty() && !state_changed {
@@ -111,7 +110,7 @@ impl SessionRuntimeInner {
             });
         }
 
-        self.emit_runtime_context_transition_notifications(hook_runtime, &input, tools)
+        self.emit_runtime_context_transition_notifications(hook_runtime, &input, tool_schemas)
             .await
     }
 
@@ -119,12 +118,12 @@ impl SessionRuntimeInner {
         &self,
         effective_hook_runtime: &SharedHookRuntime,
         input: &LiveRuntimeContextTransitionInput,
-        tools: &[DynAgentTool],
+        tool_schemas: &[RuntimeToolSchemaEntry],
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let injections = self
             .collect_runtime_context_update_injections(
                 &input.delivery_runtime_session_id,
-                &effective_hook_runtime,
+                effective_hook_runtime,
             )
             .await;
         let state_delta = compute_capability_state_delta(
@@ -138,7 +137,8 @@ impl SessionRuntimeInner {
         };
         let _cache_delta =
             effective_hook_runtime.update_capabilities(input.capability_keys.clone());
-        let notice = build_live_context_frame(&input, &notification_delta, &state_delta, &tools);
+        let notice =
+            build_live_context_frame(input, &notification_delta, &state_delta, tool_schemas);
         self.emit_context_frame(
             &input.delivery_runtime_session_id,
             input.turn_id.as_deref(),
@@ -146,7 +146,7 @@ impl SessionRuntimeInner {
         )
         .await
         .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
-        let _ = context_frame::enqueue_context_frame(&effective_hook_runtime, &notice);
+        let _ = context_frame::enqueue_context_frame(effective_hook_runtime, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) = build_workflow_assignment_context_frame(
@@ -161,7 +161,7 @@ impl SessionRuntimeInner {
             )
             .await
             .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
-            let _ = context_frame::enqueue_context_frame(&effective_hook_runtime, &workflow_frame);
+            let _ = context_frame::enqueue_context_frame(effective_hook_runtime, &workflow_frame);
         }
 
         Ok(RuntimeContextTransitionOutcome {
@@ -238,7 +238,7 @@ impl SessionRuntimeInner {
             capability_delta: &capability_delta,
             effective_capabilities: &input.capability_keys,
             state_delta: Some(&state_delta),
-            tools: &[],
+            tool_schemas: &[],
             skill_entries: &input.after_state.skill.skills,
             companion_agents: &input.after_state.companion.agents,
         });
@@ -309,7 +309,7 @@ impl SessionRuntimeInner {
                 capability_delta: &capability_delta,
                 effective_capabilities: &pending.capability_keys,
                 state_delta: Some(&state_delta),
-                tools: input.tools,
+                tool_schemas: input.tool_schemas,
                 skill_entries: &pending_after_state.skill.skills,
                 companion_agents: &pending_after_state.companion.agents,
             });
@@ -367,14 +367,14 @@ pub(crate) struct ApplyPendingRuntimeContextTransitionInput<'a> {
     pub before_state: CapabilityState,
     pub final_capability_state: &'a CapabilityState,
     pub transitions: &'a [PendingCapabilityStateTransition],
-    pub tools: &'a [DynAgentTool],
+    pub tool_schemas: &'a [RuntimeToolSchemaEntry],
 }
 
 fn build_live_context_frame(
     input: &LiveRuntimeContextTransitionInput,
     notification_delta: &SetDelta,
     state_delta: &CapabilityStateDelta,
-    tools: &[DynAgentTool],
+    tool_schemas: &[RuntimeToolSchemaEntry],
 ) -> ContextFrame {
     let metadata = RuntimeContextUpdateFrame::new(RuntimeContextUpdateFrameInput {
         phase_node: &input.phase_node,
@@ -383,7 +383,7 @@ fn build_live_context_frame(
         capability_delta: notification_delta,
         effective_capabilities: &input.capability_keys,
         state_delta: Some(state_delta),
-        tools,
+        tool_schemas,
         skill_entries: &input.after_state.skill.skills,
         companion_agents: &input.after_state.companion.agents,
     });
@@ -402,7 +402,7 @@ struct RuntimeContextUpdateFrameInput<'a> {
     capability_delta: &'a SetDelta,
     effective_capabilities: &'a BTreeSet<String>,
     state_delta: Option<&'a CapabilityStateDelta>,
-    tools: &'a [DynAgentTool],
+    tool_schemas: &'a [RuntimeToolSchemaEntry],
     skill_entries: &'a [agentdash_spi::context::capability::SkillEntry],
     companion_agents: &'a [agentdash_spi::context::capability::CompanionAgentEntry],
 }
@@ -450,8 +450,8 @@ impl RuntimeContextUpdateFrame {
             dimensions.push(d);
         }
         if let Some(d) =
-            dimension::tool_schema::ToolSchemaDimensionDelta::from_tools_and_state_delta(
-                input.tools,
+            dimension::tool_schema::ToolSchemaDimensionDelta::from_schema_entries_and_state_delta(
+                input.tool_schemas,
                 input.state_delta,
             )
         {
@@ -524,11 +524,7 @@ impl ContextFramePayload for RuntimeContextUpdateFrame {
     }
 
     fn kind(&self) -> &'static str {
-        if self.apply_mode.as_deref() == Some("initial") {
-            "capability_state_snapshot"
-        } else {
-            "capability_state_delta"
-        }
+        "capability_state_delta"
     }
 
     fn source(&self) -> RuntimeEventSource {
@@ -566,11 +562,14 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_agent_types::{
-        AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
+        AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     };
+    use agentdash_spi::{ToolCapability, context_usage_kind};
     use async_trait::async_trait;
     use serde_json::Value;
     use tokio_util::sync::CancellationToken;
+
+    use crate::session::dimension::tool_schema::runtime_tool_schema_entries_from_tools;
 
     use super::*;
 
@@ -634,8 +633,10 @@ mod tests {
             ..Default::default()
         };
         let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
+        let tool_schemas = runtime_tool_schema_entries_from_tools(&tools);
 
-        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &tools);
+        let notice =
+            build_live_context_frame(&input, &SetDelta::default(), &state_delta, &tool_schemas);
 
         assert_eq!(notice.kind, "capability_state_delta");
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));
@@ -747,7 +748,7 @@ mod tests {
 
         let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
 
-        assert_eq!(notice.kind, "capability_state_snapshot");
+        assert_eq!(notice.kind, "capability_state_delta");
         let effective_agents = notice
             .sections
             .iter()
@@ -765,6 +766,148 @@ mod tests {
                 .contains("## Companion Agent Roster Delta")
         );
         assert!(notice.rendered_text.contains("- （无）"));
+    }
+
+    #[test]
+    fn initial_context_frame_includes_project_mcp_schema_as_regular_delta() {
+        let mut capability_state = CapabilityState::default();
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        capability_state.tool.mcp_servers = vec![agentdash_spi::RuntimeMcpServer {
+            name: "code-analyzer".to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: "http://127.0.0.1:9999/mcp".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+        }];
+        let capability_keys = capability_state.capability_keys();
+        let tool_schemas = vec![RuntimeToolSchemaEntry {
+            name: "mcp_code_analyzer_scan_repo".to_string(),
+            description: "扫描仓库结构".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": {
+                        "type": "string",
+                        "description": "扫描根目录"
+                    }
+                },
+                "required": ["root"]
+            }),
+            capability_key: Some("mcp:code-analyzer".to_string()),
+            source: Some("mcp:code-analyzer".to_string()),
+            tool_path: Some("mcp:code-analyzer::scan_repo".to_string()),
+            context_usage_kind: Some(context_usage_kind::MCP_TOOLS.to_string()),
+        }];
+
+        let notice = build_initial_capability_state_frame(
+            &capability_state,
+            &capability_keys,
+            &tool_schemas,
+        );
+
+        assert_eq!(notice.kind, "capability_state_delta");
+        assert_eq!(notice.apply_mode.as_deref(), Some("initial"));
+        let tool_section = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::ToolSchemaDelta { added_tools } => Some(added_tools),
+                _ => None,
+            })
+            .expect("project MCP tool schema should be visible on initial delta");
+        assert_eq!(tool_section.len(), 1);
+        assert_eq!(
+            tool_section[0].capability_key.as_deref(),
+            Some("mcp:code-analyzer")
+        );
+        assert_eq!(
+            tool_section[0].tool_path.as_deref(),
+            Some("mcp:code-analyzer::scan_repo")
+        );
+        assert!(notice.rendered_text.contains("mcp_code_analyzer_scan_repo"));
+        assert!(notice.rendered_text.contains("source: `mcp:code-analyzer`"));
+        assert!(notice.rendered_text.contains("`root` (required, string)"));
+    }
+
+    #[test]
+    fn live_transition_frame_includes_project_mcp_schema_from_application_surface() {
+        let before_state = CapabilityState::default();
+        let mut after_state = CapabilityState::default();
+        after_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        after_state.tool.mcp_servers = vec![agentdash_spi::RuntimeMcpServer {
+            name: "code-analyzer".to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: "http://127.0.0.1:9999/mcp".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+        }];
+        let input = LiveRuntimeContextTransitionInput {
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "enable-mcp".to_string(),
+            before_state: Some(before_state),
+            after_state,
+            capability_keys: BTreeSet::from(["mcp:code-analyzer".to_string()]),
+            key_delta: SetDelta::default(),
+            apply_mode: "live",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+        let tool_schemas = vec![RuntimeToolSchemaEntry {
+            name: "mcp_code_analyzer_scan_repo".to_string(),
+            description: "扫描仓库结构".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": {
+                        "type": "string",
+                        "description": "扫描根目录"
+                    }
+                },
+                "required": ["root"]
+            }),
+            capability_key: Some("mcp:code-analyzer".to_string()),
+            source: Some("mcp:code-analyzer".to_string()),
+            tool_path: Some("mcp:code-analyzer::scan_repo".to_string()),
+            context_usage_kind: Some(context_usage_kind::MCP_TOOLS.to_string()),
+        }];
+
+        let notice =
+            build_live_context_frame(&input, &SetDelta::default(), &state_delta, &tool_schemas);
+
+        assert_eq!(notice.kind, "capability_state_delta");
+        let tool_section = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::ToolSchemaDelta { added_tools } => Some(added_tools),
+                _ => None,
+            })
+            .expect("project MCP tool schema should be visible on live transition");
+        assert_eq!(tool_section.len(), 1);
+        assert_eq!(tool_section[0].source.as_deref(), Some("mcp:code-analyzer"));
+        assert_eq!(
+            tool_section[0].tool_path.as_deref(),
+            Some("mcp:code-analyzer::scan_repo")
+        );
+        assert!(notice.rendered_text.contains("mcp_code_analyzer_scan_repo"));
+        assert!(
+            notice
+                .rendered_text
+                .contains("path: `mcp:code-analyzer::scan_repo`")
+        );
+        assert!(notice.rendered_text.contains("扫描根目录"));
     }
 
     #[test]

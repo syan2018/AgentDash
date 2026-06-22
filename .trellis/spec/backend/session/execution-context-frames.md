@@ -82,6 +82,12 @@ pub struct ExecutionTurnFrame {
 cancel flag 与 processor channel。它是 per-turn runtime 快照，不承担 owner/context/VFS
 解析。
 
+ToolSchema PromptText 不进入 `ExecutionTurnFrame`。Turn preparation 在 application 层装配
+`AssembledToolSurface`：`tools` 投影到 `ExecutionTurnFrame.assembled_tools` 服务 connector
+执行；`schemas` 留在 application 的 runtime context frame producer 中生成
+`tool_schema_delta` 和 `ContextFrame.rendered_text`。这样 provider bridge 的机器工具表与
+平台掌握的 Agent 可见能力说明同源，但职责边界保持分离。
+
 ## Connector Consumption Matrix
 
 | Connector | SessionFrame | TurnFrame |
@@ -101,8 +107,9 @@ MCP 或 capability 热更新流程：
 active TurnExecution
   -> clone ExecutionSessionFrame + CapabilityState
   -> persist AgentFrame revision for the updated surface
-  -> build tools
-  -> connector.update_session_tools(session_id, tools)
+  -> build AssembledToolSurface
+  -> connector.update_session_tools(session_id, surface.tools)
+  -> runtime context frame consumes surface.schemas
   -> update active turn projection
 ```
 
@@ -111,6 +118,11 @@ active TurnExecution
 `CapabilityState.tool_policy` 做工具级裁决。下一轮 prompt 仍通过
 `LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan -> PreparedTurn` 重新投影完整
 `ExecutionContext`。
+
+运行中采用已持久化 AgentFrame revision 时也必须使用同一份 `AssembledToolSurface`。connector
+只接收 `DynAgentTool` replace-set；ContextFrame / turn-start notice / transform_context 使用
+`RuntimeToolSchemaEntry` 渲染工具说明。PiAgent connector 不负责 ToolSchema 文本格式化，原因是
+平台需要在 application 层审计并掌握 Agent 实际收到的能力上下文。
 
 ## PiAgent Bundle Handling
 

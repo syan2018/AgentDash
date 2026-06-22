@@ -40,17 +40,6 @@ import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
-// eslint-disable-next-line react-refresh/only-export-components
-export { collectAllPlatformEvents as collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
-export type {
-  LocalDraftStartAction,
-  PromptTemplate,
-  SessionChatCommand,
-  SessionChatCommandState,
-  SessionChatViewProps,
-} from "./SessionChatViewTypes";
-export { isLocalDraftStartAction } from "./SessionChatViewTypes";
-
 // ─── 工具函数 ──────────────────────────────────────────
 
 // ─── 主组件 ────────────────────────────────────────────

@@ -23,7 +23,9 @@ use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::title_generator::derive_session_title;
-use crate::session::tool_assembly::assemble_tools_for_execution_context;
+use crate::session::tool_assembly::{
+    AssembledToolSurface, assemble_tool_surface_for_execution_context,
+};
 use crate::session::turn_supervisor::TurnSupervisor;
 use crate::session::types::TitleSource;
 use agentdash_application_ports::backend_transport::RelayPromptTransport;
@@ -180,12 +182,12 @@ pub(super) struct TurnPreparationDeps {
 }
 
 impl TurnPreparationDeps {
-    pub(super) async fn assemble_tools(
+    pub(super) async fn assemble_tool_surface(
         &self,
         session_id: &str,
         context: &agentdash_spi::ExecutionContext,
-    ) -> Vec<agentdash_agent_types::DynAgentTool> {
-        assemble_tools_for_execution_context(
+    ) -> AssembledToolSurface {
+        assemble_tool_surface_for_execution_context(
             session_id,
             context,
             self.runtime_tool_provider.as_deref(),

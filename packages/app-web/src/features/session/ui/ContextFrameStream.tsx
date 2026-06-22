@@ -50,7 +50,7 @@ export function ContextFrameStream({
       {expanded && (
         <div className={ST.itemList}>
           {frames.map((frame) => (
-            <FrameStripItem key={frame.id} frame={frame} />
+            <FrameStripItem key={frame.id} frame={frame} defaultOpen={defaultExpanded} />
           ))}
         </div>
       )}
@@ -59,8 +59,14 @@ export function ContextFrameStream({
 }
 
 /** 每个 frame 渲染为一条 strip 行，结构对齐 ToolCallCardShell */
-function FrameStripItem({ frame }: { frame: ContextFrame }) {
-  const [open, setOpen] = useState(false);
+function FrameStripItem({
+  frame,
+  defaultOpen = false,
+}: {
+  frame: ContextFrame;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const token = frameKindToToken(frame.kind);
   const label = frameTabLabel(frame);
 

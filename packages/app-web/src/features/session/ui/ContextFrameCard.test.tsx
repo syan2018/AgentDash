@@ -35,6 +35,20 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("调试信息");
   });
 
+  it("同一卡展示 MCP server delta 与 project MCP ToolSchema", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard frame={readFrame(sampleProjectMcpNotice())} defaultExpanded />,
+    );
+
+    expect(markup).toContain("MCP Servers");
+    expect(markup).toContain("code-analyzer");
+    expect(markup).toContain("Tool Schema");
+    expect(markup).toContain("mcp_code_analyzer_scan_repo");
+    expect(markup).toContain("mcp:code-analyzer");
+    expect(markup).toContain("1 params");
+    expect(markup).toContain("Agent 实际原文");
+  });
+
   it("assignment_context 解析并渲染 ASN token", () => {
     const markup = renderToStaticMarkup(
       <ContextFrameCard frame={readFrame(sampleAssignmentNotice())} defaultExpanded />,
@@ -100,10 +114,10 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("+2");
     expect(markup).toContain("−1");
     expect(markup).toContain("↻1");
-    expect(markup).toContain("provider: copilot");
-    expect(markup).toContain("capability: copilot/config-edit");
-    expect(markup).toContain("provider: workspace");
-    expect(markup).toContain("capability: workspace/config-edit");
+    expect(markup).toContain("copilot");
+    expect(markup).toContain("copilot/config-edit");
+    expect(markup).toContain("workspace");
+    expect(markup).toContain("workspace/config-edit");
     expect(markup).toContain("explicit only");
   });
 
@@ -193,6 +207,53 @@ function sampleNotice(): Record<string, unknown> {
         },
       ],
     };
+}
+
+function sampleProjectMcpNotice(): Record<string, unknown> {
+  return {
+    id: "runtime-context-bootstrap-mcp",
+    kind: "capability_state_delta",
+    source: "runtime_context_update",
+    phase_node: "bootstrap",
+    apply_mode: "initial",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text:
+      "## Tool Schema Delta\n\n### `mcp_code_analyzer_scan_repo`\n\ncapability: `mcp:code-analyzer`；source: `mcp:code-analyzer`；path: `mcp:code-analyzer::scan_repo`\n\n扫描仓库结构\n\n参数说明：\n\n- `root` (required, string): 扫描根目录",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "mcp_server_delta",
+        added_mcp_servers: ["code-analyzer"],
+        removed_mcp_servers: [],
+        changed_mcp_servers: [],
+      },
+      {
+        kind: "tool_schema_delta",
+        added_tools: [
+          {
+            name: "mcp_code_analyzer_scan_repo",
+            description: "扫描仓库结构",
+            parameters_schema: {
+              type: "object",
+              properties: {
+                root: {
+                  type: "string",
+                  description: "扫描根目录",
+                },
+              },
+              required: ["root"],
+            },
+            capability_key: "mcp:code-analyzer",
+            source: "mcp:code-analyzer",
+            tool_path: "mcp:code-analyzer::scan_repo",
+            context_usage_kind: "mcp_tools",
+          },
+        ],
+      },
+    ],
+  };
 }
 
 function sampleAssignmentNotice(): Record<string, unknown> {

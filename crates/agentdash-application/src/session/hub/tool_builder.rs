@@ -14,7 +14,9 @@ use crate::agent_run::AgentRunEffectiveCapabilityService;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::capability_state::project_capability_state_from_frame;
-use crate::session::tool_assembly::assemble_tools_for_execution_context;
+use crate::session::tool_assembly::{
+    AssembledToolSurface, assemble_tool_surface_for_execution_context,
+};
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 
 impl SessionRuntimeInner {
@@ -249,9 +251,11 @@ impl SessionRuntimeInner {
                 ..Default::default()
             },
         };
-        let all_tools = self
-            .assemble_tools_for_execution_context(session_id, &context)
+        let tool_surface = self
+            .assemble_tool_surface_for_execution_context(session_id, &context)
             .await;
+        let all_tools = tool_surface.tools;
+        let all_tool_schemas = tool_surface.schemas;
 
         self.connector
             .update_session_tools(session_id, all_tools.clone())
@@ -285,7 +289,7 @@ impl SessionRuntimeInner {
                     key_delta: agentdash_spi::SetDelta::default(),
                     apply_mode: "persisted_revision_adopted",
                 },
-                &all_tools,
+                &all_tool_schemas,
             )
             .await
             .map_err(|error| {
@@ -304,15 +308,26 @@ impl SessionRuntimeInner {
         Ok(all_tools)
     }
 
+    #[cfg(test)]
     pub(crate) async fn assemble_tools_for_execution_context(
         &self,
         session_id: &str,
         context: &ExecutionContext,
     ) -> Vec<DynAgentTool> {
+        self.assemble_tool_surface_for_execution_context(session_id, context)
+            .await
+            .tools
+    }
+
+    pub(crate) async fn assemble_tool_surface_for_execution_context(
+        &self,
+        session_id: &str,
+        context: &ExecutionContext,
+    ) -> AssembledToolSurface {
         let context = self
             .execution_context_with_agent_run_admission_projection(session_id, context)
             .await;
-        assemble_tools_for_execution_context(
+        assemble_tool_surface_for_execution_context(
             session_id,
             &context,
             self.runtime_tool_provider.as_deref(),

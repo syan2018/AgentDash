@@ -116,4 +116,61 @@ describe("parseContextFrame", () => {
       },
     ]);
   });
+
+  it("解析 MCP server delta 与 project MCP ToolSchema PromptText", () => {
+    const frame = parseContextFrame({
+      id: "ctx-mcp-tool-schema",
+      kind: "capability_state_delta",
+      source: "runtime_context_update",
+      phase_node: "bootstrap",
+      apply_mode: "initial",
+      delivery_status: "queued_for_transform_context",
+      delivery_channel: "turn_start",
+      message_role: "user",
+      rendered_text:
+        "## Tool Schema Delta\n\n### `mcp_code_analyzer_scan_repo`\n\ncapability: `mcp:code-analyzer`；source: `mcp:code-analyzer`；path: `mcp:code-analyzer::scan_repo`",
+      created_at_ms: 123,
+      sections: [
+        {
+          kind: "mcp_server_delta",
+          added_mcp_servers: ["code-analyzer"],
+          removed_mcp_servers: [],
+          changed_mcp_servers: [],
+        },
+        {
+          kind: "tool_schema_delta",
+          added_tools: [
+            {
+              name: "mcp_code_analyzer_scan_repo",
+              description: "扫描仓库结构",
+              parameters_schema: {
+                type: "object",
+                properties: {
+                  root: { type: "string", description: "扫描根目录" },
+                },
+                required: ["root"],
+              },
+              capability_key: "mcp:code-analyzer",
+              source: "mcp:code-analyzer",
+              tool_path: "mcp:code-analyzer::scan_repo",
+              context_usage_kind: "mcp_tools",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(frame?.rendered_text).toContain("mcp_code_analyzer_scan_repo");
+    expect(frame?.rendered_text).toContain("mcp:code-analyzer::scan_repo");
+    expect(frame?.sections.map((section) => section.kind)).toEqual([
+      "mcp_server_delta",
+      "tool_schema_delta",
+    ]);
+    const toolSchema = frame?.sections[1];
+    expect(toolSchema?.kind).toBe("tool_schema_delta");
+    if (toolSchema?.kind === "tool_schema_delta") {
+      expect(toolSchema.added_tools[0]?.source).toBe("mcp:code-analyzer");
+      expect(toolSchema.added_tools[0]?.tool_path).toBe("mcp:code-analyzer::scan_repo");
+    }
+  });
 });

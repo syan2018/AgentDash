@@ -3,10 +3,12 @@
 //! 路径级的屏蔽 / 恢复 / 移除归 `ToolPathDelta`，此处不冗余。
 
 use agentdash_agent_types::{DynAgentTool, ToolDefinition};
+use agentdash_application_ports::mcp_discovery::DiscoveredMcpTool;
 use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeToolSchemaEntry};
 use agentdash_spi::platform::tool_capability::{
-    PlatformMcpScope, ToolDescriptor, ToolSource, platform_tool_descriptors,
+    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT, PlatformMcpScope,
+    ToolDescriptor, ToolSource, platform_tool_descriptors,
 };
 use serde_json::Value;
 
@@ -19,12 +21,11 @@ pub(crate) struct ToolSchemaDimensionDelta {
 }
 
 impl ToolSchemaDimensionDelta {
-    pub fn from_tools_and_state_delta(
-        tools: &[DynAgentTool],
+    pub fn from_schema_entries_and_state_delta(
+        entries: &[RuntimeToolSchemaEntry],
         state_delta: Option<&CapabilityStateDelta>,
     ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
-        let entries = runtime_tool_schema_entries_from_tools(tools);
         let restored_paths = state_delta
             .excluded_tool_paths
             .removed
@@ -38,9 +39,16 @@ impl ToolSchemaDimensionDelta {
             .iter()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
+        let added_or_changed_mcp_servers = state_delta
+            .mcp_servers
+            .added
+            .iter()
+            .chain(state_delta.mcp_servers.changed.iter())
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
 
         let added_tools = entries
-            .into_iter()
+            .iter()
             .filter(|entry| {
                 entry
                     .capability_key
@@ -50,7 +58,9 @@ impl ToolSchemaDimensionDelta {
                         .tool_path
                         .as_ref()
                         .is_some_and(|path| restored_paths.contains(path))
+                    || mcp_schema_matches_server(entry, &added_or_changed_mcp_servers)
             })
+            .cloned()
             .collect::<Vec<_>>();
 
         if added_tools.is_empty() {
@@ -104,6 +114,32 @@ pub(crate) fn runtime_tool_schema_entries_from_tools(
     definitions.sort_by(|left, right| left.name.cmp(&right.name));
     definitions.dedup_by(|left, right| left.name == right.name);
     runtime_tool_schema_entries(definitions)
+}
+
+pub(crate) fn runtime_tool_schema_entries_from_mcp_tools(
+    entries: &[DiscoveredMcpTool],
+) -> Vec<RuntimeToolSchemaEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let metadata = metadata_for_tool(
+                &entry.runtime_name,
+                &tool_runtime_metadata_for_runtime_names(std::iter::once(
+                    entry.runtime_name.as_str(),
+                )),
+            )
+            .unwrap_or_else(|| mcp_runtime_metadata(entry));
+            RuntimeToolSchemaEntry {
+                name: entry.runtime_name.clone(),
+                description: entry.description.clone(),
+                parameters_schema: entry.parameters_schema.clone(),
+                capability_key: Some(metadata.capability_key),
+                context_usage_kind: Some(metadata.context_usage_kind.to_string()),
+                source: Some(metadata.source),
+                tool_path: Some(metadata.tool_path),
+            }
+        })
+        .collect()
 }
 
 fn format_tool_schema_entry(entry: &RuntimeToolSchemaEntry) -> String {
@@ -361,7 +397,15 @@ fn tool_runtime_metadata(definitions: &[ToolDefinition]) -> Vec<ToolRuntimeMetad
         .iter()
         .map(|definition| definition.name.as_str())
         .collect::<std::collections::BTreeSet<_>>();
+    tool_runtime_metadata_for_runtime_names(runtime_names)
+}
 
+fn tool_runtime_metadata_for_runtime_names<'a>(
+    runtime_names: impl IntoIterator<Item = &'a str>,
+) -> Vec<ToolRuntimeMetadata> {
+    let runtime_names = runtime_names
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
     platform_tool_descriptors()
         .into_iter()
         .flat_map(|descriptor| {
@@ -377,6 +421,46 @@ fn tool_runtime_metadata(definitions: &[ToolDefinition]) -> Vec<ToolRuntimeMetad
         })
         .filter(|metadata| runtime_names.contains(metadata.runtime_name.as_str()))
         .collect()
+}
+
+fn mcp_runtime_metadata(entry: &DiscoveredMcpTool) -> ToolRuntimeMetadata {
+    let server_name = agent_facing_mcp_server_name(&entry.server_name);
+    let capability_key = capability_key_for_mcp_server_name(&server_name);
+    ToolRuntimeMetadata {
+        runtime_name: entry.runtime_name.clone(),
+        capability_key: capability_key.clone(),
+        source: format!("mcp:{server_name}"),
+        tool_path: format!("{capability_key}::{}", entry.tool_name),
+        context_usage_kind: context_usage_kind::MCP_TOOLS,
+    }
+}
+
+fn mcp_schema_matches_server(
+    entry: &RuntimeToolSchemaEntry,
+    servers: &std::collections::BTreeSet<String>,
+) -> bool {
+    if servers.is_empty() {
+        return false;
+    }
+    if entry.context_usage_kind.as_deref() == Some(context_usage_kind::MCP_TOOLS)
+        && entry.capability_key.as_ref().is_some_and(|capability| {
+            servers
+                .iter()
+                .any(|server| capability_key_for_mcp_server_name(server) == *capability)
+        })
+    {
+        return true;
+    }
+    let Some(source) = entry.source.as_deref() else {
+        return false;
+    };
+    let Some(server_name) = source.strip_prefix("mcp:") else {
+        return false;
+    };
+    servers.contains(server_name)
+        || servers
+            .iter()
+            .any(|server| agent_facing_mcp_server_name(server) == server_name)
 }
 
 fn tool_source_context_usage_kind(source: &ToolSource) -> &'static str {
@@ -423,6 +507,30 @@ fn platform_mcp_runtime_name(scope: PlatformMcpScope, tool_name: &str) -> String
     )
 }
 
+fn capability_key_for_mcp_server_name(server_name: &str) -> String {
+    match agent_facing_mcp_server_name(server_name).as_str() {
+        "agentdash-relay-tools" => CAP_RELAY_MANAGEMENT.to_string(),
+        "agentdash-story-tools" => CAP_STORY_MANAGEMENT.to_string(),
+        "agentdash-workflow-tools" => CAP_WORKFLOW_MANAGEMENT.to_string(),
+        other => format!("mcp:{other}"),
+    }
+}
+
+fn agent_facing_mcp_server_name(server_name: &str) -> String {
+    const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
+        ("agentdash-story-tools-", "agentdash-story-tools"),
+        ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
+    ];
+
+    for (prefix, stable_name) in PLATFORM_SCOPED_PREFIXES {
+        if server_name.starts_with(prefix) {
+            return (*stable_name).to_string();
+        }
+    }
+
+    server_name.to_string()
+}
+
 fn sanitize_identifier(input: &str) -> String {
     let sanitized = input
         .chars()
@@ -464,5 +572,55 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
         PlatformMcpScope::Relay => "relay",
         PlatformMcpScope::Story => "story",
         PlatformMcpScope::Workflow => "workflow",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_spi::hooks::ContextFrameSection;
+
+    use super::*;
+
+    #[test]
+    fn platform_mcp_schema_matches_changed_runtime_server_by_capability_key() {
+        let state_delta = CapabilityStateDelta {
+            mcp_servers: agentdash_spi::NamedEntityDelta {
+                added: Vec::new(),
+                removed: Vec::new(),
+                changed: vec!["agentdash-workflow-tools-8de613e7".to_string()],
+            },
+            ..CapabilityStateDelta::default()
+        };
+        let entries = vec![RuntimeToolSchemaEntry {
+            name: "mcp_agentdash_workflow_tools_get_lifecycle".to_string(),
+            description: "读取 Lifecycle".to_string(),
+            parameters_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "run_id": { "type": "string" }
+                }
+            }),
+            capability_key: Some(CAP_WORKFLOW_MANAGEMENT.to_string()),
+            source: Some("platform_mcp:workflow".to_string()),
+            tool_path: Some("workflow_management::get_lifecycle".to_string()),
+            context_usage_kind: Some(context_usage_kind::MCP_TOOLS.to_string()),
+        }];
+
+        let delta = ToolSchemaDimensionDelta::from_schema_entries_and_state_delta(
+            &entries,
+            Some(&state_delta),
+        )
+        .expect("platform MCP schema should match changed server");
+
+        match delta.to_section() {
+            ContextFrameSection::ToolSchemaDelta { added_tools } => {
+                assert_eq!(added_tools.len(), 1);
+                assert_eq!(
+                    added_tools[0].source.as_deref(),
+                    Some("platform_mcp:workflow")
+                );
+            }
+            other => panic!("unexpected section: {other:?}"),
+        }
     }
 }

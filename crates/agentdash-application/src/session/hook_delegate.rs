@@ -1800,6 +1800,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transform_context_injects_project_mcp_tool_schema_prompt_text() {
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+            "sess-hook".to_string(),
+            Arc::new(NoopExecutionHookProvider),
+            AgentFrameHookSnapshot {
+                runtime_adapter_session_id: "sess-hook".to_string(),
+                ..AgentFrameHookSnapshot::default()
+            },
+        ));
+        hook_runtime.enqueue_turn_start_notice(HookTurnStartNotice {
+            id: "notice-mcp-schema".to_string(),
+            created_at_ms: 1,
+            source: RuntimeEventSource::RuntimeContextUpdate,
+            content: [
+                "## Tool Schema Delta",
+                "### `mcp_code_analyzer_scan_repo`",
+                "capability: `mcp:code-analyzer`；source: `mcp:code-analyzer`；path: `mcp:code-analyzer::scan_repo`",
+                "扫描仓库结构",
+                "参数说明：",
+                "- `root` (required, string): 扫描根目录",
+            ]
+            .join("\n\n"),
+            context_frame: None,
+        });
+        let delegate = HookRuntimeDelegate::new(hook_runtime);
+
+        let output = delegate
+            .transform_context(
+                agentdash_spi::TransformContextInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![AgentMessage::user("hello")],
+                        message_refs: vec![],
+                        tools: vec![],
+                    },
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("transform_context should succeed");
+
+        let injected_text = output
+            .steering_messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::User { content, .. } => Some(
+                    content
+                        .iter()
+                        .filter_map(|part| part.extract_text())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(injected_text.contains("notice-mcp-schema"));
+        assert!(injected_text.contains("mcp_code_analyzer_scan_repo"));
+        assert!(injected_text.contains("source: `mcp:code-analyzer`"));
+        assert!(injected_text.contains("path: `mcp:code-analyzer::scan_repo`"));
+        assert!(injected_text.contains("`root` (required, string)"));
+    }
+
+    #[tokio::test]
     async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),

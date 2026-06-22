@@ -97,7 +97,9 @@ impl TurnPreparer {
         );
         let mut context = launch_plan.context;
 
-        context.turn.assembled_tools = deps.assemble_tools(&session_id, &context).await;
+        let assembled_tool_surface = deps.assemble_tool_surface(&session_id, &context).await;
+        let assembled_tool_schemas = assembled_tool_surface.schemas;
+        context.turn.assembled_tools = assembled_tool_surface.tools;
 
         let include_connector_startup_context = should_include_connector_startup_context(
             launch_plan.summary.launch_path,
@@ -186,7 +188,7 @@ impl TurnPreparer {
                         before_state: base_capability_state,
                         final_capability_state: &capability_state,
                         transitions: &launch_plan.runtime_commands.pending_capability_transitions,
-                        tools: &context.turn.assembled_tools,
+                        tool_schemas: &assembled_tool_schemas,
                     },
                 )
                 .await
@@ -238,7 +240,7 @@ impl TurnPreparer {
             let frame = build_initial_capability_state_frame(
                 &capability_state,
                 &capability_keys,
-                &context.turn.assembled_tools,
+                &assembled_tool_schemas,
             );
             accepted_context_frames_to_emit.push(frame.clone());
             owner_bootstrap_frames.push(frame);

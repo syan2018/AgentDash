@@ -124,6 +124,17 @@ cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
 
 `PersistedSessionEvent.notification` 字段即 `BackboneEnvelope`。`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是从 envelope 提取的便利索引字段。
 
+Persisted `BackboneEnvelope` 必须表达模型和前端实际消费的 bounded fact。工具、MCP、shell、
+terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingService` 在 append/broadcast 前
+仍测量 envelope size，并对已知 oversized output 字段写入小型
+`session_eventing_append_guard` diagnostic。该 guard 保留 `session_id`、`turn_id`、
+`entry_index`、item id、event kind 等索引事实，原因是 Postgres、NDJSON backlog、frontend
+`rawEvents` 和后续 projection 都共享这条持久化事实流。
+
+工具大结果的正文读取不属于 Backbone 事件合同。事件中只保留 bounded preview、
+`details.truncation` 与 `lifecycle_path`；读取 `lifecycle_path` 必须通过 lifecycle VFS + `fs_read`
+的受控路径完成，读取失败返回有界状态，而不是把原始 body 写回 `SessionEvent`。
+
 ## NDJSON Session Stream
 
 `GET /api/acp/sessions/{id}/stream/ndjson`
@@ -195,3 +206,5 @@ AgentDashThreadItem
 - `threadItemKind.ts`：kind 元数据（badge/label/summaryVerb）的单一来源。
 - Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的走 `GenericJsonBody` 兜底。
 - Codex 已有 item 直接使用 Codex Protocol type；AgentDash 仅在 Codex 不足时通过 `AgentDashNativeThreadItem` 做加法扩展。
+- Tool / command body 展示裁切摘要时优先消费 bounded preview、`details.truncation`、shell truncation
+  details 或文本中的 `lifecycle_path` marker；完整输出展开需要走 lifecycle VFS 读取面。

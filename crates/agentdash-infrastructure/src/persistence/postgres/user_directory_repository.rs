@@ -1,5 +1,7 @@
 use agentdash_domain::DomainError;
-use agentdash_domain::identity::{Group, User, UserDirectoryRepository};
+use agentdash_domain::identity::{
+    DirectorySearchOptions, DirectorySearchResult, Group, User, UserDirectoryRepository,
+};
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -49,6 +51,27 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(user.is_admin)
         .bind(&user.provider)
         .bind(user.created_at)
+        .bind(Utc::now())
+        .execute(&self.pool)
+        .await
+        .map_err(super::db_err)?;
+
+        Ok(())
+    }
+
+    async fn upsert_group(&self, group: &Group) -> Result<(), DomainError> {
+        sqlx::query(
+            r#"
+            INSERT INTO groups (group_id, display_name, created_at, updated_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT(group_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&group.group_id)
+        .bind(&group.display_name)
+        .bind(group.created_at)
         .bind(Utc::now())
         .execute(&self.pool)
         .await
@@ -117,6 +140,88 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    async fn search_users(
+        &self,
+        options: DirectorySearchOptions,
+    ) -> Result<DirectorySearchResult<User>, DomainError> {
+        let limit = options.limit.max(1);
+        let offset = parse_offset_cursor(options.cursor.as_deref());
+        let pattern = search_pattern(options.query.as_deref());
+        let rows = sqlx::query_as::<_, UserRow>(
+            r#"
+            SELECT user_id, subject, auth_mode, display_name, email, avatar_url, is_admin, provider, created_at, updated_at
+            FROM users
+            WHERE (
+                $1::text IS NULL
+                OR lower(user_id) LIKE $1
+                OR lower(subject) LIKE $1
+                OR lower(coalesce(display_name, '')) LIKE $1
+                OR lower(coalesce(email, '')) LIKE $1
+            )
+            ORDER BY updated_at DESC, user_id ASC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(pattern)
+        .bind((limit + 1) as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(super::db_err)?;
+
+        let has_next = rows.len() > limit;
+        let items = rows
+            .into_iter()
+            .take(limit)
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(DirectorySearchResult {
+            next_cursor: has_next.then(|| (offset + limit).to_string()),
+            items,
+        })
+    }
+
+    async fn search_groups(
+        &self,
+        options: DirectorySearchOptions,
+    ) -> Result<DirectorySearchResult<Group>, DomainError> {
+        let limit = options.limit.max(1);
+        let offset = parse_offset_cursor(options.cursor.as_deref());
+        let pattern = search_pattern(options.query.as_deref());
+        let rows = sqlx::query_as::<_, GroupRow>(
+            r#"
+            SELECT group_id, display_name, created_at, updated_at
+            FROM groups
+            WHERE (
+                $1::text IS NULL
+                OR lower(group_id) LIKE $1
+                OR lower(coalesce(display_name, '')) LIKE $1
+            )
+            ORDER BY updated_at DESC, group_id ASC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(pattern)
+        .bind((limit + 1) as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(super::db_err)?;
+
+        let has_next = rows.len() > limit;
+        let items = rows
+            .into_iter()
+            .take(limit)
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(DirectorySearchResult {
+            next_cursor: has_next.then(|| (offset + limit).to_string()),
+            items,
+        })
     }
 
     async fn list_groups_for_user(&self, user_id: &str) -> Result<Vec<Group>, DomainError> {
@@ -192,6 +297,19 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
 
         Ok(())
     }
+}
+
+fn parse_offset_cursor(cursor: Option<&str>) -> usize {
+    cursor
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+fn search_pattern(query: Option<&str>) -> Option<String> {
+    query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_ascii_lowercase()))
 }
 
 #[derive(sqlx::FromRow)]

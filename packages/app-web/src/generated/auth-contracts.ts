@@ -13,9 +13,23 @@ export type AuthStartResponse = { auth_url: string, state: string, expires_at_ep
 
 export type CurrentUser = { auth_mode: AuthMode, user_id: string, subject: string, display_name?: string, email?: string, avatar_url?: string, groups: Array<AuthGroup>, is_admin: boolean, provider?: string, extra: JsonValue, };
 
-export type DirectoryGroup = { group_id: string, display_name?: string, created_at: string, updated_at: string, };
+export type DirectoryGroup = { group_id: string, display_name?: string, path?: string, provider?: string, source?: string, created_at: string, updated_at: string, };
 
-export type DirectoryUser = { user_id: string, subject: string, auth_mode: string, display_name?: string, email?: string, avatar_url?: string, is_admin: boolean, provider?: string, created_at: string, updated_at: string, };
+export type DirectoryGroupResolveResponse = { item: DirectoryGroup, source?: string, is_projection_only: boolean, };
+
+export type DirectoryGroupSearchResponse = { items: Array<DirectoryGroup>, next_cursor?: string, source?: string, is_projection_only: boolean, };
+
+export type DirectoryResolveRequest = { key: string, };
+
+export type DirectoryTreeNode = { group_id: string, display_name?: string, path?: string, has_children: boolean, children?: Array<DirectoryTreeNode>, provider?: string, source?: string, };
+
+export type DirectoryTreeResponse = { items: Array<DirectoryTreeNode>, next_cursor?: string, source?: string, is_projection_only: boolean, };
+
+export type DirectoryUser = { user_id: string, subject: string, auth_mode: string, display_name?: string, email?: string, avatar_url?: string, is_admin: boolean, provider?: string, source?: string, created_at: string, updated_at: string, };
+
+export type DirectoryUserResolveResponse = { item: DirectoryUser, source?: string, is_projection_only: boolean, };
+
+export type DirectoryUserSearchResponse = { items: Array<DirectoryUser>, next_cursor?: string, source?: string, is_projection_only: boolean, };
 
 export type LoginCredentials = { username: string, password: string, extra?: JsonValue, };
 

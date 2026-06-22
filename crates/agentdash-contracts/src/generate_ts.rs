@@ -15,7 +15,10 @@ use agentdash_contracts::agent_run_mailbox::{
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
-    DirectoryUser, LoginCredentials, LoginFieldDescriptor, LoginMetadata, LoginMode, LoginResponse,
+    DirectoryGroupResolveResponse, DirectoryGroupSearchResponse, DirectoryResolveRequest,
+    DirectoryTreeNode, DirectoryTreeResponse, DirectoryUser, DirectoryUserResolveResponse,
+    DirectoryUserSearchResponse, LoginCredentials, LoginFieldDescriptor, LoginMetadata, LoginMode,
+    LoginResponse,
 };
 use agentdash_contracts::backend::{
     BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
@@ -237,6 +240,13 @@ fn main() {
             export_all::<LoginResponse>(dir);
             export_all::<DirectoryUser>(dir);
             export_all::<DirectoryGroup>(dir);
+            export_all::<DirectoryResolveRequest>(dir);
+            export_all::<DirectoryTreeNode>(dir);
+            export_all::<DirectoryUserSearchResponse>(dir);
+            export_all::<DirectoryGroupSearchResponse>(dir);
+            export_all::<DirectoryTreeResponse>(dir);
+            export_all::<DirectoryUserResolveResponse>(dir);
+            export_all::<DirectoryGroupResolveResponse>(dir);
         },
     );
 

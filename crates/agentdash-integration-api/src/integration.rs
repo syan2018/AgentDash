@@ -10,6 +10,7 @@ use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
+use crate::directory::IdentityDirectoryProvider;
 use crate::external::ExternalServiceClient;
 pub use agentdash_domain::shared_library::{IntegrationLibraryAssetSeed, LibraryAssetType};
 
@@ -79,6 +80,14 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 同一时刻只能有一个活跃的 `AuthProvider`；若多个集成均返回 `Some`，
     /// 宿主应在启动阶段直接失败，而不是隐式覆盖。
     fn auth_provider(&self) -> Option<Box<dyn AuthProvider>> {
+        None
+    }
+
+    /// 注册身份目录 Provider。
+    ///
+    /// 目录 Provider 只负责把外部企业目录适配成通用 user/group/tree/resolve 能力。
+    /// Project grants、业务权限判断和 projection 持久化仍由宿主负责。
+    fn identity_directory_provider(&self) -> Option<Box<dyn IdentityDirectoryProvider>> {
         None
     }
 

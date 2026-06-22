@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use agentdash_application::shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
-    AgentDashIntegration, AuthProvider, LibraryAssetType, MarketplaceSourceDescriptor,
-    MarketplaceSourceProvider, SkillDiscoveryProvider,
+    AgentDashIntegration, AuthProvider, IdentityDirectoryProvider, LibraryAssetType,
+    MarketplaceSourceDescriptor, MarketplaceSourceProvider, SkillDiscoveryProvider,
 };
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
@@ -24,6 +24,7 @@ pub(crate) struct HostIntegrationRegistration {
     pub vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
     pub connectors: Vec<Arc<dyn AgentConnector>>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
+    pub identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -42,6 +43,13 @@ pub(crate) enum IntegrationRegistrationError {
         "检测到多个 AuthProvider：`{first_integration}` 与 `{second_integration}`。当前宿主只允许注册一个认证集成"
     )]
     DuplicateAuthProvider {
+        first_integration: String,
+        second_integration: String,
+    },
+    #[error(
+        "检测到多个 IdentityDirectoryProvider：`{first_integration}` 与 `{second_integration}`。当前宿主只允许注册一个身份目录集成"
+    )]
+    DuplicateIdentityDirectoryProvider {
         first_integration: String,
         second_integration: String,
     },
@@ -87,6 +95,8 @@ pub(crate) fn collect_integration_registration(
     let mut connectors = Vec::new();
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_integration: Option<String> = None;
+    let mut identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>> = None;
+    let mut identity_directory_provider_integration: Option<String> = None;
     let mut executor_owners: HashMap<String, String> = HashMap::new();
     let mut mount_providers = Vec::new();
     let mut marketplace_source_providers = Vec::new();
@@ -223,8 +233,21 @@ pub(crate) fn collect_integration_registration(
                     second_integration: integration_name,
                 });
             }
-            auth_provider_integration = Some(integration_name);
+            auth_provider_integration = Some(integration_name.clone());
             auth_provider = Some(Arc::from(provider));
+        }
+
+        if let Some(provider) = integration.identity_directory_provider() {
+            if let Some(first_integration) = identity_directory_provider_integration {
+                return Err(
+                    IntegrationRegistrationError::DuplicateIdentityDirectoryProvider {
+                        first_integration,
+                        second_integration: integration_name,
+                    },
+                );
+            }
+            identity_directory_provider_integration = Some(integration_name);
+            identity_directory_provider = Some(Arc::from(provider));
         }
     }
 
@@ -232,6 +255,7 @@ pub(crate) fn collect_integration_registration(
         vfs_providers,
         connectors,
         auth_provider,
+        identity_directory_provider,
         mount_providers,
         marketplace_source_providers,
         skill_discovery_providers,

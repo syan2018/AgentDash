@@ -30,8 +30,8 @@ pub use agentdash_spi::platform::marketplace_source;
 pub use agentdash_spi::{
     DiscoveredSkill, RoutineTriggerProvider, SkillContextExposure, SkillDiscoveryCluster,
     SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError, SkillDiscoveryOutput,
-    SkillDiscoveryOwnerKind, SkillDiscoveryProvider, SkillDiscoveryUserContext, SourceResolver,
-    VfsDiscoveryProvider,
+    SkillDiscoveryOwnerKind, SkillDiscoveryProvider, SkillDiscoveryUserContext,
+    SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver, VfsDiscoveryProvider,
 };
 pub use agentdash_spi::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,

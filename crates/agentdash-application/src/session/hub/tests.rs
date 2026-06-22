@@ -53,7 +53,10 @@ use super::super::types::{
     BackendSelectionInput, BackendSelectionInputMode, EFFECT_TYPE_APPLY_VFS_OVERLAY,
     PendingCapabilityStateTransition, RuntimeCapabilityTransition, UserPromptInput,
 };
-use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
+use super::super::{
+    AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+    SessionToolResultCache,
+};
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::session::SetToolAccessEffect;
@@ -1340,6 +1343,71 @@ impl AgentConnector for CapturingConnector {
                 .unwrap_or_default(),
             default_mount_id: vfs.and_then(|vfs| vfs.default_mount_id),
         });
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn approve_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+    async fn reject_tool_call(
+        &self,
+        _session_id: &str,
+        _tool_call_id: &str,
+        _reason: Option<String>,
+    ) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct RepositoryRestoreCapturingConnector {
+    restored_messages: Arc<TokioMutex<Vec<agentdash_spi::AgentMessage>>>,
+}
+
+#[async_trait::async_trait]
+impl AgentConnector for RepositoryRestoreCapturingConnector {
+    fn connector_id(&self) -> &'static str {
+        "repository-restore-capturing"
+    }
+    fn connector_type(&self) -> agentdash_spi::ConnectorType {
+        agentdash_spi::ConnectorType::LocalExecutor
+    }
+    fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+        agentdash_spi::ConnectorCapabilities::default()
+    }
+    fn supports_repository_restore(&self, _executor: &str) -> bool {
+        true
+    }
+    fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+        Vec::new()
+    }
+    async fn discover_options_stream(
+        &self,
+        _executor: &str,
+        _working_dir: Option<PathBuf>,
+    ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        Ok(Box::pin(stream::empty()))
+    }
+    async fn prompt(
+        &self,
+        _session_id: &str,
+        _follow_up_session_id: Option<&str>,
+        _prompt: &PromptPayload,
+        context: agentdash_spi::ExecutionContext,
+    ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+        let messages = context
+            .turn
+            .restored_session_state
+            .as_ref()
+            .map(|state| state.messages.clone())
+            .unwrap_or_default();
+        *self.restored_messages.lock().await = messages;
         Ok(Box::pin(stream::empty()))
     }
     async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
@@ -2902,6 +2970,49 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
     }
 }
 
+#[tokio::test]
+async fn projected_transcript_without_head_uses_persisted_bounded_tool_result() {
+    let persistence = Arc::new(MemorySessionPersistence::default());
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+        Arc::new(SessionStartAwareConnector::default()),
+        None,
+        persistence,
+    );
+    let session = hub.create_session("test").await.expect("create session");
+    let cache = SessionToolResultCache::default();
+    seed_unprojected_large_tool_body(&cache, &session.id);
+
+    hub.inject_notification(
+        &session.id,
+        inject_user_message_envelope(&session.id, "t-large", 0, "run large tool"),
+    )
+    .await
+    .expect("inject user notification");
+    hub.inject_notification(
+        &session.id,
+        bounded_large_tool_completed_envelope(&session.id, "t-large"),
+    )
+    .await
+    .expect("inject bounded tool notification");
+
+    let transcript = hub
+        .build_projected_transcript(&session.id)
+        .await
+        .expect("transcript should build");
+    let messages = transcript.clone().into_messages();
+    let rendered = rendered_messages(&messages);
+
+    assert!(rendered.contains("bounded preview only"));
+    assert!(rendered.contains(LARGE_OUTPUT_LIFECYCLE_PATH));
+    assert!(!rendered.contains(LARGE_OUTPUT_SENTINEL));
+
+    let frame = super::super::continuation::build_continuation_context_frame(&transcript, None)
+        .expect("continuation context should exist");
+    assert!(frame.rendered_text.contains("bounded preview only"));
+    assert!(frame.rendered_text.contains(LARGE_OUTPUT_LIFECYCLE_PATH));
+    assert!(!frame.rendered_text.contains(LARGE_OUTPUT_SENTINEL));
+}
+
 fn inject_user_message_envelope(
     session_id: &str,
     turn_id: &str,
@@ -2971,6 +3082,72 @@ fn inject_session_meta_envelope(
         source,
     )
     .with_turn_id(turn_id)
+}
+
+const LARGE_OUTPUT_SENTINEL: &str = "AGENTDASH_WP6_RESULT_TXT_BODY_SENTINEL";
+const LARGE_OUTPUT_ITEM_ID: &str = "t-large:1:tool-large";
+const LARGE_OUTPUT_LIFECYCLE_PATH: &str =
+    "lifecycle://session/tool-results/t-large:1:tool-large/result.txt";
+
+fn bounded_large_tool_preview() -> String {
+    format!(
+        "[tool result truncated]\nlifecycle_path: {LARGE_OUTPUT_LIFECYCLE_PATH}\npolicy: head_tail\n\nbounded preview only"
+    )
+}
+
+fn bounded_large_tool_completed_envelope(session_id: &str, turn_id: &str) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
+    let item = codex::ThreadItem::DynamicToolCall {
+        id: LARGE_OUTPUT_ITEM_ID.to_string(),
+        namespace: None,
+        tool: "large_fixture_tool".to_string(),
+        arguments: serde_json::json!({ "mode": "bounded" }),
+        status: codex::DynamicToolCallStatus::Completed,
+        content_items: Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+            text: bounded_large_tool_preview(),
+        }]),
+        success: Some(true),
+        duration_ms: None,
+    };
+    BackboneEnvelope::new(
+        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            item,
+            session_id.to_string(),
+            turn_id.to_string(),
+        )),
+        session_id.to_string(),
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: Some(1),
+    })
+}
+
+fn seed_unprojected_large_tool_body(cache: &SessionToolResultCache, session_id: &str) {
+    let body = format!("cache-only body prefix {LARGE_OUTPUT_SENTINEL} cache-only body suffix");
+    cache.put_text(session_id, LARGE_OUTPUT_ITEM_ID, body.clone(), body.len());
+}
+
+fn rendered_messages(messages: &[agentdash_spi::AgentMessage]) -> String {
+    messages
+        .iter()
+        .map(|message| match message {
+            agentdash_spi::AgentMessage::User { content, .. }
+            | agentdash_spi::AgentMessage::Assistant { content, .. }
+            | agentdash_spi::AgentMessage::ToolResult { content, .. } => content
+                .iter()
+                .filter_map(agentdash_spi::ContentPart::extract_text)
+                .collect::<Vec<_>>()
+                .join(""),
+            agentdash_spi::AgentMessage::CompactionSummary { summary, .. } => summary.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn context_compaction_completed_envelope(
@@ -3277,6 +3454,91 @@ async fn continuation_context_frame_uses_compacted_projection() {
     assert!(frame.rendered_text.contains("保留的新历史"));
     assert!(!frame.rendered_text.contains("第一段旧历史"));
     assert!(!frame.rendered_text.contains("第二段旧历史"));
+}
+
+#[tokio::test]
+async fn projected_transcript_with_head_uses_bounded_suffix_tool_result() {
+    let persistence = Arc::new(MemorySessionPersistence::default());
+    let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+        Arc::new(SessionStartAwareConnector::default()),
+        None,
+        persistence,
+    );
+    let session = hub.create_session("test").await.expect("create session");
+    let cache = SessionToolResultCache::default();
+    seed_unprojected_large_tool_body(&cache, &session.id);
+
+    for (turn_id, entry_index, text) in [
+        ("t-1", 0_u32, "第一段旧历史"),
+        ("t-2", 0_u32, "第二段旧历史"),
+        ("t-3", 0_u32, "保留的新历史"),
+    ] {
+        hub.inject_notification(
+            &session.id,
+            inject_user_message_envelope(&session.id, turn_id, entry_index, text),
+        )
+        .await
+        .expect("inject user notification");
+    }
+
+    commit_test_compaction_projection(&hub, &session.id, "压缩后的历史摘要", 38_000).await;
+    hub.inject_notification(
+        &session.id,
+        bounded_large_tool_completed_envelope(&session.id, "t-large"),
+    )
+    .await
+    .expect("inject bounded suffix tool notification");
+
+    let transcript = hub
+        .build_projected_transcript(&session.id)
+        .await
+        .expect("transcript should build");
+    let messages = transcript.into_messages();
+    let rendered = rendered_messages(&messages);
+
+    assert!(rendered.contains("压缩后的历史摘要"));
+    assert!(rendered.contains("bounded preview only"));
+    assert!(rendered.contains(LARGE_OUTPUT_LIFECYCLE_PATH));
+    assert!(!rendered.contains(LARGE_OUTPUT_SENTINEL));
+    assert!(!rendered.contains("第一段旧历史"));
+    assert!(!rendered.contains("第二段旧历史"));
+}
+
+#[tokio::test]
+async fn repository_rehydrate_restored_messages_use_bounded_tool_result() {
+    let connector = Arc::new(RepositoryRestoreCapturingConnector::default());
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), connector.clone(), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
+    let session = hub.create_session("test").await.expect("create session");
+    attach_test_lifecycle_frame(&hub, &session.id).await;
+    let cache = SessionToolResultCache::default();
+    seed_unprojected_large_tool_body(&cache, &session.id);
+
+    hub.inject_notification(
+        &session.id,
+        inject_user_message_envelope(&session.id, "t-large", 0, "run large tool"),
+    )
+    .await
+    .expect("inject user notification");
+    hub.inject_notification(
+        &session.id,
+        bounded_large_tool_completed_envelope(&session.id, "t-large"),
+    )
+    .await
+    .expect("inject bounded tool notification");
+
+    hub.start_prompt(&session.id, simple_prompt_request("continue"))
+        .await
+        .expect("prompt should start");
+
+    let restored = connector.restored_messages.lock().await.clone();
+    let rendered = rendered_messages(&restored);
+
+    assert!(!restored.is_empty());
+    assert!(rendered.contains("bounded preview only"));
+    assert!(rendered.contains(LARGE_OUTPUT_LIFECYCLE_PATH));
+    assert!(!rendered.contains(LARGE_OUTPUT_SENTINEL));
 }
 
 #[tokio::test]

@@ -73,7 +73,7 @@ struct LiveOutputEventBudget {
 impl LiveOutputEventBudget {
     fn new(session_max_bytes: usize) -> Self {
         Self {
-            max_bytes: session_max_bytes.min(LIVE_OUTPUT_EVENT_MAX_BYTES).max(1),
+            max_bytes: session_max_bytes.clamp(1, LIVE_OUTPUT_EVENT_MAX_BYTES),
             emitted_bytes: 0,
             omitted_bytes: 0,
             omitted_chunks: 0,

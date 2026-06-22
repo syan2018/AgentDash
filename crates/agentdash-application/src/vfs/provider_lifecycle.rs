@@ -1034,7 +1034,7 @@ async fn list_session_terminal_entries(
     journey: &LifecycleJourneyProjection,
     session_id: &str,
     display_root: &str,
-    recursive: bool,
+    _recursive: bool,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let mut metadata = journey
         .terminal_metadata_entries(session_id)
@@ -1052,11 +1052,7 @@ async fn list_session_terminal_entries(
             let log_entry =
                 RuntimeFileEntry::file(format!("{display_root}/{}.log", entry.terminal_id))
                     .as_virtual();
-            if recursive {
-                vec![metadata_entry, log_entry]
-            } else {
-                vec![metadata_entry, log_entry]
-            }
+            vec![metadata_entry, log_entry]
         })
         .collect())
 }

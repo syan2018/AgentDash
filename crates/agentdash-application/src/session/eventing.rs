@@ -1384,6 +1384,27 @@ mod tests {
         })
     }
 
+    fn oversized_terminal_output_envelope(session_id: &str, sentinel: &str) -> BackboneEnvelope {
+        let huge_output = format!(
+            "{}{}{}",
+            sentinel,
+            "t".repeat(SESSION_EVENT_APPEND_GUARD_MAX_BYTES + 16 * 1024),
+            sentinel
+        );
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::TerminalOutput {
+                terminal_id: "term-large".to_string(),
+                data: huge_output,
+            }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-terminal".to_string()),
+            entry_index: Some(3),
+        })
+    }
+
     #[tokio::test]
     async fn source_session_title_projects_to_session_meta() {
         let session_id = "sess-source-title";
@@ -1653,6 +1674,51 @@ mod tests {
             serde_json::to_string(&broadcasted.notification).expect("serialize broadcast");
         assert!(!broadcast_json.contains(sentinel));
         assert!(broadcast_json.contains("session_eventing_append_guard"));
+    }
+
+    #[tokio::test]
+    async fn append_guard_bounds_oversized_terminal_output_before_store_and_backlog() {
+        let session_id = "sess-append-guard-terminal";
+        let sentinel = "SENTINEL_TERMINAL_OUTPUT_SHOULD_NOT_PERSIST";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                oversized_terminal_output_envelope(session_id, sentinel),
+            )
+            .await
+            .expect("persist oversized terminal event");
+
+        let persisted_json =
+            serde_json::to_string(&persisted.notification).expect("serialize persisted event");
+        assert!(
+            persisted_json.len() < SESSION_EVENT_APPEND_GUARD_MAX_BYTES,
+            "persisted terminal event should be bounded, got {} bytes",
+            persisted_json.len()
+        );
+        assert!(!persisted_json.contains(sentinel));
+        assert!(persisted_json.contains("session_eventing_append_guard"));
+        assert_eq!(persisted.session_update_type, "platform_event");
+        assert_eq!(persisted.turn_id.as_deref(), Some("turn-terminal"));
+        assert_eq!(persisted.entry_index, Some(3));
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert_eq!(backlog.backlog.len(), 1);
+        let backlog_json =
+            serde_json::to_string(&backlog.backlog[0].notification).expect("serialize backlog");
+        assert!(!backlog_json.contains(sentinel));
+        assert!(backlog_json.contains("session_eventing_append_guard"));
     }
 
     #[tokio::test]

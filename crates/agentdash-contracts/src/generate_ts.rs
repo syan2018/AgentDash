@@ -22,8 +22,8 @@ use agentdash_contracts::backend::{
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
     BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
     BackendWorkspaceInventoryResponse, BackendWorkspaceInventorySource,
-    BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
-    ProjectBackendAccessMode, ProjectBackendAccessResponse, ProjectBackendAccessStatus,
+    BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, ProjectBackendAccessMode,
+    ProjectBackendAccessResponse, ProjectBackendAccessStatus,
     RegisterBackendWorkspaceInventoryRequest, RuntimeHealthStatus,
     UpdateProjectBackendAccessRequest,
 };
@@ -382,7 +382,6 @@ fn main() {
             export_all::<BackendWorkspaceInventoryStatus>(dir);
             export_all::<BackendWorkspaceInventorySource>(dir);
             export_all::<BackendWorkspaceInventoryResponse>(dir);
-            export_all::<InventoryRefreshResponse>(dir);
             export_all::<RegisterBackendWorkspaceInventoryRequest>(dir);
         },
     );

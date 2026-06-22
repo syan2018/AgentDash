@@ -1,5 +1,6 @@
 mod entity;
 mod repository;
+mod runtime_anchor;
 
 pub use entity::{
     BackendConfig, BackendExecutionLease, BackendExecutionLeaseState,
@@ -12,4 +13,8 @@ pub use entity::{
 pub use repository::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
     ProjectBackendAccessRepository, RuntimeHealthRepository,
+};
+pub use runtime_anchor::{
+    MissingRuntimeBackendAnchor, RuntimeBackendAnchor, RuntimeBackendAnchorError,
+    RuntimeBackendAnchorSource,
 };

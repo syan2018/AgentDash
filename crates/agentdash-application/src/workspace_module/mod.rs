@@ -27,6 +27,7 @@ use agentdash_domain::shared_library::{
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
+use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::common::Vfs;
 use thiserror::Error;
 
@@ -42,8 +43,8 @@ pub use visibility::{
 
 /// invoke 解析出的 backend target + workspace 上下文。
 ///
-/// backend 解析优先级（design D2-3）：`session.backend_execution`（remote 显式）→
-/// `vfs.default_mount().backend_id`（local）→ 都无则 `None`（调用方报"缺 backend"）。
+/// backend 只来自 Lifecycle / AgentRun 生成的 `RuntimeBackendAnchor`。
+/// VFS 仅用于选择可传给 extension runtime 的 workspace root 投影。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedInvocationBackend {
     pub backend_id: String,
@@ -53,59 +54,46 @@ pub struct ResolvedInvocationBackend {
 /// 从 ExecutionContext 自推 backend + workspace（与 HTTP 侧
 /// `select_extension_invocation_workspace` 等价的 application 层共享逻辑）。
 ///
-/// - `explicit_backend_id`：来自 `session.backend_execution`（remote 已 claim 的 backend），
-///   优先级最高；为 `None` 时回退到 vfs default mount 的 backend。
-/// - workspace 取与 backend 匹配且 root_ref 非空的 mount（优先 default mount）。
+/// - backend identity：只读 `runtime_backend_anchor.backend_id`。
+/// - workspace：优先匹配 anchor.root_ref；若 anchor 未携带 root_ref，则使用 default mount。
 pub fn resolve_invocation_backend(
     vfs: Option<&Vfs>,
-    explicit_backend_id: Option<&str>,
+    runtime_backend_anchor: Option<&RuntimeBackendAnchor>,
 ) -> Option<ResolvedInvocationBackend> {
-    let backend_id = match explicit_backend_id
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => id.to_string(),
-        None => {
-            let mount = vfs?.default_mount()?;
-            let id = mount.backend_id.trim();
-            if id.is_empty() {
-                return None;
-            }
-            id.to_string()
-        }
-    };
-    let workspace = vfs.and_then(|vfs| select_invocation_workspace(vfs, &backend_id));
+    let anchor = runtime_backend_anchor?;
+    let backend_id = anchor.backend_id().to_string();
+    let workspace = vfs.and_then(|vfs| select_invocation_workspace(vfs, anchor));
     Some(ResolvedInvocationBackend {
         backend_id,
         workspace,
     })
 }
 
-/// 选 backend 对应的 workspace mount（优先 default mount，再退第一个匹配 mount）。
+/// 选 anchor 对应的 workspace mount（优先 root_ref 匹配，再退 default mount）。
 /// 与 `routes/extension_runtime.rs::select_extension_invocation_workspace` 同款规则。
 fn select_invocation_workspace(
     vfs: &Vfs,
-    backend_id: &str,
+    anchor: &RuntimeBackendAnchor,
 ) -> Option<ExtensionInvocationWorkspaceContext> {
-    let backend_id = backend_id.trim();
-    if backend_id.is_empty() {
-        return None;
-    }
-    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
-        && let Some(mount) = vfs.mounts.iter().find(|mount| {
-            mount.id == default_mount_id
-                && mount.backend_id == backend_id
-                && !mount.root_ref.trim().is_empty()
-        })
+    if let Some(root_ref) = anchor
+        .root_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     {
-        return Some(ExtensionInvocationWorkspaceContext::new(
-            mount.id.clone(),
-            mount.root_ref.trim().to_string(),
-        ));
+        return vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.root_ref.trim() == root_ref && !mount.root_ref.trim().is_empty())
+            .map(|mount| {
+                ExtensionInvocationWorkspaceContext::new(
+                    mount.id.clone(),
+                    mount.root_ref.trim().to_string(),
+                )
+            });
     }
-    vfs.mounts
-        .iter()
-        .find(|mount| mount.backend_id == backend_id && !mount.root_ref.trim().is_empty())
+    vfs.default_mount()
+        .filter(|mount| !mount.root_ref.trim().is_empty())
         .map(|mount| {
             ExtensionInvocationWorkspaceContext::new(
                 mount.id.clone(),

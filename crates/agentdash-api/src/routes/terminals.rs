@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_application::vfs::PROVIDER_RELAY_FS;
 use agentdash_relay::*;
-use agentdash_spi::Vfs;
+use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
@@ -268,11 +268,21 @@ async fn resolve_terminal_launch_target(
     )
     .await?;
     let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
+    let backend_anchor = result.runtime_backend_anchor.as_ref().ok_or_else(|| {
+        ApiError::Conflict(
+            agentdash_spi::RuntimeBackendAnchorError::Missing {
+                component: "terminal_spawn".to_string(),
+                session_id: Some(session_id.to_string()),
+                turn_id: None,
+            }
+            .to_string(),
+        )
+    })?;
     let vfs = result
         .vfs
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("AgentFrame 未记录 VFS，无法创建终端".into()))?;
-    let target = terminal_launch_target_from_vfs(vfs)?;
+    let target = terminal_launch_target_from_vfs(vfs, backend_anchor)?;
     if !state
         .services
         .backend_registry
@@ -287,22 +297,41 @@ async fn resolve_terminal_launch_target(
     Ok(target)
 }
 
-fn terminal_launch_target_from_vfs(vfs: &Vfs) -> Result<TerminalLaunchTarget, ApiError> {
-    let mount = vfs
-        .default_mount()
-        .ok_or_else(|| ApiError::BadRequest("Session VFS 缺少默认 mount，无法创建终端".into()))?;
+fn terminal_launch_target_from_vfs(
+    vfs: &Vfs,
+    backend_anchor: &RuntimeBackendAnchor,
+) -> Result<TerminalLaunchTarget, ApiError> {
+    let mount = if let Some(root_ref) = backend_anchor
+        .root_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|root_ref| !root_ref.is_empty())
+    {
+        vfs.mounts
+            .iter()
+            .find(|mount| mount.root_ref.trim() == root_ref)
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Session VFS 缺少 runtime backend anchor root_ref 对应的 mount，无法创建终端"
+                        .into(),
+                )
+            })?
+    } else {
+        vfs.default_mount().ok_or_else(|| {
+            ApiError::BadRequest("Session VFS 缺少可用 mount，无法创建终端".into())
+        })?
+    };
     if mount.provider != PROVIDER_RELAY_FS {
         return Err(ApiError::BadRequest(format!(
             "Session 默认 mount `{}` 使用 provider `{}`，无法创建交互式终端",
             mount.id, mount.provider
         )));
     }
-    let backend_id = mount.backend_id.trim();
+    let backend_id = backend_anchor.backend_id();
     if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "Session 默认 mount `{}` 缺少 backend_id，无法创建终端",
-            mount.id
-        )));
+        return Err(ApiError::BadRequest(
+            "Session runtime backend anchor 缺少 backend_id，无法创建终端".into(),
+        ));
     }
     let mount_root_ref = mount.root_ref.trim();
     if mount_root_ref.is_empty() {
@@ -320,7 +349,7 @@ fn terminal_launch_target_from_vfs(vfs: &Vfs) -> Result<TerminalLaunchTarget, Ap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::{Mount, MountCapability};
+    use agentdash_spi::{Mount, MountCapability, RuntimeBackendAnchorSource};
 
     fn relay_mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
         Mount {
@@ -348,12 +377,19 @@ mod tests {
             links: Vec::new(),
         };
 
-        let target = terminal_launch_target_from_vfs(&vfs).expect("target should resolve");
+        let anchor = RuntimeBackendAnchor::new(
+            "anchor-backend",
+            RuntimeBackendAnchorSource::WorkspaceBinding,
+        )
+        .expect("anchor")
+        .with_root_ref(Some("F:/Projects/AgentDash".to_string()));
+
+        let target = terminal_launch_target_from_vfs(&vfs, &anchor).expect("target should resolve");
 
         assert_eq!(
             target,
             TerminalLaunchTarget {
-                backend_id: "backend-main".to_string(),
+                backend_id: "anchor-backend".to_string(),
                 mount_root_ref: "F:/Projects/AgentDash".to_string(),
             }
         );
@@ -378,7 +414,12 @@ mod tests {
             links: Vec::new(),
         };
 
-        let err = terminal_launch_target_from_vfs(&vfs).expect_err("target should be rejected");
+        let anchor = RuntimeBackendAnchor::new("backend-main", RuntimeBackendAnchorSource::System)
+            .expect("anchor")
+            .with_root_ref(Some("lifecycle://run/example".to_string()));
+
+        let err =
+            terminal_launch_target_from_vfs(&vfs, &anchor).expect_err("target should be rejected");
 
         assert!(matches!(err, ApiError::BadRequest(message) if message.contains("provider")));
     }

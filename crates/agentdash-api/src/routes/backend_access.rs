@@ -18,7 +18,7 @@ use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
 use agentdash_contracts::backend::{
-    BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
+    BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest,
     ProjectBackendAccessMode as ProjectBackendAccessModeDto, ProjectBackendAccessResponse,
     ProjectBackendAccessStatus as ProjectBackendAccessStatusDto,
     RegisterBackendWorkspaceInventoryRequest, UpdateProjectBackendAccessRequest,
@@ -28,9 +28,6 @@ use agentdash_contracts::workspace::{WorkspaceBindingSyncResult, WorkspaceInvent
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
     ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
-};
-use agentdash_domain::workspace::{
-    WorkspaceIdentityKind, identity_payload_from_detected_facts, normalize_path_key,
 };
 
 use crate::app_state::AppState;
@@ -89,10 +86,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/projects/{project_id}/backend-access/{access_id}/inventory",
             axum::routing::get(list_project_backend_inventory),
-        )
-        .route(
-            "/projects/{project_id}/backend-access/{access_id}/inventory/refresh",
-            axum::routing::post(refresh_project_backend_inventory),
         )
         .route(
             "/projects/{project_id}/backend-access/{access_id}/inventory/register",
@@ -279,87 +272,6 @@ pub async fn list_project_backend_inventory(
     ))
 }
 
-pub async fn refresh_project_backend_inventory(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((project_id, access_id)): Path<(String, String)>,
-) -> Result<Json<InventoryRefreshResponse>, ApiError> {
-    let project_id = parse_project_id(&project_id)?;
-    let access_id = parse_uuid(&access_id, "ProjectBackendAccess ID")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let access = load_access_for_project(&state, project_id, access_id).await?;
-    if !access.is_active() {
-        return Err(ApiError::Conflict("ProjectBackendAccess 当前未启用".into()));
-    }
-    let online = state
-        .services
-        .backend_registry
-        .list_online()
-        .await
-        .into_iter()
-        .find(|backend| backend.backend_id == access.backend_id)
-        .ok_or_else(|| ApiError::Conflict(format!("backend `{}` 当前不在线", access.backend_id)))?;
-    let mut items = Vec::new();
-    let mut warnings = Vec::new();
-    for root in online.workspace_roots {
-        match invoke_workspace_detect(
-            &state,
-            Some(current_user.user_id.as_str()),
-            project_id,
-            &access.backend_id,
-            &root,
-        )
-        .await
-        {
-            Ok(detected) => {
-                items.push(inventory_from_detected(
-                    access.backend_id.clone(),
-                    root,
-                    detected,
-                    BackendWorkspaceInventoryStatus::Available,
-                    BackendWorkspaceInventorySource::ManualRefresh,
-                    None,
-                ));
-            }
-            Err(error) => {
-                warnings.push(format!("{}: {}", root, error));
-                items.push(error_inventory(
-                    access.backend_id.clone(),
-                    root,
-                    error.to_string(),
-                ));
-            }
-        }
-    }
-    state
-        .repos
-        .backend_workspace_inventory_repo
-        .upsert_many(&items)
-        .await?;
-    let refreshed = items
-        .iter()
-        .filter(|item| item.status == BackendWorkspaceInventoryStatus::Available)
-        .count();
-    let failed = items.len().saturating_sub(refreshed);
-    Ok(Json(InventoryRefreshResponse {
-        access_id: access.id.to_string(),
-        backend_id: access.backend_id,
-        refreshed,
-        failed,
-        items: items
-            .into_iter()
-            .map(BackendWorkspaceInventoryResponse::from)
-            .collect(),
-        warnings,
-    }))
-}
-
 pub async fn register_project_backend_inventory(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -394,7 +306,7 @@ pub async fn register_project_backend_inventory(
         root_ref,
         detected,
         BackendWorkspaceInventoryStatus::Available,
-        BackendWorkspaceInventorySource::CapabilityExpansionAck,
+        BackendWorkspaceInventorySource::ManualRegister,
         None,
     );
     state
@@ -653,32 +565,8 @@ fn project_backend_access_mode_command(
     value: ProjectBackendAccessModeDto,
 ) -> ProjectBackendAccessMode {
     match value {
-        ProjectBackendAccessModeDto::UseInventory => ProjectBackendAccessMode::UseInventory,
+        ProjectBackendAccessModeDto::ExplicitGrant => ProjectBackendAccessMode::ExplicitGrant,
     }
-}
-
-fn error_inventory(
-    backend_id: String,
-    root_ref: String,
-    last_error: String,
-) -> BackendWorkspaceInventory {
-    let identity_payload = identity_payload_from_detected_facts(
-        WorkspaceIdentityKind::LocalDir,
-        &serde_json::json!({}),
-        &root_ref,
-    )
-    .unwrap_or_else(|| serde_json::json!({ "match_mode": "path_key", "path_key": normalize_path_key(&root_ref) }));
-    let mut item = BackendWorkspaceInventory::available(
-        backend_id,
-        root_ref,
-        WorkspaceIdentityKind::LocalDir,
-        identity_payload,
-        serde_json::json!({}),
-        BackendWorkspaceInventorySource::ManualRefresh,
-    );
-    item.status = BackendWorkspaceInventoryStatus::Error;
-    item.last_error = Some(last_error);
-    item
 }
 
 fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {

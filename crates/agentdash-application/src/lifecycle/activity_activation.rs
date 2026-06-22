@@ -201,6 +201,7 @@ pub fn activate_activity_with_platform(
         },
         mcp_runtime_context: Some(crate::mcp_preset::McpRuntimeBindingContext {
             vfs: Some(&effective_vfs),
+            backend_anchor: None,
         }),
         capability_context: None,
         authority_state: input.authority_state.clone(),

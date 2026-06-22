@@ -75,11 +75,16 @@ pub struct McpRuntimeBindingRule {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum McpRuntimeBindingSource {
     VfsRootRef,
-    VfsBackendId,
+    #[serde(rename = "runtime_backend_anchor_backend_id", alias = "vfs_backend_id")]
+    RuntimeBackendAnchorBackendId,
     WorkspaceId,
     WorkspaceBindingId,
-    WorkspaceIdentity { path: Vec<String> },
-    WorkspaceDetectedFact { path: Vec<String> },
+    WorkspaceIdentity {
+        path: Vec<String>,
+    },
+    WorkspaceDetectedFact {
+        path: Vec<String>,
+    },
 }
 
 /// 运行时绑定写入的 transport target。
@@ -254,5 +259,17 @@ mod tests {
         let back: McpRuntimeBindingConfig =
             serde_json::from_str(&json).expect("deserialize binding");
         assert_eq!(back, binding);
+    }
+
+    #[test]
+    fn legacy_vfs_backend_id_source_deserializes_to_runtime_anchor_source() {
+        let raw = r#"{"kind":"vfs_backend_id"}"#;
+        let source: McpRuntimeBindingSource =
+            serde_json::from_str(raw).expect("deserialize legacy source");
+
+        assert_eq!(
+            source,
+            McpRuntimeBindingSource::RuntimeBackendAnchorBackendId
+        );
     }
 }

@@ -11,7 +11,6 @@ pub struct RegisterPayload {
     pub name: String,
     pub version: String,
     pub capabilities: CapabilitiesPayload,
-    pub workspace_roots: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

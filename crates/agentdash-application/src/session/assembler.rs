@@ -453,6 +453,7 @@ impl<'a> SessionRequestAssembler<'a> {
             },
             mcp_runtime_context: Some(crate::mcp_preset::McpRuntimeBindingContext {
                 vfs: active_vfs,
+                backend_anchor: None,
             }),
             capability_context: None,
             authority_state: AuthorityState::companion_child(),
@@ -464,7 +465,10 @@ impl<'a> SessionRequestAssembler<'a> {
         for preset in &context.preset_mcp_presets {
             let server = crate::mcp_preset::resolve_preset_mcp_server(
                 preset,
-                Some(&crate::mcp_preset::McpRuntimeBindingContext { vfs: active_vfs }),
+                Some(&crate::mcp_preset::McpRuntimeBindingContext {
+                    vfs: active_vfs,
+                    backend_anchor: None,
+                }),
             )
             .map_err(|error| error.to_string())?;
             capability_state
@@ -1005,7 +1009,10 @@ pub(in crate::session) async fn compose_companion_with_workflow(
         for preset in &context.preset_mcp_presets {
             let server = crate::mcp_preset::resolve_preset_mcp_server(
                 preset,
-                Some(&crate::mcp_preset::McpRuntimeBindingContext { vfs: active_vfs }),
+                Some(&crate::mcp_preset::McpRuntimeBindingContext {
+                    vfs: active_vfs,
+                    backend_anchor: None,
+                }),
             )
             .map_err(|error| error.to_string())?;
             activation

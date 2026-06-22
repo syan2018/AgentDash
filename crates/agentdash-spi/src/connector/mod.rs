@@ -6,7 +6,9 @@ use std::{
 };
 
 use agentdash_agent_types::{AgentMessage, MessageRef};
-use agentdash_domain::backend::BackendExecutionSelectionMode;
+use agentdash_domain::backend::{
+    BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
+};
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
@@ -78,6 +80,11 @@ pub struct ExecutionSessionFrame {
     /// This field is set only for remote backend executions. It is the connector-facing
     /// projection of the already claimed backend execution lease.
     pub backend_execution: Option<ExecutionBackendPlacement>,
+    /// Lifecycle / AgentRun 生成的运行期 backend anchor。
+    ///
+    /// 这是 runtime backend identity 的唯一事实源；下游 runtime 组件只能消费该值，
+    /// 不得从 session route、VFS mount 或 online backend 列表重新推导 backend。
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::platform::auth::AuthIdentity>,
 }
@@ -122,6 +129,22 @@ pub struct ExecutionTurnFrame {
 pub struct ExecutionContext {
     pub session: ExecutionSessionFrame,
     pub turn: ExecutionTurnFrame,
+}
+
+impl ExecutionSessionFrame {
+    pub fn require_runtime_backend_anchor(
+        &self,
+        component: impl Into<String>,
+        session_id: Option<&str>,
+    ) -> Result<&RuntimeBackendAnchor, RuntimeBackendAnchorError> {
+        self.runtime_backend_anchor
+            .as_ref()
+            .ok_or_else(|| RuntimeBackendAnchorError::Missing {
+                component: component.into(),
+                session_id: session_id.map(str::to_string),
+                turn_id: Some(self.turn_id.clone()),
+            })
+    }
 }
 
 /// VFS 中发现的项目级指导文件。

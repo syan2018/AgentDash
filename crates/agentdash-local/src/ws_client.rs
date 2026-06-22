@@ -124,11 +124,6 @@ async fn run_session(
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: build_capabilities(&handler, &config.mcp_manager),
-            workspace_roots: config
-                .workspace_roots
-                .iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect(),
         },
     };
 

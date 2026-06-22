@@ -36,7 +36,6 @@ function backend(id: string, online: boolean, backend_type: "local" | "remote" =
     last_claimed_at: null,
     online,
     runtime_health: null,
-    workspace_roots: null,
     capabilities: null,
   };
 }
@@ -47,7 +46,7 @@ function access(backend_id: string, status: ProjectBackendAccess["status"] = "ac
     project_id: "project-1",
     backend_id,
     status,
-    access_mode: "use_inventory",
+    access_mode: "explicit_grant",
     priority: 0,
     root_policy: {},
     capability_policy: {},

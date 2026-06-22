@@ -261,7 +261,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
             crate::session::capability_state::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
             );
-        let mcp_runtime_context = McpRuntimeBindingContext { vfs: vfs.as_ref() };
+        let mcp_runtime_context = McpRuntimeBindingContext {
+            vfs: vfs.as_ref(),
+            backend_anchor: None,
+        };
         let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
             &mut cap_output,
             &spec.request_mcp_servers,
@@ -536,7 +539,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
             mcp_candidates: McpCandidates {
                 presets: load_available_presets(self.repos, project_id).await,
             },
-            mcp_runtime_context: Some(McpRuntimeBindingContext { vfs }),
+            mcp_runtime_context: Some(McpRuntimeBindingContext {
+                vfs,
+                backend_anchor: None,
+            }),
             capability_context: None,
             authority_state: AuthorityState::main_project_agent(),
         };
@@ -1026,7 +1032,10 @@ mod tests {
             &AgentLevelMcp {
                 preset_mcp_presets: vec![runtime_mcp_preset("code_analyzer", "http://agent/mcp")],
             },
-            &McpRuntimeBindingContext { vfs: None },
+            &McpRuntimeBindingContext {
+                vfs: None,
+                backend_anchor: None,
+            },
         )
         .expect("static agent preset should resolve");
 
@@ -1062,7 +1071,10 @@ mod tests {
                     runtime_mcp_preset("agent_only", "http://agent-only/mcp"),
                 ],
             },
-            &McpRuntimeBindingContext { vfs: None },
+            &McpRuntimeBindingContext {
+                vfs: None,
+                backend_anchor: None,
+            },
         )
         .expect("static agent presets should resolve");
 
@@ -1099,7 +1111,10 @@ mod tests {
             &mut capability_state,
             &[],
             &AgentLevelMcp::default(),
-            &McpRuntimeBindingContext { vfs: None },
+            &McpRuntimeBindingContext {
+                vfs: None,
+                backend_anchor: None,
+            },
         )
         .expect("platform scoped server should normalize");
 

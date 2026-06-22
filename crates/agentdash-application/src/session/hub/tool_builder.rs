@@ -6,7 +6,7 @@
 //!
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDiscoveryRequest};
-use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeMcpServer};
+use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeBackendAnchor, RuntimeMcpServer};
 use uuid::Uuid;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
@@ -106,6 +106,30 @@ impl SessionRuntimeInner {
         .ok()
         .flatten()
         .map(|(_anchor, _agent, frame)| project_capability_state_from_frame(&frame))
+    }
+
+    pub async fn get_current_runtime_backend_anchor(
+        &self,
+        session_id: &str,
+    ) -> Result<RuntimeBackendAnchor, ConnectorError> {
+        let anchor = self
+            .runtime_registry
+            .with_runtime(session_id, |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .and_then(|turn| turn.session_frame.runtime_backend_anchor.clone())
+            })
+            .await;
+        anchor.ok_or_else(|| {
+            ConnectorError::Runtime(
+                agentdash_spi::RuntimeBackendAnchorError::Missing {
+                    component: "session_runtime".to_string(),
+                    session_id: Some(session_id.to_string()),
+                    turn_id: None,
+                }
+                .to_string(),
+            )
+        })
     }
 
     /// Runtime adapter 边界使用的 lookup：把 delivery RuntimeSession 解析为当前 AgentFrame。
@@ -348,12 +372,20 @@ impl SessionRuntimeInner {
                     .map(|turn| {
                         (
                             turn.session_frame.mcp_servers.clone(),
+                            turn.session_frame.runtime_backend_anchor.clone(),
+                            turn.session_frame.vfs.clone(),
+                            turn.session_frame.identity.clone(),
+                            turn.session_frame.turn_id.clone(),
                             turn.capability_state.clone(),
                         )
                     })
             })
             .await;
-        let (servers, capability_state) = if let Some(surface) = active_surface {
+        let (servers, backend_anchor, vfs, identity, turn_id, capability_state) = if let Some(
+            surface,
+        ) =
+            active_surface
+        {
             surface
         } else {
             let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
@@ -384,9 +416,23 @@ impl SessionRuntimeInner {
             })?;
             (
                 frame.typed_mcp_servers(),
+                None,
+                frame.typed_vfs(),
+                None,
+                String::new(),
                 project_capability_state_from_frame(&frame),
             )
         };
+        let backend_anchor = backend_anchor.ok_or_else(|| {
+            ConnectorError::Runtime(
+                agentdash_spi::RuntimeBackendAnchorError::Missing {
+                    component: "runtime_mcp_tool_discovery".to_string(),
+                    session_id: Some(session_id.to_string()),
+                    turn_id: (!turn_id.is_empty()).then_some(turn_id.clone()),
+                }
+                .to_string(),
+            )
+        })?;
         let capability_state = self
             .capability_state_with_agent_run_admission_projection(session_id, &capability_state)
             .await;
@@ -398,7 +444,14 @@ impl SessionRuntimeInner {
             .discover_tool_entries(McpToolDiscoveryRequest {
                 servers,
                 capability_state,
-                call_context: None,
+                call_context: Some(agentdash_spi::RelayMcpCallContext {
+                    session_id: session_id.to_string(),
+                    turn_id: (!turn_id.is_empty()).then_some(turn_id),
+                    tool_call_id: None,
+                    backend_anchor: Some(backend_anchor),
+                    vfs,
+                    identity,
+                }),
             })
             .await
     }

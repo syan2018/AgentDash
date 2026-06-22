@@ -382,6 +382,16 @@ pub(crate) fn build_envelope_from_frame(
                 "FrameLaunchEnvelope: working_directory 未在 frame construction 阶段解析".into(),
             )
         })?;
+    let runtime_backend_anchor = closed_surface
+        .launch_surface
+        .runtime_backend_anchor(
+            closed_surface
+                .resolution_trace
+                .vfs_source
+                .clone()
+                .or_else(|| Some("frame_launch_surface.default_mount".to_string())),
+        )
+        .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
     Ok(FrameLaunchEnvelope {
         surface,
@@ -399,6 +409,7 @@ pub(crate) fn build_envelope_from_frame(
         context_bundle,
         continuation_context_frame: None,
         base_capability_state: closed_surface.base_capability_state,
+        runtime_backend_anchor,
         resolution_trace: closed_surface.resolution_trace,
     })
 }

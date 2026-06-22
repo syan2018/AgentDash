@@ -11,7 +11,7 @@ export type BackendMcpServerCapabilityResponse = { name: string, transport: stri
 
 export type BackendResponse = { id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
 
-export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, workspace_roots: Array<string>, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
+export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
 
 export type BackendShareScopeKind = "user" | "project" | "system";
 
@@ -19,19 +19,17 @@ export type BackendType = "local" | "remote";
 
 export type BackendVisibility = "private" | "shared" | "system";
 
-export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, workspace_roots: Array<string> | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
+export type BackendWithStatusResponse = { online: boolean, runtime_health: BackendRuntimeHealthResponse | null, capabilities: BackendCapabilitiesResponse | null, id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, };
 
 export type BackendWorkspaceInventoryResponse = { id: string, backend_id: string, root_ref: string, identity_kind: "git_repo" | "p4_workspace" | "local_dir", identity_payload: { [key in string]?: JsonValue }, detected_facts: { [key in string]?: JsonValue }, status: BackendWorkspaceInventoryStatus, source: BackendWorkspaceInventorySource, last_seen_at: string, last_error: string | null, created_at: string, updated_at: string, };
 
-export type BackendWorkspaceInventorySource = "runtime_register" | "manual_refresh" | "scheduled_refresh" | "capability_expansion_ack";
+export type BackendWorkspaceInventorySource = "manual_register";
 
 export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";
 
 export type CreateProjectBackendAccessRequest = { backend_id: string, priority?: number, root_policy?: { [key in string]?: JsonValue }, capability_policy?: { [key in string]?: JsonValue }, note?: string, };
 
-export type InventoryRefreshResponse = { access_id: string, backend_id: string, refreshed: number, failed: number, items: Array<BackendWorkspaceInventoryResponse>, warnings: Array<string>, };
-
-export type ProjectBackendAccessMode = "use_inventory";
+export type ProjectBackendAccessMode = "explicit_grant";
 
 export type ProjectBackendAccessResponse = { id: string, project_id: string, backend_id: string, status: ProjectBackendAccessStatus, access_mode: ProjectBackendAccessMode, priority: number, root_policy: { [key in string]?: JsonValue }, capability_policy: { [key in string]?: JsonValue }, note: string | null, created_by: string | null, created_at: string, updated_at: string, };
 

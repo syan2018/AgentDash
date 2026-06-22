@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_domain::backend::BackendExecutionLease;
+use agentdash_domain::backend::{BackendExecutionLease, RuntimeBackendAnchor};
 use agentdash_spi::{ConnectorError, DynAgentRuntimeDelegate, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
@@ -228,6 +228,7 @@ impl<'a> LaunchPlanner<'a> {
                 input.turn_id,
                 &prompt_input,
                 Some(&typed_vfs),
+                input.launch_envelope.runtime_backend_anchor.as_ref(),
                 &executor_config.executor,
                 command.reason_tag(),
             )
@@ -267,6 +268,7 @@ impl<'a> LaunchPlanner<'a> {
         turn_id: &str,
         prompt_input: &crate::session::types::UserPromptInput,
         typed_vfs: Option<&Vfs>,
+        runtime_backend_anchor: Option<&RuntimeBackendAnchor>,
         executor_id: &str,
         reason_tag: &str,
     ) -> Result<Option<ExecutionPlacementPlan>, ConnectorError> {
@@ -295,9 +297,13 @@ impl<'a> LaunchPlanner<'a> {
                 selection,
                 reason_tag,
             )?),
-            None if has_available_relay_executor(transport.as_ref(), executor_id) => Some(
-                selection_request_from_vfs_hint(executor_id, typed_vfs, reason_tag),
-            ),
+            None if has_available_relay_executor(transport.as_ref(), executor_id) => {
+                Some(selection_request_from_runtime_anchor(
+                    executor_id,
+                    runtime_backend_anchor,
+                    reason_tag,
+                ))
+            }
             None => None,
         };
         let Some(request) = request else {
@@ -382,13 +388,14 @@ fn selection_request_from_input(
     }
 }
 
-fn selection_request_from_vfs_hint(
+fn selection_request_from_runtime_anchor(
     executor_id: &str,
-    vfs: Option<&Vfs>,
+    runtime_backend_anchor: Option<&RuntimeBackendAnchor>,
     reason_tag: &str,
 ) -> BackendSelectionRequest {
     let reason = Some(format!("session launch: {reason_tag}"));
-    preferred_backend_id_from_vfs(vfs)
+    runtime_backend_anchor
+        .map(|anchor| anchor.backend_id().to_string())
         .map(|backend_id| BackendSelectionRequest {
             executor_id: executor_id.to_string(),
             intent: BackendSelectionIntent::WorkspaceBinding { backend_id },
@@ -412,27 +419,4 @@ fn required_backend_id(
                 "backend_selection.mode={mode} 时必须提供 backend_id"
             ))
         })
-}
-
-fn preferred_backend_id_from_vfs(vfs: Option<&Vfs>) -> Option<String> {
-    let vfs = vfs?;
-    if let Some(default_mount) = vfs.default_mount() {
-        let backend_id = default_mount.backend_id.trim();
-        if !backend_id.is_empty() {
-            return Some(backend_id.to_string());
-        }
-    }
-
-    let unique_backend_ids = vfs
-        .mounts
-        .iter()
-        .filter_map(|mount| {
-            let backend_id = mount.backend_id.trim();
-            (!backend_id.is_empty()).then_some(backend_id.to_string())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-
-    (unique_backend_ids.len() == 1)
-        .then(|| unique_backend_ids.into_iter().next())
-        .flatten()
 }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_application::agent_run::frame::surface::AgentFrameSurfaceExt;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_integration_api::AuthIdentity;
-use agentdash_spi::Vfs;
+use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 
 use crate::app_state::AppState;
 use crate::auth::{ProjectPermission, load_project_with_permission};
@@ -14,6 +14,7 @@ use crate::rpc::ApiError;
 /// 从 `AgentFrame` 直接反序列化 `vfs_surface_json`，复用 frame construction 主链路产物。
 pub(crate) struct SessionFrameVfsResult {
     pub vfs: Option<Vfs>,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     #[allow(dead_code)]
     pub frame: AgentFrame,
 }
@@ -92,6 +93,16 @@ pub(crate) async fn resolve_session_frame_vfs(
             ))
         })?;
 
+    let runtime_backend_anchor = state
+        .services
+        .session_capability
+        .get_current_runtime_backend_anchor(session_id)
+        .await
+        .ok();
     let vfs = frame.typed_vfs();
-    Ok(SessionFrameVfsResult { vfs, frame })
+    Ok(SessionFrameVfsResult {
+        vfs,
+        runtime_backend_anchor,
+        frame,
+    })
 }

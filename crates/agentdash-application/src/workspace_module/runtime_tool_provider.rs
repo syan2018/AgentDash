@@ -59,6 +59,7 @@ impl WorkspaceModuleRuntimeToolProvider {
 enum InvokeRuntimeDependency {
     RuntimeGateway,
     ExtensionChannelTransport,
+    RuntimeBackendAnchor,
 }
 
 impl InvokeRuntimeDependency {
@@ -66,6 +67,7 @@ impl InvokeRuntimeDependency {
         match self {
             Self::RuntimeGateway => "runtime_gateway",
             Self::ExtensionChannelTransport => "extension_channel_transport",
+            Self::RuntimeBackendAnchor => "runtime_backend_anchor",
         }
     }
 }
@@ -263,14 +265,25 @@ impl WorkspaceModuleRuntimeToolProvider {
             }
         };
 
-        let backend = resolve_invocation_backend(
-            context.session.vfs.as_ref(),
-            context
-                .session
-                .backend_execution
-                .as_ref()
-                .map(|placement| placement.backend_id.as_str()),
-        );
+        let backend_anchor = match context
+            .session
+            .require_runtime_backend_anchor("workspace_module_invoke", Some(session_id))
+        {
+            Ok(anchor) => anchor,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "workspace_module_invoke 装配为诊断工具：缺少 runtime backend anchor"
+                );
+                tools.push(Arc::new(WorkspaceModuleInvokeUnavailableTool::new(vec![
+                    InvokeRuntimeDependency::RuntimeBackendAnchor,
+                ])));
+                return;
+            }
+        };
+        let backend =
+            resolve_invocation_backend(context.session.vfs.as_ref(), Some(backend_anchor));
         let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
             self.installation_repo.clone(),
             transport,

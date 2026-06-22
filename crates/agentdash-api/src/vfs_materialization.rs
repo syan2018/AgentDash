@@ -216,9 +216,9 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
             .backends
             .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
-            .ok_or_else(|| {
+            .map_err(|error| {
                 ConnectorError::ConnectionFailed(format!(
-                    "无在线 backend 可执行 relay MCP server '{server_name}'"
+                    "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
                 ))
             })?;
 
@@ -232,7 +232,7 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
                     .materialization
                     .rewrite_json_arguments(RewriteJsonArgumentsInput {
                         vfs,
-                        target_backend_id: &backend_id,
+                        target_backend_id: backend_id.as_str(),
                         arguments: &arguments,
                         session_id: &context_ref.session_id,
                         turn_id: context_ref.turn_id.as_deref(),

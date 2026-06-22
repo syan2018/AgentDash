@@ -30,8 +30,6 @@ pub struct EnsureLocalRuntimeRequest {
     pub capability_slot: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
-    pub workspace_roots: Vec<String>,
-    #[serde(default)]
     pub executor_enabled: bool,
     pub client_version: Option<String>,
     #[serde(default)]

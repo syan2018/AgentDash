@@ -326,7 +326,6 @@ struct EnsureLocalRuntimePayload {
     scope: LocalRuntimeScopePayload,
     capability_slot: String,
     name: Option<String>,
-    workspace_roots: Vec<String>,
     executor_enabled: bool,
     client_version: Option<String>,
     device: serde_json::Value,
@@ -440,11 +439,6 @@ async fn claim_local_runtime(
         },
         capability_slot: "default".to_string(),
         name: request.name.clone(),
-        workspace_roots: request
-            .workspace_roots
-            .iter()
-            .map(|path| path.to_string_lossy().to_string())
-            .collect(),
         executor_enabled: request.executor_enabled,
         client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         device: local_device_payload(),

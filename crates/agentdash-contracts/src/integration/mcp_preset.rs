@@ -126,18 +126,25 @@ impl From<domain::McpRuntimeBindingRule> for McpRuntimeBindingRuleDto {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum McpRuntimeBindingSourceDto {
     VfsRootRef,
-    VfsBackendId,
+    #[serde(rename = "runtime_backend_anchor_backend_id", alias = "vfs_backend_id")]
+    RuntimeBackendAnchorBackendId,
     WorkspaceId,
     WorkspaceBindingId,
-    WorkspaceIdentity { path: Vec<String> },
-    WorkspaceDetectedFact { path: Vec<String> },
+    WorkspaceIdentity {
+        path: Vec<String>,
+    },
+    WorkspaceDetectedFact {
+        path: Vec<String>,
+    },
 }
 
 impl From<domain::McpRuntimeBindingSource> for McpRuntimeBindingSourceDto {
     fn from(source: domain::McpRuntimeBindingSource) -> Self {
         match source {
             domain::McpRuntimeBindingSource::VfsRootRef => Self::VfsRootRef,
-            domain::McpRuntimeBindingSource::VfsBackendId => Self::VfsBackendId,
+            domain::McpRuntimeBindingSource::RuntimeBackendAnchorBackendId => {
+                Self::RuntimeBackendAnchorBackendId
+            }
             domain::McpRuntimeBindingSource::WorkspaceId => Self::WorkspaceId,
             domain::McpRuntimeBindingSource::WorkspaceBindingId => Self::WorkspaceBindingId,
             domain::McpRuntimeBindingSource::WorkspaceIdentity { path } => {

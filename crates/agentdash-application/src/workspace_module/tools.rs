@@ -2274,6 +2274,7 @@ mod tests {
                 mcp_servers: Vec::new(),
                 vfs: Some(vfs),
                 backend_execution: None,
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: ExecutionTurnFrame {

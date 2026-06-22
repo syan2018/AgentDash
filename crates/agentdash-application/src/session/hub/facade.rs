@@ -206,6 +206,16 @@ pub(super) async fn envelope_from_construction_with_commands(
             pending_overlay_applied: construction.resolution.pending_overlay_applied,
         };
     }
+    let runtime_backend_anchor = closed_surface
+        .launch_surface
+        .runtime_backend_anchor(
+            closed_surface
+                .resolution_trace
+                .vfs_source
+                .clone()
+                .or_else(|| Some("test_frame_launch_surface.default_mount".to_string())),
+        )
+        .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
     Ok(FrameLaunchEnvelope {
         surface: FrameRuntimeSurface {
@@ -234,6 +244,7 @@ pub(super) async fn envelope_from_construction_with_commands(
         base_capability_state: closed_surface
             .base_capability_state
             .or(construction.resolution.runtime_base_capability_state),
+        runtime_backend_anchor,
         resolution_trace: closed_surface.resolution_trace,
     })
 }

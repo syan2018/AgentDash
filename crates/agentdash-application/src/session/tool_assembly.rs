@@ -41,6 +41,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
             session_id: session_id.to_string(),
             turn_id: Some(context.session.turn_id.clone()),
             tool_call_id: None,
+            backend_anchor: context.session.runtime_backend_anchor.clone(),
             vfs: context.session.vfs.clone(),
             identity: context.session.identity.clone(),
         };
@@ -87,6 +88,7 @@ fn schema_entry_key(entry: &RuntimeToolSchemaEntry) -> String {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use agentdash_agent_types::{
         AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
@@ -100,14 +102,23 @@ mod tests {
 
     use super::*;
 
-    struct StubMcpDiscovery;
+    struct StubMcpDiscovery {
+        captured_anchor: Arc<Mutex<Option<agentdash_spi::RuntimeBackendAnchor>>>,
+    }
 
     #[async_trait]
     impl McpToolDiscovery for StubMcpDiscovery {
         async fn discover_tool_entries(
             &self,
-            _request: McpToolDiscoveryRequest,
+            request: McpToolDiscoveryRequest,
         ) -> Result<Vec<DiscoveredMcpTool>, agentdash_spi::ConnectorError> {
+            let mut captured = self
+                .captured_anchor
+                .lock()
+                .expect("captured anchor mutex poisoned");
+            *captured = request
+                .call_context
+                .and_then(|context| context.backend_anchor);
             Ok(vec![DiscoveredMcpTool {
                 runtime_name: "mcp_code_analyzer_scan_repo".to_string(),
                 server_name: "code-analyzer".to_string(),
@@ -162,6 +173,12 @@ mod tests {
 
     #[tokio::test]
     async fn assembly_surface_preserves_project_mcp_schema_provenance() {
+        let captured_anchor = Arc::new(Mutex::new(None));
+        let runtime_backend_anchor = agentdash_spi::RuntimeBackendAnchor::new(
+            "backend-1",
+            agentdash_spi::RuntimeBackendAnchorSource::System,
+        )
+        .expect("anchor");
         let context = ExecutionContext {
             session: agentdash_spi::ExecutionSessionFrame {
                 turn_id: "turn-1".to_string(),
@@ -178,6 +195,7 @@ mod tests {
                 }],
                 vfs: None,
                 backend_execution: None,
+                runtime_backend_anchor: Some(runtime_backend_anchor.clone()),
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame::default(),
@@ -187,7 +205,9 @@ mod tests {
             "session-1",
             &context,
             None,
-            Some(&StubMcpDiscovery),
+            Some(&StubMcpDiscovery {
+                captured_anchor: captured_anchor.clone(),
+            }),
         )
         .await;
 
@@ -206,5 +226,13 @@ mod tests {
             Some(agentdash_spi::context_usage_kind::MCP_TOOLS)
         );
         assert_eq!(schema.parameters_schema["required"][0], "root");
+        assert_eq!(
+            captured_anchor
+                .lock()
+                .expect("captured anchor mutex poisoned")
+                .as_ref()
+                .map(|anchor| anchor.backend_id()),
+            Some(runtime_backend_anchor.backend_id())
+        );
     }
 }

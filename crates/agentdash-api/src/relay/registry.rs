@@ -451,6 +451,7 @@ mod tests {
             session_id: session_id.to_string(),
             turn_id: None,
             tool_call_id: None,
+            backend_anchor: None,
             vfs: None,
             identity: None,
         }
@@ -464,6 +465,7 @@ mod tests {
             session_id: session_id.to_string(),
             turn_id: None,
             tool_call_id: None,
+            backend_anchor: None,
             vfs: Some(agentdash_spi::Vfs {
                 mounts: vec![agentdash_spi::Mount {
                     id: "workspace".to_string(),

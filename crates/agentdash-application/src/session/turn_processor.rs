@@ -255,6 +255,7 @@ mod tests {
                         mcp_servers: Vec::new(),
                         vfs: None,
                         backend_execution: None,
+                        runtime_backend_anchor: None,
                         identity: None,
                     },
                     CapabilityState::default(),

@@ -13,6 +13,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use agentdash_domain::backend::{
+    RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
+};
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
@@ -180,6 +183,42 @@ impl FrameLaunchSurface {
         draft.mcp_servers = self.mcp_servers.clone();
         draft.execution_profile = Some(self.execution_profile.clone());
     }
+
+    pub fn runtime_backend_anchor(
+        &self,
+        source_detail: Option<String>,
+    ) -> Result<Option<RuntimeBackendAnchor>, RuntimeBackendAnchorError> {
+        let Some(mount) = self.vfs.default_mount() else {
+            return Ok(None);
+        };
+        let backend_id = mount.backend_id.trim();
+        if backend_id.is_empty() {
+            return Ok(None);
+        }
+
+        let workspace_id = uuid_metadata(&mount.metadata, "workspace_id");
+        let workspace_binding_id = uuid_metadata(&mount.metadata, "workspace_binding_id");
+        let source = if workspace_binding_id.is_some() || workspace_id.is_some() {
+            RuntimeBackendAnchorSource::WorkspaceBinding
+        } else {
+            RuntimeBackendAnchorSource::System
+        };
+
+        Ok(Some(
+            RuntimeBackendAnchor::new(backend_id, source)?
+                .with_workspace_id(workspace_id)
+                .with_workspace_binding_id(workspace_binding_id)
+                .with_root_ref(Some(mount.root_ref.clone()))
+                .with_source_detail(source_detail),
+        ))
+    }
+}
+
+fn uuid_metadata(metadata: &serde_json::Value, key: &str) -> Option<Uuid> {
+    metadata
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
 }
 
 // ─── FrameLaunchEnvelope: frame construction 输出，字段 non-optional ───
@@ -200,6 +239,7 @@ pub struct FrameLaunchEnvelope {
     pub context_bundle: Option<SessionContextBundle>,
     pub continuation_context_frame: Option<ContextFrame>,
     pub base_capability_state: Option<CapabilityState>,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub resolution_trace: LaunchResolutionTrace,
 }
 
@@ -316,6 +356,28 @@ mod tests {
         }
     }
 
+    fn workspace_vfs(root: &str, workspace_id: Uuid, binding_id: Uuid) -> Vfs {
+        Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: root.to_string(),
+                capabilities: vec![MountCapability::Read],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::json!({
+                    "workspace_id": workspace_id,
+                    "workspace_binding_id": binding_id,
+                }),
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
     fn test_mcp_server(name: &str) -> RuntimeMcpServer {
         RuntimeMcpServer {
             name: name.to_string(),
@@ -389,6 +451,57 @@ mod tests {
                 field: "capability_state.tool.mcp_servers",
                 expected_source: "FrameSurfaceDraft.mcp_servers",
             }
+        );
+    }
+
+    #[test]
+    fn frame_launch_surface_builds_runtime_backend_anchor_from_workspace_binding() {
+        let workspace_id = Uuid::new_v4();
+        let binding_id = Uuid::new_v4();
+        let vfs = workspace_vfs("/workspace", workspace_id, binding_id);
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(vfs.clone());
+        let surface = FrameLaunchSurface::new(
+            capability_state,
+            vfs,
+            Vec::new(),
+            AgentConfig::new("PI_AGENT"),
+        )
+        .expect("surface");
+
+        let anchor = surface
+            .runtime_backend_anchor(Some("construction.test".to_string()))
+            .expect("anchor result")
+            .expect("anchor");
+
+        assert_eq!(anchor.backend_id(), "backend");
+        assert_eq!(anchor.workspace_id, Some(workspace_id));
+        assert_eq!(anchor.workspace_binding_id, Some(binding_id));
+        assert_eq!(anchor.root_ref.as_deref(), Some("/workspace"));
+        assert_eq!(anchor.source, RuntimeBackendAnchorSource::WorkspaceBinding);
+        assert_eq!(anchor.source_detail.as_deref(), Some("construction.test"));
+    }
+
+    #[test]
+    fn frame_launch_surface_returns_no_anchor_without_backend_id() {
+        let vfs = test_vfs("/workspace");
+        let mut vfs_without_backend = vfs.clone();
+        vfs_without_backend.mounts[0].backend_id = " ".to_string();
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(vfs_without_backend.clone());
+        let surface = FrameLaunchSurface::new(
+            capability_state,
+            vfs_without_backend,
+            Vec::new(),
+            AgentConfig::new("PI_AGENT"),
+        )
+        .expect("surface");
+
+        assert!(
+            surface
+                .runtime_backend_anchor(Some("construction.test".to_string()))
+                .expect("anchor result")
+                .is_none()
         );
     }
 }

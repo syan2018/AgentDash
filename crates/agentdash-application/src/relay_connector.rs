@@ -777,6 +777,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -818,6 +819,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -883,6 +885,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {

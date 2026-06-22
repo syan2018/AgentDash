@@ -52,6 +52,8 @@ pub struct LaunchSummary {
     pub has_vfs: bool,
     pub backend_execution_backend_id: Option<String>,
     pub backend_execution_lease_id: Option<uuid::Uuid>,
+    pub runtime_backend_anchor_backend_id: Option<String>,
+    pub runtime_backend_anchor_source: Option<String>,
     pub mcp_server_count: usize,
     pub restored_executor_state: bool,
     pub capability_keys: Vec<String>,
@@ -157,6 +159,7 @@ impl LaunchPlan {
         let vfs = input.launch_envelope.launch_vfs().clone();
         let has_vfs = !vfs.mounts.is_empty();
         let identity = input.launch_envelope.intent.identity.clone();
+        let runtime_backend_anchor = input.launch_envelope.runtime_backend_anchor.clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -200,6 +203,12 @@ impl LaunchPlan {
                 .backend_execution
                 .as_ref()
                 .and_then(|placement| placement.lease_id),
+            runtime_backend_anchor_backend_id: runtime_backend_anchor
+                .as_ref()
+                .map(|anchor| anchor.backend_id.clone()),
+            runtime_backend_anchor_source: runtime_backend_anchor
+                .as_ref()
+                .map(|anchor| anchor.source.as_str().to_string()),
             mcp_server_count: mcp_servers.len(),
             restored_executor_state,
             capability_keys,
@@ -266,6 +275,7 @@ impl LaunchPlan {
                 .map(execution_backend_placement_from_plan)
                 .transpose()
                 .expect("backend_execution placement 必须已 claim lease"),
+            runtime_backend_anchor,
             identity,
         };
         let turn = ExecutionTurnFrame {
@@ -448,6 +458,9 @@ mod tests {
             .expect("launch plan tests must provide complete FrameSurfaceDraft");
         let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
             .expect("launch plan tests must provide launch-ready typed surface");
+        let runtime_backend_anchor = launch_surface
+            .runtime_backend_anchor(Some("launch_plan.test".to_string()))
+            .expect("anchor result");
         FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),
@@ -473,6 +486,7 @@ mod tests {
             context_bundle: construction.context.bundle,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
+            runtime_backend_anchor,
             resolution_trace: LaunchResolutionTrace {
                 vfs_source: construction.resolution.vfs_source,
                 mcp_source: construction.resolution.mcp_source,

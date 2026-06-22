@@ -33,6 +33,10 @@ pub use agentdash_domain::common::{
 
 // ─── connector ──────────────────────────────────────────────
 
+pub use agentdash_domain::backend::{
+    MissingRuntimeBackendAnchor, RuntimeBackendAnchor, RuntimeBackendAnchorError,
+    RuntimeBackendAnchorSource,
+};
 pub use connector::{
     AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, CompanionDimension,
     ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,

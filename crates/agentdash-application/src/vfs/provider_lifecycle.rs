@@ -30,7 +30,7 @@ use crate::lifecycle::surface::journey::{
     item_file_name, session_summary_archives, to_json_pretty, tool_result_metadata_for_projection,
 };
 use crate::runtime::{Mount, RuntimeFileEntry};
-use crate::session::SessionPersistence;
+use crate::session::{SessionPersistence, SessionToolResultCache};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -45,10 +45,30 @@ impl LifecycleMountProvider {
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
+        Self::new_with_tool_result_cache(
+            lifecycle_run_repo,
+            inline_file_repo,
+            skill_asset_repo,
+            session_persistence,
+            SessionToolResultCache::new(),
+        )
+    }
+
+    pub fn new_with_tool_result_cache(
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
+        skill_asset_repo: Arc<dyn SkillAssetRepository>,
+        session_persistence: Arc<dyn SessionPersistence>,
+        tool_result_cache: Arc<SessionToolResultCache>,
+    ) -> Self {
         Self {
             lifecycle_run_repo,
             skill_asset_repo,
-            journey: LifecycleJourneyProjection::new(inline_file_repo, session_persistence),
+            journey: LifecycleJourneyProjection::new_with_tool_result_cache(
+                inline_file_repo,
+                session_persistence,
+                tool_result_cache,
+            ),
         }
     }
 
@@ -1286,6 +1306,18 @@ mod tests {
         run: LifecycleRun,
         persistence: Arc<MemorySessionPersistence>,
     ) -> (LifecycleMountProvider, Mount) {
+        provider_for_agent_run_session_with_persistence_and_cache(
+            run,
+            persistence,
+            SessionToolResultCache::new(),
+        )
+    }
+
+    fn provider_for_agent_run_session_with_persistence_and_cache(
+        run: LifecycleRun,
+        persistence: Arc<MemorySessionPersistence>,
+        tool_result_cache: Arc<SessionToolResultCache>,
+    ) -> (LifecycleMountProvider, Mount) {
         let mount = build_agent_run_session_lifecycle_mount(
             run.id,
             Uuid::new_v4(),
@@ -1295,11 +1327,12 @@ mod tests {
             None,
             None,
         );
-        let provider = LifecycleMountProvider::new(
+        let provider = LifecycleMountProvider::new_with_tool_result_cache(
             Arc::new(RunRepo::with_run(run)),
             Arc::new(EmptyInlineRepo),
             Arc::new(EmptySkillRepo),
             persistence,
+            tool_result_cache,
         );
         (provider, mount)
     }
@@ -1656,6 +1689,107 @@ mod tests {
             search.matches[0].path,
             format!("session/tool-results/{item_id}/metadata.json")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_run_session_mount_reads_tool_result_cache_body() {
+        let session_id = "session-1";
+        let item_id = "turn-1:0:call-1";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&session_meta(session_id))
+            .await
+            .expect("create session");
+        persistence
+            .append_event(
+                session_id,
+                &dynamic_tool_completed_envelope(session_id, item_id),
+            )
+            .await
+            .expect("append tool event");
+
+        let cache = SessionToolResultCache::new();
+        cache.put_text(
+            session_id,
+            item_id,
+            "complete cached body\nAGENTDASH_CACHE_BODY_SENTINEL",
+            47,
+        );
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let (provider, mount) =
+            provider_for_agent_run_session_with_persistence_and_cache(run, persistence, cache);
+
+        let metadata = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/metadata.json"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read tool result metadata");
+        assert!(metadata.content.contains("\"status\": \"available\""));
+
+        let result = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/result.txt"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read cached tool result body");
+        assert!(result.content.contains("AGENTDASH_CACHE_BODY_SENTINEL"));
+    }
+
+    #[tokio::test]
+    async fn agent_run_session_mount_returns_expired_tool_result_status() {
+        let session_id = "session-1";
+        let item_id = "turn-1:0:call-1";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&session_meta(session_id))
+            .await
+            .expect("create session");
+        persistence
+            .append_event(
+                session_id,
+                &dynamic_tool_completed_envelope(session_id, item_id),
+            )
+            .await
+            .expect("append tool event");
+
+        let cache = SessionToolResultCache::new();
+        cache.put_text_with_ttl(
+            session_id,
+            item_id,
+            "expired cache body AGENTDASH_EXPIRED_BODY_SENTINEL",
+            48,
+            Some(std::time::Duration::from_millis(0)),
+        );
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let (provider, mount) =
+            provider_for_agent_run_session_with_persistence_and_cache(run, persistence, cache);
+
+        let metadata = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/metadata.json"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read tool result metadata");
+        assert!(metadata.content.contains("\"status\": \"expired\""));
+        assert!(!metadata.content.contains("AGENTDASH_EXPIRED_BODY_SENTINEL"));
+
+        let result = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/result.txt"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read expired tool result body");
+        assert!(result.content.contains("[tool result cache expired]"));
+        assert!(!result.content.contains("AGENTDASH_EXPIRED_BODY_SENTINEL"));
     }
 
     #[tokio::test]

@@ -25,7 +25,11 @@ function asEntry(id: string, event: BackboneEvent, extra?: Partial<SessionDispla
 function mkCmdEntry(
   id: string,
   command: string,
-  opts?: { isPendingApproval?: boolean; status?: "inProgress" | "completed" | "failed" | "declined" },
+  opts?: {
+    isPendingApproval?: boolean;
+    status?: "inProgress" | "completed" | "failed" | "declined";
+    output?: string | null;
+  },
 ): SessionDisplayEntry {
   const item = {
     type: "commandExecution",
@@ -36,7 +40,7 @@ function mkCmdEntry(
     source: "agent",
     status: opts?.status ?? "completed",
     commandActions: [],
-    aggregatedOutput: null,
+    aggregatedOutput: opts?.output ?? null,
     exitCode: 0,
     durationMs: 100,
   } as unknown as ThreadItem;
@@ -510,5 +514,21 @@ describe("aggregateEntries — tool burst", () => {
       "c2",
       "c3",
     ]);
+  });
+
+  it("T22: bounded output tools stay as single cards so truncation state remains visible", () => {
+    const entries = [
+      mkCmdEntry("c1", "large-output", {
+        output: "[tool result truncated]\nlifecycle_path: lifecycle://session/tool-results/c1/result.txt\npolicy: head_tail\n\npreview",
+      }),
+      mkCmdEntry("c2", "pwd"),
+    ];
+
+    const result = aggregateEntries(entries);
+
+    expect(result).toHaveLength(2);
+    expect(isToolGroup(result[0])).toBe(false);
+    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
+    expect((result[1] as SessionDisplayEntry).id).toBe("c2");
   });
 });

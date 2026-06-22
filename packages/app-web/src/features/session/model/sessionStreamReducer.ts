@@ -47,6 +47,13 @@ function getItemIdFromEvent(event: BackboneEvent): string | undefined {
   }
 }
 
+function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
+  if (item.type !== "commandExecution" && item.type !== "shellExec") {
+    return null;
+  }
+  return item.aggregatedOutput;
+}
+
 function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
   const itemId = getItemIdFromEvent(bbEvent);
   if (itemId) {
@@ -160,6 +167,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
 
   if (bbEvent.type === "item_completed") {
     const entryId = buildEntryId(event, bbEvent);
+    const finalCommandOutput = getCommandAggregatedOutput(bbEvent.payload.item);
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
@@ -168,13 +176,21 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
           ...existing,
           eventSeq: event.event_seq,
           event: bbEvent,
+          accumulatedText: finalCommandOutput ?? existing.accumulatedText,
           isStreaming: false,
           isPendingApproval: false,
         };
         return next;
       }
     }
-    return [...prev, { ...makeDisplayEntry(event, bbEvent), isStreaming: false }];
+    return [
+      ...prev,
+      {
+        ...makeDisplayEntry(event, bbEvent),
+        accumulatedText: finalCommandOutput ?? undefined,
+        isStreaming: false,
+      },
+    ];
   }
 
   if (bbEvent.type === "command_output_delta" || bbEvent.type === "file_change_delta" ||

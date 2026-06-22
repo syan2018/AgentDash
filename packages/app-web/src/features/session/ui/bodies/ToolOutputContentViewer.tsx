@@ -7,6 +7,7 @@
 
 import { useState, type ReactNode } from "react";
 import type { ToolOutputBlock } from "./toolOutputContent";
+import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
 import { JsonTree } from "./JsonTree";
 import { CB } from "./cardBodyTokens";
 
@@ -47,6 +48,7 @@ function OutputBlock({ block }: { block: ToolOutputBlock }): ReactNode {
 function TextOutputPanel({ text }: { text: string }): ReactNode {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const boundedOutput = parseBoundedOutputText(text);
 
   const lines = text.split("\n");
   const totalLines = lines.length;
@@ -66,6 +68,10 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
 
   return (
     <div className={CB.itemGap}>
+      {boundedOutput && (
+        <BoundedOutputNotice info={boundedOutput} />
+      )}
+
       <div className={`flex items-center justify-between ${CB.meta}`}>
         <span className="tabular-nums">
           {totalLines} 行 · {totalChars.toLocaleString()} 字符
@@ -105,6 +111,29 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
           >
             折叠
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BoundedOutputNotice({ info }: { info: BoundedOutputInfo }): ReactNode {
+  const parts = ["输出已裁切"];
+  if (info.omittedBytes != null) {
+    parts.push(`省略 ${formatBytes(info.omittedBytes)}`);
+  }
+  if (info.policy) {
+    parts.push(`policy: ${info.policy}`);
+  }
+
+  return (
+    <div className={`rounded-[6px] border border-warning/25 bg-warning/5 px-2 py-1.5 ${CB.meta}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={CB.statusWarning}>{parts.join(" · ")}</span>
+        {info.lifecyclePath && (
+          <code className="max-w-full truncate text-[10px] text-muted-foreground/60">
+            {info.lifecyclePath}
+          </code>
         )}
       </div>
     </div>

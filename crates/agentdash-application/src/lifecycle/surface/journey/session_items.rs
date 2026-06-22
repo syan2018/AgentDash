@@ -88,6 +88,18 @@ pub fn tool_result_metadata_for_projection(
     session_id: &str,
     projection: &SessionItemProjection,
 ) -> Option<SessionToolResultMetadata> {
+    tool_result_metadata_for_projection_with_status(
+        session_id,
+        projection,
+        cache_miss_status("result body"),
+    )
+}
+
+pub fn tool_result_metadata_for_projection_with_status(
+    session_id: &str,
+    projection: &SessionItemProjection,
+    body_status: SessionLargeBodyStatus,
+) -> Option<SessionToolResultMetadata> {
     let SessionItemContent::Tool { item } = &projection.content else {
         return None;
     };
@@ -113,7 +125,7 @@ pub fn tool_result_metadata_for_projection(
         lifecycle_path,
         metadata_path,
         result_path,
-        body_status: cache_miss_status("result body"),
+        body_status,
         truncation,
     })
 }
@@ -714,7 +726,7 @@ fn find_truncation_metadata(value: &Value) -> Option<Value> {
     }
 }
 
-fn cache_miss_status(label: &str) -> SessionLargeBodyStatus {
+pub fn cache_miss_status(label: &str) -> SessionLargeBodyStatus {
     SessionLargeBodyStatus {
         status: "cache_miss".to_string(),
         message: format!("{label} is not available from the current session cache."),

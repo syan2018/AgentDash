@@ -16,15 +16,19 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
-use crate::session::{PersistedSessionEvent, SessionPersistence};
+use crate::session::{
+    PersistedSessionEvent, SessionPersistence, SessionToolResultCache, SessionToolResultCacheRead,
+    SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
+};
 
 pub mod session_items;
 
 pub use session_items::{
-    SessionItemProjection, SessionItemSummary, SessionItemView, SessionToolResultMetadata,
-    filter_session_items, item_file_name, item_summary_for_view, render_item_content,
-    session_item_projections, session_summary_archives, summary_archive_markdown,
-    tool_result_cache_miss_text, tool_result_metadata_for_projection,
+    SessionItemProjection, SessionItemSummary, SessionItemView, SessionLargeBodyStatus,
+    SessionToolResultMetadata, filter_session_items, item_file_name, item_summary_for_view,
+    render_item_content, session_item_projections, session_summary_archives,
+    summary_archive_markdown, tool_result_metadata_for_projection,
+    tool_result_metadata_for_projection_with_status,
 };
 
 pub const PORT_OUTPUTS_CONTAINER: &str = "port_outputs";
@@ -53,6 +57,7 @@ impl std::error::Error for LifecycleJourneyError {}
 pub struct LifecycleJourneyProjection {
     inline_file_repo: Arc<dyn InlineFileRepository>,
     session_persistence: Arc<dyn SessionPersistence>,
+    tool_result_cache: Arc<SessionToolResultCache>,
 }
 
 impl LifecycleJourneyProjection {
@@ -60,9 +65,22 @@ impl LifecycleJourneyProjection {
         inline_file_repo: Arc<dyn InlineFileRepository>,
         session_persistence: Arc<dyn SessionPersistence>,
     ) -> Self {
+        Self::new_with_tool_result_cache(
+            inline_file_repo,
+            session_persistence,
+            SessionToolResultCache::new(),
+        )
+    }
+
+    pub fn new_with_tool_result_cache(
+        inline_file_repo: Arc<dyn InlineFileRepository>,
+        session_persistence: Arc<dyn SessionPersistence>,
+        tool_result_cache: Arc<SessionToolResultCache>,
+    ) -> Self {
         Self {
             inline_file_repo,
             session_persistence,
+            tool_result_cache,
         }
     }
 
@@ -212,7 +230,14 @@ impl LifecycleJourneyProjection {
         let projections = self.session_item_projections(session_id).await?;
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
-            .filter_map(|projection| tool_result_metadata_for_projection(session_id, projection))
+            .filter_map(|projection| {
+                let item_id = projection.summary.item_id.as_str();
+                tool_result_metadata_for_projection_with_status(
+                    session_id,
+                    projection,
+                    self.tool_result_body_status(session_id, item_id),
+                )
+            })
             .collect::<Vec<_>>();
         to_json_pretty(&metadata)
     }
@@ -226,7 +251,13 @@ impl LifecycleJourneyProjection {
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .find(|projection| projection.summary.item_id == item_id)
-            .and_then(|projection| tool_result_metadata_for_projection(session_id, projection))
+            .and_then(|projection| {
+                tool_result_metadata_for_projection_with_status(
+                    session_id,
+                    projection,
+                    self.tool_result_body_status(session_id, item_id),
+                )
+            })
             .ok_or_else(|| {
                 LifecycleJourneyError::NotFound(format!("tool result 不存在: {item_id}"))
             })?;
@@ -247,7 +278,23 @@ impl LifecycleJourneyProjection {
                 "tool result 不存在: {item_id}"
             )));
         }
-        Ok(tool_result_cache_miss_text(session_id, item_id))
+        match self.tool_result_cache.read_text(session_id, item_id) {
+            SessionToolResultCacheRead::Available { text, .. } => Ok(text),
+            SessionToolResultCacheRead::Unavailable(status) => Ok(status.message),
+        }
+    }
+
+    fn tool_result_body_status(&self, session_id: &str, item_id: &str) -> SessionLargeBodyStatus {
+        match self.tool_result_cache.read_text(session_id, item_id) {
+            SessionToolResultCacheRead::Available { metadata, .. } => SessionLargeBodyStatus {
+                status: "available".to_string(),
+                message: format!(
+                    "result body is available from the current session cache ({} bytes stored, {} original bytes).",
+                    metadata.stored_bytes, metadata.original_bytes
+                ),
+            },
+            SessionToolResultCacheRead::Unavailable(status) => tool_result_cache_status(status),
+        }
     }
 
     pub async fn terminal_metadata_entries(
@@ -909,6 +956,17 @@ fn previous_char_boundary(value: &str, max_bytes: usize) -> usize {
         boundary -= 1;
     }
     boundary
+}
+
+fn tool_result_cache_status(status: SessionToolResultCacheStatus) -> SessionLargeBodyStatus {
+    let status_name = match status.status {
+        SessionToolResultCacheStatusKind::Missing => "cache_miss",
+        SessionToolResultCacheStatusKind::Expired => "expired",
+    };
+    SessionLargeBodyStatus {
+        status: status_name.to_string(),
+        message: status.message,
+    }
 }
 
 fn map_domain_err(error: agentdash_domain::common::error::DomainError) -> LifecycleJourneyError {

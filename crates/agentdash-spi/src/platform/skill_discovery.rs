@@ -72,10 +72,61 @@ pub struct SkillDiscoveryUserContext {
     pub groups: Vec<String>,
 }
 
+/// Dynamic skill provider 声明的 VFS 文件发现规则。
+///
+/// 规则只描述“在允许自动发现的 mount 中扫描什么”，不扩大 mount 自身的
+/// discovery 权限；宿主仍必须先按 mount metadata / provider cost policy 决定
+/// 是否允许扫描该 mount。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SkillDiscoveryVfsRule {
+    pub key: String,
+    #[serde(default)]
+    pub file_names: Vec<String>,
+    #[serde(default)]
+    pub exact_paths: Vec<String>,
+    #[serde(default)]
+    pub scan_prefixes: Vec<String>,
+    #[serde(default)]
+    pub recursive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_files: Option<usize>,
+    pub max_size_bytes: u64,
+}
+
+impl SkillDiscoveryVfsRule {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            file_names: Vec::new(),
+            exact_paths: Vec::new(),
+            scan_prefixes: Vec::new(),
+            recursive: false,
+            max_depth: None,
+            max_files: None,
+            max_size_bytes: 64 * 1024,
+        }
+    }
+}
+
+/// 宿主通过 VFS 扫描后交给 dynamic skill provider 的文件内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SkillDiscoveryVfsFile {
+    pub rule_key: String,
+    pub mount_id: String,
+    /// 相对 mount 根的规范化路径。
+    pub path: String,
+    pub content: String,
+}
+
 /// Session 构建阶段传递给动态 skill provider 的通用上下文。
 ///
 /// 公开主仓只传递抽象事实；具体目录推导、组织策略和默认暴露策略由 provider
-/// 自己实现。
+/// 自己实现。需要访问 workspace 文件时，provider 应声明 VFS discovery rules，
+/// 由宿主完成 mount 受控读取后再调用 `discover_from_vfs`。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SkillDiscoveryContext {
@@ -172,6 +223,26 @@ pub enum SkillDiscoveryError {
 pub trait SkillDiscoveryProvider: Send + Sync {
     fn provider_key(&self) -> &str;
 
+    /// 声明 provider 需要宿主通过 active VFS 扫描的文件。
+    ///
+    /// 返回空列表表示沿用 legacy `discover(context)` 路径。返回非空列表时，
+    /// 宿主应先通过 VFS 扫描文件，再调用 `discover_from_vfs`。
+    fn vfs_discovery_rules(&self) -> Vec<SkillDiscoveryVfsRule> {
+        Vec::new()
+    }
+
+    /// VFS-first discovery 入口。
+    ///
+    /// 默认实现回落到 legacy `discover(context)`，保证已有 provider 在新增
+    /// trait method 后无需立即迁移。声明了 VFS rules 的 provider 应覆盖此方法。
+    async fn discover_from_vfs(
+        &self,
+        context: SkillDiscoveryContext,
+        _files: Vec<SkillDiscoveryVfsFile>,
+    ) -> Result<SkillDiscoveryOutput, SkillDiscoveryError> {
+        self.discover(context).await
+    }
+
     async fn discover(
         &self,
         context: SkillDiscoveryContext,
@@ -196,5 +267,19 @@ mod tests {
     fn explicit_only_is_context_exposure_not_unavailability() {
         assert!(SkillContextExposure::DefaultExposed.is_default_exposed());
         assert!(!SkillContextExposure::ExplicitOnly.is_default_exposed());
+    }
+
+    #[test]
+    fn vfs_rule_defaults_are_bounded() {
+        let rule = SkillDiscoveryVfsRule::new("skills");
+
+        assert_eq!(rule.key, "skills");
+        assert!(rule.file_names.is_empty());
+        assert!(rule.exact_paths.is_empty());
+        assert!(rule.scan_prefixes.is_empty());
+        assert!(!rule.recursive);
+        assert_eq!(rule.max_depth, None);
+        assert_eq!(rule.max_files, None);
+        assert_eq!(rule.max_size_bytes, 64 * 1024);
     }
 }

@@ -6,13 +6,14 @@ use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
 use agentdash_spi::{
-    AuthIdentity, DiscoveredGuideline, RuntimeMcpServer, SkillContextExposure,
+    AuthIdentity, DiscoveredGuideline, DiscoveredSkill, RuntimeMcpServer, SkillContextExposure,
     SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput,
     SkillDiscoveryProvider, SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
 use crate::context::mount_file_discovery::{
-    BUILTIN_GUIDELINE_RULES, DiscoveredMountFile, discover_mount_files,
+    BUILTIN_GUIDELINE_RULES, DiscoveredMountFile, MountFileDiscoveryDiagnostic,
+    discover_mount_files, discover_skill_vfs_files,
 };
 use crate::vfs::VfsService;
 
@@ -106,10 +107,40 @@ pub async fn derive_session_skill_baseline(
     let discovery_context =
         skill_discovery_context_from_vfs_and_identity(input.active_vfs, input.identity);
     for provider in input.skill_discovery_providers {
-        match provider.discover(discovery_context.clone()).await {
+        let rules = provider.vfs_discovery_rules();
+        let vfs_first = !rules.is_empty();
+        let output = if vfs_first {
+            match (input.vfs_service, input.active_vfs) {
+                (Some(vfs_service), Some(active_vfs)) => {
+                    let (files, scan_diagnostics) =
+                        discover_skill_vfs_files(vfs_service, active_vfs, &rules).await;
+                    diagnostics.extend(mount_diagnostics_to_discovery(
+                        provider.provider_key(),
+                        scan_diagnostics,
+                    ));
+                    provider
+                        .discover_from_vfs(discovery_context.clone(), files)
+                        .await
+                }
+                _ => {
+                    diagnostics.push(SkillDiscoveryDiagnostic {
+                        provider_key: provider.provider_key().to_string(),
+                        code: "vfs_context_missing".to_string(),
+                        message: "provider 声明了 VFS discovery rules，但当前 session 缺少 active VFS 或 VfsService，已跳过".to_string(),
+                        local_name: None,
+                        file_path: None,
+                    });
+                    continue;
+                }
+            }
+        } else {
+            provider.discover(discovery_context.clone()).await
+        };
+
+        match output {
             Ok(output) => {
                 let (provider_clusters, provider_diagnostics) =
-                    provider_output_to_surface(output, provider.provider_key());
+                    provider_output_to_surface(output, provider.provider_key(), vfs_first);
                 diagnostics.extend(provider_diagnostics);
                 clusters.extend(provider_clusters);
             }
@@ -284,6 +315,7 @@ fn skill_discovery_user_context_from_identity(
 fn provider_output_to_surface(
     output: SkillDiscoveryOutput,
     fallback_provider_key: &str,
+    require_vfs_paths: bool,
 ) -> (Vec<SkillProviderCluster>, Vec<SkillDiscoveryDiagnostic>) {
     let mut diagnostics = output.diagnostics;
     let mut seen_by_provider: HashMap<String, HashSet<String>> = HashMap::new();
@@ -294,6 +326,7 @@ fn provider_output_to_surface(
             discovery_cluster_to_provider_cluster(
                 cluster,
                 fallback_provider_key,
+                require_vfs_paths,
                 &mut diagnostics,
                 &mut seen_by_provider,
             )
@@ -305,6 +338,7 @@ fn provider_output_to_surface(
 fn discovery_cluster_to_provider_cluster(
     cluster: SkillDiscoveryCluster,
     fallback_provider_key: &str,
+    require_vfs_paths: bool,
     diagnostics: &mut Vec<SkillDiscoveryDiagnostic>,
     seen_by_provider: &mut HashMap<String, HashSet<String>>,
 ) -> SkillProviderCluster {
@@ -317,6 +351,12 @@ fn discovery_cluster_to_provider_cluster(
     let mut default_exposed_skills = Vec::new();
 
     for skill in cluster.skills {
+        if require_vfs_paths
+            && !validate_vfs_first_skill_paths(&provider_key, &skill, diagnostics)
+        {
+            continue;
+        }
+
         if !seen.insert(skill.local_name.clone()) {
             diagnostics.push(SkillDiscoveryDiagnostic {
                 provider_key: provider_key.clone(),
@@ -355,6 +395,59 @@ fn discovery_cluster_to_provider_cluster(
         inventory_count: cluster.inventory_count,
         default_exposed_skills,
     }
+}
+
+fn validate_vfs_first_skill_paths(
+    provider_key: &str,
+    skill: &DiscoveredSkill,
+    diagnostics: &mut Vec<SkillDiscoveryDiagnostic>,
+) -> bool {
+    let file_path_ok = is_controlled_vfs_skill_path(&skill.file_path, false);
+    let base_dir_ok = skill
+        .base_dir
+        .as_deref()
+        .map(|base_dir| is_controlled_vfs_skill_path(base_dir, true))
+        .unwrap_or(true);
+
+    if file_path_ok && base_dir_ok {
+        return true;
+    }
+
+    diagnostics.push(SkillDiscoveryDiagnostic {
+        provider_key: provider_key.to_string(),
+        code: "invalid_vfs_skill_path".to_string(),
+        message: format!(
+            "VFS-first provider 返回了非受控 mount URI 路径，skill `{}` 已跳过",
+            skill.local_name
+        ),
+        local_name: Some(skill.local_name.clone()),
+        file_path: Some(skill.file_path.clone()),
+    });
+    false
+}
+
+fn is_controlled_vfs_skill_path(path: &str, allow_empty_tail: bool) -> bool {
+    let Some((scheme, tail)) = path.split_once("://") else {
+        return false;
+    };
+    if scheme.trim().is_empty()
+        || scheme.eq_ignore_ascii_case("file")
+        || (scheme.len() == 1 && scheme.chars().all(|ch| ch.is_ascii_alphabetic()))
+    {
+        return false;
+    }
+
+    if tail.is_empty() {
+        return allow_empty_tail;
+    }
+    if tail.starts_with('/') || tail.starts_with('\\') || tail.contains('\\') {
+        return false;
+    }
+    if tail.len() >= 2 && tail.as_bytes()[1] == b':' && tail.as_bytes()[0].is_ascii_alphabetic() {
+        return false;
+    }
+
+    !tail.split('/').any(|segment| segment == "..")
 }
 
 fn normalize_provider_clusters(
@@ -404,6 +497,22 @@ fn loader_diagnostics_to_discovery(
             message: diag.message,
             local_name: Some(diag.name),
             file_path: Some(diag.file_path.to_string_lossy().to_string()),
+        })
+        .collect()
+}
+
+fn mount_diagnostics_to_discovery(
+    provider_key: &str,
+    diagnostics: Vec<MountFileDiscoveryDiagnostic>,
+) -> Vec<SkillDiscoveryDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|diag| SkillDiscoveryDiagnostic {
+            provider_key: provider_key.to_string(),
+            code: "vfs_file_diagnostic".to_string(),
+            message: diag.message,
+            local_name: None,
+            file_path: Some(format!("{}://{}", diag.mount_id, diag.path)),
         })
         .collect()
 }
@@ -663,6 +772,81 @@ mod tests {
         assert_eq!(clusters[0].default_exposed_skills.len(), 1);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "duplicate_local_name");
+    }
+
+    fn discovered_skill(local_name: &str, file_path: &str) -> DiscoveredSkill {
+        DiscoveredSkill {
+            local_name: local_name.to_string(),
+            display_name: None,
+            description: "desc".to_string(),
+            file_path: file_path.to_string(),
+            base_dir: None,
+            exposure: SkillContextExposure::DefaultExposed,
+            disable_model_invocation: false,
+        }
+    }
+
+    #[test]
+    fn vfs_first_provider_rejects_absolute_skill_paths() {
+        let output = SkillDiscoveryOutput {
+            clusters: vec![SkillDiscoveryCluster {
+                provider_key: "dynamic".to_string(),
+                display_name: "Dynamic".to_string(),
+                skills: vec![discovered_skill("bad", "C:\\workspace\\SKILL.md")],
+                ..Default::default()
+            }],
+            diagnostics: Vec::new(),
+        };
+
+        let (clusters, diagnostics) = provider_output_to_surface(output, "fallback", true);
+
+        assert!(clusters[0].default_exposed_skills.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "invalid_vfs_skill_path");
+        assert_eq!(diagnostics[0].local_name.as_deref(), Some("bad"));
+    }
+
+    #[test]
+    fn legacy_provider_keeps_absolute_skill_paths_for_compatibility() {
+        let output = SkillDiscoveryOutput {
+            clusters: vec![SkillDiscoveryCluster {
+                provider_key: "legacy".to_string(),
+                display_name: "Legacy".to_string(),
+                skills: vec![discovered_skill("old", "/workspace/SKILL.md")],
+                ..Default::default()
+            }],
+            diagnostics: Vec::new(),
+        };
+
+        let (clusters, diagnostics) = provider_output_to_surface(output, "fallback", false);
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(clusters[0].default_exposed_skills.len(), 1);
+        assert_eq!(
+            clusters[0].default_exposed_skills[0].file_path,
+            "/workspace/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn controlled_vfs_skill_path_validation_rejects_local_path_shapes() {
+        assert!(is_controlled_vfs_skill_path(
+            "main://skills/review/SKILL.md",
+            false
+        ));
+        assert!(is_controlled_vfs_skill_path("main://", true));
+        assert!(!is_controlled_vfs_skill_path("main://", false));
+        assert!(!is_controlled_vfs_skill_path("file:///tmp/SKILL.md", false));
+        assert!(!is_controlled_vfs_skill_path("main:///tmp/SKILL.md", false));
+        assert!(!is_controlled_vfs_skill_path("main://C:/tmp/SKILL.md", false));
+        assert!(!is_controlled_vfs_skill_path(
+            "main://skills\\review\\SKILL.md",
+            false
+        ));
+        assert!(!is_controlled_vfs_skill_path(
+            "main://skills/../SKILL.md",
+            false
+        ));
     }
 
     #[tokio::test]

@@ -111,7 +111,7 @@ pub use platform::skill_discovery::{
     DiscoveredSkill, SkillCapabilityId, SkillContextExposure, SkillDiscoveryCluster,
     SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError, SkillDiscoveryOutput,
     SkillDiscoveryOwnerKind, SkillDiscoveryProvider, SkillDiscoveryUserContext,
-    skill_capability_key,
+    SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, skill_capability_key,
 };
 pub use platform::skill_source::{
     RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,

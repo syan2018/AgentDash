@@ -161,6 +161,9 @@ pub struct DirectoryUser {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -176,6 +179,7 @@ impl From<User> for DirectoryUser {
             avatar_url: user.avatar_url,
             is_admin: user.is_admin,
             provider: user.provider,
+            source: Some("projection".to_string()),
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
@@ -188,6 +192,15 @@ pub struct DirectoryGroup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -197,8 +210,106 @@ impl From<Group> for DirectoryGroup {
         Self {
             group_id: group.group_id,
             display_name: group.display_name,
+            path: None,
+            provider: None,
+            source: Some("projection".to_string()),
             created_at: group.created_at,
             updated_at: group.updated_at,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct DirectoryResolveRequest {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryTreeNode {
+    pub group_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub path: Option<String>,
+    pub has_children: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub children: Option<Vec<DirectoryTreeNode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectorySearchResponse<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryResolveResponse<T> {
+    pub item: T,
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryUserSearchResponse {
+    pub items: Vec<DirectoryUser>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryGroupSearchResponse {
+    pub items: Vec<DirectoryGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryTreeResponse {
+    pub items: Vec<DirectoryTreeNode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryUserResolveResponse {
+    pub item: DirectoryUser,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    pub is_projection_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DirectoryGroupResolveResponse {
+    pub item: DirectoryGroup,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    pub is_projection_only: bool,
 }

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
-  DirectoryGroup,
   DirectoryUser,
+  CurrentUser,
   BackendWorkspaceInventory,
   ProjectBackendAccess,
   Project,
@@ -24,13 +24,28 @@ import {
   DangerConfirmDialog,
 } from "@agentdash/ui";
 import { UserAvatar } from "../components/ui/user-avatar";
-import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
+import {
+  fetchDirectoryGroups,
+  fetchDirectoryUsers,
+} from "../services/directory";
 import {
   createProjectBackendAccess,
   listBackendWorkspaceInventory,
   listProjectBackendAccess,
   revokeProjectBackendAccess,
 } from "../services/backendAccess";
+import {
+  mergeDirectoryUsers,
+  mergeDirectoryGroups,
+  resolveUserLabel,
+  resolveGroupLabel,
+} from "../features/directory/directorySubjectUtils";
+import { DirectorySubjectPicker } from "../features/directory/DirectorySubjectPicker";
+import type {
+  SelectedSubject,
+  DirectoryResponseStatus,
+} from "../features/directory/DirectorySubjectPicker";
+import type { DirectoryGroupSummary } from "../features/directory/directorySubjectUtils";
 
 type SettingsTab = "overview" | "context" | "workspace" | "management";
 
@@ -59,6 +74,8 @@ const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   viewer: "Viewer",
 };
 
+const DIRECTORY_SEARCH_LIMIT = 20;
+
 const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
   private: "私有",
   template_visible: "模板可见",
@@ -74,19 +91,14 @@ function describeProjectAccess(project: Project): string {
 function resolveGrantSubjectLabel(
   grant: ProjectSubjectGrant,
   users: DirectoryUser[],
-  groups: DirectoryGroup[],
+  groups: DirectoryGroupSummary[],
 ): string {
   if (grant.subject_type === "user") {
     const user = users.find((item) => item.user_id === grant.subject_id);
-    return user?.display_name?.trim() || user?.email?.trim() || grant.subject_id;
+    return user ? resolveUserLabel(user) : grant.subject_id;
   }
-
   const group = groups.find((item) => item.group_id === grant.subject_id);
-  return group?.display_name?.trim() || grant.subject_id;
-}
-
-function resolveDirectoryUserLabel(user: DirectoryUser): string {
-  return user.display_name?.trim() || user.email?.trim() || user.user_id;
+  return group ? resolveGroupLabel(group) : grant.subject_id;
 }
 
 function findGrantUser(
@@ -95,6 +107,29 @@ function findGrantUser(
 ): DirectoryUser | null {
   if (grant.subject_type !== "user") return null;
   return users.find((item) => item.user_id === grant.subject_id) ?? null;
+}
+
+function userSubjectLabel(user: Pick<DirectoryUser, "user_id" | "subject" | "email">): string {
+  const subject = user.subject?.trim();
+  if (subject && subject !== user.user_id) return subject;
+  const email = user.email?.trim();
+  if (email) return email.includes("@") ? email.split("@")[0] : email;
+  return user.user_id;
+}
+
+function resolveUserAuditLabel(
+  userId: string,
+  users: DirectoryUser[],
+  currentUser: CurrentUser | null,
+): string {
+  const user = users.find((item) => item.user_id === userId);
+  if (user) return userSubjectLabel(user);
+  if (currentUser?.user_id === userId) return userSubjectLabel(currentUser);
+  return userId;
+}
+
+function statusFrom(r: { source?: string; is_projection_only: boolean }): DirectoryResponseStatus {
+  return { source: r.source, is_projection_only: r.is_projection_only };
 }
 
 function SectionCard({
@@ -641,6 +676,7 @@ export function ProjectSettingsPage() {
     currentProjectId,
     grantsByProjectId,
     selectProject,
+    fetchProjects,
     updateProject,
     updateProjectConfig,
     fetchProjectGrants,
@@ -660,11 +696,11 @@ export function ProjectSettingsPage() {
   const [templateFlag, setTemplateFlag] = useState(false);
   const [cloneName, setCloneName] = useState("");
   const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>([]);
-  const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroup[]>([]);
+  const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroupSummary[]>([]);
+  const [directoryUsersStatus, setDirectoryUsersStatus] = useState<DirectoryResponseStatus | null>(null);
+  const [directoryGroupsStatus, setDirectoryGroupsStatus] = useState<DirectoryResponseStatus | null>(null);
   const [isDirectoryLoading, setIsDirectoryLoading] = useState(false);
-  const [shareTargetType, setShareTargetType] = useState<"user" | "group">("user");
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [pickerSelections, setPickerSelections] = useState<SelectedSubject[]>([]);
   const [grantRole, setGrantRole] = useState<ProjectRole>("viewer");
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -685,7 +721,18 @@ export function ProjectSettingsPage() {
     [projectId, projects],
   );
   const workspaces: Workspace[] = projectId ? (workspacesByProjectId[projectId] ?? []) : [];
-  const grants = project ? (grantsByProjectId[project.id] ?? []) : [];
+  const grants = useMemo(
+    () => (project ? (grantsByProjectId[project.id] ?? []) : []),
+    [grantsByProjectId, project],
+  );
+  const grantedUserIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "user").map((grant) => grant.subject_id)),
+    [grants],
+  );
+  const grantedGroupIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "group").map((grant) => grant.subject_id)),
+    [grants],
+  );
   const loadedProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -699,14 +746,35 @@ export function ProjectSettingsPage() {
     setCloneName(`${project.name}（副本）`);
     setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
     setDeleteConfirmValue("");
-    setShareTargetType("user");
-    setSelectedUserId("");
-    setSelectedGroupId("");
+    setPickerSelections([]);
     setGrantRole("viewer");
+    setDirectoryUsers([]);
+    setDirectoryGroups([]);
+    setDirectoryUsersStatus(null);
+    setDirectoryGroupsStatus(null);
     setActiveTab("overview");
     setWorkspaceInventoryRefreshKey(0);
     setError(null);
   }, [project]);
+
+  const rememberDirectoryUsers = useCallback((items: DirectoryUser[]) => {
+    setDirectoryUsers((current) => mergeDirectoryUsers(current, items));
+  }, []);
+
+  const rememberDirectoryGroups = useCallback((items: DirectoryGroupSummary[]) => {
+    setDirectoryGroups((current) => mergeDirectoryGroups(current, items));
+  }, []);
+
+  const loadDirectorySnapshot = useCallback(async () => {
+    const [usersResponse, groupsResponse] = await Promise.all([
+      fetchDirectoryUsers({ limit: DIRECTORY_SEARCH_LIMIT }),
+      fetchDirectoryGroups({ limit: DIRECTORY_SEARCH_LIMIT }),
+    ]);
+    rememberDirectoryUsers(usersResponse.items);
+    rememberDirectoryGroups(groupsResponse.items);
+    setDirectoryUsersStatus(statusFrom(usersResponse));
+    setDirectoryGroupsStatus(statusFrom(groupsResponse));
+  }, [rememberDirectoryGroups, rememberDirectoryUsers]);
 
   useEffect(() => {
     if (activeTab !== "management" || !project?.access.can_manage_sharing) return;
@@ -716,22 +784,8 @@ export function ProjectSettingsPage() {
       setIsDirectoryLoading(true);
       try {
         await fetchProjectGrants(project.id);
-        const [users, groups] = await Promise.all([
-          fetchDirectoryUsers(),
-          fetchDirectoryGroups(),
-        ]);
+        await loadDirectorySnapshot();
         if (cancelled) return;
-
-        setDirectoryUsers(users);
-        setDirectoryGroups(groups);
-
-        const firstUser = users.find((item) => item.user_id !== currentUser?.user_id) ?? users[0];
-        if (firstUser) {
-          setSelectedUserId((prev) => prev || firstUser.user_id);
-        }
-        if (groups[0]) {
-          setSelectedGroupId((prev) => prev || groups[0].group_id);
-        }
       } catch (loadError) {
         if (!cancelled) {
           setError((loadError as Error).message);
@@ -748,8 +802,8 @@ export function ProjectSettingsPage() {
     };
   }, [
     activeTab,
-    currentUser?.user_id,
     fetchProjectGrants,
+    loadDirectorySnapshot,
     project?.access.can_manage_sharing,
     project?.id,
   ]);
@@ -774,7 +828,9 @@ export function ProjectSettingsPage() {
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
   const contextContainers = project.config.context_containers ?? [];
-  const availableUsers = directoryUsers.filter((item) => item.user_id !== currentUser?.user_id);
+  const pendingSelections = pickerSelections.filter((s) =>
+    s.type === "user" ? !grantedUserIds.has(s.id) : !grantedGroupIds.has(s.id),
+  );
   const activeTabMeta = SETTINGS_TABS.find((item) => item.key === activeTab) ?? SETTINGS_TABS[0];
 
   const saveBaseInfo = async () => {
@@ -860,27 +916,39 @@ export function ProjectSettingsPage() {
     setError(null);
   };
 
-  const submitGrant = async () => {
+  const submitBatchGrant = async () => {
     if (!canManageSharing) {
       setError("当前权限不允许管理共享");
       return;
     }
-
-    const subjectId = shareTargetType === "user" ? selectedUserId : selectedGroupId;
-    if (!subjectId) {
-      setError(shareTargetType === "user" ? "请选择用户" : "请选择用户组");
+    if (pendingSelections.length === 0) {
+      setError("请先选择要授权的用户或用户组");
       return;
     }
 
-    const savedGrant = shareTargetType === "user"
-      ? await grantProjectUser(project.id, subjectId, grantRole)
-      : await grantProjectGroup(project.id, subjectId, grantRole);
-    if (!savedGrant) {
-      setError("共享授权保存失败");
-      return;
+    try {
+      const results = await Promise.allSettled(
+        pendingSelections.map((s) =>
+          s.type === "user"
+            ? grantProjectUser(project.id, s.id, grantRole)
+            : grantProjectGroup(project.id, s.id, grantRole),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length > 0) {
+        setError(`${pendingSelections.length - failed.length} 项授权成功，${failed.length} 项失败`);
+      } else {
+        setError(null);
+      }
+      await Promise.all([
+        fetchProjectGrants(project.id),
+        fetchProjects(),
+        loadDirectorySnapshot(),
+      ]);
+      setPickerSelections([]);
+    } catch (grantError) {
+      setError((grantError as Error).message);
     }
-
-    setError(null);
   };
 
   const revokeGrant = async (grant: ProjectSubjectGrant) => {
@@ -891,6 +959,10 @@ export function ProjectSettingsPage() {
       setError("撤销授权失败");
       return;
     }
+    await Promise.all([
+      fetchProjectGrants(project.id),
+      fetchProjects(),
+    ]);
     setError(null);
   };
 
@@ -1122,51 +1194,28 @@ export function ProjectSettingsPage() {
                     title="共享管理"
                     description="Project 的共享记录独立于 Workspace。这里专门处理用户/用户组授权。"
                   >
-                    <ContentGroup title="共享策略">
+                    <ContentGroup title="添加授权">
                       {canManageSharing ? (
                         <>
-                          <div className="grid gap-3 md:grid-cols-[120px_minmax(0,1fr)_140px_auto]">
-                            <select
-                              value={shareTargetType}
-                              onChange={(event) => setShareTargetType(event.target.value as "user" | "group")}
-                              className="agentdash-form-select"
-                            >
-                              <option value="user">用户</option>
-                              <option value="group">用户组</option>
-                            </select>
+                          <DirectorySubjectPicker
+                            selections={pickerSelections}
+                            onSelectionsChange={setPickerSelections}
+                            knownUsers={directoryUsers}
+                            knownGroups={directoryGroups}
+                            userDirectoryStatus={directoryUsersStatus}
+                            groupDirectoryStatus={directoryGroupsStatus}
+                            grantedUserIds={grantedUserIds}
+                            grantedGroupIds={grantedGroupIds}
+                            currentUserId={currentUser?.user_id}
+                            onUsersObserved={rememberDirectoryUsers}
+                            onGroupsObserved={rememberDirectoryGroups}
+                          />
 
-                            {shareTargetType === "user" ? (
-                              <select
-                                value={selectedUserId}
-                                onChange={(event) => setSelectedUserId(event.target.value)}
-                                className="agentdash-form-select"
-                              >
-                                <option value="">选择用户</option>
-                                {availableUsers.map((user) => (
-                                  <option key={user.user_id} value={user.user_id}>
-                                    {resolveDirectoryUserLabel(user)}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <select
-                                value={selectedGroupId}
-                                onChange={(event) => setSelectedGroupId(event.target.value)}
-                                className="agentdash-form-select"
-                              >
-                                <option value="">选择用户组</option>
-                                {directoryGroups.map((group) => (
-                                  <option key={group.group_id} value={group.group_id}>
-                                    {group.display_name?.trim() || group.group_id}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-
+                          <div className="flex flex-wrap items-center gap-3">
                             <select
                               value={grantRole}
                               onChange={(event) => setGrantRole(event.target.value as ProjectRole)}
-                              className="agentdash-form-select"
+                              className="agentdash-form-select w-auto"
                             >
                               {PROJECT_ROLE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1177,11 +1226,24 @@ export function ProjectSettingsPage() {
 
                             <button
                               type="button"
-                              onClick={() => void submitGrant()}
-                              className="agentdash-button-primary"
+                              onClick={() => void submitBatchGrant()}
+                              disabled={pendingSelections.length === 0}
+                              className="agentdash-button-primary disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              保存授权
+                              {pendingSelections.length > 0
+                                ? `批量授权 (${pendingSelections.length})`
+                                : "批量授权"}
                             </button>
+
+                            {pendingSelections.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setPickerSelections([])}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                清空选择
+                              </button>
+                            )}
                           </div>
 
                           {isDirectoryLoading && (
@@ -1206,6 +1268,14 @@ export function ProjectSettingsPage() {
                             {grants.map((grant) => {
                               const grantUser = findGrantUser(grant, directoryUsers);
                               const subjectLabel = resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups);
+                              const subjectAuditLabel = grant.subject_type === "user"
+                                ? resolveUserAuditLabel(grant.subject_id, directoryUsers, currentUser)
+                                : grant.subject_id;
+                              const grantorAuditLabel = resolveUserAuditLabel(
+                                grant.granted_by_user_id,
+                                directoryUsers,
+                                currentUser,
+                              );
                               return (
                                 <div
                                   key={`${grant.subject_type}:${grant.subject_id}`}
@@ -1231,8 +1301,13 @@ export function ProjectSettingsPage() {
                                           {PROJECT_ROLE_LABELS[grant.role]}
                                         </span>
                                       </div>
-                                      <p className="mt-1 text-xs text-muted-foreground">
-                                        subject_id: {grant.subject_id} · granted_by: {grant.granted_by_user_id}
+                                      <p
+                                        className="mt-1 text-xs text-muted-foreground"
+                                        title={`subject_id: ${grant.subject_id} · granted_by: ${grant.granted_by_user_id}`}
+                                      >
+                                        {grant.subject_type === "user" ? "subject" : "group_id"}: {subjectAuditLabel}
+                                        {" · granted_by: "}
+                                        {grantorAuditLabel}
                                       </p>
                                     </div>
                                   </div>

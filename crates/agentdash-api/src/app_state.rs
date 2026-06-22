@@ -126,6 +126,9 @@ pub struct AppState {
     pub secrets: SecretSet,
     /// 认证/授权提供者（由 Host Integration 注入，None 表示无认证）
     pub auth_provider: Option<Arc<dyn agentdash_integration_api::AuthProvider>>,
+    /// 身份目录提供者（由 Host Integration 注入，None 表示仅使用本地 projection）
+    pub identity_directory_provider:
+        Option<Arc<dyn agentdash_integration_api::IdentityDirectoryProvider>>,
 }
 
 impl AppState {
@@ -336,6 +339,7 @@ impl AppState {
                 llm_provider_secret,
             },
             auth_provider: integration_registration.auth_provider,
+            identity_directory_provider: integration_registration.identity_directory_provider,
         };
 
         let mut state = Arc::new(state);

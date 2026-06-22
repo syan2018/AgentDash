@@ -442,13 +442,13 @@ fn validate_task_title(title: &str) -> Result<(), DomainError> {
 fn validate_story_ref(
     story_ref: &Option<super::lifecycle_subject_association::SubjectRef>,
 ) -> Result<(), DomainError> {
-    if let Some(story_ref) = story_ref {
-        if story_ref.kind != "story" {
-            return Err(DomainError::InvalidConfig(format!(
-                "lifecycle_run.tasks.story_ref.kind 必须是 story，实际为 {}",
-                story_ref.kind
-            )));
-        }
+    if let Some(story_ref) = story_ref
+        && story_ref.kind != "story"
+    {
+        return Err(DomainError::InvalidConfig(format!(
+            "lifecycle_run.tasks.story_ref.kind 必须是 story，实际为 {}",
+            story_ref.kind
+        )));
     }
     Ok(())
 }

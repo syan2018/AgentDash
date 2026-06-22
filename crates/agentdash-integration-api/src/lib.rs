@@ -20,6 +20,7 @@
 //! | 外部服务 | `ExternalServiceClient` | 企业 KM、文档中心等只读内容源 |
 
 pub mod auth;
+pub mod directory;
 pub mod external;
 pub mod integration;
 
@@ -44,6 +45,11 @@ pub use auth::{
     AuthCallbackRequest, AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
     AuthStartRequest, AuthStartResponse, LoginCredentials, LoginFieldDescriptor, LoginMetadata,
     LoginMode, LoginResponse,
+};
+pub use directory::{
+    DirectoryGroup, DirectoryProviderError, DirectoryResolveRequest, DirectorySearchRequest,
+    DirectorySearchResponse, DirectoryTreeNode, DirectoryTreeRequest, DirectoryUser,
+    IdentityDirectoryProvider,
 };
 pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,

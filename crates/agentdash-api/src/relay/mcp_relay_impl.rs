@@ -28,11 +28,12 @@ impl McpRelayProvider for BackendRegistry {
                 .resolve_backend_for_relay_mcp(server_name, context.as_ref())
                 .await
             {
-                Some(id) => id,
-                None => {
-                    tracing::debug!(
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::warn!(
                         server = %server_name,
-                        "无在线 backend 可执行该 relay MCP server，跳过"
+                        error = %error,
+                        "relay MCP list_tools 缺少可用 runtime backend anchor，跳过 server"
                     );
                     continue;
                 }
@@ -103,9 +104,9 @@ impl McpRelayProvider for BackendRegistry {
         let backend_id = self
             .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
-            .ok_or_else(|| {
+            .map_err(|error| {
                 ConnectorError::ConnectionFailed(format!(
-                    "无在线 backend 可执行 relay MCP server '{server_name}'"
+                    "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
                 ))
             })?;
 
@@ -146,7 +147,7 @@ impl McpRelayProvider for BackendRegistry {
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
     ) -> Result<RelayProbeResult, ConnectorError> {
         let backend_id = self
-            .find_any_online_backend()
+            .find_any_online_backend_for_setup_probe()
             .await
             .ok_or_else(|| ConnectorError::ConnectionFailed("无在线本机后端".to_string()))?;
 

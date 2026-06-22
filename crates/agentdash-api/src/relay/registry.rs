@@ -9,6 +9,7 @@ use agentdash_application_ports::backend_transport::RemoteExecutorInfo;
 use agentdash_application_ports::backend_transport::{
     RelaySessionEvent, RelaySessionRoute, RelaySessionRouteInfo, RelayTerminalKind,
 };
+use agentdash_domain::backend::RuntimeBackendAnchorError;
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 use agentdash_spi::RelayMcpCallContext;
 
@@ -29,6 +30,16 @@ pub enum BackendCommandError {
     Timeout { backend_id: String },
     #[error("本机后端响应通道已关闭: {backend_id}")]
     ResponseDropped { backend_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RelayMcpBackendResolutionError {
+    #[error("relay MCP runtime context 缺失: server={server}")]
+    MissingContext { server: String },
+    #[error(transparent)]
+    MissingAnchor(#[from] RuntimeBackendAnchorError),
+    #[error("relay MCP backend anchor 指向的 backend 不在线: backend_id={backend_id}")]
+    BackendOffline { backend_id: String },
 }
 
 /// 已连接的本机后端
@@ -184,8 +195,11 @@ impl BackendRegistry {
         self.backends.read().await.keys().cloned().collect()
     }
 
-    /// 获取任意一个在线 backend ID（probe 场景使用，不关心选择哪个）
-    pub async fn find_any_online_backend(&self) -> Option<String> {
+    /// 获取任意一个在线 backend ID。
+    ///
+    /// 仅用于 MCP preset setup/probe diagnostic。runtime relay MCP discovery/call
+    /// 必须消费 `RelayMcpCallContext.backend_anchor`，不得使用此 helper 兜底选 backend。
+    pub async fn find_any_online_backend_for_setup_probe(&self) -> Option<String> {
         self.backends.read().await.keys().next().cloned()
     }
 
@@ -264,8 +278,14 @@ impl BackendRegistry {
             .unwrap_or_else(|e| e.into_inner()) = snapshot;
     }
 
-    /// 查找提供指定 MCP server 的在线 backend
-    pub async fn find_backend_for_mcp_server(&self, server_name: &str) -> Option<String> {
+    /// 查找上报了指定 MCP server catalog 的在线 backend。
+    ///
+    /// 仅用于配置/诊断展示。runtime relay MCP discovery/call 中 `server_name`
+    /// 只选择 MCP server，不能用它反向选择 backend。
+    pub async fn find_backend_for_mcp_server_catalog_diagnostic(
+        &self,
+        server_name: &str,
+    ) -> Option<String> {
         let backends = self.backends.read().await;
         backends
             .values()
@@ -278,48 +298,55 @@ impl BackendRegistry {
             .map(|b| b.backend_id.clone())
     }
 
-    /// 解析 relay MCP 应投递到的本机 backend。
+    /// 解析 runtime relay MCP 应投递到的本机 backend。
     ///
-    /// Project MCP Preset / AgentFrame surface 是 MCP server 的事实源；
-    /// backend 上报的 MCP catalog 仅作为 setup/probe 期的本机预配置 catalog。运行中的
-    /// session 必须使用已注册的 relay route，route 缺失或 route backend 离线都不能
-    /// fallback 到 VFS、catalog 或其它在线 backend。
+    /// 运行中的 relay MCP discovery/call 必须使用 Lifecycle/AgentRun 写入
+    /// `RelayMcpCallContext.backend_anchor` 的 backend。`server_name` 只选择 MCP server，
+    /// 不参与 backend routing；缺 context、缺 anchor 或 anchor backend 离线时都不能
+    /// fallback 到 session route、backend MCP catalog 或其它在线 backend。
     pub async fn resolve_backend_for_relay_mcp(
         &self,
         server_name: &str,
         context: Option<&RelayMcpCallContext>,
-    ) -> Option<String> {
-        if let Some(context) = context {
-            let route = match self.session_route(&context.session_id) {
-                Some(route) => route,
-                None => {
-                    tracing::warn!(
-                        session_id = %context.session_id,
-                        server = %server_name,
-                        "relay MCP session context 缺少 session route"
-                    );
-                    return None;
-                }
-            };
-
-            if self.is_online(&route.backend_id).await {
-                return Some(route.backend_id);
-            }
-
+    ) -> Result<String, RelayMcpBackendResolutionError> {
+        let Some(context) = context else {
             tracing::warn!(
-                    session_id = %context.session_id,
-                    backend_id = %route.backend_id,
-                    server = %server_name,
-                    "relay MCP session route 指向的 backend 已离线"
+                server = %server_name,
+                "relay MCP runtime context 缺失，跳过 backend fallback"
             );
-            return None;
+            return Err(RelayMcpBackendResolutionError::MissingContext {
+                server: server_name.to_string(),
+            });
+        };
+
+        let anchor = context
+            .require_backend_anchor("relay_mcp")
+            .inspect_err(|error| {
+                tracing::warn!(
+                    session_id = %context.session_id,
+                    turn_id = ?context.turn_id,
+                    server = %server_name,
+                    error = %error,
+                    "relay MCP runtime context 缺少 backend anchor，跳过 backend fallback"
+                );
+            })?;
+        let backend_id = anchor.backend_id();
+
+        if self.is_online(backend_id).await {
+            return Ok(backend_id.to_string());
         }
 
-        if let Some(backend_id) = self.find_backend_for_mcp_server(server_name).await {
-            return Some(backend_id);
-        }
-
-        self.find_any_online_backend().await
+        tracing::warn!(
+            session_id = %context.session_id,
+            turn_id = ?context.turn_id,
+            backend_id = %backend_id,
+            anchor_source = %anchor.source.as_str(),
+            server = %server_name,
+            "relay MCP backend anchor 指向的 backend 已离线，跳过 backend fallback"
+        );
+        Err(RelayMcpBackendResolutionError::BackendOffline {
+            backend_id: backend_id.to_string(),
+        })
     }
 
     /// 列出所有在线 backend 上报的 MCP server 信息
@@ -397,6 +424,7 @@ impl BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
     use agentdash_relay::{AgentInfoRelay, CommandBrowseDirectoryPayload, McpServerInfoRelay};
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
@@ -446,42 +474,29 @@ mod tests {
         }
     }
 
-    fn relay_mcp_context(session_id: &str) -> RelayMcpCallContext {
+    fn runtime_anchor(backend_id: &str) -> RuntimeBackendAnchor {
+        RuntimeBackendAnchor::new(backend_id, RuntimeBackendAnchorSource::System)
+            .expect("runtime backend anchor")
+    }
+
+    fn relay_mcp_context(session_id: &str, backend_id: &str) -> RelayMcpCallContext {
+        RelayMcpCallContext {
+            session_id: session_id.to_string(),
+            turn_id: None,
+            tool_call_id: None,
+            backend_anchor: Some(runtime_anchor(backend_id)),
+            vfs: None,
+            identity: None,
+        }
+    }
+
+    fn relay_mcp_context_without_anchor(session_id: &str) -> RelayMcpCallContext {
         RelayMcpCallContext {
             session_id: session_id.to_string(),
             turn_id: None,
             tool_call_id: None,
             backend_anchor: None,
             vfs: None,
-            identity: None,
-        }
-    }
-
-    fn relay_mcp_context_with_default_backend(
-        session_id: &str,
-        backend_id: &str,
-    ) -> RelayMcpCallContext {
-        RelayMcpCallContext {
-            session_id: session_id.to_string(),
-            turn_id: None,
-            tool_call_id: None,
-            backend_anchor: None,
-            vfs: Some(agentdash_spi::Vfs {
-                mounts: vec![agentdash_spi::Mount {
-                    id: "workspace".to_string(),
-                    provider: "relay_fs".to_string(),
-                    backend_id: backend_id.to_string(),
-                    root_ref: "F:/workspace".to_string(),
-                    capabilities: Vec::new(),
-                    default_write: true,
-                    display_name: "Workspace".to_string(),
-                    metadata: serde_json::Value::Null,
-                }],
-                default_mount_id: Some("workspace".to_string()),
-                source_project_id: None,
-                source_story_id: None,
-                links: Vec::new(),
-            }),
             identity: None,
         }
     }
@@ -745,34 +760,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_mcp_backend_resolution_uses_session_route_without_mcp_catalog() {
+    async fn relay_mcp_backend_resolution_uses_anchor_backend_without_session_route_or_catalog() {
         let registry = BackendRegistry::new();
         registry
             .try_register(connected_backend("local-a"))
             .await
             .expect("backend should register");
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let lease_id = uuid::Uuid::new_v4();
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-a".to_string(),
-            backend_id: "local-a".to_string(),
-            lease_id,
-            turn_id: "turn-a".to_string(),
-            tx,
-        });
 
         let backend_id = registry
             .resolve_backend_for_relay_mcp(
                 "project-relay-tools",
-                Some(&relay_mcp_context("session-a")),
+                Some(&relay_mcp_context("session-a", "local-a")),
             )
-            .await;
+            .await
+            .expect("anchor backend should resolve");
 
-        assert_eq!(backend_id.as_deref(), Some("local-a"));
+        assert_eq!(backend_id, "local-a");
     }
 
     #[tokio::test]
-    async fn relay_mcp_backend_resolution_with_session_context_requires_session_route() {
+    async fn relay_mcp_backend_resolution_prefers_anchor_over_session_route_and_catalog() {
         let registry = BackendRegistry::new();
         registry
             .try_register(connected_backend("local-a"))
@@ -784,48 +791,28 @@ mod tests {
             .try_register(backend_b)
             .await
             .expect("backend should register");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        registry.register_session_sink(RelaySessionRoute {
+            session_id: "session-a".to_string(),
+            backend_id: "local-a".to_string(),
+            lease_id: uuid::Uuid::new_v4(),
+            turn_id: "turn-a".to_string(),
+            tx,
+        });
 
         let backend_id = registry
             .resolve_backend_for_relay_mcp(
                 "declared-tools",
-                Some(&relay_mcp_context_with_default_backend(
-                    "session-a",
-                    "local-a",
-                )),
+                Some(&relay_mcp_context("session-a", "local-b")),
             )
-            .await;
-
-        assert_eq!(backend_id, None);
-    }
-
-    #[tokio::test]
-    async fn relay_mcp_backend_resolution_with_session_context_rejects_offline_route() {
-        let registry = BackendRegistry::new();
-        let mut backend_b = connected_backend("local-b");
-        backend_b.capabilities = capabilities_with_mcp_server("declared-tools");
-        registry
-            .try_register(backend_b)
             .await
-            .expect("backend should register");
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let lease_id = uuid::Uuid::new_v4();
-        registry.register_session_sink(RelaySessionRoute {
-            session_id: "session-a".to_string(),
-            backend_id: "local-a".to_string(),
-            lease_id,
-            turn_id: "turn-a".to_string(),
-            tx,
-        });
+            .expect("anchor backend should resolve");
 
-        let backend_id = registry
-            .resolve_backend_for_relay_mcp("declared-tools", Some(&relay_mcp_context("session-a")))
-            .await;
-
-        assert_eq!(backend_id, None);
+        assert_eq!(backend_id, "local-b");
     }
 
     #[tokio::test]
-    async fn relay_mcp_backend_resolution_falls_back_to_advertised_catalog() {
+    async fn relay_mcp_backend_resolution_without_anchor_does_not_fallback_to_catalog() {
         let registry = BackendRegistry::new();
         registry
             .try_register(connected_backend("local-a"))
@@ -838,10 +825,73 @@ mod tests {
             .await
             .expect("backend should register");
 
-        let backend_id = registry
-            .resolve_backend_for_relay_mcp("declared-tools", None)
-            .await;
+        let error = registry
+            .resolve_backend_for_relay_mcp(
+                "declared-tools",
+                Some(&relay_mcp_context_without_anchor("session-a")),
+            )
+            .await
+            .expect_err("missing anchor must not fallback");
 
-        assert_eq!(backend_id.as_deref(), Some("local-b"));
+        assert!(matches!(
+            error,
+            RelayMcpBackendResolutionError::MissingAnchor(
+                RuntimeBackendAnchorError::Missing { .. }
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_mcp_backend_resolution_without_context_does_not_fallback_to_any_online_backend()
+    {
+        let registry = BackendRegistry::new();
+        registry
+            .try_register(connected_backend("local-a"))
+            .await
+            .expect("backend should register");
+        let mut backend_b = connected_backend("local-b");
+        backend_b.capabilities = capabilities_with_mcp_server("declared-tools");
+        registry
+            .try_register(backend_b)
+            .await
+            .expect("backend should register");
+
+        let error = registry
+            .resolve_backend_for_relay_mcp("declared-tools", None)
+            .await
+            .expect_err("missing context must not fallback");
+
+        assert_eq!(
+            error,
+            RelayMcpBackendResolutionError::MissingContext {
+                server: "declared-tools".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_mcp_backend_resolution_rejects_offline_anchor_without_fallback() {
+        let registry = BackendRegistry::new();
+        let mut backend_b = connected_backend("local-b");
+        backend_b.capabilities = capabilities_with_mcp_server("declared-tools");
+        registry
+            .try_register(backend_b)
+            .await
+            .expect("backend should register");
+
+        let error = registry
+            .resolve_backend_for_relay_mcp(
+                "declared-tools",
+                Some(&relay_mcp_context("session-a", "local-a")),
+            )
+            .await
+            .expect_err("offline anchor must not fallback");
+
+        assert_eq!(
+            error,
+            RelayMcpBackendResolutionError::BackendOffline {
+                backend_id: "local-a".to_string()
+            }
+        );
     }
 }

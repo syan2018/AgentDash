@@ -19,6 +19,8 @@ use crate::vfs::{
     format_mount_uri, resolve_mount,
 };
 
+const SHELL_EXEC_RESULT_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // shell_exec
 // ---------------------------------------------------------------------------
@@ -230,12 +232,16 @@ impl AgentTool for ShellExecTool {
             let cb = on_update.clone();
             Some(tokio::spawn(async move {
                 while let Some(chunk) = rx.recv().await {
+                    let truncated = chunk.truncation.truncated;
+                    let omitted_bytes = chunk.truncation.omitted_bytes;
                     cb(AgentToolResult {
                         content: vec![ContentPart::text(chunk.delta)],
                         is_error: false,
                         details: Some(serde_json::json!({
                             "type": "shell_output",
                             "stream": chunk.stream,
+                            "truncated": truncated,
+                            "omitted_bytes": omitted_bytes,
                         })),
                     });
                 }
@@ -279,6 +285,12 @@ impl AgentTool for ShellExecTool {
         } else {
             format!("[stdout]\n{}\n\n[stderr]\n{}", result.stdout, result.stderr)
         };
+        let (merged, extra_truncation) =
+            agentdash_relay::truncate_live_output_text(&merged, SHELL_EXEC_RESULT_OUTPUT_MAX_BYTES);
+        let result_truncated = result.truncated || extra_truncation.truncated;
+        let result_omitted_bytes = result
+            .omitted_bytes
+            .saturating_add(extra_truncation.omitted_bytes);
         Ok(AgentToolResult {
             content: vec![ContentPart::text(shell_exec_result_text(
                 &params.command,
@@ -290,8 +302,8 @@ impl AgentTool for ShellExecTool {
                 result.next_seq,
                 &merged,
                 !rewrite_output.rewrites.is_empty(),
-                result.truncated,
-                result.omitted_bytes,
+                result_truncated,
+                result_omitted_bytes,
             ))],
             is_error: exit_code.is_some_and(|code| code != 0),
             details: shell_exec_result_details(
@@ -299,6 +311,8 @@ impl AgentTool for ShellExecTool {
                 &rewritten_command,
                 &rewrite_output.rewrites,
                 &result,
+                result_truncated,
+                result_omitted_bytes,
             ),
         })
     }
@@ -443,8 +457,14 @@ fn shell_exec_result_details(
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
     result: &crate::vfs::ExecResult,
+    truncated: bool,
+    omitted_bytes: usize,
 ) -> Option<serde_json::Value> {
-    (!rewrites.is_empty() || result.session_id.is_some()).then(|| {
+    (!rewrites.is_empty()
+        || result.session_id.is_some()
+        || truncated
+        || omitted_bytes > 0)
+        .then(|| {
         serde_json::json!({
             "type": "shell_exec",
             "original_command": original_command,
@@ -454,8 +474,8 @@ fn shell_exec_result_details(
             "session_id": result.session_id.as_deref(),
             "terminal_id": result.terminal_id.as_deref(),
             "next_seq": result.next_seq,
-            "truncated": result.truncated,
-            "omitted_bytes": result.omitted_bytes,
+            "truncated": truncated,
+            "omitted_bytes": omitted_bytes,
             "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
         })
     })
@@ -665,7 +685,8 @@ mod shell_exec_rewrite_tests {
     #[test]
     fn shell_exec_result_details_are_absent_without_rewrite() {
         assert!(
-            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture()).is_none()
+            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture(), false, 0)
+                .is_none()
         );
 
         let rewrites = vec![rewrite()];
@@ -674,6 +695,8 @@ mod shell_exec_rewrite_tests {
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
             &rewrites,
             &exec_result_fixture(),
+            false,
+            0,
         )
         .expect("rewrite details");
         assert_eq!(details["type"], "shell_exec");
@@ -682,6 +705,23 @@ mod shell_exec_rewrite_tests {
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao"
         );
         assert_eq!(details["rewrite"]["type"], "vfs_uri_rewrite");
+    }
+
+    #[test]
+    fn shell_exec_result_details_are_present_for_truncation() {
+        let details = shell_exec_result_details(
+            "echo lots",
+            "echo lots",
+            &[],
+            &exec_result_fixture(),
+            true,
+            1234,
+        )
+        .expect("truncation details");
+
+        assert_eq!(details["type"], "shell_exec");
+        assert_eq!(details["truncated"], true);
+        assert_eq!(details["omitted_bytes"], 1234);
     }
 
     #[test]

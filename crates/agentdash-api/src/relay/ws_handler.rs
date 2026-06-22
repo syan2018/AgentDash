@@ -433,7 +433,10 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             notify_backend_runtime_changed(state, backend_id);
         }
         RelayMessage::EventToolShellOutput { payload, .. } => {
-            if !state.services.shell_output_registry.route(payload) {
+            let payload = payload
+                .clone()
+                .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
+            if !state.services.shell_output_registry.route(&payload) {
                 tracing::debug!(
                     backend_id = %backend_id,
                     call_id = %payload.call_id,
@@ -442,6 +445,9 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventTerminalOutput { payload, .. } => {
+            let payload = payload
+                .clone()
+                .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
             let terminal_id = &payload.terminal_id;
             tracing::info!(
                 backend_id = %backend_id,
@@ -459,7 +465,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     agentdash_agent_protocol::BackboneEvent::Platform(
                         agentdash_agent_protocol::PlatformEvent::TerminalOutput {
                             terminal_id: terminal_id.clone(),
-                            data: payload.data.clone(),
+                            data: terminal_output_event_data(&payload),
                         },
                     ),
                     &term_state.session_id,
@@ -551,6 +557,21 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             );
         }
     }
+}
+
+fn terminal_output_event_data(payload: &agentdash_relay::TerminalOutputPayload) -> String {
+    if !payload.truncation.truncated {
+        return payload.data.clone();
+    }
+    let mut data = payload.data.clone();
+    if !data.ends_with('\n') && !data.is_empty() {
+        data.push('\n');
+    }
+    data.push_str(&format!(
+        "[terminal output truncated: omitted_bytes={}]\n",
+        payload.truncation.omitted_bytes
+    ));
+    data
 }
 
 fn notify_backend_runtime_changed(state: &AppState, backend_id: &str) {
@@ -915,6 +936,7 @@ mod tests {
                 call_id: "call-1".to_string(),
                 delta: "ok\n".to_string(),
                 stream: ShellOutputStream::Stdout,
+                truncation: ToolShellTruncationInfo::default(),
             },
         };
 

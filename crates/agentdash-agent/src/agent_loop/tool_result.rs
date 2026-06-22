@@ -42,16 +42,13 @@ pub(super) fn bound_agent_tool_result_text<F>(
 where
     F: FnMut(AgentToolResultCacheWrite<'_>),
 {
-    let Some(original_text) = joined_text_content(&result.content) else {
+    let cap = inline_kind.inline_byte_cap();
+    let Some(boundable_content) = boundable_tool_result_content(result, cap) else {
         return result.clone();
     };
 
-    let cap = inline_kind.inline_byte_cap();
+    let original_text = boundable_content.text;
     let original_bytes = original_text.len();
-    if original_bytes <= cap {
-        return result.clone();
-    }
-
     let lifecycle_path = lifecycle_path_for_tool_result(item_id);
     write_cache(AgentToolResultCacheWrite {
         item_id,
@@ -70,9 +67,14 @@ where
         inline_bytes,
         omitted_bytes,
     );
+    let content = if boundable_content.replace_all_content {
+        vec![ContentPart::text(bounded_text)]
+    } else {
+        replace_text_content_with_preview(&result.content, bounded_text)
+    };
 
     AgentToolResult {
-        content: replace_text_content_with_preview(&result.content, bounded_text),
+        content,
         is_error: result.is_error,
         details: Some(details),
     }
@@ -111,6 +113,49 @@ fn joined_text_content(content: &[ContentPart]) -> Option<String> {
         joined.push_str(text);
     }
     Some(joined)
+}
+
+struct BoundableToolResultContent {
+    text: String,
+    replace_all_content: bool,
+}
+
+fn boundable_tool_result_content(
+    result: &AgentToolResult,
+    cap: usize,
+) -> Option<BoundableToolResultContent> {
+    let joined_text = joined_text_content(&result.content);
+    let text_bytes = joined_text.as_ref().map_or(0, String::len);
+    let has_non_text_content = result
+        .content
+        .iter()
+        .any(|part| !matches!(part, ContentPart::Text { .. }));
+    let serialized_content = if has_non_text_content {
+        serde_json::to_string(&result.content).ok()
+    } else {
+        None
+    };
+    let serialized_bytes = serialized_content.as_ref().map_or(0, String::len);
+
+    if text_bytes <= cap && serialized_bytes <= cap {
+        return None;
+    }
+
+    if has_non_text_content && serialized_bytes > cap {
+        return Some(BoundableToolResultContent {
+            text: serialized_content.unwrap_or_else(|| {
+                format!(
+                    "[non-text tool result exceeded inline cap: {serialized_bytes} serialized bytes]"
+                )
+            }),
+            replace_all_content: true,
+        });
+    }
+
+    joined_text.map(|text| BoundableToolResultContent {
+        text,
+        replace_all_content: false,
+    })
 }
 
 fn replace_text_content_with_preview(content: &[ContentPart], preview: String) -> Vec<ContentPart> {
@@ -334,5 +379,34 @@ mod tests {
         let details = bounded.details.as_ref().unwrap();
         assert_eq!(details["original_details"], "raw-details");
         assert_eq!(details["truncation"]["truncated"], true);
+    }
+
+    #[test]
+    fn oversized_non_text_content_is_replaced_with_text_preview() {
+        let result = AgentToolResult {
+            content: vec![ContentPart::image(
+                "image/png",
+                format!("{}{}{}", "a".repeat(10_000), SENTINEL, "z".repeat(10_000)),
+            )],
+            is_error: false,
+            details: None,
+        };
+
+        let bounded = bound_agent_tool_result_text(
+            &result,
+            "image-result",
+            AgentToolResultInlineKind::Update,
+            |_| {},
+        );
+
+        assert_eq!(bounded.content.len(), 1);
+        let text = bounded.content[0].extract_text().unwrap();
+        assert!(text.len() <= AGENT_TOOL_RESULT_UPDATE_INLINE_BYTE_CAP);
+        assert!(text.contains("tool result truncated"));
+        assert!(!matches!(bounded.content[0], ContentPart::Image { .. }));
+        assert_eq!(
+            bounded.details.as_ref().unwrap()["lifecycle_path"],
+            "lifecycle://session/tool-results/image-result/result.txt"
+        );
     }
 }

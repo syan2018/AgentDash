@@ -10,7 +10,10 @@ use crate::types::{
     ToolUpdateCallback,
 };
 
-use super::tool_result::{approval_rejected_tool_result, error_tool_result};
+use super::tool_result::{
+    AgentToolResultCacheWrite, AgentToolResultInlineKind, approval_rejected_tool_result,
+    bound_agent_tool_result_text, error_tool_result,
+};
 use super::{AgentEventSink, AgentLoopConfig, emit_event};
 
 pub(super) async fn execute_tool_calls(
@@ -85,7 +88,9 @@ async fn execute_tool_calls_sequential(
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
+                let bounded =
+                    bound_tool_result_for_call(tc, &result, AgentToolResultInlineKind::Final);
+                results.push(emit_tool_call_outcome(tc, &bounded, is_error, emit).await);
             }
             ToolCallPreparation::AwaitApproval {
                 tool,
@@ -107,13 +112,22 @@ async fn execute_tool_calls_sequential(
                             cancel,
                         )
                         .await;
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &finalized.result,
+                            AgentToolResultInlineKind::Final,
+                        );
                         results.push(
-                            emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit)
-                                .await,
+                            emit_tool_call_outcome(tc, &bounded, finalized.is_error, emit).await,
                         );
                     }
                     ApprovalResolution::Rejected { result } => {
-                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &result,
+                            AgentToolResultInlineKind::Final,
+                        );
+                        results.push(emit_tool_result_message(tc, &bounded, emit).await);
                     }
                 }
             }
@@ -129,9 +143,12 @@ async fn execute_tool_calls_sequential(
                     cancel,
                 )
                 .await;
-                results.push(
-                    emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit).await,
+                let bounded = bound_tool_result_for_call(
+                    tc,
+                    &finalized.result,
+                    AgentToolResultInlineKind::Final,
                 );
+                results.push(emit_tool_call_outcome(tc, &bounded, finalized.is_error, emit).await);
             }
         }
     }
@@ -184,7 +201,9 @@ async fn execute_tool_calls_parallel(
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
+                let bounded =
+                    bound_tool_result_for_call(tc, &result, AgentToolResultInlineKind::Final);
+                results.push(emit_tool_call_outcome(tc, &bounded, is_error, emit).await);
             }
             ToolCallPreparation::AwaitApproval {
                 tool,
@@ -201,7 +220,12 @@ async fn execute_tool_calls_parallel(
                         });
                     }
                     ApprovalResolution::Rejected { result } => {
-                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &result,
+                            AgentToolResultInlineKind::Final,
+                        );
+                        results.push(emit_tool_result_message(tc, &bounded, emit).await);
                     }
                 }
             }
@@ -253,9 +277,12 @@ async fn execute_tool_calls_parallel(
             cancel,
         )
         .await;
-        results.push(
-            emit_tool_call_outcome(&entry.tc, &finalized.result, finalized.is_error, emit).await,
+        let bounded = bound_tool_result_for_call(
+            &entry.tc,
+            &finalized.result,
+            AgentToolResultInlineKind::Final,
         );
+        results.push(emit_tool_call_outcome(&entry.tc, &bounded, finalized.is_error, emit).await);
     }
 
     Ok(results)
@@ -470,11 +497,17 @@ fn build_on_update(tc: &ToolCallInfo, emit: &AgentEventSink) -> ToolUpdateCallba
     let tc_args = tc.arguments.clone();
     Arc::new(move |partial_result: AgentToolResult| {
         let emit = emit.clone();
+        let bounded_partial = bound_agent_tool_result_text(
+            &partial_result,
+            &tc_id,
+            AgentToolResultInlineKind::Update,
+            record_agent_tool_result_cache_write,
+        );
         let event = AgentEvent::ToolExecutionUpdate {
             tool_call_id: tc_id.clone(),
             tool_name: tc_name.clone(),
             args: tc_args.clone(),
-            partial_result: serde_json::to_value(&partial_result).unwrap_or_default(),
+            partial_result: serde_json::to_value(&bounded_partial).unwrap_or_default(),
         };
         tokio::spawn(async move {
             emit(event).await;
@@ -668,6 +701,29 @@ async fn emit_tool_result_message(
     .await;
 
     tool_result_msg
+}
+
+fn bound_tool_result_for_call(
+    tc: &ToolCallInfo,
+    result: &AgentToolResult,
+    inline_kind: AgentToolResultInlineKind,
+) -> AgentToolResult {
+    bound_agent_tool_result_text(
+        result,
+        &tc.id,
+        inline_kind,
+        record_agent_tool_result_cache_write,
+    )
+}
+
+fn record_agent_tool_result_cache_write(write: AgentToolResultCacheWrite<'_>) {
+    tracing::debug!(
+        item_id = write.item_id,
+        lifecycle_path = write.lifecycle_path,
+        original_bytes = write.original_bytes,
+        cache_text_bytes = write.text.len(),
+        "agent tool result cache write requested"
+    );
 }
 
 enum ApprovalResolution {

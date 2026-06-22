@@ -230,6 +230,62 @@ pub struct ToolShellTruncationInfo {
     pub omitted_tokens_estimate: Option<usize>,
 }
 
+impl ToolShellTruncationInfo {
+    pub fn is_empty(&self) -> bool {
+        !self.truncated
+            && self.omitted_bytes == 0
+            && self.omitted_chunks == 0
+            && self.omitted_tokens_estimate.is_none()
+    }
+
+    pub fn merge(&self, other: &Self) -> Self {
+        let omitted_bytes = self.omitted_bytes.saturating_add(other.omitted_bytes);
+        let omitted_chunks = self.omitted_chunks.saturating_add(other.omitted_chunks);
+        let omitted_tokens_estimate =
+            match (self.omitted_tokens_estimate, other.omitted_tokens_estimate) {
+                (Some(left), Some(right)) => Some(left.saturating_add(right)),
+                (Some(value), None) | (None, Some(value)) => Some(value),
+                (None, None) => None,
+            };
+        Self {
+            truncated: self.truncated || other.truncated,
+            omitted_bytes,
+            omitted_chunks,
+            omitted_tokens_estimate,
+        }
+    }
+}
+
+pub const LIVE_OUTPUT_EVENT_MAX_BYTES: usize = 64 * 1024;
+
+pub fn truncate_live_output_text(
+    text: &str,
+    max_bytes: usize,
+) -> (String, ToolShellTruncationInfo) {
+    let max_bytes = max_bytes.max(1);
+    if text.len() <= max_bytes {
+        return (text.to_string(), ToolShellTruncationInfo::default());
+    }
+
+    let end = text
+        .char_indices()
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .take_while(|end| *end <= max_bytes)
+        .last()
+        .unwrap_or(0);
+    let bounded = text[..end].to_string();
+    let omitted_bytes = text.len().saturating_sub(bounded.len());
+    (
+        bounded,
+        ToolShellTruncationInfo {
+            truncated: true,
+            omitted_bytes,
+            omitted_chunks: 1,
+            omitted_tokens_estimate: None,
+        },
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolShellOutputChunk {
     pub seq: u64,
@@ -319,6 +375,17 @@ pub struct ToolShellOutputPayload {
     pub call_id: String,
     pub delta: String,
     pub stream: ShellOutputStream,
+    #[serde(default, skip_serializing_if = "ToolShellTruncationInfo::is_empty")]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+impl ToolShellOutputPayload {
+    pub fn bounded(mut self, max_bytes: usize) -> Self {
+        let (delta, truncation) = truncate_live_output_text(&self.delta, max_bytes);
+        self.delta = delta;
+        self.truncation = self.truncation.merge(&truncation);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -399,6 +466,35 @@ mod tests {
         // skip_serializing_if = Option::is_none ⇒ JSON 不应含这两个 key。
         assert!(!s.contains("\"offset\""));
         assert!(!s.contains("\"limit\""));
+    }
+
+    #[test]
+    fn shell_output_payload_defaults_missing_truncation() {
+        let payload: ToolShellOutputPayload = serde_json::from_value(json!({
+            "call_id": "call-1",
+            "delta": "ok\n",
+            "stream": "stdout"
+        }))
+        .expect("payload should deserialize");
+
+        assert!(!payload.truncation.truncated);
+        assert_eq!(payload.truncation.omitted_bytes, 0);
+    }
+
+    #[test]
+    fn live_output_payload_bounded_is_utf8_safe() {
+        let payload = ToolShellOutputPayload {
+            call_id: "call-1".to_string(),
+            delta: "好".repeat(10),
+            stream: ShellOutputStream::Stdout,
+            truncation: ToolShellTruncationInfo::default(),
+        }
+        .bounded(7);
+
+        assert!(payload.delta.is_char_boundary(payload.delta.len()));
+        assert!(payload.delta.len() <= 7);
+        assert!(payload.truncation.truncated);
+        assert!(payload.truncation.omitted_bytes > 0);
     }
 
     #[test]

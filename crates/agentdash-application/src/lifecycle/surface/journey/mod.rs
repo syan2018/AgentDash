@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::BackboneEvent;
+use agentdash_agent_protocol::PlatformEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     ExecutorRunRef, LifecycleRun, LifecycleRunStatus, RuntimeNodeState, RuntimeNodeStatus,
@@ -20,9 +21,10 @@ use crate::session::{PersistedSessionEvent, SessionPersistence};
 pub mod session_items;
 
 pub use session_items::{
-    SessionItemProjection, SessionItemSummary, SessionItemView, filter_session_items,
-    item_file_name, item_summary_for_view, render_item_content, session_item_projections,
-    session_summary_archives, summary_archive_markdown,
+    SessionItemProjection, SessionItemSummary, SessionItemView, SessionToolResultMetadata,
+    filter_session_items, item_file_name, item_summary_for_view, render_item_content,
+    session_item_projections, session_summary_archives, summary_archive_markdown,
+    tool_result_cache_miss_text, tool_result_metadata_for_projection,
 };
 
 pub const PORT_OUTPUTS_CONTAINER: &str = "port_outputs";
@@ -137,6 +139,13 @@ impl LifecycleJourneyProjection {
                 self.read_item_file(session_id, SessionItemView::Tools, rest)
                     .await
             }
+            ["tool-results"] => self.read_tool_results_index(session_id).await,
+            ["tool-results", item_id, "metadata.json"] => {
+                self.read_tool_result_metadata(session_id, item_id).await
+            }
+            ["tool-results", item_id, "result.txt"] => {
+                self.read_tool_result_body_status(session_id, item_id).await
+            }
             ["writes"] => {
                 self.read_items_index(session_id, SessionItemView::Writes)
                     .await
@@ -165,6 +174,16 @@ impl LifecycleJourneyProjection {
                 }
                 to_json_pretty(&turn_events)
             }
+            ["terminal", file_name] if file_name.ends_with(".metadata.json") => {
+                let terminal_id = file_name
+                    .strip_suffix(".metadata.json")
+                    .unwrap_or(file_name);
+                self.read_terminal_metadata(session_id, terminal_id).await
+            }
+            ["terminal", file_name] if file_name.ends_with(".log") => {
+                let terminal_id = file_name.strip_suffix(".log").unwrap_or(file_name);
+                self.read_terminal_log_status(session_id, terminal_id).await
+            }
             ["terminal"] => {
                 let events = self.session_events(session_id).await?;
                 let output = events
@@ -187,6 +206,122 @@ impl LifecycleJourneyProjection {
                 rest.join("/")
             ))),
         }
+    }
+
+    pub async fn read_tool_results_index(&self, session_id: &str) -> JourneyResult<String> {
+        let projections = self.session_item_projections(session_id).await?;
+        let metadata = filter_session_items(&projections, SessionItemView::Tools)
+            .iter()
+            .filter_map(|projection| tool_result_metadata_for_projection(session_id, projection))
+            .collect::<Vec<_>>();
+        to_json_pretty(&metadata)
+    }
+
+    pub async fn read_tool_result_metadata(
+        &self,
+        session_id: &str,
+        item_id: &str,
+    ) -> JourneyResult<String> {
+        let projections = self.session_item_projections(session_id).await?;
+        let metadata = filter_session_items(&projections, SessionItemView::Tools)
+            .iter()
+            .find(|projection| projection.summary.item_id == item_id)
+            .and_then(|projection| tool_result_metadata_for_projection(session_id, projection))
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("tool result 不存在: {item_id}"))
+            })?;
+        to_json_pretty(&metadata)
+    }
+
+    pub async fn read_tool_result_body_status(
+        &self,
+        session_id: &str,
+        item_id: &str,
+    ) -> JourneyResult<String> {
+        let projections = self.session_item_projections(session_id).await?;
+        let exists = filter_session_items(&projections, SessionItemView::Tools)
+            .iter()
+            .any(|projection| projection.summary.item_id == item_id);
+        if !exists {
+            return Err(LifecycleJourneyError::NotFound(format!(
+                "tool result 不存在: {item_id}"
+            )));
+        }
+        Ok(tool_result_cache_miss_text(session_id, item_id))
+    }
+
+    pub async fn terminal_metadata_entries(
+        &self,
+        session_id: &str,
+    ) -> JourneyResult<Vec<SessionTerminalMetadata>> {
+        let events = self.session_events(session_id).await?;
+        let mut entries: BTreeMap<String, SessionTerminalMetadataBuilder> = BTreeMap::new();
+        for event in &events {
+            match &event.notification.event {
+                BackboneEvent::Platform(PlatformEvent::TerminalOutput { terminal_id, data }) => {
+                    entries
+                        .entry(terminal_id.clone())
+                        .or_insert_with(|| {
+                            SessionTerminalMetadataBuilder::new(session_id, terminal_id)
+                        })
+                        .apply_output(event, data);
+                }
+                BackboneEvent::Platform(PlatformEvent::TerminalStateChanged {
+                    terminal_id,
+                    state,
+                    exit_code,
+                    message,
+                }) => {
+                    entries
+                        .entry(terminal_id.clone())
+                        .or_insert_with(|| {
+                            SessionTerminalMetadataBuilder::new(session_id, terminal_id)
+                        })
+                        .apply_state(event, state, *exit_code, message.as_deref());
+                }
+                _ => {}
+            }
+        }
+        Ok(entries
+            .into_values()
+            .map(SessionTerminalMetadataBuilder::finish)
+            .collect())
+    }
+
+    pub async fn read_terminal_metadata(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> JourneyResult<String> {
+        let metadata = self
+            .terminal_metadata_entries(session_id)
+            .await?
+            .into_iter()
+            .find(|entry| entry.terminal_id == terminal_id)
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("terminal 不存在: {terminal_id}"))
+            })?;
+        to_json_pretty(&metadata)
+    }
+
+    pub async fn read_terminal_log_status(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+    ) -> JourneyResult<String> {
+        let exists = self
+            .terminal_metadata_entries(session_id)
+            .await?
+            .into_iter()
+            .any(|entry| entry.terminal_id == terminal_id);
+        if !exists {
+            return Err(LifecycleJourneyError::NotFound(format!(
+                "terminal 不存在: {terminal_id}"
+            )));
+        }
+        Ok(format!(
+            "[terminal log cache missing]\nsession_id: {session_id}\nterminal_id: {terminal_id}\nlifecycle_path: lifecycle://session/terminal/{terminal_id}.log\nThe original terminal log is not available from the retained output cache."
+        ))
     }
 
     pub async fn session_item_projections(
@@ -515,6 +650,116 @@ pub struct TurnSummary {
     last_occurred_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionTerminalMetadata {
+    pub session_id: String,
+    pub terminal_id: String,
+    pub metadata_path: String,
+    pub log_path: String,
+    pub lifecycle_path: String,
+    pub body_status: String,
+    pub event_count: usize,
+    pub output_bytes: usize,
+    pub first_event_seq: Option<u64>,
+    pub last_event_seq: Option<u64>,
+    pub last_state: Option<String>,
+    pub exit_code: Option<i32>,
+    pub message: Option<String>,
+    pub preview: String,
+}
+
+struct SessionTerminalMetadataBuilder {
+    session_id: String,
+    terminal_id: String,
+    event_count: usize,
+    output_bytes: usize,
+    first_event_seq: Option<u64>,
+    last_event_seq: Option<u64>,
+    last_state: Option<String>,
+    exit_code: Option<i32>,
+    message: Option<String>,
+    preview: String,
+}
+
+impl SessionTerminalMetadataBuilder {
+    fn new(session_id: &str, terminal_id: &str) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+            terminal_id: terminal_id.to_string(),
+            event_count: 0,
+            output_bytes: 0,
+            first_event_seq: None,
+            last_event_seq: None,
+            last_state: None,
+            exit_code: None,
+            message: None,
+            preview: String::new(),
+        }
+    }
+
+    fn apply_output(&mut self, event: &PersistedSessionEvent, data: &str) {
+        self.apply_event_seq(event);
+        self.output_bytes = self.output_bytes.saturating_add(data.len());
+        if self.preview.len() < 2048 {
+            self.preview.push_str(data);
+            if self.preview.len() > 2048 {
+                self.preview
+                    .truncate(previous_char_boundary(&self.preview, 2048));
+            }
+        }
+    }
+
+    fn apply_state(
+        &mut self,
+        event: &PersistedSessionEvent,
+        state: &str,
+        exit_code: Option<i32>,
+        message: Option<&str>,
+    ) {
+        self.apply_event_seq(event);
+        self.last_state = Some(state.to_string());
+        self.exit_code = exit_code;
+        self.message = message.map(ToOwned::to_owned);
+    }
+
+    fn apply_event_seq(&mut self, event: &PersistedSessionEvent) {
+        self.event_count += 1;
+        self.first_event_seq = Some(
+            self.first_event_seq
+                .map_or(event.event_seq, |seq| seq.min(event.event_seq)),
+        );
+        self.last_event_seq = Some(
+            self.last_event_seq
+                .map_or(event.event_seq, |seq| seq.max(event.event_seq)),
+        );
+    }
+
+    fn finish(self) -> SessionTerminalMetadata {
+        let log_path = format!("session/terminal/{}.log", self.terminal_id);
+        SessionTerminalMetadata {
+            session_id: self.session_id,
+            terminal_id: self.terminal_id.clone(),
+            metadata_path: format!("session/terminal/{}.metadata.json", self.terminal_id),
+            lifecycle_path: format!("lifecycle://session/terminal/{}.log", self.terminal_id),
+            log_path,
+            body_status: "cache_miss".to_string(),
+            event_count: self.event_count,
+            output_bytes: self.output_bytes,
+            first_event_seq: self.first_event_seq,
+            last_event_seq: self.last_event_seq,
+            last_state: self.last_state,
+            exit_code: self.exit_code,
+            message: self.message,
+            preview: if self.preview.is_empty() {
+                "empty".to_string()
+            } else {
+                self.preview
+            },
+        }
+    }
+}
+
 pub fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec<TurnSummary> {
     let mut groups: BTreeMap<String, Vec<&PersistedSessionEvent>> = BTreeMap::new();
     for event in events {
@@ -656,6 +901,14 @@ pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {
 pub fn to_json_pretty<T: Serialize>(value: &T) -> JourneyResult<String> {
     serde_json::to_string_pretty(value)
         .map_err(|error| LifecycleJourneyError::OperationFailed(error.to_string()))
+}
+
+fn previous_char_boundary(value: &str, max_bytes: usize) -> usize {
+    let mut boundary = max_bytes.min(value.len());
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    boundary
 }
 
 fn map_domain_err(error: agentdash_domain::common::error::DomainError) -> LifecycleJourneyError {

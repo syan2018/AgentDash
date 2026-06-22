@@ -65,7 +65,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   const [activeId, setActiveId] = useState(initialTerminalId);
   const realIdRef = useRef(initialTerminalId);
   const [status, setStatus] = useState<"connecting" | "running" | "exited" | "error">("connecting");
-  const lastWrittenLenRef = useRef(0);
+  const lastWrittenOffsetRef = useRef(0);
 
   // ---------- xterm 实例生命周期（仅挂载/卸载） ----------
   useEffect(() => {
@@ -132,18 +132,21 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
 
   // ---------- 唯一的 xterm 写入路径：store outputBuffer → 增量 write ----------
   const output = useTerminalStore((s) => s.getOutput(activeId));
+  const outputBaseOffset = useTerminalStore((s) => s.getOutputBaseOffset(activeId));
 
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
     // output 为空意味着还没有数据（新终端刚 spawn、或尚未收到会话事件）
     if (!output) return;
-    const pending = output.slice(lastWrittenLenRef.current);
+    const retainedEndOffset = outputBaseOffset + output.length;
+    const pendingStart = Math.max(0, lastWrittenOffsetRef.current - outputBaseOffset);
+    const pending = output.slice(pendingStart);
     if (pending.length > 0) {
       term.write(pending);
-      lastWrittenLenRef.current = output.length;
+      lastWrittenOffsetRef.current = retainedEndOffset;
     }
-  }, [output]);
+  }, [output, outputBaseOffset]);
 
   // ---------- 终端状态同步 ----------
   const terminalState = useTerminalStore((s) => {
@@ -167,7 +170,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   useEffect(() => {
     if (initialTerminalId !== "new" && initialTerminalId !== realIdRef.current) {
       realIdRef.current = initialTerminalId;
-      lastWrittenLenRef.current = 0;
+      lastWrittenOffsetRef.current = 0;
       if (xtermRef.current) xtermRef.current.clear();
       setActiveId(initialTerminalId);
       // 切换 activeId 后，useEffect[output] 会自动从 0 回放

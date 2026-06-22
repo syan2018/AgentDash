@@ -27,7 +27,7 @@ use super::types::{ListOptions, ListResult, ReadResult};
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
-    item_file_name, session_summary_archives, to_json_pretty,
+    item_file_name, session_summary_archives, to_json_pretty, tool_result_metadata_for_projection,
 };
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
@@ -161,6 +161,26 @@ impl LifecycleMountProvider {
                 )
                 .await?
             }
+            ["session", "tool-results"] => {
+                list_session_tool_result_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/tool-results",
+                    None,
+                    options.recursive,
+                )
+                .await?
+            }
+            ["session", "tool-results", item_id] => {
+                list_session_tool_result_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/tool-results",
+                    Some(item_id),
+                    options.recursive,
+                )
+                .await?
+            }
             ["session", "writes"] => {
                 list_session_item_entries(
                     &self.journey,
@@ -173,6 +193,15 @@ impl LifecycleMountProvider {
             ["session", "summaries"] => {
                 list_session_summary_entries(&self.journey, &session_id, "session/summaries")
                     .await?
+            }
+            ["session", "terminal"] => {
+                list_session_terminal_entries(
+                    &self.journey,
+                    &session_id,
+                    "session/terminal",
+                    options.recursive,
+                )
+                .await?
             }
             ["node"] => {
                 require_node_scope(mount)?;
@@ -518,9 +547,10 @@ fn session_root_entries(prefix: &str) -> Vec<RuntimeFileEntry> {
         RuntimeFileEntry::dir(format!("{prefix}/items")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/messages")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/tools")).as_virtual(),
+        RuntimeFileEntry::dir(format!("{prefix}/tool-results")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/writes")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/summaries")).as_virtual(),
-        RuntimeFileEntry::file(format!("{prefix}/terminal")).as_virtual(),
+        RuntimeFileEntry::dir(format!("{prefix}/terminal")).as_virtual(),
         RuntimeFileEntry::dir(format!("{prefix}/turns")).as_virtual(),
     ]
 }
@@ -780,6 +810,28 @@ impl MountProvider for LifecycleMountProvider {
                 )
                 .await?
             }
+            ["session", "tool-results"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                list_session_tool_result_entries(
+                    &self.journey,
+                    &session_id_for_node(current_node(&active)?)?,
+                    "session/tool-results",
+                    None,
+                    options.recursive,
+                )
+                .await?
+            }
+            ["session", "tool-results", item_id] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                list_session_tool_result_entries(
+                    &self.journey,
+                    &session_id_for_node(current_node(&active)?)?,
+                    "session/tool-results",
+                    Some(item_id),
+                    options.recursive,
+                )
+                .await?
+            }
             ["session", "writes"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
                 list_session_item_entries(
@@ -796,6 +848,16 @@ impl MountProvider for LifecycleMountProvider {
                     &self.journey,
                     &session_id_for_node(current_node(&active)?)?,
                     "session/summaries",
+                )
+                .await?
+            }
+            ["session", "terminal"] => {
+                let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                list_session_terminal_entries(
+                    &self.journey,
+                    &session_id_for_node(current_node(&active)?)?,
+                    "session/terminal",
+                    options.recursive,
                 )
                 .await?
             }
@@ -839,7 +901,11 @@ impl MountProvider for LifecycleMountProvider {
         };
         let max = query.max_results.unwrap_or(usize::MAX);
         let mut matches = Vec::new();
-        for entry in listing.entries.into_iter().filter(|entry| !entry.is_dir) {
+        for entry in listing
+            .entries
+            .into_iter()
+            .filter(|entry| !entry.is_dir && !is_large_lifecycle_body_path(&entry.path))
+        {
             let Ok(read) = self.read_text(mount, &entry.path, ctx).await else {
                 continue;
             };
@@ -872,6 +938,11 @@ impl MountProvider for LifecycleMountProvider {
     }
 }
 
+fn is_large_lifecycle_body_path(path: &str) -> bool {
+    (path.starts_with("session/tool-results/") && path.ends_with("/result.txt"))
+        || (path.starts_with("session/terminal/") && path.ends_with(".log"))
+}
+
 async fn list_session_item_entries(
     journey: &LifecycleJourneyProjection,
     session_id: &str,
@@ -890,6 +961,82 @@ async fn list_session_item_entries(
                 item_file_name(projection, view)
             ))
             .as_virtual()
+        })
+        .collect())
+}
+
+async fn list_session_tool_result_entries(
+    journey: &LifecycleJourneyProjection,
+    session_id: &str,
+    display_root: &str,
+    item_id: Option<&str>,
+    recursive: bool,
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    let projections = journey
+        .session_item_projections(session_id)
+        .await
+        .map_err(map_journey_err)?;
+    let mut metadata = filter_session_items(&projections, SessionItemView::Tools)
+        .iter()
+        .filter_map(|projection| tool_result_metadata_for_projection(session_id, projection))
+        .collect::<Vec<_>>();
+    metadata.sort_by(|left, right| left.item_id.cmp(&right.item_id));
+
+    if let Some(item_id) = item_id {
+        let exists = metadata.iter().any(|entry| entry.item_id == item_id);
+        if !exists {
+            return Ok(Vec::new());
+        }
+        return Ok(vec![
+            RuntimeFileEntry::file(format!("{display_root}/{item_id}/metadata.json")).as_virtual(),
+            RuntimeFileEntry::file(format!("{display_root}/{item_id}/result.txt")).as_virtual(),
+        ]);
+    }
+
+    Ok(metadata
+        .into_iter()
+        .flat_map(|entry| {
+            if recursive {
+                vec![
+                    RuntimeFileEntry::file(entry.metadata_path).as_virtual(),
+                    RuntimeFileEntry::file(entry.result_path).as_virtual(),
+                ]
+            } else {
+                vec![
+                    RuntimeFileEntry::dir(format!("{display_root}/{}", entry.item_id)).as_virtual(),
+                ]
+            }
+        })
+        .collect())
+}
+
+async fn list_session_terminal_entries(
+    journey: &LifecycleJourneyProjection,
+    session_id: &str,
+    display_root: &str,
+    recursive: bool,
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    let mut metadata = journey
+        .terminal_metadata_entries(session_id)
+        .await
+        .map_err(map_journey_err)?;
+    metadata.sort_by(|left, right| left.terminal_id.cmp(&right.terminal_id));
+    Ok(metadata
+        .into_iter()
+        .flat_map(|entry| {
+            let metadata_entry = RuntimeFileEntry::file(format!(
+                "{display_root}/{}.metadata.json",
+                entry.terminal_id
+            ))
+            .as_virtual();
+            let log_entry =
+                RuntimeFileEntry::file(format!("{display_root}/{}.log", entry.terminal_id))
+                    .as_virtual();
+            if recursive {
+                vec![metadata_entry, log_entry]
+            } else {
+                vec![metadata_entry, log_entry]
+            }
         })
         .collect())
 }
@@ -917,6 +1064,11 @@ async fn list_session_summary_entries(
 mod tests {
     use std::sync::Mutex;
 
+    use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
+    use agentdash_agent_protocol::{
+        BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo,
+        codex_app_server_protocol as codex,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
@@ -928,6 +1080,9 @@ mod tests {
 
     use super::*;
     use crate::session::MemorySessionPersistence;
+    use crate::session::{
+        ExecutionStatus, SessionEventStore, SessionMeta, SessionMetaStore, TitleSource,
+    };
     use crate::vfs::{
         build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
     };
@@ -1121,6 +1276,16 @@ mod tests {
     }
 
     fn provider_for_agent_run_session(run: LifecycleRun) -> (LifecycleMountProvider, Mount) {
+        provider_for_agent_run_session_with_persistence(
+            run,
+            Arc::new(MemorySessionPersistence::default()),
+        )
+    }
+
+    fn provider_for_agent_run_session_with_persistence(
+        run: LifecycleRun,
+        persistence: Arc<MemorySessionPersistence>,
+    ) -> (LifecycleMountProvider, Mount) {
         let mount = build_agent_run_session_lifecycle_mount(
             run.id,
             Uuid::new_v4(),
@@ -1134,7 +1299,7 @@ mod tests {
             Arc::new(RunRepo::with_run(run)),
             Arc::new(EmptyInlineRepo),
             Arc::new(EmptySkillRepo),
-            Arc::new(MemorySessionPersistence::default()),
+            persistence,
         );
         (provider, mount)
     }
@@ -1194,6 +1359,68 @@ mod tests {
 
     fn entry_paths(result: ListResult) -> Vec<String> {
         result.entries.into_iter().map(|entry| entry.path).collect()
+    }
+
+    fn session_meta(session_id: &str) -> SessionMeta {
+        SessionMeta {
+            id: session_id.to_string(),
+            title: "test session".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_delivery_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_session_id: None,
+        }
+    }
+
+    fn source_info() -> SourceInfo {
+        SourceInfo {
+            connector_id: "test".to_string(),
+            connector_type: "pi_agent".to_string(),
+            executor_id: None,
+        }
+    }
+
+    fn dynamic_tool_completed_envelope(session_id: &str, item_id: &str) -> BackboneEnvelope {
+        let item = codex::ThreadItem::DynamicToolCall {
+            id: item_id.to_string(),
+            namespace: None,
+            tool: "dynamic_tool".to_string(),
+            arguments: serde_json::json!({ "query": "large output" }),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+                text: format!(
+                    "[tool result truncated]\nlifecycle_path: lifecycle://session/tool-results/{item_id}/result.txt\npolicy: head_tail\n\npreview body"
+                ),
+            }]),
+            success: Some(true),
+            duration_ms: None,
+        };
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                session_id.to_string(),
+                "turn-1".to_string(),
+            )),
+            session_id,
+            source_info(),
+        )
+        .with_turn_id("turn-1")
+        .with_entry_index(0)
+    }
+
+    fn terminal_output_envelope(session_id: &str, terminal_id: &str) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::TerminalOutput {
+                terminal_id: terminal_id.to_string(),
+                data: "terminal preview".to_string(),
+            }),
+            session_id,
+            source_info(),
+        )
     }
 
     fn runtime_node(node_path: &str) -> RuntimeNodeState {
@@ -1354,6 +1581,137 @@ mod tests {
             .expect_err("agent run session mount is read-only");
 
         assert!(matches!(error, MountError::NotSupported(_)));
+    }
+
+    #[tokio::test]
+    async fn agent_run_session_mount_exposes_tool_result_metadata_and_miss_body() {
+        let session_id = "session-1";
+        let item_id = "turn-1:0:call-1";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&session_meta(session_id))
+            .await
+            .expect("create session");
+        persistence
+            .append_event(
+                session_id,
+                &dynamic_tool_completed_envelope(session_id, item_id),
+            )
+            .await
+            .expect("append tool event");
+
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let (provider, mount) = provider_for_agent_run_session_with_persistence(run, persistence);
+
+        let paths = entry_paths(
+            provider
+                .list(
+                    &mount,
+                    &list_options("session/tool-results"),
+                    &MountOperationContext::default(),
+                )
+                .await
+                .expect("list tool results"),
+        );
+        assert!(paths.contains(&format!("session/tool-results/{item_id}")));
+
+        let metadata = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/metadata.json"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read tool result metadata");
+        assert!(metadata.content.contains("\"body_status\""));
+        assert!(metadata.content.contains("\"cache_miss\""));
+        assert!(metadata.content.contains("preview body"));
+
+        let result = provider
+            .read_text(
+                &mount,
+                &format!("session/tool-results/{item_id}/result.txt"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read tool result miss body");
+        assert!(result.content.contains("[tool result cache missing]"));
+        assert!(!result.content.contains("preview body"));
+
+        let search = provider
+            .search_text(
+                &mount,
+                &SearchQuery {
+                    pattern: "preview body".to_string(),
+                    path: Some("session/tool-results".to_string()),
+                    case_sensitive: true,
+                    max_results: None,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("search tool result metadata");
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(
+            search.matches[0].path,
+            format!("session/tool-results/{item_id}/metadata.json")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_run_session_mount_exposes_terminal_metadata_and_miss_log() {
+        let session_id = "session-1";
+        let terminal_id = "terminal-1";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        persistence
+            .create_session(&session_meta(session_id))
+            .await
+            .expect("create session");
+        persistence
+            .append_event(
+                session_id,
+                &terminal_output_envelope(session_id, terminal_id),
+            )
+            .await
+            .expect("append terminal event");
+
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let (provider, mount) = provider_for_agent_run_session_with_persistence(run, persistence);
+
+        let paths = entry_paths(
+            provider
+                .list(
+                    &mount,
+                    &list_options("session/terminal"),
+                    &MountOperationContext::default(),
+                )
+                .await
+                .expect("list terminal"),
+        );
+        assert!(paths.contains(&format!("session/terminal/{terminal_id}.metadata.json")));
+        assert!(paths.contains(&format!("session/terminal/{terminal_id}.log")));
+
+        let metadata = provider
+            .read_text(
+                &mount,
+                &format!("session/terminal/{terminal_id}.metadata.json"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read terminal metadata");
+        assert!(metadata.content.contains("\"terminal_id\": \"terminal-1\""));
+        assert!(metadata.content.contains("\"cache_miss\""));
+
+        let log = provider
+            .read_text(
+                &mount,
+                &format!("session/terminal/{terminal_id}.log"),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read terminal miss log");
+        assert!(log.content.contains("[terminal log cache missing]"));
+        assert!(!log.content.contains("terminal preview"));
     }
 
     #[tokio::test]

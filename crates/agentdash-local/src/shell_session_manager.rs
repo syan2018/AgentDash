@@ -41,6 +41,7 @@ struct ShellSession {
     exit_code: Option<i32>,
     handle: Arc<ProcessHandle>,
     buffer: RetainedOutputBuffer,
+    live_output: LiveOutputEventBudget,
     notify: Arc<Notify>,
     created_at: Instant,
     updated_at: Instant,
@@ -59,6 +60,85 @@ struct ShellSpawnSpec {
     terminal_id: Option<String>,
     max_output_bytes: usize,
     timeout_ms: Option<u64>,
+}
+
+struct LiveOutputEventBudget {
+    max_bytes: usize,
+    emitted_bytes: usize,
+    omitted_bytes: usize,
+    omitted_chunks: usize,
+    truncation_notice_sent: bool,
+}
+
+impl LiveOutputEventBudget {
+    fn new(session_max_bytes: usize) -> Self {
+        Self {
+            max_bytes: session_max_bytes.min(LIVE_OUTPUT_EVENT_MAX_BYTES).max(1),
+            emitted_bytes: 0,
+            omitted_bytes: 0,
+            omitted_chunks: 0,
+            truncation_notice_sent: false,
+        }
+    }
+
+    fn push(&mut self, data: &str) -> Option<(String, ToolShellTruncationInfo)> {
+        if data.is_empty() {
+            return Some((String::new(), ToolShellTruncationInfo::default()));
+        }
+
+        let remaining = self.max_bytes.saturating_sub(self.emitted_bytes);
+        if remaining == 0 {
+            self.record_omitted(data.len());
+            return self.truncation_notice_once();
+        }
+
+        let (mut bounded, truncation) = truncate_live_output_text(data, remaining);
+        self.emitted_bytes = self.emitted_bytes.saturating_add(bounded.len());
+        if truncation.truncated {
+            self.record_omitted(truncation.omitted_bytes);
+            append_output_truncation_notice(&mut bounded, self.omitted_bytes);
+            return Some((bounded, self.truncation()));
+        }
+
+        Some((bounded, ToolShellTruncationInfo::default()))
+    }
+
+    fn record_omitted(&mut self, bytes: usize) {
+        self.omitted_bytes = self.omitted_bytes.saturating_add(bytes);
+        self.omitted_chunks = self.omitted_chunks.saturating_add(1);
+    }
+
+    fn truncation_notice_once(&mut self) -> Option<(String, ToolShellTruncationInfo)> {
+        if self.truncation_notice_sent {
+            return None;
+        }
+        self.truncation_notice_sent = true;
+        let mut data = String::new();
+        append_output_truncation_notice(&mut data, self.omitted_bytes);
+        Some((data, self.truncation()))
+    }
+
+    fn truncation(&self) -> ToolShellTruncationInfo {
+        ToolShellTruncationInfo {
+            truncated: self.omitted_chunks > 0,
+            omitted_bytes: self.omitted_bytes,
+            omitted_chunks: self.omitted_chunks,
+            omitted_tokens_estimate: if self.omitted_bytes > 0 {
+                usize::try_from(approx_tokens_from_byte_count(self.omitted_bytes)).ok()
+            } else {
+                None
+            },
+        }
+    }
+}
+
+fn append_output_truncation_notice(output: &mut String, omitted_bytes: usize) {
+    if !output.ends_with('\n') && !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(&format!(
+        "[output truncated: omitted_bytes={omitted_bytes}]\n"
+    ));
 }
 
 #[derive(Default)]
@@ -449,6 +529,7 @@ impl ShellSessionManager {
             exit_code: None,
             handle,
             buffer: RetainedOutputBuffer::new(spec.max_output_bytes),
+            live_output: LiveOutputEventBudget::new(spec.max_output_bytes),
             notify,
             created_at: now,
             updated_at: now,
@@ -511,7 +592,7 @@ impl ShellSessionManager {
 
     async fn push_output(&self, session_id: &str, stream: ShellOutputStream, bytes: Vec<u8>) {
         let data = String::from_utf8_lossy(&bytes).to_string();
-        let (chunk, call_id, terminal_id, notify) = {
+        let (chunk, live_output, call_id, terminal_id, notify) = {
             let mut table = self.inner.lock().await;
             let Some(session) = table.sessions.get_mut(session_id) else {
                 return;
@@ -523,31 +604,35 @@ impl ShellSessionManager {
                     stream
                 };
             let chunk = session.buffer.push(stream, data.clone());
+            let live_output = session.live_output.push(&chunk.data);
             session.updated_at = Instant::now();
             (
                 chunk,
+                live_output,
                 session.call_id.clone(),
                 session.terminal_id.clone(),
                 Arc::clone(&session.notify),
             )
         };
 
-        if let Some(call_id) = call_id {
+        if let (Some(call_id), Some((delta, truncation))) = (call_id, live_output.clone()) {
             let _ = self.event_tx.send(RelayMessage::EventToolShellOutput {
                 id: RelayMessage::new_id("shell-out"),
                 payload: ToolShellOutputPayload {
                     call_id,
-                    delta: chunk.data.clone(),
+                    delta,
                     stream: chunk.stream,
+                    truncation,
                 },
             });
         }
-        if let Some(terminal_id) = terminal_id {
+        if let (Some(terminal_id), Some((data, truncation))) = (terminal_id, live_output) {
             let _ = self.event_tx.send(RelayMessage::EventTerminalOutput {
                 id: RelayMessage::new_id("term-out"),
                 payload: TerminalOutputPayload {
                     terminal_id,
-                    data: chunk.data,
+                    data,
+                    truncation,
                 },
             });
         }
@@ -986,5 +1071,28 @@ mod tests {
         .await;
         assert!(read.truncation.truncated, "read={read:?}");
         assert!(read.truncation.omitted_bytes > 0);
+    }
+
+    #[test]
+    fn live_output_budget_bounds_single_chunk_and_stops_repeated_omissions() {
+        let mut budget = LiveOutputEventBudget::new(32);
+        let (first, first_truncation) = budget
+            .push(&"x".repeat(128))
+            .expect("first oversized chunk should emit preview");
+        assert!(first.len() <= 96, "first={first:?}");
+        assert!(first.contains("output truncated"));
+        assert!(first_truncation.truncated);
+        assert!(first_truncation.omitted_bytes > 0);
+
+        let (second, second_truncation) = budget
+            .push("another omitted chunk")
+            .expect("first fully omitted chunk should emit notice");
+        assert!(second.contains("output truncated"));
+        assert!(second_truncation.truncated);
+
+        assert!(
+            budget.push("one more omitted chunk").is_none(),
+            "subsequent omissions should not keep emitting live events"
+        );
     }
 }

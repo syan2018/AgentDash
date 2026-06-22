@@ -125,7 +125,8 @@ pub async fn list_directory_users(
     if let Some(provider) = &state.identity_directory_provider {
         match provider.search_users(query.search_request()).await {
             Ok(result) => {
-                let response = provider_user_search_response(result, state.config.auth_mode);
+                let mut response = provider_user_search_response(result, state.config.auth_mode);
+                apply_projected_user_fields(&state, &mut response.items).await;
                 return Ok(Json(response).into_response());
             }
             Err(DirectoryProviderError::Unavailable(message)) => {
@@ -499,6 +500,35 @@ fn normalize_required_key(value: &str, label: &'static str) -> Result<String, Ap
         return Err(ApiError::BadRequest(format!("{label} 不能为空")));
     }
     Ok(key.to_string())
+}
+
+async fn apply_projected_user_fields(state: &AppState, users: &mut [DirectoryUser]) {
+    for user in users.iter_mut() {
+        if user.email.is_some() && user.avatar_url.is_some() {
+            continue;
+        }
+
+        let projection = match state
+            .repos
+            .user_directory_repo
+            .get_user_by_id(&user.user_id)
+            .await
+        {
+            Ok(Some(user)) => user,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::debug!(error = %error, user_id = %user.user_id, "投影用户字段查询失败，跳过补全");
+                continue;
+            }
+        };
+
+        if user.email.is_none() {
+            user.email = projection.email;
+        }
+        if user.avatar_url.is_none() {
+            user.avatar_url = projection.avatar_url;
+        }
+    }
 }
 
 fn map_provider_error(error: DirectoryProviderError) -> ApiError {

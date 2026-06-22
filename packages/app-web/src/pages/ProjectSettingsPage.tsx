@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
-  DirectoryGroup,
   DirectoryUser,
+  CurrentUser,
   BackendWorkspaceInventory,
   ProjectBackendAccess,
   Project,
@@ -25,17 +25,27 @@ import {
 } from "@agentdash/ui";
 import { UserAvatar } from "../components/ui/user-avatar";
 import {
-  fetchDirectoryGroupTree,
   fetchDirectoryGroups,
   fetchDirectoryUsers,
 } from "../services/directory";
-import type { DirectoryTreeNode } from "../services/directory";
 import {
   createProjectBackendAccess,
   listBackendWorkspaceInventory,
   listProjectBackendAccess,
   revokeProjectBackendAccess,
 } from "../services/backendAccess";
+import {
+  mergeDirectoryUsers,
+  mergeDirectoryGroups,
+  resolveUserLabel,
+  resolveGroupLabel,
+} from "../features/directory/directorySubjectUtils";
+import { DirectorySubjectPicker } from "../features/directory/DirectorySubjectPicker";
+import type {
+  SelectedSubject,
+  DirectoryResponseStatus,
+} from "../features/directory/DirectorySubjectPicker";
+import type { DirectoryGroupSummary } from "../features/directory/directorySubjectUtils";
 
 type SettingsTab = "overview" | "context" | "workspace" | "management";
 
@@ -64,86 +74,7 @@ const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   viewer: "Viewer",
 };
 
-type DirectorySubjectMode = "user" | "group";
-
-interface DirectoryResponseStatus {
-  source?: string;
-  is_projection_only: boolean;
-}
-
-type DirectoryGroupSummary = Pick<
-  DirectoryGroup,
-  "group_id" | "display_name" | "path" | "provider" | "source"
->;
-
 const DIRECTORY_SEARCH_LIMIT = 20;
-const DIRECTORY_TREE_LIMIT = 30;
-const TREE_INDENT_CLASSES = ["pl-0", "pl-4", "pl-8", "pl-12", "pl-16", "pl-20"];
-
-function directoryStatusFrom(response: {
-  source?: string;
-  is_projection_only: boolean;
-}): DirectoryResponseStatus {
-  return {
-    source: response.source,
-    is_projection_only: response.is_projection_only,
-  };
-}
-
-function mergeDirectoryUsers(current: DirectoryUser[], incoming: DirectoryUser[]): DirectoryUser[] {
-  const next = new Map(current.map((item) => [item.user_id, item]));
-  for (const item of incoming) {
-    next.set(item.user_id, item);
-  }
-  return Array.from(next.values()).sort((left, right) =>
-    resolveDirectoryUserLabel(left).localeCompare(resolveDirectoryUserLabel(right)),
-  );
-}
-
-function mergeDirectoryGroups(
-  current: DirectoryGroupSummary[],
-  incoming: DirectoryGroupSummary[],
-): DirectoryGroupSummary[] {
-  const next = new Map(current.map((item) => [item.group_id, item]));
-  for (const item of incoming) {
-    next.set(item.group_id, {
-      ...next.get(item.group_id),
-      ...item,
-    });
-  }
-  return Array.from(next.values()).sort((left, right) =>
-    resolveDirectoryGroupLabel(left).localeCompare(resolveDirectoryGroupLabel(right)),
-  );
-}
-
-function resolveDirectoryGroupLabel(group: DirectoryGroupSummary): string {
-  return group.display_name?.trim() || group.path?.trim() || group.group_id;
-}
-
-function directoryGroupFromTreeNode(node: DirectoryTreeNode): DirectoryGroupSummary {
-  return {
-    group_id: node.group_id,
-    display_name: node.display_name,
-    path: node.path,
-    provider: node.provider,
-    source: node.source,
-  };
-}
-
-function flattenTreeGroups(nodes: DirectoryTreeNode[]): DirectoryGroupSummary[] {
-  const groups: DirectoryGroupSummary[] = [];
-  for (const node of nodes) {
-    groups.push(directoryGroupFromTreeNode(node));
-    if (node.children && node.children.length > 0) {
-      groups.push(...flattenTreeGroups(node.children));
-    }
-  }
-  return groups;
-}
-
-function treeIndentClass(level: number): string {
-  return TREE_INDENT_CLASSES[Math.min(level, TREE_INDENT_CLASSES.length - 1)] ?? "pl-20";
-}
 
 const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
   private: "私有",
@@ -164,15 +95,10 @@ function resolveGrantSubjectLabel(
 ): string {
   if (grant.subject_type === "user") {
     const user = users.find((item) => item.user_id === grant.subject_id);
-    return user?.display_name?.trim() || user?.email?.trim() || grant.subject_id;
+    return user ? resolveUserLabel(user) : grant.subject_id;
   }
-
   const group = groups.find((item) => item.group_id === grant.subject_id);
-  return group ? resolveDirectoryGroupLabel(group) : grant.subject_id;
-}
-
-function resolveDirectoryUserLabel(user: DirectoryUser): string {
-  return user.display_name?.trim() || user.email?.trim() || user.user_id;
+  return group ? resolveGroupLabel(group) : grant.subject_id;
 }
 
 function findGrantUser(
@@ -183,489 +109,27 @@ function findGrantUser(
   return users.find((item) => item.user_id === grant.subject_id) ?? null;
 }
 
-function DirectorySourceNotice({ status }: { status: DirectoryResponseStatus | null }) {
-  if (!status) return null;
-  if (status.is_projection_only) {
-    return (
-      <div className="rounded-[8px] border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-        目录 provider 暂不可用，当前仅显示已投影的身份快照。
-        {status.source ? ` source: ${status.source}` : ""}
-      </div>
-    );
-  }
-  if (!status.source) return null;
-  return (
-    <p className="text-xs text-muted-foreground">
-      目录来源：{status.source}
-    </p>
-  );
-}
-
-function DirectoryEmptyState({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-      {children}
-    </p>
-  );
-}
-
-function DirectoryErrorState({ message }: { message: string }) {
-  return (
-    <div className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-      {message}
-    </div>
-  );
-}
-
-function DirectoryUserOption({
-  user,
-  selected,
-  disabledReason,
-  onSelect,
-}: {
-  user: DirectoryUser;
-  selected: boolean;
-  disabledReason?: string;
-  onSelect: () => void;
-}) {
-  const label = resolveDirectoryUserLabel(user);
+function userSubjectLabel(user: Pick<DirectoryUser, "user_id" | "subject" | "email">): string {
+  const subject = user.subject?.trim();
+  if (subject && subject !== user.user_id) return subject;
   const email = user.email?.trim();
-  const domain = email?.includes("@") ? email.split("@").at(1) : null;
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={Boolean(disabledReason)}
-      className={`flex w-full min-w-0 items-center gap-3 rounded-[8px] border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
-        selected
-          ? "border-primary/35 bg-primary/10"
-          : "border-border bg-background hover:border-primary/30 hover:bg-secondary/40"
-      }`}
-    >
-      <UserAvatar avatarUrl={user.avatar_url} fallback={label} sizeClassName="h-9 w-9" />
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-foreground">{label}</span>
-          {disabledReason && (
-            <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-              {disabledReason}
-            </span>
-          )}
-        </span>
-        <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {email && <span>{email}</span>}
-          {domain && <span>domain: {domain}</span>}
-          <span className="font-mono">user_id: {user.user_id}</span>
-          {user.source && <span>source: {user.source}</span>}
-        </span>
-      </span>
-    </button>
-  );
+  if (email) return email.includes("@") ? email.split("@")[0] : email;
+  return user.user_id;
 }
 
-function DirectoryGroupOption({
-  group,
-  selected,
-  disabledReason,
-  onSelect,
-}: {
-  group: DirectoryGroupSummary;
-  selected: boolean;
-  disabledReason?: string;
-  onSelect: () => void;
-}) {
-  const label = resolveDirectoryGroupLabel(group);
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={Boolean(disabledReason)}
-      className={`w-full min-w-0 rounded-[8px] border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
-        selected
-          ? "border-primary/35 bg-primary/10"
-          : "border-border bg-background hover:border-primary/30 hover:bg-secondary/40"
-      }`}
-    >
-      <span className="flex flex-wrap items-center gap-2">
-        <span className="truncate text-sm font-medium text-foreground">{label}</span>
-        {disabledReason && (
-          <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-            {disabledReason}
-          </span>
-        )}
-      </span>
-      <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        {group.path && <span className="min-w-0 truncate">path: {group.path}</span>}
-        <span className="font-mono">group_id: {group.group_id}</span>
-        {group.source && <span>source: {group.source}</span>}
-      </span>
-    </button>
-  );
+function resolveUserAuditLabel(
+  userId: string,
+  users: DirectoryUser[],
+  currentUser: CurrentUser | null,
+): string {
+  const user = users.find((item) => item.user_id === userId);
+  if (user) return userSubjectLabel(user);
+  if (currentUser?.user_id === userId) return userSubjectLabel(currentUser);
+  return userId;
 }
 
-function ProjectSubjectPicker({
-  mode,
-  onModeChange,
-  selectedUserId,
-  onSelectedUserIdChange,
-  selectedGroupId,
-  onSelectedGroupIdChange,
-  knownUsers,
-  knownGroups,
-  userDirectoryStatus,
-  groupDirectoryStatus,
-  grantedUserIds,
-  grantedGroupIds,
-  currentUserId,
-  onUsersObserved,
-  onGroupsObserved,
-}: {
-  mode: DirectorySubjectMode;
-  onModeChange: (mode: DirectorySubjectMode) => void;
-  selectedUserId: string;
-  onSelectedUserIdChange: (userId: string) => void;
-  selectedGroupId: string;
-  onSelectedGroupIdChange: (groupId: string) => void;
-  knownUsers: DirectoryUser[];
-  knownGroups: DirectoryGroupSummary[];
-  userDirectoryStatus: DirectoryResponseStatus | null;
-  groupDirectoryStatus: DirectoryResponseStatus | null;
-  grantedUserIds: Set<string>;
-  grantedGroupIds: Set<string>;
-  currentUserId?: string;
-  onUsersObserved: (items: DirectoryUser[]) => void;
-  onGroupsObserved: (items: DirectoryGroupSummary[]) => void;
-}) {
-  const [userQuery, setUserQuery] = useState("");
-  const [groupQuery, setGroupQuery] = useState("");
-  const [userResults, setUserResults] = useState<DirectoryUser[]>([]);
-  const [groupResults, setGroupResults] = useState<DirectoryGroupSummary[]>([]);
-  const [userSearchStatus, setUserSearchStatus] = useState<DirectoryResponseStatus | null>(null);
-  const [groupSearchStatus, setGroupSearchStatus] = useState<DirectoryResponseStatus | null>(null);
-  const [treeStatus, setTreeStatus] = useState<DirectoryResponseStatus | null>(null);
-  const [userSearchLoading, setUserSearchLoading] = useState(false);
-  const [groupSearchLoading, setGroupSearchLoading] = useState(false);
-  const [userSearchError, setUserSearchError] = useState<string | null>(null);
-  const [groupSearchError, setGroupSearchError] = useState<string | null>(null);
-  const [treeChildrenByParent, setTreeChildrenByParent] = useState<Record<string, DirectoryTreeNode[]>>({});
-  const [treeCursorsByParent, setTreeCursorsByParent] = useState<Record<string, string | null>>({});
-  const [treeLoadingByParent, setTreeLoadingByParent] = useState<Record<string, boolean>>({});
-  const [treeErrorByParent, setTreeErrorByParent] = useState<Record<string, string | null>>({});
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Record<string, boolean>>({});
-
-  const visibleKnownUsers = useMemo(
-    () => knownUsers.filter((user) => user.user_id !== currentUserId).slice(0, DIRECTORY_SEARCH_LIMIT),
-    [currentUserId, knownUsers],
-  );
-  const userItems = userQuery.trim() ? userResults : visibleKnownUsers;
-  const groupItems = groupQuery.trim() ? groupResults : knownGroups.slice(0, DIRECTORY_SEARCH_LIMIT);
-  const selectedUser = knownUsers.find((user) => user.user_id === selectedUserId)
-    ?? userResults.find((user) => user.user_id === selectedUserId)
-    ?? null;
-  const selectedGroup = knownGroups.find((group) => group.group_id === selectedGroupId)
-    ?? groupResults.find((group) => group.group_id === selectedGroupId)
-    ?? null;
-
-  useEffect(() => {
-    if (mode !== "user") return;
-    const query = userQuery.trim();
-    if (!query) {
-      setUserSearchLoading(false);
-      setUserSearchError(null);
-      setUserSearchStatus(null);
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setUserSearchLoading(true);
-      setUserSearchError(null);
-      void (async () => {
-        try {
-          const response = await fetchDirectoryUsers({ query, limit: DIRECTORY_SEARCH_LIMIT });
-          if (cancelled) return;
-          setUserResults(response.items);
-          setUserSearchStatus(directoryStatusFrom(response));
-          onUsersObserved(response.items);
-        } catch (searchError) {
-          if (!cancelled) setUserSearchError((searchError as Error).message);
-        } finally {
-          if (!cancelled) setUserSearchLoading(false);
-        }
-      })();
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [mode, onUsersObserved, userQuery]);
-
-  useEffect(() => {
-    if (mode !== "group") return;
-    const query = groupQuery.trim();
-    if (!query) {
-      setGroupSearchLoading(false);
-      setGroupSearchError(null);
-      setGroupSearchStatus(null);
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setGroupSearchLoading(true);
-      setGroupSearchError(null);
-      void (async () => {
-        try {
-          const response = await fetchDirectoryGroups({ query, limit: DIRECTORY_SEARCH_LIMIT });
-          if (cancelled) return;
-          setGroupResults(response.items);
-          setGroupSearchStatus(directoryStatusFrom(response));
-          onGroupsObserved(response.items);
-        } catch (searchError) {
-          if (!cancelled) setGroupSearchError((searchError as Error).message);
-        } finally {
-          if (!cancelled) setGroupSearchLoading(false);
-        }
-      })();
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [groupQuery, mode, onGroupsObserved]);
-
-  const loadTreeChildren = useCallback(async (parentId: string | null, cursor?: string) => {
-    const parentKey = parentId ?? "";
-    setTreeLoadingByParent((current) => ({ ...current, [parentKey]: true }));
-    setTreeErrorByParent((current) => ({ ...current, [parentKey]: null }));
-    try {
-      const response = await fetchDirectoryGroupTree({
-        parent_id: parentKey,
-        cursor,
-        limit: DIRECTORY_TREE_LIMIT,
-      });
-      setTreeStatus(directoryStatusFrom(response));
-      onGroupsObserved(flattenTreeGroups(response.items));
-      setTreeChildrenByParent((current) => {
-        const existing = cursor ? (current[parentKey] ?? []) : [];
-        const next: Record<string, DirectoryTreeNode[]> = {
-          ...current,
-          [parentKey]: [...existing, ...response.items],
-        };
-        for (const item of response.items) {
-          if (item.children && item.children.length > 0) {
-            next[item.group_id] = item.children;
-          }
-        }
-        return next;
-      });
-      setTreeCursorsByParent((current) => ({
-        ...current,
-        [parentKey]: response.next_cursor ?? null,
-      }));
-    } catch (treeError) {
-      setTreeErrorByParent((current) => ({
-        ...current,
-        [parentKey]: (treeError as Error).message,
-      }));
-      setTreeChildrenByParent((current) => ({
-        ...current,
-        [parentKey]: current[parentKey] ?? [],
-      }));
-    } finally {
-      setTreeLoadingByParent((current) => ({ ...current, [parentKey]: false }));
-    }
-  }, [onGroupsObserved]);
-
-  useEffect(() => {
-    if (mode !== "group") return;
-    if (treeChildrenByParent[""] || treeLoadingByParent[""]) return;
-    void loadTreeChildren(null);
-  }, [loadTreeChildren, mode, treeChildrenByParent, treeLoadingByParent]);
-
-  const toggleTreeNode = (node: DirectoryTreeNode) => {
-    const expanded = expandedGroupIds[node.group_id] === true;
-    setExpandedGroupIds((current) => ({ ...current, [node.group_id]: !expanded }));
-    if (!expanded && node.has_children && !treeChildrenByParent[node.group_id]) {
-      void loadTreeChildren(node.group_id);
-    }
-  };
-
-  const renderTreeRows = (parentId: string | null, level: number): ReactNode => {
-    const parentKey = parentId ?? "";
-    const nodes = treeChildrenByParent[parentKey] ?? [];
-    const loading = treeLoadingByParent[parentKey] === true;
-    const error = treeErrorByParent[parentKey];
-    const nextCursor = treeCursorsByParent[parentKey];
-
-    return (
-      <div className="space-y-2">
-        {nodes.map((node) => {
-          const group = directoryGroupFromTreeNode(node);
-          const selected = selectedGroupId === node.group_id;
-          const granted = grantedGroupIds.has(node.group_id);
-          const expanded = expandedGroupIds[node.group_id] === true;
-          return (
-            <div key={node.group_id} className="space-y-2">
-              <div className={`flex min-w-0 items-start gap-2 ${treeIndentClass(level)}`}>
-                <button
-                  type="button"
-                  onClick={() => toggleTreeNode(node)}
-                  disabled={!node.has_children}
-                  className="mt-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background text-xs text-muted-foreground transition-colors hover:bg-secondary disabled:cursor-default disabled:opacity-40"
-                  title={node.has_children ? (expanded ? "收起组织" : "展开组织") : "没有下级组织"}
-                >
-                  {node.has_children ? (expanded ? "−" : "+") : "·"}
-                </button>
-                <DirectoryGroupOption
-                  group={group}
-                  selected={selected}
-                  disabledReason={granted ? "已授权" : undefined}
-                  onSelect={() => onSelectedGroupIdChange(node.group_id)}
-                />
-              </div>
-              {expanded && renderTreeRows(node.group_id, level + 1)}
-            </div>
-          );
-        })}
-        {loading && (
-          <p className={`${treeIndentClass(level)} text-xs text-muted-foreground`}>
-            正在加载组织...
-          </p>
-        )}
-        {error && <DirectoryErrorState message={error} />}
-        {nextCursor && (
-          <button
-            type="button"
-            onClick={() => void loadTreeChildren(parentId, nextCursor)}
-            className={`${treeIndentClass(level)} text-xs font-medium text-primary hover:text-primary/80`}
-          >
-            加载更多组织
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="inline-flex rounded-[8px] border border-border bg-muted/30 p-1">
-        {(["user", "group"] as DirectorySubjectMode[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => onModeChange(item)}
-            className={`rounded-[8px] px-3 py-1.5 text-sm transition-colors ${
-              mode === item
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {item === "user" ? "用户" : "用户组"}
-          </button>
-        ))}
-      </div>
-
-      {mode === "user" ? (
-        <div className="space-y-3">
-          <input
-            value={userQuery}
-            onChange={(event) => setUserQuery(event.target.value)}
-            className="agentdash-form-input"
-            placeholder="搜索用户名称、邮箱或 user_id"
-          />
-          <DirectorySourceNotice status={userQuery.trim() ? userSearchStatus : userDirectoryStatus} />
-          {userSearchError && <DirectoryErrorState message={userSearchError} />}
-          {userSearchLoading && <p className="text-xs text-muted-foreground">正在搜索用户...</p>}
-          {!userSearchLoading && userItems.length === 0 && (
-            <DirectoryEmptyState>
-              {userQuery.trim() ? "没有匹配的用户。" : "输入关键词后搜索企业目录用户。"}
-            </DirectoryEmptyState>
-          )}
-          <div className="grid gap-2">
-            {userItems.map((user) => {
-              const selected = selectedUserId === user.user_id;
-              const disabledReason = grantedUserIds.has(user.user_id)
-                ? "已授权"
-                : user.user_id === currentUserId
-                  ? "当前用户"
-                  : undefined;
-              return (
-                <DirectoryUserOption
-                  key={user.user_id}
-                  user={user}
-                  selected={selected}
-                  disabledReason={disabledReason}
-                  onSelect={() => onSelectedUserIdChange(user.user_id)}
-                />
-              );
-            })}
-          </div>
-          {selectedUser && (
-            <p className="text-xs text-muted-foreground">
-              已选择用户：{resolveDirectoryUserLabel(selectedUser)} · user_id: {selectedUser.user_id}
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="space-y-3">
-            <input
-              value={groupQuery}
-              onChange={(event) => setGroupQuery(event.target.value)}
-              className="agentdash-form-input"
-              placeholder="搜索组织名称、路径或 group_id"
-            />
-            <DirectorySourceNotice status={groupQuery.trim() ? groupSearchStatus : groupDirectoryStatus} />
-            {groupSearchError && <DirectoryErrorState message={groupSearchError} />}
-            {groupSearchLoading && <p className="text-xs text-muted-foreground">正在搜索用户组...</p>}
-            {!groupSearchLoading && groupItems.length === 0 && (
-              <DirectoryEmptyState>
-                {groupQuery.trim() ? "没有匹配的用户组。" : "可通过下方组织树浏览用户组。"}
-              </DirectoryEmptyState>
-            )}
-            <div className="grid gap-2">
-              {groupItems.map((group) => {
-                const selected = selectedGroupId === group.group_id;
-                const granted = grantedGroupIds.has(group.group_id);
-                return (
-                  <DirectoryGroupOption
-                    key={group.group_id}
-                    group={group}
-                    selected={selected}
-                    disabledReason={granted ? "已授权" : undefined}
-                    onSelect={() => onSelectedGroupIdChange(group.group_id)}
-                  />
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-[12px] border border-border bg-muted/10 px-3 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-medium text-foreground">组织树</p>
-              <DirectorySourceNotice status={treeStatus} />
-            </div>
-            {treeErrorByParent[""] && <DirectoryErrorState message={treeErrorByParent[""] ?? ""} />}
-            {(treeChildrenByParent[""]?.length ?? 0) === 0 && !treeLoadingByParent[""] && !treeErrorByParent[""] && (
-              <DirectoryEmptyState>当前没有可浏览的根组织。</DirectoryEmptyState>
-            )}
-            {renderTreeRows(null, 0)}
-          </div>
-
-          {selectedGroup && (
-            <p className="text-xs text-muted-foreground">
-              已选择用户组：{resolveDirectoryGroupLabel(selectedGroup)} · group_id: {selectedGroup.group_id}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function statusFrom(r: { source?: string; is_projection_only: boolean }): DirectoryResponseStatus {
+  return { source: r.source, is_projection_only: r.is_projection_only };
 }
 
 function SectionCard({
@@ -1236,9 +700,7 @@ export function ProjectSettingsPage() {
   const [directoryUsersStatus, setDirectoryUsersStatus] = useState<DirectoryResponseStatus | null>(null);
   const [directoryGroupsStatus, setDirectoryGroupsStatus] = useState<DirectoryResponseStatus | null>(null);
   const [isDirectoryLoading, setIsDirectoryLoading] = useState(false);
-  const [shareTargetType, setShareTargetType] = useState<DirectorySubjectMode>("user");
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [pickerSelections, setPickerSelections] = useState<SelectedSubject[]>([]);
   const [grantRole, setGrantRole] = useState<ProjectRole>("viewer");
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -1284,9 +746,7 @@ export function ProjectSettingsPage() {
     setCloneName(`${project.name}（副本）`);
     setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
     setDeleteConfirmValue("");
-    setShareTargetType("user");
-    setSelectedUserId("");
-    setSelectedGroupId("");
+    setPickerSelections([]);
     setGrantRole("viewer");
     setDirectoryUsers([]);
     setDirectoryGroups([]);
@@ -1312,8 +772,8 @@ export function ProjectSettingsPage() {
     ]);
     rememberDirectoryUsers(usersResponse.items);
     rememberDirectoryGroups(groupsResponse.items);
-    setDirectoryUsersStatus(directoryStatusFrom(usersResponse));
-    setDirectoryGroupsStatus(directoryStatusFrom(groupsResponse));
+    setDirectoryUsersStatus(statusFrom(usersResponse));
+    setDirectoryGroupsStatus(statusFrom(groupsResponse));
   }, [rememberDirectoryGroups, rememberDirectoryUsers]);
 
   useEffect(() => {
@@ -1368,10 +828,9 @@ export function ProjectSettingsPage() {
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
   const contextContainers = project.config.context_containers ?? [];
-  const selectedSubjectId = shareTargetType === "user" ? selectedUserId : selectedGroupId;
-  const selectedSubjectAlreadyGranted = selectedSubjectId
-    ? (shareTargetType === "user" ? grantedUserIds.has(selectedSubjectId) : grantedGroupIds.has(selectedSubjectId))
-    : false;
+  const pendingSelections = pickerSelections.filter((s) =>
+    s.type === "user" ? !grantedUserIds.has(s.id) : !grantedGroupIds.has(s.id),
+  );
   const activeTabMeta = SETTINGS_TABS.find((item) => item.key === activeTab) ?? SETTINGS_TABS[0];
 
   const saveBaseInfo = async () => {
@@ -1457,38 +916,36 @@ export function ProjectSettingsPage() {
     setError(null);
   };
 
-  const submitGrant = async () => {
+  const submitBatchGrant = async () => {
     if (!canManageSharing) {
       setError("当前权限不允许管理共享");
       return;
     }
-
-    const subjectId = shareTargetType === "user" ? selectedUserId : selectedGroupId;
-    if (!subjectId) {
-      setError(shareTargetType === "user" ? "请选择用户" : "请选择用户组");
-      return;
-    }
-    if (selectedSubjectAlreadyGranted) {
-      setError("该授权主体已经在当前 Project 中");
+    if (pendingSelections.length === 0) {
+      setError("请先选择要授权的用户或用户组");
       return;
     }
 
     try {
-      const savedGrant = shareTargetType === "user"
-        ? await grantProjectUser(project.id, subjectId, grantRole)
-        : await grantProjectGroup(project.id, subjectId, grantRole);
-      if (!savedGrant) {
-        setError("共享授权保存失败");
-        return;
+      const results = await Promise.allSettled(
+        pendingSelections.map((s) =>
+          s.type === "user"
+            ? grantProjectUser(project.id, s.id, grantRole)
+            : grantProjectGroup(project.id, s.id, grantRole),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length > 0) {
+        setError(`${pendingSelections.length - failed.length} 项授权成功，${failed.length} 项失败`);
+      } else {
+        setError(null);
       }
       await Promise.all([
         fetchProjectGrants(project.id),
         fetchProjects(),
         loadDirectorySnapshot(),
       ]);
-      setSelectedUserId("");
-      setSelectedGroupId("");
-      setError(null);
+      setPickerSelections([]);
     } catch (grantError) {
       setError((grantError as Error).message);
     }
@@ -1737,20 +1194,12 @@ export function ProjectSettingsPage() {
                     title="共享管理"
                     description="Project 的共享记录独立于 Workspace。这里专门处理用户/用户组授权。"
                   >
-                    <ContentGroup title="共享策略">
+                    <ContentGroup title="添加授权">
                       {canManageSharing ? (
                         <>
-                          <ProjectSubjectPicker
-                            mode={shareTargetType}
-                            onModeChange={(nextMode) => {
-                              setShareTargetType(nextMode);
-                              setSelectedUserId("");
-                              setSelectedGroupId("");
-                            }}
-                            selectedUserId={selectedUserId}
-                            onSelectedUserIdChange={setSelectedUserId}
-                            selectedGroupId={selectedGroupId}
-                            onSelectedGroupIdChange={setSelectedGroupId}
+                          <DirectorySubjectPicker
+                            selections={pickerSelections}
+                            onSelectionsChange={setPickerSelections}
                             knownUsers={directoryUsers}
                             knownGroups={directoryGroups}
                             userDirectoryStatus={directoryUsersStatus}
@@ -1762,11 +1211,11 @@ export function ProjectSettingsPage() {
                             onGroupsObserved={rememberDirectoryGroups}
                           />
 
-                          <div className="grid gap-3 md:grid-cols-[160px_auto]">
+                          <div className="flex flex-wrap items-center gap-3">
                             <select
                               value={grantRole}
                               onChange={(event) => setGrantRole(event.target.value as ProjectRole)}
-                              className="agentdash-form-select"
+                              className="agentdash-form-select w-auto"
                             >
                               {PROJECT_ROLE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1777,12 +1226,24 @@ export function ProjectSettingsPage() {
 
                             <button
                               type="button"
-                              onClick={() => void submitGrant()}
-                              disabled={!selectedSubjectId || selectedSubjectAlreadyGranted}
+                              onClick={() => void submitBatchGrant()}
+                              disabled={pendingSelections.length === 0}
                               className="agentdash-button-primary disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              保存授权
+                              {pendingSelections.length > 0
+                                ? `批量授权 (${pendingSelections.length})`
+                                : "批量授权"}
                             </button>
+
+                            {pendingSelections.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setPickerSelections([])}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                清空选择
+                              </button>
+                            )}
                           </div>
 
                           {isDirectoryLoading && (
@@ -1807,6 +1268,14 @@ export function ProjectSettingsPage() {
                             {grants.map((grant) => {
                               const grantUser = findGrantUser(grant, directoryUsers);
                               const subjectLabel = resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups);
+                              const subjectAuditLabel = grant.subject_type === "user"
+                                ? resolveUserAuditLabel(grant.subject_id, directoryUsers, currentUser)
+                                : grant.subject_id;
+                              const grantorAuditLabel = resolveUserAuditLabel(
+                                grant.granted_by_user_id,
+                                directoryUsers,
+                                currentUser,
+                              );
                               return (
                                 <div
                                   key={`${grant.subject_type}:${grant.subject_id}`}
@@ -1832,8 +1301,13 @@ export function ProjectSettingsPage() {
                                           {PROJECT_ROLE_LABELS[grant.role]}
                                         </span>
                                       </div>
-                                      <p className="mt-1 text-xs text-muted-foreground">
-                                        subject_id: {grant.subject_id} · granted_by: {grant.granted_by_user_id}
+                                      <p
+                                        className="mt-1 text-xs text-muted-foreground"
+                                        title={`subject_id: ${grant.subject_id} · granted_by: ${grant.granted_by_user_id}`}
+                                      >
+                                        {grant.subject_type === "user" ? "subject" : "group_id"}: {subjectAuditLabel}
+                                        {" · granted_by: "}
+                                        {grantorAuditLabel}
                                       </p>
                                     </div>
                                   </div>

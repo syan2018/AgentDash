@@ -553,7 +553,7 @@ function ProjectSubjectPicker({
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-[10px] border border-border bg-muted/30 p-1">
+      <div className="inline-flex rounded-[8px] border border-border bg-muted/30 p-1">
         {(["user", "group"] as DirectorySubjectMode[]).map((item) => (
           <button
             key={item}
@@ -1259,7 +1259,18 @@ export function ProjectSettingsPage() {
     [projectId, projects],
   );
   const workspaces: Workspace[] = projectId ? (workspacesByProjectId[projectId] ?? []) : [];
-  const grants = project ? (grantsByProjectId[project.id] ?? []) : [];
+  const grants = useMemo(
+    () => (project ? (grantsByProjectId[project.id] ?? []) : []),
+    [grantsByProjectId, project],
+  );
+  const grantedUserIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "user").map((grant) => grant.subject_id)),
+    [grants],
+  );
+  const grantedGroupIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "group").map((grant) => grant.subject_id)),
+    [grants],
+  );
   const loadedProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -1357,14 +1368,6 @@ export function ProjectSettingsPage() {
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
   const contextContainers = project.config.context_containers ?? [];
-  const grantedUserIds = useMemo(
-    () => new Set(grants.filter((grant) => grant.subject_type === "user").map((grant) => grant.subject_id)),
-    [grants],
-  );
-  const grantedGroupIds = useMemo(
-    () => new Set(grants.filter((grant) => grant.subject_type === "group").map((grant) => grant.subject_id)),
-    [grants],
-  );
   const selectedSubjectId = shareTargetType === "user" ? selectedUserId : selectedGroupId;
   const selectedSubjectAlreadyGranted = selectedSubjectId
     ? (shareTargetType === "user" ? grantedUserIds.has(selectedSubjectId) : grantedGroupIds.has(selectedSubjectId))

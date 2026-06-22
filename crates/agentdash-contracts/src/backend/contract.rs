@@ -88,7 +88,6 @@ pub struct BackendRuntimeHealthResponse {
     pub online: bool,
     pub version: Option<String>,
     pub capabilities: Value,
-    pub workspace_roots: Vec<String>,
     pub device: Value,
     pub connected_at: Option<DateTime<Utc>>,
     pub last_seen_at: Option<DateTime<Utc>>,
@@ -169,7 +168,6 @@ pub struct BackendWithStatusResponse {
     pub backend: BackendResponse,
     pub online: bool,
     pub runtime_health: Option<BackendRuntimeHealthResponse>,
-    pub workspace_roots: Option<Vec<String>>,
     pub capabilities: Option<BackendCapabilitiesResponse>,
 }
 
@@ -194,13 +192,15 @@ impl From<agentdash_domain::backend::ProjectBackendAccessStatus> for ProjectBack
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectBackendAccessMode {
-    UseInventory,
+    ExplicitGrant,
 }
 
 impl From<agentdash_domain::backend::ProjectBackendAccessMode> for ProjectBackendAccessMode {
     fn from(value: agentdash_domain::backend::ProjectBackendAccessMode) -> Self {
         match value {
-            agentdash_domain::backend::ProjectBackendAccessMode::UseInventory => Self::UseInventory,
+            agentdash_domain::backend::ProjectBackendAccessMode::ExplicitGrant => {
+                Self::ExplicitGrant
+            }
         }
     }
 }
@@ -308,10 +308,7 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventoryStatus>
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendWorkspaceInventorySource {
-    RuntimeRegister,
-    ManualRefresh,
-    ScheduledRefresh,
-    CapabilityExpansionAck,
+    ManualRegister,
 }
 
 impl From<agentdash_domain::backend::BackendWorkspaceInventorySource>
@@ -319,17 +316,8 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventorySource>
 {
     fn from(value: agentdash_domain::backend::BackendWorkspaceInventorySource) -> Self {
         match value {
-            agentdash_domain::backend::BackendWorkspaceInventorySource::RuntimeRegister => {
-                Self::RuntimeRegister
-            }
-            agentdash_domain::backend::BackendWorkspaceInventorySource::ManualRefresh => {
-                Self::ManualRefresh
-            }
-            agentdash_domain::backend::BackendWorkspaceInventorySource::ScheduledRefresh => {
-                Self::ScheduledRefresh
-            }
-            agentdash_domain::backend::BackendWorkspaceInventorySource::CapabilityExpansionAck => {
-                Self::CapabilityExpansionAck
+            agentdash_domain::backend::BackendWorkspaceInventorySource::ManualRegister => {
+                Self::ManualRegister
             }
         }
     }
@@ -373,16 +361,6 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventory>
             updated_at: value.updated_at,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct InventoryRefreshResponse {
-    pub access_id: String,
-    pub backend_id: String,
-    pub refreshed: usize,
-    pub failed: usize,
-    pub items: Vec<BackendWorkspaceInventoryResponse>,
-    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

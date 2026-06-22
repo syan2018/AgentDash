@@ -37,7 +37,6 @@ pub struct ConnectedBackend {
     pub name: String,
     pub version: String,
     pub capabilities: CapabilitiesPayload,
-    pub workspace_roots: Vec<String>,
     pub sender: BackendSender,
     pub connected_at: DateTime<Utc>,
 }
@@ -49,7 +48,6 @@ pub struct OnlineBackendInfo {
     pub name: String,
     pub version: String,
     pub capabilities: CapabilitiesPayload,
-    pub workspace_roots: Vec<String>,
     pub connected_at: DateTime<Utc>,
 }
 
@@ -173,7 +171,6 @@ impl BackendRegistry {
                 name: b.name.clone(),
                 version: b.version.clone(),
                 capabilities: b.capabilities.clone(),
-                workspace_roots: b.workspace_roots.clone(),
                 connected_at: b.connected_at,
             })
             .collect()
@@ -418,7 +415,6 @@ mod tests {
                 supports_discover_options: true,
                 mcp_servers: Vec::new(),
             },
-            workspace_roots: Vec::new(),
             sender,
             connected_at: Utc::now(),
         }

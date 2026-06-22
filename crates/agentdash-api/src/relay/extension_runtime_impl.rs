@@ -231,7 +231,6 @@ mod tests {
                     supports_discover_options: true,
                     mcp_servers: Vec::new(),
                 },
-                workspace_roots: Vec::new(),
                 sender,
                 connected_at: Utc::now(),
             })

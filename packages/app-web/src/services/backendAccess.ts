@@ -2,7 +2,6 @@ import { api } from "../api/client";
 import type {
   BackendWorkspaceInventoryResponse,
   CreateProjectBackendAccessRequest,
-  InventoryRefreshResponse,
   ProjectBackendAccessResponse,
   RegisterBackendWorkspaceInventoryRequest,
   UpdateProjectBackendAccessRequest,
@@ -14,7 +13,6 @@ import type {
 
 export type ProjectBackendAccess = ProjectBackendAccessResponse;
 export type BackendWorkspaceInventory = BackendWorkspaceInventoryResponse;
-export type InventoryRefreshResult = InventoryRefreshResponse;
 export type CreateProjectBackendAccessPayload = CreateProjectBackendAccessRequest;
 export type UpdateProjectBackendAccessPayload = UpdateProjectBackendAccessRequest;
 
@@ -50,16 +48,6 @@ export function listBackendWorkspaceInventory(
 ): Promise<BackendWorkspaceInventory[]> {
   return api.get<BackendWorkspaceInventory[]>(
     `/projects/${projectId}/backend-access/${accessId}/inventory`,
-  );
-}
-
-export function refreshBackendWorkspaceInventory(
-  projectId: string,
-  accessId: string,
-): Promise<InventoryRefreshResult> {
-  return api.post<InventoryRefreshResult>(
-    `/projects/${projectId}/backend-access/${accessId}/inventory/refresh`,
-    {},
   );
 }
 

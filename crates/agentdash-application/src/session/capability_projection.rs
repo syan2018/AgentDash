@@ -351,8 +351,7 @@ fn discovery_cluster_to_provider_cluster(
     let mut default_exposed_skills = Vec::new();
 
     for skill in cluster.skills {
-        if require_vfs_paths
-            && !validate_vfs_first_skill_paths(&provider_key, &skill, diagnostics)
+        if require_vfs_paths && !validate_vfs_first_skill_paths(&provider_key, &skill, diagnostics)
         {
             continue;
         }
@@ -838,7 +837,10 @@ mod tests {
         assert!(!is_controlled_vfs_skill_path("main://", false));
         assert!(!is_controlled_vfs_skill_path("file:///tmp/SKILL.md", false));
         assert!(!is_controlled_vfs_skill_path("main:///tmp/SKILL.md", false));
-        assert!(!is_controlled_vfs_skill_path("main://C:/tmp/SKILL.md", false));
+        assert!(!is_controlled_vfs_skill_path(
+            "main://C:/tmp/SKILL.md",
+            false
+        ));
         assert!(!is_controlled_vfs_skill_path(
             "main://skills\\review\\SKILL.md",
             false

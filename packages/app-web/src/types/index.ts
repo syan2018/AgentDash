@@ -2,7 +2,6 @@ import type {
   BackendWorkspaceInventoryResponse,
   BackendResponse,
   BackendWithStatusResponse,
-  InventoryRefreshResponse,
   ProjectBackendAccessResponse,
 } from "../generated/backend-contracts";
 import type {
@@ -67,7 +66,6 @@ export type ProjectBackendAccess = ProjectBackendAccessResponse;
 export type BackendWorkspaceInventory = BackendWorkspaceInventoryResponse;
 export type WorkspaceInventoryCandidate = GeneratedWorkspaceInventoryCandidate;
 export type WorkspaceBindingSyncResult = GeneratedWorkspaceBindingSyncResult;
-export type InventoryRefreshResult = InventoryRefreshResponse;
 
 // ─── Re-exports from domain-split files ──────────────────
 

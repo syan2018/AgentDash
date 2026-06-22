@@ -111,7 +111,6 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: online_info.is_some(),
             runtime_health,
-            workspace_roots: online_info.map(|o| o.workspace_roots.clone()),
             capabilities: online_info
                 .map(|o| backend_capabilities_response(o.capabilities.clone())),
             backend: backend_response(b),
@@ -132,7 +131,6 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: true,
             runtime_health,
-            workspace_roots: Some(o.workspace_roots.clone()),
             capabilities: Some(backend_capabilities_response(o.capabilities.clone())),
             backend: backend_response(BackendConfig {
                 id: o.backend_id.clone(),
@@ -319,7 +317,6 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
         online,
         version: health.version,
         capabilities: health.capabilities,
-        workspace_roots: health.workspace_roots,
         device: health.device,
         connected_at: health.connected_at,
         last_seen_at: health.last_seen_at,
@@ -448,7 +445,6 @@ pub async fn ensure_local_runtime(
             }),
             capability_slot: req.capability_slot,
             name: req.name,
-            workspace_roots: req.workspace_roots,
             executor_enabled: req.executor_enabled,
             client_version: req.client_version,
             device: req.device,

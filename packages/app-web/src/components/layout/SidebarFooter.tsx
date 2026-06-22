@@ -424,7 +424,6 @@ function BackendPanel({
             const isExpanded = expandedId === backend.id;
             const executors = backend.capabilities?.executors ?? [];
             const availableCount = executors.filter((e) => e.available).length;
-            const roots = backend.workspace_roots ?? [];
             return (
               <div key={backend.id}>
                 <button
@@ -475,18 +474,6 @@ function BackendPanel({
                             >
                               {ex.name}
                             </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {roots.length > 0 && (
-                      <div>
-                        <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">可访问路径</p>
-                        <div className="space-y-0.5">
-                          {roots.map((root) => (
-                            <p key={root} className="truncate text-[10px] text-muted-foreground" title={root}>
-                              {root.replace(/^\\\\\?\\/, "")}
-                            </p>
                           ))}
                         </div>
                       </div>

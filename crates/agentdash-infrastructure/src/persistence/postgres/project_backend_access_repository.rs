@@ -437,7 +437,7 @@ fn access_mode_to_str(value: ProjectBackendAccessMode) -> &'static str {
 
 fn str_to_access_mode(value: &str) -> Result<ProjectBackendAccessMode, DomainError> {
     match value {
-        "use_inventory" => Ok(ProjectBackendAccessMode::UseInventory),
+        "explicit_grant" | "use_inventory" => Ok(ProjectBackendAccessMode::ExplicitGrant),
         _ => Err(DomainError::InvalidConfig(format!(
             "project_backend_access.access_mode: 未知值 `{value}`"
         ))),
@@ -466,10 +466,11 @@ fn inventory_source_to_str(value: BackendWorkspaceInventorySource) -> &'static s
 
 fn str_to_inventory_source(value: &str) -> Result<BackendWorkspaceInventorySource, DomainError> {
     match value {
-        "runtime_register" => Ok(BackendWorkspaceInventorySource::RuntimeRegister),
-        "manual_refresh" => Ok(BackendWorkspaceInventorySource::ManualRefresh),
-        "scheduled_refresh" => Ok(BackendWorkspaceInventorySource::ScheduledRefresh),
-        "capability_expansion_ack" => Ok(BackendWorkspaceInventorySource::CapabilityExpansionAck),
+        "manual_register"
+        | "runtime_register"
+        | "manual_refresh"
+        | "scheduled_refresh"
+        | "capability_expansion_ack" => Ok(BackendWorkspaceInventorySource::ManualRegister),
         _ => Err(DomainError::InvalidConfig(format!(
             "backend_workspace_inventory.source: 未知值 `{value}`"
         ))),

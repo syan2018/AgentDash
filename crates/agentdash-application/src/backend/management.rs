@@ -27,7 +27,6 @@ pub struct EnsureLocalRuntimeInput {
     pub scope: Option<LocalRuntimeScopeInput>,
     pub capability_slot: Option<String>,
     pub name: Option<String>,
-    pub workspace_roots: Vec<String>,
     pub executor_enabled: bool,
     pub client_version: Option<String>,
     pub device: serde_json::Value,
@@ -173,8 +172,6 @@ pub async fn ensure_local_runtime_record(
         device["client_version"] = serde_json::Value::String(client_version);
     }
     device["executor_enabled"] = serde_json::Value::Bool(input.executor_enabled);
-    device["workspace_root_count"] =
-        serde_json::Value::Number(serde_json::Number::from(input.workspace_roots.len() as u64));
 
     let claim = LocalBackendClaim {
         owner_user_id: input.current_user_id,

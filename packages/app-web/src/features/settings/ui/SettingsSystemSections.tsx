@@ -223,7 +223,6 @@ interface BackendViewModel {
   runtimeHealth: BackendConfig["runtime_health"];
   executors: BackendExecutor[];
   availableExecutors: BackendExecutor[];
-  roots: string[];
   machineLabel: string;
   scopeLabel: string;
   typeLabel: string;
@@ -347,7 +346,6 @@ function BackendDetails({
       )}
 
       <ExecutorBadgeList executors={view.executors} availableExecutors={view.availableExecutors} />
-      <WorkspaceRootList roots={view.roots} />
 
       {!backend.online && (
         <div className="flex justify-end pt-1">
@@ -450,24 +448,6 @@ function ExecutorBadgeList({
   );
 }
 
-function WorkspaceRootList({ roots }: { roots: string[] }) {
-  if (roots.length === 0) return null;
-
-  return (
-    <div>
-      <p className="mb-1 text-xs font-medium text-muted-foreground">可访问路径</p>
-      {roots.map((root) => {
-        const displayRoot = root.replace(/^\\\\\?\\/, "");
-        return (
-          <p key={root} className="truncate text-xs text-foreground" title={root}>
-            {displayRoot}
-          </p>
-        );
-      })}
-    </div>
-  );
-}
-
 function createBackendViewModel(
   backend: BackendConfig,
   runtimeSummary: BackendRuntimeSummary | undefined,
@@ -475,7 +455,6 @@ function createBackendViewModel(
   const executors = backend.capabilities?.executors ?? [];
   const availableExecutors = executors.filter((executor) => executor.available);
   const runtimeHealth = backend.runtime_health;
-  const roots = backend.workspace_roots ?? runtimeHealth?.workspace_roots ?? [];
   const machineLabel = backend.machine_label || machineLabelFromDevice(backend.device) || backend.name;
   const scopeLabel = formatBackendScope(backend);
   const typeLabel = backend.backend_type === "local" ? "本机" : "远程";
@@ -486,7 +465,6 @@ function createBackendViewModel(
     runtimeHealth,
     executors,
     availableExecutors,
-    roots,
     machineLabel,
     scopeLabel,
     typeLabel,

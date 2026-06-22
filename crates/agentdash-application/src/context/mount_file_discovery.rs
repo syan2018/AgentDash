@@ -178,7 +178,10 @@ pub async fn discover_skill_vfs_files(
     service: &VfsService,
     vfs: &Vfs,
     rules: &[SkillDiscoveryVfsRule],
-) -> (Vec<SkillDiscoveryVfsFile>, Vec<MountFileDiscoveryDiagnostic>) {
+) -> (
+    Vec<SkillDiscoveryVfsFile>,
+    Vec<MountFileDiscoveryDiagnostic>,
+) {
     let mut files = Vec::new();
     let mut diagnostics = Vec::new();
 

@@ -159,7 +159,6 @@ pub struct RuntimeHealth {
     pub status: RuntimeHealthStatus,
     pub version: Option<String>,
     pub capabilities: serde_json::Value,
-    pub workspace_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -176,7 +175,6 @@ pub struct RuntimeHealthOnlineUpdate {
     pub name: String,
     pub version: String,
     pub capabilities: serde_json::Value,
-    pub workspace_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: chrono::DateTime<chrono::Utc>,
 }
@@ -319,13 +317,13 @@ impl ProjectBackendAccessStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectBackendAccessMode {
-    UseInventory,
+    ExplicitGrant,
 }
 
 impl ProjectBackendAccessMode {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::UseInventory => "use_inventory",
+            Self::ExplicitGrant => "explicit_grant",
         }
     }
 }
@@ -354,9 +352,9 @@ impl ProjectBackendAccess {
             project_id,
             backend_id,
             status: ProjectBackendAccessStatus::Active,
-            access_mode: ProjectBackendAccessMode::UseInventory,
+            access_mode: ProjectBackendAccessMode::ExplicitGrant,
             priority: 0,
-            root_policy: serde_json::json!({ "kind": "backend_inventory" }),
+            root_policy: serde_json::json!({ "kind": "workspace_registry" }),
             capability_policy: serde_json::json!({}),
             note: None,
             created_by,
@@ -393,19 +391,13 @@ impl BackendWorkspaceInventoryStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendWorkspaceInventorySource {
-    RuntimeRegister,
-    ManualRefresh,
-    ScheduledRefresh,
-    CapabilityExpansionAck,
+    ManualRegister,
 }
 
 impl BackendWorkspaceInventorySource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::RuntimeRegister => "runtime_register",
-            Self::ManualRefresh => "manual_refresh",
-            Self::ScheduledRefresh => "scheduled_refresh",
-            Self::CapabilityExpansionAck => "capability_expansion_ack",
+            Self::ManualRegister => "manual_register",
         }
     }
 }

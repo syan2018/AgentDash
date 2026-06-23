@@ -10,7 +10,9 @@ use agentdash_spi::hooks::{
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
 use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
-use crate::agent_run::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
+use crate::agent_run::{
+    AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget, AgentRunAcceptedLaunchHookRuntimeSync,
+};
 
 #[derive(Clone)]
 pub struct SessionHookService {
@@ -328,6 +330,19 @@ impl SessionHookService {
             )));
         }
         Ok(frame)
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRunAcceptedLaunchHookRuntimeSync for SessionHookService {
+    async fn sync_accepted_launch_hook_runtime(
+        &self,
+        target: AgentFrameRuntimeTarget,
+        turn_id: &str,
+    ) -> Result<(), ConnectorError> {
+        self.ensure_hook_runtime_for_target(&target, Some(turn_id))
+            .await
+            .map(|_| ())
     }
 }
 

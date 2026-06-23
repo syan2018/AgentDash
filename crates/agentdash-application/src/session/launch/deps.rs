@@ -10,8 +10,11 @@ use agentdash_domain::workflow::{
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 
-use crate::agent_run::AgentRunMailboxRuntimeAdapter;
 use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
+use crate::agent_run::{
+    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
+    AgentRunMailboxRuntimeAdapter,
+};
 use crate::context::SharedContextAuditBus;
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
@@ -133,12 +136,18 @@ impl SessionLaunchDeps {
             stores: self.stores.clone(),
             eventing: self.eventing.clone(),
             core: self.core.clone(),
-            hooks: self.hooks.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
-            agent_frame_repo: self.agent_frame_repo.clone(),
-            execution_anchor_repo: self.execution_anchor_repo.clone(),
-            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
+            accepted_launch_commit: self.accepted_launch_commit_adapter(),
         }
+    }
+
+    pub(super) fn accepted_launch_commit_adapter(&self) -> AgentRunAcceptedLaunchCommitAdapter {
+        AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
+            frame_repo: self.agent_frame_repo.clone(),
+            anchor_repo: self.execution_anchor_repo.clone(),
+            agent_repo: self.lifecycle_agent_repo.clone(),
+            hook_runtime_sync: Some(Arc::new(self.hooks.clone())),
+        })
     }
 
     pub(super) fn ingestion(&self) -> StreamIngestionDeps {
@@ -217,11 +226,8 @@ pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionStoreSet,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
-    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
-    pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    pub(super) accepted_launch_commit: AgentRunAcceptedLaunchCommitAdapter,
     core: SessionCoreService,
-    pub(super) hooks: SessionHookService,
 }
 
 impl TurnCommitDeps {

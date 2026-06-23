@@ -6,13 +6,9 @@
 mod compiler;
 mod escalation;
 mod policy;
-mod runtime_surface_update;
 mod service;
 
 pub use compiler::PermissionGrantCompiler;
 pub use escalation::{EscalationResult, ScopeEscalationCoordinator};
 pub use policy::PermissionPolicyService;
-pub use runtime_surface_update::{
-    PermissionRuntimeSurfaceAdopter, PermissionRuntimeSurfaceUpdateService,
-};
 pub use service::{GrantRequest, GrantRequestResult, PermissionGrantService};

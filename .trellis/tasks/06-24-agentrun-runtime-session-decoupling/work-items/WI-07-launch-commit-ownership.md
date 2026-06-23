@@ -1,15 +1,29 @@
 # WI-07 Launch And Commit Ownership Split
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: codex-agent
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
-- Blockers: None recorded.
-- Handoff summary: TBD.
+- Files changed:
+  - `crates/agentdash-application/src/agent_run/frame/launch_commit.rs`
+  - `crates/agentdash-application/src/agent_run/frame/mod.rs`
+  - `crates/agentdash-application/src/agent_run/frame/surface_service.rs`
+  - `crates/agentdash-application/src/agent_run/mod.rs`
+  - `crates/agentdash-application/src/session/hooks_service.rs`
+  - `crates/agentdash-application/src/session/launch/commit.rs`
+  - `crates/agentdash-application/src/session/launch/deps.rs`
+  - `crates/agentdash-application/src/session/launch/orchestrator.rs`
+- Tests run:
+  - `cargo check -p agentdash-application`
+  - `cargo test -p agentdash-application launch_commit`
+  - `cargo test -p agentdash-application runtime_command_apply_commit_failure_marks_failed_and_returns_error`
+  - `cargo test -p agentdash-application frame::surface_service`
+  - `rg -n "AgentFrameBuilder|resolve_current_frame_from_delivery_trace_ref|bind_current_delivery_from_anchor|DeliveryBindingStatus|AgentFrameRuntimeTarget" crates/agentdash-application/src/session/launch -g "*.rs"` returned no matches.
+  - `git diff --check` passed.
+- Blockers: 无。
+- Handoff summary: AgentRun/Lifecycle accepted launch commit adapter now owns accepted AgentFrame revision persistence, LifecycleAgent current delivery binding, hook runtime target sync timing, and bootstrap status query/marking. RuntimeSession launch commit keeps accepted delivery events, meta updates, runtime command applied commit, title derivation, and stream ingestion, then consumes the adapter outcome for control-plane side effects.
 
 ## Purpose
 

@@ -1,7 +1,7 @@
-//! Permission grant runtime surface update adapter.
+//! AgentRun-owned Permission grant runtime surface update adapter.
 //!
-//! Permission accepts typed update requests through the AgentRun frame/surface
-//! facade while keeping grant-state orchestration in the permission service.
+//! Permission owns grant lifecycle state. AgentRun owns the frame revision writer
+//! and active-runtime adoption boundary for surface-changing grant effects.
 
 use std::sync::Arc;
 
@@ -9,16 +9,16 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::runtime_capability::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
 use crate::agent_run::{
-    AgentFrameBuilder, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
-    AgentRunFrameSurfaceService, AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateAdapter,
-    AgentRunRuntimeSurfaceUpdateService, RejectingFrameConstructionAdapter,
-    RuntimeSurfaceUpdateRequest,
+    AgentFrameBuilder, AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter,
+    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
+    AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateAdapter,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceUpdateRequest,
 };
+use crate::permission::PermissionGrantCompiler;
 use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
@@ -26,28 +26,6 @@ use agentdash_spi::{
     CapabilityState, RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
 };
 use tokio::sync::Mutex;
-
-use super::compiler::PermissionGrantCompiler;
-
-#[async_trait]
-pub trait PermissionRuntimeSurfaceAdopter: Send + Sync {
-    async fn adopt_permission_runtime_surface(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<(), String>;
-}
-
-#[async_trait]
-impl PermissionRuntimeSurfaceAdopter for AgentRunRuntimeSurfaceUpdateService {
-    async fn adopt_permission_runtime_surface(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<(), String> {
-        self.adopt_persisted_frame_revision_into_active_runtime(target)
-            .await
-            .map(|_| ())
-    }
-}
 
 #[derive(Debug)]
 pub struct PermissionRuntimeSurfaceUpdateOutcome {
@@ -66,26 +44,26 @@ impl PermissionRuntimeSurfaceUpdateOutcome {
     }
 }
 
-pub struct PermissionRuntimeSurfaceUpdateService {
+pub struct AgentRunPermissionRuntimeSurfaceUpdateService {
     frame_repo: Arc<dyn AgentFrameRepository>,
-    adopter: Option<Arc<dyn PermissionRuntimeSurfaceAdopter>>,
+    active_adopter: Option<Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>>,
 }
 
-impl PermissionRuntimeSurfaceUpdateService {
+impl AgentRunPermissionRuntimeSurfaceUpdateService {
     pub fn new(frame_repo: Arc<dyn AgentFrameRepository>) -> Self {
         Self {
             frame_repo,
-            adopter: None,
+            active_adopter: None,
         }
     }
 
-    pub fn with_adopter(
+    pub fn with_active_adopter(
         frame_repo: Arc<dyn AgentFrameRepository>,
-        adopter: Arc<dyn PermissionRuntimeSurfaceAdopter>,
+        active_adopter: Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>,
     ) -> Self {
         Self {
             frame_repo,
-            adopter: Some(adopter),
+            active_adopter: Some(active_adopter),
         }
     }
 
@@ -98,7 +76,7 @@ impl PermissionRuntimeSurfaceUpdateService {
         let adapter = PermissionGrantRuntimeSurfaceUpdateAdapter {
             projector: Self {
                 frame_repo: self.frame_repo.clone(),
-                adopter: self.adopter.clone(),
+                active_adopter: self.active_adopter.clone(),
             },
             grant: grant.clone(),
             outcome: outcome.clone(),
@@ -190,12 +168,13 @@ impl PermissionRuntimeSurfaceUpdateService {
         let Some(target) = outcome.adoption_target.clone() else {
             return Ok(());
         };
-        let Some(adopter) = self.adopter.as_ref() else {
+        let Some(active_adopter) = self.active_adopter.as_ref() else {
             return Ok(());
         };
-        adopter
-            .adopt_permission_runtime_surface(target)
+        active_adopter
+            .adopt_persisted_frame_revision_into_active_runtime(target)
             .await
+            .map(|_| ())
             .map_err(|error| {
                 ApplicationError::Internal(format!(
                     "PermissionGrant active-runtime adoption failed for grant {}: {error}",
@@ -229,7 +208,7 @@ impl PermissionRuntimeSurfaceUpdateService {
 }
 
 struct PermissionGrantRuntimeSurfaceUpdateAdapter {
-    projector: PermissionRuntimeSurfaceUpdateService,
+    projector: AgentRunPermissionRuntimeSurfaceUpdateService,
     grant: PermissionGrant,
     outcome: Arc<Mutex<Option<PermissionRuntimeSurfaceUpdateOutcome>>>,
 }

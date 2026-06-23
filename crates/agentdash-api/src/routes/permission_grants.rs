@@ -6,6 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
+use agentdash_application::agent_run::AgentRunPermissionRuntimeSurfaceUpdateService;
 use agentdash_application::permission::PermissionGrantService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
@@ -223,10 +224,14 @@ pub async fn approve_grant(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
 
-    let result = PermissionGrantService::new_with_runtime_surface_adopter(
+    let runtime_surface_updates =
+        AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
+            state.repos.agent_frame_repo.clone(),
+            Arc::new(state.services.runtime_surface_update.clone()),
+        );
+    let result = PermissionGrantService::new_with_runtime_surface_updates(
         state.repos.permission_grant_repo.clone(),
-        state.repos.agent_frame_repo.clone(),
-        Arc::new(state.services.runtime_surface_update.clone()),
+        runtime_surface_updates,
     )
     .approve(id, &current_user.user_id)
     .await?;
@@ -264,10 +269,14 @@ pub async fn revoke_grant(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
 
-    let result = PermissionGrantService::new_with_runtime_surface_adopter(
+    let runtime_surface_updates =
+        AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
+            state.repos.agent_frame_repo.clone(),
+            Arc::new(state.services.runtime_surface_update.clone()),
+        );
+    let result = PermissionGrantService::new_with_runtime_surface_updates(
         state.repos.permission_grant_repo.clone(),
-        state.repos.agent_frame_repo.clone(),
-        Arc::new(state.services.runtime_surface_update.clone()),
+        runtime_surface_updates,
     )
     .revoke(id)
     .await?;

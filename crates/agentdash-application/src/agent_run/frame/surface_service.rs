@@ -267,7 +267,7 @@ pub const AGENT_FRAME_WRITE_BOUNDARIES: &[AgentFrameWriteBoundary] = &[
         primitive: AgentFrameWritePrimitive::AgentFrameBuilder,
     },
     AgentFrameWriteBoundary {
-        owner: "session::launch::commit::TurnCommitter",
+        owner: "agent_run::frame::launch_commit::AgentRunAcceptedLaunchCommitAdapter",
         role: AgentFrameWriteRole::LaunchCommit,
         primitive: AgentFrameWritePrimitive::PersistedFrameRevisionCommit,
     },

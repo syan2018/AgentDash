@@ -190,3 +190,15 @@ impl AgentRunRuntimeSurfaceUpdateService {
         .map(|caps| caps.skills)
     }
 }
+
+#[async_trait]
+impl AgentRunActiveRuntimeSurfaceAdopter for AgentRunRuntimeSurfaceUpdateService {
+    async fn adopt_persisted_frame_revision_into_active_runtime(
+        &self,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        self.active_adopter
+            .adopt_persisted_frame_revision_into_active_runtime(target)
+            .await
+    }
+}

@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod construction;
 pub mod hook_runtime;
+pub mod launch_commit;
 pub mod launch_envelope_provider;
 pub mod runtime_launch;
 pub mod surface;
@@ -8,6 +9,11 @@ pub mod surface_service;
 
 pub use builder::AgentFrameBuilder;
 pub use hook_runtime::AgentFrameHookRuntime;
+pub use launch_commit::{
+    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
+    AgentRunAcceptedLaunchCommitInput, AgentRunAcceptedLaunchCommitOutcome,
+    AgentRunAcceptedLaunchHookRuntimeSync,
+};
 pub use launch_envelope_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeProvider,
     FrameLaunchEnvelopeProviderInput, RoutineLaunchSource, SharedFrameLaunchEnvelopeProvider,

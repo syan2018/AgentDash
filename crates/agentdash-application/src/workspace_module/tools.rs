@@ -1851,8 +1851,7 @@ mod tests {
         let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-        let mut agent =
-            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), AgentSource::Unknown);
+        let mut agent = LifecycleAgent::new_root(active_run_id, project_id, AgentSource::Unknown);
         agent.id = agent_id;
         agent_repo.create(&agent).await.expect("agent should save");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
@@ -2097,8 +2096,7 @@ mod tests {
         let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-        let mut agent =
-            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), AgentSource::Unknown);
+        let mut agent = LifecycleAgent::new_root(active_run_id, project_id, AgentSource::Unknown);
         agent.id = agent_id;
         agent_repo.create(&agent).await.expect("agent should save");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
@@ -2698,8 +2696,7 @@ mod tests {
         let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
         let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
-        let mut agent =
-            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), AgentSource::Unknown);
+        let mut agent = LifecycleAgent::new_root(active_run_id, project_id, AgentSource::Unknown);
         agent.id = agent_id;
         agent_repo.create(&agent).await.expect("agent should save");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(

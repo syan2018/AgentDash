@@ -6,6 +6,7 @@ pub mod frame;
 pub mod mailbox;
 mod mailbox_runtime_adapter;
 pub mod message_delivery;
+mod permission_runtime_surface_update;
 mod presentation_read_model;
 mod project_agent_start;
 pub mod runtime_capability;
@@ -43,13 +44,15 @@ pub use effective_capability::{
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
     AgentFrameWriteBoundary, AgentFrameWritePrimitive, AgentFrameWriteRole,
-    AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
-    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
-    AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
-    AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
-    CanvasVisibilityReason, FrameConstructionCommand, FrameConstructionReason,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
+    AgentRunAcceptedLaunchCommitInput, AgentRunAcceptedLaunchCommitOutcome,
+    AgentRunAcceptedLaunchHookRuntimeSync, AgentRunFrameConstructionAdapter,
+    AgentRunFrameSurfaceCommand, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
+    AgentRunFrameSurfaceService, AgentRunRuntimeSurfaceUpdateAdapter,
+    AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
+    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
+    FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
+    FrameRuntimeSurface, FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
 };
 pub use mailbox::{
@@ -64,6 +67,9 @@ pub use mailbox_runtime_adapter::{
 };
 pub use message_delivery::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,
+};
+pub use permission_runtime_surface_update::{
+    AgentRunPermissionRuntimeSurfaceUpdateService, PermissionRuntimeSurfaceUpdateOutcome,
 };
 pub use presentation_read_model::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,

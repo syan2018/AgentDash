@@ -8,7 +8,9 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::RuntimeSurfaceUpdateRequest;
+use crate::agent_run::{
+    AgentRunPermissionRuntimeSurfaceUpdateService, RuntimeSurfaceUpdateRequest,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,
@@ -17,10 +19,6 @@ use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilit
 use agentdash_spi::RuntimeCapabilityTransition;
 
 use super::policy::PermissionPolicyService;
-use super::runtime_surface_update::{
-    PermissionRuntimeSurfaceAdopter, PermissionRuntimeSurfaceUpdateService,
-};
-
 /// Grant 创建请求参数。
 #[derive(Debug, Clone)]
 pub struct GrantRequest {
@@ -54,7 +52,7 @@ pub enum GrantRequestResult {
 /// Permission Grant 生命周期服务。
 pub struct PermissionGrantService {
     repo: Arc<dyn PermissionGrantRepository>,
-    runtime_surface_updates: PermissionRuntimeSurfaceUpdateService,
+    runtime_surface_updates: AgentRunPermissionRuntimeSurfaceUpdateService,
 }
 
 impl PermissionGrantService {
@@ -64,20 +62,17 @@ impl PermissionGrantService {
     ) -> Self {
         Self {
             repo,
-            runtime_surface_updates: PermissionRuntimeSurfaceUpdateService::new(frame_repo),
+            runtime_surface_updates: AgentRunPermissionRuntimeSurfaceUpdateService::new(frame_repo),
         }
     }
 
-    pub fn new_with_runtime_surface_adopter(
+    pub fn new_with_runtime_surface_updates(
         repo: Arc<dyn PermissionGrantRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        adopter: Arc<dyn PermissionRuntimeSurfaceAdopter>,
+        runtime_surface_updates: AgentRunPermissionRuntimeSurfaceUpdateService,
     ) -> Self {
         Self {
             repo,
-            runtime_surface_updates: PermissionRuntimeSurfaceUpdateService::with_adopter(
-                frame_repo, adopter,
-            ),
+            runtime_surface_updates,
         }
     }
 
@@ -387,9 +382,11 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::AgentFrameRuntimeTarget;
     use crate::agent_run::runtime_capability::project_capability_state_from_frame;
-    use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
+    use crate::agent_run::{
+        AgentFrameBuilder, AgentRunActiveRuntimeSurfaceAdopter, AgentRunGrantProjection,
+    };
+    use agentdash_agent_types::DynAgentTool;
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
         PolicyOutcome,
@@ -611,15 +608,15 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl PermissionRuntimeSurfaceAdopter for TestSurfaceBoundary {
-        async fn adopt_permission_runtime_surface(
+    impl AgentRunActiveRuntimeSurfaceAdopter for TestSurfaceBoundary {
+        async fn adopt_persisted_frame_revision_into_active_runtime(
             &self,
-            _target: AgentFrameRuntimeTarget,
-        ) -> Result<(), String> {
+            _target: crate::agent_run::AgentFrameRuntimeTarget,
+        ) -> Result<Vec<DynAgentTool>, String> {
             if self.fail_adoption {
                 Err("connector refresh failed".to_string())
             } else {
-                Ok(())
+                Ok(Vec::new())
             }
         }
     }
@@ -628,10 +625,12 @@ mod tests {
         grant_repo: Arc<InMemoryGrantRepo>,
         frame_repo: Arc<InMemoryFrameRepo>,
     ) -> PermissionGrantService {
-        PermissionGrantService::new_with_runtime_surface_adopter(
+        PermissionGrantService::new_with_runtime_surface_updates(
             grant_repo,
-            frame_repo.clone(),
-            Arc::new(TestSurfaceBoundary::new(frame_repo)),
+            AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
+                frame_repo.clone(),
+                Arc::new(TestSurfaceBoundary::new(frame_repo)),
+            ),
         )
     }
 
@@ -819,10 +818,12 @@ mod tests {
             .expect("initial frame");
         let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
 
-        let error = PermissionGrantService::new_with_runtime_surface_adopter(
+        let error = PermissionGrantService::new_with_runtime_surface_updates(
             grant_repo.clone(),
-            frame_repo.clone(),
-            Arc::new(TestSurfaceBoundary::failing(frame_repo.clone())),
+            AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
+                frame_repo.clone(),
+                Arc::new(TestSurfaceBoundary::failing(frame_repo.clone())),
+            ),
         )
         .approve(grant.id, "user-1")
         .await

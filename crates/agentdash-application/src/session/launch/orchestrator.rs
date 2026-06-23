@@ -1,7 +1,6 @@
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
     SessionLaunchDeps, StreamIngestionAttacher, TurnCommitter, TurnPreparationInput, TurnPreparer,
@@ -82,8 +81,8 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let agent_needs_bootstrap_early =
-            Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
+        let accepted_launch_commit = self.deps.accepted_launch_commit_adapter();
+        let agent_needs_bootstrap_early = accepted_launch_commit.agent_needs_bootstrap(&sid).await;
         let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
         let launch_envelope = match provider
             .build_frame_launch_envelope(FrameLaunchEnvelopeProviderInput {
@@ -199,7 +198,10 @@ impl SessionLaunchOrchestrator {
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let agent_needs_bootstrap = Self::resolve_agent_needs_bootstrap(deps, session_id).await;
+        let accepted_launch_commit = deps.accepted_launch_commit_adapter();
+        let agent_needs_bootstrap = accepted_launch_commit
+            .agent_needs_bootstrap(session_id)
+            .await;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,
@@ -264,7 +266,9 @@ impl SessionLaunchOrchestrator {
         tracing::debug!(session_id, turn_id, "session launch committed turn");
 
         if committed.accepted.prepared.is_owner_bootstrap {
-            Self::mark_agent_bootstrapped(deps, session_id).await;
+            accepted_launch_commit
+                .mark_agent_bootstrapped(session_id)
+                .await;
         }
 
         let attached = StreamIngestionAttacher::new(deps.ingestion())
@@ -277,63 +281,6 @@ impl SessionLaunchOrchestrator {
         );
 
         Ok(attached.turn_id)
-    }
-
-    /// 通过 runtime session → AgentFrame → LifecycleAgent 链路解析 bootstrap 状态。
-    /// 若任一环节缺失（repo 未注入或数据不存在），回退为 false（不需要 bootstrap）。
-    async fn resolve_agent_needs_bootstrap(deps: &SessionLaunchDeps, session_id: &str) -> bool {
-        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
-            return false;
-        };
-        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
-            return false;
-        };
-        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
-            return false;
-        };
-        match resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
-        .await
-        {
-            Ok(Some((_anchor, agent, _frame))) => agent.needs_bootstrap(),
-            _ => false,
-        }
-    }
-
-    /// Bootstrap 完成后标记 LifecycleAgent.bootstrap_status = "bootstrapped"。
-    async fn mark_agent_bootstrapped(deps: &SessionLaunchDeps, session_id: &str) {
-        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
-            return;
-        };
-        let Some(anchor_repo) = deps.execution_anchor_repo.as_ref() else {
-            return;
-        };
-        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
-            return;
-        };
-        let mut agent = match resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
-        .await
-        {
-            Ok(Some((_anchor, agent, _frame))) => agent,
-            _ => return,
-        };
-        agent.mark_bootstrapped();
-        if let Err(error) = agent_repo.update(&agent).await {
-            tracing::warn!(
-                session_id,
-                agent_id = %agent.id,
-                "标记 agent bootstrapped 失败: {error}"
-            );
-        }
     }
 }
 

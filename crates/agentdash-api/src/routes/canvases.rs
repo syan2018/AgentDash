@@ -253,11 +253,11 @@ fn canvas_data_binding_to_contract(binding: CanvasDataBinding) -> CanvasDataBind
 }
 
 fn canvas_data_binding_from_contract(binding: CanvasDataBindingDto) -> CanvasDataBinding {
-    CanvasDataBinding {
-        alias: binding.alias,
-        source_uri: binding.source_uri,
-        content_type: binding.content_type,
-    }
+    CanvasDataBinding::with_content_type(
+        binding.alias,
+        binding.source_uri,
+        Some(binding.content_type),
+    )
 }
 
 pub async fn promote_canvas_to_extension(

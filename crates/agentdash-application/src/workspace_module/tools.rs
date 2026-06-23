@@ -14,7 +14,7 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleOperation,
     WorkspaceModuleOperationDispatch,
 };
-use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
@@ -606,6 +606,7 @@ pub struct WorkspaceModuleInvokeTool {
     gateway: Arc<RuntimeGateway>,
     channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     visibility_source: WorkspaceModuleVisibilitySource,
+    session_services_handle: Option<SharedSessionToolServicesHandle>,
 }
 
 impl WorkspaceModuleInvokeTool {
@@ -630,6 +631,7 @@ impl WorkspaceModuleInvokeTool {
             gateway,
             channel_invoker,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
+            session_services_handle: None,
         }
     }
 
@@ -637,6 +639,7 @@ impl WorkspaceModuleInvokeTool {
         mut self,
         session_services_handle: SharedSessionToolServicesHandle,
     ) -> Self {
+        self.session_services_handle = Some(session_services_handle.clone());
         self.visibility_source = self
             .visibility_source
             .with_runtime(session_services_handle, self.session_id.clone());
@@ -657,6 +660,26 @@ impl WorkspaceModuleInvokeTool {
                 serde_json::json!({}),
             )
         })
+    }
+
+    async fn refresh_canvas_mount_for_runtime(
+        &self,
+        canvas: &Canvas,
+    ) -> Result<(), AgentToolError> {
+        let Some(handle) = self.session_services_handle.as_ref() else {
+            return Ok(());
+        };
+        let Some(session_services) = handle.get().await else {
+            return Err(AgentToolError::ExecutionFailed(
+                "Session services 尚未完成初始化，无法刷新 Canvas mount".to_string(),
+            ));
+        };
+        session_services
+            .capability
+            .expose_canvas_mount_revision_and_adopt(&self.session_id, canvas)
+            .await
+            .map(|_| ())
+            .map_err(AgentToolError::ExecutionFailed)
     }
 }
 
@@ -846,12 +869,13 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                                 "invalid canvas.bind_data input: {error}"
                             ))
                         })?;
-                    let result = bind_canvas_data_for_project(
+                    let (canvas, result) = bind_canvas_data_for_project(
                         self.canvas_repo.as_ref(),
                         self.project_id,
                         bind_params,
                     )
                     .await?;
+                    self.refresh_canvas_mount_for_runtime(&canvas).await?;
                     let content = format!(
                         "canvas_id={}\nmount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
                         result.canvas_id,
@@ -2495,7 +2519,7 @@ mod tests {
                     "operation_key": "canvas.bind_data",
                     "input": {
                         "alias": "stats",
-                        "source_uri": "project://data/stats.json"
+                        "source_uri": "project://data/stats.csv"
                     }
                 }),
                 CancellationToken::new(),
@@ -2516,7 +2540,7 @@ mod tests {
             details
                 .pointer("/output/content_type")
                 .and_then(serde_json::Value::as_str),
-            Some("application/json")
+            Some("text/csv")
         );
 
         let saved = canvas_repo
@@ -2529,8 +2553,8 @@ mod tests {
             .iter()
             .find(|binding| binding.alias == "stats")
             .expect("binding should be saved");
-        assert_eq!(binding.source_uri, "project://data/stats.json");
-        assert_eq!(binding.content_type, "application/json");
+        assert_eq!(binding.source_uri, "project://data/stats.csv");
+        assert_eq!(binding.content_type, "text/csv");
     }
 
     #[tokio::test]

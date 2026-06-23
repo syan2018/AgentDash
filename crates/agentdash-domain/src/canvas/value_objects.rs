@@ -99,20 +99,162 @@ root.innerHTML = `
 pub struct CanvasDataBinding {
     pub alias: String,
     pub source_uri: String,
-    #[serde(default = "default_binding_content_type")]
+    #[serde(default)]
     pub content_type: String,
 }
 
 impl CanvasDataBinding {
     pub fn new(alias: String, source_uri: String) -> Self {
+        Self::with_content_type(alias, source_uri, None)
+    }
+
+    pub fn with_content_type(
+        alias: String,
+        source_uri: String,
+        content_type: Option<String>,
+    ) -> Self {
+        let content_type = normalize_binding_content_type(content_type.as_deref(), &source_uri);
         Self {
             alias,
             source_uri,
-            content_type: default_binding_content_type(),
+            content_type,
+        }
+    }
+
+    pub fn data_path(&self) -> String {
+        canvas_binding_data_path(&self.alias, &self.content_type, &self.source_uri)
+    }
+
+    pub fn placeholder_content(&self) -> &'static str {
+        if content_type_base(&self.content_type) == "application/json" {
+            "null"
+        } else {
+            ""
         }
     }
 }
 
-fn default_binding_content_type() -> String {
-    "application/json".to_string()
+pub fn canvas_binding_data_path(alias: &str, content_type: &str, source_uri: &str) -> String {
+    let extension =
+        extension_for_content_type(content_type).or_else(|| source_uri_extension(source_uri));
+    format!(
+        "bindings/{}.{}",
+        alias.trim(),
+        extension.unwrap_or_else(|| "txt".to_string())
+    )
+}
+
+pub fn normalize_binding_content_type(content_type: Option<&str>, source_uri: &str) -> String {
+    let explicit = content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(content_type_base);
+    explicit.unwrap_or_else(|| infer_binding_content_type(source_uri))
+}
+
+pub fn infer_binding_content_type(source_uri: &str) -> String {
+    match source_uri_extension(source_uri).as_deref() {
+        Some("json") => "application/json",
+        Some("ndjson") => "application/x-ndjson",
+        Some("csv") => "text/csv",
+        Some("md") | Some("markdown") => "text/markdown",
+        Some("html") | Some("htm") => "text/html",
+        Some("css") => "text/css",
+        Some("js") | Some("mjs") | Some("cjs") => "text/javascript",
+        Some("ts") | Some("tsx") => "text/typescript",
+        Some("jsx") => "text/jsx",
+        Some("svg") => "image/svg+xml",
+        Some("txt") | Some("log") => "text/plain",
+        Some("xml") => "application/xml",
+        Some("yaml") | Some("yml") => "application/yaml",
+        _ => "text/plain",
+    }
+    .to_string()
+}
+
+fn extension_for_content_type(content_type: &str) -> Option<String> {
+    let base = content_type_base(content_type);
+    let extension = match base.as_str() {
+        "application/json" => "json",
+        value if value.ends_with("+json") => "json",
+        "application/x-ndjson" => "ndjson",
+        "text/csv" => "csv",
+        "text/markdown" => "md",
+        "text/html" => "html",
+        "text/css" => "css",
+        "text/javascript"
+        | "application/javascript"
+        | "application/x-javascript"
+        | "text/ecmascript"
+        | "application/ecmascript" => "js",
+        "text/typescript" => "ts",
+        "text/jsx" => "jsx",
+        "text/tsx" => "tsx",
+        "image/svg+xml" => "svg",
+        "text/plain" => "txt",
+        "application/xml" | "text/xml" => "xml",
+        "application/yaml" | "application/x-yaml" | "text/yaml" => "yaml",
+        _ => return None,
+    };
+    Some(extension.to_string())
+}
+
+fn source_uri_extension(source_uri: &str) -> Option<String> {
+    let without_fragment = source_uri.split('#').next().unwrap_or(source_uri);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    let file_name = without_query
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(without_query);
+    let extension = file_name.rsplit_once('.')?.1;
+    let extension = extension.trim().to_ascii_lowercase();
+    if extension
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        && !extension.is_empty()
+    {
+        Some(extension)
+    } else {
+        None
+    }
+}
+
+fn content_type_base(content_type: &str) -> String {
+    content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_content_type_is_inferred_from_source_uri_extension() {
+        let binding = CanvasDataBinding::new(
+            "stats".to_string(),
+            "main://reports/stats.csv?download=1".to_string(),
+        );
+
+        assert_eq!(binding.content_type, "text/csv");
+        assert_eq!(binding.data_path(), "bindings/stats.csv");
+    }
+
+    #[test]
+    fn explicit_binding_content_type_controls_data_path() {
+        let binding = CanvasDataBinding::with_content_type(
+            "summary".to_string(),
+            "main://reports/summary".to_string(),
+            Some("Text/Markdown; charset=utf-8".to_string()),
+        );
+
+        assert_eq!(binding.content_type, "text/markdown");
+        assert_eq!(binding.data_path(), "bindings/summary.md");
+    }
 }

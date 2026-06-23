@@ -20,10 +20,11 @@ use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
 };
+use crate::canvas::resolve_canvas_binding_files;
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
-use crate::vfs::append_canvas_mounts;
+use crate::vfs::{append_canvas_mounts, refresh_canvas_mount_binding_files};
 
 #[derive(Clone)]
 pub struct SessionCapabilityService {
@@ -123,6 +124,11 @@ impl SessionCapabilityService {
             ));
         };
         append_canvas_mounts(&mut active_vfs, std::slice::from_ref(canvas));
+        if let Some(vfs_service) = self.hub.vfs_service.as_deref() {
+            let binding_files =
+                resolve_canvas_binding_files(canvas, &active_vfs, vfs_service).await;
+            refresh_canvas_mount_binding_files(&mut active_vfs, canvas, &binding_files);
+        }
         after_state.vfs.active = Some(active_vfs.clone());
         self.derive_skill_baseline_for_transition_state(Some(&before_state), &mut after_state)
             .await;

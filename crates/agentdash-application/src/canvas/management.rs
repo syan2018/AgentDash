@@ -5,7 +5,9 @@ use uuid::Uuid;
 use crate::error::ApplicationError;
 use crate::repository_set::RepositorySet;
 use agentdash_domain::DomainError;
-use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
+use agentdash_domain::canvas::{
+    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, normalize_binding_content_type,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct CanvasMutationInput {
@@ -222,7 +224,7 @@ pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
                 binding.alias
             )));
         }
-        let binding_path = format!("bindings/{}.json", binding.alias);
+        let binding_path = binding.data_path();
         if file_paths.contains(&binding_path) {
             return Err(DomainError::InvalidConfig(format!(
                 "Canvas binding `{}` 会与已有文件路径冲突: {}",
@@ -265,10 +267,8 @@ fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
     for binding in &mut canvas.bindings {
         binding.alias = binding.alias.trim().to_string();
         binding.source_uri = binding.source_uri.trim().to_string();
-        binding.content_type = binding.content_type.trim().to_string();
-        if binding.content_type.is_empty() {
-            binding.content_type = "application/json".to_string();
-        }
+        binding.content_type =
+            normalize_binding_content_type(Some(&binding.content_type), &binding.source_uri);
     }
 
     Ok(())

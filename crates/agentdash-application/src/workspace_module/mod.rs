@@ -393,7 +393,7 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
             "properties": {
                 "alias": {
                     "type": "string",
-                    "description": "Runtime binding alias, exposed as bindings/<alias>.json"
+                    "description": "Runtime binding alias, exposed as bindings/<alias>.<ext>"
                 },
                 "source_uri": {
                     "type": "string",
@@ -401,7 +401,7 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
                 },
                 "content_type": {
                     "type": "string",
-                    "description": "Optional content type, defaults to application/json"
+                    "description": "Optional content type; omitted values are inferred from source_uri"
                 }
             },
             "required": ["alias", "source_uri"],

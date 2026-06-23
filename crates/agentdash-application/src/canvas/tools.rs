@@ -159,13 +159,11 @@ pub(crate) async fn bind_canvas_data_for_project(
     canvas_repo: &dyn CanvasRepository,
     project_id: Uuid,
     params: BindCanvasDataParams,
-) -> Result<CanvasBindingToolResult, AgentToolError> {
+) -> Result<(Canvas, CanvasBindingToolResult), AgentToolError> {
     let mut canvas = load_canvas_by_ref(canvas_repo, project_id, &params.canvas_id).await?;
 
-    let mut binding = CanvasDataBinding::new(params.alias, params.source_uri);
-    if let Some(content_type) = params.content_type {
-        binding.content_type = content_type;
-    }
+    let binding =
+        CanvasDataBinding::with_content_type(params.alias, params.source_uri, params.content_type);
     let alias = binding.alias.clone();
     let source_uri = binding.source_uri.clone();
     let content_type = binding.content_type.clone();
@@ -176,14 +174,15 @@ pub(crate) async fn bind_canvas_data_for_project(
         .await
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
-    Ok(CanvasBindingToolResult {
+    let result = CanvasBindingToolResult {
         canvas_id: canvas.mount_id.clone(),
         mount_id: build_canvas_mount_id(&canvas),
         bindings: canvas.bindings.clone(),
         alias,
         source_uri,
         content_type,
-    })
+    };
+    Ok((canvas, result))
 }
 
 pub async fn expose_existing_canvas_for_session(

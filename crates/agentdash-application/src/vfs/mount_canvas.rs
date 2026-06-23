@@ -1,5 +1,6 @@
 use agentdash_domain::canvas::Canvas;
 
+use crate::canvas::CanvasResolvedBindingFile;
 use crate::runtime::{Mount, MountCapability, Vfs};
 
 use super::mount::PROVIDER_CANVAS_FS;
@@ -41,4 +42,22 @@ pub fn append_canvas_mounts(vfs: &mut Vfs, canvases: &[Canvas]) {
         vfs.mounts.retain(|existing| existing.id != mount.id);
         vfs.mounts.push(mount);
     }
+}
+
+pub fn refresh_canvas_mount_binding_files(
+    vfs: &mut Vfs,
+    canvas: &Canvas,
+    binding_files: &[CanvasResolvedBindingFile],
+) {
+    let mount_id = build_canvas_mount_id(canvas);
+    let Some(mount) = vfs.mounts.iter_mut().find(|mount| mount.id == mount_id) else {
+        return;
+    };
+    let Some(metadata) = mount.metadata.as_object_mut() else {
+        return;
+    };
+    metadata.insert(
+        "binding_files".to_string(),
+        serde_json::to_value(binding_files).unwrap_or_else(|_| serde_json::json!([])),
+    );
 }

@@ -31,7 +31,7 @@ pub struct CanvasSandboxConfigDto {
 pub struct CanvasDataBindingDto {
     pub alias: String,
     pub source_uri: String,
-    #[serde(default = "default_binding_content_type")]
+    #[serde(default)]
     pub content_type: String,
 }
 
@@ -250,8 +250,4 @@ pub struct RuntimeInvocationResultDto {
     pub action_key: String,
     pub trace: RuntimeTraceDto,
     pub output: RuntimeInvocationOutputDto,
-}
-
-fn default_binding_content_type() -> String {
-    "application/json".to_string()
 }

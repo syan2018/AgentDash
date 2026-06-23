@@ -45,7 +45,10 @@ pub use mount::{
     PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
     mount_purpose,
 };
-pub use mount_canvas::{append_canvas_mounts, build_canvas_mount, build_canvas_mount_id};
+pub use mount_canvas::{
+    append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
+    refresh_canvas_mount_binding_files,
+};
 pub use mount_inline::{
     build_context_container_mount, list_inline_entries, normalize_inline_files,
     parse_inline_mount_owner,

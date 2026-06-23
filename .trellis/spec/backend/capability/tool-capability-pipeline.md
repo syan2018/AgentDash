@@ -208,7 +208,7 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 - `workspace_module` 是 Canvas Agent 操作的 well-known capability key。
 - 默认 Agent 工具面包含 `workspace_module_create/list/describe/invoke/present`。
 - 已创建 Canvas 表达为 `canvas:{mount_id}` module。
-- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`。
+- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`；绑定结果在 Canvas runtime 与 `cvs-<mount_id>` mount 中投影为 `bindings/<alias>.<ext>` 只读生成文件，扩展名来自显式 `content_type` 或 `source_uri` 推断。
 - Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{mount_id}"`。
 - Canvas 编辑 mount 表达为 VFS URI：`cvs-<mount_id>://...`。
 - ProjectAgent preset 中保存的 `canvas` capability directive 只作为 forward migration 输入；运行态普通 Agent capability 不再以 `canvas` 作为主入口。

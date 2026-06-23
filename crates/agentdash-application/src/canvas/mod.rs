@@ -14,8 +14,10 @@ pub use promotion::{
     build_canvas_extension_package,
 };
 pub use runtime::{
-    CanvasRuntimeBinding, CanvasRuntimeBridgeSnapshot, CanvasRuntimeFile, CanvasRuntimeSnapshot,
-    build_runtime_snapshot, build_runtime_snapshot_with_bindings,
+    CanvasResolvedBindingFile, CanvasRuntimeBinding, CanvasRuntimeBridgeSnapshot,
+    CanvasRuntimeFile, CanvasRuntimeSnapshot, build_runtime_snapshot,
+    build_runtime_snapshot_with_bindings, resolve_canvas_binding_files,
+    unresolved_canvas_binding_files,
 };
 pub use tools::expose_existing_canvas_for_session;
 pub(crate) use tools::{

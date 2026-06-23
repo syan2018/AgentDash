@@ -29,18 +29,20 @@ Use this skill when working with AgentDashboard Canvas assets.
 - The default entry is `src/main.tsx`; change `entry_file` only when the target file exists.
 - The preview runtime transpiles `.ts`, `.tsx`, `.js`, and `.jsx` as ES modules.
 - `.css` files are collected into the preview document automatically.
-- `.json` files can be imported as modules; data bindings also materialize as JSON files.
+- `.json` files can be imported as modules; data bindings materialize as typed text files under `bindings/`.
 - Prefer small, explicit modules under `src/`; import local files with `./`, `../`, or `/`.
 - React and `react-dom/client` are available through the canvas import map by default.
 
 ## Data Bindings
 
 - Call `workspace_module_describe(module_id="canvas:{mount_id}")` before binding and follow the described `canvas.bind_data` input schema.
-- Invoke `canvas.bind_data` with `workspace_module_invoke` to map a VFS `source_uri` to `bindings/<alias>.json`.
+- Invoke `canvas.bind_data` with `workspace_module_invoke` to map a VFS `source_uri` to `bindings/<alias>.<ext>`.
 - `alias` must be a plain name without `/` or `\`.
-- `content_type` defaults to `application/json`.
-- At preview time the runtime tries to read each `source_uri` from the session VFS. If it cannot resolve the source, the binding file remains `null`.
-- Data bindings are for text/JSON data. Do not use them to inline binary image bytes.
+- `content_type` is optional; omitted values are inferred from the `source_uri` extension.
+- JSON bindings use `bindings/<alias>.json`; CSV, Markdown, HTML, CSS, JavaScript, SVG, YAML, XML, and plain text bindings keep matching text-oriented extensions.
+- At preview and mount exposure time the runtime tries to read each `source_uri` from the session VFS. If it cannot resolve the source, JSON binding files remain `null` and non-JSON text binding files remain empty.
+- Canvas mounts expose resolved binding files as read-only generated files. Change a binding through `canvas.bind_data`, not by writing directly to `bindings/<alias>.<ext>`.
+- Data bindings are for text data. Do not use them to inline binary image bytes.
 
 In canvas code, import bound data with a relative path:
 

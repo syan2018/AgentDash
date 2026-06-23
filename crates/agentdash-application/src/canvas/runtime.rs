@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use agentdash_domain::canvas::{Canvas, CanvasImportMap};
+use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
 use agentdash_spi::Vfs;
 
 use crate::runtime_gateway::RuntimeSurface;
@@ -34,6 +34,16 @@ pub struct CanvasRuntimeBinding {
     pub alias: String,
     pub source_uri: String,
     pub data_path: String,
+    pub content_type: String,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CanvasResolvedBindingFile {
+    pub alias: String,
+    pub source_uri: String,
+    pub path: String,
+    pub content: String,
     pub content_type: String,
     pub resolved: bool,
 }
@@ -87,22 +97,17 @@ pub fn build_runtime_snapshot(
     let bindings = canvas
         .bindings
         .iter()
-        .map(|binding| CanvasRuntimeBinding {
-            alias: binding.alias.clone(),
-            source_uri: binding.source_uri.clone(),
-            data_path: format!("bindings/{}.json", binding.alias),
-            content_type: binding.content_type.clone(),
-            resolved: false,
-        })
+        .map(runtime_binding_from_canvas_binding)
         .collect::<Vec<_>>();
 
-    for binding in &bindings {
-        if existing_paths.contains(&binding.data_path) {
+    for binding in &canvas.bindings {
+        let path = binding.data_path();
+        if existing_paths.contains(&path) {
             continue;
         }
         files.push(CanvasRuntimeFile {
-            path: binding.data_path.clone(),
-            content: "null".to_string(),
+            path,
+            content: binding.placeholder_content().to_string(),
             file_type: "data".to_string(),
         });
     }
@@ -145,26 +150,72 @@ pub async fn build_runtime_snapshot_with_bindings(
         );
     }
 
-    for binding in &mut snapshot.bindings {
-        let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, vfs) else {
-            continue;
-        };
-        let Ok(result) = vfs_service.read_text(vfs, &resource_ref, None, None).await else {
-            continue;
-        };
+    let resolved_files = resolve_canvas_binding_files(canvas, vfs, vfs_service).await;
 
+    for resolved_file in resolved_files {
+        let Some(binding) = snapshot
+            .bindings
+            .iter_mut()
+            .find(|binding| binding.alias == resolved_file.alias)
+        else {
+            continue;
+        };
         if let Some(file) = snapshot
             .files
             .iter_mut()
             .find(|file| file.path == binding.data_path)
         {
-            file.content = result.content;
+            file.content = resolved_file.content;
             file.file_type = "data".to_string();
-            binding.resolved = true;
+            binding.resolved = resolved_file.resolved;
         }
     }
 
     snapshot
+}
+
+pub async fn resolve_canvas_binding_files(
+    canvas: &Canvas,
+    vfs: &Vfs,
+    vfs_service: &VfsService,
+) -> Vec<CanvasResolvedBindingFile> {
+    let mut files = unresolved_canvas_binding_files(canvas);
+    for file in &mut files {
+        let Ok(resource_ref) = parse_mount_uri(&file.source_uri, vfs) else {
+            continue;
+        };
+        let Ok(result) = vfs_service.read_text(vfs, &resource_ref, None, None).await else {
+            continue;
+        };
+        file.content = result.content;
+        file.resolved = true;
+    }
+    files
+}
+
+pub fn unresolved_canvas_binding_files(canvas: &Canvas) -> Vec<CanvasResolvedBindingFile> {
+    canvas
+        .bindings
+        .iter()
+        .map(|binding| CanvasResolvedBindingFile {
+            alias: binding.alias.clone(),
+            source_uri: binding.source_uri.clone(),
+            path: binding.data_path(),
+            content: binding.placeholder_content().to_string(),
+            content_type: binding.content_type.clone(),
+            resolved: false,
+        })
+        .collect()
+}
+
+fn runtime_binding_from_canvas_binding(binding: &CanvasDataBinding) -> CanvasRuntimeBinding {
+    CanvasRuntimeBinding {
+        alias: binding.alias.clone(),
+        source_uri: binding.source_uri.clone(),
+        data_path: binding.data_path(),
+        content_type: binding.content_type.clone(),
+        resolved: false,
+    }
 }
 
 fn infer_file_type(path: &str) -> &'static str {
@@ -209,7 +260,7 @@ mod tests {
         )];
         canvas.bindings = vec![CanvasDataBinding::new(
             "stats".to_string(),
-            "lifecycle://active/artifacts/1".to_string(),
+            "lifecycle://active/artifacts/stats.json".to_string(),
         )];
 
         let snapshot = build_runtime_snapshot(&canvas, Some("session-1".to_string()));

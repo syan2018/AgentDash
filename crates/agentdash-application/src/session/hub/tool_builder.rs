@@ -177,8 +177,9 @@ impl SessionRuntimeInner {
 
     /// 将已持久化的 AgentFrame revision 采用到 active runtime。
     ///
-    /// 该 helper 不写入新的 frame；它只读取当前最新 frame fact，并同步 active
-    /// turn cache、connector tools 与 hook runtime target。
+    /// 该 helper 不写入新的 frame；它通过 delivery anchor 校验调用方指定的
+    /// frame 是当前生效 revision，并同步 active turn cache、connector tools
+    /// 与 hook runtime target。
     pub(crate) async fn adopt_persisted_agent_frame_revision(
         &self,
         target: AgentFrameRuntimeTarget,
@@ -192,6 +193,11 @@ impl SessionRuntimeInner {
         let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
             ConnectorError::Runtime(format!(
                 "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法采用已持久化能力状态"
+            ))
+        })?;
+        let agent_repo = self.lifecycle_agent_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 LifecycleAgent repository，无法采用已持久化能力状态"
             ))
         })?;
         let target_frame = frame_repo
@@ -209,30 +215,35 @@ impl SessionRuntimeInner {
                     target.frame_id
                 ))
             })?;
-        let delivery_anchor = anchor_repo
-            .find_by_session(&target.delivery_runtime_session_id)
+        let (delivery_anchor, _agent, adopted_frame) = resolve_current_frame_from_delivery_trace_ref(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!(
-                    "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法采用已持久化能力状态: {error}"
+                    "通过 anchor 查找 delivery RuntimeSession `{session_id}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "delivery RuntimeSession `{session_id}` 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame，拒绝采用已持久化能力状态"
                 ))
             })?;
-        if delivery_anchor.is_none_or(|anchor| anchor.agent_id != target_frame.agent_id) {
+        if delivery_anchor.agent_id != target_frame.agent_id {
             return Err(ConnectorError::Runtime(format!(
                 "Agent `{}` 未绑定 delivery RuntimeSession `{session_id}` 的 anchor，拒绝采用已持久化能力状态",
                 target_frame.agent_id
             )));
         }
-        let adopted_frame = frame_repo
-            .get_current(target_frame.agent_id)
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "查找 Agent `{}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}",
-                    target_frame.agent_id
-                ))
-            })?
-            .unwrap_or(target_frame);
+        if adopted_frame.id != target.frame_id {
+            return Err(ConnectorError::Runtime(format!(
+                "AgentFrame `{}` 不是 delivery RuntimeSession `{session_id}` 当前 revision（当前为 `{}`），拒绝采用不同 revision",
+                target.frame_id, adopted_frame.id
+            )));
+        }
         let state = project_capability_state_from_frame(&adopted_frame);
         let mcp_servers = adopted_frame.typed_mcp_servers();
 

@@ -10,7 +10,7 @@ use crate::capability::{
 };
 use crate::lifecycle::{
     ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
-    resolve_active_workflow_projection_for_target,
+    resolve_active_workflow_projection_for_target, resolve_current_frame_from_delivery_trace_ref,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -229,7 +229,7 @@ async fn resolve_task_workspace(
 
 /// 通过 task 关联的 AgentRun target 查找活跃 lifecycle workflow projection。
 ///
-/// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent.current_frame
+/// 链路: LifecycleSubjectAssociation(Task) → AgentFrame 最新 revision
 ///      → HookControlTarget(run/agent/frame) → LifecycleRun.orchestrations[].RuntimeNodeState
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
@@ -261,7 +261,14 @@ async fn find_active_workflow_for_task_target(
         if agent.run_id != assoc.anchor_run_id {
             continue;
         };
-        let Some(frame_id) = agent.current_frame_id else {
+        let Some(frame_id) = repos
+            .agent_frame_repo
+            .get_current(agent.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|frame| frame.id)
+        else {
             continue;
         };
         let target = HookControlTarget {
@@ -297,17 +304,15 @@ async fn resolve_visible_canvas_mount_ids(
     else {
         return Vec::new();
     };
-    let Ok(Some(agent)) = repos.lifecycle_agent_repo.get(anchor.agent_id).await else {
-        return Vec::new();
-    };
-    if agent.run_id != anchor.run_id {
-        return Vec::new();
-    }
-    match repos.agent_frame_repo.get_current(agent.id).await {
-        Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
-        _ => match repos.agent_frame_repo.get(anchor.launch_frame_id).await {
-            Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
-            _ => Vec::new(),
-        },
+    match resolve_current_frame_from_delivery_trace_ref(
+        &anchor.runtime_session_id,
+        repos.execution_anchor_repo.as_ref(),
+        repos.lifecycle_agent_repo.as_ref(),
+        repos.agent_frame_repo.as_ref(),
+    )
+    .await
+    {
+        Ok(Some((_anchor, _agent, frame))) => frame.visible_canvas_mount_ids(),
+        _ => Vec::new(),
     }
 }

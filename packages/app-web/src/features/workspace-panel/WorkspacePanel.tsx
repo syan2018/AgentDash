@@ -23,7 +23,6 @@ import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
 import {
   activeCanvasMountIdsFromRuntimeSurface,
   canvasMountIdFromPresentationUri,
-  isActiveCanvasPresentationUri,
   selectCanvasModuleOpenOptions,
   openUserCanvasModule,
   type CanvasModuleOpenOption,
@@ -65,17 +64,14 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         pinned: type.pinned,
         defaultUri: type.defaultUri ?? type.buildUri({}),
         canCreateUri: type.typeId === "canvas"
-          ? (uri) => (
-              (!runtimeCanvasSurfaceReady && canvasMountIdFromPresentationUri(uri) !== null)
-              || isActiveCanvasPresentationUri(uri, activeCanvasMountIds)
-            )
+          ? (uri) => canvasMountIdFromPresentationUri(uri) !== null
           : type.canCreateUri,
       })),
       resolveTitle: (typeId, uri) => {
         const type = registrySnapshot.find((descriptor) => descriptor.typeId === typeId);
         return type?.resolveTitle(uri) ?? uri;
       },
-    }), [activeCanvasMountIds, registrySnapshot, runtimeCanvasSurfaceReady]);
+    }), [registrySnapshot]);
 
     // 首次挂载或 session 切换时初始化 Tab 状态
     useEffect(() => {

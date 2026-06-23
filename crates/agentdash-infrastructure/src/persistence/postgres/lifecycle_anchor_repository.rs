@@ -46,7 +46,6 @@ struct AgentRow {
     project_agent_id: Option<String>,
     status: String,
     bootstrap_status: String,
-    current_frame_id: Option<String>,
     current_delivery_runtime_session_id: Option<String>,
     current_delivery_launch_frame_id: Option<String>,
     current_delivery_orchestration_id: Option<String>,
@@ -153,10 +152,6 @@ impl TryFrom<AgentRow> for LifecycleAgent {
             )?,
             status: row.status,
             bootstrap_status: row.bootstrap_status,
-            current_frame_id: opt_uuid(
-                row.current_frame_id.as_ref(),
-                "lifecycle_agents.current_frame_id",
-            )?,
             current_delivery,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -170,11 +165,11 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         sqlx::query(
             r#"INSERT INTO lifecycle_agents
                 (id, run_id, project_id, source, project_agent_id, status, bootstrap_status,
-                 current_frame_id, current_delivery_runtime_session_id,
+                 current_delivery_runtime_session_id,
                  current_delivery_launch_frame_id, current_delivery_orchestration_id,
                  current_delivery_node_path, current_delivery_node_attempt,
                  current_delivery_status, current_delivery_observed_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
         )
         .bind(agent.id.to_string())
         .bind(agent.run_id.to_string())
@@ -183,7 +178,6 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(&agent.status)
         .bind(&agent.bootstrap_status)
-        .bind(agent.current_frame_id.map(|id| id.to_string()))
         .bind(
             agent
                 .current_delivery
@@ -237,7 +231,7 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
         sqlx::query_as::<_, AgentRow>(
             r#"SELECT id,run_id,project_id,source,project_agent_id,status,bootstrap_status,
-                      current_frame_id, current_delivery_runtime_session_id,
+                      current_delivery_runtime_session_id,
                       current_delivery_launch_frame_id, current_delivery_orchestration_id,
                       current_delivery_node_path, current_delivery_node_attempt,
                       current_delivery_status, current_delivery_observed_at,
@@ -255,7 +249,7 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
         sqlx::query_as::<_, AgentRow>(
             r#"SELECT id,run_id,project_id,source,project_agent_id,status,bootstrap_status,
-                      current_frame_id, current_delivery_runtime_session_id,
+                      current_delivery_runtime_session_id,
                       current_delivery_launch_frame_id, current_delivery_orchestration_id,
                       current_delivery_node_path, current_delivery_node_attempt,
                       current_delivery_status, current_delivery_observed_at,
@@ -274,20 +268,19 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
         sqlx::query(
             r#"UPDATE lifecycle_agents
-               SET status=$1, bootstrap_status=$2, current_frame_id=$3, project_agent_id=$4,
-                   current_delivery_runtime_session_id=$5,
-                   current_delivery_launch_frame_id=$6,
-                   current_delivery_orchestration_id=$7,
-                   current_delivery_node_path=$8,
-                   current_delivery_node_attempt=$9,
-                   current_delivery_status=$10,
-                   current_delivery_observed_at=$11,
-                   updated_at=$12
-               WHERE id=$13"#,
+               SET status=$1, bootstrap_status=$2, project_agent_id=$3,
+                   current_delivery_runtime_session_id=$4,
+                   current_delivery_launch_frame_id=$5,
+                   current_delivery_orchestration_id=$6,
+                   current_delivery_node_path=$7,
+                   current_delivery_node_attempt=$8,
+                   current_delivery_status=$9,
+                   current_delivery_observed_at=$10,
+                   updated_at=$11
+               WHERE id=$12"#,
         )
         .bind(&agent.status)
         .bind(&agent.bootstrap_status)
-        .bind(agent.current_frame_id.map(|id| id.to_string()))
         .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(
             agent
@@ -480,7 +473,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                       visible_workspace_module_refs_json,
                       execution_profile_json,
                       created_by_kind,created_by_id,created_at
-               FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC LIMIT 1"#,
+               FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC, created_at DESC LIMIT 1"#,
         )
         .bind(agent_id.to_string())
         .fetch_optional(&self.pool)
@@ -1161,7 +1154,6 @@ mod lifecycle_agent_current_delivery_tests {
             project_agent_id: None,
             status: "active".to_string(),
             bootstrap_status: "pending".to_string(),
-            current_frame_id: Some(Uuid::new_v4().to_string()),
             current_delivery_runtime_session_id: Some("runtime-a".to_string()),
             current_delivery_launch_frame_id: Some(Uuid::new_v4().to_string()),
             current_delivery_orchestration_id: Some(Uuid::new_v4().to_string()),

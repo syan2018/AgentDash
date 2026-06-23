@@ -135,7 +135,7 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
                 key={agent.agent_ref.agent_id}
                 type="button"
                 onClick={() => navigate(`/agent/${agent.agent_ref.agent_id}`, {
-                  state: { run_id: lifecycleRun.run_ref.run_id, frame_id: agent.current_frame_id ?? null },
+                  state: { run_id: lifecycleRun.run_ref.run_id },
                 })}
                 className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-left hover:bg-secondary/40"
               >
@@ -338,7 +338,7 @@ export function LifecycleAgentPage() {
   const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
   const fetchFrame = useLifecycleStore((s) => s.fetchFrame);
   const agent = useLifecycleStore((s) => s.agents.get(agentId) ?? null);
-  const frameId = routeState.frame_id ?? agent?.current_frame_id ?? null;
+  const frameId = routeState.frame_id ?? null;
   const frame = useLifecycleStore((s) => (frameId ? s.frames.get(frameId) ?? null : null));
   const error = useLifecycleStore((s) => s.error);
 

@@ -2,6 +2,7 @@ use agentdash_spi::hooks::{HookRuntimeAccess, RuntimeAdapterProvenance, SharedHo
 use agentdash_spi::{AgentToolError, ExecutionContext};
 use uuid::Uuid;
 
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::repository_set::RepositorySet;
 
 #[derive(Clone, Copy)]
@@ -80,78 +81,21 @@ async fn resolve_lifecycle_anchor(
     runtime_session_id: &str,
     repos: &RepositorySet,
 ) -> Result<CompanionLifecycleAnchor, String> {
-    let anchor = repos
-        .execution_anchor_repo
-        .find_by_session(runtime_session_id)
-        .await
-        .map_err(|error| {
-            format!(
-                "查询 runtime session `{runtime_session_id}` 的 RuntimeSessionExecutionAnchor 失败: {error}"
-            )
-        })?
-        .ok_or_else(|| {
-            format!("runtime session `{runtime_session_id}` 缺少 RuntimeSessionExecutionAnchor")
-        })?;
-
-    let agent = repos
-        .lifecycle_agent_repo
-        .get(anchor.agent_id)
-        .await
-        .map_err(|error| {
-            format!(
-                "查询 runtime session `{runtime_session_id}` anchor 指向的 LifecycleAgent `{}` 失败: {error}",
-                anchor.agent_id
-            )
-        })?
-        .ok_or_else(|| {
-            format!(
-                "runtime session `{runtime_session_id}` anchor 指向的 LifecycleAgent 不存在: {}",
-                anchor.agent_id
-            )
-        })?;
-
-    if agent.run_id != anchor.run_id {
-        return Err(format!(
-            "runtime session `{runtime_session_id}` anchor run_id `{}` 与 LifecycleAgent run_id `{}` 不一致",
-            anchor.run_id, agent.run_id
-        ));
-    }
-
-    let frame = match repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await
-        .map_err(|error| {
-            format!(
-                "查询 LifecycleAgent `{}` 的 current AgentFrame 失败: {error}",
-                agent.id
-            )
-        })? {
-        Some(frame) => frame,
-        None => repos
-            .agent_frame_repo
-            .get(anchor.launch_frame_id)
-            .await
-            .map_err(|error| {
-                format!(
-                    "查询 runtime session `{runtime_session_id}` anchor launch AgentFrame `{}` 失败: {error}",
-                    anchor.launch_frame_id
-                )
-            })?
-            .ok_or_else(|| {
-                format!(
-                    "runtime session `{runtime_session_id}` anchor 指向的 launch AgentFrame 不存在: {}",
-                    anchor.launch_frame_id
-                )
-            })?,
-    };
-
-    if frame.agent_id != agent.id {
-        return Err(format!(
-            "runtime session `{runtime_session_id}` 解析到的 AgentFrame `{}` 属于 agent `{}`，与 anchor agent `{}` 不一致",
-            frame.id, frame.agent_id, agent.id
-        ));
-    }
+    let (_anchor, agent, frame) = resolve_current_frame_from_delivery_trace_ref(
+        runtime_session_id,
+        repos.execution_anchor_repo.as_ref(),
+        repos.lifecycle_agent_repo.as_ref(),
+        repos.agent_frame_repo.as_ref(),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "通过 RuntimeSessionExecutionAnchor 查询 runtime session `{runtime_session_id}` 当前 AgentFrame 失败: {error}"
+        )
+    })?
+    .ok_or_else(|| {
+        format!("runtime session `{runtime_session_id}` 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame")
+    })?;
 
     Ok(CompanionLifecycleAnchor {
         project_id: agent.project_id,

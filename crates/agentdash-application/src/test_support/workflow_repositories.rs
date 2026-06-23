@@ -38,7 +38,7 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .await
             .iter()
             .filter(|frame| frame.agent_id == agent_id)
-            .max_by_key(|frame| frame.revision)
+            .max_by_key(|frame| (frame.revision, frame.created_at))
             .cloned())
     }
 

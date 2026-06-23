@@ -939,6 +939,7 @@ mod tests {
     impl MemoryAgentRepo {
         fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
             let mut agents = HashMap::new();
+            let mut current_frame_ids: HashMap<Uuid, Uuid> = HashMap::new();
             let frames: Vec<_> = frame_repo
                 .frames
                 .lock()
@@ -950,21 +951,21 @@ mod tests {
                 let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::Unknown);
                 agent.id = frame.agent_id;
                 agent.status = "running".to_string();
-                let agent = agents.entry(agent.id).or_insert(agent);
-                let should_replace = agent
-                    .current_frame_id
+                agents.entry(agent.id).or_insert(agent);
+                let should_replace = current_frame_ids
+                    .get(&frame.agent_id)
                     .and_then(|current_frame_id| {
-                        frames.iter().find(|item| item.id == current_frame_id)
+                        frames.iter().find(|item| item.id == *current_frame_id)
                     })
                     .is_none_or(|current_frame| frame.revision > current_frame.revision);
                 if should_replace {
-                    agent.set_current_frame(frame.id);
+                    current_frame_ids.insert(frame.agent_id, frame.id);
                 }
             }
 
             let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
             for agent in agents.values_mut() {
-                let Some(frame_id) = agent.current_frame_id else {
+                let Some(frame_id) = current_frame_ids.get(&agent.id).copied() else {
                     continue;
                 };
                 let Some(runtime_session_id) = sessions_by_frame

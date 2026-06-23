@@ -357,3 +357,109 @@ openWorkspaceTab(`canvas://${event.view_key}`);
 ```ts
 openWorkspaceTab(event.presentation_uri);
 ```
+
+## Scenario: AgentRun Runtime Frame Resolution Contract
+
+### 1. Scope / Trigger
+
+- Trigger: AgentRun runtime 可以在同一个 delivery session 内采用新的 `AgentFrame` revision，例如 Canvas create/bind/present 写入新的 VFS mount 和 workspace module visibility。
+- Scope: backend session-facing frame resolver、AgentRun Workspace projection、Canvas runtime snapshot、Session control view、WorkspacePanel Canvas tab opening。
+
+### 2. Signatures
+
+Backend resolver signature:
+
+```rust
+resolve_current_frame_from_delivery_trace_ref(
+    runtime_session_id: &str,
+    anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    agent_repo: &dyn LifecycleAgentRepository,
+    frame_repo: &dyn AgentFrameRepository,
+) -> Result<Option<(RuntimeSessionExecutionAnchor, LifecycleAgent, AgentFrame)>, DomainError>
+```
+
+Browser-facing projection fields:
+
+```rust
+AgentRunWorkspaceView {
+    delivery_runtime_ref?: RuntimeSessionRefDto,
+    frame_runtime?: AgentFrameRuntimeView,
+    resource_surface?: ResolvedVfsSurface,
+    resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView,
+}
+```
+
+Database schema:
+
+```sql
+runtime_session_execution_anchors(
+    runtime_session_id text primary key,
+    run_id text not null,
+    agent_id text not null,
+    launch_frame_id text not null
+);
+
+lifecycle_agents.current_delivery_runtime_session_id text;
+lifecycle_agents.current_delivery_launch_frame_id text;
+-- lifecycle_agents.current_frame_id is not part of the runtime frame contract.
+```
+
+### 3. Contracts
+
+- Session-facing frame reads start from `runtime_session_id` and resolve through `RuntimeSessionExecutionAnchor`.
+- `RuntimeSessionExecutionAnchor.launch_frame_id` is launch evidence; it is not the current workspace surface after runtime adoption.
+- `resolve_current_frame_from_delivery_trace_ref` validates anchor -> agent -> run ownership before returning the effective `AgentFrame`.
+- `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-session views. Frontend-facing AgentRun, Canvas, VFS and Session runtime paths must not choose a frame from a raw agent id when a delivery runtime session is available.
+- `LifecycleAgent.current_delivery_*` stores the current delivery binding. `LifecycleAgent.current_frame_id` is not a domain or API contract field.
+- Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `runtime_session_id` has no execution anchor | Return not found / no runtime surface projection |
+| Anchor agent does not belong to anchor run | Treat resolver result as unavailable |
+| Effective frame belongs to a different agent | Treat resolver result as unavailable |
+| Effective frame has Canvas mount `cvs-{mount_id}` | AgentRun `resource_surface` exposes the Canvas mount and Canvas snapshot uses the same frame |
+| `AgentRunView` exposes `current_frame_id` | Contract drift; remove the field and consume `frame_runtime.frame_ref` where a UI needs display-only frame identity |
+| Workspace module event has `presentation_uri=canvas://{mount_id}` while runtime surface is refreshing | Open or activate the Canvas tab and refresh its content after workspace state update |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workspace_module_present(canvas:{mount_id}, preview)` creates/adopts a new frame revision; Agent runtime tools, AgentRun Workspace `resource_surface`, Canvas runtime snapshot, and WorkspacePanel tab all observe the same mount.
+- Good: Session control view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
+- Base: A draft/static run view with no delivery runtime may show the latest frame revision via `AgentFrameRepository.get_current(agent_id)` because no session anchor exists.
+- Bad: A Canvas snapshot resolves VFS from `anchor.launch_frame_id` after a later frame revision added the Canvas mount.
+- Bad: Frontend prevents opening `canvas://{mount_id}` because the previous `runtime_surface` has not refreshed yet.
+
+### 6. Tests Required
+
+- Backend unit test asserts `DeliveryRuntimeSelectionService` returns the effective current frame for the current delivery binding.
+- API/session test asserts Canvas/runtime VFS resolution uses the current adopted frame rather than launch frame evidence.
+- Contract check asserts `AgentRunView` has no `current_frame_id` field.
+- Frontend Workspace module test asserts `workspace_module_presented.presentation_uri` opens the Canvas tab and does not synthesize a Canvas URI from `view_key`.
+- Frontend WorkspacePanel/store test asserts concrete `canvas://{mount_id}` can be opened before the refreshed runtime surface has been rendered.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let frame = frame_repo
+    .get(anchor.launch_frame_id)
+    .await?
+    .or(frame_repo.get_current(agent.id).await?);
+```
+
+#### Correct
+
+```rust
+let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
+    runtime_session_id,
+    anchor_repo,
+    agent_repo,
+    frame_repo,
+)
+.await?
+.ok_or_else(|| WorkflowApplicationError::NotFound("runtime frame unavailable".to_string()))?;
+```

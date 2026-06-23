@@ -641,10 +641,8 @@ mod tests {
             entity_key: Option<&str>,
         ) -> RoutineDispatchReuseTarget {
             let mut run = test_run(routine.project_id);
-            let mut agent =
-                LifecycleAgent::new_root(run.id, routine.project_id, AgentSource::Routine);
+            let agent = LifecycleAgent::new_root(run.id, routine.project_id, AgentSource::Routine);
             let frame = AgentFrame::new_revision(agent.id, 1, "test");
-            agent.set_current_frame(frame.id);
             let mut orchestration = test_orchestration("routine.main");
             let orchestration_id = orchestration.orchestration_id;
             orchestration.node_tree.push(RuntimeNodeState {

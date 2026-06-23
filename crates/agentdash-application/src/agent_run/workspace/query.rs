@@ -386,14 +386,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 .await
                 .map_err(WorkflowApplicationError::from);
         }
-        if let Some(current_frame_id) = agent.current_frame_id {
-            return self
-                .repos
-                .agent_frame_repo
-                .get(current_frame_id)
-                .await
-                .map_err(WorkflowApplicationError::from);
-        }
         self.repos
             .agent_frame_repo
             .get_current(agent.id)

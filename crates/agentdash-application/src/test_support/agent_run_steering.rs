@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository,
 };
 
-use crate::lifecycle::WorkflowApplicationError;
+use crate::lifecycle::{WorkflowApplicationError, resolve_current_frame_from_delivery_trace_ref};
 use crate::session::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
     SessionTurnSteerCommand,
@@ -73,26 +73,19 @@ impl<'a> AgentRunSteeringService<'a> {
             ));
         }
 
-        let anchor = self
-            .execution_anchor_repo
-            .find_by_session(&command.delivery_runtime_session_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "runtime_session 缺少 RuntimeSessionExecutionAnchor: {}",
-                    command.delivery_runtime_session_id
-                ))
-            })?;
-        let agent = self
-            .lifecycle_agent_repo
-            .get(anchor.agent_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_agent 不存在: {}",
-                    anchor.agent_id
-                ))
-            })?;
+        let (anchor, agent, frame) = resolve_current_frame_from_delivery_trace_ref(
+            &command.delivery_runtime_session_id,
+            self.execution_anchor_repo,
+            self.lifecycle_agent_repo,
+            self.agent_frame_repo,
+        )
+        .await?
+        .ok_or_else(|| {
+            WorkflowApplicationError::NotFound(format!(
+                "runtime_session 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame: {}",
+                command.delivery_runtime_session_id
+            ))
+        })?;
         if agent.run_id != anchor.run_id {
             return Err(WorkflowApplicationError::Conflict(format!(
                 "RuntimeSessionExecutionAnchor run {} 与 LifecycleAgent run {} 不一致",
@@ -114,24 +107,6 @@ impl<'a> AgentRunSteeringService<'a> {
                     anchor.run_id
                 ))
             })?;
-        let frame = self
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await?
-            .or(self.agent_frame_repo.get(anchor.launch_frame_id).await?)
-            .ok_or_else(|| {
-                WorkflowApplicationError::NotFound(format!(
-                    "lifecycle_agent {} 没有 current AgentFrame",
-                    agent.id
-                ))
-            })?;
-        if frame.agent_id != agent.id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "AgentFrame {} 不属于 LifecycleAgent {}",
-                frame.id, agent.id
-            )));
-        }
-
         let active_turn_id = match self
             .session_core
             .inspect_session_execution_state(&command.delivery_runtime_session_id)

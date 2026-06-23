@@ -19,7 +19,9 @@ use crate::routes::lifecycle_contracts::{
 use crate::routes::lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent};
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_agent::MessageRef;
-use agentdash_application::lifecycle::run_view_builder;
+use agentdash_application::lifecycle::{
+    resolve_current_frame_from_delivery_trace_ref, run_view_builder,
+};
 use agentdash_application::session::{
     ExecutionStatus, SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest,
     SessionMeta, SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest,
@@ -204,16 +206,14 @@ pub async fn get_session_runtime_control(
             "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
         )));
     }
-    let frame = state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await?
-        .or(state
-            .repos
-            .agent_frame_repo
-            .get(anchor.launch_frame_id)
-            .await?);
+    let frame = resolve_current_frame_from_delivery_trace_ref(
+        &runtime_session_id,
+        state.repos.execution_anchor_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+    )
+    .await?
+    .map(|(_anchor, _agent, frame)| frame);
     let frame_runtime = match frame {
         Some(frame) => {
             let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;

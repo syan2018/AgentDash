@@ -139,7 +139,6 @@ pub struct AgentRunView {
     pub source: String,
     pub project_agent_id: Option<String>,
     pub status: String,
-    pub current_frame_id: Option<String>,
     pub delivery_runtime_ref: Option<RuntimeSessionRefView>,
     pub last_delivery_status: Option<String>,
     pub created_at: String,
@@ -358,6 +357,11 @@ async fn subject_runtime_attempt_history(
             continue;
         };
         for agent in agents {
+            let current_frame_id = repos
+                .agent_frame_repo
+                .get_current(agent.id)
+                .await?
+                .map(|frame| frame.id);
             let anchors = repos.execution_anchor_repo.list_by_agent(agent.id).await?;
             for anchor in anchors {
                 if anchor.run_id != run.id
@@ -365,7 +369,8 @@ async fn subject_runtime_attempt_history(
                 {
                     continue;
                 }
-                let Some(attempt) = runtime_attempt_from_anchor(run, &agent, &anchor) else {
+                let Some(attempt) = runtime_attempt_from_anchor(run, &anchor, current_frame_id)
+                else {
                     continue;
                 };
                 attempts.push(attempt);
@@ -442,8 +447,8 @@ fn sort_subject_runtime_attempts(attempts: &mut [SubjectRuntimeAttemptView]) {
 
 fn runtime_attempt_from_anchor(
     run: &LifecycleRun,
-    agent: &LifecycleAgent,
     anchor: &RuntimeSessionExecutionAnchor,
+    current_frame_id: Option<Uuid>,
 ) -> Option<SubjectRuntimeAttemptView> {
     let orchestration_id = anchor.orchestration_id?;
     let node_path = anchor.node_path.as_deref()?;
@@ -471,7 +476,7 @@ fn runtime_attempt_from_anchor(
             runtime_session_id: anchor.runtime_session_id.clone(),
         },
         launch_frame_id: anchor.launch_frame_id.to_string(),
-        current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
+        current_frame_id: current_frame_id.map(|id| id.to_string()),
         orchestration_id: orchestration_id.to_string(),
         node_path: node_path.to_string(),
         attempt,
@@ -519,7 +524,6 @@ pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> AgentRunView {
         source: agent.source.as_str().to_string(),
         project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
         status: agent.status.clone(),
-        current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
         delivery_runtime_ref: current_delivery.map(|binding| RuntimeSessionRefView {
             runtime_session_id: binding.runtime_session_id.clone(),
         }),
@@ -827,11 +831,9 @@ mod tests {
             .insert("agent-node-2".to_string(), json!({"result": "newer"}));
         run.orchestrations.push(orchestration);
 
-        let mut agent =
-            LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent);
         let launch_frame_id = Uuid::new_v4();
         let current_frame_id = Uuid::new_v4();
-        agent.set_current_frame(current_frame_id);
 
         let older_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "runtime-old",
@@ -853,8 +855,10 @@ mod tests {
         );
 
         let mut attempts = vec![
-            runtime_attempt_from_anchor(&run, &agent, &older_anchor).expect("older attempt"),
-            runtime_attempt_from_anchor(&run, &agent, &newer_anchor).expect("newer attempt"),
+            runtime_attempt_from_anchor(&run, &older_anchor, Some(current_frame_id))
+                .expect("older attempt"),
+            runtime_attempt_from_anchor(&run, &newer_anchor, Some(current_frame_id))
+                .expect("newer attempt"),
         ];
         sort_subject_runtime_attempts(&mut attempts);
 
@@ -927,8 +931,6 @@ mod tests {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame_id = Uuid::new_v4();
-        let current_frame_id = Uuid::new_v4();
-        agent.set_current_frame(current_frame_id);
         let current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-current-delivery",
             run.id,

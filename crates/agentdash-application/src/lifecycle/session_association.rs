@@ -50,12 +50,8 @@ pub async fn resolve_current_frame_from_delivery_trace_ref(
     if agent.run_id != anchor.run_id {
         return Ok(None);
     }
-    let frame = match frame_repo.get_current(agent.id).await? {
-        Some(frame) => frame,
-        None => match frame_repo.get(anchor.launch_frame_id).await? {
-            Some(frame) => frame,
-            None => return Ok(None),
-        },
+    let Some(frame) = frame_repo.get_current(agent.id).await? else {
+        return Ok(None);
     };
     if frame.agent_id != agent.id {
         return Ok(None);
@@ -574,8 +570,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let orchestration_id = Uuid::new_v4();
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
-        agent.set_current_frame(Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
 
         let launch_frame = AgentFrame::new_revision(agent.id, 1, "launch");
         let lifecycle_mount = build_lifecycle_mount_with_node_scope(

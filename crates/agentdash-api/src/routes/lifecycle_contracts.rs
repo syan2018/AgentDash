@@ -147,7 +147,6 @@ pub(crate) fn agent_run_to_contract(agent: app::AgentRunView) -> contract::Agent
         source: agent.source,
         project_agent_id: agent.project_agent_id,
         status: agent.status,
-        current_frame_id: agent.current_frame_id,
         delivery_runtime_ref: agent
             .delivery_runtime_ref
             .map(runtime_session_ref_to_contract),

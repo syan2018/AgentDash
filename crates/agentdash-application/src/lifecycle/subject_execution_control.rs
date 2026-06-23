@@ -653,7 +653,6 @@ mod tests {
 
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
-        agent.set_current_frame(frame.id);
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "runtime-2",
             run.id,
@@ -740,7 +739,6 @@ mod tests {
         run_repo.create(&run).await.expect("run");
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
-        agent.set_current_frame(frame.id);
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-plain-1",
             run.id,

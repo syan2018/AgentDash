@@ -1276,9 +1276,6 @@ pub struct AgentRunView {
     #[ts(optional)]
     pub project_agent_id: Option<String>,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub current_frame_id: Option<String>,
     /// 投递用的 runtime session（由 execution anchor 提供）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

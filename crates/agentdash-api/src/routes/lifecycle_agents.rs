@@ -1971,10 +1971,9 @@ mod tests {
     async fn delivery_runtime_session_context_ignores_old_anchor_without_current_delivery() {
         let fixture = DeliverySelectionFixture::default();
         let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-        agent.set_current_frame(current_frame.id);
         let old_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-old",
             run.id,
@@ -2018,7 +2017,6 @@ mod tests {
         let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let current_launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-        agent.set_current_frame(current_frame.id);
 
         let mut current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-current",

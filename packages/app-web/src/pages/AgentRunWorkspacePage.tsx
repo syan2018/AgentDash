@@ -484,7 +484,14 @@ export function AgentRunWorkspacePage({
         const target = workspaceModulePresentedTabTarget(data);
         if (target) {
           if (target.refreshRuntime) {
-            void refreshAgentRunWorkspaceState();
+            void (async () => {
+              await refreshAgentRunWorkspaceState().catch(() => {});
+              refreshWorkspaceModuleCatalog();
+              expandWorkspacePanel(target.typeId, target.uri, {
+                refreshContent: target.refreshRuntime,
+              });
+            })();
+            break;
           }
           expandWorkspacePanel(target.typeId, target.uri, {
             refreshContent: target.refreshRuntime,

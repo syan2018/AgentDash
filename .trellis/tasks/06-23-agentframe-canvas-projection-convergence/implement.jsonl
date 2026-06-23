@@ -1,0 +1,5 @@
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"AgentFrame、RuntimeSession、Canvas presentation 与前端 WorkspacePanel 共享跨层事实源。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"字段删除、DTO 生成与前后端 contract drift 检查需要遵循该契约。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"后端分层与 AgentRun/Session/Canvas 边界需要按架构主文档收束。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"移除或调整 lifecycle_agents.current_frame_id 必须配套 migration。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"WorkspacePanel、runtime surface 与 Canvas tab 的前端事实源约束在此定义。"}

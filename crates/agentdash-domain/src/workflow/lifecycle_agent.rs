@@ -166,7 +166,6 @@ pub mod bootstrap_status {
 /// Run-scoped Agent runtime identity.
 ///
 /// Agent 只属于一个 LifecycleRun；可以有多个 frame revision 和 runtime session refs。
-/// `current_frame_id` 指向当前生效 AgentFrame。
 /// `bootstrap_status` 取代原 SessionMeta.bootstrap_state，表达首轮初始化是否完成。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleAgent {
@@ -182,8 +181,6 @@ pub struct LifecycleAgent {
     /// "pending" = 等待首次 bootstrap；"bootstrapped" = 已完成；"not_applicable" = 不需要。
     #[serde(default = "default_bootstrap_status")]
     pub bootstrap_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_frame_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_delivery: Option<LifecycleAgentCurrentDeliveryBinding>,
     pub created_at: DateTime<Utc>,
@@ -205,7 +202,6 @@ impl LifecycleAgent {
             project_agent_id: None,
             status: "active".to_string(),
             bootstrap_status: bootstrap_status::PENDING.to_string(),
-            current_frame_id: None,
             current_delivery: None,
             created_at: now,
             updated_at: now,
@@ -220,11 +216,6 @@ impl LifecycleAgent {
     pub fn with_bootstrap_status(mut self, status: &str) -> Self {
         self.bootstrap_status = status.to_string();
         self
-    }
-
-    pub fn set_current_frame(&mut self, frame_id: Uuid) {
-        self.current_frame_id = Some(frame_id);
-        self.updated_at = Utc::now();
     }
 
     pub fn bind_current_delivery_from_anchor(

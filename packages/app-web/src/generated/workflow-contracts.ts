@@ -93,7 +93,7 @@ export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string,
 /**
  * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
  */
-source: string, project_agent_id?: string, status: string, current_frame_id?: string,
+source: string, project_agent_id?: string, status: string,
 /**
  * 投递用的 runtime session（由 execution anchor 提供）。
  */

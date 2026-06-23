@@ -173,7 +173,6 @@ impl TurnCommitter {
                         "accepted pending AgentFrame revision 已写入"
                     );
                     if let Ok(Some(mut agent)) = agent_repo.get(pending_frame.agent_id).await {
-                        agent.set_current_frame(pending_frame.id);
                         match anchor_repo.find_by_session(session_id).await {
                             Ok(Some(anchor)) => {
                                 agent.bind_current_delivery_from_anchor(
@@ -198,7 +197,7 @@ impl TurnCommitter {
                         if let Err(error) = agent_repo.update(&agent).await {
                             tracing::warn!(
                                 session_id,
-                                "同步 accepted pending current_frame_id 失败: {error}"
+                                "同步 accepted pending current delivery 失败: {error}"
                             );
                         } else {
                             self.sync_hook_runtime_target(
@@ -247,7 +246,6 @@ impl TurnCommitter {
                             "accepted AgentFrame revision 已写入"
                         );
                         if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
-                            agent.set_current_frame(frame.id);
                             agent.bind_current_delivery_from_anchor(
                                 &anchor,
                                 DeliveryBindingStatus::Running,
@@ -256,7 +254,7 @@ impl TurnCommitter {
                             if let Err(error) = agent_repo.update(&agent).await {
                                 tracing::warn!(
                                     session_id,
-                                    "同步 accepted current_frame_id 失败: {error}"
+                                    "同步 accepted current delivery 失败: {error}"
                                 );
                             } else {
                                 self.sync_hook_runtime_target(

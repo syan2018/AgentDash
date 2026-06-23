@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::ApplicationError;
 use crate::lifecycle::{
     AgentRunRuntimeAddress, MessageStreamProjectionRef, MessageStreamTraceKind,
+    resolve_current_frame_from_delivery_trace_ref,
 };
 use crate::repository_set::RepositorySet;
 
@@ -68,7 +69,7 @@ pub enum DeliveryRuntimeSelectionError {
         actual_agent_id: Uuid,
         actual_launch_frame_id: Uuid,
     },
-    #[error("LifecycleAgent {agent_id} 缺少 current_frame_id")]
+    #[error("LifecycleAgent {agent_id} 缺少当前 AgentFrame revision")]
     CurrentFrameMissing { agent_id: Uuid },
     #[error("AgentFrame {frame_id} 不存在")]
     CurrentFrameNotFound { frame_id: Uuid },
@@ -147,26 +148,36 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.ensure_run(run_id).await?;
         let agent = self.load_agent_for_run(run_id, agent_id).await?;
-        let current_frame_id = agent
-            .current_frame_id
-            .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id })?;
         let binding = agent
             .current_delivery
             .clone()
             .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
-        let anchor = self
-            .repos
-            .execution_anchors
-            .find_by_session(&binding.runtime_session_id)
+        let (anchor, _resolved_agent, current_frame) =
+            resolve_current_frame_from_delivery_trace_ref(
+                &binding.runtime_session_id,
+                self.repos.execution_anchors,
+                self.repos.lifecycle_agents,
+                self.repos.agent_frames,
+            )
             .await?
             .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
                 runtime_session_id: binding.runtime_session_id.clone(),
             })?;
+        if current_frame.agent_id != agent_id {
+            return Err(DeliveryRuntimeSelectionError::CurrentFrameNotFound {
+                frame_id: current_frame.id,
+            });
+        }
+        if anchor.agent_id != agent_id {
+            return Err(DeliveryRuntimeSelectionError::AnchorMissing {
+                runtime_session_id: binding.runtime_session_id.clone(),
+            });
+        }
         validate_anchor_matches(&anchor, run_id, agent_id, binding.launch_frame_id)?;
 
         self.selection_from_anchor(
             agent,
-            current_frame_id,
+            current_frame.id,
             anchor,
             binding.status,
             binding.observed_at,
@@ -393,7 +404,6 @@ mod tests {
                 LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
             let launch_frame = AgentFrame::new_initial(agent.id);
             let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
-            agent.set_current_frame(current_frame.id);
             let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
                 "runtime-current",
                 run.id,
@@ -454,9 +464,8 @@ mod tests {
     async fn delivery_runtime_selection_current_delivery_requires_binding() {
         let fixture = SelectionFixture::new();
         let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let frame = AgentFrame::new_initial(agent.id);
-        agent.set_current_frame(frame.id);
         fixture.runs.create(&run).await.expect("run");
         fixture.frames.create(&frame).await.expect("frame");
         fixture.agents.create(&agent).await.expect("agent");
@@ -479,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn delivery_runtime_selection_current_delivery_rejects_anchor_mismatch() {
         let fixture = SelectionFixture::new();
-        let (run, mut agent, launch_frame, current_frame, anchor) =
+        let (run, agent, launch_frame, _current_frame, anchor) =
             fixture.seed_current_delivery().await;
         let mismatched_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             anchor.runtime_session_id.clone(),
@@ -492,7 +501,6 @@ mod tests {
             .upsert(&mismatched_anchor)
             .await
             .expect("replace anchor");
-        agent.set_current_frame(current_frame.id);
 
         let error = fixture
             .service()

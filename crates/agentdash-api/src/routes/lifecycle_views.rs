@@ -12,6 +12,7 @@ use agentdash_application::agent_run::{
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel,
 };
+use agentdash_application::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use agentdash_application::lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
@@ -296,22 +297,20 @@ async fn resolve_frame_from_anchor(
             "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
         )));
     }
-    state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await?
-        .or(state
-            .repos
-            .agent_frame_repo
-            .get(anchor.launch_frame_id)
-            .await?)
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "lifecycle_agent {} 没有 current AgentFrame",
-                agent.id
-            ))
-        })
+    resolve_current_frame_from_delivery_trace_ref(
+        runtime_session_id,
+        state.repos.execution_anchor_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+    )
+    .await?
+    .map(|(_anchor, _agent, frame)| frame)
+    .ok_or_else(|| {
+        ApiError::NotFound(format!(
+            "lifecycle_agent {} 没有 current AgentFrame",
+            agent.id
+        ))
+    })
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

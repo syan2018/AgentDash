@@ -402,9 +402,6 @@ impl<'a> LifecycleDispatchService<'a> {
         let frame = builder.build(self.frame_repo).await?;
 
         let mut agent = agent;
-        agent.set_current_frame(frame.id);
-        self.agent_repo.update(&agent).await?;
-
         let anchor_repo = self.anchor_repo.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "Workflow AgentCall materialization 缺少 RuntimeSessionExecutionAnchorRepository"
@@ -480,8 +477,6 @@ impl<'a> LifecycleDispatchService<'a> {
             .create_initial_frame(&agent, runtime_session_ref)
             .await?;
         let mut agent = agent;
-        agent.set_current_frame(frame.id);
-        self.agent_repo.update(&agent).await?;
 
         if let Some(parent_agent_id) = plan.parent_agent_id {
             let lineage = AgentLineage::new(
@@ -580,8 +575,6 @@ impl<'a> LifecycleDispatchService<'a> {
             .create_plain_initial_frame(&agent, runtime_session_ref)
             .await?;
         let mut agent = agent;
-        agent.set_current_frame(frame.id);
-        self.agent_repo.update(&agent).await?;
 
         if let Some(parent_agent_id) = plan.parent_agent_id {
             let lineage = AgentLineage::new(
@@ -1998,19 +1991,13 @@ mod tests {
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
         assert_eq!(result.runtime_refs.agent_ref, target_agent.id);
-        let agents = agent_repo.items.lock().unwrap().clone();
-        let updated_target = agents
+        let frames = frame_repo.items.lock().unwrap().clone();
+        let updated_target = frames
             .iter()
-            .find(|agent| agent.id == target_agent.id)
-            .expect("target agent");
-        assert_eq!(
-            updated_target.current_frame_id,
-            Some(result.runtime_refs.frame_ref)
-        );
-        let first = agents
-            .iter()
-            .find(|agent| agent.id == first_agent.id)
-            .expect("first agent");
-        assert_eq!(first.current_frame_id, None);
+            .filter(|frame| frame.agent_id == target_agent.id)
+            .max_by_key(|frame| frame.revision)
+            .expect("target frame");
+        assert_eq!(updated_target.id, result.runtime_refs.frame_ref);
+        assert!(frames.iter().all(|frame| frame.agent_id != first_agent.id));
     }
 }

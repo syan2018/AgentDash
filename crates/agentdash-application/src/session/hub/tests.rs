@@ -139,7 +139,6 @@ async fn attach_test_lifecycle_frame(hub: &SessionRuntimeInner, session_id: &str
         LifecycleAgent::new_root(anchor.run_id, uuid::Uuid::new_v4(), AgentSource::Unknown)
             .with_bootstrap_status("not_applicable");
     agent.id = frame.agent_id;
-    agent.set_current_frame(frame.id);
     hub.lifecycle_agent_repo
         .as_ref()
         .expect("test hub should provide LifecycleAgentRepository")
@@ -150,13 +149,13 @@ async fn attach_test_lifecycle_frame(hub: &SessionRuntimeInner, session_id: &str
 }
 
 async fn current_frame_id(hub: &SessionRuntimeInner, agent_id: uuid::Uuid) -> Option<uuid::Uuid> {
-    hub.lifecycle_agent_repo
+    hub.agent_frame_repo
         .as_ref()
-        .expect("test hub should provide LifecycleAgentRepository")
-        .get(agent_id)
+        .expect("test hub should provide AgentFrameRepository")
+        .get_current(agent_id)
         .await
-        .expect("agent lookup should succeed")
-        .and_then(|agent| agent.current_frame_id)
+        .expect("frame lookup should succeed")
+        .map(|frame| frame.id)
 }
 
 #[derive(Default)]
@@ -1131,21 +1130,6 @@ async fn seed_refreshed_agent_run_for_command_test(
         .create(&current_frame)
         .await
         .expect("seed current frame");
-    let mut agent = hub
-        .lifecycle_agent_repo
-        .as_ref()
-        .expect("test hub should provide agent repo")
-        .get(launch_frame.agent_id)
-        .await
-        .expect("agent lookup should succeed")
-        .expect("agent should exist");
-    agent.set_current_frame(current_frame.id);
-    hub.lifecycle_agent_repo
-        .as_ref()
-        .expect("test hub should provide agent repo")
-        .update(&agent)
-        .await
-        .expect("update current frame");
 
     let _rx = hub.ensure_session(session_id).await;
     hub.runtime_registry

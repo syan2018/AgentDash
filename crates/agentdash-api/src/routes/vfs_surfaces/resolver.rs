@@ -7,7 +7,7 @@ use agentdash_application::lifecycle::surface::surface_projector::{
 };
 use agentdash_application::lifecycle::{
     AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
-    MessageStreamTraceKind,
+    MessageStreamTraceKind, resolve_current_frame_from_delivery_trace_ref,
 };
 use agentdash_application::session::construction_planner::resolve_project_workspace;
 use agentdash_application::task::plan::find_task_plan_item_for_subject;
@@ -296,22 +296,22 @@ pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
         .into_iter()
         .filter(|anchor| anchor.agent_id == agent.id)
         .max_by_key(|anchor| anchor.updated_at);
-    let anchor_frame_id = anchor.as_ref().map(|anchor| anchor.launch_frame_id);
-    let current_frame = state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
+    let frame = match anchor.as_ref() {
+        Some(anchor) => resolve_current_frame_from_delivery_trace_ref(
+            &anchor.runtime_session_id,
+            state.repos.execution_anchor_repo.as_ref(),
+            state.repos.lifecycle_agent_repo.as_ref(),
+            state.repos.agent_frame_repo.as_ref(),
+        )
         .await
-        .map_err(ApiError::from)?;
-    let frame = match (current_frame, anchor_frame_id) {
-        (Some(frame), _) => Some(frame),
-        (None, Some(frame_id)) => state
+        .map_err(ApiError::from)?
+        .map(|(_anchor, _agent, frame)| frame),
+        None => state
             .repos
             .agent_frame_repo
-            .get(frame_id)
+            .get_current(agent.id)
             .await
             .map_err(ApiError::from)?,
-        (None, None) => None,
     };
     let Some(frame) = frame else {
         return Ok(None);

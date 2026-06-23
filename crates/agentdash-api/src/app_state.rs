@@ -368,12 +368,12 @@ impl AppState {
         // 再从 frame revision 投影 connector 所需的 runtime surface。
         {
             let provider = Arc::new(
-                crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(
+                crate::bootstrap::frame_launch_envelope_provider::AppStateFrameLaunchEnvelopeProvider::new(
                     state.clone(),
                 ),
             );
             session_runtime_builder
-                .set_session_construction_provider(provider)
+                .set_frame_launch_envelope_provider(provider)
                 .await;
         }
 

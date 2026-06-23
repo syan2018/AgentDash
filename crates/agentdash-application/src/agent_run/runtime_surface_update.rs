@@ -7,15 +7,15 @@ use agentdash_spi::{CapabilityState, Vfs};
 use async_trait::async_trait;
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::runtime_capability::project_capability_state_from_frame;
+use crate::agent_run::runtime_capability_projection::{
+    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline, merge_live_vfs_skill_entries,
+};
 use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
 };
 use crate::canvas::resolve_canvas_binding_files;
-use crate::session::capability_projection::{
-    SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
-};
-use crate::session::capability_state::project_capability_state_from_frame;
 use crate::session::types::AgentFrameRuntimeTarget;
 use crate::vfs::{VfsService, append_canvas_mounts, refresh_canvas_mount_binding_files};
 
@@ -178,7 +178,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         &self,
         active_vfs: &Vfs,
     ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
-        derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: self.vfs_service.as_deref(),
             active_vfs: Some(active_vfs),
             identity: None,

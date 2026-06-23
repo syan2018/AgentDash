@@ -161,11 +161,12 @@ pub fn activate_activity_with_platform(
         .workflow_contract
         .map(|contract| contract.capability_config.mount_directives.clone())
         .unwrap_or_default();
-    let effective_vfs = crate::session::capability_state::compose_vfs_with_overlay_and_directives(
-        input.base_vfs,
-        &lifecycle_vfs,
-        &mount_directives,
-    );
+    let effective_vfs =
+        crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives(
+            input.base_vfs,
+            &lifecycle_vfs,
+            &mount_directives,
+        );
 
     // ── 3. 调 Resolver ──
     let mut contributions = Vec::new();
@@ -680,7 +681,7 @@ mod tests {
         assert_eq!(target_vfs.default_mount_id.as_deref(), Some("review"));
         assert_ne!(base_surface, target);
 
-        let delta = crate::session::compute_capability_state_delta(
+        let delta = crate::agent_run::runtime_capability::compute_capability_state_delta(
             Some(&base_surface),
             &target,
             &activation.capability_keys,

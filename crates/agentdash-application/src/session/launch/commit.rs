@@ -5,8 +5,8 @@ use agentdash_domain::workflow::DeliveryBindingStatus;
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
 use crate::agent_run::AgentFrameBuilder;
+use crate::agent_run::runtime_capability::capability_state_to_frame_surfaces;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::session::capability_state::capability_state_to_frame_surfaces;
 use crate::session::hub_support::{
     TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
     build_user_input_submitted_envelope,

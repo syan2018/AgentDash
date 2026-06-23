@@ -5,7 +5,7 @@ use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeCompanionAgentEntry};
 
 use super::DimensionDelta;
-use crate::session::CapabilityStateDelta;
+use crate::agent_run::runtime_capability::CapabilityStateDelta;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CompanionAgentDimensionDelta {

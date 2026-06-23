@@ -9,13 +9,13 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
+use crate::agent_run::runtime_capability::{
+    ToolCapabilityDimensionModule, project_capability_state_from_frame,
+};
 use crate::agent_run::{
     AgentFrameBuilder, AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateService,
 };
 use crate::session::AgentFrameRuntimeTarget;
-use crate::session::capability_state::{
-    ToolCapabilityDimensionModule, project_capability_state_from_frame,
-};
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,

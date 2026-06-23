@@ -10,14 +10,14 @@ use agentdash_domain::workflow::{
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 
+use crate::agent_run::AgentRunMailboxRuntimeAdapter;
+use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
 use crate::context::SharedContextAuditBus;
-use crate::session::construction_provider::SharedSessionConstructionProvider;
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
 use crate::session::hub::SessionRuntimeInner;
-use crate::session::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps;
 use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
@@ -35,8 +35,8 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
-    pub(super) session_construction_provider:
-        Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
+    pub(super) frame_launch_envelope_provider:
+        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopeProvider>>>,
     runtime_registry: SessionRuntimeRegistry,
     hook_effect_handler_registry:
         Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
@@ -50,7 +50,8 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
-    pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
+    pub(super) agent_run_mailbox_runtime_adapter:
+        Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
     eventing: SessionEventingService,
     core: SessionCoreService,
     hooks: SessionHookService,
@@ -65,7 +66,7 @@ impl SessionLaunchDeps {
             runtime_registry: inner.runtime_registry.clone(),
             turn_supervisor: inner.turn_supervisor.clone(),
             stores: inner.stores.clone(),
-            session_construction_provider: inner.session_construction_provider.clone(),
+            frame_launch_envelope_provider: inner.frame_launch_envelope_provider.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
             context_audit_bus: inner.context_audit_bus.clone(),
             base_system_prompt: inner.base_system_prompt.clone(),
@@ -77,7 +78,7 @@ impl SessionLaunchDeps {
             agent_frame_repo: inner.agent_frame_repo.clone(),
             execution_anchor_repo: inner.execution_anchor_repo.clone(),
             lifecycle_agent_repo: inner.lifecycle_agent_repo.clone(),
-            agent_run_mailbox_boundary_deps: inner.agent_run_mailbox_boundary_deps.clone(),
+            agent_run_mailbox_runtime_adapter: inner.agent_run_mailbox_runtime_adapter.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),
             hooks: inner.hook_service(),
@@ -86,10 +87,10 @@ impl SessionLaunchDeps {
         }
     }
 
-    pub(super) async fn current_session_construction_provider(
+    pub(super) async fn current_frame_launch_envelope_provider(
         &self,
-    ) -> Option<SharedSessionConstructionProvider> {
-        self.session_construction_provider.read().await.clone()
+    ) -> Option<SharedFrameLaunchEnvelopeProvider> {
+        self.frame_launch_envelope_provider.read().await.clone()
     }
 
     pub(super) fn planning(&self) -> LaunchPlanningDeps {
@@ -102,7 +103,7 @@ impl SessionLaunchDeps {
             context_audit_bus: self.context_audit_bus.clone(),
             backend_execution_transport: self.backend_execution_transport.clone(),
             backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
-            agent_run_mailbox_boundary_deps: self.agent_run_mailbox_boundary_deps.clone(),
+            agent_run_mailbox_runtime_adapter: self.agent_run_mailbox_runtime_adapter.clone(),
         }
     }
 
@@ -160,12 +161,19 @@ pub(super) struct LaunchPlanningDeps {
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
-    pub(super) agent_run_mailbox_boundary_deps: Option<AgentRunMailboxRuntimeBoundaryDeps>,
+    agent_run_mailbox_runtime_adapter:
+        Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
 }
 
 impl LaunchPlanningDeps {
     pub(super) async fn current_context_audit_bus(&self) -> Option<SharedContextAuditBus> {
         self.context_audit_bus.read().await.clone()
+    }
+
+    pub(super) async fn current_agent_run_mailbox_runtime_adapter(
+        &self,
+    ) -> Option<Arc<AgentRunMailboxRuntimeAdapter>> {
+        self.agent_run_mailbox_runtime_adapter.read().await.clone()
     }
 }
 

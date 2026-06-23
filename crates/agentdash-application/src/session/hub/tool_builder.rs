@@ -12,8 +12,8 @@ use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
 use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::agent_run::AgentRunEffectiveCapabilityService;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::session::capability_state::project_capability_state_from_frame;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
 };

@@ -90,38 +90,38 @@
 - [x] 更新 `.trellis/spec/backend/session/runtime-execution-state.md`：`session/hub` 只表达 live runtime coordination，不表达 AgentRun current surface query。
 - [x] 如需要，新增 backend appendix 记录 AgentRun runtime surface query contract 与 `AgentFrame` exposure boundary。
 - [x] 清理 task research 中已转入 design 的临时 TODO。
-- [ ] 跑质量检查。
+- [x] 跑质量检查。
 
 ## Phase 6: Session Module Owner Cleanup
 
 这一步是用户指出的核心补充：不能只清 `session/hub` 或重命名 `SessionCapabilityService`，必须沿调用链清理整个
 `session` 模块里仍承载的业务 owner。
 
-- [ ] 将 `agent_run::frame::construction::* -> session::assembly_builder` 的反向依赖迁出：
-  - [ ] `SessionAssemblyBuilder`、`AssemblyLaunchExtras`、`project_assembly_to_frame` 移到 `agent_run::frame::construction`。
-  - [ ] construction 侧自行拥有 frame surface draft + launch-only extras handoff。
-  - [ ] session launch 不再 re-export assembly builder。
-- [ ] 将 `agent_run::frame::construction::* -> session::assembler` 的 owner composition 迁出：
-  - [ ] lifecycle node composition 归 lifecycle/AgentRun construction。
-  - [ ] companion composition 归 companion/AgentRun construction。
-  - [ ] ProjectAgent selection/context projection 不再从 session assembler 进入。
-  - [ ] `SessionRequestAssembler` 删除或改名为 AgentRun construction service。
-- [ ] 将 `session::capability_state` 迁到 AgentRun runtime surface/capability owner：
-  - [ ] `project_capability_state_from_frame` / `capability_state_to_frame_surfaces` 与 `AgentFrameBuilder` 同归属。
-  - [ ] `RuntimeCapabilityTransition` replay / `CapabilityDimensionRegistry` 移出 session。
-  - [ ] Permission、WorkspaceModule、AgentRun query/update 不再 import `session::capability_state`。
-- [ ] 将 `session::capability_projection` 迁到 construction-time capability projection owner：
-  - [ ] skill/guideline discovery 的输入输出按 AgentRun construction/runtime surface 命名。
-  - [ ] session runtime transition service 只在 test helper 或 delivery transition apply 中消费窄接口。
-- [ ] 将 `session::construction_provider` 改为 launch envelope provider contract：
-  - [ ] contract 名称表达 `FrameLaunchEnvelope` provider，而不是 session construction owner。
-  - [ ] `SessionLaunchService` 只依赖 provider 产出的 closed launch envelope。
-- [ ] 将 `session::mailbox_delegate` 迁到 AgentRun mailbox runtime adapter：
-  - [ ] AgentRun mailbox scheduler/service construction 不再由 session delegate 持有。
-  - [ ] session launch planner 只接收/安装 `AgentRuntimeDelegate`。
-- [ ] 增加边界检查：
-  - [ ] `rg "session::assembly_builder|session::assembler|session::capability_state|session::capability_projection" crates/agentdash-application/src/agent_run crates/agentdash-application/src/permission crates/agentdash-application/src/workspace_module`
-  - [ ] `rg "SessionRequestAssembler|SessionAssemblyBuilder|project_capability_state_from_frame" crates/agentdash-application/src/session/mod.rs crates/agentdash-application/src/session`
+- [x] 将 `agent_run::frame::construction::* -> session::assembly_builder` 的反向依赖迁出：
+  - [x] `SessionAssemblyBuilder`、`AssemblyLaunchExtras`、`project_assembly_to_frame` 移到 `agent_run::frame::construction`。
+  - [x] construction 侧自行拥有 frame surface draft + launch-only extras handoff。
+  - [x] session launch 不再 re-export assembly builder。
+- [x] 将 `agent_run::frame::construction::* -> session::assembler` 的 owner composition 迁出：
+  - [x] lifecycle node composition 归 lifecycle/AgentRun construction。
+  - [x] companion composition 归 companion/AgentRun construction。
+  - [x] ProjectAgent selection/context projection 不再从 session assembler 进入。
+  - [x] `SessionRequestAssembler` 删除或改名为 AgentRun construction service。
+- [x] 将 `session::capability_state` 迁到 AgentRun runtime surface/capability owner：
+  - [x] `project_capability_state_from_frame` / `capability_state_to_frame_surfaces` 与 `AgentFrameBuilder` 同归属。
+  - [x] `RuntimeCapabilityTransition` replay / `CapabilityDimensionRegistry` 移出 session。
+  - [x] Permission、WorkspaceModule、AgentRun query/update 不再 import `session::capability_state`。
+- [x] 将 `session::capability_projection` 迁到 construction-time capability projection owner：
+  - [x] skill/guideline discovery 的输入输出按 AgentRun construction/runtime surface 命名。
+  - [x] session runtime transition service 只在 test helper 或 delivery transition apply 中消费窄接口。
+- [x] 将 `session::construction_provider` 改为 launch envelope provider contract：
+  - [x] contract 名称表达 `FrameLaunchEnvelope` provider，而不是 session construction owner。
+  - [x] `SessionLaunchService` 只依赖 provider 产出的 closed launch envelope。
+- [x] 将 `session::mailbox_delegate` 迁到 AgentRun mailbox runtime adapter：
+  - [x] AgentRun mailbox scheduler/service construction 不再由 session delegate 持有。
+  - [x] session launch planner 只接收/安装 `AgentRuntimeDelegate`。
+- [x] 增加边界检查：
+  - [x] `rg "session::assembly_builder|session::assembler|session::capability_state|session::capability_projection" crates/agentdash-application/src/agent_run crates/agentdash-application/src/permission crates/agentdash-application/src/workspace_module`
+  - [x] `rg "SessionRequestAssembler|SessionAssemblyBuilder|project_capability_state_from_frame" crates/agentdash-application/src/session/mod.rs crates/agentdash-application/src/session`
 
 ## Efficient Parallel Dispatch Plan
 

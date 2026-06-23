@@ -3,6 +3,7 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_spi::ConnectorError;
 
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::projection::resolve_active_workflow_projection_from_message_stream_trace;
@@ -13,7 +14,6 @@ use crate::lifecycle::{
 use crate::session::construction_planner::{
     build_project_agent_context, resolve_project_workspace,
 };
-use crate::session::construction_provider::SessionConstructionProviderInput;
 
 use super::{
     FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
@@ -26,7 +26,7 @@ pub(super) async fn compose(
     frame: &AgentFrame,
     agent: LifecycleAgent,
     run: LifecycleRun,
-    input: &SessionConstructionProviderInput,
+    input: &FrameLaunchEnvelopeProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let project_agent_id = agent.project_agent_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("LifecycleAgent {} 缺少 project_agent_id", agent.id))

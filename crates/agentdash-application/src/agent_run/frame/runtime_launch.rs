@@ -71,7 +71,7 @@ impl FrameRuntimeSurface {
 
 // ─── FrameLaunchIntent: 只来自 command/prompt intent ───
 
-/// 来自 `LaunchCommand` / `AssemblyLaunchExtras` 的请求意图，
+/// 来自 `LaunchCommand` / `FrameAssemblyLaunchExtras` 的请求意图，
 /// 不含任何 frame surface 数据。
 #[derive(Debug, Clone, Default)]
 pub struct FrameLaunchIntent {

@@ -11,6 +11,9 @@ use agentdash_domain::workflow::{
 use async_trait::async_trait;
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::agent_run::frame::construction::{
+    LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+};
 use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
@@ -20,7 +23,6 @@ use crate::lifecycle::{
 };
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 
 use super::executor_launcher::LaunchedAgentNode;
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};

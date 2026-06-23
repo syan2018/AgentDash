@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::agent_run::frame::runtime_launch::runtime_backend_anchor_from_vfs;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::lifecycle::AgentRunRuntimeAddress;
-use crate::session::capability_state::project_capability_state_from_frame;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSurfaceQueryPurpose {

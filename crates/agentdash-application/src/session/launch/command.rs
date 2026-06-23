@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use agentdash_spi::RuntimeMcpServer;
 
-use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
+use crate::agent_run::frame::launch_envelope_provider::{
+    CompanionLaunchSource, RoutineLaunchSource,
+};
 use crate::session::types::UserPromptInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
@@ -216,7 +218,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{LaunchCommand, LaunchModifier, LaunchSource};
-    use crate::session::construction_provider::{CompanionLaunchSource, RoutineLaunchSource};
+    use crate::agent_run::frame::launch_envelope_provider::{
+        CompanionLaunchSource, RoutineLaunchSource,
+    };
     use crate::session::types::UserPromptInput;
 
     #[test]

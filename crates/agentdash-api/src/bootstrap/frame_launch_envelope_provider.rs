@@ -1,7 +1,7 @@
-//! `SessionConstructionProvider` 的 API 层薄委托。
+//! `FrameLaunchEnvelopeProvider` 的 API 层薄委托。
 //!
 //! 所有 compose 逻辑由 application 层的 `FrameConstructionService` 承接，此文件仅保留：
-//! 1. `AppStateSessionConstructionProvider` — 实现 trait 的薄委托层
+//! 1. `AppStateFrameLaunchEnvelopeProvider` — 实现 trait 的薄委托层
 //! 2. test-only 的 API error encode/decode 辅助（供集成测试使用）
 
 use std::sync::Arc;
@@ -12,8 +12,8 @@ use agentdash_application::agent_run::frame::construction::{
     FrameConstructionDeps, FrameConstructionService,
 };
 use agentdash_application::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-use agentdash_application::session::{
-    SessionConstructionProvider, SessionConstructionProviderInput,
+use agentdash_application::agent_run::frame::{
+    FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput,
 };
 use agentdash_spi::ConnectorError;
 
@@ -25,11 +25,11 @@ use crate::rpc::ApiError;
 ///
 /// 内部持有 `FrameConstructionService`（application 层），将所有 compose 路由
 /// 和 frame 持久化委托给该 service，自身不再包含任何业务分支。
-pub struct AppStateSessionConstructionProvider {
+pub struct AppStateFrameLaunchEnvelopeProvider {
     service: FrameConstructionService,
 }
 
-impl AppStateSessionConstructionProvider {
+impl AppStateFrameLaunchEnvelopeProvider {
     pub fn new(state: Arc<AppState>) -> Self {
         let service = FrameConstructionService::new(FrameConstructionDeps {
             repos: state.repos.clone(),
@@ -47,10 +47,10 @@ impl AppStateSessionConstructionProvider {
 }
 
 #[async_trait]
-impl SessionConstructionProvider for AppStateSessionConstructionProvider {
-    async fn build_frame_construction(
+impl FrameLaunchEnvelopeProvider for AppStateFrameLaunchEnvelopeProvider {
+    async fn build_frame_launch_envelope(
         &self,
-        input: SessionConstructionProviderInput,
+        input: FrameLaunchEnvelopeProviderInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         self.service.construct_launch_envelope(input).await
     }

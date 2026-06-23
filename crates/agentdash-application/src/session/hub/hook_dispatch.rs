@@ -20,6 +20,7 @@ use super::super::terminal_effects::{
 };
 use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
+use crate::agent_run::AgentRunMailboxAutoResumeRequest;
 use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
@@ -231,32 +232,20 @@ impl SessionRuntimeInner {
         &self,
         request: &TerminalAutoResumeRequest,
     ) -> AutoResumeMailboxRoute {
-        let Some(deps) = self.agent_run_mailbox_boundary_deps.clone() else {
+        let Some(adapter) = self.agent_run_mailbox_runtime_adapter.read().await.clone() else {
             return AutoResumeMailboxRoute::NoAnchor;
         };
-        let service = crate::agent_run::AgentRunMailboxService::new(
-            deps.lifecycle_run_repo.as_ref(),
-            deps.lifecycle_agent_repo.as_ref(),
-            deps.agent_frame_repo.as_ref(),
-            deps.execution_anchor_repo.as_ref(),
-            deps.command_receipt_repo.as_ref(),
-            deps.mailbox_repo.as_ref(),
-            deps.session_core.clone(),
-            deps.session_control.clone(),
-            deps.session_eventing.clone(),
-            (*deps.session_launch).clone(),
-        );
-        match service
-            .accept_hook_auto_resume_effect(
-                &request.session_id,
-                request.effect_id,
-                request.turn_id.clone(),
-                request.terminal_event_seq,
-                text_user_input_blocks(msg::AUTO_RESUME_PROMPT),
-            )
+        match adapter
+            .accept_hook_auto_resume_effect(AgentRunMailboxAutoResumeRequest {
+                session_id: request.session_id.clone(),
+                effect_id: request.effect_id,
+                source_turn_id: request.turn_id.clone(),
+                terminal_event_seq: request.terminal_event_seq,
+                input: text_user_input_blocks(msg::AUTO_RESUME_PROMPT),
+            })
             .await
         {
-            Ok(_) => {
+            Ok(true) => {
                 if let Some(frame) = build_auto_resume_context_frame(
                     "hook_before_stop_continue",
                     msg::AUTO_RESUME_PROMPT,
@@ -267,9 +256,7 @@ impl SessionRuntimeInner {
                 }
                 AutoResumeMailboxRoute::Routed
             }
-            Err(crate::lifecycle::WorkflowApplicationError::NotFound(_)) => {
-                AutoResumeMailboxRoute::NoAnchor
-            }
+            Ok(false) => AutoResumeMailboxRoute::NoAnchor,
             Err(error) => {
                 tracing::warn!(
                     session_id = %request.session_id,

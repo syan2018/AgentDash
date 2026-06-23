@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::agent_run::{
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
+    AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
@@ -171,12 +172,6 @@ pub(crate) async fn build_session_runtime(
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
-    .with_agent_run_mailbox_boundary(
-        repos.lifecycle_run_repo.clone(),
-        repos.agent_run_command_receipt_repo.clone(),
-        repos.agent_run_mailbox_repo.clone(),
-    )
-    .map_err(anyhow::Error::msg)?
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {
@@ -191,6 +186,23 @@ pub(crate) async fn build_session_runtime(
     let session_launch = session_runtime_builder.launch_service();
     let session_hooks = session_runtime_builder.hook_service();
     let session_runtime_transition = session_runtime_builder.runtime_transition_service();
+    let mailbox_runtime_adapter = Arc::new(AgentRunMailboxRuntimeAdapter::new(
+        AgentRunMailboxRuntimeBoundaryDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+            session_core: session_core.clone(),
+            session_control: session_control.clone(),
+            session_eventing: session_eventing.clone(),
+            session_launch: Arc::new(session_launch.clone()),
+        },
+    ));
+    session_runtime_builder
+        .set_agent_run_mailbox_runtime_adapter(mailbox_runtime_adapter)
+        .await;
     let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
         AgentRunRuntimeSurfaceQueryDeps {
             anchor_repo: repos.execution_anchor_repo.clone(),

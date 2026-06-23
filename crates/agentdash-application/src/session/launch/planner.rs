@@ -14,7 +14,6 @@ use crate::session::hook_delegate::HookRuntimeDelegate;
 use crate::session::hook_injection_sink::{
     DynRuntimeHookInjectionSink, SessionRuntimeHookInjectionSink,
 };
-use crate::session::mailbox_delegate::AgentRunMailboxRuntimeDelegate;
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
@@ -157,12 +156,11 @@ impl<'a> LaunchPlanner<'a> {
                     Some(injection_sink),
                 )
             });
-        let runtime_delegate = match self.deps.agent_run_mailbox_boundary_deps.clone() {
-            Some(mailbox_deps) => Some(Arc::new(AgentRunMailboxRuntimeDelegate::new(
-                input.session_id.to_string(),
-                hook_runtime_delegate,
-                mailbox_deps,
-            )) as DynAgentRuntimeDelegate),
+        let runtime_delegate = match self.deps.current_agent_run_mailbox_runtime_adapter().await {
+            Some(mailbox_adapter) => Some(
+                mailbox_adapter
+                    .runtime_delegate(input.session_id.to_string(), hook_runtime_delegate),
+            ),
             None => hook_runtime_delegate,
         };
         let restore_mode = match prompt_launch_path {

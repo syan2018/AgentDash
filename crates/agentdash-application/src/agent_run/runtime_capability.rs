@@ -14,7 +14,7 @@ pub use agentdash_spi::{
 
 pub use agentdash_spi::AccumulationPolicy;
 
-use super::types::{
+use crate::session::types::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
     CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
     CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
@@ -1271,7 +1271,9 @@ mod tests {
         let transition = RuntimeCapabilityTransition {
             declarations: Vec::new(),
             effects: vec![RuntimeCapabilityEffectRecord {
-                dimension: crate::session::CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
+                dimension: crate::session::types::CapabilityDimensionKey::new(
+                    CAPABILITY_DIMENSION_TOOL,
+                ),
                 effect_type: EFFECT_TYPE_SET_TOOL_ACCESS.to_string(),
                 payload: serde_json::json!({
                     "capabilities": "not-a-set",

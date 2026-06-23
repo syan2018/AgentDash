@@ -8,7 +8,8 @@ use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs};
 use uuid::Uuid;
 
-use crate::session::{AgentFrameRuntimeTarget, project_capability_state_from_frame};
+use crate::agent_run::runtime_capability::project_capability_state_from_frame;
+use crate::session::AgentFrameRuntimeTarget;
 
 /// AgentRun runtime capability/admission 的入口请求标识。
 ///

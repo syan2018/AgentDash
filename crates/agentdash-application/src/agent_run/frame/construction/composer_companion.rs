@@ -3,19 +3,21 @@
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-use crate::session::construction_provider::{
-    CompanionLaunchSource, SessionConstructionProviderInput,
+use crate::agent_run::frame::launch_envelope_provider::{
+    CompanionLaunchSource, FrameLaunchEnvelopeProviderInput,
 };
-use crate::session::{CompanionParentSpec, CompanionParentWorkflowSpec};
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
-use super::{FrameConstructionService, frame_builder_from_existing};
+use super::{
+    CompanionParentSpec, CompanionParentWorkflowSpec, FrameConstructionService,
+    frame_builder_from_existing,
+};
 
 pub(super) async fn compose_project_agent_owner_modifier(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
-    input: &SessionConstructionProviderInput,
+    input: &FrameLaunchEnvelopeProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let builder =
@@ -52,7 +54,7 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
-    input: &SessionConstructionProviderInput,
+    input: &FrameLaunchEnvelopeProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let workflow = companion.workflow.ok_or_else(|| {

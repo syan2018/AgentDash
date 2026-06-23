@@ -1,10 +1,6 @@
 use std::io;
 
 #[cfg(test)]
-use super::capability_projection::{
-    SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
-};
-#[cfg(test)]
 use super::hub::PendingRuntimeContextTransitionInput;
 use super::hub::SessionRuntimeInner;
 use super::hub::{ApplyPendingRuntimeContextTransitionInput, PendingRuntimeContextApplication};
@@ -12,6 +8,10 @@ use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
 use super::types::CapabilityState;
+#[cfg(test)]
+use crate::agent_run::runtime_capability_projection::{
+    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline, merge_live_vfs_skill_entries,
+};
 #[cfg(test)]
 use agentdash_spi::Vfs;
 
@@ -108,7 +108,7 @@ impl SessionRuntimeTransitionService {
         &self,
         active_vfs: &Vfs,
     ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
-        derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: self.hub.vfs_service.as_deref(),
             active_vfs: Some(active_vfs),
             identity: None,

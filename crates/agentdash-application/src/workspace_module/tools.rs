@@ -1167,6 +1167,7 @@ mod tests {
 
     use super::*;
     use crate::agent_run::frame::surface::{AgentFrameSurfaceExt, FrameSurfaceDraft};
+    use crate::agent_run::runtime_capability::project_capability_state_from_frame;
     use crate::agent_run::{
         AgentRunEffectiveCapabilityService, AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure,
         AgentRunRuntimeSurfaceProvenance, AgentRunRuntimeSurfaceQueryError,
@@ -1179,7 +1180,6 @@ mod tests {
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
     };
-    use crate::session::capability_state::project_capability_state_from_frame;
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan,
@@ -2024,7 +2024,7 @@ mod tests {
         );
 
         let state = hub
-            .current_runtime_capability_state(&session.id)
+            .get_current_capability_state(&session.id)
             .await
             .expect("current capability state should exist");
         let active_vfs = state.vfs.active.expect("active VFS should exist");
@@ -2247,7 +2247,7 @@ mod tests {
         );
 
         let state = hub
-            .current_runtime_capability_state(&session.id)
+            .get_current_capability_state(&session.id)
             .await
             .expect("current capability state should exist");
         let active_vfs = state.vfs.active.expect("active VFS should exist");

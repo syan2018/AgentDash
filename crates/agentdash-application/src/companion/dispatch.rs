@@ -8,9 +8,9 @@ use agentdash_spi::AgentConfig;
 use agentdash_spi::action_type as at;
 
 use super::tools::CompanionAdoptionMode;
+use crate::agent_run::frame::CompanionLaunchSource;
 use crate::lifecycle::LifecycleDispatchService;
 use crate::repository_set::RepositorySet;
-use crate::session::CompanionLaunchSource;
 use crate::task::plan::update_run_task;
 
 #[derive(Debug, Clone)]

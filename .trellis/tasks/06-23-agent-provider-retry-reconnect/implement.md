@@ -13,6 +13,32 @@
 
 本任务适合由主会话协调、多个 Trellis sub-agents 并行推进。并行单位按稳定接口和可独立验证的产物拆分，不按目录树隐式推断依赖。
 
+Directed dependency graph:
+
+```mermaid
+flowchart TD
+    Review["Review gate\n用户确认 planning 后 task.py start"]
+    A["Track A\nProtocol contracts\nPlatformEvent, AgentEvent, Turn duration, TS bindings"]
+    B["Track B\nBridge/provider retry\nclassification, backoff, pre-delta retry"]
+    C["Track C\nAgent loop boundary\nhas_visible_delta, pollution prevention"]
+    D["Track D\nSession recovery\nSessionRewound, stable projection, mailbox cleanup"]
+    E["Track E\nFrontend Codex-style feed\nThinking, Reconnecting, duration, rehydrate"]
+    F["Track F\nIntegration check\nevent sequence, projection, UI, focused tests"]
+
+    Review --> A
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    B --> C
+    C --> D
+    D --> E
+    B --> F
+    C --> F
+    D --> F
+    E --> F
+```
+
 | Track | Owner Role | Scope | Depends On | Deliverable | Verification |
 | --- | --- | --- | --- | --- | --- |
 | A. Protocol contracts | trellis-implement | 新增 `PlatformEvent::ProviderAttemptStatus`、`PlatformEvent::SessionRewound`、AgentEvent retry/status variants、Turn duration/TTFD 字段，生成 TS bindings。 | `design.md` event model | Rust protocol types + generated TS | protocol crate tests, TS compile |

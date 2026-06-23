@@ -89,8 +89,8 @@ impl WorkspaceModuleVisibilitySource {
             ));
         };
         session_services
-            .capability
-            .effective_capability_view_for_runtime_session(session_id)
+            .runtime_surface_update
+            .effective_capability_view_for_delivery_runtime(session_id)
             .await
             .map_err(AgentToolError::ExecutionFailed)
     }
@@ -1147,7 +1147,7 @@ mod tests {
     };
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+        LifecycleRun, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
     use agentdash_spi::SkillContextExposure;
     use agentdash_spi::connector::RuntimeToolProvider;
@@ -1168,7 +1168,11 @@ mod tests {
 
     use super::*;
     use crate::agent_run::frame::surface::FrameSurfaceDraft;
-    use crate::agent_run::{AgentRunEffectiveCapabilityService, frame::builder::AgentFrameBuilder};
+    use crate::agent_run::{
+        AgentRunEffectiveCapabilityService, AgentRunRuntimeSurfaceQuery,
+        AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
+        AgentRunRuntimeSurfaceUpdateService, frame::builder::AgentFrameBuilder,
+    };
     use crate::canvas::build_canvas;
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
@@ -1221,6 +1225,89 @@ mod tests {
                     .to_string(),
             }],
         }
+    }
+
+    struct InMemoryLifecycleRunRepo {
+        runs: Mutex<HashMap<Uuid, LifecycleRun>>,
+    }
+
+    impl InMemoryLifecycleRunRepo {
+        fn with_run(run_id: Uuid, project_id: Uuid) -> Self {
+            let mut run = LifecycleRun::new_control(project_id);
+            run.id = run_id;
+            let mut runs = HashMap::new();
+            runs.insert(run.id, run);
+            Self {
+                runs: Mutex::new(runs),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl agentdash_domain::workflow::LifecycleRunRepository for InMemoryLifecycleRunRepo {
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self.runs.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            let runs = self.runs.lock().unwrap();
+            Ok(ids.iter().filter_map(|id| runs.get(id).cloned()).collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|run| run.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().remove(&id);
+            Ok(())
+        }
+    }
+
+    fn runtime_surface_update_for_test(
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        run_repo: Arc<InMemoryLifecycleRunRepo>,
+        agent_repo: Arc<MemoryLifecycleAgentRepository>,
+        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        hub: &SessionRuntimeInner,
+        vfs_service: Option<Arc<VfsService>>,
+    ) -> AgentRunRuntimeSurfaceUpdateService {
+        let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+            AgentRunRuntimeSurfaceQueryDeps {
+                anchor_repo,
+                run_repo,
+                agent_repo,
+                frame_repo: frame_repo.clone(),
+            },
+        ));
+        AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: runtime_surface_query,
+            frame_repo,
+            vfs_service,
+            active_adopter: Arc::new(hub.clone()),
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        })
     }
 
     fn installation(project_id: Uuid, key: &str) -> ProjectExtensionInstallation {
@@ -1755,6 +1842,10 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let active_run_id = Uuid::new_v4();
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let run_repo = Arc::new(InMemoryLifecycleRunRepo::with_run(
+            active_run_id,
+            project_id,
+        ));
         let frame = AgentFrame::new_initial(Uuid::new_v4());
         let frame_id = frame.id;
         let agent_id = frame.agent_id;
@@ -1771,7 +1862,7 @@ mod tests {
             Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
-        .with_vfs_service(vfs_service)
+        .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
         .with_lifecycle_agent_repo(agent_repo)
@@ -1836,7 +1927,15 @@ mod tests {
                 control: hub.control_service(),
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
-                capability: hub.capability_service(),
+                runtime_transition: hub.runtime_transition_service(),
+                runtime_surface_update: runtime_surface_update_for_test(
+                    frame_repo.clone(),
+                    run_repo.clone(),
+                    agent_repo.clone(),
+                    anchor_repo.clone(),
+                    &hub,
+                    Some(vfs_service.clone()),
+                ),
             })
             .await;
 
@@ -1989,6 +2088,10 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let active_run_id = Uuid::new_v4();
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let run_repo = Arc::new(InMemoryLifecycleRunRepo::with_run(
+            active_run_id,
+            project_id,
+        ));
         let frame = AgentFrame::new_initial(Uuid::new_v4());
         let frame_id = frame.id;
         let agent_id = frame.agent_id;
@@ -2005,7 +2108,7 @@ mod tests {
             Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
-        .with_vfs_service(vfs_service)
+        .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
         .with_lifecycle_agent_repo(agent_repo)
@@ -2067,7 +2170,15 @@ mod tests {
                 control: hub.control_service(),
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
-                capability: hub.capability_service(),
+                runtime_transition: hub.runtime_transition_service(),
+                runtime_surface_update: runtime_surface_update_for_test(
+                    frame_repo.clone(),
+                    run_repo.clone(),
+                    agent_repo.clone(),
+                    anchor_repo.clone(),
+                    &hub,
+                    Some(vfs_service.clone()),
+                ),
             })
             .await;
 
@@ -2578,6 +2689,10 @@ mod tests {
         let base = tempfile::tempdir().expect("tempdir");
         let active_run_id = Uuid::new_v4();
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let run_repo = Arc::new(InMemoryLifecycleRunRepo::with_run(
+            active_run_id,
+            project_id,
+        ));
         let frame = AgentFrame::new_initial(Uuid::new_v4());
         let frame_id = frame.id;
         let agent_id = frame.agent_id;
@@ -2594,7 +2709,7 @@ mod tests {
             Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
-        .with_vfs_service(vfs_service)
+        .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
         .with_lifecycle_agent_repo(agent_repo)
@@ -2643,7 +2758,15 @@ mod tests {
                 control: hub.control_service(),
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
-                capability: hub.capability_service(),
+                runtime_transition: hub.runtime_transition_service(),
+                runtime_surface_update: runtime_surface_update_for_test(
+                    frame_repo.clone(),
+                    run_repo.clone(),
+                    agent_repo.clone(),
+                    anchor_repo.clone(),
+                    &hub,
+                    Some(vfs_service.clone()),
+                ),
             })
             .await;
 

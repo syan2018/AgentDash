@@ -7,7 +7,9 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use base64::Engine;
 
-use agentdash_agent::bridge::{BridgeError, BridgeRequest, LlmBridge, StreamChunk};
+use agentdash_agent::bridge::{
+    BridgeError, BridgeRequest, LlmBridge, ProviderErrorClassification, StreamChunk,
+};
 
 use super::openai_responses_common::{
     ResponsesRequestOptions, build_responses_request_body, process_responses_stream,
@@ -82,18 +84,49 @@ async fn run_stream(
         )
         .send()
         .await
-        .map_err(|error| BridgeError::CompletionFailed(format!("Codex HTTP 请求失败: {error}")))?;
+        .map_err(|error| super::provider_transport_error("Codex HTTP 请求失败", error))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        return Err(BridgeError::CompletionFailed(format!(
-            "Codex API 返回 {status}: {}",
-            friendly_codex_error(&body_text).unwrap_or(body_text)
-        )));
-    }
+    let response = check_codex_api_response(response).await?;
 
     process_responses_stream(response, "读取 Codex 响应流失败", tx).await
+}
+
+async fn check_codex_api_response(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, BridgeError> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body_text = response.text().await.unwrap_or_default();
+    let display_body = friendly_codex_error(&body_text).unwrap_or_else(|| body_text.clone());
+    let classification = classify_codex_api_error(status, &headers, &body_text);
+    Err(BridgeError::provider(
+        format!("Codex API 返回 {status}: {display_body}"),
+        classification,
+    ))
+}
+
+fn classify_codex_api_error(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    body: &str,
+) -> ProviderErrorClassification {
+    let classification = super::classify_http_provider_failure(status, headers, body);
+    if !is_codex_usage_or_rate_limit_error(body) {
+        return classification;
+    }
+
+    let mut fatal = ProviderErrorClassification::fatal().with_http_status(status.as_u16());
+    if let Some(code) = classification.provider_code.clone() {
+        fatal = fatal.with_provider_code(code);
+    }
+    if let Some(retry_after_ms) = classification.retry_after_ms {
+        fatal = fatal.with_retry_after_ms(retry_after_ms);
+    }
+    fatal
 }
 
 fn resolve_codex_url(base_url: &str) -> String {
@@ -131,8 +164,9 @@ struct StoredCodexCredential {
 async fn resolve_codex_auth(client: &reqwest::Client, raw: &str) -> Result<CodexAuth, BridgeError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(BridgeError::CompletionFailed(
+        return Err(super::provider_fatal_error(
             "OpenAI Codex provider 未配置登录凭据".to_string(),
+            "codex_auth_missing",
         ));
     }
 
@@ -174,8 +208,9 @@ async fn refresh_if_needed(
         return Ok(credential);
     }
     if credential.refresh.trim().is_empty() {
-        return Err(BridgeError::CompletionFailed(
+        return Err(super::provider_fatal_error(
             "Codex OAuth access token 已过期，且没有 refresh token".to_string(),
+            "codex_refresh_missing",
         ));
     }
 
@@ -189,17 +224,9 @@ async fn refresh_if_needed(
         ])
         .send()
         .await
-        .map_err(|error| {
-            BridgeError::CompletionFailed(format!("刷新 Codex token 失败: {error}"))
-        })?;
+        .map_err(|error| super::provider_transport_error("刷新 Codex token 失败", error))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        return Err(BridgeError::CompletionFailed(format!(
-            "刷新 Codex token 返回 {status}: {body_text}"
-        )));
-    }
+    let response = super::check_http_response(response, "刷新 Codex token").await?;
 
     #[derive(serde::Deserialize)]
     struct TokenResponse {
@@ -209,7 +236,10 @@ async fn refresh_if_needed(
     }
 
     let token: TokenResponse = response.json().await.map_err(|error| {
-        BridgeError::CompletionFailed(format!("解析 Codex token 失败: {error}"))
+        super::provider_fatal_error(
+            format!("解析 Codex token 失败: {error}"),
+            "codex_token_parse_failed",
+        )
     })?;
 
     Ok(StoredCodexCredential {
@@ -261,9 +291,26 @@ fn friendly_codex_error(raw: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn is_codex_usage_or_rate_limit_error(raw: &str) -> bool {
+    let parsed: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
+    };
+    let Some(error) = parsed.get("error") else {
+        return false;
+    };
+    let code = error
+        .get("code")
+        .or_else(|| error.get("type"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    code.contains("usage_limit") || code.contains("rate_limit")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent::bridge::ProviderErrorKind;
     use agentdash_agent::types::{AgentMessage, ToolDefinition};
 
     fn jwt_with_account(account_id: &str) -> String {
@@ -341,5 +388,28 @@ mod tests {
         assert_eq!(tool["name"], "demo_tool");
         assert_eq!(tool["strict"], false);
         assert_eq!(tool["parameters"]["properties"]["value"]["type"], "string");
+    }
+
+    #[test]
+    fn codex_rate_limit_friendly_error_stays_fatal() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "5".parse().unwrap());
+        let classification = classify_codex_api_error(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            r#"{"error":{"code":"rate_limit_exceeded","plan_type":"Plus"}}"#,
+        );
+
+        assert_eq!(classification.kind, ProviderErrorKind::Fatal);
+        assert_eq!(
+            friendly_codex_error(r#"{"error":{"code":"rate_limit_exceeded","plan_type":"Plus"}}"#)
+                .as_deref(),
+            Some("已达到 ChatGPT Codex 使用限制（plus plan）")
+        );
+        assert_eq!(
+            classification.provider_code.as_deref(),
+            Some("rate_limit_exceeded")
+        );
+        assert_eq!(classification.retry_after_ms, Some(5_000));
     }
 }

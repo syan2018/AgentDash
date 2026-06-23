@@ -13,7 +13,8 @@ pub use agent_loop::{
     readable_tool_result_item_id, readable_tool_result_lifecycle_path, stable_tool_result_item_id,
 };
 pub use bridge::{
-    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
+    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, ProviderErrorClassification,
+    ProviderErrorKind, ProviderRetryPolicy, StreamChunk, ToolCallDeltaContent, sleep_for_retry,
 };
 pub use event_stream::{EventReceiver, EventSender, event_channel};
 pub use tools::{ToolInfo, ToolRegistry};
@@ -25,7 +26,8 @@ pub use types::{
     BeforeToolCallInput, BeforeToolCallResult, CompactionParams, CompactionResult,
     CompactionTriggerStats, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
     EvaluateCompactionInput, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
-    ProviderVisibleContextStats, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition, ToolExecutionMode,
-    ToolUpdateCallback, TransformContextInput, TransformContextOutput, TurnControlDecision,
+    ProviderAttemptPhase, ProviderAttemptStatus, ProviderVisibleContextStats, StopDecision,
+    StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
+    ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
+    TransformContextOutput, TurnControlDecision,
 };

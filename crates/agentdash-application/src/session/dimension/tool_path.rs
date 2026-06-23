@@ -3,7 +3,7 @@
 use agentdash_spi::hooks::ContextFrameSection;
 
 use super::DimensionDelta;
-use crate::session::CapabilityStateDelta;
+use crate::agent_run::runtime_capability::CapabilityStateDelta;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolPathDimensionDelta {

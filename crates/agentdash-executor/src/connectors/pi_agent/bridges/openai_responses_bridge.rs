@@ -71,7 +71,7 @@ async fn run_stream(
         )
         .send()
         .await
-        .map_err(|error| BridgeError::CompletionFailed(format!("HTTP 请求失败: {error}")))?;
+        .map_err(|error| super::provider_transport_error("HTTP 请求失败", error))?;
 
     let response = super::check_http_response(response, "API").await?;
 

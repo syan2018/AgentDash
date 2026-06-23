@@ -6,8 +6,6 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
 use super::branching::SessionBranchingService;
-use super::capability_service::SessionCapabilityService;
-use super::construction_provider::SharedSessionConstructionProvider;
 use super::control::SessionControlService;
 use super::core::SessionCoreService;
 use super::effects_service::SessionEffectsService;
@@ -17,7 +15,10 @@ use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
+use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
+use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
+use crate::agent_run::{AgentRunActiveRuntimeSurfaceAdopter, AgentRunMailboxRuntimeAdapter};
 use crate::context::SharedContextAuditBus;
 
 pub struct SessionRuntimeBuilder {
@@ -135,8 +136,12 @@ impl SessionRuntimeBuilder {
         self.inner.hook_service()
     }
 
-    pub fn capability_service(&self) -> SessionCapabilityService {
-        self.inner.capability_service()
+    pub fn runtime_transition_service(&self) -> SessionRuntimeTransitionService {
+        self.inner.runtime_transition_service()
+    }
+
+    pub fn active_runtime_surface_adopter(&self) -> Arc<dyn AgentRunActiveRuntimeSurfaceAdopter> {
+        Arc::new(self.inner.clone())
     }
 
     pub fn effects_service(&self) -> SessionEffectsService {
@@ -171,18 +176,13 @@ impl SessionRuntimeBuilder {
         self
     }
 
-    pub fn with_agent_run_mailbox_boundary(
-        mut self,
-        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
-        command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
-        mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
-    ) -> Result<Self, String> {
-        self.inner = self.inner.with_agent_run_mailbox_boundary(
-            lifecycle_run_repo,
-            command_receipt_repo,
-            mailbox_repo,
-        )?;
-        Ok(self)
+    pub async fn set_agent_run_mailbox_runtime_adapter(
+        &self,
+        adapter: Arc<AgentRunMailboxRuntimeAdapter>,
+    ) {
+        self.inner
+            .set_agent_run_mailbox_runtime_adapter(adapter)
+            .await;
     }
 
     pub async fn set_terminal_callback(
@@ -199,11 +199,13 @@ impl SessionRuntimeBuilder {
         self.inner.set_hook_effect_handler_registry(registry).await;
     }
 
-    pub async fn set_session_construction_provider(
+    pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedSessionConstructionProvider,
+        provider: SharedFrameLaunchEnvelopeProvider,
     ) {
-        self.inner.set_session_construction_provider(provider).await;
+        self.inner
+            .set_frame_launch_envelope_provider(provider)
+            .await;
     }
 
     pub async fn set_context_audit_bus(&self, bus: SharedContextAuditBus) {

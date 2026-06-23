@@ -1,0 +1,3 @@
+{"path":".trellis/spec/backend/session/pi-agent-streaming.md","reason":"PiAgent AgentEvent 到 BackboneEnvelope 映射契约"}
+{"path":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Backbone fileChange item 与 session event 持久化契约"}
+{"path":".trellis/spec/frontend/type-safety.md","reason":"前端 generated DTO 与 reducer 类型消费约束"}

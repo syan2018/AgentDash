@@ -15,7 +15,7 @@ use agentdash_spi::platform::tool_capability::{
     CAP_WORKSPACE_MODULE, ToolCapability,
 };
 
-use crate::session::{CapabilityStateDelta, SetDelta};
+use crate::agent_run::runtime_capability::{CapabilityStateDelta, SetDelta};
 
 /// 能力 key 的人类可读短描述 —— 与 `McpInjectionConfig::to_context_content` 保持口径一致。
 pub fn capability_description(key: &str) -> &'static str {
@@ -222,7 +222,7 @@ mod tests {
         let delta = SetDelta::default();
         let effective: BTreeSet<String> = ["workflow_management".to_string()].into_iter().collect();
         let state_delta = CapabilityStateDelta {
-            excluded_tool_paths: crate::session::SetDelta {
+            excluded_tool_paths: crate::agent_run::runtime_capability::SetDelta {
                 added: vec![
                     "workflow_management::upsert_workflow_tool".to_string(),
                     "workflow_management::upsert_lifecycle_tool".to_string(),

@@ -226,7 +226,7 @@ pub async fn approve_grant(
     let result = PermissionGrantService::new_with_runtime_surface_adopter(
         state.repos.permission_grant_repo.clone(),
         state.repos.agent_frame_repo.clone(),
-        Arc::new(state.services.session_capability.clone()),
+        Arc::new(state.services.runtime_surface_update.clone()),
     )
     .approve(id, &current_user.user_id)
     .await?;
@@ -267,7 +267,7 @@ pub async fn revoke_grant(
     let result = PermissionGrantService::new_with_runtime_surface_adopter(
         state.repos.permission_grant_repo.clone(),
         state.repos.agent_frame_repo.clone(),
-        Arc::new(state.services.session_capability.clone()),
+        Arc::new(state.services.runtime_surface_update.clone()),
     )
     .revoke(id)
     .await?;

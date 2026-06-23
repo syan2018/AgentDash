@@ -15,7 +15,8 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::session_construction::resolve_session_frame_vfs;
+use crate::session_construction::resolve_current_runtime_surface_with_backend_for_api;
+use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -129,11 +130,18 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 session_id".into(),
         ));
     }
-    let frame_result = resolve_session_frame_vfs(&state, &current_user, session_id).await?;
-    let backend_anchor = require_extension_runtime_backend_anchor(session_id, &frame_result)?;
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
+        &state,
+        &current_user,
+        session_id,
+        RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+    )
+    .await?;
+    let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
-    let workspace = resolve_extension_invocation_workspace(&frame_result.vfs, backend_anchor);
+    let workspace =
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -181,8 +189,14 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 session_id".into(),
         ));
     }
-    let frame_result = resolve_session_frame_vfs(&state, &current_user, session_id).await?;
-    let backend_anchor = require_extension_runtime_backend_anchor(session_id, &frame_result)?;
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
+        &state,
+        &current_user,
+        session_id,
+        RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+    )
+    .await?;
+    let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     if req.channel_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
@@ -195,7 +209,8 @@ pub async fn invoke_project_extension_runtime_channel(
         ));
     }
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
-    let workspace = resolve_extension_invocation_workspace(&frame_result.vfs, backend_anchor);
+    let workspace =
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
 
     let consumer = req
         .consumer_extension_key
@@ -301,27 +316,10 @@ fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
-fn require_extension_runtime_backend_anchor<'a>(
-    session_id: &str,
-    result: &'a crate::session_construction::SessionFrameVfsResult,
-) -> Result<&'a RuntimeBackendAnchor, ApiError> {
-    result.runtime_backend_anchor.as_ref().ok_or_else(|| {
-        ApiError::Conflict(
-            agentdash_spi::RuntimeBackendAnchorError::Missing {
-                component: "extension_runtime".to_string(),
-                session_id: Some(session_id.to_string()),
-                turn_id: None,
-            }
-            .to_string(),
-        )
-    })
-}
-
 fn resolve_extension_invocation_workspace(
-    vfs: &Option<Vfs>,
+    vfs: &Vfs,
     backend_anchor: &RuntimeBackendAnchor,
 ) -> Option<ExtensionInvocationWorkspaceContext> {
-    let vfs = vfs.as_ref()?;
     select_extension_invocation_workspace(vfs, backend_anchor)
 }
 

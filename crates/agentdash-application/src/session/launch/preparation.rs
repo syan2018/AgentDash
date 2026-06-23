@@ -32,6 +32,7 @@ pub(in crate::session) struct PreparedTurn {
     pub pending_frame: Option<AgentFrame>,
     pub session_id: String,
     pub turn_id: String,
+    pub started_at_ms: i64,
     pub resolved_payload: ResolvedPromptPayload,
     pub resolved_follow_up_session_id: Option<String>,
     pub title_hint: String,
@@ -153,18 +154,20 @@ impl TurnPreparer {
                 (uuid::Uuid::new_v4(), session_uuid)
             });
 
+        let started_at_ms = chrono::Utc::now().timestamp_millis();
         deps.turn_supervisor
             .activate_turn(
                 &session_id,
                 SessionProfile {
                     capability_state: capability_state.clone(),
                 },
-                TurnExecution::new(
+                TurnExecution::new_with_started_at(
                     turn_id.clone(),
                     context.session.clone(),
                     capability_state.clone(),
                     audit_bundle_id,
                     audit_session_id,
+                    started_at_ms,
                 ),
             )
             .await;
@@ -180,7 +183,7 @@ impl TurnPreparer {
             .pending_capability_transitions
             .is_empty()
         {
-            deps.capability
+            deps.runtime_transition
                 .apply_pending_runtime_context_transitions_on_turn(
                     crate::session::hub::ApplyPendingRuntimeContextTransitionInput {
                         session_id: &session_id,
@@ -300,6 +303,7 @@ impl TurnPreparer {
             pending_frame: launch_plan.pending_frame,
             session_id,
             turn_id,
+            started_at_ms,
             resolved_payload,
             resolved_follow_up_session_id,
             title_hint,

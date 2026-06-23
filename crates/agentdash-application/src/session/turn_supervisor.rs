@@ -129,6 +129,21 @@ impl TurnSupervisor {
         })
     }
 
+    pub(super) async fn active_turn_started_at_ms(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Option<i64> {
+        self.registry
+            .with_runtime(session_id, |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .filter(|turn| turn.turn_id == turn_id)
+                    .map(|turn| turn.started_at_ms)
+            })
+            .await
+    }
+
     pub(super) async fn register_processor_tx(
         &self,
         session_id: &str,

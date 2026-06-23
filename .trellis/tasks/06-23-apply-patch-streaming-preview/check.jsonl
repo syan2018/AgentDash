@@ -1,0 +1,2 @@
+{"path":"crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs","reason":"验证 stream_mapper 对 fs_apply_patch 流式参数预览的事件输出"}
+{"path":"packages/app-web/src/features/session/model/sessionStreamReducer.test.ts","reason":"验证前端相同 item_id 的 fileChange item_started 更新语义"}

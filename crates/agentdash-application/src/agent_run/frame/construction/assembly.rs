@@ -7,13 +7,13 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
+#[cfg(test)]
+use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 #[cfg(test)]
 use crate::lifecycle::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
-#[cfg(test)]
-use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 #[cfg(test)]
 #[allow(deprecated)]
 use crate::session::construction::RuntimeContextInspectionPlan;
@@ -21,7 +21,7 @@ use crate::session::construction::RuntimeContextInspectionPlan;
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 
-/// 把 `SessionAssemblyBuilder` 的累积声明合并进 frame construction handoff。
+/// 把 `FrameAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
 /// ## 合并语义（2026-04-30 对称化后）
 ///
@@ -38,9 +38,9 @@ use crate::session::types::UserPromptInput;
 /// AgentFrame revision、launch envelope 与测试构造需要消费同一份 typed handoff。
 #[cfg(test)]
 #[allow(deprecated)]
-pub(crate) fn apply_session_assembly(
+pub(crate) fn apply_frame_assembly(
     mut plan: RuntimeContextInspectionPlan,
-    prepared: SessionAssemblyBuilder,
+    prepared: FrameAssemblyBuilder,
 ) -> RuntimeContextInspectionPlan {
     if let Some(blocks) = prepared.input {
         plan.prompt.input = Some(blocks);
@@ -102,7 +102,7 @@ pub(crate) fn apply_session_assembly(
 /// - **复合便利**：`apply_companion_slice` / `apply_lifecycle_activation` 封装常见组合
 /// - **新组合无需新函数**：companion + workflow 只需叠加对应层
 #[derive(Clone, Default)]
-pub(crate) struct SessionAssemblyBuilder {
+pub(crate) struct FrameAssemblyBuilder {
     // ── VFS 层 ──
     pub(super) vfs: Option<Vfs>,
 
@@ -127,7 +127,7 @@ pub(crate) struct SessionAssemblyBuilder {
 }
 
 #[allow(dead_code)]
-impl SessionAssemblyBuilder {
+impl FrameAssemblyBuilder {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -340,7 +340,7 @@ impl SessionAssemblyBuilder {
     }
 
     /// 结束 builder 链；保留该方法只为让既有 compose 代码保持声明式尾部。
-    pub(crate) fn build(self) -> SessionAssemblyBuilder {
+    pub(crate) fn build(self) -> FrameAssemblyBuilder {
         self
     }
 
@@ -398,20 +398,20 @@ pub(super) fn slice_companion_bundle(
     sliced
 }
 
-/// 将 `SessionAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
+/// 将 `FrameAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
 ///
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
-pub(crate) fn project_assembly_to_frame(
+pub(crate) fn project_frame_assembly_to_frame(
     frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
-    prepared: SessionAssemblyBuilder,
+    prepared: FrameAssemblyBuilder,
 ) -> (
     crate::agent_run::frame::builder::AgentFrameBuilder,
-    AssemblyLaunchExtras,
+    FrameAssemblyLaunchExtras,
 ) {
     let surface_draft = prepared.to_surface_draft();
     let frame_builder = frame_builder.with_surface_draft(&surface_draft);
-    let extras = AssemblyLaunchExtras {
+    let extras = FrameAssemblyLaunchExtras {
         frame_surface_draft: surface_draft,
         context_bundle: prepared.context_bundle,
         input: prepared.input,
@@ -423,11 +423,12 @@ pub(crate) fn project_assembly_to_frame(
     (frame_builder, extras)
 }
 
-/// `project_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
+/// `project_frame_assembly_to_frame` 的 frame surface draft 与 launch-only 输出。
 ///
 /// `frame_surface_draft` 写入 AgentFrame revision 并传递给 FrameLaunchEnvelope；
 /// 其余字段只服务 prompt、env、context bundle 等 launch pipeline 投影。
-pub struct AssemblyLaunchExtras {
+#[allow(dead_code)]
+pub struct FrameAssemblyLaunchExtras {
     pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,

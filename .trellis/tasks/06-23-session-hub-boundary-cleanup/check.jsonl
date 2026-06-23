@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查 RuntimeGateway MCP session action backing access 是否消费 AgentRun runtime surface query port"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 session/hub 是否只保留 live runtime coordination 职责"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 Session 与 AgentRun effective surface 边界"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "检查 capability/admission 与 AgentFrame revision 写入边界"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查 Permission grant surface-changing effect 与 active adoption 边界"}
+{"file": ".trellis/spec/backend/permission/grant-lifecycle.md", "reason": "检查 Permission grant apply/revoke 后 active adoption failure 可见性"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "检查 VFS resource surface query 的 application 层归属"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 active turn ExecutionContext tool refresh 与 current surface query 的边界"}
+{"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/session-hub-inventory.md", "reason": "校验 hub 保留/迁出职责矩阵"}
+{"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/runtime-gateway-mcp-boundary.md", "reason": "校验 RuntimeGateway MCP access 迁移边界"}
+{"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/business-consumer-migration-map.md", "reason": "校验 Canvas/Extension/VFS/Permission/Terminal consumer 迁移覆盖"}
+{"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/agentframe-exposure-inventory.md", "reason": "校验 AgentFrame exposure boundary 与裸引用收束"}

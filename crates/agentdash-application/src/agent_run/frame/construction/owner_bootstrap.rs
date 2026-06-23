@@ -17,6 +17,9 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolC
 use uuid::Uuid;
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::agent_run::runtime_capability_projection::{
+    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
+};
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
@@ -47,14 +50,12 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
 use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
-use crate::session::assembly_builder::{SessionAssemblyBuilder, project_assembly_to_frame};
-use crate::session::capability_projection::{
-    SessionCapabilityProjectionInput, derive_session_skill_baseline,
-};
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
+
+use super::assembly::{FrameAssemblyBuilder, project_frame_assembly_to_frame};
 
 /// Owner 级 frame bootstrap 的 owner scope 描述。
 #[allow(dead_code)]
@@ -203,15 +204,15 @@ impl<'a> OwnerBootstrapComposer<'a> {
         &self,
         frame_builder: AgentFrameBuilder,
         spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<(AgentFrameBuilder, crate::session::AssemblyLaunchExtras), String> {
+    ) -> Result<(AgentFrameBuilder, super::FrameAssemblyLaunchExtras), String> {
         let prepared = self.compose_owner_bootstrap(spec).await?;
-        Ok(project_assembly_to_frame(frame_builder, prepared))
+        Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
 
     async fn compose_owner_bootstrap(
         &self,
         mut spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<SessionAssemblyBuilder, String> {
+    ) -> Result<FrameAssemblyBuilder, String> {
         let project_id = spec.owner.project_id();
         let owner_ctx = spec
             .subject_owner_ctx
@@ -251,7 +252,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             }
         }
         cap_output.workspace_module =
-            crate::session::capability_state::project_workspace_module_dimension(
+            crate::agent_run::runtime_capability::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
             );
         let runtime_mcp_servers =
@@ -299,7 +300,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 .or_else(|| workspace.as_deref().cloned()),
         };
 
-        let mut builder = SessionAssemblyBuilder::new()
+        let mut builder = FrameAssemblyBuilder::new()
             .with_input(user_input)
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(runtime_mcp_servers)
@@ -548,7 +549,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         identity: Option<&AuthIdentity>,
         diagnostics_label: &'static str,
     ) {
-        let Some(caps) = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        let Some(caps) = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: Some(self.vfs_service),
             active_vfs,
             identity,

@@ -18,7 +18,7 @@ use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
 use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
-use crate::session::capability_state::{
+use crate::agent_run::runtime_capability::{
     capability_state_to_frame_surfaces, compose_vfs_with_overlay_and_directives,
 };
 

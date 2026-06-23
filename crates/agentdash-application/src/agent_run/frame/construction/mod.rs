@@ -4,11 +4,13 @@
 //! 各 composer 子模块负责具体路径的 bootstrap spec 组装，
 //! 本模块负责路径分类 (classify) 和最终 frame 持久化。
 
+mod assembly;
 mod classify;
 mod composer_companion;
 mod composer_lifecycle_node;
 mod composer_project_agent;
 mod owner_bootstrap;
+mod request_assembler;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,6 +19,7 @@ use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError, SkillDiscoveryProvider};
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace,
@@ -24,17 +27,13 @@ use crate::agent_run::frame::runtime_launch::{
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::merge_executor_config_fields;
+use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::session::assembler::CompanionParentFactsProvider;
-use crate::session::capability_state::replay_runtime_capability_transitions;
-use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode, UserPromptInput};
-use crate::session::{
-    AssemblyLaunchExtras, LaunchCommand, SessionRequestAssembler, TerminalHookEffectBinding,
-};
+use crate::session::{LaunchCommand, TerminalHookEffectBinding};
 use crate::vfs::VfsService;
 use crate::workspace::resolution::BackendAvailability;
 
@@ -42,7 +41,7 @@ use crate::workspace::resolution::BackendAvailability;
 
 /// Session frame compose 的唯一入口。
 ///
-/// 替代此前散落在 API 层 `AppStateSessionConstructionProvider` 中的 5 个 compose 方法，
+/// 替代此前散落在 API 层 `AppStateFrameLaunchEnvelopeProvider` 中的 5 个 compose 方法，
 /// 将"路径分类 → compose → 持久化 → FrameLaunchEnvelope"收束为一次调用。
 pub struct FrameConstructionService {
     pub(crate) repos: RepositorySet,
@@ -68,8 +67,13 @@ pub struct FrameConstructionDeps {
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
 }
 
+pub(crate) use assembly::FrameAssemblyLaunchExtras;
 pub(crate) use owner_bootstrap::{
     OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
+};
+pub(crate) use request_assembler::{
+    CompanionParentFactsProvider, CompanionParentSpec, CompanionParentWorkflowSpec,
+    FrameRequestAssembler, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
 };
 
 impl FrameConstructionService {
@@ -90,7 +94,7 @@ impl FrameConstructionService {
     /// 统一 frame construction 入口：分类 → compose → 持久化 → envelope。
     pub async fn construct_launch_envelope(
         &self,
-        input: SessionConstructionProviderInput,
+        input: FrameLaunchEnvelopeProviderInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let session_id = input.session_id.clone();
         let anchor = self
@@ -157,11 +161,9 @@ impl FrameConstructionService {
 
     // ─── 内部 helpers ───
 
-    pub(crate) fn assembler(&self) -> SessionRequestAssembler<'_> {
-        SessionRequestAssembler::new(
+    pub(crate) fn assembler(&self) -> FrameRequestAssembler<'_> {
+        FrameRequestAssembler::new(
             self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
-            self.availability.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),
         )
@@ -185,7 +187,7 @@ impl FrameConstructionService {
     pub(crate) fn prompt_launch_path(
         &self,
         executor_config: Option<&AgentConfig>,
-        input: &SessionConstructionProviderInput,
+        input: &FrameLaunchEnvelopeProviderInput,
     ) -> PromptLaunchPath {
         let supports_repository_restore = executor_config
             .map(|config| {
@@ -205,7 +207,7 @@ impl FrameConstructionService {
     pub(crate) async fn compose_pending_frame(
         &self,
         builder: AgentFrameBuilder,
-        extras: AssemblyLaunchExtras,
+        extras: FrameAssemblyLaunchExtras,
         command: &LaunchCommand,
         runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
@@ -301,7 +303,7 @@ pub(crate) fn frame_builder_from_existing(
 /// 替代此前从 frame 构建 launch request、应用 command/extras、再转换 envelope 的三步链路。
 pub(crate) fn build_envelope_from_frame(
     frame: &AgentFrame,
-    extras: Option<AssemblyLaunchExtras>,
+    extras: Option<FrameAssemblyLaunchExtras>,
     command: &LaunchCommand,
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_session_id: &str,

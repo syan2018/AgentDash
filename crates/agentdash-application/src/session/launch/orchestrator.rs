@@ -1,7 +1,7 @@
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
     SessionLaunchDeps, StreamIngestionAttacher, TurnCommitter, TurnPreparationInput, TurnPreparer,
@@ -33,7 +33,7 @@ impl SessionLaunchOrchestrator {
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let reason = command.reason_tag();
-        let Some(provider) = self.deps.current_session_construction_provider().await else {
+        let Some(provider) = self.deps.current_frame_launch_envelope_provider().await else {
             return Err(ConnectorError::Runtime(format!(
                 "session_launch_envelope_provider 未注入，拒绝 session launch: {reason}"
             )));
@@ -86,7 +86,7 @@ impl SessionLaunchOrchestrator {
             Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
         let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
         let launch_envelope = match provider
-            .build_frame_construction(SessionConstructionProviderInput {
+            .build_frame_launch_envelope(FrameLaunchEnvelopeProviderInput {
                 session_id: sid.clone(),
                 command: command.clone(),
                 runtime_trace_state: runtime_trace_state.clone(),

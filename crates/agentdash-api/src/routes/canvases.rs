@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
+use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
     CanvasRuntimeSnapshot, CreateCanvasInput, build_canvas_extension_package,
@@ -40,7 +41,7 @@ use crate::dto::{
     PromoteCanvasToExtensionRequest,
 };
 use crate::rpc::ApiError;
-use crate::session_construction::resolve_session_frame_vfs;
+use crate::session_construction::resolve_current_runtime_surface_for_api;
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -583,7 +584,14 @@ async fn resolve_canvas_runtime_vfs(
         return Ok(None);
     };
 
-    Ok(resolve_session_frame_vfs(state, current_user, session_id)
+    Ok(Some(
+        resolve_current_runtime_surface_for_api(
+            state,
+            current_user,
+            session_id,
+            RuntimeSurfaceQueryPurpose::new("canvas_runtime_snapshot"),
+        )
         .await?
-        .vfs)
+        .vfs,
+    ))
 }

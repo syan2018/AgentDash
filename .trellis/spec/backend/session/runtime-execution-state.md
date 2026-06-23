@@ -28,6 +28,13 @@ frame_id` 是业务索引，`RuntimeSession` 只以 `MessageStreamProjectionRef`
 这样 workspace resource surface、connector VFS 和 skill baseline 都从 AgentFrame / AgentRun
 控制面事实闭包得到，delivery trace 仍能通过 message stream ref 下钻到 runtime events。
 
+Session runtime live state 不回答 “某个 AgentRun 当前 runtime surface 是什么”。这个查询由
+AgentRun / Lifecycle current runtime surface query 负责：`runtime_session_id` 经
+`RuntimeSessionExecutionAnchor` 回到 AgentRun runtime address，再闭合 VFS、MCP servers、
+`CapabilityState`、runtime backend anchor、identity/admission context 与 provenance。这样做的原因是
+Canvas snapshot、Extension runtime、Terminal target、VFS surface、RuntimeGateway MCP access 都必须
+看到同一份 current surface closure，不能分别从 active turn cache、API helper 或 hub idle branch 拼装。
+
 三个查询语义保持分离：
 
 - `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。
@@ -62,6 +69,38 @@ connector 的 `update_session_tools`。
 
 热更新路径只更新 runtime tools/capability projection，不构造新的 prompt，也不把
 一次性 `ExecutionContext` 当成新的 session 事实源。
+
+active connector tool refresh 与 current surface query 必须分离。refresh 发生在 live turn 内，消费
+已经闭合的 `ExecutionContext` / active turn snapshot，并把 tool replace-set、runtime context
+notification 与 hook runtime target 同步到当前 connector；current surface query 则从 AgentRun
+control-plane current revision 读取闭包 surface，服务 RuntimeGateway/API/resource browser 等读路径。
+这个分层让运行中的 connector 更新保持低延迟，同时让 idle runtime action 与 API query 不依赖
+SessionHub 是否存在 active turn。
+
+`session/hub` 可以保留 active-turn-only helper，但这些 helper 的语义必须显式是 live coordination。
+需要 current VFS、MCP servers、backend anchor、capability state 或 AgentRun target 的 API/业务路径，
+应消费 AgentRun runtime surface query 或其 resource-surface adapter。
+
+Session 层不保留独立的 capability service。需要留在 session 的 capability 相关读写只限于
+live runtime coordination：active/latest runtime capability snapshot、runtime delivery command
+outbox，以及 turn 边界 pending runtime context transition 应用。这组能力由
+`SessionRuntimeTransitionService` 表达，原因是它协调 delivery session 的运行中转场，而不是拥有
+AgentRun current surface query 或 Canvas/WorkspaceModule/Permission 的业务 surface update。
+
+## AgentFrame Exposure Boundary
+
+`AgentFrame` 是 AgentRun runtime surface revision 的存储实体，不是 RuntimeGateway/API current
+surface 的公开 contract。准入规则：
+
+- frame construction、launch closure、AgentRun runtime surface query 内部实现、surface update use
+  case、repository adapter 可以直接持有 `AgentFrame`。
+- presentation read-model 可以读取 frame 形成 UI/debug projection，但该 projection 不作为 runtime
+  action、current surface query 或 business mutation 的复用入口。
+- RuntimeGateway provider、API current-surface consumer、session hub idle query、Canvas/Extension/VFS/
+  Terminal consumer 使用 query/update port 的 DTO，不 import `AgentFrame`、`AgentFrameSurfaceExt` 或
+  `resolve_current_frame_from_delivery_trace_ref`。
+- Canvas、WorkspaceModule、Permission 等 surface-changing effect 进入 runtime surface update use case；
+  live active adoption primitive 只作为 update use case 内部的同步步骤。
 
 ## Turn Background Task Supervision
 

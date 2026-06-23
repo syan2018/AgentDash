@@ -53,15 +53,34 @@
 Session Action baseline：`mcp.list_tools`、`mcp.call_tool`
 
 关键约束：
-- MCP runtime server surface 来源于当前 AgentFrame / active execution surface；active turn 读取 `ExecutionSessionFrame.mcp_servers`，idle runtime 通过 `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
+- MCP runtime server surface 来源于 AgentRun / Lifecycle current runtime surface query 的闭包结果；该 query 从 `runtime_session_id` 经 `RuntimeSessionExecutionAnchor` 回到 AgentRun runtime address，再读取 current surface revision。
+- `RuntimeSessionMcpAccess` 是 RuntimeGateway provider 的 backing port；其实现消费 AgentRun runtime surface query port 与 MCP discovery port，不进入 `SessionHub`，也不直接持有 `AgentFrame`、`AgentFrameSurfaceExt` 或 current frame resolver。
 - `CapabilityState` 负责工具能力与 tool policy 裁决；空或未授权的 `CapabilityState` 不暴露任何工具。
-- Provider 通过 `RuntimeSessionMcpAccess` 进入 SessionHub，不直接读 MCP preset/agent config。
 - 所有工具暴露都必须经过 `capability_state.is_capability_tool_enabled()`。
-- `surface_for(Session)` 只表达 action 粒度可用性；具体 MCP tool surface 由 `mcp.list_tools` 输出
+- `surface_for_actor(Session)` 只表达 action visibility：actor/context 可以看到 `mcp.list_tools` / `mcp.call_tool` 这类 action；具体 MCP tool surface 只能来自 query-backed `mcp.list_tools` 输出。
+- 后端绑定型 MCP discovery / call 必须消费 backend-required current surface，原因是 relay MCP 需要与 VFS、backend anchor、capability state 同源闭包的 call context。
 
-`RuntimeSessionExecutionAnchor` 在这里只服务 trace/runtime session 到 AgentFrame 的 backlink。MCP
-runtime action 仍然是 Session action，原因是调用发生在一个可投递的 delivery runtime session
-上；可执行 MCP server 的事实源仍回到 AgentFrame surface。
+`RuntimeSessionExecutionAnchor` 在这里只服务 trace/runtime session 到 AgentRun control-plane identity
+的 backlink。MCP runtime action 仍然是 Session action，原因是调用发生在一个可投递的 delivery
+runtime session 上；可执行 MCP server 的事实源回到 AgentRun current runtime surface，而不是
+Session live runtime cache。
+
+RuntimeGateway provider 边界保持 action input/output 与 actor/context admission：provider 不解析
+current `AgentFrame`，不读取 session hub idle fallback，也不自行拼 VFS/backend/MCP surface。active
+turn connector tool refresh 是 session live runtime coordination，继续消费已闭合的
+`ExecutionContext`；它不是 `mcp.list_tools` / `mcp.call_tool` 的 current surface query 路径。
+
+## AgentRun Runtime Surface Query Boundary
+
+AgentRun runtime surface query 是 application 层 current surface 读取入口。它的公开 contract 以
+`runtime_session_id`、AgentRun runtime address、surface revision、VFS、MCP servers、
+`CapabilityState`、`RuntimeBackendAnchor` 和 provenance 为中心，不把 domain `AgentFrame` entity
+或 `FrameLaunchSurface` 暴露给 RuntimeGateway / API current-surface consumer。
+
+允许直接持有 `AgentFrame` 的区域限于 frame construction、launch closure、surface query 内部实现、
+surface update use case、repository adapter、以及明确的 presentation read-model。RuntimeGateway
+和 API current-surface consumer 使用 query DTO，原因是它们需要的是可执行 runtime surface，而不是
+frame storage entity。
 
 ---
 

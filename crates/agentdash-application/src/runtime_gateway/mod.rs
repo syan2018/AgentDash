@@ -1,6 +1,7 @@
 mod error;
 mod extension_actions;
 mod gateway;
+mod mcp_access;
 mod provider;
 mod session_actions;
 mod setup_actions;
@@ -19,6 +20,7 @@ pub use extension_actions::{
     attach_extension_invocation_workspace,
 };
 pub use gateway::RuntimeGateway;
+pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
 pub use provider::RuntimeProvider;
 pub(crate) use session_actions::execute_runtime_mcp_tool;
 pub use session_actions::{

@@ -136,6 +136,19 @@ describe("computeProjectionRefreshKey", () => {
 
     expect(computeProjectionRefreshKey(events)).toBe(7);
   });
+
+  it("session_rewound meta event 会推进 projection refresh key", () => {
+    const events = [
+      eventEnvelope(1, agentDeltaEvent("assistant-1")),
+      eventEnvelope(8, platformMetaEvent("session_rewound", {
+        discarded_turn_id: "turn-1",
+        stable_event_seq: 0,
+        reason: "provider_retry",
+      })),
+    ];
+
+    expect(computeProjectionRefreshKey(events)).toBe(8);
+  });
 });
 
 describe("extractTurnLifecycleEventType", () => {

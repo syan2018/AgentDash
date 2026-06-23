@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use agentdash_spi::hooks::ContextFrameSection;
 
 use super::DimensionDelta;
+use crate::agent_run::runtime_capability::{CapabilityStateDelta, SetDelta};
 use crate::capability::capability_description;
-use crate::session::{CapabilityStateDelta, SetDelta};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapabilityKeyDimensionDelta {

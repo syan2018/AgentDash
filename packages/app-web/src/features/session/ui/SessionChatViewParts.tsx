@@ -18,7 +18,7 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
 import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
-import type { TurnSegment } from "../model/useSessionFeed";
+import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
 import type { SessionChatCommand, SessionChatCommandState } from "./SessionChatViewTypes";
@@ -361,6 +361,41 @@ function formatTurnDuration(ms: number): string {
   return `${m}m ${s}s`;
 }
 
+function terminalTurnLabel(status: TurnSegment["status"]): string | null {
+  switch (status) {
+    case "completed":
+      return "已处理";
+    case "failed":
+      return "执行失败";
+    case "interrupted":
+      return "执行已中断";
+    default:
+      return null;
+  }
+}
+
+function turnActivityClassName(activity: TurnActivityStatus): string {
+  switch (activity.kind) {
+    case "retry_exhausted":
+      return "border-destructive/20 bg-destructive/8 text-destructive";
+    case "reconnecting":
+      return "border-warning/25 bg-warning/10 text-warning";
+    case "connecting":
+    case "thinking":
+    default:
+      return "border-info/20 bg-info/8 text-info";
+  }
+}
+
+function TurnActivityStrip({ activity }: { activity: TurnActivityStatus }) {
+  return (
+    <div className={`flex w-fit items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs ${turnActivityClassName(activity)}`}>
+      <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-current" />
+      <span>{activity.label}</span>
+    </div>
+  );
+}
+
 function TurnSection({
   segment,
   sessionId,
@@ -371,6 +406,7 @@ function TurnSection({
   streamingEntryId: string | null;
 }) {
   const isCompleted = segment.status === "completed";
+  const terminalLabel = terminalTurnLabel(segment.status);
   const [collapsed, setCollapsed] = useState(false);
   const [prevStatus, setPrevStatus] = useState(segment.status);
 
@@ -384,14 +420,19 @@ function TurnSection({
   if (!isCompleted || !collapsed) {
     return (
       <div className="space-y-1.5">
-        {isCompleted && (
+        {segment.activity && (
+          <TurnActivityStrip activity={segment.activity} />
+        )}
+        {terminalLabel && (
           <button
             type="button"
-            onClick={() => setCollapsed(true)}
+            onClick={() => {
+              if (isCompleted) setCollapsed(true);
+            }}
             className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
           >
             <span className="h-px flex-1 max-w-6 bg-border/40" />
-            <span>已处理{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+            <span>{terminalLabel}{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
             <span className="h-px flex-1 bg-border/40" />
           </button>
         )}

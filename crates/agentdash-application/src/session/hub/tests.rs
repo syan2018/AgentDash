@@ -45,7 +45,6 @@ use tokio::sync::Mutex as TokioMutex;
 
 use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
-use super::super::construction_provider::SessionConstructionProviderInput;
 use super::super::hook_messages as msg;
 use super::super::hub_support::{TurnExecution, TurnState, build_user_input_submitted_envelope};
 use super::super::local_workspace_vfs;
@@ -58,12 +57,13 @@ use super::super::{
     SessionToolResultCache,
 };
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
-use crate::session::SetToolAccessEffect;
-use crate::session::capability_state::{
+use crate::agent_run::runtime_capability::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
+use crate::session::SetToolAccessEffect;
 use crate::session::types::AgentFrameRuntimeTarget;
 use crate::test_support::{
     AgentRunSteeringCommand, AgentRunSteeringService, MemoryAgentFrameRepository,
@@ -1514,7 +1514,7 @@ fn canvas_skill_vfs() -> agentdash_spi::Vfs {
 }
 
 #[tokio::test]
-async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
+async fn adopt_persisted_frame_revision_into_active_runtime_requires_matching_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None)
         .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
@@ -1522,10 +1522,11 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
         .create_session("capability-surface")
         .await
         .expect("create");
+    let _current_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
     let frame = attach_test_lifecycle_frame(&hub, "another-session").await;
 
     let error = match hub
-        .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+        .adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
             frame_id: frame.id,
             delivery_runtime_session_id: session.id.clone(),
         })
@@ -1537,14 +1538,15 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
 
     match error {
         ConnectorError::Runtime(message) => {
-            assert!(message.contains("缺少可用 RuntimeSessionExecutionAnchor/AgentFrame"));
+            assert!(message.contains("未绑定 delivery RuntimeSession"));
         }
         other => panic!("expected runtime error, got {other}"),
     }
 }
 
 #[tokio::test]
-async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_frame() {
+async fn adopt_persisted_frame_revision_into_active_runtime_updates_runtime_without_writing_frame()
+{
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None)
         .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
@@ -1608,7 +1610,7 @@ async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_fr
         })
         .await;
 
-    hub.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+    hub.adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
         frame_id: persisted_frame.id,
         delivery_runtime_session_id: session.id.clone(),
     })
@@ -1660,7 +1662,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     after_state.vfs.active = Some(canvas_skill_vfs());
     let transition = runtime_transition_from_state(&after_state, after_state.vfs.active.clone());
 
-    hub.capability_service()
+    hub.runtime_transition_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
             target_frame_id: uuid::Uuid::new_v4(),
             delivery_runtime_session_id: session.id.clone(),
@@ -3704,18 +3706,18 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 
 #[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
+    use crate::agent_run::frame::FrameLaunchEnvelopeProvider;
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-    use crate::session::SessionConstructionProvider;
 
     struct StaticConstructionProvider {
         hub: SessionRuntimeInner,
     }
 
     #[async_trait::async_trait]
-    impl SessionConstructionProvider for StaticConstructionProvider {
-        async fn build_frame_construction(
+    impl FrameLaunchEnvelopeProvider for StaticConstructionProvider {
+        async fn build_frame_launch_envelope(
             &self,
-            input: SessionConstructionProviderInput,
+            input: FrameLaunchEnvelopeProviderInput,
         ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             let prompt_text = input
                 .command
@@ -3737,7 +3739,7 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
         .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
     let session = hub.create_session("invalid-config").await.expect("create");
     let launch_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
-    hub.set_session_construction_provider(Arc::new(StaticConstructionProvider {
+    hub.set_frame_launch_envelope_provider(Arc::new(StaticConstructionProvider {
         hub: hub.clone(),
     }))
     .await;
@@ -3911,11 +3913,11 @@ async fn start_prompt_releases_claim_when_session_meta_is_missing() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Fail-lock: auto-resume 必须经过 SessionConstructionProvider
+// Fail-lock: auto-resume 必须经过 FrameLaunchEnvelopeProvider
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn launch_prompt_strict_requires_session_construction_provider() {
+async fn launch_prompt_strict_requires_frame_launch_envelope_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
     let session = hub.create_session("strict-launch").await.expect("create");
@@ -3944,7 +3946,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
 }
 
 #[tokio::test]
-async fn local_relay_prompt_requires_session_construction_provider() {
+async fn local_relay_prompt_requires_frame_launch_envelope_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -4059,7 +4061,7 @@ async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-    use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
+    use crate::agent_run::frame::{FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -4069,10 +4071,10 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     }
 
     #[async_trait::async_trait]
-    impl SessionConstructionProvider for SpyConstructionProvider {
-        async fn build_frame_construction(
+    impl FrameLaunchEnvelopeProvider for SpyConstructionProvider {
+        async fn build_frame_launch_envelope(
             &self,
-            input: SessionConstructionProviderInput,
+            input: FrameLaunchEnvelopeProviderInput,
         ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = input
@@ -4156,7 +4158,7 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     let calls = Arc::new(AtomicUsize::new(0));
     let captured_prompt = Arc::new(TokioMutex::new(None));
     let captured_mcp_len = Arc::new(AtomicUsize::new(usize::MAX));
-    hub.set_session_construction_provider(Arc::new(SpyConstructionProvider {
+    hub.set_frame_launch_envelope_provider(Arc::new(SpyConstructionProvider {
         calls: calls.clone(),
         captured_prompt: captured_prompt.clone(),
         captured_mcp_len: captured_mcp_len.clone(),

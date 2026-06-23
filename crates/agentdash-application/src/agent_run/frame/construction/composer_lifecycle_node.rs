@@ -6,22 +6,24 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::ConnectorError;
 
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
-use crate::session::construction_provider::SessionConstructionProviderInput;
-use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 
-use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
+use super::{
+    FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+    connector_internal, frame_builder_from_existing,
+};
 
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
     _agent: LifecycleAgent,
     run: LifecycleRun,
-    input: &SessionConstructionProviderInput,
+    input: &FrameLaunchEnvelopeProviderInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let anchor = svc

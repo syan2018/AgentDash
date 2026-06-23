@@ -17,14 +17,14 @@ use crate::context::mount_file_discovery::{
 };
 use crate::vfs::VfsService;
 
-use super::baseline_capabilities::{
+use crate::session::baseline_capabilities::{
     INTEGRATION_STATIC_SKILL_PROVIDER_KEY, WORKSPACE_SKILL_PROVIDER_KEY,
     build_session_baseline_capabilities_from_clusters, skills_to_provider_clusters,
 };
-use super::types::CapabilityState;
+use crate::session::types::CapabilityState;
 
 #[derive(Clone, Copy)]
-pub struct SessionCapabilityProjectionInput<'a> {
+pub struct RuntimeCapabilityProjectionInput<'a> {
     pub vfs_service: Option<&'a VfsService>,
     pub active_vfs: Option<&'a Vfs>,
     pub identity: Option<&'a AuthIdentity>,
@@ -34,32 +34,32 @@ pub struct SessionCapabilityProjectionInput<'a> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct SessionCapabilityProjection {
+pub struct RuntimeCapabilityProjection {
     pub session_capabilities: SessionBaselineCapabilities,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
 }
 
-pub async fn derive_session_capability_projection(
-    input: SessionCapabilityProjectionInput<'_>,
-) -> SessionCapabilityProjection {
-    let session_capabilities = derive_session_skill_baseline(input)
+pub async fn derive_runtime_capability_projection(
+    input: RuntimeCapabilityProjectionInput<'_>,
+) -> RuntimeCapabilityProjection {
+    let session_capabilities = derive_runtime_skill_baseline(input)
         .await
         .unwrap_or_default();
     let discovered_guidelines = match (input.vfs_service, input.active_vfs) {
         (Some(vfs_service), Some(active_vfs)) => {
-            derive_session_guidelines(vfs_service, active_vfs, input.diagnostics_label).await
+            derive_runtime_guidelines(vfs_service, active_vfs, input.diagnostics_label).await
         }
         _ => Vec::new(),
     };
 
-    SessionCapabilityProjection {
+    RuntimeCapabilityProjection {
         session_capabilities,
         discovered_guidelines,
     }
 }
 
-pub async fn derive_session_skill_baseline(
-    input: SessionCapabilityProjectionInput<'_>,
+pub async fn derive_runtime_skill_baseline(
+    input: RuntimeCapabilityProjectionInput<'_>,
 ) -> Option<SessionBaselineCapabilities> {
     let mut clusters = Vec::new();
     let mut diagnostics = Vec::new();
@@ -173,7 +173,7 @@ pub async fn derive_session_skill_baseline(
     ))
 }
 
-pub async fn derive_session_guidelines(
+pub async fn derive_runtime_guidelines(
     vfs_service: &VfsService,
     active_vfs: &Vfs,
     diagnostics_label: &'static str,
@@ -919,7 +919,7 @@ mod tests {
         )
         .expect("skill file");
 
-        let caps = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        let caps = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: None,
             active_vfs: None,
             identity: None,
@@ -946,7 +946,7 @@ mod tests {
         let provider = Arc::new(CapturingSkillDiscoveryProvider::default());
         let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider.clone()];
 
-        let _ = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        let _ = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
             vfs_service: None,
             active_vfs: Some(&vfs),
             identity: Some(&identity),

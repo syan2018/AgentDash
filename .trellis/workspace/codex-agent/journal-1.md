@@ -1016,3 +1016,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: 完成Agent Provider重试与恢复
+
+**Date**: 2026-06-23
+**Task**: 完成Agent Provider重试与恢复
+**Branch**: `main`
+
+### Summary
+
+完成Agent provider pre-delta retry、ProviderAttemptStatus/SessionRewound协议、失败轮次恢复、前端重连状态展示，并补齐Pi Agent bridge结构化错误分类、重试边界测试与相关spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc347b1d2` | (see git log) |
+| `620149507` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,11 +8,12 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use super::super::construction_provider::SharedSessionConstructionProvider;
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionRuntimeInner;
+use crate::agent_run::AgentRunMailboxRuntimeAdapter;
+use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -78,8 +79,10 @@ impl SessionRuntimeInner {
         )
     }
 
-    pub fn capability_service(&self) -> super::super::capability_service::SessionCapabilityService {
-        super::super::capability_service::SessionCapabilityService::new(self.clone())
+    pub fn runtime_transition_service(
+        &self,
+    ) -> super::super::runtime_transition_service::SessionRuntimeTransitionService {
+        super::super::runtime_transition_service::SessionRuntimeTransitionService::new(self.clone())
     }
 
     pub fn new_with_hooks_and_persistence(
@@ -103,7 +106,7 @@ impl SessionRuntimeInner {
             skill_discovery_providers: Vec::new(),
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
-            session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
+            frame_launch_envelope_provider: Arc::new(tokio::sync::RwLock::new(None)),
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
             base_system_prompt: String::new(),
             settings_repo: None,
@@ -115,7 +118,7 @@ impl SessionRuntimeInner {
             execution_anchor_repo: None,
             lifecycle_agent_repo: None,
             permission_grant_repo: None,
-            agent_run_mailbox_boundary_deps: None,
+            agent_run_mailbox_runtime_adapter: Arc::new(tokio::sync::RwLock::new(None)),
             lifecycle_gate_repo: None,
         }
     }
@@ -202,39 +205,11 @@ impl SessionRuntimeInner {
         self
     }
 
-    pub fn with_agent_run_mailbox_boundary(
-        mut self,
-        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
-        command_receipt_repo: Arc<dyn agentdash_domain::workflow::AgentRunCommandReceiptRepository>,
-        mailbox_repo: Arc<dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository>,
-    ) -> Result<Self, String> {
-        let lifecycle_agent_repo = self.lifecycle_agent_repo.clone().ok_or_else(|| {
-            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 lifecycle_agent_repo"
-                .to_string()
-        })?;
-        let agent_frame_repo = self.agent_frame_repo.clone().ok_or_else(|| {
-            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 agent_frame_repo"
-                .to_string()
-        })?;
-        let execution_anchor_repo = self.execution_anchor_repo.clone().ok_or_else(|| {
-            "SessionRuntimeInner 注入 AgentRun mailbox boundary 前必须先注入 execution_anchor_repo"
-                .to_string()
-        })?;
-        self.agent_run_mailbox_boundary_deps = Some(
-            super::super::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps {
-                lifecycle_run_repo,
-                lifecycle_agent_repo,
-                agent_frame_repo,
-                execution_anchor_repo,
-                command_receipt_repo,
-                mailbox_repo,
-                session_core: self.core_service(),
-                session_control: self.control_service(),
-                session_eventing: self.eventing_service(),
-                session_launch: Arc::new(self.launch_service()),
-            },
-        );
-        Ok(self)
+    pub async fn set_agent_run_mailbox_runtime_adapter(
+        &self,
+        adapter: Arc<AgentRunMailboxRuntimeAdapter>,
+    ) {
+        *self.agent_run_mailbox_runtime_adapter.write().await = Some(adapter);
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
@@ -284,11 +259,11 @@ impl SessionRuntimeInner {
     /// 让 auto-resume 的 prompt 与 HTTP 主通道使用同一份 envelope。
     ///
     /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
-    pub async fn set_session_construction_provider(
+    pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedSessionConstructionProvider,
+        provider: SharedFrameLaunchEnvelopeProvider,
     ) {
-        *self.session_construction_provider.write().await = Some(provider);
+        *self.frame_launch_envelope_provider.write().await = Some(provider);
     }
 
     /// 注入 Context Audit 总线，使 Hub 创建的 runtime delegate 能发出 hook fragment 审计。
@@ -317,7 +292,7 @@ impl SessionRuntimeInner {
         if self.hook_effect_handler_registry.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 hook_effect_handler_registry".to_string());
         }
-        if self.session_construction_provider.read().await.is_none() {
+        if self.frame_launch_envelope_provider.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 session_launch_envelope_provider".to_string());
         }
         if self.context_audit_bus.read().await.is_none() {
@@ -341,8 +316,13 @@ impl SessionRuntimeInner {
         if self.permission_grant_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 permission_grant_repo".to_string());
         }
-        if self.agent_run_mailbox_boundary_deps.is_none() {
-            return Err("SessionRuntimeInner 缺少 agent_run_mailbox_boundary_deps".to_string());
+        if self
+            .agent_run_mailbox_runtime_adapter
+            .read()
+            .await
+            .is_none()
+        {
+            return Err("SessionRuntimeInner 缺少 agent_run_mailbox_runtime_adapter".to_string());
         }
         Ok(())
     }

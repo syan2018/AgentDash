@@ -1,14 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::AgentFrameSurfaceExt;
-use agentdash_application::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
-    OrchestrationNodeEvidenceRef,
-};
-use agentdash_application::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
-    MessageStreamTraceKind, resolve_current_frame_from_delivery_trace_ref,
-};
+use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::session::construction_planner::resolve_project_workspace;
 use agentdash_application::task::plan::find_task_plan_item_for_subject;
 use agentdash_application::vfs::{
@@ -16,7 +8,6 @@ use agentdash_application::vfs::{
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
     build_project_vfs_mount_mount,
 };
-use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -26,13 +17,12 @@ use crate::{
     },
     routes::sessions::ensure_session_permission,
     rpc::ApiError,
-    session_construction::resolve_session_frame_vfs,
+    session_construction::{
+        project_runtime_surface_resource_vfs, resolve_current_runtime_surface_for_api,
+        resolve_runtime_session_resource_vfs_for_api,
+    },
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
-
-pub(crate) struct AgentRunFrameVfsResolution {
-    pub(crate) vfs: Vfs,
-}
 
 pub(crate) async fn resolve_surface_from_source(
     state: &Arc<AppState>,
@@ -219,13 +209,11 @@ pub(crate) async fn resolve_surface_bundle(
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
-            resolve_session_frame_vfs(state, current_user, session_id)
-                .await?
-                .vfs
-                .unwrap_or_default()
+            resolve_runtime_session_resource_vfs_for_api(state, current_user, session_id).await?
         }
         ResolvedVfsSurfaceSource::AgentRun { run_id, agent_id } => {
-            resolve_agent_run_frame_vfs(state, current_user, *run_id, *agent_id, permission).await?
+            resolve_agent_run_resource_vfs(state, current_user, *run_id, *agent_id, permission)
+                .await?
         }
     };
 
@@ -245,7 +233,7 @@ async fn load_project_vfs_mounts(
         .map_err(ApiError::from)
 }
 
-async fn resolve_agent_run_frame_vfs(
+async fn resolve_agent_run_resource_vfs(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
     run_id: uuid::Uuid,
@@ -274,97 +262,34 @@ async fn resolve_agent_run_frame_vfs(
         ));
     }
 
-    resolve_agent_run_frame_vfs_for_agent(state.as_ref(), &run, &agent)
-        .await?
-        .map(|resolution| resolution.vfs)
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("lifecycle_agent {} 没有可用 AgentFrame", agent.id))
-        })
-}
-
-pub(crate) async fn resolve_agent_run_frame_vfs_for_agent(
-    state: &AppState,
-    run: &LifecycleRun,
-    agent: &LifecycleAgent,
-) -> Result<Option<AgentRunFrameVfsResolution>, ApiError> {
     let anchor = state
         .repos
         .execution_anchor_repo
-        .list_by_run(run.id)
+        .list_by_run(run_id)
         .await
         .map_err(ApiError::from)?
         .into_iter()
-        .filter(|anchor| anchor.agent_id == agent.id)
+        .filter(|anchor| anchor.agent_id == agent_id)
         .max_by_key(|anchor| anchor.updated_at);
-    let frame = match anchor.as_ref() {
-        Some(anchor) => resolve_current_frame_from_delivery_trace_ref(
-            &anchor.runtime_session_id,
-            state.repos.execution_anchor_repo.as_ref(),
-            state.repos.lifecycle_agent_repo.as_ref(),
-            state.repos.agent_frame_repo.as_ref(),
-        )
-        .await
-        .map_err(ApiError::from)?
-        .map(|(_anchor, _agent, frame)| frame),
-        None => state
-            .repos
-            .agent_frame_repo
-            .get_current(agent.id)
-            .await
-            .map_err(ApiError::from)?,
-    };
-    let Some(frame) = frame else {
-        return Ok(None);
-    };
-    let vfs = match anchor.as_ref() {
-        Some(anchor) => {
-            let node_evidence = match (
-                anchor.orchestration_id,
-                anchor.node_path.as_ref(),
-                anchor.node_attempt,
-            ) {
-                (Some(orchestration_id), Some(node_path), Some(attempt)) => {
-                    Some(OrchestrationNodeEvidenceRef {
-                        run_id: anchor.run_id,
-                        orchestration_id,
-                        node_path: node_path.clone(),
-                        attempt,
-                    })
-                }
-                _ => None,
-            };
-            let surface = AgentRunLifecycleSurfaceProjector::new(&state.repos)
-                .project_launch_evidence_surface(AgentRunLifecycleSessionEvidenceFacts {
-                    base_vfs: frame.typed_vfs(),
-                    address: AgentRunRuntimeAddress {
-                        run_id: anchor.run_id,
-                        agent_id: anchor.agent_id,
-                        frame_id: anchor.launch_frame_id,
-                    },
-                    message_stream: MessageStreamProjectionRef {
-                        runtime_session_id: anchor.runtime_session_id.clone(),
-                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                    },
-                    project_id: run.project_id,
-                    node_evidence,
-                    skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(),
-                })
-                .await
-                .map_err(|error| {
-                    ApiError::Internal(format!("构建 AgentRun lifecycle surface 失败: {error}"))
-                })?;
-            surface.vfs
-        }
-        None => frame.typed_vfs().unwrap_or_else(|| Vfs {
-            mounts: Vec::new(),
-            default_mount_id: None,
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        }),
-    };
 
-    Ok(Some(AgentRunFrameVfsResolution { vfs }))
+    let Some(anchor) = anchor else {
+        return Err(ApiError::NotFound(format!(
+            "lifecycle_agent {agent_id} 没有可用 delivery runtime surface"
+        )));
+    };
+    let surface = resolve_current_runtime_surface_for_api(
+        state,
+        current_user,
+        &anchor.runtime_session_id,
+        RuntimeSurfaceQueryPurpose::resource_surface(),
+    )
+    .await?;
+    if surface.run_id != run_id || surface.agent_id != agent_id {
+        return Err(ApiError::Conflict(
+            "AgentRun delivery anchor 与 current runtime surface 不一致".into(),
+        ));
+    }
+    project_runtime_surface_resource_vfs(state, &surface).await
 }
 
 pub(crate) async fn build_surface_summary(

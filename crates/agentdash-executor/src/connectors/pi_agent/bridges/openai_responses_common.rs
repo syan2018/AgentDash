@@ -1,5 +1,6 @@
 use agentdash_agent::bridge::{
-    BridgeError, BridgeRequest, BridgeResponse, StreamChunk, ToolCallDeltaContent,
+    BridgeError, BridgeRequest, BridgeResponse, ProviderErrorClassification, StreamChunk,
+    ToolCallDeltaContent,
 };
 use agentdash_agent::types::{
     AgentMessage, ContentPart, StopReason, TokenUsage, ToolCallInfo, now_millis,
@@ -204,7 +205,7 @@ pub(super) async fn process_responses_stream(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|error| BridgeError::CompletionFailed(format!("{read_error_context}: {error}")))?
+        .map_err(|error| super::provider_stream_read_error(read_error_context, error))?
     {
         let text = String::from_utf8_lossy(&chunk);
         for event in parser.feed(&text) {
@@ -213,6 +214,13 @@ pub(super) async fn process_responses_stream(
     }
     if let Some(trailing) = parser.flush() {
         process_responses_sse_event(&trailing, &mut state, tx).await?;
+    }
+
+    if !state.has_visible_output() {
+        return Err(BridgeError::provider(
+            "Responses stream ended before any visible output",
+            ProviderErrorClassification::retryable().with_provider_code("empty_stream"),
+        ));
     }
 
     let message = state.into_agent_message();
@@ -254,6 +262,14 @@ struct ResponsesStreamState {
 }
 
 impl ResponsesStreamState {
+    fn has_visible_output(&self) -> bool {
+        !self.content_parts.is_empty()
+            || !self.tool_calls.is_empty()
+            || !self.text_buf.is_empty()
+            || !self.reasoning_buf.is_empty()
+            || self.pending_fc.is_some()
+    }
+
     fn finish_current_text(&mut self) {
         if !self.text_buf.is_empty() {
             self.content_parts
@@ -448,7 +464,10 @@ async fn process_responses_sse_event(
                 })
                 .or_else(|| data.get("message").and_then(|value| value.as_str()))
                 .unwrap_or("unknown error");
-            return Err(BridgeError::CompletionFailed(message.to_string()));
+            return Err(super::provider_event_error(
+                message.to_string(),
+                Some(&sse.data),
+            ));
         }
         _ => {}
     }

@@ -18,16 +18,17 @@ use super::super::assignment_context_frame::build_runtime_assignment_context_fra
 use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
+#[cfg(test)]
+use crate::agent_run::runtime_capability::RuntimeContextTransition;
+use crate::agent_run::runtime_capability::{
+    CapabilityStateDelta, apply_runtime_capability_transition, compute_capability_state_delta,
+};
 use crate::hooks::hook_injection_to_fragment;
 #[cfg(test)]
 use crate::session::{
-    AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeContextTransition,
-    RuntimeDeliveryCommand,
+    AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeDeliveryCommand,
 };
-use crate::session::{
-    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
-    apply_runtime_capability_transition, compute_capability_state_delta,
-};
+use crate::session::{CapabilityState, PendingCapabilityStateTransition};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {
@@ -643,7 +644,7 @@ mod tests {
             apply_mode: "live",
         };
         let state_delta = CapabilityStateDelta {
-            excluded_tool_paths: crate::session::SetDelta {
+            excluded_tool_paths: crate::agent_run::runtime_capability::SetDelta {
                 added: Vec::new(),
                 removed: vec!["workflow_management::upsert_workflow_tool".to_string()],
             },

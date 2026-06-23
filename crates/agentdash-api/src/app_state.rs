@@ -6,6 +6,10 @@ use tokio::sync::broadcast;
 
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::agent_run::{
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceUpdateService,
+};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
@@ -14,12 +18,12 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
+use agentdash_application::runtime_gateway::{CurrentSurfaceRuntimeMcpAccess, RuntimeGateway};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
-    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
-    SessionRuntimeService, SessionTitleService,
+    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
+    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
@@ -55,7 +59,8 @@ pub struct ServiceSet {
     pub session_control: SessionControlService,
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
-    pub session_capability: SessionCapabilityService,
+    pub session_runtime_transition: SessionRuntimeTransitionService,
+    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -202,7 +207,7 @@ impl AppState {
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,
                 shell_output_registry: shell_output_registry.clone(),
-                mcp_tool_discovery,
+                mcp_tool_discovery: mcp_tool_discovery.clone(),
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
                 integration_connectors: integration_registration.connectors,
@@ -220,7 +225,8 @@ impl AppState {
         let session_control = session_bootstrap.session_control;
         let session_launch = session_bootstrap.session_launch;
         let session_hooks = session_bootstrap.session_hooks;
-        let session_capability = session_bootstrap.session_capability;
+        let session_runtime_transition = session_bootstrap.session_runtime_transition;
+        let runtime_surface_update = session_bootstrap.runtime_surface_update;
         let session_effects = session_bootstrap.session_effects;
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
@@ -229,8 +235,18 @@ impl AppState {
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
 
-        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
-            Arc::new(session_capability.clone());
+        let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+            AgentRunRuntimeSurfaceQueryDeps {
+                anchor_repo: repos.execution_anchor_repo.clone(),
+                run_repo: repos.lifecycle_run_repo.clone(),
+                agent_repo: repos.lifecycle_agent_repo.clone(),
+                frame_repo: repos.agent_frame_repo.clone(),
+            },
+        ));
+        let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
+            runtime_surface_query,
+            mcp_tool_discovery,
+        ));
         let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
             mcp_probe_relay,
             setup_action_transport,
@@ -238,8 +254,8 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
-        // RuntimeGateway 装配序晚于 session runtime tool composer（gateway 依赖 session_mcp_access，
-        // 后者依赖 composer 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
+        // RuntimeGateway 装配序晚于 session runtime tool composer；此处把 gateway
+        // 回填进延迟句柄，供 workspace_module_invoke。
         runtime_gateway_handle.set(runtime_gateway.clone()).await;
 
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();
@@ -309,7 +325,8 @@ impl AppState {
                 session_control,
                 session_launch,
                 session_hooks,
-                session_capability,
+                session_runtime_transition,
+                runtime_surface_update,
                 session_effects,
                 session_title,
                 connector,
@@ -351,12 +368,12 @@ impl AppState {
         // 再从 frame revision 投影 connector 所需的 runtime surface。
         {
             let provider = Arc::new(
-                crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(
+                crate::bootstrap::frame_launch_envelope_provider::AppStateFrameLaunchEnvelopeProvider::new(
                     state.clone(),
                 ),
             );
             session_runtime_builder
-                .set_session_construction_provider(provider)
+                .set_frame_launch_envelope_provider(provider)
                 .await;
         }
 

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, UserInputBlock,
+};
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxMessageSource,
     SteeringStopEffect,
@@ -12,22 +14,24 @@ use agentdash_domain::workflow::{
 use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
     AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
-    CompactionFailureInput, CompactionParams, CompactionResult, EvaluateCompactionInput,
-    StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
-    TurnControlDecision,
+    CompactionFailureInput, CompactionParams, CompactionResult, DynAgentRuntimeDelegate,
+    EvaluateCompactionInput, StopDecision, ToolCallDecision, TransformContextInput,
+    TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::agent_run::{AgentRunMailboxScheduleTrigger, AgentRunMailboxService};
 use crate::lifecycle::WorkflowApplicationError;
 use crate::session::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
 };
+use uuid::Uuid;
+
+use super::mailbox::{AgentRunMailboxScheduleTrigger, AgentRunMailboxService};
 
 #[derive(Clone)]
-pub(crate) struct AgentRunMailboxRuntimeBoundaryDeps {
+pub struct AgentRunMailboxRuntimeBoundaryDeps {
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
@@ -40,17 +44,75 @@ pub(crate) struct AgentRunMailboxRuntimeBoundaryDeps {
     pub session_launch: Arc<SessionLaunchService>,
 }
 
-pub(crate) struct AgentRunMailboxRuntimeDelegate {
+#[derive(Clone)]
+pub struct AgentRunMailboxRuntimeAdapter {
+    deps: Arc<AgentRunMailboxRuntimeBoundaryDeps>,
+}
+
+pub struct AgentRunMailboxAutoResumeRequest {
+    pub session_id: String,
+    pub effect_id: Uuid,
+    pub source_turn_id: String,
+    pub terminal_event_seq: u64,
+    pub input: Vec<UserInputBlock>,
+}
+
+impl AgentRunMailboxRuntimeAdapter {
+    pub fn new(deps: AgentRunMailboxRuntimeBoundaryDeps) -> Self {
+        Self {
+            deps: Arc::new(deps),
+        }
+    }
+
+    pub fn runtime_delegate(
+        &self,
+        runtime_session_id: String,
+        inner: Option<DynAgentRuntimeDelegate>,
+    ) -> DynAgentRuntimeDelegate {
+        Arc::new(AgentRunMailboxRuntimeDelegate::new(
+            runtime_session_id,
+            inner,
+            self.deps.clone(),
+        ))
+    }
+
+    fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
+        mailbox_service_from_deps(&self.deps)
+    }
+
+    pub async fn accept_hook_auto_resume_effect(
+        &self,
+        request: AgentRunMailboxAutoResumeRequest,
+    ) -> Result<bool, String> {
+        match self
+            .mailbox_service()
+            .accept_hook_auto_resume_effect(
+                &request.session_id,
+                request.effect_id,
+                request.source_turn_id,
+                request.terminal_event_seq,
+                request.input,
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(WorkflowApplicationError::NotFound(_)) => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+struct AgentRunMailboxRuntimeDelegate {
     runtime_session_id: String,
     inner: Option<Arc<dyn AgentRuntimeDelegate>>,
-    deps: AgentRunMailboxRuntimeBoundaryDeps,
+    deps: Arc<AgentRunMailboxRuntimeBoundaryDeps>,
 }
 
 impl AgentRunMailboxRuntimeDelegate {
-    pub(crate) fn new(
+    fn new(
         runtime_session_id: String,
         inner: Option<Arc<dyn AgentRuntimeDelegate>>,
-        deps: AgentRunMailboxRuntimeBoundaryDeps,
+        deps: Arc<AgentRunMailboxRuntimeBoundaryDeps>,
     ) -> Self {
         Self {
             runtime_session_id,
@@ -62,14 +124,14 @@ impl AgentRunMailboxRuntimeDelegate {
     fn boundary_stage(&self) -> MailboxBoundaryStage<'_> {
         MailboxBoundaryStage {
             runtime_session_id: &self.runtime_session_id,
-            deps: &self.deps,
+            deps: self.deps.as_ref(),
         }
     }
 
     fn hook_router(&self) -> HookDeliveryRouter<'_> {
         HookDeliveryRouter {
             runtime_session_id: &self.runtime_session_id,
-            deps: &self.deps,
+            deps: self.deps.as_ref(),
         }
     }
 }
@@ -94,18 +156,7 @@ fn runtime_session_mailbox_adapter_ref(
 
 impl MailboxBoundaryStage<'_> {
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
-        AgentRunMailboxService::new(
-            self.deps.lifecycle_run_repo.as_ref(),
-            self.deps.lifecycle_agent_repo.as_ref(),
-            self.deps.agent_frame_repo.as_ref(),
-            self.deps.execution_anchor_repo.as_ref(),
-            self.deps.command_receipt_repo.as_ref(),
-            self.deps.mailbox_repo.as_ref(),
-            self.deps.session_core.clone(),
-            self.deps.session_control.clone(),
-            self.deps.session_eventing.clone(),
-            (*self.deps.session_launch).clone(),
-        )
+        mailbox_service_from_deps(self.deps)
     }
 
     async fn schedule_agent_loop_turn_boundary(&self) {
@@ -173,18 +224,7 @@ struct HookDeliveryRouter<'a> {
 
 impl HookDeliveryRouter<'_> {
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
-        AgentRunMailboxService::new(
-            self.deps.lifecycle_run_repo.as_ref(),
-            self.deps.lifecycle_agent_repo.as_ref(),
-            self.deps.agent_frame_repo.as_ref(),
-            self.deps.execution_anchor_repo.as_ref(),
-            self.deps.command_receipt_repo.as_ref(),
-            self.deps.mailbox_repo.as_ref(),
-            self.deps.session_core.clone(),
-            self.deps.session_control.clone(),
-            self.deps.session_eventing.clone(),
-            (*self.deps.session_launch).clone(),
-        )
+        mailbox_service_from_deps(self.deps)
     }
 
     async fn route_hook_delivery_messages(
@@ -228,6 +268,23 @@ impl HookDeliveryRouter<'_> {
             Err(error) => Err(AgentRuntimeError::Runtime(error.to_string())),
         }
     }
+}
+
+fn mailbox_service_from_deps(
+    deps: &AgentRunMailboxRuntimeBoundaryDeps,
+) -> AgentRunMailboxService<'_> {
+    AgentRunMailboxService::new(
+        deps.lifecycle_run_repo.as_ref(),
+        deps.lifecycle_agent_repo.as_ref(),
+        deps.agent_frame_repo.as_ref(),
+        deps.execution_anchor_repo.as_ref(),
+        deps.command_receipt_repo.as_ref(),
+        deps.mailbox_repo.as_ref(),
+        deps.session_core.clone(),
+        deps.session_control.clone(),
+        deps.session_eventing.clone(),
+        (*deps.session_launch).clone(),
+    )
 }
 
 #[derive(Debug, Default)]

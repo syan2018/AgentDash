@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
+- **Total Sessions**: 29
 - **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1018 | Active |
+| `journal-1.md` | ~1052 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-06-23 | 完成Agent Provider重试与恢复 | `bc347b1d2`, `620149507` | `main` |
 | 28 | 2026-06-23 | PiAgent readable lifecycle ID 降噪 | `cf300d988` | `main` |
 | 27 | 2026-06-23 | PiAgent 大输出 lifecycle 链路收口 | `7262091d1` | `codex/piagent-tool-result-bounding` |
 | 26 | 2026-06-23 | PiAgent 工具大输出有界化 | `1ad96871`, `a38e1f45`, `c527d9c2`, `b83f783c`, `fb6a68bc`, `474cbcf7`, `607e1f14`, `967a3ccf` | `codex/piagent-tool-result-bounding` |

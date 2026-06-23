@@ -16,7 +16,7 @@
 //! prompt 来源，并合入 frame construction handoff:
 //!
 //! ```text
-//! compose fn(各自 Spec) → SessionAssemblyBuilder → AgentFrame / FrameLaunchEnvelope
+//! compose fn(各自 Spec) → FrameAssemblyBuilder → AgentFrame / FrameLaunchEnvelope
 //! ```
 //!
 //! compose 函数内部共享 lifecycle / companion building blocks，不再重复散落。
@@ -24,7 +24,6 @@
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
@@ -34,6 +33,14 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
+#[cfg(test)]
+use super::assembly::slice_companion_bundle;
+use super::assembly::{
+    FrameAssemblyBuilder, FrameAssemblyLaunchExtras, project_frame_assembly_to_frame,
+};
+use crate::agent_run::runtime_capability_projection::{
+    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
+};
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
@@ -58,15 +65,8 @@ use crate::lifecycle::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
-use crate::session::assembly_builder::SessionAssemblyBuilder;
-#[cfg(test)]
-use crate::session::assembly_builder::slice_companion_bundle;
-use crate::session::capability_projection::{
-    SessionCapabilityProjectionInput, derive_session_skill_baseline,
-};
 use crate::session::construction_planner::ResolvedProjectAgentContext;
 use crate::vfs::{VfsService, apply_agent_vfs_access_grants};
-use crate::workspace::BackendAvailability;
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 1:内部 builder prompt 投影
@@ -76,14 +76,12 @@ use crate::workspace::BackendAvailability;
 // SECTION 2:Assembler 共享服务容器
 // ═══════════════════════════════════════════════════════════════════
 
-/// `SessionRequestAssembler` 依赖的基础设施引用集合。
+/// `FrameRequestAssembler` 依赖的基础设施引用集合。
 ///
 /// 由 `AppState` / 各 handler 构造后传入各 compose 函数,避免每个 compose
 /// 签名都携带 6-7 个 service 参数。
-pub struct SessionRequestAssembler<'a> {
+pub struct FrameRequestAssembler<'a> {
     pub vfs_service: &'a VfsService,
-    pub canvas_repo: &'a dyn CanvasRepository,
-    pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
     /// 可选审计总线 —— 每次 compose 产出 Bundle 后批量 emit。
@@ -108,27 +106,24 @@ pub trait CompanionParentFactsProvider: Send + Sync {
 }
 
 #[async_trait]
-impl CompanionParentFactsProvider for crate::session::SessionCapabilityService {
+impl CompanionParentFactsProvider for crate::session::SessionRuntimeTransitionService {
     async fn latest_companion_parent_capability_state(
         &self,
         parent_session_id: &str,
     ) -> Option<CapabilityState> {
-        self.get_latest_capability_state(parent_session_id).await
+        self.latest_runtime_capability_state(parent_session_id)
+            .await
     }
 }
 
-impl<'a> SessionRequestAssembler<'a> {
+impl<'a> FrameRequestAssembler<'a> {
     pub fn new(
         vfs_service: &'a VfsService,
-        canvas_repo: &'a dyn CanvasRepository,
-        availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
     ) -> Self {
         Self {
             vfs_service,
-            canvas_repo,
-            availability,
             repos,
             platform_config,
             audit_bus: None,
@@ -162,32 +157,6 @@ impl<'a> SessionRequestAssembler<'a> {
         self
     }
 
-    /// lifecycle_node 的 frame builder 路径。
-    pub async fn compose_lifecycle_node_to_frame(
-        &self,
-        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
-        spec: LifecycleNodeSpec<'_>,
-    ) -> Result<
-        (
-            crate::agent_run::frame::builder::AgentFrameBuilder,
-            crate::session::assembly_builder::AssemblyLaunchExtras,
-        ),
-        String,
-    > {
-        let prepared = compose_lifecycle_node_with_audit(
-            self.repos,
-            self.platform_config,
-            spec,
-            self.audit_bus.clone(),
-            None,
-        )
-        .await?;
-        Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder,
-            prepared,
-        ))
-    }
-
     /// companion 的 frame builder 路径。
     pub async fn compose_companion_to_frame(
         &self,
@@ -196,7 +165,7 @@ impl<'a> SessionRequestAssembler<'a> {
     ) -> Result<
         (
             crate::agent_run::frame::builder::AgentFrameBuilder,
-            crate::session::assembly_builder::AssemblyLaunchExtras,
+            FrameAssemblyLaunchExtras,
         ),
         String,
     > {
@@ -210,8 +179,6 @@ impl<'a> SessionRequestAssembler<'a> {
             slice_mode: spec.slice_mode,
             companion_executor_config: spec.companion_executor_config,
             dispatch_prompt: spec.dispatch_prompt,
-            selected_project_agent_id: spec.selected_project_agent_id,
-            selected_agent_key: spec.selected_agent_key.clone(),
             selected_context: None,
         })?;
         let selected_context = self
@@ -240,10 +207,7 @@ impl<'a> SessionRequestAssembler<'a> {
             )
             .await?;
         }
-        Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder,
-            prepared,
-        ))
+        Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
 
     /// companion + workflow 的 frame builder 路径。
@@ -254,7 +218,7 @@ impl<'a> SessionRequestAssembler<'a> {
     ) -> Result<
         (
             crate::agent_run::frame::builder::AgentFrameBuilder,
-            crate::session::assembly_builder::AssemblyLaunchExtras,
+            FrameAssemblyLaunchExtras,
         ),
         String,
     > {
@@ -278,8 +242,6 @@ impl<'a> SessionRequestAssembler<'a> {
                     slice_mode: spec.companion.slice_mode,
                     companion_executor_config: spec.companion.companion_executor_config,
                     dispatch_prompt: spec.companion.dispatch_prompt,
-                    selected_project_agent_id: spec.companion.selected_project_agent_id,
-                    selected_agent_key: spec.companion.selected_agent_key.clone(),
                     selected_context,
                 },
                 run: spec.run,
@@ -293,10 +255,7 @@ impl<'a> SessionRequestAssembler<'a> {
             },
         )
         .await?;
-        Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder,
-            prepared,
-        ))
+        Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
 
     pub(crate) async fn resolve_companion_parent_facts(
@@ -323,7 +282,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
     async fn apply_selected_companion_project_agent(
         &self,
-        prepared: &mut SessionAssemblyBuilder,
+        prepared: &mut FrameAssemblyBuilder,
         selected_project_agent_id: Option<Uuid>,
         selected_agent_key_snapshot: Option<&str>,
     ) -> Result<Option<crate::session::construction_planner::ResolvedProjectAgentContext>, String>
@@ -378,7 +337,7 @@ impl<'a> SessionRequestAssembler<'a> {
     async fn project_companion_system_to_agent_run_lifecycle(
         &self,
         child_session_id: &str,
-        prepared: &mut SessionAssemblyBuilder,
+        prepared: &mut FrameAssemblyBuilder,
         explicit_skill_asset_keys: Vec<String>,
     ) -> Result<(), String> {
         let Some(anchor) = self
@@ -432,7 +391,7 @@ impl<'a> SessionRequestAssembler<'a> {
 
     async fn resolve_selected_companion_capabilities(
         &self,
-        prepared: &mut SessionAssemblyBuilder,
+        prepared: &mut FrameAssemblyBuilder,
         context: &crate::session::construction_planner::ResolvedProjectAgentContext,
         slice_mode: CompanionSliceMode,
         identity: Option<&AuthIdentity>,
@@ -468,13 +427,14 @@ impl<'a> SessionRequestAssembler<'a> {
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
         capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
 
-        if let Some(caps) = derive_companion_selected_project_agent_skill_baseline(
-            Some(self.vfs_service),
+        if let Some(caps) = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
+            vfs_service: Some(self.vfs_service),
             active_vfs,
             identity,
-            self.extra_skill_dirs,
-            self.skill_discovery_providers,
-        )
+            extra_skill_dirs: self.extra_skill_dirs,
+            skill_discovery_providers: self.skill_discovery_providers,
+            diagnostics_label: "companion_selected_project_agent",
+        })
         .await
         {
             capability_state.skill.skills = caps.skills;
@@ -484,24 +444,6 @@ impl<'a> SessionRequestAssembler<'a> {
         prepared.capability_state = Some(capability_state);
         Ok(())
     }
-}
-
-async fn derive_companion_selected_project_agent_skill_baseline(
-    vfs_service: Option<&VfsService>,
-    active_vfs: Option<&Vfs>,
-    identity: Option<&AuthIdentity>,
-    extra_skill_dirs: &[PathBuf],
-    skill_discovery_providers: &[Arc<dyn SkillDiscoveryProvider>],
-) -> Option<agentdash_spi::SessionBaselineCapabilities> {
-    derive_session_skill_baseline(SessionCapabilityProjectionInput {
-        vfs_service,
-        active_vfs,
-        identity,
-        extra_skill_dirs,
-        skill_discovery_providers,
-        diagnostics_label: "companion_selected_project_agent",
-    })
-    .await
 }
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
@@ -515,7 +457,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
 ) -> Result<
     (
         crate::agent_run::frame::builder::AgentFrameBuilder,
-        crate::session::assembly_builder::AssemblyLaunchExtras,
+        FrameAssemblyLaunchExtras,
     ),
     String,
 > {
@@ -527,19 +469,16 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
         audit_session_key,
     )
     .await?;
-    Ok(crate::session::assembly_builder::project_assembly_to_frame(
-        frame_builder,
-        prepared,
-    ))
+    Ok(project_frame_assembly_to_frame(frame_builder, prepared))
 }
 
-pub(in crate::session) async fn compose_lifecycle_node_with_audit(
+async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
-) -> Result<SessionAssemblyBuilder, String> {
+) -> Result<FrameAssemblyBuilder, String> {
     let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
     };
@@ -667,7 +606,7 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
             AuditTrigger::ComposerRebuild,
         );
     }
-    Ok(SessionAssemblyBuilder::new()
+    Ok(FrameAssemblyBuilder::new()
         .apply_lifecycle_activation(&activation, spec.inherited_executor_config)
         .with_context_bundle(context_bundle)
         .build())
@@ -773,14 +712,12 @@ fn contribute_lifecycle_context(
     Contribution::fragments_only(fragments)
 }
 
-/// Companion 子 session 组装(脱离 `SessionRequestAssembler`,companion tool
+/// Companion 子 session 组装(脱离 `FrameRequestAssembler`,companion tool
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
 ///
-/// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
-pub(in crate::session) fn compose_companion(
-    spec: CompanionSpec<'_>,
-) -> Result<SessionAssemblyBuilder, String> {
-    Ok(SessionAssemblyBuilder::new()
+/// 内部委托给 `FrameAssemblyBuilder::apply_companion_slice`。
+fn compose_companion(spec: CompanionSpec<'_>) -> Result<FrameAssemblyBuilder, String> {
+    Ok(FrameAssemblyBuilder::new()
         .apply_companion_slice(
             spec.parent_vfs,
             spec.parent_mcp_servers,
@@ -844,8 +781,6 @@ pub struct CompanionSpec<'a> {
     pub slice_mode: CompanionSliceMode,
     pub companion_executor_config: AgentConfig,
     pub dispatch_prompt: String,
-    pub selected_project_agent_id: Option<Uuid>,
-    pub selected_agent_key: Option<String>,
     pub selected_context: Option<ResolvedProjectAgentContext>,
 }
 
@@ -894,12 +829,12 @@ pub struct CompanionWorkflowSpec<'a> {
 /// Companion + Workflow 组合组装。
 ///
 /// 基于 companion VFS slice 叠加 lifecycle mount 和 workflow 能力/MCP，
-/// 通过 `SessionAssemblyBuilder` 声明式组合两个关注点。
-pub(in crate::session) async fn compose_companion_with_workflow(
+/// 通过 `FrameAssemblyBuilder` 声明式组合两个关注点。
+async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
-) -> Result<SessionAssemblyBuilder, String> {
+) -> Result<FrameAssemblyBuilder, String> {
     use crate::companion::tools::build_companion_execution_slice;
 
     let project_id = spec.run.project_id;
@@ -1051,7 +986,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     let user_input = agentdash_agent_protocol::text_user_input_blocks(comp.dispatch_prompt.clone());
 
-    Ok(SessionAssemblyBuilder::new()
+    Ok(FrameAssemblyBuilder::new()
         .with_vfs(slice.vfs.ok_or_else(|| {
             "companion workflow compose 未产出 VFS，拒绝构造 child session".to_string()
         })?)
@@ -1086,9 +1021,7 @@ mod tests {
         AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
         OutputPortDefinition, WorkflowGraph, WorkflowGraphDraft, WorkflowInjectionSpec,
     };
-    use async_trait::async_trait;
     use std::collections::BTreeSet;
-    use std::sync::{Arc, Mutex};
 
     // ── companion bundle fragment 裁剪回归 ──
 
@@ -1155,45 +1088,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct CapturingCompanionSkillProvider {
-        context: Mutex<Option<agentdash_spi::SkillDiscoveryContext>>,
-    }
-
-    #[async_trait]
-    impl SkillDiscoveryProvider for CapturingCompanionSkillProvider {
-        fn provider_key(&self) -> &str {
-            "test.companion.capture"
-        }
-
-        async fn discover(
-            &self,
-            context: agentdash_spi::SkillDiscoveryContext,
-        ) -> Result<agentdash_spi::SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError>
-        {
-            *self.context.lock().expect("context lock") = Some(context);
-            Ok(agentdash_spi::SkillDiscoveryOutput::default())
-        }
-    }
-
-    fn companion_projection_identity() -> AuthIdentity {
-        AuthIdentity {
-            auth_mode: agentdash_spi::AuthMode::Enterprise,
-            user_id: "user-companion".to_string(),
-            subject: "subject-companion".to_string(),
-            display_name: Some("Companion User".to_string()),
-            email: Some("companion@example.com".to_string()),
-            avatar_url: None,
-            groups: vec![agentdash_spi::AuthGroup {
-                group_id: "design".to_string(),
-                display_name: Some("Design".to_string()),
-            }],
-            is_admin: false,
-            provider: Some("test".to_string()),
-            extra: serde_json::Value::Null,
-        }
-    }
-
     #[test]
     fn selected_agent_key_snapshot_must_match_project_agent_name() {
         let context = selected_context_with_name("reviewer");
@@ -1202,45 +1096,6 @@ mod tests {
         assert!(validate_selected_agent_key_snapshot(&context, Some("Reviewer")).is_ok());
         assert!(validate_selected_agent_key_snapshot(&context, None).is_ok());
         assert!(validate_selected_agent_key_snapshot(&context, Some("planner")).is_err());
-    }
-
-    #[tokio::test]
-    async fn companion_selected_project_agent_skill_provider_receives_identity() {
-        let vfs = Vfs {
-            mounts: vec![test_workspace_mount()],
-            default_mount_id: Some("workspace".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-        let identity = companion_projection_identity();
-        let provider = Arc::new(CapturingCompanionSkillProvider::default());
-        let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider.clone()];
-
-        let _ = derive_companion_selected_project_agent_skill_baseline(
-            None,
-            Some(&vfs),
-            Some(&identity),
-            &[],
-            &providers,
-        )
-        .await;
-
-        let captured = provider
-            .context
-            .lock()
-            .expect("context lock")
-            .clone()
-            .expect("provider context");
-        assert_eq!(
-            captured.workspace_root_ref.as_deref(),
-            Some("workspace://test")
-        );
-        let user = captured.user.expect("user context");
-        assert_eq!(user.user_id, "user-companion");
-        assert_eq!(user.display_name.as_deref(), Some("Companion User"));
-        assert_eq!(user.email.as_deref(), Some("companion@example.com"));
-        assert_eq!(user.groups, vec!["design"]);
     }
 
     fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {
@@ -1378,7 +1233,7 @@ mod tests {
 
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
-        let prepared = SessionAssemblyBuilder::new()
+        let prepared = FrameAssemblyBuilder::new()
             .append_lifecycle_mount(LifecycleMountSurface {
                 run_id: Uuid::new_v4(),
                 orchestration_id: Uuid::new_v4(),
@@ -1413,7 +1268,7 @@ mod tests {
             links: Vec::new(),
         };
 
-        let prepared = SessionAssemblyBuilder::new()
+        let prepared = FrameAssemblyBuilder::new()
             .with_vfs(base_vfs)
             .apply_lifecycle_activation(&activation, None)
             .build();
@@ -1552,18 +1407,18 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // apply_session_assembly 合并语义回归测试
+    // apply_frame_assembly 合并语义回归测试
     // ═══════════════════════════════════════════════════════════
     //
-    // 这些测试锁定 `apply_session_assembly` 的 frame surface handoff 行为：
+    // 这些测试锁定 `apply_frame_assembly` 的 frame surface handoff 行为：
     // - frame surface draft 承载 capability / VFS / MCP；
     // - prepared VFS 优先表达 compose 后的最终 mount 组合；
     // - workspace_defaults 顺序保持"先回填、再被 prepared.vfs 覆盖"。
 
-    mod apply_session_assembly_tests {
+    mod apply_frame_assembly_tests {
         use super::super::*;
+        use crate::agent_run::frame::construction::assembly::apply_frame_assembly;
         use crate::session::UserPromptInput;
-        use crate::session::assembly_builder::apply_session_assembly;
         use crate::session::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
@@ -1599,14 +1454,14 @@ mod tests {
             };
             capability_state.vfs.active = Some(vfs.clone());
             let mcp_servers = vec![runtime_mcp_server("compose_a", "http://a")];
-            let prepared = SessionAssemblyBuilder {
+            let prepared = FrameAssemblyBuilder {
                 vfs: Some(vfs),
                 capability_state: Some(capability_state),
                 mcp_servers,
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             let draft = result
                 .projections
                 .frame_surface_draft
@@ -1631,7 +1486,7 @@ mod tests {
                 source_story_id: None,
                 links: Vec::new(),
             });
-            let prepared = SessionAssemblyBuilder {
+            let prepared = FrameAssemblyBuilder {
                 vfs: Some(Vfs {
                     mounts: Vec::new(),
                     default_mount_id: Some("prepared-mount".to_string()),
@@ -1642,7 +1497,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             assert_eq!(
                 result.surface.vfs.and_then(|v| v.default_mount_id),
                 Some("prepared-mount".to_string()),
@@ -1660,9 +1515,9 @@ mod tests {
                 source_story_id: None,
                 links: Vec::new(),
             });
-            let prepared = SessionAssemblyBuilder::default();
+            let prepared = FrameAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             assert_eq!(
                 result.surface.vfs.and_then(|v| v.default_mount_id),
                 Some("base-mount".to_string()),
@@ -1673,12 +1528,12 @@ mod tests {
         fn prompt_blocks_prepared_overrides_base() {
             let mut base = base_plan();
             base.prompt.input = Some(agentdash_agent_protocol::text_user_input_blocks("base"));
-            let prepared = SessionAssemblyBuilder {
+            let prepared = FrameAssemblyBuilder {
                 input: Some(agentdash_agent_protocol::text_user_input_blocks("compose")),
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             let texts: Vec<&str> = result
                 .prompt
                 .input
@@ -1694,9 +1549,9 @@ mod tests {
         fn prompt_blocks_prepared_none_preserves_base() {
             let mut base = base_plan();
             base.prompt.input = Some(agentdash_agent_protocol::text_user_input_blocks("base"));
-            let prepared = SessionAssemblyBuilder::default();
+            let prepared = FrameAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             let texts: Vec<&str> = result
                 .prompt
                 .input
@@ -1717,9 +1572,9 @@ mod tests {
             base.context.bundle =
                 Some(SessionContextBundle::new(uuid::Uuid::new_v4(), "test-base"));
             // prepared 为 None 时整体替换：base bundle 被清除
-            let prepared = SessionAssemblyBuilder::default();
+            let prepared = FrameAssemblyBuilder::default();
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             assert!(
                 result.context.bundle.is_none(),
                 "context_bundle 为整体替换字段，prepared=None 会清除 base"
@@ -1740,12 +1595,12 @@ mod tests {
 
             let mut prepared_env = HashMap::new();
             prepared_env.insert("BAR".to_string(), "prepared".to_string());
-            let prepared = SessionAssemblyBuilder {
+            let prepared = FrameAssemblyBuilder {
                 env: prepared_env,
                 ..Default::default()
             };
 
-            let result = apply_session_assembly(base, prepared);
+            let result = apply_frame_assembly(base, prepared);
             assert!(!result.prompt.environment_variables.contains_key("FOO"));
             assert_eq!(
                 result
@@ -1765,8 +1620,8 @@ mod tests {
                 .environment_variables
                 .insert("FOO".to_string(), "base".to_string());
 
-            let prepared = SessionAssemblyBuilder::default();
-            let result = apply_session_assembly(base, prepared);
+            let prepared = FrameAssemblyBuilder::default();
+            let result = apply_frame_assembly(base, prepared);
             assert_eq!(
                 result
                     .prompt
@@ -1808,7 +1663,7 @@ mod tests {
                 executor_config: None,
                 backend_selection: None,
             };
-            let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
+            let prepared = FrameAssemblyBuilder::new().with_user_input(input).build();
             assert!(
                 prepared.input.is_some(),
                 "with_user_input 应把 input 写入 builder"

@@ -106,6 +106,51 @@ Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Pla
 
 前端模型上下文面板的 refresh key 来自 `turn_completed`、内部 platform `context_compacted` 和 `ContextFrame(kind="compaction_summary")`。`executor_context_compacted` 只影响时间线/状态展示语义，因为内部 projection store 没有发生 commit。
 
+Provider retry/reconnect 与失败轮次恢复使用一等 `PlatformEvent` variants，而不是
+`SessionMetaUpdate` 自由 key：
+
+```rust
+PlatformEvent::ProviderAttemptStatus(ProviderAttemptStatus)
+PlatformEvent::SessionRewound(SessionRewound)
+```
+
+`ProviderAttemptStatus` 字段：
+
+- `turn_id: String`
+- `phase: connecting | connected_waiting_first_delta | streaming | retry_scheduled | retrying | failed | succeeded`
+- `attempt: u32`
+- `max_attempts: u32`
+- `will_retry: bool`
+- `delay_ms?: u64`
+- `reason_code?: String`
+- `message?: String`
+- `provider?: String`
+- `model?: String`
+
+`SessionRewound` 字段：
+
+- `discarded_turn_id: String`
+- `stable_event_seq: u64`
+- `stable_turn_id?: String`
+- `reason: provider_retry | provider_failure | runtime_failure`
+- `replacement_turn_id?: String`
+- `message?: String`
+
+消费规则：
+
+- `ProviderAttemptStatus` 是运行状态，不是 assistant message。前端可以渲染 Thinking /
+  Reconnecting / retry exhausted，但不能把该文案写入模型上下文。
+- `ErrorNotification { will_retry: true }` 是 Codex-style intermediate state；它不是 terminal
+  failed，也不更新 turn summary。attempt/max/delay/provider 等细节来自
+  `ProviderAttemptStatus`。
+- `SessionRewound` 是 append-only stable-boundary fact。事件流不物理删除尾部事件；projection、
+  frontend reducer 或 full rehydrate 必须按 `stable_event_seq` / `discarded_turn_id` 排除失败轮次。
+- 新增或修改 `PlatformEvent` 一等 variant 后必须重新生成 TypeScript binding：
+
+```powershell
+cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
+```
+
 ## TypeScript Binding
 
 生成命令：

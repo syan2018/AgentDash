@@ -387,13 +387,9 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::{
-        AgentFrameBuilder, AgentFrameSurfaceExt, AgentRunFrameSurfaceError,
-        AgentRunGrantProjection, AgentRunSurfaceProjectionContext,
-        AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
-    };
+    use crate::agent_run::runtime_capability::project_capability_state_from_frame;
+    use crate::agent_run::{AgentFrameBuilder, AgentFrameSurfaceExt, AgentRunGrantProjection};
     use crate::session::AgentFrameRuntimeTarget;
-    use crate::session::capability_state::project_capability_state_from_frame;
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
         PolicyOutcome,
@@ -597,82 +593,20 @@ mod tests {
     }
 
     struct TestSurfaceBoundary {
-        frame_repo: Arc<InMemoryFrameRepo>,
         fail_adoption: bool,
     }
 
     impl TestSurfaceBoundary {
-        fn new(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+        fn new(_frame_repo: Arc<InMemoryFrameRepo>) -> Self {
             Self {
-                frame_repo,
                 fail_adoption: false,
             }
         }
 
-        fn failing(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+        fn failing(_frame_repo: Arc<InMemoryFrameRepo>) -> Self {
             Self {
-                frame_repo,
                 fail_adoption: true,
             }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl AgentRunSurfaceProjectionContextResolver for TestSurfaceBoundary {
-        async fn resolve_surface_projection_context(
-            &self,
-            source: AgentRunSurfaceProjectionContextSource,
-        ) -> Result<AgentRunSurfaceProjectionContext, AgentRunFrameSurfaceError> {
-            let (effect_frame_id, runtime_session_id) = match source {
-                AgentRunSurfaceProjectionContextSource::EffectFrame {
-                    effect_frame_id,
-                    delivery_runtime_session_id,
-                } => (effect_frame_id, delivery_runtime_session_id),
-                other => {
-                    return Err(AgentRunFrameSurfaceError::ProjectionContextUnavailable(
-                        format!("test resolver expected effect frame source, got {other:?}"),
-                    ));
-                }
-            };
-            let effect_frame = self
-                .frame_repo
-                .get(effect_frame_id)
-                .await
-                .map_err(|error| {
-                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(error.to_string())
-                })?
-                .ok_or_else(|| {
-                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
-                        "effect frame not found: {effect_frame_id}"
-                    ))
-                })?;
-            let current_frame = self
-                .frame_repo
-                .get_current(effect_frame.agent_id)
-                .await
-                .map_err(|error| {
-                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(error.to_string())
-                })?
-                .unwrap_or(effect_frame);
-            let capability_state = project_capability_state_from_frame(&current_frame);
-            Ok(AgentRunSurfaceProjectionContext {
-                target: AgentFrameRuntimeTarget {
-                    frame_id: current_frame.id,
-                    delivery_runtime_session_id: runtime_session_id.clone(),
-                },
-                delivery_runtime_session_id: runtime_session_id,
-                active_turn_id: Some("turn-test".to_string()),
-                current_frame: current_frame.clone(),
-                identity: Some(agentdash_spi::AuthIdentity::system_routine(
-                    "permission-test",
-                )),
-                active_vfs: capability_state.vfs.active.clone(),
-                mcp_servers: current_frame.typed_mcp_servers(),
-                runtime_backend_anchor: None,
-                capability_state,
-                skill_discovery_provider_count: 0,
-                extra_skill_dirs: Vec::new(),
-            })
         }
     }
 

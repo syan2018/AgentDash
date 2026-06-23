@@ -3,12 +3,16 @@ use std::collections::HashMap;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk, ToolCallDeltaContent};
+use crate::bridge::{
+    BridgeError, BridgeRequest, LlmBridge, ProviderErrorClassification, ProviderRetryPolicy,
+    StreamChunk, ToolCallDeltaContent, sleep_for_retry,
+};
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
     BeforeProviderRequestInput, CompactionFailureInput, ContentPart, DynAgentTool,
-    EvaluateCompactionInput, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
-    estimate_request_tokens, now_millis,
+    EvaluateCompactionInput, ProviderAttemptPhase, ProviderAttemptStatus,
+    ProviderVisibleContextStats, ToolCallInfo, TransformContextInput, estimate_request_tokens,
+    now_millis,
 };
 
 use super::tool_call::refresh_context_tools;
@@ -264,108 +268,94 @@ pub(super) async fn stream_assistant_response(
             .await;
     }
 
+    let retry_policy = ProviderRetryPolicy::default();
     let mut partial = PartialAssistantState::new();
-    let mut stream = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-        stream = bridge.stream_complete(request) => stream,
-    };
     let mut response = None;
     let mut stream_failure = None;
+    let mut last_pre_delta_error = None;
 
-    loop {
-        let chunk = tokio::select! {
+    for attempt in 1..=retry_policy.max_attempts {
+        emit_provider_status(
+            emit,
+            ProviderAttemptStatus {
+                phase: ProviderAttemptPhase::Connecting,
+                attempt,
+                max_attempts: retry_policy.max_attempts,
+                will_retry: false,
+                delay_ms: None,
+                reason_code: None,
+                message: None,
+                provider: None,
+                model: None,
+            },
+        )
+        .await;
+
+        let mut stream = tokio::select! {
             biased;
-            _ = cancel.cancelled() => {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            stream = bridge.stream_complete(request.clone()) => stream,
+        };
+        emit_provider_status(
+            emit,
+            ProviderAttemptStatus {
+                phase: ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+                attempt,
+                max_attempts: retry_policy.max_attempts,
+                will_retry: false,
+                delay_ms: None,
+                reason_code: None,
+                message: None,
+                provider: None,
+                model: None,
+            },
+        )
+        .await;
+        let mut has_visible_delta = false;
+        let mut streaming_status_emitted = false;
+        let mut retry_error = None;
+
+        loop {
+            let chunk = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
+                    break;
+                }
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
+            if cancel.is_cancelled() {
                 stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
                 break;
             }
-            chunk = stream.next() => chunk,
-        };
-        let Some(chunk) = chunk else {
-            break;
-        };
-        if cancel.is_cancelled() {
-            stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
-            break;
-        }
-        match chunk {
-            StreamChunk::TextDelta(text) if !text.is_empty() => {
-                ensure_partial_started(context, emit, &mut partial).await;
-                end_active_reasoning(context, emit, &mut partial).await;
-                let content_index = if let Some(index) = partial.active_text_index {
-                    index
-                } else {
-                    let index = partial.content_mut().len();
-                    partial.content_mut().push(ContentPart::text(""));
-                    partial.active_text_index = Some(index);
-                    sync_partial(context, &partial);
-                    emit_event(
+            match chunk {
+                StreamChunk::TextDelta(text) if !text.is_empty() => {
+                    mark_visible_delta(
                         emit,
-                        AgentEvent::MessageUpdate {
-                            message: partial.message.clone(),
-                            event: AssistantStreamEvent::TextStart {
-                                content_index: index,
-                            },
-                        },
+                        &mut has_visible_delta,
+                        &mut streaming_status_emitted,
+                        attempt,
+                        retry_policy.max_attempts,
                     )
                     .await;
-                    index
-                };
-
-                if let Some(ContentPart::Text { text: existing }) =
-                    partial.content_mut().get_mut(content_index)
-                {
-                    existing.push_str(&text);
-                }
-                sync_partial(context, &partial);
-                emit_event(
-                    emit,
-                    AgentEvent::MessageUpdate {
-                        message: partial.message.clone(),
-                        event: AssistantStreamEvent::TextDelta {
-                            content_index,
-                            text,
-                        },
-                    },
-                )
-                .await;
-            }
-            StreamChunk::ReasoningDelta {
-                id,
-                text,
-                signature,
-            } if !text.is_empty() => {
-                ensure_partial_started(context, emit, &mut partial).await;
-                end_active_text(context, emit, &mut partial).await;
-
-                let reasoning_key = PartialAssistantState::reasoning_key(&id);
-                if partial.active_reasoning_id.as_deref() != Some(reasoning_key.as_str()) {
+                    ensure_partial_started(context, emit, &mut partial).await;
                     end_active_reasoning(context, emit, &mut partial).await;
-                }
-
-                let content_index =
-                    if let Some(index) = partial.reasoning_indices.get(&reasoning_key) {
-                        *index
+                    let content_index = if let Some(index) = partial.active_text_index {
+                        index
                     } else {
                         let index = partial.content_mut().len();
-                        partial.content_mut().push(ContentPart::reasoning(
-                            "",
-                            id.clone(),
-                            signature.clone(),
-                        ));
-                        partial
-                            .reasoning_indices
-                            .insert(reasoning_key.clone(), index);
-                        partial.active_reasoning_id = Some(reasoning_key.clone());
+                        partial.content_mut().push(ContentPart::text(""));
+                        partial.active_text_index = Some(index);
                         sync_partial(context, &partial);
                         emit_event(
                             emit,
                             AgentEvent::MessageUpdate {
                                 message: partial.message.clone(),
-                                event: AssistantStreamEvent::ThinkingStart {
+                                event: AssistantStreamEvent::TextStart {
                                     content_index: index,
-                                    id: id.clone(),
                                 },
                             },
                         )
@@ -373,188 +363,365 @@ pub(super) async fn stream_assistant_response(
                         index
                     };
 
-                let delta = if let Some(ContentPart::Reasoning {
-                    text: existing,
-                    signature: existing_signature,
-                    ..
-                }) = partial.content_mut().get_mut(content_index)
-                {
-                    if let Some(sig) = signature.clone() {
-                        *existing_signature = Some(sig);
+                    if let Some(ContentPart::Text { text: existing }) =
+                        partial.content_mut().get_mut(content_index)
+                    {
+                        existing.push_str(&text);
                     }
-                    let suffix = compute_suffix(existing, &text);
-                    if !suffix.is_empty() {
-                        existing.push_str(&suffix);
-                    }
-                    suffix
-                } else {
-                    String::new()
-                };
-
-                partial.active_reasoning_id = Some(reasoning_key);
-                if !delta.is_empty() {
                     sync_partial(context, &partial);
                     emit_event(
                         emit,
                         AgentEvent::MessageUpdate {
                             message: partial.message.clone(),
-                            event: AssistantStreamEvent::ThinkingDelta {
+                            event: AssistantStreamEvent::TextDelta {
                                 content_index,
-                                id: id.clone(),
-                                text: delta,
+                                text,
                             },
                         },
                     )
                     .await;
                 }
-            }
-            StreamChunk::ToolCallDelta { id, content } => match content {
-                ToolCallDeltaContent::Name(name) => {
-                    ensure_partial_started(context, emit, &mut partial).await;
-                    end_active_text(context, emit, &mut partial).await;
-                    end_active_reasoning(context, emit, &mut partial).await;
-                    let _ = ensure_tool_call_partial(
-                        context,
+                StreamChunk::ReasoningDelta {
+                    id,
+                    text,
+                    signature,
+                } if !text.is_empty() => {
+                    mark_visible_delta(
                         emit,
-                        &mut partial,
-                        &id,
-                        Some(name),
-                        serde_json::Value::Object(Default::default()),
+                        &mut has_visible_delta,
+                        &mut streaming_status_emitted,
+                        attempt,
+                        retry_policy.max_attempts,
                     )
                     .await;
-                    sync_partial(context, &partial);
+                    ensure_partial_started(context, emit, &mut partial).await;
+                    end_active_text(context, emit, &mut partial).await;
+
+                    let reasoning_key = PartialAssistantState::reasoning_key(&id);
+                    if partial.active_reasoning_id.as_deref() != Some(reasoning_key.as_str()) {
+                        end_active_reasoning(context, emit, &mut partial).await;
+                    }
+
+                    let content_index =
+                        if let Some(index) = partial.reasoning_indices.get(&reasoning_key) {
+                            *index
+                        } else {
+                            let index = partial.content_mut().len();
+                            partial.content_mut().push(ContentPart::reasoning(
+                                "",
+                                id.clone(),
+                                signature.clone(),
+                            ));
+                            partial
+                                .reasoning_indices
+                                .insert(reasoning_key.clone(), index);
+                            partial.active_reasoning_id = Some(reasoning_key.clone());
+                            sync_partial(context, &partial);
+                            emit_event(
+                                emit,
+                                AgentEvent::MessageUpdate {
+                                    message: partial.message.clone(),
+                                    event: AssistantStreamEvent::ThinkingStart {
+                                        content_index: index,
+                                        id: id.clone(),
+                                    },
+                                },
+                            )
+                            .await;
+                            index
+                        };
+
+                    let delta = if let Some(ContentPart::Reasoning {
+                        text: existing,
+                        signature: existing_signature,
+                        ..
+                    }) = partial.content_mut().get_mut(content_index)
+                    {
+                        if let Some(sig) = signature.clone() {
+                            *existing_signature = Some(sig);
+                        }
+                        let suffix = compute_suffix(existing, &text);
+                        if !suffix.is_empty() {
+                            existing.push_str(&suffix);
+                        }
+                        suffix
+                    } else {
+                        String::new()
+                    };
+
+                    partial.active_reasoning_id = Some(reasoning_key);
+                    if !delta.is_empty() {
+                        sync_partial(context, &partial);
+                        emit_event(
+                            emit,
+                            AgentEvent::MessageUpdate {
+                                message: partial.message.clone(),
+                                event: AssistantStreamEvent::ThinkingDelta {
+                                    content_index,
+                                    id: id.clone(),
+                                    text: delta,
+                                },
+                            },
+                        )
+                        .await;
+                    }
                 }
-                ToolCallDeltaContent::Arguments(delta) if !delta.is_empty() => {
+                StreamChunk::ToolCallDelta { id, content } => {
+                    mark_visible_delta(
+                        emit,
+                        &mut has_visible_delta,
+                        &mut streaming_status_emitted,
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    .await;
+                    match content {
+                        ToolCallDeltaContent::Name(name) => {
+                            ensure_partial_started(context, emit, &mut partial).await;
+                            end_active_text(context, emit, &mut partial).await;
+                            end_active_reasoning(context, emit, &mut partial).await;
+                            let _ = ensure_tool_call_partial(
+                                context,
+                                emit,
+                                &mut partial,
+                                &id,
+                                Some(name),
+                                serde_json::Value::Object(Default::default()),
+                            )
+                            .await;
+                            sync_partial(context, &partial);
+                        }
+                        ToolCallDeltaContent::Arguments(delta) if !delta.is_empty() => {
+                            ensure_partial_started(context, emit, &mut partial).await;
+                            end_active_text(context, emit, &mut partial).await;
+                            end_active_reasoning(context, emit, &mut partial).await;
+
+                            let (content_index, tool_name) = ensure_tool_call_partial(
+                                context,
+                                emit,
+                                &mut partial,
+                                &id,
+                                None,
+                                serde_json::Value::Object(Default::default()),
+                            )
+                            .await;
+
+                            let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
+                                state.partial_json.push_str(&delta);
+                                let draft = state.partial_json.clone();
+                                if let Ok(arguments) =
+                                    serde_json::from_str::<serde_json::Value>(&state.partial_json)
+                                {
+                                    Some((state.index, Some(arguments), draft))
+                                } else {
+                                    Some((state.index, None, draft))
+                                }
+                            } else {
+                                None
+                            };
+                            let mut current_draft = String::new();
+                            let mut is_parseable = false;
+                            if let Some((tool_index, arguments, draft)) = tool_index {
+                                current_draft = draft;
+                                if let Some(arguments) = arguments
+                                    && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                                {
+                                    is_parseable = true;
+                                    tc.arguments = arguments;
+                                }
+                            }
+                            sync_partial(context, &partial);
+                            emit_event(
+                                emit,
+                                AgentEvent::MessageUpdate {
+                                    message: partial.message.clone(),
+                                    event: AssistantStreamEvent::ToolCallDelta {
+                                        content_index,
+                                        tool_call_id: id,
+                                        name: tool_name,
+                                        delta,
+                                        draft: current_draft,
+                                        is_parseable,
+                                    },
+                                },
+                            )
+                            .await;
+                        }
+                        ToolCallDeltaContent::Arguments(_) => {}
+                    }
+                }
+                StreamChunk::ToolCall { info } => {
+                    mark_visible_delta(
+                        emit,
+                        &mut has_visible_delta,
+                        &mut streaming_status_emitted,
+                        attempt,
+                        retry_policy.max_attempts,
+                    )
+                    .await;
                     ensure_partial_started(context, emit, &mut partial).await;
                     end_active_text(context, emit, &mut partial).await;
                     end_active_reasoning(context, emit, &mut partial).await;
 
+                    let info_id = info.id.clone();
                     let (content_index, tool_name) = ensure_tool_call_partial(
                         context,
                         emit,
                         &mut partial,
-                        &id,
-                        None,
-                        serde_json::Value::Object(Default::default()),
+                        &info_id,
+                        Some(info.name.clone()),
+                        info.arguments.clone(),
                     )
                     .await;
 
-                    let tool_index = if let Some(state) = partial.tool_calls.get_mut(&id) {
-                        state.partial_json.push_str(&delta);
-                        let draft = state.partial_json.clone();
-                        if let Ok(arguments) =
-                            serde_json::from_str::<serde_json::Value>(&state.partial_json)
-                        {
-                            Some((state.index, Some(arguments), draft))
-                        } else {
-                            Some((state.index, None, draft))
-                        }
+                    let mut should_emit_delta = None;
+                    let tool_index = if let Some(state) = partial.tool_calls.get_mut(&info_id) {
+                        let serialized = serde_json::to_string(&info.arguments).unwrap_or_default();
+                        let suffix = compute_suffix(&state.partial_json, &serialized);
+                        state.partial_json = serialized;
+                        should_emit_delta = (!suffix.is_empty()).then_some(suffix);
+                        Some(state.index)
                     } else {
                         None
                     };
-                    let mut current_draft = String::new();
-                    let mut is_parseable = false;
-                    if let Some((tool_index, arguments, draft)) = tool_index {
-                        current_draft = draft;
-                        if let Some(arguments) = arguments
-                            && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
-                        {
-                            is_parseable = true;
-                            tc.arguments = arguments;
-                        }
+                    if let Some(tool_index) = tool_index
+                        && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
+                    {
+                        *tc = info.clone();
                     }
+
                     sync_partial(context, &partial);
+                    if let Some(delta) = should_emit_delta {
+                        emit_event(
+                            emit,
+                            AgentEvent::MessageUpdate {
+                                message: partial.message.clone(),
+                                event: AssistantStreamEvent::ToolCallDelta {
+                                    content_index,
+                                    tool_call_id: info_id.clone(),
+                                    name: tool_name,
+                                    delta,
+                                    draft: serde_json::to_string(&info.arguments)
+                                        .unwrap_or_default(),
+                                    is_parseable: true,
+                                },
+                            },
+                        )
+                        .await;
+                    }
                     emit_event(
                         emit,
                         AgentEvent::MessageUpdate {
                             message: partial.message.clone(),
-                            event: AssistantStreamEvent::ToolCallDelta {
+                            event: AssistantStreamEvent::ToolCallEnd {
                                 content_index,
-                                tool_call_id: id,
-                                name: tool_name,
-                                delta,
-                                draft: current_draft,
-                                is_parseable,
+                                tool_call: info,
                             },
                         },
                     )
                     .await;
                 }
-                ToolCallDeltaContent::Arguments(_) => {}
-            },
-            StreamChunk::ToolCall { info } => {
-                ensure_partial_started(context, emit, &mut partial).await;
-                end_active_text(context, emit, &mut partial).await;
-                end_active_reasoning(context, emit, &mut partial).await;
-
-                let info_id = info.id.clone();
-                let (content_index, tool_name) = ensure_tool_call_partial(
-                    context,
-                    emit,
-                    &mut partial,
-                    &info_id,
-                    Some(info.name.clone()),
-                    info.arguments.clone(),
-                )
-                .await;
-
-                let mut should_emit_delta = None;
-                let tool_index = if let Some(state) = partial.tool_calls.get_mut(&info_id) {
-                    let serialized = serde_json::to_string(&info.arguments).unwrap_or_default();
-                    let suffix = compute_suffix(&state.partial_json, &serialized);
-                    state.partial_json = serialized;
-                    should_emit_delta = (!suffix.is_empty()).then_some(suffix);
-                    Some(state.index)
-                } else {
-                    None
-                };
-                if let Some(tool_index) = tool_index
-                    && let Some(tc) = partial.tool_calls_mut().get_mut(tool_index)
-                {
-                    *tc = info.clone();
+                StreamChunk::Done(resp) => {
+                    response = Some(resp);
                 }
-
-                sync_partial(context, &partial);
-                if let Some(delta) = should_emit_delta {
-                    emit_event(
-                        emit,
-                        AgentEvent::MessageUpdate {
-                            message: partial.message.clone(),
-                            event: AssistantStreamEvent::ToolCallDelta {
-                                content_index,
-                                tool_call_id: info_id.clone(),
-                                name: tool_name,
-                                delta,
-                                draft: serde_json::to_string(&info.arguments).unwrap_or_default(),
-                                is_parseable: true,
-                            },
-                        },
-                    )
-                    .await;
+                StreamChunk::Error(error) => {
+                    if is_retryable_pre_delta(&error, has_visible_delta) {
+                        retry_error = Some(error);
+                    } else {
+                        let aborted = error.is_aborted();
+                        stream_failure =
+                            Some(AgentMessage::error_assistant(error.to_string(), aborted));
+                    }
+                    break;
                 }
-                emit_event(
-                    emit,
-                    AgentEvent::MessageUpdate {
-                        message: partial.message.clone(),
-                        event: AssistantStreamEvent::ToolCallEnd {
-                            content_index,
-                            tool_call: info,
-                        },
-                    },
-                )
-                .await;
+                _ => {}
             }
-            StreamChunk::Done(resp) => {
-                response = Some(resp);
-            }
-            StreamChunk::Error(error) => {
-                stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
-                break;
-            }
-            _ => {}
         }
+        drop(stream);
+
+        if stream_failure.is_some() {
+            break;
+        }
+
+        if response.is_some() {
+            emit_provider_status(
+                emit,
+                ProviderAttemptStatus {
+                    phase: ProviderAttemptPhase::Succeeded,
+                    attempt,
+                    max_attempts: retry_policy.max_attempts,
+                    will_retry: false,
+                    delay_ms: None,
+                    reason_code: None,
+                    message: None,
+                    provider: None,
+                    model: None,
+                },
+            )
+            .await;
+            break;
+        }
+
+        if let Some(error) = retry_error {
+            let classification = error.classification();
+            if attempt < retry_policy.max_attempts {
+                let delay_ms =
+                    retry_policy.delay_for_attempt(attempt, classification.retry_after_ms);
+                emit_retry_scheduled(
+                    emit,
+                    attempt,
+                    retry_policy,
+                    delay_ms,
+                    &error,
+                    &classification,
+                )
+                .await;
+                last_pre_delta_error = Some(error);
+                sleep_for_retry(delay_ms, cancel).await?;
+                continue;
+            }
+
+            emit_retry_exhausted(emit, attempt, retry_policy, &error, &classification).await;
+            stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
+            break;
+        }
+
+        let empty_error = BridgeError::EmptyResponse;
+        if has_visible_delta {
+            stream_failure = Some(AgentMessage::error_assistant(
+                empty_error.to_string(),
+                false,
+            ));
+            break;
+        }
+        let classification = empty_error.classification();
+        if attempt < retry_policy.max_attempts {
+            let delay_ms = retry_policy.delay_for_attempt(attempt, classification.retry_after_ms);
+            emit_retry_scheduled(
+                emit,
+                attempt,
+                retry_policy,
+                delay_ms,
+                &empty_error,
+                &classification,
+            )
+            .await;
+            last_pre_delta_error = Some(empty_error);
+            sleep_for_retry(delay_ms, cancel).await?;
+            continue;
+        }
+
+        emit_retry_exhausted(emit, attempt, retry_policy, &empty_error, &classification).await;
+        last_pre_delta_error = Some(empty_error);
+        break;
     }
-    drop(stream);
+
+    if stream_failure.is_none()
+        && response.is_none()
+        && let Some(error) = last_pre_delta_error
+    {
+        stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
+    }
 
     end_active_text(context, emit, &mut partial).await;
     end_active_reasoning(context, emit, &mut partial).await;
@@ -685,6 +852,113 @@ fn provider_visible_stats(request: &BridgeRequest) -> ProviderVisibleContextStat
             &request.tools,
         ),
     }
+}
+
+fn is_retryable_pre_delta(error: &BridgeError, has_visible_delta: bool) -> bool {
+    !has_visible_delta && error.classification().is_retryable_before_visible_delta()
+}
+
+async fn mark_visible_delta(
+    emit: &AgentEventSink,
+    has_visible_delta: &mut bool,
+    streaming_status_emitted: &mut bool,
+    attempt: u32,
+    max_attempts: u32,
+) {
+    *has_visible_delta = true;
+    if *streaming_status_emitted {
+        return;
+    }
+    *streaming_status_emitted = true;
+    emit_provider_status(
+        emit,
+        ProviderAttemptStatus {
+            phase: ProviderAttemptPhase::Streaming,
+            attempt,
+            max_attempts,
+            will_retry: false,
+            delay_ms: None,
+            reason_code: None,
+            message: None,
+            provider: None,
+            model: None,
+        },
+    )
+    .await;
+}
+
+async fn emit_provider_status(emit: &AgentEventSink, status: ProviderAttemptStatus) {
+    emit_event(emit, AgentEvent::ProviderAttemptStatus { status }).await;
+}
+
+async fn emit_retry_scheduled(
+    emit: &AgentEventSink,
+    attempt: u32,
+    retry_policy: ProviderRetryPolicy,
+    delay_ms: u64,
+    error: &BridgeError,
+    classification: &ProviderErrorClassification,
+) {
+    emit_provider_status(
+        emit,
+        ProviderAttemptStatus {
+            phase: ProviderAttemptPhase::RetryScheduled,
+            attempt,
+            max_attempts: retry_policy.max_attempts,
+            will_retry: true,
+            delay_ms: Some(delay_ms),
+            reason_code: provider_reason_code(classification),
+            message: Some(format!(
+                "Reconnecting... {}/{}",
+                attempt.saturating_add(1),
+                retry_policy.max_attempts
+            )),
+            provider: None,
+            model: None,
+        },
+    )
+    .await;
+    tracing::warn!(
+        attempt,
+        max_attempts = retry_policy.max_attempts,
+        delay_ms,
+        http_status = classification.http_status,
+        provider_code = classification.provider_code.as_deref(),
+        error = %error,
+        "provider attempt failed before visible delta; retry scheduled"
+    );
+}
+
+async fn emit_retry_exhausted(
+    emit: &AgentEventSink,
+    attempt: u32,
+    retry_policy: ProviderRetryPolicy,
+    error: &BridgeError,
+    classification: &ProviderErrorClassification,
+) {
+    emit_provider_status(
+        emit,
+        ProviderAttemptStatus {
+            phase: ProviderAttemptPhase::Failed,
+            attempt,
+            max_attempts: retry_policy.max_attempts,
+            will_retry: false,
+            delay_ms: None,
+            reason_code: provider_reason_code(classification),
+            message: Some(error.to_string()),
+            provider: None,
+            model: None,
+        },
+    )
+    .await;
+}
+
+fn provider_reason_code(classification: &ProviderErrorClassification) -> Option<String> {
+    classification.provider_code.clone().or_else(|| {
+        classification
+            .http_status
+            .map(|status| format!("http_{status}"))
+    })
 }
 
 async fn end_active_text(

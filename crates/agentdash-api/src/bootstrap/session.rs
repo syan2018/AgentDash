@@ -2,6 +2,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
+use agentdash_application::agent_run::{
+    AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
+    AgentRunRuntimeSurfaceUpdateService,
+};
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
@@ -11,11 +16,11 @@ use agentdash_application::runtime_tools::{
     VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_application::session::{
-    EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionCapabilityService,
-    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
-    SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
-    SessionRuntimeService, SessionTerminalCallback, SessionTitleService, SessionToolResultCache,
-    SessionToolResultCachePut,
+    EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
+    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
+    SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
+    SessionToolResultCache, SessionToolResultCachePut,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
@@ -57,7 +62,8 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_control: SessionControlService,
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
-    pub session_capability: SessionCapabilityService,
+    pub session_runtime_transition: SessionRuntimeTransitionService,
+    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
@@ -166,12 +172,6 @@ pub(crate) async fn build_session_runtime(
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
-    .with_agent_run_mailbox_boundary(
-        repos.lifecycle_run_repo.clone(),
-        repos.agent_run_command_receipt_repo.clone(),
-        repos.agent_run_mailbox_repo.clone(),
-    )
-    .map_err(anyhow::Error::msg)?
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {
@@ -185,7 +185,41 @@ pub(crate) async fn build_session_runtime(
     let session_control = session_runtime_builder.control_service();
     let session_launch = session_runtime_builder.launch_service();
     let session_hooks = session_runtime_builder.hook_service();
-    let session_capability = session_runtime_builder.capability_service();
+    let session_runtime_transition = session_runtime_builder.runtime_transition_service();
+    let mailbox_runtime_adapter = Arc::new(AgentRunMailboxRuntimeAdapter::new(
+        AgentRunMailboxRuntimeBoundaryDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+            session_core: session_core.clone(),
+            session_control: session_control.clone(),
+            session_eventing: session_eventing.clone(),
+            session_launch: Arc::new(session_launch.clone()),
+        },
+    ));
+    session_runtime_builder
+        .set_agent_run_mailbox_runtime_adapter(mailbox_runtime_adapter)
+        .await;
+    let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+        AgentRunRuntimeSurfaceQueryDeps {
+            anchor_repo: repos.execution_anchor_repo.clone(),
+            run_repo: repos.lifecycle_run_repo.clone(),
+            agent_repo: repos.lifecycle_agent_repo.clone(),
+            frame_repo: repos.agent_frame_repo.clone(),
+        },
+    ));
+    let runtime_surface_update =
+        AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: runtime_surface_query,
+            frame_repo: repos.agent_frame_repo.clone(),
+            vfs_service: Some(vfs_service.clone()),
+            active_adopter: session_runtime_builder.active_runtime_surface_adopter(),
+            extra_skill_dirs: extra_skill_dirs.clone(),
+            skill_discovery_providers: skill_discovery_providers.clone(),
+        });
     let session_effects = session_runtime_builder.effects_service();
     let session_title = session_runtime_builder.title_service();
 
@@ -219,7 +253,8 @@ pub(crate) async fn build_session_runtime(
             control: session_control.clone(),
             launch: session_launch.clone(),
             hooks: session_hooks.clone(),
-            capability: session_capability.clone(),
+            runtime_transition: session_runtime_transition.clone(),
+            runtime_surface_update: runtime_surface_update.clone(),
         })
         .await;
 
@@ -232,7 +267,8 @@ pub(crate) async fn build_session_runtime(
         session_control,
         session_launch,
         session_hooks,
-        session_capability,
+        session_runtime_transition,
+        runtime_surface_update,
         session_effects,
         session_title,
         connector,

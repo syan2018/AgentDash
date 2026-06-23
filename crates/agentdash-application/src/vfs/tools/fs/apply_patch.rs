@@ -244,7 +244,7 @@ mod fs_apply_patch_mutation_tests {
     fn apply_patch_mutation_keys_preserve_explicit_mount_prefix() {
         let keys = fs_apply_patch_mutation_keys(
             r#"*** Begin Patch
-*** Add File: canvas://src/view.tsx
+*** Add File: cvs-demo://src/view.tsx
 +export const value = 1;
 *** Delete File: workspace://src/old.rs
 *** End Patch"#,
@@ -253,7 +253,7 @@ mod fs_apply_patch_mutation_tests {
 
         assert_eq!(
             keys,
-            vec!["canvas://src/view.tsx", "workspace://src/old.rs"]
+            vec!["cvs-demo://src/view.tsx", "workspace://src/old.rs"]
         );
     }
 
@@ -280,7 +280,7 @@ mod fs_apply_patch_mutation_tests {
         let err = fs_apply_patch_mutation_keys(
             r#"*** Begin Patch
 *** Update File: workspace://src/old.rs
-*** Move to: canvas://src/new.rs
+*** Move to: cvs-demo://src/new.rs
 @@
  old
 *** End Patch"#,

@@ -4,8 +4,9 @@
 //! 供企业插件直接实现外部服务的文件系统级操作。
 
 use async_trait::async_trait;
+use std::sync::Arc;
 
-use crate::Mount;
+use crate::{Mount, Vfs};
 
 // ============================================================================
 // Error
@@ -343,13 +344,47 @@ pub struct ExecResult {
 /// Providers that need infrastructure references (e.g. `BackendRegistry`,
 /// overlay) hold them via constructor injection. This struct carries
 /// cross-cutting per-request concerns like the authenticated user.
-#[derive(Debug, Default)]
 pub struct MountOperationContext {
     /// The authenticated identity of the user who initiated this operation.
     /// Injected by the framework from the HTTP session; providers consume
     /// it on demand (e.g. external docs provider maps `user_id` to an
     /// upstream owner identity).
     pub identity: Option<crate::platform::auth::AuthIdentity>,
+    pub runtime_vfs: Option<Arc<Vfs>>,
+    pub runtime_text_resolver: Option<Arc<dyn MountRuntimeTextResolver>>,
+}
+
+impl std::fmt::Debug for MountOperationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MountOperationContext")
+            .field("identity", &self.identity)
+            .field("runtime_vfs", &self.runtime_vfs.as_ref().map(|_| "<vfs>"))
+            .field(
+                "runtime_text_resolver",
+                &self.runtime_text_resolver.as_ref().map(|_| "<resolver>"),
+            )
+            .finish()
+    }
+}
+
+impl Default for MountOperationContext {
+    fn default() -> Self {
+        Self {
+            identity: None,
+            runtime_vfs: None,
+            runtime_text_resolver: None,
+        }
+    }
+}
+
+#[async_trait]
+pub trait MountRuntimeTextResolver: Send + Sync {
+    async fn read_runtime_text(
+        &self,
+        vfs: &Vfs,
+        uri: &str,
+        identity: Option<&crate::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError>;
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 ---
 name: canvas-system
-description: AgentDashboard Canvas authoring guide. Use when a session has workspace_module access for Canvas work, a canvas:{mount_id} workspace module, or a canvas VFS mount; use for creating or editing runnable React/HTML/CSS Canvas assets, binding VFS data into Canvas previews, rendering VFS image assets, or calling session runtime actions from Canvas UI.
+description: AgentDashboard Canvas authoring guide. Use when a session has workspace_module access for Canvas work, a canvas:{canvas_mount_id} workspace module, or a canvas VFS mount; use for creating or editing runnable React/HTML/CSS Canvas assets, binding VFS data into Canvas previews, rendering VFS image assets, or calling session runtime actions from Canvas UI.
 ---
 
 # Canvas System
@@ -10,18 +10,18 @@ Use this skill when working with AgentDashboard Canvas assets.
 ## Core Flow
 
 1. Use `workspace_module_create(kind="canvas", input={...})` to create or attach a Canvas when you need a new editable surface.
-2. Use `workspace_module_list` and `workspace_module_describe(module_id="canvas:{mount_id}")` to inspect existing Canvas modules, UI entries, and available operations.
-3. Edit canvas source through VFS tools, usually `fs_apply_patch` against `cvs-<mount_id>://...`.
-4. Bind external data with `workspace_module_invoke` on the `canvas:{mount_id}` module operation `canvas.bind_data` when the Canvas needs session VFS facts.
-5. Call `workspace_module_present(module_id="canvas:{mount_id}", view_key="preview")` when the Canvas is ready for user inspection.
+2. Use `workspace_module_list` and `workspace_module_describe(module_id="canvas:{canvas_mount_id}")` to inspect existing Canvas modules, UI entries, and available operations.
+3. Edit canvas source through VFS tools, usually `fs_apply_patch` against `{canvas_mount_id}://...`.
+4. Bind external data with `workspace_module_invoke` on the `canvas:{canvas_mount_id}` module operation `canvas.bind_data` when the Canvas needs session VFS facts.
+5. Call `workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")` when the Canvas is ready for user inspection.
 
 ## Core Rules
 
 - A canvas is a project-level runnable frontend asset stored in `Canvas.files`.
-- Each attached canvas is a workspace module named `canvas:{mount_id}` and is exposed as a VFS mount named `cvs-<mount_id>`.
+- Each attached canvas is a workspace module named `canvas:{canvas_mount_id}` and is exposed as a VFS mount named `{canvas_mount_id}`.
 - Canvas mounts support `read`, `write`, `list`, and `search`; they do not support `exec`.
 - Use mount URIs such as `cvs-demo://src/main.tsx`; mount URIs are the stable authoring address instead of backend ids or absolute paths.
-- Use `canvas://{mount_id}` only as the presentation URI opened by `workspace_module_present`; use `cvs-<mount_id>://...` for file edits.
+- Use `canvas://{canvas_mount_id}` only as the presentation URI opened by `workspace_module_present`; use `{canvas_mount_id}://...` for file edits.
 - The `canvas-system` guide is provided by the session lifecycle skill surface; Canvas files contain only runnable asset source and supporting data files.
 
 ## Source Files
@@ -35,7 +35,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 
 ## Data Bindings
 
-- Call `workspace_module_describe(module_id="canvas:{mount_id}")` before binding and follow the described `canvas.bind_data` input schema.
+- Call `workspace_module_describe(module_id="canvas:{canvas_mount_id}")` before binding and follow the described `canvas.bind_data` input schema.
 - Invoke `canvas.bind_data` with `workspace_module_invoke` to map a VFS `source_uri` to `bindings/<alias>.<ext>`.
 - `alias` must be a plain name without `/` or `\`.
 - `content_type` is optional; omitted values are inferred from the `source_uri` extension.

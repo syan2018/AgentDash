@@ -7,9 +7,9 @@ use uuid::Uuid;
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
     CanvasRuntimeSnapshot, CreateCanvasInput, build_canvas_extension_package,
-    build_runtime_snapshot_with_bindings, create_project_canvas, delete_canvas_record,
-    list_project_canvases as list_project_canvases_use_case, load_canvas_by_ref,
-    update_canvas_record,
+    build_runtime_snapshot_with_bindings, canvas_vfs_mount_id, create_project_canvas,
+    delete_canvas_record, list_project_canvases as list_project_canvases_use_case,
+    load_canvas_by_id, load_canvas_by_project_mount_id, update_canvas_record,
 };
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
@@ -67,6 +67,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(list_project_canvases).post(create_canvas),
         )
         .route(
+            "/projects/{project_id}/canvases/by-mount/{canvas_mount_id}",
+            axum::routing::get(get_canvas_by_mount),
+        )
+        .route(
             "/canvases/{id}",
             axum::routing::get(get_canvas)
                 .put(update_canvas)
@@ -105,7 +109,7 @@ pub async fn create_canvas(
         &state.repos,
         CreateCanvasInput {
             project_id,
-            mount_id: req.mount_id,
+            mount_id: req.canvas_mount_id,
             title: req.title,
             description: req.description,
             mutation: CanvasMutationInput {
@@ -137,6 +141,25 @@ pub async fn get_canvas(
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
+
+    Ok(Json(canvas_to_contract(canvas)))
+}
+
+pub async fn get_canvas_by_mount(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, canvas_mount_id)): Path<(String, String)>,
+) -> Result<Json<CanvasResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let canvas =
+        load_canvas_by_project_mount_id(&state.repos, project_id, &canvas_mount_id).await?;
 
     Ok(Json(canvas_to_contract(canvas)))
 }
@@ -189,10 +212,12 @@ pub async fn delete_canvas(
 }
 
 fn canvas_to_contract(canvas: Canvas) -> CanvasResponse {
+    let vfs_mount_id = canvas_vfs_mount_id(&canvas);
     CanvasResponse {
-        id: canvas.id.to_string(),
+        canvas_id: canvas.id.to_string(),
         project_id: canvas.project_id.to_string(),
-        mount_id: canvas.mount_id,
+        canvas_mount_id: canvas.mount_id,
+        vfs_mount_id,
         title: canvas.title,
         description: canvas.description,
         entry_file: canvas.entry_file,
@@ -381,6 +406,8 @@ fn canvas_runtime_snapshot_to_contract(
 ) -> CanvasRuntimeSnapshotDto {
     CanvasRuntimeSnapshotDto {
         canvas_id: snapshot.canvas_id.to_string(),
+        canvas_mount_id: snapshot.canvas_mount_id,
+        vfs_mount_id: snapshot.vfs_mount_id,
         session_id: snapshot.session_id,
         resource_surface_ref: snapshot.resource_surface_ref,
         entry: snapshot.entry,
@@ -520,7 +547,9 @@ async fn load_canvas_with_permission(
     raw_canvas_id: &str,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::canvas::Canvas, ApiError> {
-    let canvas = load_canvas_by_ref(&state.repos, raw_canvas_id).await?;
+    let canvas_id = Uuid::parse_str(raw_canvas_id)
+        .map_err(|_| ApiError::BadRequest("Canvas route 只接受 canvas_id UUID".into()))?;
+    let canvas = load_canvas_by_id(&state.repos, canvas_id).await?;
 
     load_project_with_permission(state, current_user, canvas.project_id, permission).await?;
     Ok(canvas)

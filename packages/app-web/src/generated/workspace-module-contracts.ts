@@ -80,7 +80,7 @@ export type WorkspaceModuleStatusKind = "ready" | "unavailable";
  */
 export type WorkspaceModuleSummary = {
 /**
- * 稳定 id：`ext:{extension_key}` / `canvas:{mount_id}` / `builtin:{key}`。
+ * 稳定 id：`ext:{extension_key}` / `canvas:{canvas_mount_id}` / `builtin:{key}`。
  */
 module_id: string, kind: WorkspaceModuleKind, title: string, description: string,
 /**
@@ -109,7 +109,7 @@ export type WorkspaceModuleUiEntry = { view_key: string,
  */
 renderer_kind: string,
 /**
- * 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://dashboard`
+ * 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://cvs-dashboard`
  * 或 extension panel 的 `<scheme>://panel`。
  */
 presentation_uri?: string | null,

@@ -58,17 +58,17 @@ Contract:
 
 ## Canvas Session Visibility
 
-Canvas 被 `workspace_module_create(kind="canvas")` 或 `workspace_module_present(module_id="canvas:{mount_id}")` 暴露给当前 session 后，前端从 Session runtime surface 浏览 `canvas_fs` mount。Canvas VFS 仍由 `canvas_fs` provider 管理；workspace module 只负责 Agent-facing lifecycle、operation 和 presentation 入口。
+Canvas 被 `workspace_module_create(kind="canvas")` 或 `workspace_module_present(module_id="canvas:{canvas_mount_id}")` 暴露给当前 session 后，前端从 Session runtime surface 浏览 `canvas_fs` mount。Canvas VFS 仍由 `canvas_fs` provider 管理；workspace module 只负责 Agent-facing lifecycle、operation 和 presentation 入口。
 
 Contract:
 
-- Runtime mount id: `cvs-<canvas.mount_id>`。
-- Session meta 存储 `visible_canvas_mount_ids: Vec<String>`，值为未加 `cvs-` 前缀的 `canvas.mount_id`。
-- `workspace_module_create(kind="canvas")` 返回 `canvas:{mount_id}` descriptor 前，先把目标 Canvas 追加到 live runtime VFS，把 `canvas.mount_id` 写入 `visible_canvas_mount_ids`，并同步刷新 `CapabilityState.vfs.active`。
-- `workspace_module_present(module_id="canvas:{mount_id}")` 在发送 `workspace_module_presented` 展示事件前执行同一套 session exposure 逻辑。
+- Runtime mount id: `canvas_mount_id`，值必须为 `cvs-...`。
+- Session meta 存储 `visible_canvas_mount_ids: Vec<String>`，值与 Canvas runtime mount id 同名。
+- `workspace_module_create(kind="canvas")` 返回 `canvas:{canvas_mount_id}` descriptor 前，先把目标 Canvas 追加到 live runtime VFS，把 `canvas_mount_id` 写入 `visible_canvas_mount_ids`，并同步刷新 `CapabilityState.vfs.active`。
+- `workspace_module_present(module_id="canvas:{canvas_mount_id}")` 在发送 `workspace_module_presented` 展示事件前执行同一套 session exposure 逻辑。
 - Canvas 可见后，状态更新服务必须从刷新后的 live VFS 重新 discovery Skill 维度，并写入 `CapabilityState.skill.skills`。
-- `workspace_module_presented.presentation_uri` 使用 `canvas://{mount_id}`，用于打开 WorkspacePanel Canvas tab。
-- Agent 编辑 Canvas 文件继续使用 `cvs-<mount_id>://...`；`canvas://{mount_id}` 不是 VFS 编辑 URI。
+- `workspace_module_presented.presentation_uri` 使用 `canvas://{canvas_mount_id}`，用于打开 WorkspacePanel Canvas tab。
+- Agent 编辑 Canvas 文件使用 `{canvas_mount_id}://...`；presentation URI 与 VFS authoring URI 分离，原因是 tab 展示身份和文件系统挂载身份服务于不同调用面。
 - 前端收到 `workspace_module_presented` 后刷新 session context，再按 `presentation_uri` 打开或继续使用 Canvas / VFS tab。
 
 ## Surface Mutation

@@ -476,7 +476,7 @@ export function AgentRunWorkspacePage({
       }
       case "workspace_module_presented": {
         // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
-        // - canvas → typeId "canvas"，presentation_uri=canvas://{mount_id}。
+        // - canvas → typeId "canvas"，presentation_uri=canvas://{canvas_mount_id}。
         // - extension webview/panel → typeId = view_key，presentation_uri 为后端生成的 tab URI。
         const data = workspaceModulePresentationFromPlatformEventData(
           extractPlatformEventData(_event),

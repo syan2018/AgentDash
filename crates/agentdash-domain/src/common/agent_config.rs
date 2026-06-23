@@ -81,7 +81,7 @@ pub struct AgentPresetConfig {
     /// 调用侧额外加入的非默认 companion agent 名称。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_companions: Option<Vec<String>>,
-    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{mount_id}`）。
+    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
     /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。
@@ -279,12 +279,12 @@ mod tests {
     #[test]
     fn preset_config_roundtrips_and_merges_visible_workspace_module_refs() {
         let config = AgentPresetConfig::from_json(&serde_json::json!({
-            "visible_workspace_module_refs": ["ext:demo", "canvas:dashboard-a"]
+            "visible_workspace_module_refs": ["ext:demo", "canvas:cvs-dashboard-a"]
         }))
         .expect("valid preset config");
         assert_eq!(
             config.visible_workspace_module_refs.as_deref(),
-            Some(["ext:demo".to_string(), "canvas:dashboard-a".to_string()].as_slice())
+            Some(["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()].as_slice())
         );
 
         let base = AgentPresetConfig {

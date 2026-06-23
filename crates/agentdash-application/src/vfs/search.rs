@@ -60,6 +60,7 @@ pub(crate) async fn grep_inline(
         .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
     let ctx = MountOperationContext {
         identity: params.identity.cloned(),
+        ..MountOperationContext::default()
     };
     let full_opts = ListOptions {
         path: String::new(),

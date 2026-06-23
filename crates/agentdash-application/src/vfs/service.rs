@@ -93,6 +93,8 @@ impl VfsService {
             .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
         let ctx = MountOperationContext {
             identity: identity.cloned(),
+            runtime_vfs: Some(Arc::new(vfs.clone())),
+            runtime_text_resolver: Some(Arc::new(self.clone())),
         };
 
         Ok(MountDispatch {
@@ -598,6 +600,8 @@ impl VfsService {
             .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
         let ctx = MountOperationContext {
             identity: identity.cloned(),
+            runtime_vfs: Some(Arc::new(vfs.clone())),
+            runtime_text_resolver: Some(Arc::new(self.clone())),
         };
         let target = ProviderPatchTarget {
             provider: provider.as_ref(),
@@ -730,6 +734,8 @@ impl VfsService {
             .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
         let ctx = MountOperationContext {
             identity: identity.cloned(),
+            runtime_vfs: Some(Arc::new(vfs.clone())),
+            runtime_text_resolver: Some(Arc::new(self.clone())),
         };
         let target = ProviderPatchTarget {
             provider: provider.as_ref(),
@@ -1017,6 +1023,19 @@ impl VfsService {
         let truncated = result.truncated;
         let hits = format_search_matches(&result.matches);
         Ok((hits, truncated))
+    }
+}
+
+#[async_trait]
+impl agentdash_spi::platform::mount::MountRuntimeTextResolver for VfsService {
+    async fn read_runtime_text(
+        &self,
+        vfs: &Vfs,
+        uri: &str,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError> {
+        let target = parse_mount_uri(uri, vfs).map_err(MountError::OperationFailed)?;
+        self.read_text(vfs, &target, None, identity).await
     }
 }
 

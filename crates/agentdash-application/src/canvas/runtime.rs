@@ -6,11 +6,15 @@ use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
 use agentdash_spi::Vfs;
 
 use crate::runtime_gateway::RuntimeSurface;
-use crate::vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
+use crate::vfs::VfsService;
+
+use super::{CanvasRuntimeResourceService, canvas_vfs_mount_id};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {
     pub canvas_id: uuid::Uuid,
+    pub canvas_mount_id: String,
+    pub vfs_mount_id: String,
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_surface_ref: Option<String>,
@@ -120,6 +124,8 @@ pub fn build_runtime_snapshot(
 
     CanvasRuntimeSnapshot {
         canvas_id: canvas.id,
+        canvas_mount_id: canvas.mount_id.clone(),
+        vfs_mount_id: canvas_vfs_mount_id(canvas),
         session_id,
         resource_surface_ref: None,
         entry: canvas.entry_file.clone(),
@@ -137,41 +143,9 @@ pub async fn build_runtime_snapshot_with_bindings(
     vfs: Option<&Vfs>,
     vfs_service: &VfsService,
 ) -> CanvasRuntimeSnapshot {
-    let mut snapshot = build_runtime_snapshot(canvas, session_id);
-    let Some(vfs) = vfs else {
-        return snapshot;
-    };
-    if let Some(session_id) = snapshot.session_id.as_deref() {
-        snapshot.resource_surface_ref = Some(
-            ResolvedVfsSurfaceSource::SessionRuntime {
-                session_id: session_id.to_string(),
-            }
-            .surface_ref(),
-        );
-    }
-
-    let resolved_files = resolve_canvas_binding_files(canvas, vfs, vfs_service).await;
-
-    for resolved_file in resolved_files {
-        let Some(binding) = snapshot
-            .bindings
-            .iter_mut()
-            .find(|binding| binding.alias == resolved_file.alias)
-        else {
-            continue;
-        };
-        if let Some(file) = snapshot
-            .files
-            .iter_mut()
-            .find(|file| file.path == binding.data_path)
-        {
-            file.content = resolved_file.content;
-            file.file_type = "data".to_string();
-            binding.resolved = resolved_file.resolved;
-        }
-    }
-
-    snapshot
+    CanvasRuntimeResourceService::new(vfs_service)
+        .build_snapshot_with_bindings(canvas, session_id, vfs)
+        .await
 }
 
 pub async fn resolve_canvas_binding_files(
@@ -179,18 +153,9 @@ pub async fn resolve_canvas_binding_files(
     vfs: &Vfs,
     vfs_service: &VfsService,
 ) -> Vec<CanvasResolvedBindingFile> {
-    let mut files = unresolved_canvas_binding_files(canvas);
-    for file in &mut files {
-        let Ok(resource_ref) = parse_mount_uri(&file.source_uri, vfs) else {
-            continue;
-        };
-        let Ok(result) = vfs_service.read_text(vfs, &resource_ref, None, None).await else {
-            continue;
-        };
-        file.content = result.content;
-        file.resolved = true;
-    }
-    files
+    CanvasRuntimeResourceService::new(vfs_service)
+        .resolve_binding_files(canvas, vfs)
+        .await
 }
 
 pub fn unresolved_canvas_binding_files(canvas: &Canvas) -> Vec<CanvasResolvedBindingFile> {
@@ -250,7 +215,7 @@ mod tests {
     fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {
         let mut canvas = Canvas::new(
             Uuid::new_v4(),
-            "demo".to_string(),
+            "cvs-demo".to_string(),
             "Demo".to_string(),
             String::new(),
         );
@@ -282,7 +247,7 @@ mod tests {
     fn build_runtime_snapshot_disables_bridge_without_session_surface() {
         let canvas = Canvas::new(
             Uuid::new_v4(),
-            "demo".to_string(),
+            "cvs-demo".to_string(),
             "Demo".to_string(),
             String::new(),
         );
@@ -306,7 +271,7 @@ mod tests {
     async fn build_runtime_snapshot_with_runtime_vfs_exposes_resource_surface_ref() {
         let canvas = Canvas::new(
             Uuid::new_v4(),
-            "demo".to_string(),
+            "cvs-demo".to_string(),
             "Demo".to_string(),
             String::new(),
         );

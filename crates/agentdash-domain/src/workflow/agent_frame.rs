@@ -146,10 +146,10 @@ mod tests {
         frame.append_visible_workspace_module_ref("ext:demo");
         frame.append_visible_workspace_module_ref("ext:demo");
         frame.append_visible_workspace_module_ref("   ");
-        frame.append_visible_workspace_module_ref("canvas:dashboard-a");
+        frame.append_visible_workspace_module_ref("canvas:cvs-dashboard-a");
         assert_eq!(
             frame.visible_workspace_module_refs(),
-            vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()]
+            vec!["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()]
         );
     }
 

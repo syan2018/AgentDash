@@ -363,7 +363,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform(
             "workspace_module_create",
             "Create Workspace Module",
-            "创建或接入 workspace module 实例；Canvas 使用 kind=canvas 创建后返回 canvas:{mount_id}",
+            "创建或接入 workspace module 实例；Canvas 使用 kind=canvas 创建后返回 canvas:{canvas_mount_id}",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

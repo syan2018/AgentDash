@@ -152,6 +152,22 @@ pub fn normalize_binding_content_type(content_type: Option<&str>, source_uri: &s
     explicit.unwrap_or_else(|| infer_binding_content_type(source_uri))
 }
 
+pub fn is_text_compatible_binding_content_type(content_type: &str) -> bool {
+    let base = content_type_base(content_type);
+    base.starts_with("text/")
+        || base == "application/json"
+        || base.ends_with("+json")
+        || base == "application/x-ndjson"
+        || base == "image/svg+xml"
+        || base == "application/xml"
+        || base.ends_with("+xml")
+        || base == "application/yaml"
+        || base == "application/x-yaml"
+        || base == "application/javascript"
+        || base == "application/ecmascript"
+        || base == "application/x-javascript"
+}
+
 pub fn infer_binding_content_type(source_uri: &str) -> String {
     match source_uri_extension(source_uri).as_deref() {
         Some("json") => "application/json",
@@ -256,5 +272,18 @@ mod tests {
 
         assert_eq!(binding.content_type, "text/markdown");
         assert_eq!(binding.data_path(), "bindings/summary.md");
+    }
+
+    #[test]
+    fn text_compatible_binding_content_types_include_structured_text_assets() {
+        for content_type in [
+            "image/svg+xml",
+            "application/xml",
+            "application/yaml",
+            "application/javascript",
+        ] {
+            assert!(is_text_compatible_binding_content_type(content_type));
+        }
+        assert!(!is_text_compatible_binding_content_type("image/png"));
     }
 }

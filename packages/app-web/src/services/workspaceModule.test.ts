@@ -23,10 +23,10 @@ describe("workspace module service", () => {
     mocks.apiGetMock.mockResolvedValue([]);
     mocks.apiPostMock.mockReset();
     mocks.apiPostMock.mockResolvedValue({
-      module_id: "canvas:mount-a",
+      module_id: "canvas:cvs-mount-a",
       view_key: "preview",
       renderer_kind: "canvas",
-      presentation_uri: "canvas://mount-a",
+      presentation_uri: "canvas://cvs-mount-a",
       title: "Canvas A",
     });
   });
@@ -41,7 +41,7 @@ describe("workspace module service", () => {
 
   it("posts user-open presentation requests through the project workspace module endpoint", async () => {
     await presentWorkspaceModule("project/1", {
-      module_id: "canvas:mount-a",
+      module_id: "canvas:cvs-mount-a",
       view_key: "preview",
       runtime_session_id: "session-1",
     });
@@ -49,7 +49,7 @@ describe("workspace module service", () => {
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/projects/project%2F1/workspace-modules/present",
       {
-        module_id: "canvas:mount-a",
+        module_id: "canvas:cvs-mount-a",
         view_key: "preview",
         runtime_session_id: "session-1",
       },

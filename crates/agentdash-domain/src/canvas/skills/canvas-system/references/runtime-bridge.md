@@ -59,7 +59,7 @@ const imageUrl = await window.agentdash.assets.url("main://docs/diagram.png");
 The URI shape is:
 
 ```text
-<mount_id>://<mount_relative_path>
+<vfs_mount_id>://<mount_relative_path>
 ```
 
 Examples:
@@ -170,15 +170,15 @@ Output:
 
 These are Agent tools, not browser runtime APIs:
 
-- `workspace_module_create(kind="canvas")`: create or attach a Canvas and return the `canvas:{mount_id}` descriptor. The create result exposes the current session's Canvas VFS mount and skill path so the Agent can immediately edit files such as `cvs-demo://src/main.tsx`.
-- `workspace_module_list`: inspect project workspace modules, including existing Canvas modules named `canvas:{mount_id}`.
-- `workspace_module_describe(module_id="canvas:{mount_id}")`: inspect the Canvas module UI entries and operation schemas before invoking or presenting it.
-- `workspace_module_invoke(module_id="canvas:{mount_id}", operation_key="canvas.bind_data", input={...})`: map a VFS `source_uri` to `bindings/<alias>.<ext>` using the operation schema returned by describe; the extension follows explicit `content_type` or is inferred from `source_uri`.
-- `workspace_module_present(module_id="canvas:{mount_id}", view_key="preview")`: expose the Canvas runtime surface to the current session and open its `presentation_uri`.
-- VFS tools: edit files through `cvs-<mount_id>://...`; canvas mounts support read/write/list/search, not exec.
+- `workspace_module_create(kind="canvas")`: create or attach a Canvas and return the `canvas:{canvas_mount_id}` descriptor. The create result exposes the current session's Canvas VFS mount and skill path so the Agent can immediately edit files such as `cvs-demo://src/main.tsx`.
+- `workspace_module_list`: inspect project workspace modules, including existing Canvas modules named `canvas:{canvas_mount_id}`.
+- `workspace_module_describe(module_id="canvas:{canvas_mount_id}")`: inspect the Canvas module UI entries and operation schemas before invoking or presenting it.
+- `workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.bind_data", input={...})`: map a VFS `source_uri` to `bindings/<alias>.<ext>` using the operation schema returned by describe; the extension follows explicit `content_type` or is inferred from `source_uri`.
+- `workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")`: expose the Canvas runtime surface to the current session and open its `presentation_uri`.
+- VFS tools: edit files through `{canvas_mount_id}://...`; canvas mounts support read/write/list/search, not exec.
 
 URI boundaries:
 
-- `canvas://{mount_id}` is the presentation URI for the WorkspacePanel Canvas tab.
-- `cvs-<mount_id>://...` is the Agent-editable VFS URI for Canvas files.
-- Backend ids, absolute paths, and Canvas VFS mount ids are not browser runtime API inputs.
+- `canvas://{canvas_mount_id}` is the presentation URI for the WorkspacePanel Canvas tab.
+- `{canvas_mount_id}://...` is the Agent-editable VFS URI for Canvas files.
+- Backend ids and absolute paths are not browser runtime API inputs.

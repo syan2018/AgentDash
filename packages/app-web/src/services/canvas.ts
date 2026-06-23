@@ -29,6 +29,15 @@ export async function fetchCanvas(canvasId: string): Promise<Canvas> {
   return api.get<Canvas>(`/canvases/${encodeURIComponent(canvasId)}`);
 }
 
+export async function fetchCanvasByMountId(
+  projectId: string,
+  canvasMountId: string,
+): Promise<Canvas> {
+  return api.get<Canvas>(
+    `/projects/${encodeURIComponent(projectId)}/canvases/by-mount/${encodeURIComponent(canvasMountId)}`,
+  );
+}
+
 export async function updateCanvas(
   canvasId: string,
   input: UpdateCanvasInput,

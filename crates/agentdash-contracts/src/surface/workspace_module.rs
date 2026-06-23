@@ -56,7 +56,7 @@ impl WorkspaceModuleStatus {
 /// `list` 返回的摘要——不含完整 schema。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleSummary {
-    /// 稳定 id：`ext:{extension_key}` / `canvas:{mount_id}` / `builtin:{key}`。
+    /// 稳定 id：`ext:{extension_key}` / `canvas:{canvas_mount_id}` / `builtin:{key}`。
     pub module_id: String,
     pub kind: WorkspaceModuleKind,
     pub title: String,
@@ -79,7 +79,7 @@ pub struct WorkspaceModuleUiEntry {
     pub view_key: String,
     /// "webview" | "canvas" | "panel"。
     pub renderer_kind: String,
-    /// 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://dashboard`
+    /// 可直接交给 WorkspacePanel 打开的展示 URI，例如 `canvas://cvs-dashboard`
     /// 或 extension panel 的 `<scheme>://panel`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presentation_uri: Option<String>,

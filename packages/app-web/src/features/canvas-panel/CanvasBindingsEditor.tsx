@@ -14,13 +14,11 @@ interface BindingValidationResult {
   rowErrors: string[];
 }
 
-const DEFAULT_CONTENT_TYPE = "application/json";
-
 function createEmptyBinding(): CanvasDataBinding {
   return {
     alias: "",
     source_uri: "",
-    content_type: DEFAULT_CONTENT_TYPE,
+    content_type: "",
   };
 }
 
@@ -28,7 +26,7 @@ function normalizeBinding(binding: CanvasDataBinding): CanvasDataBinding {
   return {
     alias: binding.alias.trim(),
     source_uri: binding.source_uri.trim(),
-    content_type: binding.content_type.trim() || DEFAULT_CONTENT_TYPE,
+    content_type: binding.content_type.trim(),
   };
 }
 
@@ -188,7 +186,7 @@ export function CanvasBindingsEditor({
                 onChange={(event) => handleBindingChange(index, "content_type", event.target.value)}
                 disabled={isSaving}
                 className="w-full rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors focus:border-foreground/40"
-                placeholder={DEFAULT_CONTENT_TYPE}
+                placeholder="留空按 source_uri 推断"
               />
             </label>
           </div>

@@ -186,7 +186,7 @@ mod tests {
     fn builds_canvas_extension_package_with_canvas_panel_manifest() {
         let canvas = Canvas::new(
             Uuid::new_v4(),
-            "Demo Canvas".to_string(),
+            "cvs-demo-canvas".to_string(),
             "Demo Canvas".to_string(),
             "A demo canvas".to_string(),
         );
@@ -202,7 +202,7 @@ mod tests {
 
         assert!(package.archive_digest.starts_with("sha256:"));
         assert!(package.manifest_digest.starts_with("sha256:"));
-        assert_eq!(package.manifest.extension_id, "canvas-demo-canvas");
+        assert_eq!(package.manifest.extension_id, "canvas-cvs-demo-canvas");
         assert_eq!(package.manifest.package.version, "0.2.0");
         assert_eq!(package.manifest.asset_version, "0.2.1");
         assert!(matches!(

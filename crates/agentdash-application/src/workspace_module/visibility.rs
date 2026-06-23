@@ -218,18 +218,12 @@ mod tests {
             project_id: Uuid,
             mount_id: &str,
         ) -> Result<Option<Canvas>, DomainError> {
-            self.find_by_mount_id(mount_id)
-                .await
-                .map(|canvas| canvas.filter(|canvas| canvas.project_id == project_id))
-        }
-
-        async fn find_by_mount_id(&self, mount_id: &str) -> Result<Option<Canvas>, DomainError> {
             Ok(self
                 .canvases
                 .lock()
                 .unwrap()
                 .values()
-                .find(|canvas| canvas.mount_id == mount_id)
+                .find(|canvas| canvas.project_id == project_id && canvas.mount_id == mount_id)
                 .cloned())
         }
 
@@ -318,7 +312,7 @@ mod tests {
         let canvas_repo = Arc::new(FakeCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
-            Some("dashboard-a".to_string()),
+            Some("cvs-dashboard-a".to_string()),
             "Dashboard A".to_string(),
             "demo canvas".to_string(),
             Default::default(),
@@ -363,7 +357,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(module_ids.len(), 2);
         assert!(module_ids.contains(&"ext:demo"));
-        assert!(module_ids.contains(&"canvas:dashboard-a"));
+        assert!(module_ids.contains(&"canvas:cvs-dashboard-a"));
     }
 
     #[tokio::test]
@@ -377,7 +371,7 @@ mod tests {
             &install_repo,
             &canvas_repo,
             project_id,
-            &view(base, vec!["canvas:dashboard-a".to_string()]),
+            &view(base, vec!["canvas:cvs-dashboard-a".to_string()]),
         )
         .await
         .expect("resolve visibility");
@@ -389,10 +383,10 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(module_ids.len(), 2);
         assert!(module_ids.contains(&"ext:demo"));
-        assert!(module_ids.contains(&"canvas:dashboard-a"));
+        assert!(module_ids.contains(&"canvas:cvs-dashboard-a"));
         assert_eq!(
             projection.runtime_refs,
-            vec!["canvas:dashboard-a".to_string()]
+            vec!["canvas:cvs-dashboard-a".to_string()]
         );
     }
 

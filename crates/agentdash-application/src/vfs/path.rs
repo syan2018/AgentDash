@@ -436,8 +436,8 @@ fn validate_mount_root_ref(mount: &Mount) -> Result<(), String> {
             "mount `{}` skill_asset_fs root_ref 必须使用 skill-assets://",
             mount.id
         )),
-        "canvas_fs" if root_ref.scheme() != Some("canvas") => Err(format!(
-            "mount `{}` canvas_fs root_ref 必须使用 canvas://",
+        "canvas_fs" if root_ref.scheme() != Some("canvas-root") => Err(format!(
+            "mount `{}` canvas_fs root_ref 必须使用 canvas-root://",
             mount.id
         )),
         "inline_fs" if root_ref.is_local_path() => Err(format!(

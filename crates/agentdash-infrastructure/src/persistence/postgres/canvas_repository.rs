@@ -245,30 +245,6 @@ impl CanvasRepository for PostgresCanvasRepository {
         Ok(Some(row.try_into_canvas(files, bindings)?))
     }
 
-    async fn find_by_mount_id(&self, mount_id: &str) -> Result<Option<Canvas>, DomainError> {
-        let row = sqlx::query_as::<_, CanvasRow>(
-            r#"
-            SELECT id, project_id, mount_id, title, description, entry_file, sandbox_config, created_at, updated_at
-            FROM canvases
-            WHERE mount_id = $1
-            LIMIT 1
-            "#,
-        )
-        .bind(mount_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        let Some(row) = row else {
-            return Ok(None);
-        };
-
-        let canvas_id = row.id.clone();
-        let files = self.load_files(std::slice::from_ref(&canvas_id)).await?;
-        let bindings = self.load_bindings(std::slice::from_ref(&canvas_id)).await?;
-        Ok(Some(row.try_into_canvas(files, bindings)?))
-    }
-
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Canvas>, DomainError> {
         let rows = sqlx::query_as::<_, CanvasRow>(
             r#"

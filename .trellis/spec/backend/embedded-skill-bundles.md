@@ -85,7 +85,7 @@ Session 默认具备 memory 协议说明，而 skill 内容仍由 embedded bundl
 Workspace Module 操作协议也使用项目级内嵌 Skill 路径：`workspace-module-system` 应作为 builtin SkillAsset
 同步到项目 SkillAsset，并在 session 具备 `workspace_module` capability 时经 lifecycle VFS projection
 暴露。这个 skill 只描述 Agent 调用 `workspace_module_create/list/describe/invoke/present` 的顺序、
-`canvas:{mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态，以及 Canvas work
+`canvas:{canvas_mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态，以及 Canvas work
 如何进入 `canvas-system` 指南。原因是 workspace module 与 canvas authoring 都是 session 级
 Agent 操作协议，统一经 lifecycle skill surface 投影，避免指南可见性绑定到某个 Canvas 实例文件树。
 

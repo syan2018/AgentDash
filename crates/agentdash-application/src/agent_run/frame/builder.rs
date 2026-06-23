@@ -429,7 +429,7 @@ mod tests {
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.append_visible_canvas_mount("demo");
+        frame1.append_visible_canvas_mount("cvs-demo");
         repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
@@ -443,7 +443,10 @@ mod tests {
             frame2.execution_profile_json,
             Some(serde_json::json!({"executor": "local"}))
         );
-        assert_eq!(frame2.visible_canvas_mount_ids(), vec!["demo".to_string()]);
+        assert_eq!(
+            frame2.visible_canvas_mount_ids(),
+            vec!["cvs-demo".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -455,7 +458,7 @@ mod tests {
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.append_visible_workspace_module_ref("canvas:dashboard-a");
+        frame1.append_visible_workspace_module_ref("canvas:cvs-dashboard-a");
         repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
@@ -466,7 +469,7 @@ mod tests {
 
         assert_eq!(
             frame2.visible_workspace_module_refs(),
-            vec!["canvas:dashboard-a".to_string()]
+            vec!["canvas:cvs-dashboard-a".to_string()]
         );
     }
 

@@ -1,12 +1,12 @@
 use agentdash_domain::canvas::Canvas;
 
-use crate::canvas::CanvasResolvedBindingFile;
+use crate::canvas::{CanvasResolvedBindingFile, canvas_provider_root_ref, canvas_vfs_mount_id};
 use crate::runtime::{Mount, MountCapability, Vfs};
 
 use super::mount::PROVIDER_CANVAS_FS;
 
 pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
-    format!("cvs-{}", canvas.mount_id)
+    canvas_vfs_mount_id(canvas)
 }
 
 pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
@@ -14,7 +14,7 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
         id: build_canvas_mount_id(canvas),
         provider: PROVIDER_CANVAS_FS.to_string(),
         backend_id: String::new(),
-        root_ref: format!("canvas://{}", canvas.id),
+        root_ref: canvas_provider_root_ref(canvas),
         capabilities: vec![
             MountCapability::Read,
             MountCapability::Write,
@@ -29,7 +29,8 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
         },
         metadata: serde_json::json!({
             "canvas_id": canvas.id.to_string(),
-            "mount_id": canvas.mount_id,
+            "canvas_mount_id": canvas.mount_id,
+            "vfs_mount_id": canvas_vfs_mount_id(canvas),
             "project_id": canvas.project_id.to_string(),
             "entry_file": canvas.entry_file,
         }),

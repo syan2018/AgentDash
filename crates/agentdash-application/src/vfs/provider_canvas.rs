@@ -16,6 +16,7 @@ use super::provider::{
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
 use crate::runtime::Mount;
+use crate::vfs::parse_mount_uri;
 
 pub struct CanvasFsMountProvider {
     canvas_repo: Arc<dyn CanvasRepository>,
@@ -77,7 +78,8 @@ impl MountProvider for CanvasFsMountProvider {
             .find(|file| file.path == path)
             .map(|file| file.content.clone());
         let binding_file = if file_content.is_none() {
-            canvas_binding_files(mount, &canvas)
+            canvas_binding_files(mount, &canvas, _ctx)
+                .await
                 .into_iter()
                 .find(|file| file.path == path)
         } else {
@@ -177,15 +179,21 @@ impl MountProvider for CanvasFsMountProvider {
     ) -> Result<ListResult, MountError> {
         let path = normalize_mount_relative_path(&options.path, true).map_err(map_mount_err)?;
         let canvas = self.load_canvas(mount).await?;
-        let files = canvas_files_map(mount, &canvas);
-        Ok(ListResult {
-            entries: list_inline_entries(
-                &files,
-                &path,
-                options.pattern.as_deref(),
-                options.recursive,
-            ),
-        })
+        let binding_files = canvas_binding_files(mount, &canvas, _ctx).await;
+        let files = canvas_files_map_from_bindings(&canvas, &binding_files);
+        let binding_attrs = binding_files
+            .into_iter()
+            .map(|file| (file.path.clone(), binding_file_attributes(&file)))
+            .collect::<BTreeMap<_, _>>();
+        let mut entries =
+            list_inline_entries(&files, &path, options.pattern.as_deref(), options.recursive);
+        for entry in &mut entries {
+            if let Some(attrs) = binding_attrs.get(&entry.path) {
+                entry.is_virtual = true;
+                entry.attributes = Some(attrs.clone());
+            }
+        }
+        Ok(ListResult { entries })
     }
 
     async fn search_text(
@@ -202,7 +210,7 @@ impl MountProvider for CanvasFsMountProvider {
         let max_results = query.max_results.unwrap_or(usize::MAX);
         let mut matches = Vec::new();
 
-        for (path, content) in canvas_files_map(mount, &canvas) {
+        for (path, content) in canvas_files_map(mount, &canvas, _ctx).await {
             if !base_path.is_empty()
                 && path != base_path
                 && !path.starts_with(&format!("{base_path}/"))
@@ -261,33 +269,59 @@ fn parse_canvas_id(mount: &Mount) -> Result<Uuid, MountError> {
         .map_err(|error| MountError::OperationFailed(format!("canvas_id 无效: {error}")))
 }
 
-fn canvas_files_map(mount: &Mount, canvas: &Canvas) -> BTreeMap<String, String> {
+async fn canvas_files_map(
+    mount: &Mount,
+    canvas: &Canvas,
+    ctx: &MountOperationContext,
+) -> BTreeMap<String, String> {
+    let binding_files = canvas_binding_files(mount, canvas, ctx).await;
+    canvas_files_map_from_bindings(canvas, &binding_files)
+}
+
+fn canvas_files_map_from_bindings(
+    canvas: &Canvas,
+    binding_files: &[CanvasResolvedBindingFile],
+) -> BTreeMap<String, String> {
     let mut files = canvas
         .files
         .iter()
         .map(|file| (file.path.clone(), file.content.clone()))
         .collect::<BTreeMap<_, _>>();
-    for binding_file in canvas_binding_files(mount, canvas) {
+    for binding_file in binding_files {
         files
-            .entry(binding_file.path)
-            .or_insert(binding_file.content);
+            .entry(binding_file.path.clone())
+            .or_insert_with(|| binding_file.content.clone());
     }
     files
 }
 
-fn canvas_binding_files(mount: &Mount, canvas: &Canvas) -> Vec<CanvasResolvedBindingFile> {
+async fn canvas_binding_files(
+    mount: &Mount,
+    canvas: &Canvas,
+    ctx: &MountOperationContext,
+) -> Vec<CanvasResolvedBindingFile> {
     let mut files = unresolved_canvas_binding_files(canvas)
         .into_iter()
         .map(|file| (file.path.clone(), file))
         .collect::<BTreeMap<_, _>>();
-    if let Some(metadata_files) = mount.metadata.get("binding_files").cloned()
-        && let Ok(metadata_files) =
-            serde_json::from_value::<Vec<CanvasResolvedBindingFile>>(metadata_files)
-    {
-        for file in metadata_files {
-            if files.contains_key(&file.path) {
-                files.insert(file.path.clone(), file);
-            }
+
+    let (Some(vfs), Some(resolver)) = (&ctx.runtime_vfs, &ctx.runtime_text_resolver) else {
+        return files.into_values().collect();
+    };
+
+    for file in files.values_mut() {
+        let Ok(source_ref) = parse_mount_uri(&file.source_uri, vfs.as_ref()) else {
+            continue;
+        };
+        if source_ref.mount_id == mount.id && source_ref.path == file.path {
+            continue;
+        }
+        if let Ok(result) = resolver
+            .read_runtime_text(vfs.as_ref(), &file.source_uri, ctx.identity.as_ref())
+            .await
+        {
+            file.content = result.content;
+            file.resolved = true;
         }
     }
     files.into_values().collect()
@@ -344,13 +378,36 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{CanvasDataBinding, CanvasRepository};
+    use agentdash_spi::platform::mount::MountRuntimeTextResolver;
 
     use super::*;
-    use crate::vfs::{build_canvas_mount, refresh_canvas_mount_binding_files};
+    use crate::vfs::build_canvas_mount;
 
     #[derive(Default)]
     struct FakeCanvasRepo {
         canvases: Mutex<BTreeMap<Uuid, Canvas>>,
+    }
+
+    struct StaticRuntimeTextResolver {
+        content: Mutex<String>,
+    }
+
+    #[async_trait]
+    impl MountRuntimeTextResolver for StaticRuntimeTextResolver {
+        async fn read_runtime_text(
+            &self,
+            _vfs: &agentdash_spi::Vfs,
+            uri: &str,
+            _identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        ) -> Result<ReadResult, MountError> {
+            if uri != "main://data/stats.csv" {
+                return Err(MountError::NotFound(uri.to_string()));
+            }
+            Ok(ReadResult::new(
+                "data/stats.csv",
+                self.content.lock().expect("lock").clone(),
+            ))
+        }
     }
 
     #[async_trait]
@@ -378,16 +435,6 @@ mod tests {
                 .expect("lock")
                 .values()
                 .find(|canvas| canvas.project_id == project_id && canvas.mount_id == mount_id)
-                .cloned())
-        }
-
-        async fn find_by_mount_id(&self, mount_id: &str) -> Result<Option<Canvas>, DomainError> {
-            Ok(self
-                .canvases
-                .lock()
-                .expect("lock")
-                .values()
-                .find(|canvas| canvas.mount_id == mount_id)
                 .cloned())
         }
 
@@ -421,7 +468,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let mut canvas = Canvas::new(
             project_id,
-            "dashboard".to_string(),
+            "cvs-dashboard".to_string(),
             "Dashboard".to_string(),
             String::new(),
         );
@@ -430,25 +477,36 @@ mod tests {
             "main://data/stats.csv".to_string(),
         )];
 
-        let binding_file = CanvasResolvedBindingFile {
-            alias: "stats".to_string(),
-            source_uri: "main://data/stats.csv".to_string(),
-            path: "bindings/stats.csv".to_string(),
-            content: "name,value\nA,1".to_string(),
-            content_type: "text/csv".to_string(),
-            resolved: true,
-        };
-        let mut vfs = agentdash_spi::Vfs {
-            mounts: vec![build_canvas_mount(&canvas)],
+        let vfs = agentdash_spi::Vfs {
+            mounts: vec![
+                build_canvas_mount(&canvas),
+                Mount {
+                    id: "main".to_string(),
+                    provider: "inline_fs".to_string(),
+                    backend_id: String::new(),
+                    root_ref: "context://inline/main".to_string(),
+                    capabilities: vec![agentdash_spi::MountCapability::Read],
+                    default_write: false,
+                    display_name: "Main".to_string(),
+                    metadata: serde_json::json!({}),
+                },
+            ],
+            default_mount_id: Some(canvas.mount_id.clone()),
             ..Default::default()
         };
-        refresh_canvas_mount_binding_files(&mut vfs, &canvas, std::slice::from_ref(&binding_file));
-        let mount = vfs.mounts.into_iter().next().expect("mount");
+        let mount = vfs.mounts.first().expect("mount").clone();
+        let resolver = Arc::new(StaticRuntimeTextResolver {
+            content: Mutex::new("name,value\nA,1".to_string()),
+        });
 
         let repo = Arc::new(FakeCanvasRepo::default());
         repo.create(&canvas).await.expect("create canvas");
         let provider = CanvasFsMountProvider::new(repo);
-        let ctx = MountOperationContext::default();
+        let ctx = MountOperationContext {
+            runtime_vfs: Some(Arc::new(vfs.clone())),
+            runtime_text_resolver: Some(resolver.clone()),
+            ..MountOperationContext::default()
+        };
 
         let read = provider
             .read_text(&mount, "bindings/stats.csv", &ctx)
@@ -462,6 +520,13 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+
+        *resolver.content.lock().expect("lock") = "name,value\nB,2".to_string();
+        let reread = provider
+            .read_text(&mount, "bindings/stats.csv", &ctx)
+            .await
+            .expect("reread binding file");
+        assert_eq!(reread.content, "name,value\nB,2");
 
         let listed = provider
             .list(

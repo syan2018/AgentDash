@@ -307,17 +307,17 @@ import type {
 
 ### 2. Signatures
 
-- `workspace_module_create(kind="canvas", input={ canvas_id?: string, title?: string, description?: string }) -> WorkspaceModuleDescriptor`
+- `workspace_module_create(kind="canvas", input={ canvas_mount_id?: string, title?: string, description?: string }) -> WorkspaceModuleDescriptor`
 - `workspace_module_describe(module_id: string) -> WorkspaceModuleDescriptor`
 - `workspace_module_invoke(module_id: string, operation_key: string, input: unknown) -> operation result`
 - `workspace_module_present(module_id: string, view_key: string) -> workspace_module_presented event`
 
 ### 3. Contracts
 
-- Canvas module id is `canvas:{mount_id}`.
+- Canvas module id is `canvas:{canvas_mount_id}`.
 - Canvas bind operation key is `canvas.bind_data` and is discoverable through describe.
-- Canvas UI entry exposes `view_key="preview"` and `presentation_uri="canvas://{mount_id}"`.
-- Canvas VFS edit URI is `cvs-<mount_id>://...` and may appear in tool results or diagnostics as `vfs_mount_uri`.
+- Canvas UI entry exposes `view_key="preview"` and `presentation_uri="canvas://{canvas_mount_id}"`.
+- Canvas VFS edit URI is `{canvas_mount_id}://...` and may appear in tool results or diagnostics as `vfs_mount_uri`.
 - `workspace_module_presented` payload includes `module_id`, `view_key`, `renderer_kind`, `presentation_uri`, `title`, and optional Canvas diagnostics such as `vfs_mount_uri`.
 - Frontend opens Canvas tabs from `presentation_uri` only. `view_key` selects a module UI entry; it is not a Canvas id.
 
@@ -326,16 +326,16 @@ import type {
 | 条件 | 语义 |
 | --- | --- |
 | Backend emits Canvas presentation without `presentation_uri` | contract/test failure |
-| Canvas `presentation_uri` is not `canvas://{mount_id}` | contract/test failure |
+| Canvas `presentation_uri` is not `canvas://{canvas_mount_id}` | contract/test failure |
 | Frontend receives unsupported `renderer_kind` | ignore or show non-blocking unsupported renderer state |
-| Frontend receives Canvas event with malformed `presentation_uri` | do not open a tab; surface compact error/log |
+| Frontend receives Canvas event with malformed `presentation_uri` | keep tab state unchanged; surface compact error/log |
 | Generated TS drift after Rust DTO change | `pnpm run contracts:check` failure |
 
-### 5. Good/Base/Bad Cases
+### 5. Reference Cases
 
-- Good: `workspace_module_present(canvas:{mount_id}, preview)` refreshes runtime surface, emits `workspace_module_presented.presentation_uri=canvas://{mount_id}`, and WorkspacePanel opens that URI.
-- Base: Extension UI entries continue using their own renderer URI fields without Canvas-specific parsing.
-- Bad: Frontend builds `canvas://{view_key}` or treats `cvs-<mount_id>://...` as the Canvas tab URI.
+- Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` refreshes runtime surface, emits `workspace_module_presented.presentation_uri=canvas://{canvas_mount_id}`, and WorkspacePanel opens that URI.
+- Extension presentation flow: Extension UI entries continue using their own renderer URI fields.
+- URI responsibility: `view_key` selects the module UI entry, `canvas://{canvas_mount_id}` identifies the Canvas tab, and `{canvas_mount_id}://...` identifies the VFS authoring mount.
 
 ### 6. Tests Required
 
@@ -411,7 +411,7 @@ lifecycle_agents.current_delivery_launch_frame_id text;
 - `resolve_current_frame_from_delivery_trace_ref` validates anchor -> agent -> run ownership before returning the effective `AgentFrame`.
 - `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-session views. Frontend-facing AgentRun, Canvas, VFS and Session runtime paths must not choose a frame from a raw agent id when a delivery runtime session is available.
 - `LifecycleAgent.current_delivery_*` stores the current delivery binding. `LifecycleAgent.current_frame_id` is not a domain or API contract field.
-- Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
+- Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
 
 ### 4. Validation & Error Matrix
 
@@ -420,17 +420,17 @@ lifecycle_agents.current_delivery_launch_frame_id text;
 | `runtime_session_id` has no execution anchor | Return not found / no runtime surface projection |
 | Anchor agent does not belong to anchor run | Treat resolver result as unavailable |
 | Effective frame belongs to a different agent | Treat resolver result as unavailable |
-| Effective frame has Canvas mount `cvs-{mount_id}` | AgentRun `resource_surface` exposes the Canvas mount and Canvas snapshot uses the same frame |
+| Effective frame has Canvas mount `{canvas_mount_id}` | AgentRun `resource_surface` exposes the Canvas mount and Canvas snapshot uses the same frame |
 | `AgentRunView` exposes `current_frame_id` | Contract drift; remove the field and consume `frame_runtime.frame_ref` where a UI needs display-only frame identity |
-| Workspace module event has `presentation_uri=canvas://{mount_id}` while runtime surface is refreshing | Open or activate the Canvas tab and refresh its content after workspace state update |
+| Workspace module event has `presentation_uri=canvas://{canvas_mount_id}` while runtime surface is refreshing | Open or activate the Canvas tab and refresh its content after workspace state update |
 
-### 5. Good/Base/Bad Cases
+### 5. Reference Cases
 
-- Good: `workspace_module_present(canvas:{mount_id}, preview)` creates/adopts a new frame revision; Agent runtime tools, AgentRun Workspace `resource_surface`, Canvas runtime snapshot, and WorkspacePanel tab all observe the same mount.
-- Good: Session control view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
-- Base: A draft/static run view with no delivery runtime may show the latest frame revision via `AgentFrameRepository.get_current(agent_id)` because no session anchor exists.
-- Bad: A Canvas snapshot resolves VFS from `anchor.launch_frame_id` after a later frame revision added the Canvas mount.
-- Bad: Frontend prevents opening `canvas://{mount_id}` because the previous `runtime_surface` has not refreshed yet.
+- Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` creates/adopts a new frame revision; Agent runtime tools, AgentRun Workspace `resource_surface`, Canvas runtime snapshot, and WorkspacePanel tab all observe the same mount.
+- Session control flow: Session control view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
+- Draft/static run flow: A draft/static run view with no delivery runtime may show the latest frame revision via `AgentFrameRepository.get_current(agent_id)` because no session anchor exists.
+- Frame freshness: Canvas snapshot and AgentRun resource surface resolve from the current adopted frame revision so late Canvas exposure is visible to both runtime and UI.
+- Presentation ordering: WorkspacePanel opens `canvas://{canvas_mount_id}` from the presentation payload while runtime surface refresh catches up.
 
 ### 6. Tests Required
 
@@ -438,7 +438,7 @@ lifecycle_agents.current_delivery_launch_frame_id text;
 - API/session test asserts Canvas/runtime VFS resolution uses the current adopted frame rather than launch frame evidence.
 - Contract check asserts `AgentRunView` has no `current_frame_id` field.
 - Frontend Workspace module test asserts `workspace_module_presented.presentation_uri` opens the Canvas tab and does not synthesize a Canvas URI from `view_key`.
-- Frontend WorkspacePanel/store test asserts concrete `canvas://{mount_id}` can be opened before the refreshed runtime surface has been rendered.
+- Frontend WorkspacePanel/store test asserts concrete `canvas://{canvas_mount_id}` can be opened before the refreshed runtime surface has been rendered.
 
 ### 7. Wrong vs Correct
 

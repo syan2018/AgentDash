@@ -1323,7 +1323,7 @@ mod tests {
 
     #[test]
     fn project_to_base_workspace_module_allowlist_when_set() {
-        let refs = vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()];
+        let refs = vec!["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()];
         let dim = project_workspace_module_dimension(Some(&refs));
         assert_eq!(
             dim.mode,

@@ -48,11 +48,11 @@ export function ProjectCanvasManager({
         const remembered = readRememberedCanvasId(storageKey);
         const preferredIds = [current, remembered].filter((value): value is string => Boolean(value));
         for (const preferredId of preferredIds) {
-          if (nextCanvases.some((canvas) => canvas.id === preferredId)) {
+          if (nextCanvases.some((canvas) => canvas.canvas_id === preferredId)) {
             return preferredId;
           }
         }
-        return nextCanvases[0]?.id ?? null;
+        return nextCanvases[0]?.canvas_id ?? null;
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Canvas 列表加载失败");
@@ -77,7 +77,7 @@ export function ProjectCanvasManager({
   }, [selectedCanvasId, storageKey]);
 
   const selectedCanvas = useMemo(
-    () => canvases.find((canvas) => canvas.id === selectedCanvasId) ?? null,
+    () => canvases.find((canvas) => canvas.canvas_id === selectedCanvasId) ?? null,
     [canvases, selectedCanvasId],
   );
 
@@ -97,7 +97,7 @@ export function ProjectCanvasManager({
         description: createDescription.trim() || undefined,
       });
       setCanvases((prev) => [createdCanvas, ...prev]);
-      setSelectedCanvasId(createdCanvas.id);
+      setSelectedCanvasId(createdCanvas.canvas_id);
       setCreateTitle("");
       setCreateDescription("");
       setMessage(`已在 ${projectName} 下创建 Canvas：${createdCanvas.title}`);
@@ -109,19 +109,19 @@ export function ProjectCanvasManager({
   }, [createDescription, createTitle, projectId, projectName]);
 
   const handleDeleteCanvas = useCallback(async (canvas: Canvas) => {
-    setDeletingCanvasId(canvas.id);
+    setDeletingCanvasId(canvas.canvas_id);
     setError(null);
     setMessage(null);
     try {
-      await deleteCanvas(canvas.id);
-      const currentIndex = canvases.findIndex((item) => item.id === canvas.id);
+      await deleteCanvas(canvas.canvas_id);
+      const currentIndex = canvases.findIndex((item) => item.canvas_id === canvas.canvas_id);
       const nextSelectedCanvasId =
-        canvases[currentIndex + 1]?.id
-        ?? canvases[currentIndex - 1]?.id
+        canvases[currentIndex + 1]?.canvas_id
+        ?? canvases[currentIndex - 1]?.canvas_id
         ?? null;
-      setCanvases((prev) => prev.filter((item) => item.id !== canvas.id));
+      setCanvases((prev) => prev.filter((item) => item.canvas_id !== canvas.canvas_id));
       setSelectedCanvasId((current) => {
-        if (current !== canvas.id) {
+        if (current !== canvas.canvas_id) {
           return current;
         }
         return nextSelectedCanvasId;
@@ -135,11 +135,11 @@ export function ProjectCanvasManager({
   }, [canvases]);
 
   const handlePromoteCanvas = useCallback(async (canvas: Canvas) => {
-    setPromotingCanvasId(canvas.id);
+    setPromotingCanvasId(canvas.canvas_id);
     setError(null);
     setMessage(null);
     try {
-      const result = await promoteCanvasToExtension(canvas.id, {
+      const result = await promoteCanvasToExtension(canvas.canvas_id, {
         display_name: canvas.title,
         overwrite: true,
       });
@@ -232,10 +232,10 @@ export function ProjectCanvasManager({
           {!isLoading && canvases.length > 0 && (
             <div className="space-y-2">
               {canvases.map((canvas) => {
-                const isSelected = canvas.id === selectedCanvasId;
+                const isSelected = canvas.canvas_id === selectedCanvasId;
                 return (
                   <article
-                    key={canvas.id}
+                    key={canvas.canvas_id}
                     className={`rounded-[14px] border p-3 transition-colors ${
                       isSelected
                         ? "border-foreground/15 bg-foreground/[0.03]"
@@ -244,7 +244,7 @@ export function ProjectCanvasManager({
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedCanvasId(canvas.id)}
+                      onClick={() => setSelectedCanvasId(canvas.canvas_id)}
                       className="w-full text-left"
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -266,7 +266,7 @@ export function ProjectCanvasManager({
 
                     <div className="mt-3 flex flex-wrap gap-2">
                       <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
-                        mount: {canvas.mount_id}
+                        mount: {canvas.canvas_mount_id}
                       </span>
                       <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                         files: {canvas.files.length}
@@ -283,10 +283,10 @@ export function ProjectCanvasManager({
                       <button
                         type="button"
                         onClick={() => void handleDeleteCanvas(canvas)}
-                        disabled={deletingCanvasId === canvas.id}
+                        disabled={deletingCanvasId === canvas.canvas_id}
                         className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-2.5 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {deletingCanvasId === canvas.id ? "删除中..." : "删除"}
+                        {deletingCanvasId === canvas.canvas_id ? "删除中..." : "删除"}
                       </button>
                     </div>
                   </article>
@@ -313,13 +313,13 @@ export function ProjectCanvasManager({
                   <button
                     type="button"
                     onClick={() => void handlePromoteCanvas(selectedCanvas)}
-                    disabled={promotingCanvasId === selectedCanvas.id}
+                    disabled={promotingCanvasId === selectedCanvas.canvas_id}
                     className="rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {promotingCanvasId === selectedCanvas.id ? "发布中..." : "发布为插件"}
+                    {promotingCanvasId === selectedCanvas.canvas_id ? "发布中..." : "发布为插件"}
                   </button>
                   <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
-                    mount: {selectedCanvas.mount_id}
+                    mount: {selectedCanvas.canvas_mount_id}
                   </span>
                   <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     files: {selectedCanvas.files.length}
@@ -335,7 +335,7 @@ export function ProjectCanvasManager({
             </div>
             <div className="min-h-0 flex-1">
               <CanvasRuntimePanel
-                canvasId={selectedCanvas.id}
+                canvasId={selectedCanvas.canvas_id}
                 sessionId={null}
                 onClose={() => setSelectedCanvasId(null)}
               />

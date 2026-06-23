@@ -12,6 +12,8 @@ import {
 function snapshot(): CanvasRuntimeSnapshot {
   return {
     canvas_id: "canvas-1",
+    canvas_mount_id: "cvs-canvas-1",
+    vfs_mount_id: "cvs-canvas-1",
     session_id: "session-1",
     resource_surface_ref: "session-runtime:session-1",
     entry: "src/main.tsx",

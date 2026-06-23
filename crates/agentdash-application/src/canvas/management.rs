@@ -6,8 +6,11 @@ use crate::error::ApplicationError;
 use crate::repository_set::RepositorySet;
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, normalize_binding_content_type,
+    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig,
+    is_text_compatible_binding_content_type, normalize_binding_content_type,
 };
+
+use super::{derive_canvas_mount_id, normalize_canvas_mount_id};
 
 #[derive(Debug, Clone, Default)]
 pub struct CanvasMutationInput {
@@ -66,18 +69,34 @@ pub async fn create_project_canvas(
     Ok(canvas)
 }
 
-pub async fn load_canvas_by_ref(
+pub async fn load_canvas_by_id(
     repos: &RepositorySet,
-    raw_canvas_id: &str,
+    canvas_id: Uuid,
 ) -> Result<Canvas, ApplicationError> {
-    let canvas = if let Ok(uuid) = Uuid::parse_str(raw_canvas_id) {
-        repos.canvas_repo.get_by_id(uuid).await
-    } else {
-        repos.canvas_repo.find_by_mount_id(raw_canvas_id).await
-    }
-    .map_err(ApplicationError::from)?;
+    let canvas = repos
+        .canvas_repo
+        .get_by_id(canvas_id)
+        .await
+        .map_err(ApplicationError::from)?;
 
-    canvas.ok_or_else(|| ApplicationError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))
+    canvas.ok_or_else(|| ApplicationError::NotFound(format!("Canvas {canvas_id} 不存在")))
+}
+
+pub async fn load_canvas_by_project_mount_id(
+    repos: &RepositorySet,
+    project_id: Uuid,
+    raw_canvas_mount_id: &str,
+) -> Result<Canvas, ApplicationError> {
+    let canvas_mount_id = normalize_canvas_mount_id(raw_canvas_mount_id)
+        .map_err(|error| ApplicationError::BadRequest(error.to_string()))?;
+    let canvas = repos
+        .canvas_repo
+        .get_by_mount_id(project_id, &canvas_mount_id)
+        .await
+        .map_err(ApplicationError::from)?;
+
+    canvas
+        .ok_or_else(|| ApplicationError::NotFound(format!("Canvas mount {canvas_mount_id} 不存在")))
 }
 
 pub async fn update_canvas_record(
@@ -218,6 +237,12 @@ pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
                 binding.alias
             )));
         }
+        if !is_text_compatible_binding_content_type(&binding.content_type) {
+            return Err(DomainError::InvalidConfig(format!(
+                "Canvas binding `{}` 的 content_type `{}` 不是文本数据类型",
+                binding.alias, binding.content_type
+            )));
+        }
         if !binding_aliases.insert(binding.alias.clone()) {
             return Err(DomainError::InvalidConfig(format!(
                 "Canvas binding alias 重复: {}",
@@ -285,70 +310,6 @@ fn normalize_path(path: &str) -> Result<String, DomainError> {
     Ok(normalized)
 }
 
-pub fn derive_canvas_mount_id(title: &str) -> String {
-    let mut out = String::new();
-    let mut last_was_sep = false;
-    for ch in title.trim().chars() {
-        let mapped = if ch.is_ascii_alphanumeric() {
-            Some(ch.to_ascii_lowercase())
-        } else if matches!(ch, '-' | '_') {
-            Some(ch)
-        } else if ch.is_whitespace() {
-            Some('-')
-        } else {
-            None
-        };
-
-        let Some(next) = mapped else {
-            continue;
-        };
-
-        if matches!(next, '-' | '_') {
-            if out.is_empty() || last_was_sep {
-                continue;
-            }
-            last_was_sep = true;
-            out.push(next);
-            continue;
-        }
-
-        last_was_sep = false;
-        out.push(next);
-    }
-
-    let normalized = out.trim_matches(['-', '_']).to_string();
-    if normalized.is_empty() {
-        "canvas".to_string()
-    } else {
-        normalized
-    }
-}
-
-pub fn normalize_canvas_mount_id(raw: &str) -> Result<String, DomainError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(DomainError::InvalidConfig(
-            "Canvas mount_id 不能为空".to_string(),
-        ));
-    }
-    if trimmed.eq_ignore_ascii_case("main") {
-        return Err(DomainError::InvalidConfig(
-            "Canvas mount_id `main` 为保留字".to_string(),
-        ));
-    }
-    if trimmed.chars().any(char::is_whitespace) {
-        return Err(DomainError::InvalidConfig(
-            "Canvas mount_id 不能包含空白字符".to_string(),
-        ));
-    }
-    if trimmed.chars().any(|ch| matches!(ch, '/' | '\\' | ':')) {
-        return Err(DomainError::InvalidConfig(
-            "Canvas mount_id 不能包含 `/`、`\\` 或 `:`".to_string(),
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,7 +318,7 @@ mod tests {
     fn build_canvas_uses_react_default_and_seed_file() {
         let canvas = build_canvas(
             Uuid::new_v4(),
-            Some("demo".to_string()),
+            Some("cvs-demo".to_string()),
             "Demo".to_string(),
             String::new(),
             CanvasMutationInput::default(),
@@ -384,7 +345,7 @@ mod tests {
     fn apply_canvas_mutation_replaces_source_files_without_system_skill_injection() {
         let mut canvas = build_canvas(
             Uuid::new_v4(),
-            Some("demo".to_string()),
+            Some("cvs-demo".to_string()),
             "Demo".to_string(),
             String::new(),
             CanvasMutationInput::default(),
@@ -415,7 +376,7 @@ mod tests {
     fn validate_canvas_contract_rejects_missing_entry_file() {
         let mut canvas = Canvas::new(
             Uuid::new_v4(),
-            "demo".to_string(),
+            "cvs-demo".to_string(),
             "Demo".to_string(),
             String::new(),
         );
@@ -423,5 +384,34 @@ mod tests {
 
         let err = validate_canvas_contract(&canvas).expect_err("应拒绝缺失 entry");
         assert!(err.to_string().contains("必须存在于 files 中"));
+    }
+
+    #[test]
+    fn derived_canvas_mount_id_uses_cvs_prefix_once() {
+        assert_eq!(
+            derive_canvas_mount_id("Demo Dashboard"),
+            "cvs-demo-dashboard"
+        );
+        assert_eq!(derive_canvas_mount_id("cvs-demo"), "cvs-demo");
+    }
+
+    #[test]
+    fn validate_canvas_contract_rejects_binary_data_binding() {
+        let mut canvas = build_canvas(
+            Uuid::new_v4(),
+            Some("cvs-demo".to_string()),
+            "Demo".to_string(),
+            String::new(),
+            CanvasMutationInput::default(),
+        )
+        .expect("应能创建 canvas");
+        canvas.bindings = vec![CanvasDataBinding::with_content_type(
+            "logo".to_string(),
+            "main://assets/logo.png".to_string(),
+            Some("image/png".to_string()),
+        )];
+
+        let err = validate_canvas_contract(&canvas).expect_err("应拒绝非文本绑定");
+        assert!(err.to_string().contains("不是文本数据类型"));
     }
 }

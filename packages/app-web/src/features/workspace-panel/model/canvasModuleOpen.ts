@@ -34,7 +34,7 @@ export function activeCanvasMountIdsFromRuntimeSurface(
     if (mount.purpose !== "canvas") continue;
     const rawId = mount.id.trim();
     if (!rawId) continue;
-    ids.add(rawId.startsWith("cvs-") ? rawId.slice("cvs-".length) : rawId);
+    ids.add(rawId);
   }
   return ids;
 }

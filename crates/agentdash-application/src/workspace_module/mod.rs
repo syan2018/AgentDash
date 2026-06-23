@@ -7,7 +7,7 @@
 //! 决策对齐：
 //! - D3：`protocol_channels[].methods[]` 投影为其 provider extension module 的
 //!   operation（`origin = "protocol_channel"`），不单独成 module。
-//! - module_id 约定见 §4：`ext:{extension_key}` / `canvas:{mount_id}` /
+//! - module_id 约定见 §4：`ext:{extension_key}` / `canvas:{canvas_mount_id}` /
 //!   `builtin:{key}`。
 
 pub mod runtime_tool_provider;
@@ -25,6 +25,7 @@ use agentdash_domain::shared_library::{
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
 };
 
+use crate::canvas::{canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id};
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::backend::RuntimeBackendAnchor;
@@ -411,10 +412,11 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
             "type": "object",
             "properties": {
                 "canvas_id": {"type": "string"},
-                "mount_id": {"type": "string"},
+                "canvas_mount_id": {"type": "string"},
+                "vfs_mount_id": {"type": "string"},
                 "bindings": {"type": "array"}
             },
-            "required": ["canvas_id", "mount_id", "bindings"]
+            "required": ["canvas_id", "canvas_mount_id", "vfs_mount_id", "bindings"]
         })),
         permission_summary: Vec::new(),
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
@@ -426,7 +428,7 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
     let ui_entries = vec![WorkspaceModuleUiEntry {
         view_key: "preview".to_string(),
         renderer_kind: "canvas".to_string(),
-        presentation_uri: Some(format!("canvas://{}", canvas.mount_id)),
+        presentation_uri: Some(canvas_presentation_uri(&canvas.mount_id)),
         uri_scheme: Some("canvas".to_string()),
         title: canvas.title.clone(),
     }];
@@ -437,7 +439,7 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
         .collect::<Vec<_>>();
 
     let summary = WorkspaceModuleSummary {
-        module_id: format!("{MODULE_ID_CANVAS_PREFIX}{}", canvas.mount_id),
+        module_id: canvas_module_id(&canvas.mount_id),
         kind: WorkspaceModuleKind::Canvas,
         title: canvas.title.clone(),
         description: canvas.description.clone(),
@@ -452,10 +454,7 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
         summary,
         ui_entries,
         operations,
-        runtime_backing: Some(format!(
-            "canvas:{}",
-            crate::vfs::build_canvas_mount_id(canvas)
-        )),
+        runtime_backing: Some(format!("canvas_vfs:{}", canvas_vfs_mount_id(canvas))),
     }
 }
 
@@ -601,7 +600,7 @@ mod tests {
                 .expect("projection");
         let canvas = build_canvas(
             Uuid::new_v4(),
-            Some("dashboard-a".to_string()),
+            Some("cvs-dashboard-a".to_string()),
             "Dashboard A".to_string(),
             "demo canvas".to_string(),
             Default::default(),
@@ -660,7 +659,7 @@ mod tests {
             .iter()
             .find(|module| module.summary.kind == WorkspaceModuleKind::Canvas)
             .expect("canvas module");
-        assert_eq!(canvas_module.summary.module_id, "canvas:dashboard-a");
+        assert_eq!(canvas_module.summary.module_id, "canvas:cvs-dashboard-a");
         let canvas_op = canvas_module
             .operations
             .iter()
@@ -678,7 +677,7 @@ mod tests {
         assert_eq!(canvas_module.ui_entries[0].view_key, "preview");
         assert_eq!(
             canvas_module.ui_entries[0].presentation_uri.as_deref(),
-            Some("canvas://dashboard-a")
+            Some("canvas://cvs-dashboard-a")
         );
     }
 

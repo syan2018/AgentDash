@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchCanvas,
+  fetchCanvasByMountId,
   fetchCanvasRuntimeSnapshot,
   updateCanvas,
 } from "../../services/canvas";
@@ -10,6 +11,8 @@ import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasRuntimePanelProps {
   canvasId: string | null;
+  canvasMountId?: string | null;
+  projectId?: string | null;
   sessionId: string | null;
   refreshRevision?: number;
   onClose: () => void;
@@ -19,6 +22,8 @@ export interface CanvasRuntimePanelProps {
 
 export function CanvasRuntimePanel({
   canvasId,
+  canvasMountId,
+  projectId,
   sessionId,
   refreshRevision = 0,
   onClose,
@@ -34,7 +39,7 @@ export function CanvasRuntimePanel({
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   const loadCanvasData = useCallback(async () => {
-    if (!canvasId) {
+    if (!canvasId && (!canvasMountId || !projectId)) {
       setCanvas(null);
       setSnapshot(null);
       setError(null);
@@ -45,9 +50,13 @@ export function CanvasRuntimePanel({
     setIsLoading(true);
     setError(null);
     try {
+      const canvasRequest = canvasId
+        ? fetchCanvas(canvasId)
+        : fetchCanvasByMountId(projectId ?? "", canvasMountId ?? "");
+      const snapshotCanvasId = canvasId ?? (await canvasRequest).canvas_id;
       const [nextCanvas, nextSnapshot] = await Promise.all([
-        fetchCanvas(canvasId),
-        fetchCanvasRuntimeSnapshot(canvasId, sessionId),
+        canvasRequest,
+        fetchCanvasRuntimeSnapshot(snapshotCanvasId, sessionId),
       ]);
       setCanvas(nextCanvas);
       setSnapshot(nextSnapshot);
@@ -59,23 +68,24 @@ export function CanvasRuntimePanel({
     } finally {
       setIsLoading(false);
     }
-  }, [canvasId, sessionId]);
+  }, [canvasId, canvasMountId, projectId, sessionId]);
 
   useEffect(() => {
     void loadCanvasData();
   }, [loadCanvasData, refreshRevision]);
 
   const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
-    if (!canvasId) {
+    const targetCanvasId = canvas?.canvas_id ?? canvasId;
+    if (!targetCanvasId) {
       return;
     }
 
     setIsSavingBindings(true);
     setBindingsError(null);
     try {
-      const nextCanvas = await updateCanvas(canvasId, { bindings });
+      const nextCanvas = await updateCanvas(targetCanvasId, { bindings });
       setCanvas(nextCanvas);
-      const nextSnapshot = await fetchCanvasRuntimeSnapshot(canvasId, sessionId);
+      const nextSnapshot = await fetchCanvasRuntimeSnapshot(targetCanvasId, sessionId);
       setSnapshot(nextSnapshot);
     } catch (err) {
       setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
@@ -83,11 +93,11 @@ export function CanvasRuntimePanel({
     } finally {
       setIsSavingBindings(false);
     }
-  }, [canvasId, sessionId]);
+  }, [canvas, canvasId, sessionId]);
 
-  const canvasMountId = canvas ? `cvs-${canvas.mount_id}` : null;
+  const vfsMountId = canvas?.vfs_mount_id ?? snapshot?.vfs_mount_id ?? null;
 
-  if (!canvasId) {
+  if (!canvasId && !canvasMountId) {
     return null;
   }
 
@@ -98,7 +108,7 @@ export function CanvasRuntimePanel({
         <div className="flex min-w-0 items-center gap-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-foreground">
-              {canvas?.title || canvasId}
+              {canvas?.title || canvasMountId || canvasId}
             </h3>
           </div>
           {snapshot && (
@@ -162,10 +172,10 @@ export function CanvasRuntimePanel({
         <div className="shrink-0 border-t border-border">
           <div className="flex items-center justify-between bg-secondary/20 px-3 py-1.5">
             <div className="flex items-center gap-1">
-              {onBrowseFiles && canvasMountId && (
+              {onBrowseFiles && vfsMountId && (
                 <button
                   type="button"
-                  onClick={() => onBrowseFiles(canvasMountId)}
+                  onClick={() => onBrowseFiles(vfsMountId)}
                   className="rounded-[6px] px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 >
                   浏览文件

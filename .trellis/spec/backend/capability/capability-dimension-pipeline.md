@@ -108,7 +108,7 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 | Guidelines | — | VFS/project facts | none | `DiscoveredGuideline[]` | 否 | projection-only module |
 | Extension runtime | — | installed extension assets | future extension effects | command / flag / renderer projection | 否 | projection-only module |
 
-> **Workspace module 可见性**：声明式 allowlist 事实源是 ProjectAgent preset `visible_workspace_module_refs`，投影进 base `CapabilityState.workspace_module`（`mode=All` 未配/清空 / `mode=Allowlist` 受限），经 `effective_capability_json` 序列化还原。`workspace_module_create(kind="canvas")` materialize 新 `canvas:{mount_id}` 时通过 AgentRun exposure revision 追加 runtime visible module ref，使 create 后紧接着 describe/invoke/present 不被 allowlist 裁掉；这个 runtime exposure 属于 AgentRun 当前能力面，不回写 ProjectAgent preset。
+> **Workspace module 可见性**：声明式 allowlist 事实源是 ProjectAgent preset `visible_workspace_module_refs`，投影进 base `CapabilityState.workspace_module`（`mode=All` 未配/清空 / `mode=Allowlist` 受限），经 `effective_capability_json` 序列化还原。`workspace_module_create(kind="canvas")` materialize 新 `canvas:{canvas_mount_id}` 时通过 AgentRun exposure revision 追加 runtime visible module ref，使 create 后紧接着 describe/invoke/present 不被 allowlist 裁掉；这个 runtime exposure 属于 AgentRun 当前能力面，不回写 ProjectAgent preset。
 >
 > **Skill 权限 vs 发现**：skill 的"授予"是 `skill_asset_keys`（声明式 Replace，种进 lifecycle mount metadata）；`CapabilityState.skill.skills`（`SkillEntry`）是 `load_skills_from_vfs` 扫 mount 的**发现物化结果**，供上下文展示和执行侧读取。`frame_builder` 的 `inherit_skills_from` carry-forward 是发现缓存（热修订不重扫 VFS），与权限原语无关。
 
@@ -116,9 +116,9 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 
 ## Canvas Workspace Module Runtime Exposure
 
-`workspace_module_create(kind="canvas")` 同时做两件事：创建或接入 Canvas 资产，并把对应 `canvas:{mount_id}` runtime visible module ref 写入 AgentRun 当前 frame revision。这样 Agent 在同一轮可立即 `workspace_module_describe`、`workspace_module_invoke` 或 `workspace_module_present` 该实例。
+`workspace_module_create(kind="canvas")` 同时做两件事：创建或接入 Canvas 资产，并把对应 `canvas:{canvas_mount_id}` runtime visible module ref 写入 AgentRun 当前 frame revision。这样 Agent 在同一轮可立即 `workspace_module_describe`、`workspace_module_invoke` 或 `workspace_module_present` 该实例。
 
-这个 runtime exposure 与 VFS Accumulate 维度配合使用：workspace module ref 让实例 operation/UI entry 可见，Canvas VFS exposure 让 `cvs-<mount_id>://...` 文件面可见；`canvas-system` 作为 lifecycle-projected SkillAsset 进入同一 AgentRun skill baseline。它们都表达当前 AgentRun 的可操作面，不改变 ProjectAgent 的长期 preset。
+这个 runtime exposure 与 VFS Accumulate 维度配合使用：workspace module ref 让实例 operation/UI entry 可见，Canvas VFS exposure 让 `{canvas_mount_id}://...` 文件面可见；`canvas-system` 作为 lifecycle-projected SkillAsset 进入同一 AgentRun skill baseline。它们都表达当前 AgentRun 的可操作面，不改变 ProjectAgent 的长期 preset。
 
 ## Registry Ordering
 

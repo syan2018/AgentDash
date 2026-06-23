@@ -17,17 +17,17 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 
 ## Module Ids
 
-- Canvas modules use `canvas:{mount_id}`.
+- Canvas modules use `canvas:{canvas_mount_id}`.
 - Extension modules use `ext:{extension_key}`.
 - Builtin modules use `builtin:{key}` when the platform exposes one.
 
 ## Canvas Modules
 
-- Create or attach a Canvas with `workspace_module_create(kind="canvas", input={ canvas_id?, title?, description? })`.
-- The created or attached module is `canvas:{mount_id}`.
-- The current session can edit Canvas files after create or present through `cvs-<mount_id>://...`.
-- The Canvas presentation URI is `canvas://{mount_id}`; `cvs-<mount_id>://...` is the authoring VFS URI.
-- Bind Canvas data by describing the module, then invoking the `canvas.bind_data` operation on that same `canvas:{mount_id}` module.
+- Create or attach a Canvas with `workspace_module_create(kind="canvas", input={ canvas_mount_id?, title?, description? })`.
+- The created or attached module is `canvas:{canvas_mount_id}`.
+- The current session can edit Canvas files after create or present through `{canvas_mount_id}://...`.
+- The Canvas presentation URI is `canvas://{canvas_mount_id}`; `{canvas_mount_id}://...` is the authoring VFS URI.
+- Bind Canvas data by describing the module, then invoking the `canvas.bind_data` operation on that same `canvas:{canvas_mount_id}` module.
 - Use the lifecycle-projected `canvas-system` skill for source editing, runtime bridge usage, data binding details, and Canvas UI quality rules.
 
 ## Extension Modules

@@ -399,7 +399,7 @@ impl AgentTool for WorkspaceModuleCreateTool {
     }
 
     fn description(&self) -> &str {
-        "Create or attach a workspace module instance. Currently supports kind=`canvas`: pass input.canvas_id? + input.title? + input.description?; returns the materialized canvas:{mount_id} descriptor and exposes its Canvas VFS mount to the current session."
+        "Create or attach a workspace module instance. Currently supports kind=`canvas`: pass input.canvas_mount_id? + input.title? + input.description?; returns the materialized canvas:{canvas_mount_id} descriptor and exposes its Canvas VFS mount to the current session."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -455,8 +455,11 @@ impl AgentTool for WorkspaceModuleCreateTool {
         })?;
         let module_id = descriptor.summary.module_id.clone();
         let content = format!(
-            "created workspace module\nmodule_id={module_id}\ncanvas_id={}\nmount={}://\nskill_path={}",
-            canvas.mount_id, canvas_result.mount_id, canvas_result.skill_path
+            "created workspace module\nmodule_id={module_id}\ncanvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nskill_path={}",
+            canvas_result.canvas_id,
+            canvas_result.canvas_mount_id,
+            canvas_result.vfs_mount_id,
+            canvas_result.skill_path
         );
         let details = serde_json::json!({
             "kind": kind,
@@ -860,7 +863,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                         ));
                     };
                     obj.insert(
-                        "canvas_id".to_string(),
+                        "canvas_mount_id".to_string(),
                         serde_json::Value::String(module.summary.source.clone()),
                     );
                     let bind_params: BindCanvasDataParams =
@@ -877,9 +880,10 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     .await?;
                     self.refresh_canvas_mount_for_runtime(&canvas).await?;
                     let content = format!(
-                        "canvas_id={}\nmount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
+                        "canvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
                         result.canvas_id,
-                        result.mount_id,
+                        result.canvas_mount_id,
+                        result.vfs_mount_id,
                         result.alias,
                         result.source_uri,
                         result.content_type
@@ -1339,15 +1343,6 @@ mod tests {
                 .find(|c| c.project_id == project_id && c.mount_id == mount_id)
                 .cloned())
         }
-        async fn find_by_mount_id(&self, mount_id: &str) -> Result<Option<Canvas>, DomainError> {
-            Ok(self
-                .canvases
-                .read()
-                .await
-                .values()
-                .find(|c| c.mount_id == mount_id)
-                .cloned())
-        }
         async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Canvas>, DomainError> {
             Ok(self
                 .canvases
@@ -1537,7 +1532,7 @@ mod tests {
         let canvas_repo = Arc::new(FakeCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
-            Some("dashboard-a".to_string()),
+            Some("cvs-dashboard-a".to_string()),
             "Dashboard A".to_string(),
             "demo canvas".to_string(),
             Default::default(),
@@ -1678,7 +1673,7 @@ mod tests {
             allowed_module_ids: vec!["ext:demo".to_string()],
         };
         let view =
-            test_effective_capability_view(visibility, vec!["canvas:dashboard-a".to_string()]);
+            test_effective_capability_view(visibility, vec!["canvas:cvs-dashboard-a".to_string()]);
         let projection =
             resolve_workspace_module_visibility(&install_repo, &canvas_repo, project_id, &view)
                 .await
@@ -1691,7 +1686,7 @@ mod tests {
 
         assert_eq!(module_ids.len(), 2);
         assert!(module_ids.contains(&"ext:demo"));
-        assert!(module_ids.contains(&"canvas:dashboard-a"));
+        assert!(module_ids.contains(&"canvas:cvs-dashboard-a"));
     }
 
     #[tokio::test]
@@ -1863,7 +1858,7 @@ mod tests {
                 .as_ref()
                 .and_then(|details| details.get("module_id"))
                 .and_then(serde_json::Value::as_str),
-            Some("canvas:sales-board")
+            Some("canvas:cvs-sales-board")
         );
         assert!(
             result
@@ -1900,7 +1895,7 @@ mod tests {
         );
         assert_eq!(
             updated_frame.visible_workspace_module_refs(),
-            vec!["canvas:sales-board".to_string()]
+            vec!["canvas:cvs-sales-board".to_string()]
         );
 
         let state = hub
@@ -1949,7 +1944,7 @@ mod tests {
         let describe = describe_tool
             .execute(
                 "tool-describe",
-                serde_json::json!({"module_id": "canvas:sales-board"}),
+                serde_json::json!({"module_id": "canvas:cvs-sales-board"}),
                 CancellationToken::new(),
                 None,
             )
@@ -1964,7 +1959,7 @@ mod tests {
                 .details
                 .and_then(|details| details.pointer("/summary/module_id").cloned())
                 .and_then(|value| value.as_str().map(str::to_string)),
-            Some("canvas:sales-board".to_string())
+            Some("canvas:cvs-sales-board".to_string())
         );
     }
 
@@ -2076,7 +2071,7 @@ mod tests {
             .execute(
                 "tool-present",
                 serde_json::json!({
-                    "module_id": "canvas:dashboard-a",
+                    "module_id": "canvas:cvs-dashboard-a",
                     "view_key": "preview"
                 }),
                 CancellationToken::new(),
@@ -2111,11 +2106,11 @@ mod tests {
         );
         assert_eq!(
             updated_frame.visible_canvas_mount_ids(),
-            vec!["dashboard-a".to_string()]
+            vec!["cvs-dashboard-a".to_string()]
         );
         assert_eq!(
             updated_frame.visible_workspace_module_refs(),
-            vec!["canvas:dashboard-a".to_string()]
+            vec!["canvas:cvs-dashboard-a".to_string()]
         );
 
         let state = hub
@@ -2179,7 +2174,7 @@ mod tests {
                 .1
                 .get("presentation_uri")
                 .and_then(serde_json::Value::as_str),
-            Some("canvas://dashboard-a")
+            Some("canvas://cvs-dashboard-a")
         );
     }
 
@@ -2515,7 +2510,7 @@ mod tests {
             .execute(
                 "t",
                 serde_json::json!({
-                    "module_id": "canvas:dashboard-a",
+                    "module_id": "canvas:cvs-dashboard-a",
                     "operation_key": "canvas.bind_data",
                     "input": {
                         "alias": "stats",
@@ -2544,7 +2539,7 @@ mod tests {
         );
 
         let saved = canvas_repo
-            .get_by_mount_id(project_id, "dashboard-a")
+            .get_by_mount_id(project_id, "cvs-dashboard-a")
             .await
             .expect("load canvas")
             .expect("canvas");

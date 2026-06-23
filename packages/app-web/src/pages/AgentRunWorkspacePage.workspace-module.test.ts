@@ -126,10 +126,10 @@ describe("workspaceModulePresentedTabTarget", () => {
   it("opens Canvas tabs from presentation_uri", () => {
     expect(workspaceModulePresentedTabTarget(presentation({
       renderer_kind: "canvas",
-      presentation_uri: "canvas://dashboard-a",
+      presentation_uri: "canvas://cvs-dashboard-a",
     }))).toEqual({
       typeId: "canvas",
-      uri: "canvas://dashboard-a",
+      uri: "canvas://cvs-dashboard-a",
       refreshRuntime: true,
     });
   });
@@ -144,7 +144,7 @@ describe("workspaceModulePresentedTabTarget", () => {
 
   it("does not infer Canvas URI from view_key or module_id", () => {
     expect(workspaceModulePresentedTabTarget(presentation({
-      module_id: "canvas:dashboard-a",
+      module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
       presentation_uri: "",
@@ -153,28 +153,28 @@ describe("workspaceModulePresentedTabTarget", () => {
 
   it("does not parse legacy uri fallback as presentation_uri", () => {
     expect(workspaceModulePresentationFromPlatformEventData({
-      module_id: "canvas:dashboard-a",
+      module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
-      uri: "canvas://dashboard-a",
+      uri: "canvas://cvs-dashboard-a",
       title: "Dashboard",
     })).toBeNull();
   });
 
   it("parses stream payload with the generated presentation DTO shape", () => {
     expect(workspaceModulePresentationFromPlatformEventData({
-      module_id: "canvas:dashboard-a",
+      module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
-      presentation_uri: "canvas://dashboard-a",
+      presentation_uri: "canvas://cvs-dashboard-a",
       title: "Dashboard",
       payload: { source: "tool" },
       diagnostics: null,
     })).toEqual({
-      module_id: "canvas:dashboard-a",
+      module_id: "canvas:cvs-dashboard-a",
       renderer_kind: "canvas",
       view_key: "preview",
-      presentation_uri: "canvas://dashboard-a",
+      presentation_uri: "canvas://cvs-dashboard-a",
       title: "Dashboard",
       payload: { source: "tool" },
       diagnostics: null,
@@ -412,18 +412,21 @@ describe("workspaceTabStore Canvas tab identity", () => {
 
     const firstId = useWorkspaceTabStore
       .getState()
-      .openOrActivate("canvas", "canvas://mount-a", canvasLayoutOptions);
+      .openOrActivate("canvas", "canvas://cvs-mount-a", canvasLayoutOptions);
     const duplicateId = useWorkspaceTabStore
       .getState()
-      .openOrActivate("canvas", "canvas://mount-a", canvasLayoutOptions);
+      .openOrActivate("canvas", "canvas://cvs-mount-a", canvasLayoutOptions);
     const secondId = useWorkspaceTabStore
       .getState()
-      .openOrActivate("canvas", "canvas://mount-b", canvasLayoutOptions);
+      .openOrActivate("canvas", "canvas://cvs-mount-b", canvasLayoutOptions);
 
     const tabs = useWorkspaceTabStore.getState().tabs;
     expect(duplicateId).toBe(firstId);
     expect(secondId).not.toBe(firstId);
-    expect(tabs.map((tab) => tab.uri)).toEqual(["canvas://mount-a", "canvas://mount-b"]);
+    expect(tabs.map((tab) => tab.uri)).toEqual([
+      "canvas://cvs-mount-a",
+      "canvas://cvs-mount-b",
+    ]);
 
     useWorkspaceTabStore.getState().reset();
   });
@@ -433,7 +436,7 @@ describe("workspaceTabStore Canvas tab identity", () => {
 
     const tabId = useWorkspaceTabStore
       .getState()
-      .openOrActivate("canvas", "canvas://mount-a", canvasLayoutOptions);
+      .openOrActivate("canvas", "canvas://cvs-mount-a", canvasLayoutOptions);
     useWorkspaceTabStore.getState().refreshTab(tabId);
 
     const tabs = useWorkspaceTabStore.getState().tabs;
@@ -441,7 +444,7 @@ describe("workspaceTabStore Canvas tab identity", () => {
     expect(tabs[0]).toMatchObject({
       id: tabId,
       typeId: "canvas",
-      uri: "canvas://mount-a",
+      uri: "canvas://cvs-mount-a",
       refreshRevision: 1,
     });
 
@@ -499,17 +502,17 @@ function canvasModule(
 describe("Canvas workspace module selector and user-open flow", () => {
   it("selects only ready Canvas modules with concrete canonical presentation URIs", () => {
     const options = selectCanvasModuleOpenOptions([
-      canvasModule("canvas:mount-a", "canvas://mount-a"),
-      canvasModule("canvas:empty", "canvas://"),
-      canvasModule("canvas:missing", null),
-      canvasModule("canvas:disabled", "canvas://disabled", "unavailable"),
+      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
+      canvasModule("canvas:cvs-empty", "canvas://"),
+      canvasModule("canvas:cvs-missing", null),
+      canvasModule("canvas:cvs-disabled", "canvas://cvs-disabled", "unavailable"),
     ]);
 
     expect(options).toEqual([{
-      module_id: "canvas:mount-a",
+      module_id: "canvas:cvs-mount-a",
       view_key: "preview",
-      title: "Preview canvas:mount-a",
-      presentation_uri: "canvas://mount-a",
+      title: "Preview canvas:cvs-mount-a",
+      presentation_uri: "canvas://cvs-mount-a",
     }]);
   });
 
@@ -529,11 +532,11 @@ describe("Canvas workspace module selector and user-open flow", () => {
       }],
     });
     const options = selectCanvasModuleOpenOptions([
-      canvasModule("canvas:mount-a", "canvas://mount-a"),
-      canvasModule("canvas:mount-b", "canvas://mount-b"),
+      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
+      canvasModule("canvas:cvs-mount-b", "canvas://cvs-mount-b"),
     ], activeCanvasMountIds);
 
-    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://mount-a"]);
+    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
   });
 
   it("opens an already active Canvas from the canonical project presentation URI", async () => {
@@ -542,17 +545,17 @@ describe("Canvas workspace module selector and user-open flow", () => {
     await openUserCanvasModule({
       runtimeSessionId: "session-1",
       option: {
-        module_id: "canvas:mount-a",
+        module_id: "canvas:cvs-mount-a",
         view_key: "preview",
         title: "Canvas A",
-        presentation_uri: "canvas://candidate",
+        presentation_uri: "canvas://cvs-candidate",
       },
       openOrActivate,
     });
 
     expect(openOrActivate).toHaveBeenCalledWith(
       "canvas",
-      "canvas://candidate",
+      "canvas://cvs-candidate",
       true,
     );
   });
@@ -560,10 +563,10 @@ describe("Canvas workspace module selector and user-open flow", () => {
   it("does not open a tab without a runtime session or concrete Canvas presentation", async () => {
     const openOrActivate = vi.fn();
     const option = {
-      module_id: "canvas:mount-a",
+      module_id: "canvas:cvs-mount-a",
       view_key: "preview",
       title: "Canvas A",
-      presentation_uri: "canvas://candidate",
+      presentation_uri: "canvas://cvs-candidate",
     };
 
     await expect(openUserCanvasModule({

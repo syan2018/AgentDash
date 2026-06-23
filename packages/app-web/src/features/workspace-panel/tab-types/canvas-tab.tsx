@@ -8,10 +8,10 @@ import { CanvasIcon } from "./icons";
 
 const SCHEME = "canvas://";
 
-function parseCanvasUri(uri: string): { canvasId: string } | null {
+function parseCanvasUri(uri: string): { canvasMountId: string } | null {
   if (!uri.startsWith(SCHEME)) return null;
-  const canvasId = uri.slice(SCHEME.length);
-  return canvasId ? { canvasId } : null;
+  const canvasMountId = uri.slice(SCHEME.length);
+  return canvasMountId ? { canvasMountId } : null;
 }
 
 function isConcreteCanvasUri(uri: string): boolean {
@@ -19,16 +19,16 @@ function isConcreteCanvasUri(uri: string): boolean {
 }
 
 function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
-  const { sessionId } = useWorkspaceData();
+  const { projectId, sessionId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
-  const canvasId = parsed?.canvasId || null;
+  const canvasMountId = parsed?.canvasMountId || null;
 
   const handleBrowseFiles = useCallback((mountId: string) => {
     const uri = `${mountId}://`;
     useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
   }, []);
 
-  if (!canvasId) {
+  if (!canvasMountId) {
     return (
       <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 px-6">
         <CanvasIcon className="h-8 w-8 text-muted-foreground/40" />
@@ -44,7 +44,9 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
 
   return (
     <CanvasRuntimePanel
-      canvasId={canvasId}
+      canvasId={null}
+      canvasMountId={canvasMountId}
+      projectId={projectId}
       sessionId={sessionId}
       refreshRevision={refreshRevision}
       onClose={() => {}}
@@ -66,21 +68,21 @@ export const canvasTabType: TabTypeDescriptor = {
   resolveTitle: (uri) => {
     const parsed = parseCanvasUri(uri);
     if (!parsed) return "Canvas";
-    const shortId = parsed.canvasId.length > 8
-      ? `${parsed.canvasId.slice(0, 8)}…`
-      : parsed.canvasId;
+    const shortId = parsed.canvasMountId.length > 8
+      ? `${parsed.canvasMountId.slice(0, 8)}…`
+      : parsed.canvasMountId;
     return `Canvas: ${shortId}`;
   },
 
   parseUri: (uri) => {
     const parsed = parseCanvasUri(uri);
-    return parsed ? { canvasId: parsed.canvasId } : null;
+    return parsed ? { canvasMountId: parsed.canvasMountId } : null;
   },
   canCreateUri: isConcreteCanvasUri,
 
   buildUri: (params) => {
-    const canvasId = params?.canvasId;
-    return canvasId ? `${SCHEME}${canvasId}` : "canvas://";
+    const canvasMountId = params?.canvasMountId;
+    return canvasMountId ? `${SCHEME}${canvasMountId}` : "canvas://";
   },
   menuOrder: 10,
 };

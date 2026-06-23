@@ -70,6 +70,56 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     revokeObjectUrl.mockRestore();
   });
 
+  it("resolves binding-generated files imported by snapshot path", async () => {
+    const blobs: Blob[] = [];
+    const createObjectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockImplementation((object: Blob | MediaSource) => {
+        if (object instanceof Blob) {
+          blobs.push(object);
+        }
+        return `blob:module-${blobs.length}`;
+      });
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+    const built = buildPreviewDocument(
+      {
+        ...snapshot(),
+        files: [
+          {
+            path: "src/main.tsx",
+            content: "import events from 'bindings/lifecycle_events.json'; export default events;",
+            file_type: "code",
+          },
+          {
+            path: "bindings/lifecycle_events.json",
+            content: "{\"events\":[]}",
+            file_type: "data",
+          },
+        ],
+        bindings: [
+          {
+            alias: "lifecycle_events",
+            source_uri: "lifecycle://session/events.json",
+            data_path: "bindings/lifecycle_events.json",
+            content_type: "application/json",
+            resolved: true,
+          },
+        ],
+      },
+      "frame-1",
+    );
+
+    const moduleTexts = await Promise.all(blobs.map((blob) => blob.text()));
+
+    expect(moduleTexts[0]).toBe("export default {\"events\":[]};");
+    expect(moduleTexts[1]).toContain("blob:module-1");
+
+    built.dispose();
+    createObjectUrl.mockRestore();
+    revokeObjectUrl.mockRestore();
+  });
+
   it("resolves image blobs through the runtime asset cache", async () => {
     const cache = createRuntimeAssetUrlCache();
     const readBlob = vi.fn(async () => new Blob(["image"], { type: "image/png" }));

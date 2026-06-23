@@ -136,9 +136,12 @@ terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingSe
 的受控路径完成，读取失败返回有界状态，而不是把原始 body 写回 `SessionEvent`。
 
 PiAgent 工具结果的 ThreadItem id 与 `lifecycle_path` item id 必须同源，形状为
-`{turn_id}:{tool_call_id}`。`entry_index` 可以继续作为 envelope trace / ordering 字段存在，
-但不能参与 tool result body ref，原因是 producer 在进入模型上下文前需要生成与 Backbone
-ThreadItem、`SessionToolResultCache` 和 lifecycle VFS 一致的 stable id。
+`{turn_alias}:{body_alias}`，例如 `turn_001:tool_001` 或 `turn_001:cmd_001`。`lifecycle_path`
+使用同一坐标的分段地址：
+`lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt`。`entry_index` 可以继续作为
+envelope trace / ordering 字段存在，但不能参与 tool result body ref，原因是 producer 在进入模型
+上下文前需要生成与 Backbone ThreadItem、`SessionToolResultCache` 和 lifecycle VFS 一致的可读地址。
+raw `turn_id`、raw `tool_call_id` 和 provider trace 留在结构化 metadata / trace 中，前端和模型主上下文默认消费 readable address。
 
 ## NDJSON Session Stream
 

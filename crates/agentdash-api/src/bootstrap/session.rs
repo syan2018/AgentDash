@@ -15,6 +15,7 @@ use agentdash_application::session::{
     SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
     SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
     SessionRuntimeService, SessionTerminalCallback, SessionTitleService, SessionToolResultCache,
+    SessionToolResultCachePut,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
@@ -339,13 +340,21 @@ async fn build_pi_agent_connector(
     connector.set_llm_secret_codec(deps.llm_provider_secret);
     let cache = deps.tool_result_cache;
     connector.set_tool_result_cache_writer(Some(Arc::new(move |write| {
-        let metadata = cache.put_text(
-            write.session_id,
-            write.item_id,
-            write.text,
-            write.original_bytes,
-        );
-        debug_assert_eq!(metadata.lifecycle_path, write.lifecycle_path);
+        let expected_lifecycle_path = write.lifecycle_path.clone();
+        let metadata = cache.put_text_entry(SessionToolResultCachePut {
+            session_id: write.session_id,
+            item_id: write.item_id,
+            lifecycle_path: write.lifecycle_path,
+            turn_alias: write.turn_alias,
+            body_alias: write.body_alias,
+            body_kind: write.body_kind,
+            raw_turn_id: write.raw_turn_id,
+            raw_tool_call_id: write.raw_tool_call_id,
+            tool_name: write.tool_name,
+            text: write.text,
+            original_bytes: write.original_bytes,
+        });
+        debug_assert_eq!(metadata.lifecycle_path, expected_lifecycle_path);
     })));
     Some(PiAgentConnectorBuildResult { connector })
 }

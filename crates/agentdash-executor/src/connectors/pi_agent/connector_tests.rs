@@ -68,7 +68,8 @@ fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
         .strip_prefix("lifecycle://session/tool-results/")
         .and_then(|rest| rest.strip_suffix("/result.txt"))
         .expect("lifecycle_path should use tool-results result.txt shape");
-    assert_eq!(path_item_id, item_id);
+    let normalized_item_id = path_item_id.replace('/', ":");
+    assert_eq!(normalized_item_id, item_id);
 }
 
 #[derive(Default)]
@@ -881,6 +882,7 @@ fn message_end_with_usage_emits_token_usage_update_with_context_window() {
         StreamMapperRuntimeContext {
             model_context_window: Some(200_000),
             reserve_tokens: 16_384,
+            readable_ids: None,
         },
     );
 
@@ -1237,8 +1239,8 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
 #[test]
 fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
     let raw_sentinel = "RAW_TOOL_RESULT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
-    let stable_item_id = "turn-1:tool-1";
-    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-1/result.txt";
+    let stable_item_id = "turn_001:tool_001";
+    let lifecycle_path = "lifecycle://session/tool-results/turn_001/tool_001/result.txt";
     let bounded_text = format!(
         "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded preview"
     );
@@ -1277,7 +1279,11 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let update_envelopes = convert_event_to_envelopes(
+    let runtime_context = StreamMapperRuntimeContext {
+        readable_ids: Some(ReadableIdRegistry::new()),
+        ..StreamMapperRuntimeContext::default()
+    };
+    let update_envelopes = convert_event_to_envelopes_with_runtime_context(
         &update_event,
         "session-1",
         &test_source(),
@@ -1285,8 +1291,9 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context.clone(),
     );
-    let end_envelopes = convert_event_to_envelopes(
+    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
         &end_event,
         "session-1",
         &test_source(),
@@ -1294,6 +1301,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context,
     );
 
     assert_eq!(update_envelopes.len(), 1);
@@ -1351,8 +1359,8 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 #[test]
 fn shell_exec_final_uses_bounded_output_and_structured_details() {
     let raw_sentinel = "RAW_SHELL_OUTPUT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
-    let stable_item_id = "turn-1:tool-shell-1";
-    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-shell-1/result.txt";
+    let stable_item_id = "turn_001:cmd_001";
+    let lifecycle_path = "lifecycle://session/tool-results/turn_001/cmd_001/result.txt";
     let bounded_output = format!(
         "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded shell preview"
     );
@@ -1399,7 +1407,11 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
     let mut entry_index = 0;
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let _ = convert_event_to_envelopes(
+    let runtime_context = StreamMapperRuntimeContext {
+        readable_ids: Some(ReadableIdRegistry::new()),
+        ..StreamMapperRuntimeContext::default()
+    };
+    let _ = convert_event_to_envelopes_with_runtime_context(
         &start_event,
         "session-1",
         &test_source(),
@@ -1407,8 +1419,9 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context.clone(),
     );
-    let end_envelopes = convert_event_to_envelopes(
+    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
         &end_event,
         "session-1",
         &test_source(),
@@ -1416,6 +1429,7 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context,
     );
 
     assert_eq!(end_envelopes.len(), 1);
@@ -2798,6 +2812,7 @@ async fn update_session_tools_replaces_all_tools() {
                 model_id: None,
             },
             model_context_window: Some(CONTEXT_WINDOW_STANDARD),
+            readable_ids: ReadableIdRegistry::new(),
         },
     );
 

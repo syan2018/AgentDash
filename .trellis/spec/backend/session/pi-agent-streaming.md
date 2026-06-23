@@ -76,19 +76,22 @@
 - `AgentToolResult.details.truncation`:
   `truncated: bool`、`original_bytes: usize`、`inline_bytes: usize`、
   `omitted_bytes: usize`、`policy: string`。
-- PiAgent tool result stable item id:
-  `{turn_id}:{tool_call_id}`。该 id 必须同时用于 `AgentToolResult` lifecycle ref、
-  `SessionToolResultCache` key、Backbone ThreadItem id 和 lifecycle VFS
-  `session/tool-results/{item_id}` 路径。`entry_index` 只属于 stream mapper 的展示/排序状态，
-  不能放进 tool result lifecycle ref，原因是 producer 边界需要在进入模型上下文前生成同一个
-  可读地址。
+- PiAgent readable runtime address:
+  session scoped `ReadableIdRegistry` 为 raw `turn_id`、raw `tool_call_id` 和 raw `terminal_id`
+  分配 `turn_001`、`tool_001` / `cmd_001`、`term_001` 这类可见 alias。工具结果
+  `item_id = {turn_alias}:{body_alias}`，该 id 必须同时用于 `AgentToolResult` lifecycle ref、
+  `SessionToolResultCache` key、Backbone ThreadItem id 和 lifecycle VFS 分段路径。`entry_index`
+  只属于 stream mapper 的展示/排序状态，不能放进 tool result lifecycle ref，原因是 producer
+  边界需要在进入模型上下文前生成同一个可读地址。
 - `AgentToolResult.details.lifecycle_path`:
-  `lifecycle://session/tool-results/{item_id}/result.txt`。
+  `lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt`。
+- `AgentToolResult.details.readable_ref` 保存可见 alias；`details.raw_trace` 保存 raw
+  `turn_id`、raw `tool_call_id` 和 tool name，用于诊断但不进入默认正文。
 - lifecycle VFS paths:
-  `session/tool-results/{item_id}/metadata.json`、
-  `session/tool-results/{item_id}/result.txt`、
-  `session/terminal/{terminal_id}.metadata.json`、
-  `session/terminal/{terminal_id}.log`。
+  `session/tool-results/{turn_alias}/{body_alias}/metadata.json`、
+  `session/tool-results/{turn_alias}/{body_alias}/result.txt`、
+  `session/terminal/{terminal_alias}.metadata.json`、
+  `session/terminal/{terminal_alias}.log`。
 - shell details retain:
   `state`、`exit_code`、`session_id`、`terminal_id`、`next_seq`、
   `truncated`、`omitted_bytes`。
@@ -97,12 +100,12 @@
 
 - Producer boundary owns bounding. Final result, partial update and terminal live output must be
   bounded before they become `AgentEvent` / `BackboneEnvelope`.
-- PiAgent 每轮 prompt 必须刷新 `ToolResultRefContext(session_id, turn_id, cache_writer)`。
+- PiAgent 每轮 prompt 必须刷新 `ToolResultRefContext(session_id, raw_turn_id, readable_ids, cache_writer)`。
   hot agent 复用时也使用当前 turn 的 context，避免 lifecycle ref 和 cache write 落到上一轮
-  `turn_id`。
+  raw `turn_id`，同时复用同一 session 的 alias registry。
 - Oversized `AgentToolResult` 写入 `SessionToolResultCache` 时，cache key 使用
-  `(session_id, stable_item_id)`；bounded preview 与 `details.lifecycle_path` 使用同一个
-  stable item id。lifecycle provider 必须读取同一个共享 cache 实例。
+  `(session_id, readable_item_id)`；bounded preview 与 `details.lifecycle_path` 使用同一个
+  readable item id。cache metadata 保留 raw trace。lifecycle provider 必须读取同一个共享 cache 实例。
 - `SessionEventingService` append guard is a persistence and stream safety net. It may replace
   known oversized output fields with `session_eventing_append_guard` diagnostics while preserving
   `turn_id`、`entry_index`、item id and event kind.
@@ -117,9 +120,9 @@
 | --- | --- |
 | Tool result text exceeds inline cap | Write bounded preview, set `details.truncation`, attach `lifecycle_path` |
 | Non-text tool content serializes above inline cap | Replace content with bounded text preview and ref metadata |
-| PiAgent hot agent starts a new turn | Refresh `ToolResultRefContext`; new lifecycle paths use the new `turn_id` |
+| PiAgent hot agent starts a new turn | Refresh `ToolResultRefContext`; new lifecycle paths use the session registry's next readable `turn_###` alias |
 | Stream mapper maps tool start/update/end | ThreadItem id equals the item id embedded in `details.lifecycle_path` |
-| Lifecycle provider reads tool result body | Use shared `SessionToolResultCache` keyed by `(session_id, {turn_id}:{tool_call_id})` |
+| Lifecycle provider reads tool result body | Use shared `SessionToolResultCache` keyed by `(session_id, {turn_alias}:{body_alias})` |
 | Cache body missing or expired | lifecycle read returns bounded miss/expired status |
 | Terminal live output exceeds event budget | Relay/platform event carries bounded data and truncation status |
 | Oversized Backbone envelope reaches append | Known output fields are replaced before store/broadcast |
@@ -139,7 +142,7 @@
 
 - Agent loop tests assert final/update/immediate/rejected tool result sentinel does not reach events
   or next provider request; oversized final/update paths also assert cache writer receives the
-  original body with `(session_id, {turn_id}:{tool_call_id})`.
+  original body with `(session_id, {turn_alias}:{body_alias})` and raw trace metadata.
 - Executor mapping tests assert bounded content remains bounded after `stream_mapper`, and parse
   `lifecycle_path` to prove the embedded item id equals ThreadItem id.
 - Application tests assert append/backlog, lifecycle VFS read, projection, continuation and repository

@@ -143,7 +143,9 @@ pub use terminal_effects::{
 pub use title_service::SessionTitleService;
 pub use tool_result_cache::{
     SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL, SessionToolResultCache, SessionToolResultCacheMetadata,
-    SessionToolResultCacheRead, SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
+    SessionToolResultCachePut, SessionToolResultCacheRead, SessionToolResultCacheStatus,
+    SessionToolResultCacheStatusKind, lifecycle_path_for_tool_result,
+    readable_aliases_from_item_id,
 };
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

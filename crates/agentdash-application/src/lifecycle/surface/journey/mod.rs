@@ -158,11 +158,18 @@ impl LifecycleJourneyProjection {
                     .await
             }
             ["tool-results"] => self.read_tool_results_index(session_id).await,
-            ["tool-results", item_id, "metadata.json"] => {
-                self.read_tool_result_metadata(session_id, item_id).await
+            ["tool-results", turn_alias] => {
+                self.read_tool_results_turn_index(session_id, turn_alias)
+                    .await
             }
-            ["tool-results", item_id, "result.txt"] => {
-                self.read_tool_result_body_status(session_id, item_id).await
+            ["tool-results", turn_alias, body_alias, "metadata.json"] => {
+                let item_id = tool_result_item_id(turn_alias, body_alias);
+                self.read_tool_result_metadata(session_id, &item_id).await
+            }
+            ["tool-results", turn_alias, body_alias, "result.txt"] => {
+                let item_id = tool_result_item_id(turn_alias, body_alias);
+                self.read_tool_result_body_status(session_id, &item_id)
+                    .await
             }
             ["writes"] => {
                 self.read_items_index(session_id, SessionItemView::Writes)
@@ -193,14 +200,16 @@ impl LifecycleJourneyProjection {
                 to_json_pretty(&turn_events)
             }
             ["terminal", file_name] if file_name.ends_with(".metadata.json") => {
-                let terminal_id = file_name
+                let terminal_alias = file_name
                     .strip_suffix(".metadata.json")
                     .unwrap_or(file_name);
-                self.read_terminal_metadata(session_id, terminal_id).await
+                self.read_terminal_metadata(session_id, terminal_alias)
+                    .await
             }
             ["terminal", file_name] if file_name.ends_with(".log") => {
-                let terminal_id = file_name.strip_suffix(".log").unwrap_or(file_name);
-                self.read_terminal_log_status(session_id, terminal_id).await
+                let terminal_alias = file_name.strip_suffix(".log").unwrap_or(file_name);
+                self.read_terminal_log_status(session_id, terminal_alias)
+                    .await
             }
             ["terminal"] => {
                 let events = self.session_events(session_id).await?;
@@ -239,6 +248,32 @@ impl LifecycleJourneyProjection {
                 )
             })
             .collect::<Vec<_>>();
+        to_json_pretty(&metadata)
+    }
+
+    pub async fn read_tool_results_turn_index(
+        &self,
+        session_id: &str,
+        turn_alias: &str,
+    ) -> JourneyResult<String> {
+        let projections = self.session_item_projections(session_id).await?;
+        let metadata = filter_session_items(&projections, SessionItemView::Tools)
+            .iter()
+            .filter_map(|projection| {
+                let item_id = projection.summary.item_id.as_str();
+                tool_result_metadata_for_projection_with_status(
+                    session_id,
+                    projection,
+                    self.tool_result_body_status(session_id, item_id),
+                )
+            })
+            .filter(|entry| entry.turn_alias == turn_alias)
+            .collect::<Vec<_>>();
+        if metadata.is_empty() {
+            return Err(LifecycleJourneyError::NotFound(format!(
+                "tool result turn 不存在: {turn_alias}"
+            )));
+        }
         to_json_pretty(&metadata)
     }
 
@@ -306,10 +341,15 @@ impl LifecycleJourneyProjection {
         for event in &events {
             match &event.notification.event {
                 BackboneEvent::Platform(PlatformEvent::TerminalOutput { terminal_id, data }) => {
+                    let next_index = entries.len() + 1;
                     entries
                         .entry(terminal_id.clone())
                         .or_insert_with(|| {
-                            SessionTerminalMetadataBuilder::new(session_id, terminal_id)
+                            SessionTerminalMetadataBuilder::new(
+                                session_id,
+                                terminal_id,
+                                format_readable_alias("term", next_index),
+                            )
                         })
                         .apply_output(event, data);
                 }
@@ -319,10 +359,15 @@ impl LifecycleJourneyProjection {
                     exit_code,
                     message,
                 }) => {
+                    let next_index = entries.len() + 1;
                     entries
                         .entry(terminal_id.clone())
                         .or_insert_with(|| {
-                            SessionTerminalMetadataBuilder::new(session_id, terminal_id)
+                            SessionTerminalMetadataBuilder::new(
+                                session_id,
+                                terminal_id,
+                                format_readable_alias("term", next_index),
+                            )
                         })
                         .apply_state(event, state, *exit_code, message.as_deref());
                 }
@@ -356,18 +401,17 @@ impl LifecycleJourneyProjection {
         session_id: &str,
         terminal_id: &str,
     ) -> JourneyResult<String> {
-        let exists = self
+        let metadata = self
             .terminal_metadata_entries(session_id)
             .await?
             .into_iter()
-            .any(|entry| entry.terminal_id == terminal_id);
-        if !exists {
-            return Err(LifecycleJourneyError::NotFound(format!(
-                "terminal 不存在: {terminal_id}"
-            )));
-        }
+            .find(|entry| entry.terminal_id == terminal_id)
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("terminal 不存在: {terminal_id}"))
+            })?;
         Ok(format!(
-            "[terminal log cache missing]\nsession_id: {session_id}\nterminal_id: {terminal_id}\nlifecycle_path: lifecycle://session/terminal/{terminal_id}.log\nThe original terminal log is not available from the retained output cache."
+            "[terminal log cache missing]\nsession_id: {session_id}\nterminal_id: {}\nlifecycle_path: {}\nThe original terminal log is not available from the retained output cache.",
+            metadata.terminal_id, metadata.lifecycle_path
         ))
     }
 
@@ -702,6 +746,7 @@ pub struct TurnSummary {
 pub struct SessionTerminalMetadata {
     pub session_id: String,
     pub terminal_id: String,
+    pub raw_terminal_id: String,
     pub metadata_path: String,
     pub log_path: String,
     pub lifecycle_path: String,
@@ -718,7 +763,8 @@ pub struct SessionTerminalMetadata {
 
 struct SessionTerminalMetadataBuilder {
     session_id: String,
-    terminal_id: String,
+    raw_terminal_id: String,
+    terminal_alias: String,
     event_count: usize,
     output_bytes: usize,
     first_event_seq: Option<u64>,
@@ -730,10 +776,11 @@ struct SessionTerminalMetadataBuilder {
 }
 
 impl SessionTerminalMetadataBuilder {
-    fn new(session_id: &str, terminal_id: &str) -> Self {
+    fn new(session_id: &str, terminal_id: &str, terminal_alias: String) -> Self {
         Self {
             session_id: session_id.to_string(),
-            terminal_id: terminal_id.to_string(),
+            raw_terminal_id: terminal_id.to_string(),
+            terminal_alias,
             event_count: 0,
             output_bytes: 0,
             first_event_seq: None,
@@ -783,12 +830,13 @@ impl SessionTerminalMetadataBuilder {
     }
 
     fn finish(self) -> SessionTerminalMetadata {
-        let log_path = format!("session/terminal/{}.log", self.terminal_id);
+        let log_path = format!("session/terminal/{}.log", self.terminal_alias);
         SessionTerminalMetadata {
             session_id: self.session_id,
-            terminal_id: self.terminal_id.clone(),
-            metadata_path: format!("session/terminal/{}.metadata.json", self.terminal_id),
-            lifecycle_path: format!("lifecycle://session/terminal/{}.log", self.terminal_id),
+            terminal_id: self.terminal_alias.clone(),
+            raw_terminal_id: self.raw_terminal_id,
+            metadata_path: format!("session/terminal/{}.metadata.json", self.terminal_alias),
+            lifecycle_path: format!("lifecycle://session/terminal/{}.log", self.terminal_alias),
             log_path,
             body_status: "cache_miss".to_string(),
             event_count: self.event_count,
@@ -942,6 +990,18 @@ pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {
         ))
     } else {
         Ok(joined)
+    }
+}
+
+fn tool_result_item_id(turn_alias: &str, body_alias: &str) -> String {
+    format!("{turn_alias}:{body_alias}")
+}
+
+fn format_readable_alias(prefix: &str, index: usize) -> String {
+    if index < 1000 {
+        format!("{prefix}_{index:03}")
+    } else {
+        format!("{prefix}_{index}")
     }
 }
 

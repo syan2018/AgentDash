@@ -14,6 +14,7 @@ describe("CommandExecutionCardBody", () => {
             "state: exited",
             "exit_code: 0",
             "output_truncated: true (omitted_bytes=4096)",
+            "lifecycle_path: lifecycle://session/tool-results/turn_001/cmd_001/result.txt",
             "bounded preview",
           ].join("\n"),
         )}
@@ -24,6 +25,7 @@ describe("CommandExecutionCardBody", () => {
     expect(html).toContain("4.0 KiB");
     expect(html).toContain("status: completed");
     expect(html).toContain("exit: 0");
+    expect(html).toContain("lifecycle://session/tool-results/turn_001/cmd_001/result.txt");
     expect(html).toContain("bounded preview");
   });
 });

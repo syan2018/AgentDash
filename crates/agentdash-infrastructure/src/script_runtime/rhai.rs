@@ -160,12 +160,9 @@ fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
             }
         }
         serde_json::Value::String(text) => Dynamic::from(text.clone()),
-        serde_json::Value::Array(items) => Dynamic::from(
-            items
-                .iter()
-                .map(json_to_dynamic)
-                .collect::<rhai::Array>(),
-        ),
+        serde_json::Value::Array(items) => {
+            Dynamic::from(items.iter().map(json_to_dynamic).collect::<rhai::Array>())
+        }
         serde_json::Value::Object(object) => {
             let mut map = rhai::Map::new();
             for (key, value) in object {

@@ -6,7 +6,7 @@ describe("boundedOutput", () => {
     const info = parseBoundedOutputText(
       [
         "[tool result truncated]",
-        "lifecycle_path: lifecycle://session/tool-results/item-1/result.txt",
+        "lifecycle_path: lifecycle://session/tool-results/turn_001/tool_001/result.txt",
         "policy: head_tail",
         "",
         "head",
@@ -18,7 +18,7 @@ describe("boundedOutput", () => {
     expect(info).toMatchObject({
       truncated: true,
       source: "tool_result",
-      lifecyclePath: "lifecycle://session/tool-results/item-1/result.txt",
+      lifecyclePath: "lifecycle://session/tool-results/turn_001/tool_001/result.txt",
       policy: "head_tail",
       omittedBytes: 2048,
     });
@@ -38,7 +38,7 @@ describe("boundedOutput", () => {
   it("parses existing details.truncation shape", () => {
     const info = parseTruncationDetails({
       details: {
-        lifecycle_path: "lifecycle://session/tool-results/item-1/result.txt",
+        lifecycle_path: "lifecycle://session/tool-results/turn_001/tool_001/result.txt",
         truncation: {
           truncated: true,
           original_bytes: 1000,
@@ -50,7 +50,7 @@ describe("boundedOutput", () => {
     });
 
     expect(info).toMatchObject({
-      lifecyclePath: "lifecycle://session/tool-results/item-1/result.txt",
+      lifecyclePath: "lifecycle://session/tool-results/turn_001/tool_001/result.txt",
       originalBytes: 1000,
       inlineBytes: 200,
       omittedBytes: 800,

@@ -9,6 +9,8 @@ use agentdash_spi::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::session::{lifecycle_path_for_tool_result, readable_aliases_from_item_id};
+
 use super::{JourneyResult, LifecycleJourneyError, to_json_pretty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +38,8 @@ pub struct SessionItemSummary {
 pub struct SessionToolResultMetadata {
     pub session_id: String,
     pub item_id: String,
+    pub turn_alias: String,
+    pub body_alias: String,
     pub item_kind: String,
     pub tool_name: String,
     pub item_status: Option<String>,
@@ -104,9 +108,10 @@ pub fn tool_result_metadata_for_projection_with_status(
         return None;
     };
     let item_id = projection.summary.item_id.clone();
-    let metadata_path = format!("session/tool-results/{item_id}/metadata.json");
-    let result_path = format!("session/tool-results/{item_id}/result.txt");
-    let lifecycle_path = format!("lifecycle://session/tool-results/{item_id}/result.txt");
+    let (turn_alias, body_alias) = readable_aliases_from_item_id(&item_id);
+    let metadata_path = format!("session/tool-results/{turn_alias}/{body_alias}/metadata.json");
+    let result_path = format!("session/tool-results/{turn_alias}/{body_alias}/result.txt");
+    let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
     let item_value = serde_json::to_value(item).ok();
     let preview = tool_result_preview(item)
         .or_else(|| item_value.as_ref().and_then(find_tool_result_preview))
@@ -116,6 +121,8 @@ pub fn tool_result_metadata_for_projection_with_status(
     Some(SessionToolResultMetadata {
         session_id: session_id.to_string(),
         item_id,
+        turn_alias,
+        body_alias,
         item_kind: projection.summary.item_kind.clone(),
         tool_name: thread_item_name(item),
         item_status: projection.summary.status.clone(),
@@ -131,7 +138,8 @@ pub fn tool_result_metadata_for_projection_with_status(
 }
 
 pub fn tool_result_cache_miss_text(session_id: &str, item_id: &str) -> String {
-    let lifecycle_path = format!("lifecycle://session/tool-results/{item_id}/result.txt");
+    let (turn_alias, body_alias) = readable_aliases_from_item_id(item_id);
+    let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
     format!(
         "[tool result cache missing]\nsession_id: {session_id}\nitem_id: {item_id}\nlifecycle_path: {lifecycle_path}\nThe original tool result body is not available from the session cache."
     )

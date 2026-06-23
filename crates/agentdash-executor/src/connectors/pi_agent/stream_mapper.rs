@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use agentdash_agent::{
-    AgentEvent, AgentMessage, AgentToolResult, ContentPart, TokenUsage, stable_tool_result_item_id,
+    AgentEvent, AgentMessage, AgentToolResult, ContentPart, ReadableIdRegistry, TokenUsage,
+    stable_tool_result_item_id,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
@@ -27,7 +29,7 @@ fn make_envelope(
     })
 }
 
-/// 合成非工具 chunk item_id。工具结果使用 `stable_tool_result_item_id`。
+/// 合成非工具 chunk item_id。工具结果优先使用 session scoped readable ref。
 fn synth_item_id(turn_id: &str, entry_index: u32, suffix: &str) -> String {
     format!("{turn_id}:{entry_index}:{suffix}")
 }
@@ -45,10 +47,11 @@ pub(super) struct ToolCallEmitState {
     raw_input: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct StreamMapperRuntimeContext {
     pub model_context_window: Option<u64>,
     pub reserve_tokens: u64,
+    pub readable_ids: Option<Arc<ReadableIdRegistry>>,
 }
 
 fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String {
@@ -137,6 +140,23 @@ fn upsert_state_from_message(
 /// 判断是否为 shell_exec 工具调用（映射为 AgentDash native shellExec）。
 fn is_shell_exec(tool_name: &str) -> bool {
     tool_name == "shell_exec"
+}
+
+fn tool_result_item_id(
+    runtime_context: &StreamMapperRuntimeContext,
+    turn_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+) -> String {
+    runtime_context
+        .readable_ids
+        .as_ref()
+        .map(|registry| {
+            registry
+                .tool_result_ref(turn_id, tool_call_id, tool_name)
+                .item_id
+        })
+        .unwrap_or_else(|| stable_tool_result_item_id(turn_id, tool_call_id))
 }
 
 /// 从 shell_exec 的 args JSON 中提取 command / cwd。
@@ -586,7 +606,8 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 if !created {
                     return Vec::new();
                 }
-                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, &state.tool_name);
                 let item = if is_shell_exec(&state.tool_name) {
                     make_shell_exec_item(
                         &item_id,
@@ -765,7 +786,12 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                         Some(tool_call.arguments.clone()),
                     );
                     if created {
-                        let item_id = stable_tool_result_item_id(turn_id, &tool_call.id);
+                        let item_id = tool_result_item_id(
+                            &runtime_context,
+                            turn_id,
+                            &tool_call.id,
+                            &_state.tool_name,
+                        );
                         let item = if is_shell_exec(&_state.tool_name) {
                             make_shell_exec_item(
                                 &item_id,
@@ -922,7 +948,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 tool_name,
                 Some(args.clone()),
             );
-            let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
+            let item_id = tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
             let item = if is_shell_exec(tool_name) {
                 make_shell_exec_item(
                     &item_id,
@@ -971,7 +997,8 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             );
 
             if is_shell_output || is_vfs_uri_rewrite {
-                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
                 let delta = partial_result_text(partial_result);
                 vec![wrap(
                     BackboneEvent::CommandOutputDelta(
@@ -986,7 +1013,8 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 )]
             } else {
                 let content_items = decode_tool_result_to_content_items(partial_result);
-                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
                 let item = make_dynamic_tool_item(
                     &item_id,
                     &state,
@@ -1080,7 +1108,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 tool_name,
                 None,
             );
-            let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
+            let item_id = tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
 
             let item = if is_shell_exec(tool_name) {
                 let exit_code = shell_exit_code_from_result(result);

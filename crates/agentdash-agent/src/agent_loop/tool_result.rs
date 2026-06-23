@@ -29,13 +29,10 @@ pub(super) struct AgentToolResultCacheWrite<'a> {
     pub original_bytes: usize,
 }
 
-pub(super) fn lifecycle_path_for_tool_result(item_id: &str) -> String {
-    format!("lifecycle://session/tool-results/{item_id}/result.txt")
-}
-
 pub(super) fn bound_agent_tool_result_text<F>(
     result: &AgentToolResult,
     item_id: &str,
+    lifecycle_path: &str,
     inline_kind: AgentToolResultInlineKind,
     mut write_cache: F,
 ) -> AgentToolResult
@@ -49,20 +46,19 @@ where
 
     let original_text = boundable_content.text;
     let original_bytes = original_text.len();
-    let lifecycle_path = lifecycle_path_for_tool_result(item_id);
     write_cache(AgentToolResultCacheWrite {
         item_id,
-        lifecycle_path: &lifecycle_path,
+        lifecycle_path,
         text: &original_text,
         original_bytes,
     });
 
-    let bounded_text = bounded_tool_result_text(&original_text, cap, &lifecycle_path);
+    let bounded_text = bounded_tool_result_text(&original_text, cap, lifecycle_path);
     let inline_bytes = bounded_text.len();
     let omitted_bytes = original_bytes.saturating_sub(inline_bytes);
     let details = merge_truncation_details(
         result.details.clone(),
-        &lifecycle_path,
+        lifecycle_path,
         original_bytes,
         inline_bytes,
         omitted_bytes,
@@ -306,6 +302,7 @@ mod tests {
         let bounded = bound_agent_tool_result_text(
             &result,
             "item-1",
+            "lifecycle://session/tool-results/turn_001/tool_001/result.txt",
             AgentToolResultInlineKind::Final,
             |write| {
                 cached = Some((write.item_id.to_string(), write.text.to_string()));
@@ -323,7 +320,7 @@ mod tests {
         let details = bounded.details.as_ref().unwrap();
         assert_eq!(
             details["lifecycle_path"],
-            "lifecycle://session/tool-results/item-1/result.txt"
+            "lifecycle://session/tool-results/turn_001/tool_001/result.txt"
         );
         assert_eq!(details["truncation"]["truncated"], true);
         assert_eq!(
@@ -349,6 +346,7 @@ mod tests {
         let bounded = bound_agent_tool_result_text(
             &result,
             "item-2",
+            "lifecycle://session/tool-results/turn_001/tool_002/result.txt",
             AgentToolResultInlineKind::Update,
             |_| {
                 cache_writes += 1;
@@ -372,6 +370,7 @@ mod tests {
         let bounded = bound_agent_tool_result_text(
             &result,
             "item-3",
+            "lifecycle://session/tool-results/turn_001/tool_003/result.txt",
             AgentToolResultInlineKind::Update,
             |_| {},
         );
@@ -395,6 +394,7 @@ mod tests {
         let bounded = bound_agent_tool_result_text(
             &result,
             "image-result",
+            "lifecycle://session/tool-results/turn_001/tool_004/result.txt",
             AgentToolResultInlineKind::Update,
             |_| {},
         );
@@ -406,7 +406,7 @@ mod tests {
         assert!(!matches!(bounded.content[0], ContentPart::Image { .. }));
         assert_eq!(
             bounded.details.as_ref().unwrap()["lifecycle_path"],
-            "lifecycle://session/tool-results/image-result/result.txt"
+            "lifecycle://session/tool-results/turn_001/tool_004/result.txt"
         );
     }
 }

@@ -519,7 +519,7 @@ describe("aggregateEntries — tool burst", () => {
   it("T22: bounded output tools stay as single cards so truncation state remains visible", () => {
     const entries = [
       mkCmdEntry("c1", "large-output", {
-        output: "[tool result truncated]\nlifecycle_path: lifecycle://session/tool-results/c1/result.txt\npolicy: head_tail\n\npreview",
+        output: "[tool result truncated]\nlifecycle_path: lifecycle://session/tool-results/turn_001/tool_001/result.txt\npolicy: head_tail\n\npreview",
       }),
       mkCmdEntry("c2", "pwd"),
     ];

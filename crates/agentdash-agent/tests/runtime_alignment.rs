@@ -11,9 +11,9 @@ use agentdash_agent::types::TokenUsage;
 use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
-    BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopDecision, StopReason,
-    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, ToolResultCacheWrite, ToolResultRefContext,
-    agent_loop::AgentEventSink,
+    BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, ReadableIdRegistry,
+    StopDecision, StopReason, ToolApprovalOutcome, ToolCallInfo, ToolDefinition,
+    ToolResultCacheWrite, ToolResultRefContext, agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;
@@ -328,8 +328,7 @@ fn large_result_text() -> String {
 }
 
 fn assert_bounded_tool_result(result: &AgentToolResult, lifecycle_item_id: &str) {
-    let expected_lifecycle_path =
-        format!("lifecycle://session/tool-results/{lifecycle_item_id}/result.txt");
+    let expected_lifecycle_path = lifecycle_path_for_test_item(lifecycle_item_id);
     let text = result
         .content
         .first()
@@ -355,6 +354,15 @@ fn assert_bounded_tool_result(result: &AgentToolResult, lifecycle_item_id: &str)
             .and_then(serde_json::Value::as_bool),
         Some(true)
     );
+}
+
+fn lifecycle_path_for_test_item(item_id: &str) -> String {
+    item_id
+        .split_once(':')
+        .map(|(turn_alias, body_alias)| {
+            format!("lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt")
+        })
+        .unwrap_or_else(|| format!("lifecycle://session/tool-results/{item_id}/result.txt"))
 }
 
 #[tokio::test]
@@ -815,11 +823,13 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let cache_writes = Arc::new(StdMutex::new(Vec::<ToolResultCacheWrite>::new()));
     let cache_writes_for_writer = cache_writes.clone();
-    let stable_item_id = format!("turn-large:{tool_call_id}");
+    let readable_ids = ReadableIdRegistry::new();
+    let stable_item_id = "turn_001:tool_001".to_string();
     let config = AgentLoopConfig {
         tool_result_ref_context: Some(ToolResultRefContext {
             session_id: "session-large".to_string(),
-            turn_id: "turn-large".to_string(),
+            raw_turn_id: "turn-large".to_string(),
+            readable_ids,
             cache_writer: Some(Arc::new(move |write| {
                 cache_writes_for_writer
                     .lock()
@@ -907,16 +917,18 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0].session_id, "session-large");
     assert_eq!(writes[0].item_id, stable_item_id);
+    assert_eq!(writes[0].turn_alias, "turn_001");
+    assert_eq!(writes[0].body_alias, "tool_001");
+    assert_eq!(writes[0].body_kind, "tool_result");
+    assert_eq!(writes[0].raw_turn_id, "turn-large");
+    assert_eq!(writes[0].raw_tool_call_id, tool_call_id);
     assert!(
         writes[0].text.contains(LARGE_RESULT_SENTINEL),
         "cache writer should receive the original body"
     );
     assert_eq!(
         writes[0].lifecycle_path,
-        format!(
-            "lifecycle://session/tool-results/{}/result.txt",
-            writes[0].item_id
-        )
+        "lifecycle://session/tool-results/turn_001/tool_001/result.txt"
     );
 
     let snapshots = bridge.message_snapshots().await;
@@ -996,7 +1008,7 @@ async fn large_tool_update_partial_result_is_bounded_before_serialization() {
             _ => None,
         })
         .expect("tool update should exist");
-    assert_bounded_tool_result(&partial_result, tool_call_id);
+    assert_bounded_tool_result(&partial_result, "turn_001:tool_001");
 }
 
 #[tokio::test]
@@ -1085,7 +1097,7 @@ async fn large_immediate_tool_result_is_bounded() {
             _ => None,
         })
         .expect("tool execution end should exist for immediate result");
-    assert_bounded_tool_result(&end_result, tool_call_id);
+    assert_bounded_tool_result(&end_result, "turn_001:tool_001");
 }
 
 #[tokio::test]
@@ -1155,7 +1167,7 @@ async fn large_approval_rejection_result_is_bounded_without_tool_execution_end()
         })
         .expect("rejected tool result should exist");
     assert!(tool_result_message.is_error);
-    assert_bounded_tool_result(&tool_result_message, tool_call_id);
+    assert_bounded_tool_result(&tool_result_message, "turn_001:tool_001");
     assert_eq!(
         tool_result_message
             .details

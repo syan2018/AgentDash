@@ -13,8 +13,8 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ToolResultCacheWriter,
-    ToolResultRefContext,
+    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ReadableIdRegistry,
+    ToolResultCacheWriter, ToolResultRefContext,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -60,6 +60,8 @@ struct PiAgentSessionRuntime {
     model_selection: PiAgentModelSelection,
     /// 当前执行模型的真实上下文窗口，来自 provider catalog/model profile。
     model_context_window: Option<u64>,
+    /// Session-scoped readable runtime address registry.
+    readable_ids: Arc<ReadableIdRegistry>,
 }
 
 struct ResolvedExecutionBridge {
@@ -667,6 +669,10 @@ impl AgentConnector for PiAgentConnector {
             "Pi Agent prompt resolved runtime reuse state"
         );
         let incoming_system_prompt = assemble_system_prompt(&context.turn.context_frames);
+        let readable_ids = existing_runtime
+            .as_ref()
+            .map(|runtime| runtime.readable_ids.clone())
+            .unwrap_or_else(ReadableIdRegistry::new);
         let mut cached_system_prompt = existing_runtime
             .as_ref()
             .and_then(|runtime| runtime.last_system_prompt.clone());
@@ -790,7 +796,8 @@ impl AgentConnector for PiAgentConnector {
         }
         agent.set_tool_result_ref_context(Some(ToolResultRefContext {
             session_id: session_id.to_string(),
-            turn_id: context.session.turn_id.clone(),
+            raw_turn_id: context.session.turn_id.clone(),
+            readable_ids: readable_ids.clone(),
             cache_writer: self.tool_result_cache_writer.clone(),
         }));
 
@@ -813,6 +820,7 @@ impl AgentConnector for PiAgentConnector {
                 last_system_prompt: cached_system_prompt,
                 model_selection: requested_model_selection,
                 model_context_window: current_model_context_window,
+                readable_ids: readable_ids.clone(),
             },
         );
 
@@ -826,6 +834,7 @@ impl AgentConnector for PiAgentConnector {
         let stream_runtime_context = StreamMapperRuntimeContext {
             model_context_window: current_model_context_window,
             reserve_tokens: 0,
+            readable_ids: Some(readable_ids),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
@@ -853,7 +862,7 @@ impl AgentConnector for PiAgentConnector {
                                 &mut entry_index,
                                 &mut chunk_emit_states,
                                 &mut tool_call_states,
-                                stream_runtime_context,
+                                stream_runtime_context.clone(),
                             );
 
                             for e in envelopes {
@@ -891,7 +900,7 @@ impl AgentConnector for PiAgentConnector {
                     &mut entry_index,
                     &mut chunk_emit_states,
                     &mut tool_call_states,
-                    stream_runtime_context,
+                    stream_runtime_context.clone(),
                 );
 
                 for e in envelopes {

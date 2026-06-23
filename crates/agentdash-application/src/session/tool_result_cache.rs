@@ -30,7 +30,13 @@ struct SessionToolResultCacheEntry {
 pub struct SessionToolResultCacheMetadata {
     pub session_id: String,
     pub item_id: String,
+    pub turn_alias: String,
+    pub body_alias: String,
+    pub body_kind: String,
     pub lifecycle_path: String,
+    pub raw_turn_id: String,
+    pub raw_tool_call_id: String,
+    pub tool_name: String,
     pub original_bytes: usize,
     pub stored_bytes: usize,
     pub created_at_ms: i64,
@@ -64,6 +70,21 @@ pub enum SessionToolResultCacheRead {
     Unavailable(SessionToolResultCacheStatus),
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionToolResultCachePut {
+    pub session_id: String,
+    pub item_id: String,
+    pub lifecycle_path: String,
+    pub turn_alias: String,
+    pub body_alias: String,
+    pub body_kind: String,
+    pub raw_turn_id: String,
+    pub raw_tool_call_id: String,
+    pub tool_name: String,
+    pub text: String,
+    pub original_bytes: usize,
+}
+
 impl SessionToolResultCache {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
@@ -76,12 +97,60 @@ impl SessionToolResultCache {
         text: impl Into<String>,
         original_bytes: usize,
     ) -> SessionToolResultCacheMetadata {
-        self.put_text_with_ttl(
+        let session_id = session_id.into();
+        let item_id = item_id.into();
+        let (turn_alias, body_alias) = readable_aliases_from_item_id(&item_id);
+        let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
+        self.put_text_entry(SessionToolResultCachePut {
             session_id,
             item_id,
+            lifecycle_path,
+            turn_alias,
+            body_alias,
+            body_kind: "tool_result".to_string(),
+            raw_turn_id: String::new(),
+            raw_tool_call_id: String::new(),
+            tool_name: String::new(),
+            text: text.into(),
+            original_bytes,
+        })
+    }
+
+    pub fn put_text_entry(&self, put: SessionToolResultCachePut) -> SessionToolResultCacheMetadata {
+        self.put_text_entry_with_ttl(put, Some(SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL))
+    }
+
+    pub fn put_text_entry_with_ttl(
+        &self,
+        put: SessionToolResultCachePut,
+        ttl: Option<Duration>,
+    ) -> SessionToolResultCacheMetadata {
+        let SessionToolResultCachePut {
+            session_id,
+            item_id,
+            lifecycle_path,
+            turn_alias,
+            body_alias,
+            body_kind,
+            raw_turn_id,
+            raw_tool_call_id,
+            tool_name,
             text,
             original_bytes,
-            Some(SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL),
+        } = put;
+        self.put_text_with_metadata_and_ttl(
+            session_id,
+            item_id,
+            lifecycle_path,
+            turn_alias,
+            body_alias,
+            body_kind,
+            raw_turn_id,
+            raw_tool_call_id,
+            tool_name,
+            text,
+            original_bytes,
+            ttl,
         )
     }
 
@@ -95,13 +164,53 @@ impl SessionToolResultCache {
     ) -> SessionToolResultCacheMetadata {
         let session_id = session_id.into();
         let item_id = item_id.into();
+        let (turn_alias, body_alias) = readable_aliases_from_item_id(&item_id);
+        let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
+        self.put_text_with_metadata_and_ttl(
+            session_id,
+            item_id,
+            lifecycle_path,
+            turn_alias,
+            body_alias,
+            "tool_result".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+            text,
+            original_bytes,
+            ttl,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn put_text_with_metadata_and_ttl(
+        &self,
+        session_id: String,
+        item_id: String,
+        lifecycle_path: String,
+        turn_alias: String,
+        body_alias: String,
+        body_kind: String,
+        raw_turn_id: String,
+        raw_tool_call_id: String,
+        tool_name: String,
+        text: impl Into<String>,
+        original_bytes: usize,
+        ttl: Option<Duration>,
+    ) -> SessionToolResultCacheMetadata {
         let text = text.into();
         let now_ms = Utc::now().timestamp_millis();
         let ttl_ms = ttl.map(|ttl| ttl.as_millis().min(i64::MAX as u128) as i64);
         let metadata = SessionToolResultCacheMetadata {
             session_id: session_id.clone(),
             item_id: item_id.clone(),
-            lifecycle_path: lifecycle_path_for_tool_result(&item_id),
+            turn_alias,
+            body_alias,
+            body_kind,
+            lifecycle_path,
+            raw_turn_id,
+            raw_tool_call_id,
+            tool_name,
             original_bytes,
             stored_bytes: text.len(),
             created_at_ms: now_ms,
@@ -184,8 +293,15 @@ impl SessionToolResultCacheEntry {
     }
 }
 
-fn lifecycle_path_for_tool_result(item_id: &str) -> String {
-    format!("lifecycle://session/tool-results/{item_id}/result.txt")
+pub fn readable_aliases_from_item_id(item_id: &str) -> (String, String) {
+    item_id
+        .split_once(':')
+        .map(|(turn_alias, body_alias)| (turn_alias.to_string(), body_alias.to_string()))
+        .unwrap_or_else(|| ("turn_unknown".to_string(), item_id.to_string()))
+}
+
+pub fn lifecycle_path_for_tool_result(turn_alias: &str, body_alias: &str) -> String {
+    format!("lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt")
 }
 
 fn status_for(
@@ -193,7 +309,8 @@ fn status_for(
     session_id: &str,
     item_id: &str,
 ) -> SessionToolResultCacheStatus {
-    let lifecycle_path = lifecycle_path_for_tool_result(item_id);
+    let (turn_alias, body_alias) = readable_aliases_from_item_id(item_id);
+    let lifecycle_path = lifecycle_path_for_tool_result(&turn_alias, &body_alias);
     let status_text = match status {
         SessionToolResultCacheStatusKind::Missing => "missing",
         SessionToolResultCacheStatusKind::Expired => "expired",
@@ -216,19 +333,19 @@ mod tests {
     #[test]
     fn cache_round_trips_text_and_metadata() {
         let cache = SessionToolResultCache::default();
-        let metadata = cache.put_text("session-1", "item-1", "large result", 12);
+        let metadata = cache.put_text("session-1", "turn_001:tool_001", "large result", 12);
 
         assert_eq!(
             metadata.lifecycle_path,
-            "lifecycle://session/tool-results/item-1/result.txt"
+            "lifecycle://session/tool-results/turn_001/tool_001/result.txt"
         );
         assert_eq!(metadata.original_bytes, 12);
         assert_eq!(metadata.stored_bytes, 12);
 
-        let read = cache.read_text("session-1", "item-1");
+        let read = cache.read_text("session-1", "turn_001:tool_001");
         match read {
             SessionToolResultCacheRead::Available { metadata, text } => {
-                assert_eq!(metadata.item_id, "item-1");
+                assert_eq!(metadata.item_id, "turn_001:tool_001");
                 assert_eq!(text, "large result");
             }
             SessionToolResultCacheRead::Unavailable(status) => {

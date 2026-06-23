@@ -517,13 +517,14 @@ function rewriteModuleSpecifiers(
   getModuleUrl: (requestPath: string) => string,
 ): string {
   const replaceSpecifier = (specifier: string) => {
-    if (!isLocalSpecifier(specifier)) {
-      return specifier;
+    if (isLocalSpecifier(specifier)) {
+      const resolvedPath = resolveImportPath(currentPath, specifier);
+      const existingPath = resolveExistingModulePath(fileMap, resolvedPath);
+      return getModuleUrl(existingPath);
     }
 
-    const resolvedPath = resolveImportPath(currentPath, specifier);
-    const existingPath = resolveExistingModulePath(fileMap, resolvedPath);
-    return getModuleUrl(existingPath);
+    const canvasFilePath = maybeResolveExistingModulePath(fileMap, specifier);
+    return canvasFilePath ? getModuleUrl(canvasFilePath) : specifier;
   };
 
   return code
@@ -539,6 +540,18 @@ function resolveExistingModulePath(
   fileMap: Map<string, CanvasRuntimeFile>,
   requestPath: string,
 ): string {
+  const matched = maybeResolveExistingModulePath(fileMap, requestPath);
+  if (!matched) {
+    throw new Error(`无法解析 Canvas 模块: ${requestPath}`);
+  }
+
+  return matched;
+}
+
+function maybeResolveExistingModulePath(
+  fileMap: Map<string, CanvasRuntimeFile>,
+  requestPath: string,
+): string | null {
   const normalizedRequest = normalizePath(requestPath);
   const candidates = [
     normalizedRequest,
@@ -547,11 +560,7 @@ function resolveExistingModulePath(
   ];
 
   const matched = candidates.find((candidate) => fileMap.has(candidate));
-  if (!matched) {
-    throw new Error(`无法解析 Canvas 模块: ${requestPath}`);
-  }
-
-  return matched;
+  return matched ?? null;
 }
 
 function resolveImportPath(currentPath: string, specifier: string): string {

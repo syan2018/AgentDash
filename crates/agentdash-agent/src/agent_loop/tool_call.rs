@@ -16,7 +16,6 @@ use super::tool_result::{
 };
 use super::{
     AgentEventSink, AgentLoopConfig, ToolResultCacheWrite, ToolResultRefContext, emit_event,
-    stable_tool_result_item_id,
 };
 
 pub(super) async fn execute_tool_calls(
@@ -526,6 +525,7 @@ fn build_on_update(
         let emit = emit.clone();
         let bounded_partial = bound_tool_result_for_call_with_context(
             &tc_id,
+            &tc_name,
             &partial_result,
             AgentToolResultInlineKind::Update,
             ref_context.as_ref(),
@@ -738,6 +738,7 @@ fn bound_tool_result_for_call(
 ) -> AgentToolResult {
     bound_tool_result_for_call_with_context(
         &tc.id,
+        &tc.name,
         result,
         inline_kind,
         config.tool_result_ref_context.as_ref(),
@@ -746,29 +747,98 @@ fn bound_tool_result_for_call(
 
 fn bound_tool_result_for_call_with_context(
     tool_call_id: &str,
+    tool_name: &str,
     result: &AgentToolResult,
     inline_kind: AgentToolResultInlineKind,
     ref_context: Option<&ToolResultRefContext>,
 ) -> AgentToolResult {
-    let item_id = ref_context
-        .map(|context| stable_tool_result_item_id(&context.turn_id, tool_call_id))
-        .unwrap_or_else(|| tool_call_id.to_string());
-    bound_agent_tool_result_text(result, &item_id, inline_kind, |write| {
-        record_agent_tool_result_cache_write(ref_context, write);
-    })
+    let readable_ref = ref_context
+        .map(|context| {
+            context
+                .readable_ids
+                .tool_result_ref(&context.raw_turn_id, tool_call_id, tool_name)
+        })
+        .unwrap_or_else(|| {
+            let fallback_registry = super::ReadableIdRegistry::default();
+            fallback_registry.tool_result_ref("turn", tool_call_id, tool_name)
+        });
+    let item_id = readable_ref.item_id.as_str();
+    let lifecycle_path = readable_ref.lifecycle_path.as_str();
+    let bounded =
+        bound_agent_tool_result_text(result, item_id, lifecycle_path, inline_kind, |write| {
+            record_agent_tool_result_cache_write(
+                ref_context,
+                Some(&readable_ref),
+                tool_name,
+                write,
+            );
+        });
+    let should_attach_readable_ref = ref_context.is_some()
+        || bounded.details.as_ref().is_some_and(|details| {
+            details.get("truncation").is_some() || details.get("lifecycle_path").is_some()
+        });
+    if should_attach_readable_ref {
+        attach_readable_ref_details(bounded, &readable_ref, tool_name)
+    } else {
+        bounded
+    }
+}
+
+fn attach_readable_ref_details(
+    mut result: AgentToolResult,
+    readable_ref: &super::ReadableToolResultRef,
+    tool_name: &str,
+) -> AgentToolResult {
+    let mut details = match result.details.take() {
+        Some(serde_json::Value::Object(object)) => object,
+        Some(value) => {
+            let mut object = serde_json::Map::new();
+            object.insert("original_details".to_string(), value);
+            object
+        }
+        None => serde_json::Map::new(),
+    };
+    details.insert(
+        "readable_ref".to_string(),
+        serde_json::json!({
+            "item_id": readable_ref.item_id,
+            "turn_alias": readable_ref.turn_alias,
+            "body_alias": readable_ref.body_alias,
+            "body_kind": readable_ref.body_kind.as_str(),
+            "lifecycle_path": readable_ref.lifecycle_path,
+        }),
+    );
+    details.insert(
+        "raw_trace".to_string(),
+        serde_json::json!({
+            "raw_turn_id": readable_ref.raw_turn_id,
+            "raw_tool_call_id": readable_ref.raw_tool_call_id,
+            "tool_name": tool_name,
+        }),
+    );
+    result.details = Some(serde_json::Value::Object(details));
+    result
 }
 
 fn record_agent_tool_result_cache_write(
     ref_context: Option<&ToolResultRefContext>,
+    readable_ref: Option<&super::ReadableToolResultRef>,
+    tool_name: &str,
     write: AgentToolResultCacheWrite<'_>,
 ) {
-    if let Some(context) = ref_context
+    if let (Some(context), Some(readable_ref)) = (ref_context, readable_ref)
         && let Some(writer) = context.cache_writer.as_ref()
     {
         writer(ToolResultCacheWrite {
             session_id: context.session_id.clone(),
             item_id: write.item_id.to_string(),
             lifecycle_path: write.lifecycle_path.to_string(),
+            turn_alias: readable_ref.turn_alias.clone(),
+            body_alias: readable_ref.body_alias.clone(),
+            body_kind: readable_ref.body_kind.as_str().to_string(),
+            raw_turn_id: readable_ref.raw_turn_id.clone(),
+            raw_tool_call_id: readable_ref.raw_tool_call_id.clone(),
+            tool_name: tool_name.to_string(),
             text: write.text.to_string(),
             original_bytes: write.original_bytes,
         });

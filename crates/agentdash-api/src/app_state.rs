@@ -8,6 +8,7 @@ use crate::integrations::{builtin_integrations, collect_integration_registration
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::agent_run::{
     AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
@@ -59,6 +60,7 @@ pub struct ServiceSet {
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
     pub session_capability: SessionCapabilityService,
+    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -224,6 +226,7 @@ impl AppState {
         let session_launch = session_bootstrap.session_launch;
         let session_hooks = session_bootstrap.session_hooks;
         let session_capability = session_bootstrap.session_capability;
+        let runtime_surface_update = session_bootstrap.runtime_surface_update;
         let session_effects = session_bootstrap.session_effects;
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
@@ -323,6 +326,7 @@ impl AppState {
                 session_launch,
                 session_hooks,
                 session_capability,
+                runtime_surface_update,
                 session_effects,
                 session_title,
                 connector,

@@ -1514,7 +1514,7 @@ fn canvas_skill_vfs() -> agentdash_spi::Vfs {
 }
 
 #[tokio::test]
-async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
+async fn adopt_persisted_frame_revision_into_active_runtime_requires_matching_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
     let session = hub
@@ -1524,7 +1524,7 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
     let frame = attach_test_frame(&hub, "another-session").await;
 
     let error = match hub
-        .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+        .adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
             frame_id: frame.id,
             delivery_runtime_session_id: session.id.clone(),
         })
@@ -1543,7 +1543,8 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
 }
 
 #[tokio::test]
-async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_frame() {
+async fn adopt_persisted_frame_revision_into_active_runtime_updates_runtime_without_writing_frame()
+{
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
     let session = hub
@@ -1606,7 +1607,7 @@ async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_fr
         })
         .await;
 
-    hub.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
+    hub.adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
         frame_id: persisted_frame.id,
         delivery_runtime_session_id: session.id.clone(),
     })

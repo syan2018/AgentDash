@@ -88,8 +88,8 @@ impl WorkspaceModuleVisibilitySource {
             ));
         };
         session_services
-            .capability
-            .effective_capability_view_for_runtime_session(session_id)
+            .runtime_surface_update
+            .effective_capability_view_for_delivery_runtime(session_id)
             .await
             .map_err(AgentToolError::ExecutionFailed)
     }
@@ -678,8 +678,8 @@ impl WorkspaceModuleInvokeTool {
             ));
         };
         session_services
-            .capability
-            .expose_canvas_mount_revision_and_adopt(&self.session_id, canvas)
+            .runtime_surface_update
+            .expose_canvas_mount(&self.session_id, canvas)
             .await
             .map(|_| ())
             .map_err(AgentToolError::ExecutionFailed)
@@ -1166,12 +1166,20 @@ mod tests {
     use tokio::sync::RwLock;
 
     use super::*;
-    use crate::agent_run::frame::surface::FrameSurfaceDraft;
-    use crate::agent_run::{AgentRunEffectiveCapabilityService, frame::builder::AgentFrameBuilder};
+    use crate::agent_run::frame::surface::{AgentFrameSurfaceExt, FrameSurfaceDraft};
+    use crate::agent_run::{
+        AgentRunEffectiveCapabilityService, AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure,
+        AgentRunRuntimeSurfaceProvenance, AgentRunRuntimeSurfaceQueryError,
+        AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceUpdateDeps,
+        AgentRunRuntimeSurfaceUpdateService, AgentRunRuntimeSurfaceWithBackend,
+        RuntimeSurfaceQueryPurpose, frame::builder::AgentFrameBuilder,
+    };
     use crate::canvas::build_canvas;
+    use crate::lifecycle::AgentRunRuntimeAddress;
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
     };
+    use crate::session::capability_state::project_capability_state_from_frame;
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan,
@@ -1186,6 +1194,115 @@ mod tests {
     };
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
     use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
+
+    struct TestRuntimeSurfaceQuery {
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        run_id: Uuid,
+        project_id: Uuid,
+        agent_id: Uuid,
+    }
+
+    #[async_trait]
+    impl AgentRunRuntimeSurfaceQueryPort for TestRuntimeSurfaceQuery {
+        async fn current_runtime_surface(
+            &self,
+            runtime_session_id: &str,
+            _purpose: RuntimeSurfaceQueryPurpose,
+        ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
+            let frame = self
+                .frame_repo
+                .get_current(self.agent_id)
+                .await
+                .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
+                    purpose: RuntimeSurfaceQueryPurpose::new("test_workspace_module"),
+                    operation: "current AgentFrame",
+                    message: error.to_string(),
+                })?
+                .expect("test current frame should exist");
+            let capability_state = project_capability_state_from_frame(&frame);
+            let vfs = capability_state.vfs.active.clone().unwrap_or_default();
+            Ok(AgentRunRuntimeSurface {
+                runtime_session_id: runtime_session_id.to_string(),
+                run_id: self.run_id,
+                project_id: self.project_id,
+                agent_id: self.agent_id,
+                runtime_address: AgentRunRuntimeAddress {
+                    run_id: self.run_id,
+                    agent_id: self.agent_id,
+                    frame_id: frame.id,
+                },
+                surface_frame_id: frame.id,
+                surface_revision: frame.revision,
+                capability_state,
+                vfs,
+                mcp_servers: frame.typed_mcp_servers(),
+                runtime_backend_anchor: None,
+                active_turn_id: None,
+                identity: None,
+                provenance: AgentRunRuntimeSurfaceProvenance {
+                    launch_frame_id: frame.id,
+                    launch_created_by_kind: frame.created_by_kind.clone(),
+                    surface_frame_id: frame.id,
+                    surface_revision: frame.revision,
+                    surface_created_by_kind: frame.created_by_kind.clone(),
+                    anchor_updated_at: chrono::Utc::now(),
+                    orchestration_id: None,
+                    node_path: None,
+                    node_attempt: None,
+                },
+                closure: AgentRunRuntimeSurfaceClosure {
+                    capability_field_present: frame.effective_capability_json.is_some(),
+                    vfs_field_present: frame.vfs_surface_json.is_some(),
+                    mcp_field_present: frame.mcp_surface_json.is_some(),
+                },
+            })
+        }
+
+        async fn current_runtime_surface_with_backend(
+            &self,
+            runtime_session_id: &str,
+            purpose: RuntimeSurfaceQueryPurpose,
+        ) -> Result<AgentRunRuntimeSurfaceWithBackend, AgentRunRuntimeSurfaceQueryError> {
+            let surface = self
+                .current_runtime_surface(runtime_session_id, purpose.clone())
+                .await?;
+            let runtime_backend_anchor =
+                surface.runtime_backend_anchor.clone().ok_or_else(|| {
+                    AgentRunRuntimeSurfaceQueryError::MissingRuntimeBackendAnchor {
+                        purpose,
+                        runtime_session_id: runtime_session_id.to_string(),
+                        turn_id: None,
+                    }
+                })?;
+            Ok(AgentRunRuntimeSurfaceWithBackend {
+                surface,
+                runtime_backend_anchor,
+            })
+        }
+    }
+
+    fn runtime_surface_update_for_test(
+        hub: &SessionRuntimeInner,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        run_id: Uuid,
+        project_id: Uuid,
+        agent_id: Uuid,
+        vfs_service: Option<Arc<VfsService>>,
+    ) -> AgentRunRuntimeSurfaceUpdateService {
+        AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: Arc::new(TestRuntimeSurfaceQuery {
+                frame_repo: frame_repo.clone(),
+                run_id,
+                project_id,
+                agent_id,
+            }),
+            frame_repo,
+            vfs_service,
+            active_adopter: Arc::new(hub.clone()),
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        })
+    }
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
@@ -1821,6 +1938,14 @@ mod tests {
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
                 capability: hub.capability_service(),
+                runtime_surface_update: runtime_surface_update_for_test(
+                    &hub,
+                    frame_repo.clone(),
+                    active_run_id,
+                    project_id,
+                    agent_id,
+                    None,
+                ),
             })
             .await;
 
@@ -2052,6 +2177,14 @@ mod tests {
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
                 capability: hub.capability_service(),
+                runtime_surface_update: runtime_surface_update_for_test(
+                    &hub,
+                    frame_repo.clone(),
+                    active_run_id,
+                    project_id,
+                    agent_id,
+                    None,
+                ),
             })
             .await;
 

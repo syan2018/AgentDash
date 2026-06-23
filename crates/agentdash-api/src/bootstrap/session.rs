@@ -2,6 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
+use agentdash_application::agent_run::{
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
+    AgentRunRuntimeSurfaceUpdateService,
+};
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
@@ -58,6 +62,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
     pub session_capability: SessionCapabilityService,
+    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
@@ -186,6 +191,23 @@ pub(crate) async fn build_session_runtime(
     let session_launch = session_runtime_builder.launch_service();
     let session_hooks = session_runtime_builder.hook_service();
     let session_capability = session_runtime_builder.capability_service();
+    let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+        AgentRunRuntimeSurfaceQueryDeps {
+            anchor_repo: repos.execution_anchor_repo.clone(),
+            run_repo: repos.lifecycle_run_repo.clone(),
+            agent_repo: repos.lifecycle_agent_repo.clone(),
+            frame_repo: repos.agent_frame_repo.clone(),
+        },
+    ));
+    let runtime_surface_update =
+        AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: runtime_surface_query,
+            frame_repo: repos.agent_frame_repo.clone(),
+            vfs_service: Some(vfs_service.clone()),
+            active_adopter: session_runtime_builder.active_runtime_surface_adopter(),
+            extra_skill_dirs: extra_skill_dirs.clone(),
+            skill_discovery_providers: skill_discovery_providers.clone(),
+        });
     let session_effects = session_runtime_builder.effects_service();
     let session_title = session_runtime_builder.title_service();
 
@@ -220,6 +242,7 @@ pub(crate) async fn build_session_runtime(
             launch: session_launch.clone(),
             hooks: session_hooks.clone(),
             capability: session_capability.clone(),
+            runtime_surface_update: runtime_surface_update.clone(),
         })
         .await;
 
@@ -233,6 +256,7 @@ pub(crate) async fn build_session_runtime(
         session_launch,
         session_hooks,
         session_capability,
+        runtime_surface_update,
         session_effects,
         session_title,
         connector,

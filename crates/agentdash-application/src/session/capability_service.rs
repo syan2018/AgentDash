@@ -1,12 +1,9 @@
-use agentdash_agent_types::DynAgentTool;
-use agentdash_domain::canvas::Canvas;
-use agentdash_spi::{RuntimeBackendAnchor, Vfs};
+use agentdash_spi::Vfs;
 use std::io;
 
 use super::capability_projection::{
     SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
 };
-use super::capability_state::project_capability_state_from_frame;
 #[cfg(test)]
 use super::hub::PendingRuntimeContextTransitionInput;
 use super::hub::SessionRuntimeInner;
@@ -14,13 +11,7 @@ use super::hub::{ApplyPendingRuntimeContextTransitionInput, PendingRuntimeContex
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
-use super::types::{AgentFrameRuntimeTarget, CapabilityState};
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::{
-    AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
-};
-use crate::canvas::resolve_canvas_binding_files;
-use crate::vfs::{append_canvas_mounts, refresh_canvas_mount_binding_files};
+use super::types::CapabilityState;
 
 #[derive(Clone)]
 pub struct SessionCapabilityService {
@@ -38,134 +29,6 @@ impl SessionCapabilityService {
 
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         self.hub.get_latest_capability_state(session_id).await
-    }
-
-    pub async fn get_current_runtime_backend_anchor(
-        &self,
-        session_id: &str,
-    ) -> Result<RuntimeBackendAnchor, String> {
-        self.hub
-            .get_current_runtime_backend_anchor(session_id)
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    /// Delivery adapter: 把 RuntimeSession id 解析为对应的 AgentFrame id。
-    ///
-    /// 仅用于已知 delivery session 但尚未拥有 `AgentFrameRuntimeTarget` 的
-    /// adapter 边界（如 canvas tool、workflow executor 入口）。业务控制路径应
-    /// 直接传递 `AgentFrameRuntimeTarget`，不应依赖此方法做反查。
-    pub(crate) async fn resolve_runtime_session_frame_id(
-        &self,
-        session_id: &str,
-    ) -> Result<uuid::Uuid, String> {
-        self.hub
-            .resolve_runtime_session_frame_id(session_id)
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    /// Delivery adapter: 把 RuntimeSession id 解析为完整的 `AgentFrameRuntimeTarget`。
-    ///
-    /// 仅用于 adapter 边界将 session 维度入口转换为 frame-first 控制目标。
-    /// 内部业务路径应直接持有并传递 `AgentFrameRuntimeTarget`。
-    pub(crate) async fn resolve_runtime_session_target(
-        &self,
-        session_id: &str,
-    ) -> Result<AgentFrameRuntimeTarget, String> {
-        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
-        Ok(AgentFrameRuntimeTarget {
-            frame_id,
-            delivery_runtime_session_id: session_id.to_string(),
-        })
-    }
-
-    /// 将已持久化的 AgentFrame revision 采用到 active runtime。
-    pub async fn adopt_persisted_agent_frame_revision(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String> {
-        self.hub
-            .adopt_persisted_agent_frame_revision(target)
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    /// Canvas expose 的生产写入路径：先写新的 AgentFrame revision，再采用到 active runtime。
-    pub(crate) async fn expose_canvas_mount_revision_and_adopt(
-        &self,
-        session_id: &str,
-        canvas: &Canvas,
-    ) -> Result<Vfs, String> {
-        let target = self.resolve_runtime_session_target(session_id).await?;
-        let frame_repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
-            format!("session `{session_id}` 无 AgentFrame repository，无法写入 Canvas exposure")
-        })?;
-        let current_frame = frame_repo
-            .get(target.frame_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{}` 不存在", target.frame_id))?;
-
-        let before_state = project_capability_state_from_frame(&current_frame);
-        let mut after_state = before_state.clone();
-        let Some(mut active_vfs) = after_state.vfs.active.clone() else {
-            return Err(format!(
-                "AgentFrame `{}` 缺少 VFS surface，拒绝将 live VFS 作为 Canvas exposure 事实源",
-                current_frame.id
-            ));
-        };
-        append_canvas_mounts(&mut active_vfs, std::slice::from_ref(canvas));
-        if let Some(vfs_service) = self.hub.vfs_service.as_deref() {
-            let binding_files =
-                resolve_canvas_binding_files(canvas, &active_vfs, vfs_service).await;
-            refresh_canvas_mount_binding_files(&mut active_vfs, canvas, &binding_files);
-        }
-        after_state.vfs.active = Some(active_vfs.clone());
-        self.derive_skill_baseline_for_transition_state(Some(&before_state), &mut after_state)
-            .await;
-
-        let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
-            .with_capability_state(&after_state)
-            .with_created_by("canvas_expose", Some(current_frame.id.to_string()))
-            .with_runtime_session(session_id.to_string())
-            .build_uncommitted(frame_repo.as_ref())
-            .await
-            .map_err(|error| error.to_string())?;
-        next_frame.append_visible_canvas_mount(&canvas.mount_id);
-        next_frame.append_visible_workspace_module_ref(&format!("canvas:{}", canvas.mount_id));
-        frame_repo
-            .create(&next_frame)
-            .await
-            .map_err(|error| error.to_string())?;
-
-        self.adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
-            frame_id: next_frame.id,
-            delivery_runtime_session_id: session_id.to_string(),
-        })
-        .await?;
-
-        next_frame
-            .typed_vfs()
-            .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))
-    }
-
-    pub(crate) async fn effective_capability_view_for_runtime_session(
-        &self,
-        session_id: &str,
-    ) -> Result<AgentRunEffectiveCapabilityView, String> {
-        let target = self.resolve_runtime_session_target(session_id).await?;
-        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
-            format!(
-                "session `{session_id}` 无 AgentFrame repository，无法读取 AgentRun capability view"
-            )
-        })?;
-        let frame = repo
-            .get(target.frame_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{}` 不存在", target.frame_id))?;
-        Ok(AgentRunEffectiveCapabilityService::effective_view_from_frame(target, &frame))
     }
 
     pub async fn list_requested_runtime_commands(

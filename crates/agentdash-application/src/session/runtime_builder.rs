@@ -18,6 +18,7 @@ use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 use super::title_service::SessionTitleService;
+use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::context::SharedContextAuditBus;
 
 pub struct SessionRuntimeBuilder {
@@ -137,6 +138,10 @@ impl SessionRuntimeBuilder {
 
     pub fn capability_service(&self) -> SessionCapabilityService {
         self.inner.capability_service()
+    }
+
+    pub fn active_runtime_surface_adopter(&self) -> Arc<dyn AgentRunActiveRuntimeSurfaceAdopter> {
+        Arc::new(self.inner.clone())
     }
 
     pub fn effects_service(&self) -> SessionEffectsService {

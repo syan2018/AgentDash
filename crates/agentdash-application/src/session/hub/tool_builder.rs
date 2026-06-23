@@ -5,10 +5,11 @@
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //!
 use agentdash_agent_types::DynAgentTool;
-use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeBackendAnchor};
-use uuid::Uuid;
+use agentdash_spi::{ConnectorError, ExecutionContext};
+use async_trait::async_trait;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
+use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::agent_run::AgentRunEffectiveCapabilityService;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
@@ -70,79 +71,12 @@ impl SessionRuntimeInner {
         .map(|(_anchor, _agent, frame)| project_capability_state_from_frame(&frame))
     }
 
-    pub async fn get_current_runtime_backend_anchor(
-        &self,
-        session_id: &str,
-    ) -> Result<RuntimeBackendAnchor, ConnectorError> {
-        let anchor = self
-            .runtime_registry
-            .with_runtime(session_id, |runtime| {
-                runtime
-                    .and_then(|runtime| runtime.turn_state.active_turn())
-                    .and_then(|turn| turn.session_frame.runtime_backend_anchor.clone())
-            })
-            .await;
-        anchor.ok_or_else(|| {
-            ConnectorError::Runtime(
-                agentdash_spi::RuntimeBackendAnchorError::Missing {
-                    component: "session_runtime".to_string(),
-                    session_id: Some(session_id.to_string()),
-                    turn_id: None,
-                }
-                .to_string(),
-            )
-        })
-    }
-
-    /// Runtime adapter 边界使用的 lookup：把 delivery RuntimeSession 解析为当前 AgentFrame。
-    ///
-    /// 后续 command 必须携带 `AgentFrameRuntimeTarget`，不能把 raw session id
-    /// 继续作为 frame revision 写入目标。
-    pub(crate) async fn resolve_runtime_session_frame_id(
-        &self,
-        session_id: &str,
-    ) -> Result<Uuid, ConnectorError> {
-        let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 AgentFrame repository，无法解析 runtime surface target"
-            ))
-        })?;
-        let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法解析 runtime surface target"
-            ))
-        })?;
-        let agent_repo = self.lifecycle_agent_repo.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 LifecycleAgent repository，无法解析 runtime surface target"
-            ))
-        })?;
-        let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
-        .await
-        .map_err(|error| {
-            ConnectorError::Runtime(format!(
-                "通过 anchor 查找 session `{session_id}` 当前 AgentFrame 失败: {error}"
-            ))
-        })?
-        .ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 未关联 AgentFrame，无法解析 runtime surface target"
-            ))
-        })?;
-        Ok(frame.id)
-    }
-
     /// 将已持久化的 AgentFrame revision 采用到 active runtime。
     ///
     /// 该 helper 不写入新的 frame；它通过 delivery anchor 校验调用方指定的
     /// frame 是当前生效 revision，并同步 active turn cache、connector tools
     /// 与 hook runtime target。
-    pub(crate) async fn adopt_persisted_agent_frame_revision(
+    pub(crate) async fn adopt_persisted_frame_revision_into_active_runtime(
         &self,
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
@@ -377,5 +311,17 @@ impl SessionRuntimeInner {
                 capability_state.clone()
             }
         }
+    }
+}
+
+#[async_trait]
+impl AgentRunActiveRuntimeSurfaceAdopter for SessionRuntimeInner {
+    async fn adopt_persisted_frame_revision_into_active_runtime(
+        &self,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<Vec<DynAgentTool>, String> {
+        SessionRuntimeInner::adopt_persisted_frame_revision_into_active_runtime(self, target)
+            .await
+            .map_err(|error| error.to_string())
     }
 }

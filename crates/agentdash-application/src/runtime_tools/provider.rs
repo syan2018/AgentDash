@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::agent_run::AgentRunRuntimeSurfaceUpdateService;
 use crate::runtime_gateway::RuntimeGateway;
 use crate::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
@@ -41,6 +42,7 @@ pub struct SessionToolServices {
     pub launch: SessionLaunchService,
     pub hooks: SessionHookService,
     pub capability: SessionCapabilityService,
+    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
 }
 
 #[derive(Clone, Default)]

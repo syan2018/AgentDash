@@ -4,12 +4,15 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::AgentFrameBuilder;
-use crate::agent_run::AgentRunGrantProjection;
+use crate::agent_run::{
+    AgentFrameBuilder, AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateService,
+};
+use crate::session::AgentFrameRuntimeTarget;
 use crate::session::capability_state::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
@@ -25,6 +28,31 @@ use agentdash_spi::{
 
 use super::compiler::PermissionGrantCompiler;
 use super::policy::PermissionPolicyService;
+
+#[async_trait]
+pub trait PermissionGrantRuntimeSurfaceUpdate: Send + Sync {
+    async fn adopt_permission_effect_frame(
+        &self,
+        grant: &PermissionGrant,
+        effect_frame: &AgentFrame,
+    ) -> Result<(), String>;
+}
+
+#[async_trait]
+impl PermissionGrantRuntimeSurfaceUpdate for AgentRunRuntimeSurfaceUpdateService {
+    async fn adopt_permission_effect_frame(
+        &self,
+        grant: &PermissionGrant,
+        effect_frame: &AgentFrame,
+    ) -> Result<(), String> {
+        self.adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
+            frame_id: effect_frame.id,
+            delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
+        })
+        .await
+        .map(|_| ())
+    }
+}
 
 /// Grant 创建请求参数。
 #[derive(Debug, Clone)]
@@ -173,6 +201,18 @@ impl PermissionGrantService {
         })
     }
 
+    pub async fn approve_with_runtime_surface_update(
+        &self,
+        grant_id: Uuid,
+        user_id: &str,
+        runtime_surface_update: &dyn PermissionGrantRuntimeSurfaceUpdate,
+    ) -> Result<PermissionGrantEffectResult, ApplicationError> {
+        let result = self.approve(grant_id, user_id).await?;
+        self.adopt_effect_frame(&result, runtime_surface_update)
+            .await?;
+        Ok(result)
+    }
+
     /// 用户拒绝 grant。
     pub async fn reject(&self, grant_id: Uuid) -> Result<PermissionGrant, ApplicationError> {
         let mut grant = self
@@ -218,6 +258,17 @@ impl PermissionGrantService {
             transition,
             effect_frame,
         })
+    }
+
+    pub async fn revoke_with_runtime_surface_update(
+        &self,
+        grant_id: Uuid,
+        runtime_surface_update: &dyn PermissionGrantRuntimeSurfaceUpdate,
+    ) -> Result<PermissionGrantEffectResult, ApplicationError> {
+        let result = self.revoke(grant_id).await?;
+        self.adopt_effect_frame(&result, runtime_surface_update)
+            .await?;
+        Ok(result)
     }
 
     /// 将单个已到期的 active grant 过期，并按 CE02 分类撤销其 AgentRun effect。
@@ -381,6 +432,25 @@ impl PermissionGrantService {
             .await
             .map_err(ApplicationError::from)?;
         Ok((transition, Some(effect_frame)))
+    }
+
+    async fn adopt_effect_frame(
+        &self,
+        result: &PermissionGrantEffectResult,
+        runtime_surface_update: &dyn PermissionGrantRuntimeSurfaceUpdate,
+    ) -> Result<(), ApplicationError> {
+        let Some(effect_frame) = result.effect_frame.as_ref() else {
+            return Ok(());
+        };
+        runtime_surface_update
+            .adopt_permission_effect_frame(&result.grant, effect_frame)
+            .await
+            .map_err(|error| {
+                ApplicationError::Internal(format!(
+                    "PermissionGrant active-runtime adoption failed for grant {}: {error}",
+                    result.grant.id
+                ))
+            })
     }
 }
 
@@ -702,6 +772,30 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingRuntimeSurfaceUpdate {
+        adopted: Mutex<Vec<(Uuid, String)>>,
+        error: Option<String>,
+    }
+
+    #[async_trait]
+    impl PermissionGrantRuntimeSurfaceUpdate for RecordingRuntimeSurfaceUpdate {
+        async fn adopt_permission_effect_frame(
+            &self,
+            grant: &PermissionGrant,
+            effect_frame: &AgentFrame,
+        ) -> Result<(), String> {
+            self.adopted
+                .lock()
+                .await
+                .push((effect_frame.id, grant.source_runtime_session_id.clone()));
+            if let Some(error) = &self.error {
+                return Err(error.clone());
+            }
+            Ok(())
+        }
+    }
+
     async fn pending_grant(
         repo: &InMemoryGrantRepo,
         frame_id: Uuid,
@@ -773,6 +867,66 @@ mod tests {
         );
         assert!(state.tool.enabled_clusters.contains(&ToolCluster::Write));
         assert_eq!(current.agent_id, agent_id);
+    }
+
+    #[tokio::test]
+    async fn approve_with_runtime_surface_update_adopts_surface_effect_frame() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
+        let runtime_surface_update = RecordingRuntimeSurfaceUpdate::default();
+
+        let result = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+            .approve_with_runtime_surface_update(grant.id, "user-1", &runtime_surface_update)
+            .await
+            .expect("approve");
+
+        let effect_frame = result.effect_frame.expect("surface effect frame");
+        assert_eq!(
+            runtime_surface_update.adopted.lock().await.as_slice(),
+            &[(effect_frame.id, "runtime-session-1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn approve_with_runtime_surface_update_surfaces_adoption_failure() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
+        let runtime_surface_update = RecordingRuntimeSurfaceUpdate {
+            adopted: Mutex::default(),
+            error: Some("live adoption unavailable".to_string()),
+        };
+
+        let error = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+            .approve_with_runtime_surface_update(grant.id, "user-1", &runtime_surface_update)
+            .await
+            .expect_err("adoption failure should be visible");
+
+        assert!(matches!(
+            error,
+            ApplicationError::Internal(message)
+                if message.contains("active-runtime adoption failed")
+                    && message.contains("live adoption unavailable")
+        ));
+        let stored = grant_repo
+            .find_by_id(grant.id)
+            .await
+            .expect("grant lookup")
+            .expect("grant");
+        assert_eq!(stored.status, GrantStatus::Applied);
     }
 
     /// Grants from different runtime sessions targeting the same `effect_frame_id`
@@ -891,13 +1045,18 @@ mod tests {
         )
         .await;
 
+        let runtime_surface_update = RecordingRuntimeSurfaceUpdate::default();
         let result = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
-            .approve(grant.id, "user-1")
+            .approve_with_runtime_surface_update(grant.id, "user-1", &runtime_surface_update)
             .await
             .expect("approve");
 
         assert_eq!(result.grant.status, GrantStatus::Applied);
         assert!(result.effect_frame.is_none());
+        assert!(
+            runtime_surface_update.adopted.lock().await.is_empty(),
+            "admission-only grants must not trigger active runtime adoption"
+        );
         assert!(
             result.transition.effects.is_empty(),
             "admission-only grants must not rewrite AgentFrame capability surface"

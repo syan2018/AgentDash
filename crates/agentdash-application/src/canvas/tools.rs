@@ -258,8 +258,8 @@ pub(crate) async fn expose_canvas_to_session(
         )
     })?;
     let active_vfs = session_services
-        .capability
-        .expose_canvas_mount_revision_and_adopt(session_id, canvas)
+        .runtime_surface_update
+        .expose_canvas_mount(session_id, canvas)
         .await
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!(

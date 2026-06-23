@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::{permission::PermissionGrantService, session::AgentFrameRuntimeTarget};
+use agentdash_application::permission::PermissionGrantService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
     PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
@@ -15,7 +15,6 @@ use agentdash_contracts::permission::{
 use agentdash_domain::permission::{
     GrantStatus, PermissionGrant, PermissionGrantStatusFilter, PolicyOutcome,
 };
-use agentdash_domain::workflow::AgentFrame;
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
@@ -228,9 +227,12 @@ pub async fn approve_grant(
         state.repos.permission_grant_repo.clone(),
         state.repos.agent_frame_repo.clone(),
     )
-    .approve(id, &current_user.user_id)
+    .approve_with_runtime_surface_update(
+        id,
+        &current_user.user_id,
+        &state.services.runtime_surface_update,
+    )
     .await?;
-    adopt_grant_effect(&state, &result.grant, result.effect_frame.as_ref()).await?;
 
     Ok(Json(grant_to_dto(&result.grant)))
 }
@@ -269,35 +271,8 @@ pub async fn revoke_grant(
         state.repos.permission_grant_repo.clone(),
         state.repos.agent_frame_repo.clone(),
     )
-    .revoke(id)
+    .revoke_with_runtime_surface_update(id, &state.services.runtime_surface_update)
     .await?;
-    adopt_grant_effect(&state, &result.grant, result.effect_frame.as_ref()).await?;
 
     Ok(Json(grant_to_dto(&result.grant)))
-}
-
-async fn adopt_grant_effect(
-    state: &AppState,
-    grant: &PermissionGrant,
-    effect_frame: Option<&AgentFrame>,
-) -> Result<(), ApiError> {
-    let target_frame_id = effect_frame.map(|frame| frame.id).or(grant.effect_frame_id);
-    let Some(target_frame_id) = target_frame_id else {
-        return Ok(());
-    };
-    state
-        .services
-        .session_capability
-        .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
-            frame_id: target_frame_id,
-            delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
-        })
-        .await
-        .map_err(|error| {
-            ApiError::Internal(format!(
-                "PermissionGrant active-runtime adoption failed for grant {}: {error}",
-                grant.id
-            ))
-        })?;
-    Ok(())
 }

@@ -23,48 +23,48 @@
 
 ## Phase 1: AgentRun Runtime Surface Query
 
-- [ ] 新增 AgentRun/Lifecycle runtime surface query facade 与窄 query port。
-- [ ] 从 `RuntimeSessionExecutionAnchor` 解析 run / agent / runtime address。
-- [ ] 在 query facade 内部读取 current surface revision，并闭合 typed capability / VFS / MCP / execution metadata。
-- [ ] 从 closed VFS surface 派生可选 `RuntimeBackendAnchor`，并提供 backend-required query/helper 供 MCP、Extension runtime、Terminal 等执行路径使用。
-- [ ] 保留 project/run/agent/runtime address/surface revision provenance 与 typed error。
-- [ ] 将 `resolve_current_frame_from_delivery_trace_ref` 降级为 query facade 内部实现 helper，或至少停止让 RuntimeGateway/API current-surface consumer 直接调用。
-- [ ] 新 query port 的 public result 不包含 `AgentFrame`、`AgentFrameRepository` 或 `FrameLaunchSurface`。
-- [ ] 增加 query facade 单元测试：
-  - [ ] runtime session 缺 anchor。
-  - [ ] anchor 指向 agent/run 不一致。
-  - [ ] current surface revision 缺 VFS/capability/MCP closure。
-  - [ ] default mount backend id 生成 backend anchor。
-  - [ ] workspace metadata 生成 workspace binding anchor。
-  - [ ] resource query 在缺 backend anchor 时仍返回 closed resource surface。
-  - [ ] backend-required query 在缺 backend anchor 时返回带 purpose 的 typed error。
+- [x] 新增 AgentRun/Lifecycle runtime surface query facade 与窄 query port。
+- [x] 从 `RuntimeSessionExecutionAnchor` 解析 run / agent / runtime address。
+- [x] 在 query facade 内部读取 current surface revision，并闭合 typed capability / VFS / MCP / execution metadata。
+- [x] 从 closed VFS surface 派生可选 `RuntimeBackendAnchor`，并提供 backend-required query/helper 供 MCP、Extension runtime、Terminal 等执行路径使用。
+- [x] 保留 project/run/agent/runtime address/surface revision provenance 与 typed error。
+- [x] 将 `resolve_current_frame_from_delivery_trace_ref` 降级为 query facade 内部实现 helper，或至少停止让 RuntimeGateway/API current-surface consumer 直接调用。
+- [x] 新 query port 的 public result 不包含 `AgentFrame`、`AgentFrameRepository` 或 `FrameLaunchSurface`。
+- [x] 增加 query facade 单元测试：
+  - [x] runtime session 缺 anchor。
+  - [x] anchor 指向 agent/run 不一致。
+  - [x] current surface revision 缺 VFS/capability/MCP closure。
+  - [x] default mount backend id 生成 backend anchor。
+  - [x] workspace metadata 生成 workspace binding anchor。
+  - [x] resource query 在缺 backend anchor 时仍返回 closed resource surface。
+  - [x] backend-required query 在缺 backend anchor 时返回带 purpose 的 typed error。
 
 ## Phase 2: RuntimeGateway MCP Access Migration
 
-- [ ] 新增 `RuntimeSessionMcpAccess` 实现，依赖 AgentRun runtime surface query port 与 MCP discovery port。
-- [ ] `mcp.list_tools` 通过 query facade 返回的 surface 构造 `McpToolDiscoveryRequest`。
-- [ ] `mcp.call_tool` 复用同一 discovery entries 并执行目标 tool。
-- [ ] AppState/bootstrap 改为注入新的 MCP access，而不是 `SessionCapabilityService`。
-- [ ] 删除 `SessionCapabilityService impl RuntimeSessionMcpAccess`。
-- [ ] 从 `session/hub/tool_builder.rs` 移除 runtime action backing discovery 的 idle surface fallback。
-- [ ] 保留 hub 内 active turn connector tool refresh 逻辑，并确保它不承担 RuntimeGateway session action backing access。
-- [ ] 增加 RuntimeGateway/MCP 测试：
-  - [ ] Canvas/user session actor 的 `mcp.list_tools` 能在 idle session 下拿到 backend anchor。
-  - [ ] `mcp.call_tool` 的 runtime_name / server_name + tool_name 匹配行为保持。
-  - [ ] capability disabled tool 不暴露。
+- [x] 新增 `RuntimeSessionMcpAccess` 实现，依赖 AgentRun runtime surface query port 与 MCP discovery port。
+- [x] `mcp.list_tools` 通过 query facade 返回的 surface 构造 `McpToolDiscoveryRequest`。
+- [x] `mcp.call_tool` 复用同一 discovery entries 并执行目标 tool。
+- [x] AppState/bootstrap 改为注入新的 MCP access，而不是 `SessionCapabilityService`。
+- [x] 删除 `SessionCapabilityService impl RuntimeSessionMcpAccess`。
+- [x] 从 `session/hub/tool_builder.rs` 移除 runtime action backing discovery 的 idle surface fallback。
+- [x] 保留 hub 内 active turn connector tool refresh 逻辑，并确保它不承担 RuntimeGateway session action backing access。
+- [x] 增加 RuntimeGateway/MCP 测试：
+  - [x] Canvas/user session actor 的 `mcp.list_tools` 能在 idle session 下拿到 backend anchor。
+  - [x] `mcp.call_tool` 的 runtime_name / server_name + tool_name 匹配行为保持。
+  - [x] capability disabled tool 不暴露。
 
 ## Phase 3: API Current Surface Consumers
 
-- [ ] 用 AgentRun runtime surface query 替换或改造 `resolve_session_frame_vfs`。
-- [ ] 删除 `SessionFrameVfsResult.frame` 这类向 API current-surface consumer 泄漏 `AgentFrame` 的字段，或将 helper 私有化为 query adapter 内部实现。
-- [ ] Canvas runtime snapshot / binding resource path 改为消费 query facade VFS。
-- [ ] Extension runtime action/channel target 解析改为消费 query facade backend anchor + VFS workspace context。
-- [ ] VFS surface `SessionRuntime` source 改为消费 query facade。
-- [ ] VFS surface `AgentRun` current delivery source 改为消费同一 resource surface facade，不再在 API route 内独立执行 current frame + lifecycle projection。
-- [ ] Terminal spawn / launch target 改为消费 query facade 的 backend anchor + VFS。
-- [ ] 检查 terminal/session VFS target 相关路径是否仍依赖 active-turn-only backend anchor helper。
-- [ ] 保留 API route 的 project permission 校验，并明确权限校验发生在 API adapter 还是 query facade。
-- [ ] 对 `crates/agentdash-api/src` 增加 focused import review：Canvas/Extension/VFS/Terminal/runtime action 路径不再直接 import `AgentFrame`、`AgentFrameSurfaceExt` 或 current frame resolver；presentation read-model 除外。
+- [x] 用 AgentRun runtime surface query 替换或改造 `resolve_session_frame_vfs`。
+- [x] 删除 `SessionFrameVfsResult.frame` 这类向 API current-surface consumer 泄漏 `AgentFrame` 的字段，或将 helper 私有化为 query adapter 内部实现。
+- [x] Canvas runtime snapshot / binding resource path 改为消费 query facade VFS。
+- [x] Extension runtime action/channel target 解析改为消费 query facade backend anchor + VFS workspace context。
+- [x] VFS surface `SessionRuntime` source 改为消费 query facade。
+- [x] VFS surface `AgentRun` current delivery source 改为消费同一 resource surface facade，不再在 API route 内独立执行 current frame + lifecycle projection。
+- [x] Terminal spawn / launch target 改为消费 query facade 的 backend anchor + VFS。
+- [x] 检查 terminal/session VFS target 相关路径是否仍依赖 active-turn-only backend anchor helper。
+- [x] 保留 API route 的 project permission 校验，并明确权限校验发生在 API adapter 还是 query facade。
+- [x] 对 `crates/agentdash-api/src` 增加 focused import review：Canvas/Extension/VFS/Terminal/runtime action 路径不再直接 import `AgentFrame`、`AgentFrameSurfaceExt` 或 current frame resolver；presentation read-model 除外。
 - [ ] 增加 API/route 测试：
   - [ ] Canvas runtime snapshot 使用同一 current surface VFS。
   - [ ] Extension runtime invoke 使用 query facade backend target。
@@ -73,24 +73,55 @@
 
 ## Phase 4: Business Update / Adoption Old Path Cleanup
 
-- [ ] 调查并迁移 Canvas exposure/adoption helper。
-- [ ] 调查并迁移 WorkspaceModule Canvas operation 后的 runtime surface update path。
-- [ ] 调查并迁移 Permission grant apply/revoke active runtime adoption path。
-- [ ] 将 active runtime adoption primitive 收窄为 runtime surface update use case 内部 helper。
-- [ ] 删除、私有化或重命名误导性 facade：
-  - [ ] `SessionCapabilityService::expose_canvas_mount_revision_and_adopt`
-  - [ ] `SessionCapabilityService::adopt_persisted_agent_frame_revision`
-  - [ ] `SessionCapabilityService::resolve_runtime_session_target`
-  - [ ] active-turn-only `get_current_runtime_backend_anchor` 对 API/业务的暴露
-- [ ] 增加静态 grep 检查或 focused tests，确保业务模块不直接调用旧 adoption primitive。
+- [x] 调查并迁移 Canvas exposure/adoption helper。
+- [x] 调查并迁移 WorkspaceModule Canvas operation 后的 runtime surface update path。
+- [x] 调查并迁移 Permission grant apply/revoke active runtime adoption path。
+- [x] 将 active runtime adoption primitive 收窄为 runtime surface update use case 内部 helper。
+- [x] 删除、私有化或重命名误导性 facade：
+  - [x] `SessionCapabilityService::expose_canvas_mount_revision_and_adopt`
+  - [x] `SessionCapabilityService::adopt_persisted_agent_frame_revision`
+  - [x] `SessionCapabilityService::resolve_runtime_session_target`
+  - [x] active-turn-only `get_current_runtime_backend_anchor` 对 API/业务的暴露
+- [x] 增加静态 grep 检查或 focused tests，确保业务模块不直接调用旧 adoption primitive。
 
 ## Phase 5: Spec And Cleanup
 
-- [ ] 更新 `.trellis/spec/backend/runtime-gateway.md`：MCP session action backing access 消费 AgentRun runtime surface query port。
-- [ ] 更新 `.trellis/spec/backend/session/runtime-execution-state.md`：`session/hub` 只表达 live runtime coordination，不表达 AgentRun current surface query。
-- [ ] 如需要，新增 backend appendix 记录 AgentRun runtime surface query contract 与 `AgentFrame` exposure boundary。
-- [ ] 清理 task research 中已转入 design 的临时 TODO。
+- [x] 更新 `.trellis/spec/backend/runtime-gateway.md`：MCP session action backing access 消费 AgentRun runtime surface query port。
+- [x] 更新 `.trellis/spec/backend/session/runtime-execution-state.md`：`session/hub` 只表达 live runtime coordination，不表达 AgentRun current surface query。
+- [x] 如需要，新增 backend appendix 记录 AgentRun runtime surface query contract 与 `AgentFrame` exposure boundary。
+- [x] 清理 task research 中已转入 design 的临时 TODO。
 - [ ] 跑质量检查。
+
+## Phase 6: Session Module Owner Cleanup
+
+这一步是用户指出的核心补充：不能只清 `session/hub` 或重命名 `SessionCapabilityService`，必须沿调用链清理整个
+`session` 模块里仍承载的业务 owner。
+
+- [ ] 将 `agent_run::frame::construction::* -> session::assembly_builder` 的反向依赖迁出：
+  - [ ] `SessionAssemblyBuilder`、`AssemblyLaunchExtras`、`project_assembly_to_frame` 移到 `agent_run::frame::construction`。
+  - [ ] construction 侧自行拥有 frame surface draft + launch-only extras handoff。
+  - [ ] session launch 不再 re-export assembly builder。
+- [ ] 将 `agent_run::frame::construction::* -> session::assembler` 的 owner composition 迁出：
+  - [ ] lifecycle node composition 归 lifecycle/AgentRun construction。
+  - [ ] companion composition 归 companion/AgentRun construction。
+  - [ ] ProjectAgent selection/context projection 不再从 session assembler 进入。
+  - [ ] `SessionRequestAssembler` 删除或改名为 AgentRun construction service。
+- [ ] 将 `session::capability_state` 迁到 AgentRun runtime surface/capability owner：
+  - [ ] `project_capability_state_from_frame` / `capability_state_to_frame_surfaces` 与 `AgentFrameBuilder` 同归属。
+  - [ ] `RuntimeCapabilityTransition` replay / `CapabilityDimensionRegistry` 移出 session。
+  - [ ] Permission、WorkspaceModule、AgentRun query/update 不再 import `session::capability_state`。
+- [ ] 将 `session::capability_projection` 迁到 construction-time capability projection owner：
+  - [ ] skill/guideline discovery 的输入输出按 AgentRun construction/runtime surface 命名。
+  - [ ] session runtime transition service 只在 test helper 或 delivery transition apply 中消费窄接口。
+- [ ] 将 `session::construction_provider` 改为 launch envelope provider contract：
+  - [ ] contract 名称表达 `FrameLaunchEnvelope` provider，而不是 session construction owner。
+  - [ ] `SessionLaunchService` 只依赖 provider 产出的 closed launch envelope。
+- [ ] 将 `session::mailbox_delegate` 迁到 AgentRun mailbox runtime adapter：
+  - [ ] AgentRun mailbox scheduler/service construction 不再由 session delegate 持有。
+  - [ ] session launch planner 只接收/安装 `AgentRuntimeDelegate`。
+- [ ] 增加边界检查：
+  - [ ] `rg "session::assembly_builder|session::assembler|session::capability_state|session::capability_projection" crates/agentdash-application/src/agent_run crates/agentdash-application/src/permission crates/agentdash-application/src/workspace_module`
+  - [ ] `rg "SessionRequestAssembler|SessionAssemblyBuilder|project_capability_state_from_frame" crates/agentdash-application/src/session/mod.rs crates/agentdash-application/src/session`
 
 ## Efficient Parallel Dispatch Plan
 

@@ -38,6 +38,27 @@ RuntimeGateway MCP action
 
 ## Boundary Model
 
+### -1. Session Module Call Chain Audit
+
+这次补充的判断不是按文件名切分，而是按调用链切分。当前 session 模块里仍有多条业务链路把
+AgentRun/Lifecycle/Canvas/Permission/WorkspaceModule surface ownership 反向拉进了 session：
+
+| Call chain | 涉及业务 owner | 为什么有问题 | 目标归属 |
+| --- | --- | --- | --- |
+| `agent_run::frame::construction::*` -> `session::assembly_builder::{SessionAssemblyBuilder, project_assembly_to_frame}` -> `FrameSurfaceDraft` | AgentRun frame construction, VFS, MCP, capability, Canvas mounts | AgentRun construction 反向依赖 session builder，说明 session 正在充当 frame surface construction toolbox。 | `agent_run::frame::construction` 拥有 surface assembly；session launch 只消费 `FrameLaunchEnvelope`。 |
+| `agent_run::frame::construction::{composer_lifecycle_node, composer_companion}` / `workflow::orchestration::agent_node_launcher` -> `session::{SessionRequestAssembler, compose_lifecycle_node_to_frame_with_audit}` | Lifecycle node, companion, ProjectAgent selection, Canvas repo, RepositorySet | lifecycle/companion/project-agent 组合是业务 owner construction，不是 delivery session runtime。 | 拆到 `agent_run::frame::construction` 下 owner-specific composer，或分别归 lifecycle/companion construction service。 |
+| `agent_run::{runtime_surface, runtime_surface_update, effective_capability}` / `permission::service` / `workspace_module::tools` -> `session::capability_state::{project_capability_state_from_frame, RuntimeCapabilityTransition, CapabilityDimensionRegistry}` | AgentFrame runtime surface storage, Permission grant effects, WorkspaceModule visibility | `session::capability_state` 实际是 AgentFrame surface/replay 模型，被多个业务模块当公共 surface API。 | 迁到 AgentRun runtime surface/capability surface 模块；session 只在 delivery transition outbox 中引用窄 DTO。 |
+| `agent_run::frame::builder` -> `session::capability_state::{capability_state_to_frame_surfaces, compose_vfs_with_overlay_and_directives}` | AgentFrame write model | frame builder 写入 surface 时依赖 session，方向反了。 | frame builder 与 surface serializer 同归 `agent_run::frame` 或 `agent_run::runtime_surface`。 |
+| `session::construction_provider` -> `agent_run::frame::construction::build` -> `FrameLaunchEnvelope` | Launch envelope construction | trait 名叫 SessionConstructionProvider，但实现和事实源是 AgentRun frame construction。session 只需要 launch envelope provider，不应命名成 session construction owner。 | 改为 frame/launch envelope provider contract，输入保留 delivery facts，construction 实现归 AgentRun。 |
+| `session::mailbox_delegate` -> `AgentRunMailboxService::{schedule_for_runtime_session, drain_agent_run_turn_boundary_for_delegate, accept_hook_steering_messages}` | AgentRun mailbox policy/scheduler | session delegate 正在 new AgentRun mailbox service 并持有 lifecycle/frame/mailbox repositories。session 应只是 AgentRuntimeDelegate adapter 安装点。 | 将 mailbox runtime delegate 移到 AgentRun mailbox adapter；session launch planner 只插入 delegate。 |
+| `session::assembler` -> `derive_session_skill_baseline` + `AgentRunLifecycleSurfaceProjector` + `CanvasRepository` | Skill discovery, lifecycle projection, Canvas mount surface | companion/lifecycle construction 过程中跨多个业务 owner 拼 surface，session 成为聚合编排者。 | owner-specific construction service 统一决定 skill/lifecycle/canvas surface，session 不持有这些仓储。 |
+
+因此 session 模块不是整包删除，而是要把它缩回 delivery runtime boundary：
+
+- 保留：runtime trace/session meta/event persistence、live registry、turn supervisor、connector lifecycle、launch/commit/ingestion、terminal effects、hook delivery binding cache、active turn tool refresh、runtime delivery command outbox。
+- 迁出：AgentFrame surface model、capability dimension replay、frame construction builder、lifecycle/companion/project-agent composition、Canvas mount construction、AgentRun mailbox scheduler policy。
+- 删除/私有化：任何让 API、RuntimeGateway、Canvas、WorkspaceModule、Permission、AgentRun construction 把 `session::*` 当 current surface / business surface API 的 public re-export。
+
 ### 0. AgentFrame Exposure Boundary
 
 当前 `AgentFrame` 的实际暴露面偏大，原因不是 `AgentFrame` 本身抽象错误，而是 application 仍是单 crate，`agentdash_domain::workflow::{AgentFrame, AgentFrameRepository}` 与 `agent_run::frame::*` 很容易被横向模块直接 import。
@@ -249,6 +270,12 @@ business event
 | VFS surface resolver `AgentRun` | run/agent -> latest delivery anchor/current frame/lifecycle projection | AgentRun resource surface facade | Replace duplicated API projection; ensure same delivery runtime does not diverge from `SessionRuntime` source |
 | WorkspaceModule Canvas exposure helpers | business mutation + frame write/adopt | Runtime surface update use case | Migrate/update, then private/delete helper |
 | Permission route adoption | grant state + active runtime adoption | Permission service + runtime surface update use case | Remove route-level adoption |
+| `agent_run::frame::construction::* -> session::assembly_builder` | AgentRun frame construction depends on session surface builder | AgentRun frame construction | Move `SessionAssemblyBuilder` / `AssemblyLaunchExtras` / `project_assembly_to_frame` under AgentRun construction and rename away from session |
+| `agent_run::frame::construction::* -> session::assembler` | lifecycle/companion/project-agent composition through session request assembler | Owner-specific construction services | Split lifecycle node and companion construction out of session; construction provider calls AgentRun-owned composer |
+| `session::capability_state` public exports | AgentFrame capability/VFS/MCP surface projection and transition replay | AgentRun runtime capability/surface module | Move frame projection/replay/dimension registry out; leave only delivery outbox record types in session until migrated |
+| `session::capability_projection` public exports | Skill/guideline discovery for runtime surface construction | AgentRun construction or capability module | Rename and move to construction-time capability projection owner; session launch consumes result only |
+| `session::construction_provider` naming | Provider contract claims session construction ownership while building AgentRun frame launch envelope | AgentRun frame launch envelope provider contract | Rename contract around `FrameLaunchEnvelope`; session keeps dependency as a launch input provider |
+| `session::mailbox_delegate` | Runtime delegate directly creates AgentRun mailbox service and owns scheduler policy deps | AgentRun mailbox runtime adapter | Move delegate/policy service construction to AgentRun; session launch planner only installs returned delegate |
 | Presentation lifecycle/session views | UI projection from current frame | Read-model facade | Keep separate from runtime surface query; no action/provider reuse |
 
 Exact function names and additional rows are captured in the research files listed at the end of this design.

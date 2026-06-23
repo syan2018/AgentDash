@@ -222,7 +222,7 @@ async fn resolve_task_workspace(
     if let Some(workspace_id) = story.and_then(|story| story.default_workspace_id) {
         return repos.workspace_repo.get_by_id(workspace_id).await.ok();
     }
-    crate::session::construction_planner::resolve_project_workspace(repos, project)
+    crate::agent_run::resolve_project_workspace(repos, project)
         .await
         .ok()
 }

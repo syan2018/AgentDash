@@ -6,13 +6,13 @@ use agentdash_spi::ConnectorError;
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::project_agent_context::{
+    build_project_agent_context, resolve_project_workspace,
+};
 use crate::lifecycle::projection::resolve_active_workflow_projection_from_message_stream_trace;
 use crate::lifecycle::{
     SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
     SubjectWorkspacePolicy,
-};
-use crate::session::construction_planner::{
-    build_project_agent_context, resolve_project_workspace,
 };
 
 use super::{

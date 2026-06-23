@@ -38,6 +38,9 @@ use super::assembly::slice_companion_bundle;
 use super::assembly::{
     FrameAssemblyBuilder, FrameAssemblyLaunchExtras, project_frame_assembly_to_frame,
 };
+use crate::agent_run::project_agent_context::{
+    ResolvedProjectAgentContext, build_project_agent_context,
+};
 use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
 };
@@ -65,7 +68,6 @@ use crate::lifecycle::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
-use crate::session::construction_planner::ResolvedProjectAgentContext;
 use crate::vfs::{VfsService, apply_agent_vfs_access_grants};
 
 // ═══════════════════════════════════════════════════════════════════
@@ -285,8 +287,7 @@ impl<'a> FrameRequestAssembler<'a> {
         prepared: &mut FrameAssemblyBuilder,
         selected_project_agent_id: Option<Uuid>,
         selected_agent_key_snapshot: Option<&str>,
-    ) -> Result<Option<crate::session::construction_planner::ResolvedProjectAgentContext>, String>
-    {
+    ) -> Result<Option<ResolvedProjectAgentContext>, String> {
         let Some(context) = self
             .resolve_selected_companion_project_agent_context(
                 selected_project_agent_id,
@@ -327,9 +328,7 @@ impl<'a> FrameRequestAssembler<'a> {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("selected companion ProjectAgent {project_agent_id} 不存在"))?;
-        let context =
-            crate::session::construction_planner::build_project_agent_context(self.repos, &agent)
-                .await?;
+        let context = build_project_agent_context(self.repos, &agent).await?;
         validate_selected_agent_key_snapshot(&context, selected_agent_key_snapshot)?;
         Ok(Some(context))
     }
@@ -392,7 +391,7 @@ impl<'a> FrameRequestAssembler<'a> {
     async fn resolve_selected_companion_capabilities(
         &self,
         prepared: &mut FrameAssemblyBuilder,
-        context: &crate::session::construction_planner::ResolvedProjectAgentContext,
+        context: &ResolvedProjectAgentContext,
         slice_mode: CompanionSliceMode,
         identity: Option<&AuthIdentity>,
     ) -> Result<(), String> {

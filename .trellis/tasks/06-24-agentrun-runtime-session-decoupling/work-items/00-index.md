@@ -17,7 +17,7 @@ See `../parallel-dag.md`.
 | `WI-06-surface-update-unification.md` | done | Unify business surface updates behind AgentRun typed update facade. |
 | `WI-07-launch-commit-ownership.md` | done | Split RuntimeSession delivery commit from AgentRun/Lifecycle writes. |
 | `WI-08-presentation-read-model-cleanup.md` | done | Move presentation/current-frame read models behind application query facades. |
-| `WI-09-public-visibility-import-cleanup.md` | pending | Remove broad public exports and forbidden imports after migrations. |
+| `WI-09-public-visibility-import-cleanup.md` | done | Remove broad public exports and forbidden imports after migrations. |
 | `WI-10-final-review-gate.md` | pending | Run final evidence, test and documentation gate. |
 | `WI-11-canvas-extension-session-project-binding.md` | done | Add explicit Canvas/Extension Project/session binding guards before Gateway/provider invocation. |
 

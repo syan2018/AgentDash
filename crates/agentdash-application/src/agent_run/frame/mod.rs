@@ -1,13 +1,14 @@
-pub mod builder;
-pub mod construction;
-pub mod hook_runtime;
-pub mod launch_commit;
-pub mod launch_envelope_provider;
-pub mod runtime_launch;
-pub mod surface;
-pub mod surface_service;
+pub(crate) mod builder;
+pub(crate) mod construction;
+pub(crate) mod hook_runtime;
+pub(crate) mod launch_commit;
+pub(crate) mod launch_envelope_provider;
+pub(crate) mod runtime_launch;
+pub(crate) mod surface;
+pub(crate) mod surface_service;
 
 pub use builder::AgentFrameBuilder;
+pub use construction::{FrameConstructionDeps, FrameConstructionService};
 pub use hook_runtime::AgentFrameHookRuntime;
 pub use launch_commit::{
     AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,

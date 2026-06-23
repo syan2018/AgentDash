@@ -468,7 +468,7 @@ struct AgentRunFrameVfsResolution {
 }
 
 /// Project Agent 面向用户的显示名：优先 preset.display_name，回退 ProjectAgent.name。
-/// 与 construction_planner 的 display_name 解析同语义，仅依赖实体本地 config，无额外查询。
+/// 与 project_agent_context 的 display_name 解析同语义，仅依赖实体本地 config，无额外查询。
 fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
     project_agent
         .preset_config()

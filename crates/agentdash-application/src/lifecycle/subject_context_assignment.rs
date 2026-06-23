@@ -5,12 +5,12 @@ use agentdash_domain::workflow::SubjectRef;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
 
+use crate::agent_run::resolve_project_workspace;
 use crate::context::{
     Contribution, contribute_workspace_static_sources, resolve_workspace_declared_sources,
 };
 use crate::lifecycle::WorkflowApplicationError;
 use crate::repository_set::RepositorySet;
-use crate::session::construction_planner::resolve_project_workspace;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::vfs::VfsService;
 use crate::workspace::BackendAvailability;

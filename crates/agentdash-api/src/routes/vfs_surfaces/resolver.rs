@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session::construction_planner::resolve_project_workspace;
+use agentdash_application::agent_run::resolve_project_workspace;
 use agentdash_application::task::plan::find_task_plan_item_for_subject;
 use agentdash_application::vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, SessionMountTarget,

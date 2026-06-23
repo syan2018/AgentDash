@@ -8,6 +8,7 @@ mod mailbox_runtime_adapter;
 pub mod message_delivery;
 mod permission_runtime_surface_update;
 mod presentation_read_model;
+mod project_agent_context;
 mod project_agent_start;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
@@ -51,8 +52,9 @@ pub use frame::{
     AgentRunFrameSurfaceService, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
     AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
-    FrameRuntimeSurface, FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    FrameConstructionDeps, FrameConstructionReason, FrameConstructionService,
+    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
+    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
 };
 pub use mailbox::{
@@ -76,6 +78,10 @@ pub use presentation_read_model::{
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
     RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel, SessionRuntimeControlPlaneReadModel,
     SessionRuntimeControlPlaneStatusModel, SessionRuntimeControlReadModel,
+};
+pub use project_agent_context::{
+    PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,
+    resolve_project_workspace,
 };
 pub use project_agent_start::{
     ProjectAgentRunInitialMailboxCommand, ProjectAgentRunInitialMailboxCommandPort,

@@ -7,7 +7,6 @@ mod compaction_checkpoint;
 mod compaction_context_frame;
 #[cfg(test)]
 pub(crate) mod construction;
-pub mod construction_planner;
 pub mod context;
 mod context_frame;
 mod context_projector;

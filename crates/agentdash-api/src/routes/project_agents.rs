@@ -4,10 +4,7 @@ use agentdash_application::agent_run::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService,
-};
-use agentdash_application::session::construction_planner::{
-    ResolvedProjectAgentContext, build_project_agent_context,
+    ProjectAgentRunStartService, ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,

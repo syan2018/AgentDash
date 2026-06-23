@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BackboneEnvelope, BackboneEvent } from "../../../generated/backbone-protocol";
+import type { BackboneEnvelope, BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "./types";
 import {
   createInitialStreamState,
@@ -47,6 +47,22 @@ function agentDelta(event_seq: number, delta: string): SessionEventEnvelope {
       delta,
     },
   });
+}
+
+function commandItem(id: string, aggregatedOutput: string | null): Extract<ThreadItem, { type: "commandExecution" }> {
+  return {
+    type: "commandExecution",
+    id,
+    command: "printf test",
+    cwd: "/tmp",
+    processId: null,
+    source: "agent",
+    status: "completed",
+    commandActions: [],
+    aggregatedOutput,
+    exitCode: 0,
+    durationMs: 10,
+  };
 }
 
 describe("sessionStreamReducer", () => {
@@ -111,5 +127,45 @@ describe("sessionStreamReducer", () => {
     });
 
     expect(shouldFlushStreamEventImmediately(approvalEvent)).toBe(true);
+  });
+
+  it("command completed 后使用 final aggregatedOutput 作为终态 bounded 展示源", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      streamEvent(1, {
+        type: "item_started",
+        payload: {
+          item: commandItem("cmd-1", null),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          startedAtMs: 1,
+        },
+      }),
+      streamEvent(2, {
+        type: "command_output_delta",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "cmd-1",
+          delta: "live preview\n",
+        },
+      }),
+      streamEvent(3, {
+        type: "item_completed",
+        payload: {
+          item: commandItem(
+            "cmd-1",
+            "command: printf test\noutput_truncated: true (omitted_bytes=4096)\nfinal bounded output",
+          ),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          completedAtMs: 3,
+        },
+      }),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.accumulatedText).toContain("output_truncated: true");
+    expect(state.entries[0]?.accumulatedText).toContain("final bounded output");
+    expect(state.entries[0]?.accumulatedText).not.toBe("live preview\n");
   });
 });

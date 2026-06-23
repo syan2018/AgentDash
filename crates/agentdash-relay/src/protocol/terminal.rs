@@ -1,4 +1,6 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+
+use super::tool::{ToolShellTruncationInfo, truncate_live_output_text};
 
 // ─── 交互式终端 Payload ─────────────────────────────────────
 
@@ -71,6 +73,17 @@ pub struct TerminalKillResponse {
 pub struct TerminalOutputPayload {
     pub terminal_id: String,
     pub data: String,
+    #[serde(default, skip_serializing_if = "ToolShellTruncationInfo::is_empty")]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+impl TerminalOutputPayload {
+    pub fn bounded(mut self, max_bytes: usize) -> Self {
+        let (data, truncation) = truncate_live_output_text(&self.data, max_bytes);
+        self.data = data;
+        self.truncation = self.truncation.merge(&truncation);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

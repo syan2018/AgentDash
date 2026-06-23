@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::SessionPersistence;
+use agentdash_application::session::{SessionPersistence, SessionToolResultCache};
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
@@ -22,6 +22,7 @@ pub(crate) struct VfsBootstrapOutput {
 pub(crate) fn build_vfs_kernel(
     repos: RepositorySet,
     session_persistence: Arc<dyn SessionPersistence>,
+    tool_result_cache: Arc<SessionToolResultCache>,
     backend_registry: Arc<BackendRegistry>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
@@ -33,6 +34,7 @@ pub(crate) fn build_vfs_kernel(
             repos.routine_execution_repo.clone(),
             repos.skill_asset_repo.clone(),
             session_persistence,
+            tool_result_cache,
         )
         .register(Arc::new(RelayFsMountProvider::new(
             backend_registry.clone(),

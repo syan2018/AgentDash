@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{
-    Arc,
+    Arc, Mutex as StdMutex,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -12,7 +12,8 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
     BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopDecision, StopReason,
-    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, agent_loop::AgentEventSink,
+    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, ToolResultCacheWrite, ToolResultRefContext,
+    agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;
@@ -31,6 +32,7 @@ enum ScriptStep {
 struct ScriptedBridge {
     scripts: Arc<Mutex<VecDeque<Vec<ScriptStep>>>>,
     tool_snapshots: Arc<Mutex<Vec<Vec<String>>>>,
+    message_snapshots: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 impl ScriptedBridge {
@@ -38,11 +40,16 @@ impl ScriptedBridge {
         Self {
             scripts: Arc::new(Mutex::new(scripts.into())),
             tool_snapshots: Arc::new(Mutex::new(Vec::new())),
+            message_snapshots: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     async fn tool_snapshots(&self) -> Vec<Vec<String>> {
         self.tool_snapshots.lock().await.clone()
+    }
+
+    async fn message_snapshots(&self) -> Vec<Vec<String>> {
+        self.message_snapshots.lock().await.clone()
     }
 }
 
@@ -52,6 +59,13 @@ impl LlmBridge for ScriptedBridge {
         &self,
         request: BridgeRequest,
     ) -> Pin<Box<dyn Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        self.message_snapshots.lock().await.push(
+            request
+                .messages
+                .iter()
+                .map(|message| message.first_text().unwrap_or_default().to_string())
+                .collect(),
+        );
         self.tool_snapshots
             .lock()
             .await
@@ -91,11 +105,30 @@ struct NamedTool {
     executed: Arc<AtomicUsize>,
 }
 
+#[derive(Clone)]
+struct LargeResultTool {
+    name: String,
+    final_text: String,
+    update_text: Option<String>,
+    executed: Arc<AtomicUsize>,
+}
+
 impl NamedTool {
     fn new(name: impl Into<String>, executed: Arc<AtomicUsize>) -> Self {
         Self {
             name: name.into(),
             executed,
+        }
+    }
+}
+
+impl LargeResultTool {
+    fn new(name: impl Into<String>, final_text: String, update_text: Option<String>) -> Self {
+        Self {
+            name: name.into(),
+            final_text,
+            update_text,
+            executed: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -133,6 +166,47 @@ impl AgentTool for NamedTool {
             content: vec![ContentPart::text(format!("{}:{args}", self.name))],
             is_error: false,
             details: None,
+        })
+    }
+}
+
+#[async_trait]
+impl AgentTool for LargeResultTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "large result test tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        _args: serde_json::Value,
+        _cancel: CancellationToken,
+        on_update: Option<agentdash_agent::ToolUpdateCallback>,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        self.executed.fetch_add(1, Ordering::SeqCst);
+        if let (Some(on_update), Some(update_text)) = (on_update, self.update_text.as_ref()) {
+            on_update(AgentToolResult {
+                content: vec![ContentPart::text(update_text.clone())],
+                is_error: false,
+                details: Some(serde_json::json!({ "phase": "update" })),
+            });
+        }
+        Ok(AgentToolResult {
+            content: vec![ContentPart::text(self.final_text.clone())],
+            is_error: false,
+            details: Some(serde_json::json!({ "phase": "final" })),
         })
     }
 }
@@ -240,6 +314,47 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::ToolExecutionApprovalResolved { .. } => "tool_execution_approval_resolved",
         AgentEvent::ToolExecutionEnd { .. } => "tool_execution_end",
     }
+}
+
+const LARGE_RESULT_SENTINEL: &str = "AGENTDASH_RUNTIME_ALIGNMENT_LARGE_RESULT_SENTINEL";
+
+fn large_result_text() -> String {
+    format!(
+        "{}{}{}",
+        "h".repeat(70_000),
+        LARGE_RESULT_SENTINEL,
+        "t".repeat(70_000)
+    )
+}
+
+fn assert_bounded_tool_result(result: &AgentToolResult, lifecycle_item_id: &str) {
+    let expected_lifecycle_path =
+        format!("lifecycle://session/tool-results/{lifecycle_item_id}/result.txt");
+    let text = result
+        .content
+        .first()
+        .and_then(ContentPart::extract_text)
+        .expect("bounded result should have text");
+    assert!(text.contains("[tool result truncated]"));
+    assert!(!text.contains(LARGE_RESULT_SENTINEL));
+    assert!(text.contains(&expected_lifecycle_path));
+    assert_eq!(
+        result
+            .details
+            .as_ref()
+            .and_then(|details| details.get("lifecycle_path"))
+            .and_then(serde_json::Value::as_str),
+        Some(expected_lifecycle_path.as_str())
+    );
+    assert_eq!(
+        result
+            .details
+            .as_ref()
+            .and_then(|details| details.get("truncation"))
+            .and_then(|truncation| truncation.get("truncated"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
 }
 
 #[tokio::test]
@@ -669,6 +784,413 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
             .expect("tool result should have text")
             .contains("arguments are invalid")
     );
+}
+
+#[tokio::test]
+async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
+    let tool_call_id = "tool-large-final-1";
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call_named(
+                tool_call_id,
+                "large_tool",
+                serde_json::json!({}),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let tool: DynAgentTool = Arc::new(LargeResultTool::new(
+        "large_tool",
+        large_result_text(),
+        None,
+    ));
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let cache_writes = Arc::new(StdMutex::new(Vec::<ToolResultCacheWrite>::new()));
+    let cache_writes_for_writer = cache_writes.clone();
+    let stable_item_id = format!("turn-large:{tool_call_id}");
+    let config = AgentLoopConfig {
+        tool_result_ref_context: Some(ToolResultRefContext {
+            session_id: "session-large".to_string(),
+            turn_id: "turn-large".to_string(),
+            cache_writer: Some(Arc::new(move |write| {
+                cache_writes_for_writer
+                    .lock()
+                    .expect("cache write lock poisoned")
+                    .push(write);
+            })),
+        }),
+        ..AgentLoopConfig::default()
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("run large tool")],
+        &mut context,
+        &[tool],
+        &config,
+        &bridge,
+        &collecting_sink(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    let tool_result_message = new_messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::ToolResult {
+                content,
+                details,
+                is_error,
+                ..
+            } => Some(AgentToolResult {
+                content: content.clone(),
+                details: details.clone(),
+                is_error: *is_error,
+            }),
+            _ => None,
+        })
+        .expect("tool result message should exist");
+    assert!(!tool_result_message.is_error);
+    assert_bounded_tool_result(&tool_result_message, &stable_item_id);
+
+    let collected = events.lock().await.clone();
+    let end_result = collected
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolExecutionEnd {
+                tool_call_id: id,
+                tool_name,
+                result,
+                is_error,
+            } if id == tool_call_id => {
+                assert_eq!(tool_name, "large_tool");
+                assert!(!is_error);
+                Some(
+                    serde_json::from_value::<AgentToolResult>(result.clone())
+                        .expect("tool end result should decode"),
+                )
+            }
+            _ => None,
+        })
+        .expect("tool execution end should exist");
+    assert_bounded_tool_result(&end_result, &stable_item_id);
+
+    let message_end_result = collected
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::MessageEnd {
+                message:
+                    AgentMessage::ToolResult {
+                        content,
+                        details,
+                        is_error,
+                        ..
+                    },
+            } => Some(AgentToolResult {
+                content: content.clone(),
+                details: details.clone(),
+                is_error: *is_error,
+            }),
+            _ => None,
+        })
+        .expect("tool result message_end should exist");
+    assert_bounded_tool_result(&message_end_result, &stable_item_id);
+    let writes = cache_writes.lock().expect("cache write lock poisoned");
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].session_id, "session-large");
+    assert_eq!(writes[0].item_id, stable_item_id);
+    assert!(
+        writes[0].text.contains(LARGE_RESULT_SENTINEL),
+        "cache writer should receive the original body"
+    );
+    assert_eq!(
+        writes[0].lifecycle_path,
+        format!(
+            "lifecycle://session/tool-results/{}/result.txt",
+            writes[0].item_id
+        )
+    );
+
+    let snapshots = bridge.message_snapshots().await;
+    let second_request_messages = snapshots
+        .get(1)
+        .expect("second provider request should include tool result context");
+    assert!(
+        second_request_messages
+            .iter()
+            .any(|text| text.contains("[tool result truncated]"))
+    );
+    assert!(
+        !second_request_messages
+            .iter()
+            .any(|text| text.contains(LARGE_RESULT_SENTINEL))
+    );
+}
+
+#[tokio::test]
+async fn large_tool_update_partial_result_is_bounded_before_serialization() {
+    let tool_call_id = "tool-large-update-1";
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call_named(
+                tool_call_id,
+                "large_update_tool",
+                serde_json::json!({}),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let tool: DynAgentTool = Arc::new(LargeResultTool::new(
+        "large_update_tool",
+        "small final".to_string(),
+        Some(large_result_text()),
+    ));
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+
+    agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("run large update tool")],
+        &mut context,
+        &[tool],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &collecting_sink(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+    tokio::task::yield_now().await;
+
+    let collected = events.lock().await.clone();
+    let partial_result = collected
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolExecutionUpdate {
+                tool_call_id: id,
+                tool_name,
+                args,
+                partial_result,
+            } if id == tool_call_id => {
+                assert_eq!(tool_name, "large_update_tool");
+                assert_eq!(args, &serde_json::json!({}));
+                Some(
+                    serde_json::from_value::<AgentToolResult>(partial_result.clone())
+                        .expect("partial result should decode"),
+                )
+            }
+            _ => None,
+        })
+        .expect("tool update should exist");
+    assert_bounded_tool_result(&partial_result, tool_call_id);
+}
+
+#[tokio::test]
+async fn large_immediate_tool_result_is_bounded() {
+    let tool_call_id = "tool-large-immediate-1";
+    let executed = Arc::new(AtomicUsize::new(0));
+    let tool: DynAgentTool = Arc::new(RecordingTool {
+        executed: executed.clone(),
+    });
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call(
+                tool_call_id,
+                serde_json::json!({ "value": "x" }),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let config = AgentLoopConfig {
+        before_tool_call: Some(Arc::new(|_ctx, _cancel| {
+            Box::pin(async move {
+                Some(agentdash_agent::BeforeToolCallResult {
+                    block: true,
+                    reason: Some(large_result_text()),
+                })
+            })
+        })),
+        ..AgentLoopConfig::default()
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("blocked large tool")],
+        &mut context,
+        &[tool],
+        &config,
+        &bridge,
+        &collecting_sink(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    assert_eq!(executed.load(Ordering::SeqCst), 0);
+    let tool_result_message = new_messages
+        .iter()
+        .find(|message| matches!(message, AgentMessage::ToolResult { .. }))
+        .expect("immediate tool result should exist");
+    assert!(
+        !tool_result_message
+            .first_text()
+            .unwrap_or_default()
+            .contains(LARGE_RESULT_SENTINEL)
+    );
+    assert!(
+        tool_result_message
+            .first_text()
+            .unwrap_or_default()
+            .contains("[tool result truncated]")
+    );
+
+    let collected = events.lock().await.clone();
+    let end_result = collected
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ToolExecutionEnd {
+                tool_call_id: id,
+                result,
+                is_error,
+                ..
+            } if id == tool_call_id => {
+                assert!(*is_error);
+                Some(
+                    serde_json::from_value::<AgentToolResult>(result.clone())
+                        .expect("tool end result should decode"),
+                )
+            }
+            _ => None,
+        })
+        .expect("tool execution end should exist for immediate result");
+    assert_bounded_tool_result(&end_result, tool_call_id);
+}
+
+#[tokio::test]
+async fn large_approval_rejection_result_is_bounded_without_tool_execution_end() {
+    let tool_call_id = "tool-large-reject-1";
+    let executed = Arc::new(AtomicUsize::new(0));
+    let tool: DynAgentTool = Arc::new(RecordingTool {
+        executed: executed.clone(),
+    });
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call(
+                tool_call_id,
+                serde_json::json!({ "value": "x" }),
+            )),
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let config = AgentLoopConfig {
+        runtime_delegate: Some(Arc::new(RejectingRuntimeDelegate)),
+        await_tool_approval: Some(Arc::new(|_request, _cancel| {
+            Box::pin(async move {
+                ToolApprovalOutcome::Rejected {
+                    reason: Some(large_result_text()),
+                }
+            })
+        })),
+        ..AgentLoopConfig::default()
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("reject large tool")],
+        &mut context,
+        &[tool],
+        &config,
+        &bridge,
+        &collecting_sink(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    assert_eq!(executed.load(Ordering::SeqCst), 0);
+    let tool_result_message = new_messages
+        .iter()
+        .find_map(|message| match message {
+            AgentMessage::ToolResult {
+                content,
+                details,
+                is_error,
+                ..
+            } => Some(AgentToolResult {
+                content: content.clone(),
+                details: details.clone(),
+                is_error: *is_error,
+            }),
+            _ => None,
+        })
+        .expect("rejected tool result should exist");
+    assert!(tool_result_message.is_error);
+    assert_bounded_tool_result(&tool_result_message, tool_call_id);
+    assert_eq!(
+        tool_result_message
+            .details
+            .as_ref()
+            .and_then(|details| details.get("approval_state"))
+            .and_then(serde_json::Value::as_str),
+        Some("rejected")
+    );
+
+    let collected = events.lock().await.clone();
+    assert!(collected.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolExecutionApprovalResolved {
+            tool_call_id: id,
+            approved: false,
+            ..
+        } if id == tool_call_id
+    )));
+    assert!(!collected.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolExecutionEnd { tool_call_id: id, .. } if id == tool_call_id
+    )));
+    assert!(!collected.iter().any(|event| matches!(
+        event,
+        AgentEvent::MessageEnd {
+            message:
+                AgentMessage::ToolResult {
+                    content,
+                    ..
+                },
+        } if content
+            .iter()
+            .filter_map(ContentPart::extract_text)
+            .any(|text| text.contains(LARGE_RESULT_SENTINEL))
+    )));
 }
 
 #[tokio::test]

@@ -12,7 +12,10 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use agentdash_agent::{Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge};
+use agentdash_agent::{
+    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ToolResultCacheWriter,
+    ToolResultRefContext,
+};
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
@@ -43,6 +46,7 @@ pub struct PiAgentConnector {
     /// Layer 0: 系统全局 base system prompt。
     system_prompt: String,
     agents: Arc<Mutex<HashMap<String, PiAgentSessionRuntime>>>,
+    tool_result_cache_writer: Option<ToolResultCacheWriter>,
 }
 
 struct PiAgentSessionRuntime {
@@ -98,6 +102,7 @@ impl PiAgentConnector {
             llm_secret_codec: None,
             system_prompt: system_prompt.into(),
             agents: Arc::new(Mutex::new(HashMap::new())),
+            tool_result_cache_writer: None,
         }
     }
 
@@ -126,6 +131,10 @@ impl PiAgentConnector {
 
     pub fn set_llm_secret_codec(&mut self, codec: Arc<dyn LlmSecretCodec>) {
         self.llm_secret_codec = Some(codec);
+    }
+
+    pub fn set_tool_result_cache_writer(&mut self, writer: Option<ToolResultCacheWriter>) {
+        self.tool_result_cache_writer = writer;
     }
 
     pub(crate) fn add_provider(&mut self, provider: ProviderEntry) {
@@ -779,6 +788,11 @@ impl AgentConnector for PiAgentConnector {
         if let Some(thinking_level) = context.session.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);
         }
+        agent.set_tool_result_ref_context(Some(ToolResultRefContext {
+            session_id: session_id.to_string(),
+            turn_id: context.session.turn_id.clone(),
+            cache_writer: self.tool_result_cache_writer.clone(),
+        }));
 
         tracing::debug!(
             session_id,

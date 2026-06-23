@@ -1,0 +1,13 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-23-piagent-large-output-lifecycle-closeout/prd.md", "reason": "验收标准"}
+{"file": ".trellis/tasks/06-23-piagent-large-output-lifecycle-closeout/design.md", "reason": "稳定 id 与共享 cache 合同"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "检查 PiAgent bounded result 合同"}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "检查 projection/resume 不扩写合同"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查 Backbone / ThreadItem / persisted event 合同"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 lifecycle VFS / fs_read 边界"}
+{"file": "crates/agentdash-agent/tests/runtime_alignment.rs", "reason": "agent loop sentinel 回归"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs", "reason": "stream mapper / connector id 一致性回归"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "lifecycle VFS cache body 回归"}
+{"file": "crates/agentdash-application/src/session/hub/tests.rs", "reason": "projection / rehydrate sentinel 回归"}
+{"file": "packages/app-web/src/features/session/model/boundedOutput.test.ts", "reason": "前端 bounded marker 解析回归"}
+{"file": "packages/app-web/src/features/session/model/useSessionFeed.test.ts", "reason": "前端 tool burst / bounded 单卡回归"}

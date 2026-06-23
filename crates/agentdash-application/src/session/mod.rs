@@ -57,6 +57,7 @@ pub mod terminal_effects;
 pub mod title_generator;
 pub mod title_service;
 pub(crate) mod tool_assembly;
+pub mod tool_result_cache;
 pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
@@ -140,6 +141,10 @@ pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
 pub use title_service::SessionTitleService;
+pub use tool_result_cache::{
+    SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL, SessionToolResultCache, SessionToolResultCacheMetadata,
+    SessionToolResultCacheRead, SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
+};
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget, ApplyMountOperationsEffect,

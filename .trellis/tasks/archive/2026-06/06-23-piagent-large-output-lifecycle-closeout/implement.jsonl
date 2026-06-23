@@ -1,0 +1,20 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-23-piagent-large-output-lifecycle-closeout/prd.md", "reason": "任务需求与验收标准"}
+{"file": ".trellis/tasks/06-23-piagent-large-output-lifecycle-closeout/design.md", "reason": "稳定 item id 与共享缓存设计"}
+{"file": ".trellis/tasks/06-23-piagent-large-output-lifecycle-closeout/implement.md", "reason": "实施步骤与验证命令"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "PiAgent tool result bounded fact 与 lifecycle path 合同"}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "projection/resume 不自动读取 lifecycle body 合同"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Backbone ThreadItem 与 persisted event bounded 合同"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "lifecycle VFS 与 fs_read 读取边界"}
+{"file": "crates/agentdash-agent/src/agent_loop.rs", "reason": "AgentLoopConfig 扩展点"}
+{"file": "crates/agentdash-agent/src/agent_loop/tool_call.rs", "reason": "工具执行 final/update 裁切接入点"}
+{"file": "crates/agentdash-agent/src/agent_loop/tool_result.rs", "reason": "工具结果裁切与 lifecycle_path helper"}
+{"file": "crates/agentdash-agent/src/agent.rs", "reason": "Agent runtime config 注入点"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/connector.rs", "reason": "PiAgent turn_id/session_id 与 agent prompt 主链路"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs", "reason": "Backbone tool item id 映射点"}
+{"file": "crates/agentdash-application/src/session/tool_result_cache.rs", "reason": "共享会话工具结果缓存"}
+{"file": "crates/agentdash-application/src/vfs/provider.rs", "reason": "MountProviderRegistry builtins 注入点"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "lifecycle VFS provider 共享 cache 注入点"}
+{"file": "crates/agentdash-application/src/lifecycle/surface/journey/mod.rs", "reason": "tool-results metadata/body 读取逻辑"}
+{"file": "crates/agentdash-api/src/bootstrap/session.rs", "reason": "API session runtime / PiAgent connector bootstrap"}
+{"file": "crates/agentdash-api/src/bootstrap/vfs.rs", "reason": "API VFS kernel bootstrap"}

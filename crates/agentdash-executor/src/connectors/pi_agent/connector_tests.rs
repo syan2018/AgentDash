@@ -48,6 +48,29 @@ fn test_vfs(root_ref: &str) -> agentdash_spi::Vfs {
     }
 }
 
+fn content_item_text(items: &[codex::DynamicToolCallOutputContentItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => Some(text.as_str()),
+            codex::DynamicToolCallOutputContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
+    let path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("lifecycle_path: "))
+        .expect("bounded tool result should include lifecycle_path marker");
+    let path_item_id = path
+        .strip_prefix("lifecycle://session/tool-results/")
+        .and_then(|rest| rest.strip_suffix("/result.txt"))
+        .expect("lifecycle_path should use tool-results result.txt shape");
+    assert_eq!(path_item_id, item_id);
+}
+
 #[derive(Default)]
 struct RecordingBridge {
     requests: StdMutex<Vec<agentdash_agent::BridgeRequest>>,
@@ -1212,11 +1235,28 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
 }
 
 #[test]
-fn tool_execution_updates_preserve_full_tool_result_payload() {
+fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
+    let raw_sentinel = "RAW_TOOL_RESULT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
+    let stable_item_id = "turn-1:tool-1";
+    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-1/result.txt";
+    let bounded_text = format!(
+        "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded preview"
+    );
     let result = AgentToolResult {
-        content: vec![ContentPart::text("done")],
+        content: vec![ContentPart::text(bounded_text.clone())],
         is_error: false,
-        details: Some(serde_json::json!({ "ok": true })),
+        details: Some(serde_json::json!({
+            "ok": true,
+            "raw_sentinel_for_regression": raw_sentinel,
+            "lifecycle_path": lifecycle_path,
+            "truncation": {
+                "truncated": true,
+                "original_bytes": 131072,
+                "inline_bytes": bounded_text.len(),
+                "omitted_bytes": 131072 - bounded_text.len(),
+                "policy": "head_tail"
+            }
+        })),
     };
     let raw_result = serde_json::to_value(&result).expect("tool result should serialize");
 
@@ -1259,18 +1299,154 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     assert_eq!(update_envelopes.len(), 1);
     match &update_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "echo")
-            );
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                content_items: Some(content_items),
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool update, got {:?}", n.item);
+            };
+            assert_eq!(id, stable_item_id);
+            assert_eq!(tool, "echo");
+            let text = content_item_text(content_items);
+            assert!(text.contains("bounded preview"));
+            assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
+            assert!(!text.contains(raw_sentinel));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
 
     match &end_envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
-            assert!(
-                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. }) if tool == "echo" && *success == Some(true))
-            );
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                content_items: Some(content_items),
+                success,
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool completion, got {:?}", n.item);
+            };
+            assert_eq!(id, stable_item_id);
+            assert_eq!(tool, "echo");
+            assert_eq!(*success, Some(true));
+            let text = content_item_text(content_items);
+            assert!(text.contains("bounded preview"));
+            assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
+            assert!(!text.contains(raw_sentinel));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn shell_exec_final_uses_bounded_output_and_structured_details() {
+    let raw_sentinel = "RAW_SHELL_OUTPUT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
+    let stable_item_id = "turn-1:tool-shell-1";
+    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-shell-1/result.txt";
+    let bounded_output = format!(
+        "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded shell preview"
+    );
+    let start_event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        args: serde_json::json!({
+            "command": "cargo test -p agentdash-executor pi_agent",
+            "cwd": "workspace://repo"
+        }),
+    };
+    let result = AgentToolResult {
+        content: vec![ContentPart::text(bounded_output.clone())],
+        is_error: true,
+        details: Some(serde_json::json!({
+            "type": "shell_exec",
+            "original_command": "cargo test -p agentdash-executor pi_agent",
+            "executed_command": "cargo test -p agentdash-executor pi_agent",
+            "state": "completed",
+            "exit_code": 7,
+            "session_id": "shell-session-1",
+            "terminal_id": "terminal-1",
+            "next_seq": 42,
+            "truncated": true,
+            "omitted_bytes": 8192,
+            "raw_sentinel_for_regression": raw_sentinel,
+            "lifecycle_path": lifecycle_path,
+            "truncation": {
+                "truncated": true,
+                "original_bytes": 131072,
+                "inline_bytes": bounded_output.len(),
+                "omitted_bytes": 131072 - bounded_output.len(),
+                "policy": "head_tail"
+            }
+        })),
+    };
+    let end_event = AgentEvent::ToolExecutionEnd {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        result: serde_json::to_value(&result).expect("tool result should serialize"),
+        is_error: true,
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let _ = convert_event_to_envelopes(
+        &start_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+    let end_envelopes = convert_event_to_envelopes(
+        &end_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(end_envelopes.len(), 1);
+    match &end_envelopes[0].event {
+        BackboneEvent::ItemCompleted(n) => {
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            assert!(matches!(
+                &n.item,
+                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                    agentdash_agent_protocol::AgentDashNativeThreadItem::ShellExec {
+                        command,
+                        id,
+                        cwd: Some(cwd),
+                        status: codex::DynamicToolCallStatus::Failed,
+                        aggregated_output: Some(aggregated_output),
+                        exit_code: Some(7),
+                        success: Some(false),
+                        ..
+                    }
+                ) if id == stable_item_id
+                    && command == "cargo test -p agentdash-executor pi_agent"
+                    && cwd == "workspace://repo"
+                    && aggregated_output == &bounded_output
+                    && aggregated_output.contains(lifecycle_path)
+                    && {
+                        assert_lifecycle_path_matches_item_id(aggregated_output, id);
+                        true
+                    }
+                    && !aggregated_output.contains(raw_sentinel)
+            ));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }

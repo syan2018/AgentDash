@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart, TokenUsage};
+use agentdash_agent::{
+    AgentEvent, AgentMessage, AgentToolResult, ContentPart, TokenUsage, stable_tool_result_item_id,
+};
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     PlatformEvent, SourceInfo, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo,
@@ -25,7 +27,7 @@ fn make_envelope(
     })
 }
 
-/// 合成 item_id — pi_agent 没有原生 item id，用 turn + entry 合成。
+/// 合成非工具 chunk item_id。工具结果使用 `stable_tool_result_item_id`。
 fn synth_item_id(turn_id: &str, entry_index: u32, suffix: &str) -> String {
     format!("{turn_id}:{entry_index}:{suffix}")
 }
@@ -180,14 +182,57 @@ fn partial_result_details_type(partial_result: &serde_json::Value) -> Option<&st
 }
 
 fn partial_result_text(partial_result: &serde_json::Value) -> String {
-    partial_result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .to_string()
+    tool_result_text(partial_result).unwrap_or_default()
+}
+
+fn decode_tool_result(value: &serde_json::Value) -> Option<AgentToolResult> {
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn tool_result_text(value: &serde_json::Value) -> Option<String> {
+    let result = decode_tool_result(value)?;
+    let text = result
+        .content
+        .iter()
+        .filter_map(ContentPart::extract_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn tool_result_details(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    value.get("details").filter(|details| !details.is_null())
+}
+
+fn shell_exit_code_from_result(value: &serde_json::Value) -> Option<i32> {
+    tool_result_details(value)
+        .and_then(|details| details.get("exit_code"))
+        .and_then(|exit_code| exit_code.as_i64())
+        .and_then(|exit_code| i32::try_from(exit_code).ok())
+        .or_else(|| {
+            tool_result_text(value).and_then(|text| {
+                // exit code 可能被保留在 shell result 文本里；bounded preview 裁掉尾部时，
+                // 上面的 details 路径仍能保留结构化状态。
+                text.lines().rev().find_map(|line| {
+                    let trimmed = line.trim();
+                    trimmed
+                        .strip_prefix("exit_code: ")
+                        .or_else(|| trimmed.strip_prefix("Exit code: "))
+                        .and_then(|s| s.parse::<i32>().ok())
+                })
+            })
+        })
+}
+
+fn shell_command_status_from_result(
+    value: &serde_json::Value,
+    is_error: bool,
+) -> codex::CommandExecutionStatus {
+    if is_error || shell_exit_code_from_result(value).is_some_and(|exit_code| exit_code != 0) {
+        codex::CommandExecutionStatus::Failed
+    } else {
+        codex::CommandExecutionStatus::Completed
+    }
 }
 
 fn command_status_to_dynamic(
@@ -541,7 +586,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 if !created {
                     return Vec::new();
                 }
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
                 let item = if is_shell_exec(&state.tool_name) {
                     make_shell_exec_item(
                         &item_id,
@@ -720,7 +765,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                         Some(tool_call.arguments.clone()),
                     );
                     if created {
-                        let item_id = synth_item_id(turn_id, _state.entry_index, &tool_call.id);
+                        let item_id = stable_tool_result_item_id(turn_id, &tool_call.id);
                         let item = if is_shell_exec(&_state.tool_name) {
                             make_shell_exec_item(
                                 &item_id,
@@ -877,7 +922,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 tool_name,
                 Some(args.clone()),
             );
-            let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+            let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
             let item = if is_shell_exec(tool_name) {
                 make_shell_exec_item(
                     &item_id,
@@ -926,7 +971,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             );
 
             if is_shell_output || is_vfs_uri_rewrite {
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
                 let delta = partial_result_text(partial_result);
                 vec![wrap(
                     BackboneEvent::CommandOutputDelta(
@@ -941,7 +986,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 )]
             } else {
                 let content_items = decode_tool_result_to_content_items(partial_result);
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
                 let item = make_dynamic_tool_item(
                     &item_id,
                     &state,
@@ -1035,37 +1080,12 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 tool_name,
                 None,
             );
-            let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+            let item_id = stable_tool_result_item_id(turn_id, tool_call_id);
 
             let item = if is_shell_exec(tool_name) {
-                let exit_code = result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .and_then(|text| {
-                        // exit code 通常作为 "Exit code: N" 出现在输出末尾
-                        text.lines().rev().find_map(|line| {
-                            let trimmed = line.trim();
-                            trimmed
-                                .strip_prefix("exit_code: ")
-                                .or_else(|| trimmed.strip_prefix("Exit code: "))
-                                .and_then(|s| s.parse::<i32>().ok())
-                        })
-                    });
-                let aggregated_output = result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .map(|s| s.to_string());
-                let status = if *is_error {
-                    codex::CommandExecutionStatus::Failed
-                } else {
-                    codex::CommandExecutionStatus::Completed
-                };
+                let exit_code = shell_exit_code_from_result(result);
+                let aggregated_output = tool_result_text(result);
+                let status = shell_command_status_from_result(result, *is_error);
                 make_shell_exec_item(&item_id, &state, status, aggregated_output, exit_code)
             } else {
                 let content_items = decode_tool_result_to_content_items(result);
@@ -1127,7 +1147,7 @@ fn reconcile_chunk(
 fn decode_tool_result_to_content_items(
     value: &serde_json::Value,
 ) -> Option<Vec<codex::DynamicToolCallOutputContentItem>> {
-    let result: AgentToolResult = serde_json::from_value(value.clone()).ok()?;
+    let result = decode_tool_result(value)?;
     let items: Vec<codex::DynamicToolCallOutputContentItem> = result
         .content
         .iter()

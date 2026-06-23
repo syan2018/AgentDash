@@ -80,6 +80,28 @@ pub type AwaitToolApprovalFn = Arc<
 pub type AgentEventSink =
     Arc<dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
+pub type ToolResultCacheWriter = Arc<dyn Fn(ToolResultCacheWrite) + Send + Sync>;
+
+#[derive(Clone)]
+pub struct ToolResultRefContext {
+    pub session_id: String,
+    pub turn_id: String,
+    pub cache_writer: Option<ToolResultCacheWriter>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolResultCacheWrite {
+    pub session_id: String,
+    pub item_id: String,
+    pub lifecycle_path: String,
+    pub text: String,
+    pub original_bytes: usize,
+}
+
+pub fn stable_tool_result_item_id(turn_id: &str, tool_call_id: &str) -> String {
+    format!("{turn_id}:{tool_call_id}")
+}
+
 // ─── AgentLoopConfig ────────────────────────────────────────
 
 /// Agent Loop 配置 — 对齐 Pi `AgentLoopConfig`
@@ -115,6 +137,9 @@ pub struct AgentLoopConfig {
 
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+
+    /// 当前 turn 的工具结果引用上下文，用于生成 stable lifecycle path 并写入外部缓存。
+    pub tool_result_ref_context: Option<ToolResultRefContext>,
 }
 
 // ─── 入口函数 ───────────────────────────────────────────────

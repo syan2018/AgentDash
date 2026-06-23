@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
     self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn, BeforeToolCallFn,
-    TransformContextFn,
+    ToolResultRefContext, TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
@@ -73,6 +73,9 @@ pub struct AgentConfig {
 
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+
+    /// 当前 turn 的工具结果引用上下文。
+    pub tool_result_ref_context: Option<ToolResultRefContext>,
 }
 
 // ─── Agent ──────────────────────────────────────────────────
@@ -172,6 +175,10 @@ impl Agent {
 
     pub fn set_runtime_delegate(&mut self, delegate: Option<DynAgentRuntimeDelegate>) {
         self.config.runtime_delegate = delegate;
+    }
+
+    pub fn set_tool_result_ref_context(&mut self, context: Option<ToolResultRefContext>) {
+        self.config.tool_result_ref_context = context;
     }
 
     pub async fn messages(&self) -> Vec<AgentMessage> {
@@ -479,6 +486,7 @@ impl Agent {
             after_tool_call: self.config.after_tool_call.clone(),
             await_tool_approval: Some(build_tool_approval_waiter(pending_approvals)),
             runtime_delegate: self.config.runtime_delegate.clone(),
+            tool_result_ref_context: self.config.tool_result_ref_context.clone(),
             get_tools: Some(Arc::new(move || {
                 live_tools
                     .read()

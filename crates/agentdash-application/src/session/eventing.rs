@@ -4,7 +4,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
     codex_app_server_protocol as codex,
 };
-use agentdash_agent_types::MessageRef;
+use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem, MessageRef};
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
@@ -24,6 +24,10 @@ use super::persistence::{
 };
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::types::TitleSource;
+
+const SESSION_EVENT_APPEND_GUARD_MAX_BYTES: usize = 256 * 1024;
+const SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES: usize = 16 * 1024;
+const SESSION_EVENT_APPEND_GUARD_POLICY: &str = "drop_known_output_fields_v1";
 
 #[derive(Clone)]
 pub struct SessionEventingService {
@@ -124,8 +128,21 @@ impl SessionEventingService {
     pub(crate) async fn broadcast_persisted_event(
         &self,
         session_id: &str,
-        event: PersistedSessionEvent,
+        mut event: PersistedSessionEvent,
     ) {
+        match bound_envelope_for_append(event.notification.clone()) {
+            Ok(notification) => {
+                event.notification = notification;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    event_seq = event.event_seq,
+                    error = %error,
+                    "SessionEventingService broadcast guard 无法测量 BackboneEnvelope，继续发送已持久化事件"
+                );
+            }
+        }
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(event);
     }
@@ -136,6 +153,7 @@ impl SessionEventingService {
         envelope: BackboneEnvelope,
         broadcast: bool,
     ) -> io::Result<PersistedSessionEvent> {
+        let envelope = bound_envelope_for_append(envelope)?;
         if let Some(result) = self
             .maybe_commit_compaction_projection(session_id, envelope.clone())
             .await?
@@ -659,10 +677,11 @@ impl SessionEventingService {
         session_id: &str,
         envelope: &BackboneEnvelope,
     ) -> io::Result<PersistedSessionEvent> {
+        let envelope = bound_envelope_for_append(envelope.clone())?;
         let persisted = self
             .stores
             .events
-            .append_event(session_id, envelope)
+            .append_event(session_id, &envelope)
             .await?;
         self.advance_model_projection_head(session_id, &persisted)
             .await?;
@@ -724,6 +743,408 @@ fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::V
             Some(value)
         }
         _ => None,
+    }
+}
+
+fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<BackboneEnvelope> {
+    let original_bytes = serialized_envelope_len(&envelope)?;
+    if original_bytes <= SESSION_EVENT_APPEND_GUARD_MAX_BYTES {
+        return Ok(envelope);
+    }
+
+    let truncated_fields = bound_known_output_fields(&mut envelope, original_bytes);
+    let bounded_bytes = serialized_envelope_len(&envelope)?;
+    if truncated_fields > 0 {
+        tracing::warn!(
+            session_id = %envelope.session_id,
+            event_type = backbone_event_type_name_for_guard(&envelope.event),
+            turn_id = envelope.trace.turn_id.as_deref(),
+            entry_index = envelope.trace.entry_index,
+            original_bytes,
+            bounded_bytes,
+            truncated_fields,
+            policy = SESSION_EVENT_APPEND_GUARD_POLICY,
+            "SessionEventingService append guard 裁切了超大 BackboneEnvelope"
+        );
+    } else {
+        tracing::warn!(
+            session_id = %envelope.session_id,
+            event_type = backbone_event_type_name_for_guard(&envelope.event),
+            turn_id = envelope.trace.turn_id.as_deref(),
+            entry_index = envelope.trace.entry_index,
+            original_bytes,
+            bounded_bytes,
+            policy = SESSION_EVENT_APPEND_GUARD_POLICY,
+            "SessionEventingService append guard 发现超大 BackboneEnvelope，但没有匹配到已知输出字段"
+        );
+    }
+    Ok(envelope)
+}
+
+fn serialized_envelope_len(envelope: &BackboneEnvelope) -> io::Result<usize> {
+    serde_json::to_vec(envelope)
+        .map(|bytes| bytes.len())
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("BackboneEnvelope 序列化失败: {error}"),
+            )
+        })
+}
+
+fn bound_known_output_fields(envelope: &mut BackboneEnvelope, original_bytes: usize) -> usize {
+    let mut truncated_fields = 0;
+    match &mut envelope.event {
+        BackboneEvent::ItemCompleted(completed) => {
+            truncated_fields += bound_thread_item_outputs(
+                &mut completed.item,
+                original_bytes,
+                "item_completed.item",
+            );
+        }
+        BackboneEvent::CommandOutputDelta(delta) => {
+            truncated_fields += replace_if_large(
+                &mut delta.delta,
+                original_bytes,
+                "command_output_delta.delta",
+            );
+        }
+        BackboneEvent::McpToolCallProgress(progress) => {
+            truncated_fields += replace_if_large(
+                &mut progress.message,
+                original_bytes,
+                "mcp_tool_call_progress.message",
+            );
+        }
+        BackboneEvent::Platform(PlatformEvent::TerminalOutput { data, .. }) => {
+            truncated_fields +=
+                replace_if_large(data, original_bytes, "platform.terminal_output.data");
+        }
+        _ => {}
+    }
+    truncated_fields
+}
+
+fn bound_thread_item_outputs(
+    item: &mut AgentDashThreadItem,
+    envelope_original_bytes: usize,
+    field_prefix: &str,
+) -> usize {
+    match item {
+        AgentDashThreadItem::Codex(item) => {
+            bound_codex_thread_item_outputs(item, envelope_original_bytes, field_prefix)
+        }
+        AgentDashThreadItem::AgentDash(item) => {
+            bound_agentdash_thread_item_outputs(item, envelope_original_bytes, field_prefix)
+        }
+    }
+}
+
+fn bound_codex_thread_item_outputs(
+    item: &mut codex::ThreadItem,
+    envelope_original_bytes: usize,
+    field_prefix: &str,
+) -> usize {
+    match item {
+        codex::ThreadItem::CommandExecution {
+            id,
+            aggregated_output,
+            ..
+        } => aggregated_output
+            .as_mut()
+            .map(|output| {
+                replace_if_large(
+                    output,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.commandExecution({id}).aggregatedOutput"),
+                )
+            })
+            .unwrap_or_default(),
+        codex::ThreadItem::DynamicToolCall {
+            id, content_items, ..
+        } => content_items
+            .as_mut()
+            .map(|items| {
+                bound_content_items(
+                    items,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.dynamicToolCall({id}).contentItems"),
+                )
+            })
+            .unwrap_or_default(),
+        codex::ThreadItem::McpToolCall {
+            id, result, error, ..
+        } => {
+            let mut truncated_fields = 0;
+            if let Some(result) = result.as_mut() {
+                truncated_fields += replace_json_vec_if_large(
+                    &mut result.content,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.mcpToolCall({id}).result.content"),
+                );
+                truncated_fields += replace_json_value_if_large(
+                    &mut result.structured_content,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.mcpToolCall({id}).result.structuredContent"),
+                );
+                truncated_fields += replace_json_value_if_large(
+                    &mut result.meta,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.mcpToolCall({id}).result._meta"),
+                );
+            }
+            if let Some(error) = error.as_mut() {
+                truncated_fields += replace_if_large(
+                    &mut error.message,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.mcpToolCall({id}).error.message"),
+                );
+            }
+            truncated_fields
+        }
+        _ => 0,
+    }
+}
+
+fn bound_agentdash_thread_item_outputs(
+    item: &mut AgentDashNativeThreadItem,
+    envelope_original_bytes: usize,
+    field_prefix: &str,
+) -> usize {
+    match item {
+        AgentDashNativeThreadItem::ShellExec {
+            id,
+            aggregated_output,
+            ..
+        } => aggregated_output
+            .as_mut()
+            .map(|output| {
+                replace_if_large(
+                    output,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.shellExec({id}).aggregatedOutput"),
+                )
+            })
+            .unwrap_or_default(),
+        AgentDashNativeThreadItem::FsRead {
+            id, content_items, ..
+        } => content_items
+            .as_mut()
+            .map(|items| {
+                bound_content_items(
+                    items,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.fsRead({id}).contentItems"),
+                )
+            })
+            .unwrap_or_default(),
+        AgentDashNativeThreadItem::FsGrep {
+            id, content_items, ..
+        } => content_items
+            .as_mut()
+            .map(|items| {
+                bound_content_items(
+                    items,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.fsGrep({id}).contentItems"),
+                )
+            })
+            .unwrap_or_default(),
+        AgentDashNativeThreadItem::FsGlob {
+            id, content_items, ..
+        } => content_items
+            .as_mut()
+            .map(|items| {
+                bound_content_items(
+                    items,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}.fsGlob({id}).contentItems"),
+                )
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn bound_content_items(
+    items: &mut Vec<codex::DynamicToolCallOutputContentItem>,
+    envelope_original_bytes: usize,
+    field_prefix: &str,
+) -> usize {
+    if let Ok(bytes) = serde_json::to_vec(items)
+        && bytes.len() > SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES
+    {
+        *items = vec![codex::DynamicToolCallOutputContentItem::InputText {
+            text: append_guard_diagnostic_text(field_prefix, envelope_original_bytes, bytes.len()),
+        }];
+        return 1;
+    }
+
+    let mut truncated_fields = 0;
+    for (index, item) in items.iter_mut().enumerate() {
+        match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                truncated_fields += replace_if_large(
+                    text,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}[{index}].text"),
+                );
+            }
+            codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                truncated_fields += replace_if_large(
+                    image_url,
+                    envelope_original_bytes,
+                    &format!("{field_prefix}[{index}].imageUrl"),
+                );
+            }
+        }
+    }
+    truncated_fields
+}
+
+fn bound_json_values(
+    values: &mut [serde_json::Value],
+    envelope_original_bytes: usize,
+    field_prefix: &str,
+) -> usize {
+    values
+        .iter_mut()
+        .enumerate()
+        .map(|(index, value)| {
+            replace_json_string_leaves(
+                value,
+                envelope_original_bytes,
+                &format!("{field_prefix}[{index}]"),
+            )
+        })
+        .sum()
+}
+
+fn replace_json_vec_if_large(
+    values: &mut Vec<serde_json::Value>,
+    envelope_original_bytes: usize,
+    field_path: &str,
+) -> usize {
+    let Ok(bytes) = serde_json::to_vec(values) else {
+        return 0;
+    };
+    if bytes.len() <= SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES {
+        return bound_json_values(values, envelope_original_bytes, field_path);
+    }
+    *values = vec![serde_json::json!({
+        "type": "text",
+        "text": append_guard_diagnostic_text(field_path, envelope_original_bytes, bytes.len()),
+    })];
+    1
+}
+
+fn replace_json_value_if_large(
+    value: &mut Option<serde_json::Value>,
+    envelope_original_bytes: usize,
+    field_path: &str,
+) -> usize {
+    let Some(current) = value.as_mut() else {
+        return 0;
+    };
+    let Ok(bytes) = serde_json::to_vec(current) else {
+        return 0;
+    };
+    if bytes.len() <= SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES {
+        return replace_json_string_leaves(current, envelope_original_bytes, field_path);
+    }
+    *current = append_guard_diagnostic_value(field_path, envelope_original_bytes, bytes.len());
+    1
+}
+
+fn replace_json_string_leaves(
+    value: &mut serde_json::Value,
+    envelope_original_bytes: usize,
+    field_path: &str,
+) -> usize {
+    match value {
+        serde_json::Value::String(text) => {
+            replace_if_large(text, envelope_original_bytes, field_path)
+        }
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .enumerate()
+            .map(|(index, item)| {
+                replace_json_string_leaves(
+                    item,
+                    envelope_original_bytes,
+                    &format!("{field_path}[{index}]"),
+                )
+            })
+            .sum(),
+        serde_json::Value::Object(map) => map
+            .iter_mut()
+            .map(|(key, item)| {
+                replace_json_string_leaves(
+                    item,
+                    envelope_original_bytes,
+                    &format!("{field_path}.{key}"),
+                )
+            })
+            .sum(),
+        _ => 0,
+    }
+}
+
+fn replace_if_large(text: &mut String, envelope_original_bytes: usize, field_path: &str) -> usize {
+    let original_field_bytes = text.len();
+    if original_field_bytes <= SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES {
+        return 0;
+    }
+    *text = append_guard_diagnostic_text(field_path, envelope_original_bytes, original_field_bytes);
+    1
+}
+
+fn append_guard_diagnostic_text(
+    field_path: &str,
+    envelope_original_bytes: usize,
+    original_field_bytes: usize,
+) -> String {
+    format!(
+        "[session_eventing_append_guard] output omitted before persistence; field={field_path}; policy={SESSION_EVENT_APPEND_GUARD_POLICY}; envelope_original_bytes={envelope_original_bytes}; field_original_bytes={original_field_bytes}; inline_bytes=0"
+    )
+}
+
+fn append_guard_diagnostic_value(
+    field_path: &str,
+    envelope_original_bytes: usize,
+    original_field_bytes: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "session_eventing_append_guard",
+        "policy": SESSION_EVENT_APPEND_GUARD_POLICY,
+        "field": field_path,
+        "envelope_original_bytes": envelope_original_bytes,
+        "field_original_bytes": original_field_bytes,
+        "inline_bytes": 0,
+    })
+}
+
+fn backbone_event_type_name_for_guard(event: &BackboneEvent) -> &'static str {
+    match event {
+        BackboneEvent::AgentMessageDelta(_) => "agent_message_delta",
+        BackboneEvent::ReasoningTextDelta(_) => "reasoning_text_delta",
+        BackboneEvent::ReasoningSummaryDelta(_) => "reasoning_summary_delta",
+        BackboneEvent::ItemStarted(_) => "item_started",
+        BackboneEvent::ItemCompleted(_) => "item_completed",
+        BackboneEvent::CommandOutputDelta(_) => "command_output_delta",
+        BackboneEvent::FileChangeDelta(_) => "file_change_delta",
+        BackboneEvent::McpToolCallProgress(_) => "mcp_tool_call_progress",
+        BackboneEvent::TurnStarted(_) => "turn_started",
+        BackboneEvent::TurnCompleted(_) => "turn_completed",
+        BackboneEvent::TurnDiffUpdated(_) => "turn_diff_updated",
+        BackboneEvent::UserInputSubmitted(_) => "user_input_submitted",
+        BackboneEvent::TurnPlanUpdated(_) => "turn_plan_updated",
+        BackboneEvent::PlanDelta(_) => "plan_delta",
+        BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
+        BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
+        BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
+        BackboneEvent::ApprovalRequest(_) => "approval_request",
+        BackboneEvent::Error(_) => "error",
+        BackboneEvent::Platform(_) => "platform_event",
     }
 }
 
@@ -843,6 +1264,7 @@ fn estimate_text_tokens(value: &str) -> u64 {
 mod tests {
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+    use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
         ExecutionContext, ExecutionStream, PromptPayload,
@@ -925,6 +1347,62 @@ mod tests {
             session_id,
             test_source_info(),
         )
+    }
+
+    fn oversized_dynamic_tool_completed_envelope(
+        session_id: &str,
+        sentinel: &str,
+    ) -> BackboneEnvelope {
+        let huge_output = format!(
+            "{}{}{}",
+            sentinel,
+            "x".repeat(SESSION_EVENT_APPEND_GUARD_MAX_BYTES + 32 * 1024),
+            sentinel
+        );
+        let item = codex::ThreadItem::DynamicToolCall {
+            id: "tool-item-1".to_string(),
+            namespace: None,
+            tool: "huge_output".to_string(),
+            arguments: serde_json::json!({ "mode": "test" }),
+            status: codex::DynamicToolCallStatus::Completed,
+            content_items: Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+                text: huge_output,
+            }]),
+            success: Some(true),
+            duration_ms: None,
+        };
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item, "thread-1", "turn-1",
+            )),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(7),
+        })
+    }
+
+    fn oversized_terminal_output_envelope(session_id: &str, sentinel: &str) -> BackboneEnvelope {
+        let huge_output = format!(
+            "{}{}{}",
+            sentinel,
+            "t".repeat(SESSION_EVENT_APPEND_GUARD_MAX_BYTES + 16 * 1024),
+            sentinel
+        );
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::TerminalOutput {
+                terminal_id: "term-large".to_string(),
+                data: huge_output,
+            }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-terminal".to_string()),
+            entry_index: Some(3),
+        })
     }
 
     #[tokio::test]
@@ -1140,6 +1618,143 @@ mod tests {
             .expect("projection head exists");
         assert_eq!(head.head_event_seq, 0);
         assert_eq!(head.updated_by_event_seq, None);
+    }
+
+    #[tokio::test]
+    async fn append_guard_bounds_oversized_tool_completed_event_before_store_and_broadcast() {
+        let session_id = "sess-append-guard-tool";
+        let sentinel = "SENTINEL_TOOL_OUTPUT_SHOULD_NOT_PERSIST";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+        let mut broadcast_rx = service.ensure_session(session_id).await;
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                oversized_dynamic_tool_completed_envelope(session_id, sentinel),
+            )
+            .await
+            .expect("persist oversized event");
+
+        let persisted_json =
+            serde_json::to_string(&persisted.notification).expect("serialize persisted event");
+        assert!(
+            persisted_json.len() < SESSION_EVENT_APPEND_GUARD_MAX_BYTES,
+            "persisted event should be bounded, got {} bytes",
+            persisted_json.len()
+        );
+        assert!(!persisted_json.contains(sentinel));
+        assert!(persisted_json.contains("session_eventing_append_guard"));
+        assert_eq!(persisted.turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(persisted.entry_index, Some(7));
+        assert!(matches!(
+            &persisted.notification.event,
+            BackboneEvent::ItemCompleted(completed)
+                if completed.item.id() == "tool-item-1"
+        ));
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert_eq!(backlog.backlog.len(), 1);
+        let backlog_json =
+            serde_json::to_string(&backlog.backlog[0].notification).expect("serialize backlog");
+        assert!(!backlog_json.contains(sentinel));
+        assert!(backlog_json.contains("session_eventing_append_guard"));
+
+        let broadcasted = broadcast_rx.recv().await.expect("receive broadcast");
+        let broadcast_json =
+            serde_json::to_string(&broadcasted.notification).expect("serialize broadcast");
+        assert!(!broadcast_json.contains(sentinel));
+        assert!(broadcast_json.contains("session_eventing_append_guard"));
+    }
+
+    #[tokio::test]
+    async fn append_guard_bounds_oversized_terminal_output_before_store_and_backlog() {
+        let session_id = "sess-append-guard-terminal";
+        let sentinel = "SENTINEL_TERMINAL_OUTPUT_SHOULD_NOT_PERSIST";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                oversized_terminal_output_envelope(session_id, sentinel),
+            )
+            .await
+            .expect("persist oversized terminal event");
+
+        let persisted_json =
+            serde_json::to_string(&persisted.notification).expect("serialize persisted event");
+        assert!(
+            persisted_json.len() < SESSION_EVENT_APPEND_GUARD_MAX_BYTES,
+            "persisted terminal event should be bounded, got {} bytes",
+            persisted_json.len()
+        );
+        assert!(!persisted_json.contains(sentinel));
+        assert!(persisted_json.contains("session_eventing_append_guard"));
+        assert_eq!(persisted.session_update_type, "platform_event");
+        assert_eq!(persisted.turn_id.as_deref(), Some("turn-terminal"));
+        assert_eq!(persisted.entry_index, Some(3));
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert_eq!(backlog.backlog.len(), 1);
+        let backlog_json =
+            serde_json::to_string(&backlog.backlog[0].notification).expect("serialize backlog");
+        assert!(!backlog_json.contains(sentinel));
+        assert!(backlog_json.contains("session_eventing_append_guard"));
+    }
+
+    #[tokio::test]
+    async fn append_guard_leaves_small_events_unchanged() {
+        let session_id = "sess-append-guard-small";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::TerminalOutput {
+                terminal_id: "term-1".to_string(),
+                data: "hello\n".to_string(),
+            }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-small".to_string()),
+            entry_index: Some(2),
+        });
+        let original_json = serde_json::to_value(&envelope).expect("serialize original");
+
+        let persisted = service
+            .persist_notification(session_id, envelope)
+            .await
+            .expect("persist small event");
+
+        assert_eq!(
+            serde_json::to_value(&persisted.notification).expect("serialize persisted"),
+            original_json
+        );
     }
 
     struct NoopConnector;

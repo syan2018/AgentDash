@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
-- **Last Active**: 2026-06-22
+- **Total Sessions**: 27
+- **Last Active**: 2026-06-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~912 | Active |
+| `journal-1.md` | ~985 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-06-23 | PiAgent 大输出 lifecycle 链路收口 | `7262091d1` | `codex/piagent-tool-result-bounding` |
+| 26 | 2026-06-23 | PiAgent 工具大输出有界化 | `1ad96871`, `a38e1f45`, `c527d9c2`, `b83f783c`, `fb6a68bc`, `474cbcf7`, `607e1f14`, `967a3ccf` | `codex/piagent-tool-result-bounding` |
 | 25 | 2026-06-22 | PiAgent MCP ToolSchema 上下文收束 | `e1cb0da58` | `main` |
 | 24 | 2026-06-22 | Session UI Redesign Phase 2 + Delta Section 统一 | `e8c99edb`, `832ef612`, `8dd0568e`, `0196663a`, `ae7e827e`, `bff211a0`, `e0ef0549`, `49d58ef7`, `295d4f6e` | `main` |
 | 23 | 2026-06-21 | 多模块架构收敛与 Contract Boundary 收口 | `469646c9`, `3937a73b`, `09860c73`, `6e5be522`, `40b52937`, `1aed97bd`, `c15b3fb1`, `3ac57391`, `1c1c1f8d`, `27052e1a`, `de0c7ff0`, `8fbb523e`, `7935c441`, `f2a857ec` | `main` |

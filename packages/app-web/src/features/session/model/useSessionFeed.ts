@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import { useSessionStream } from "./useSessionStream";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
 import { isToolBurstEligible } from "./threadItemKind";
 import type {
@@ -54,6 +55,46 @@ function isToolBurstEvent(event: BackboneEvent): boolean {
   return item != null && isToolBurstEligible(item);
 }
 
+function itemTextOutputs(item: AgentDashThreadItem): string[] {
+  switch (item.type) {
+    case "commandExecution":
+    case "shellExec":
+      return item.aggregatedOutput ? [item.aggregatedOutput] : [];
+    case "dynamicToolCall":
+    case "fsRead":
+    case "fsGrep":
+    case "fsGlob":
+      return (item.contentItems ?? [])
+        .filter((contentItem) => contentItem.type === "inputText")
+        .map((contentItem) => contentItem.text);
+    case "mcpToolCall": {
+      const texts: string[] = [];
+      for (const contentItem of item.result?.content ?? []) {
+        if (contentItem == null || typeof contentItem !== "object" || Array.isArray(contentItem)) {
+          continue;
+        }
+        const type = contentItem.type;
+        const text = contentItem.text;
+        if (type === "text" && typeof text === "string") {
+          texts.push(text);
+        }
+      }
+      return texts;
+    }
+    default:
+      return [];
+  }
+}
+
+function hasBoundedOutputEntry(entry: SessionDisplayEntry): boolean {
+  if (parseBoundedOutputText(entry.accumulatedText)) {
+    return true;
+  }
+  const item = extractThreadItem(entry.event);
+  if (!item) return false;
+  return itemTextOutputs(item).some((text) => parseBoundedOutputText(text) != null);
+}
+
 function isContextFrameEvent(event: BackboneEvent): boolean {
   return (
     event.type === "platform" &&
@@ -92,6 +133,7 @@ function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
 function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   const event = entry.event;
   if (isToolBurstEvent(event)) {
+    if (hasBoundedOutputEntry(entry)) return "active_tool";
     if (!isToolEntryTerminal(entry)) return "active_tool";
     return "tool_like";
   }

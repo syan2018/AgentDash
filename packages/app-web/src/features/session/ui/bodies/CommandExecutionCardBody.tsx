@@ -8,6 +8,7 @@ import { memo, useEffect, useRef, useState, useCallback } from "react";
 import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
 import { useWorkspaceTabStore } from "../../../../stores/workspaceTabStore";
 import { useTerminalStore } from "../../model/useTerminalStore";
+import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
 import { CB } from "./cardBodyTokens";
 
 type CommandItem =
@@ -30,6 +31,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   const status = item.status;
   const isRunning = status === "inProgress";
   const renderedOutput = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
+  const boundedOutput = parseBoundedOutputText(renderedOutput);
 
   const handlePromote = useCallback(() => {
     const promoteId = `promote-${item.id}`;
@@ -58,12 +60,16 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     }
   }, [renderedOutput, isRunning]);
 
-  const lineCount = renderedOutput ? renderedOutput.split("\n").length - 1 : 0;
+  const lineCount = renderedOutput ? renderedOutput.split("\n").length : 0;
   const shouldCollapse = lineCount > 80;
   const maxH = collapsed ? "max-h-16" : shouldCollapse ? "max-h-96" : "max-h-64";
 
   return (
     <div className={CB.sectionGap}>
+      {boundedOutput && (
+        <BoundedOutputNotice info={boundedOutput} />
+      )}
+
       {(renderedOutput || isRunning) && (
         <div className="relative">
           <pre
@@ -93,6 +99,9 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
       )}
 
       <div className={`mt-1.5 flex items-center gap-2 ${CB.meta}`}>
+        <span className={statusClassName(status)}>
+          status: {status}
+        </span>
         {item.exitCode !== undefined && item.exitCode !== null && (
           <span className={item.exitCode === 0 ? CB.statusSuccess : CB.statusFailed}>
             exit: {item.exitCode}
@@ -112,3 +121,33 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     </div>
   );
 });
+
+function BoundedOutputNotice({ info }: { info: BoundedOutputInfo }) {
+  const parts = ["输出已裁切"];
+  if (info.omittedBytes != null) {
+    parts.push(`省略 ${formatBytes(info.omittedBytes)}`);
+  }
+  if (info.policy) {
+    parts.push(`policy: ${info.policy}`);
+  }
+
+  return (
+    <div className={`rounded-[6px] border border-warning/25 bg-warning/5 px-2 py-1.5 ${CB.meta}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={CB.statusWarning}>{parts.join(" · ")}</span>
+        {info.lifecyclePath && (
+          <code className="max-w-full truncate text-[10px] text-muted-foreground/60">
+            {info.lifecyclePath}
+          </code>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function statusClassName(status: CommandItem["status"]): string {
+  if (status === "completed") return CB.statusSuccess;
+  if (status === "failed") return CB.statusFailed;
+  if (status === "inProgress") return CB.statusWarning;
+  return CB.statusNeutral;
+}

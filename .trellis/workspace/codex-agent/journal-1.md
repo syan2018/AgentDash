@@ -910,3 +910,76 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: PiAgent 工具大输出有界化
+
+**Date**: 2026-06-23
+**Task**: PiAgent 工具大输出有界化
+**Branch**: `codex/piagent-tool-result-bounding`
+
+### Summary
+
+完成 PiAgent 工具、shell/terminal、SessionEvent、lifecycle_vfs、projection/resume 与前端展示的大输出有界化实现；通过 subagent 分包推进并完成 sentinel 回归验证；固化跨层 bounded fact 与 lifecycle 读取契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1ad96871` | (see git log) |
+| `a38e1f45` | (see git log) |
+| `c527d9c2` | (see git log) |
+| `b83f783c` | (see git log) |
+| `fb6a68bc` | (see git log) |
+| `474cbcf7` | (see git log) |
+| `607e1f14` | (see git log) |
+| `967a3ccf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 27: PiAgent 大输出 lifecycle 链路收口
+
+**Date**: 2026-06-23
+**Task**: PiAgent 大输出 lifecycle 链路收口
+**Branch**: `codex/piagent-tool-result-bounding`
+
+### Summary
+
+补齐 PiAgent 大工具结果的 stable lifecycle item id、共享 SessionToolResultCache 写入与 lifecycle VFS 读取链路；补强 bounded fact、projection 不扩写和前后端/contract 验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7262091d1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

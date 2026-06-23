@@ -141,6 +141,12 @@ fn build_continuation_transcript_markdown(transcript: &ProjectedTranscript) -> O
                 {
                     text = json_preview(details);
                 }
+                if let Some(summary) = details.as_ref().and_then(render_truncation_summary) {
+                    if !text.trim().is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str(&summary);
+                }
                 history_lines.push(format!(
                     "#### 工具结果 ({})",
                     tool_name.as_deref().unwrap_or("tool_result")
@@ -817,6 +823,71 @@ fn json_preview(value: &serde_json::Value) -> String {
     }
 }
 
+fn render_truncation_summary(details: &serde_json::Value) -> Option<String> {
+    let truncation = find_truncation_metadata(details)?;
+    let truncated = truncation
+        .get("truncated")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !truncated {
+        return None;
+    }
+
+    let lifecycle_path = details
+        .get("lifecycle_path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let policy = truncation
+        .get("policy")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let original_bytes = truncation
+        .get("original_bytes")
+        .and_then(serde_json::Value::as_u64);
+    let inline_bytes = truncation
+        .get("inline_bytes")
+        .and_then(serde_json::Value::as_u64);
+    let omitted_bytes = truncation
+        .get("omitted_bytes")
+        .and_then(serde_json::Value::as_u64);
+
+    let mut lines = Vec::new();
+    lines.push("[tool result truncated]".to_string());
+    if let Some(path) = lifecycle_path {
+        lines.push(format!("lifecycle_path: {path}"));
+    }
+    if let Some(policy) = policy {
+        lines.push(format!("policy: {policy}"));
+    }
+    if let Some(bytes) = original_bytes {
+        lines.push(format!("original_bytes: {bytes}"));
+    }
+    if let Some(bytes) = inline_bytes {
+        lines.push(format!("inline_bytes: {bytes}"));
+    }
+    if let Some(bytes) = omitted_bytes {
+        lines.push(format!("omitted_bytes: {bytes}"));
+    }
+    Some(lines.join("\n"))
+}
+
+fn find_truncation_metadata(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(truncation) = object.get("truncation")
+                && truncation.is_object()
+            {
+                return Some(truncation);
+            }
+            object.values().find_map(find_truncation_metadata)
+        }
+        serde_json::Value::Array(values) => values.iter().find_map(find_truncation_metadata),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,5 +926,26 @@ mod tests {
             parts[0].extract_text(),
             Some("[image output: unsupported image_url]")
         );
+    }
+
+    #[test]
+    fn truncation_summary_uses_details_without_result_body() {
+        let details = serde_json::json!({
+            "lifecycle_path": "lifecycle://session/tool-results/turn-1:tool-1/result.txt",
+            "truncation": {
+                "truncated": true,
+                "original_bytes": 123456,
+                "inline_bytes": 4096,
+                "omitted_bytes": 119360,
+                "policy": "head_tail"
+            }
+        });
+
+        let summary = render_truncation_summary(&details).expect("summary");
+
+        assert!(summary.contains("lifecycle://session/tool-results/turn-1:tool-1/result.txt"));
+        assert!(summary.contains("policy: head_tail"));
+        assert!(summary.contains("original_bytes: 123456"));
+        assert!(!summary.contains("result.txt body"));
     }
 }

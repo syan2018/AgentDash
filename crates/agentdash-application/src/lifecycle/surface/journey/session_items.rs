@@ -31,6 +31,32 @@ pub struct SessionItemSummary {
     pub preview: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionToolResultMetadata {
+    pub session_id: String,
+    pub item_id: String,
+    pub item_kind: String,
+    pub tool_name: String,
+    pub item_status: Option<String>,
+    pub first_event_seq: u64,
+    pub last_event_seq: u64,
+    pub preview: String,
+    pub lifecycle_path: String,
+    pub metadata_path: String,
+    pub result_path: String,
+    pub body_status: SessionLargeBodyStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionLargeBodyStatus {
+    pub status: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionItemProjection {
     pub summary: SessionItemSummary,
@@ -56,6 +82,59 @@ pub enum SessionItemContent {
         raw_value: Option<Value>,
     },
     Event,
+}
+
+pub fn tool_result_metadata_for_projection(
+    session_id: &str,
+    projection: &SessionItemProjection,
+) -> Option<SessionToolResultMetadata> {
+    tool_result_metadata_for_projection_with_status(
+        session_id,
+        projection,
+        cache_miss_status("result body"),
+    )
+}
+
+pub fn tool_result_metadata_for_projection_with_status(
+    session_id: &str,
+    projection: &SessionItemProjection,
+    body_status: SessionLargeBodyStatus,
+) -> Option<SessionToolResultMetadata> {
+    let SessionItemContent::Tool { item } = &projection.content else {
+        return None;
+    };
+    let item_id = projection.summary.item_id.clone();
+    let metadata_path = format!("session/tool-results/{item_id}/metadata.json");
+    let result_path = format!("session/tool-results/{item_id}/result.txt");
+    let lifecycle_path = format!("lifecycle://session/tool-results/{item_id}/result.txt");
+    let item_value = serde_json::to_value(item).ok();
+    let preview = tool_result_preview(item)
+        .or_else(|| item_value.as_ref().and_then(find_tool_result_preview))
+        .unwrap_or_else(|| projection.summary.preview.clone());
+    let truncation = item_value.as_ref().and_then(find_truncation_metadata);
+
+    Some(SessionToolResultMetadata {
+        session_id: session_id.to_string(),
+        item_id,
+        item_kind: projection.summary.item_kind.clone(),
+        tool_name: thread_item_name(item),
+        item_status: projection.summary.status.clone(),
+        first_event_seq: projection.summary.first_event_seq,
+        last_event_seq: projection.summary.last_event_seq,
+        preview,
+        lifecycle_path,
+        metadata_path,
+        result_path,
+        body_status,
+        truncation,
+    })
+}
+
+pub fn tool_result_cache_miss_text(session_id: &str, item_id: &str) -> String {
+    let lifecycle_path = format!("lifecycle://session/tool-results/{item_id}/result.txt");
+    format!(
+        "[tool result cache missing]\nsession_id: {session_id}\nitem_id: {item_id}\nlifecycle_path: {lifecycle_path}\nThe original tool result body is not available from the session cache."
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -578,6 +657,79 @@ fn thread_item_preview(item: &AgentDashThreadItem) -> String {
         name
     } else {
         format!("{name} {target}")
+    }
+}
+
+fn tool_result_preview(item: &AgentDashThreadItem) -> Option<String> {
+    match item {
+        AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+            content_items, ..
+        }) => content_items
+            .as_ref()
+            .and_then(|items| content_items_preview(items)),
+        AgentDashThreadItem::Codex(codex::ThreadItem::CommandExecution {
+            aggregated_output,
+            ..
+        }) => aggregated_output.clone(),
+        AgentDashThreadItem::AgentDash(AgentDashNativeThreadItem::ShellExec {
+            aggregated_output,
+            ..
+        }) => aggregated_output.clone(),
+        AgentDashThreadItem::AgentDash(item) => item
+            .content_items()
+            .and_then(|items| content_items_preview(items)),
+        _ => None,
+    }
+}
+
+fn content_items_preview(items: &[codex::DynamicToolCallOutputContentItem]) -> Option<String> {
+    let text = items
+        .iter()
+        .filter_map(|item| match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+fn find_tool_result_preview(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for key in ["aggregated_output", "text", "preview"] {
+                if let Some(text) = object.get(key).and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    return Some(text.to_string());
+                }
+            }
+            object.values().find_map(find_tool_result_preview)
+        }
+        Value::Array(values) => values.iter().find_map(find_tool_result_preview),
+        _ => None,
+    }
+}
+
+fn find_truncation_metadata(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(object) => {
+            if let Some(truncation) = object.get("truncation")
+                && truncation.is_object()
+            {
+                return Some(truncation.clone());
+            }
+            object.values().find_map(find_truncation_metadata)
+        }
+        Value::Array(values) => values.iter().find_map(find_truncation_metadata),
+        _ => None,
+    }
+}
+
+pub fn cache_miss_status(label: &str) -> SessionLargeBodyStatus {
+    SessionLargeBodyStatus {
+        status: "cache_miss".to_string(),
+        message: format!("{label} is not available from the current session cache."),
     }
 }
 

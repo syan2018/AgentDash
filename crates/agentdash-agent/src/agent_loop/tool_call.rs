@@ -10,8 +10,14 @@ use crate::types::{
     ToolUpdateCallback,
 };
 
-use super::tool_result::{approval_rejected_tool_result, error_tool_result};
-use super::{AgentEventSink, AgentLoopConfig, emit_event};
+use super::tool_result::{
+    AgentToolResultCacheWrite, AgentToolResultInlineKind, approval_rejected_tool_result,
+    bound_agent_tool_result_text, error_tool_result,
+};
+use super::{
+    AgentEventSink, AgentLoopConfig, ToolResultCacheWrite, ToolResultRefContext, emit_event,
+    stable_tool_result_item_id,
+};
 
 pub(super) async fn execute_tool_calls(
     context: &AgentContext,
@@ -85,7 +91,13 @@ async fn execute_tool_calls_sequential(
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
+                let bounded = bound_tool_result_for_call(
+                    tc,
+                    &result,
+                    AgentToolResultInlineKind::Final,
+                    config,
+                );
+                results.push(emit_tool_call_outcome(tc, &bounded, is_error, emit).await);
             }
             ToolCallPreparation::AwaitApproval {
                 tool,
@@ -96,7 +108,8 @@ async fn execute_tool_calls_sequential(
                 match await_tool_approval(tc, &args, &reason, details, config, emit, cancel).await {
                     ApprovalResolution::Approved => {
                         let executed =
-                            execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
+                            execute_prepared_tool_call(tc, &tool, &args, config, cancel, emit)
+                                .await;
                         let finalized = finalize_executed_tool_call(
                             context,
                             assistant_message,
@@ -107,18 +120,30 @@ async fn execute_tool_calls_sequential(
                             cancel,
                         )
                         .await;
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &finalized.result,
+                            AgentToolResultInlineKind::Final,
+                            config,
+                        );
                         results.push(
-                            emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit)
-                                .await,
+                            emit_tool_call_outcome(tc, &bounded, finalized.is_error, emit).await,
                         );
                     }
                     ApprovalResolution::Rejected { result } => {
-                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &result,
+                            AgentToolResultInlineKind::Final,
+                            config,
+                        );
+                        results.push(emit_tool_result_message(tc, &bounded, emit).await);
                     }
                 }
             }
             ToolCallPreparation::Prepared { tool, args } => {
-                let executed = execute_prepared_tool_call(tc, &tool, &args, cancel, emit).await;
+                let executed =
+                    execute_prepared_tool_call(tc, &tool, &args, config, cancel, emit).await;
                 let finalized = finalize_executed_tool_call(
                     context,
                     assistant_message,
@@ -129,9 +154,13 @@ async fn execute_tool_calls_sequential(
                     cancel,
                 )
                 .await;
-                results.push(
-                    emit_tool_call_outcome(tc, &finalized.result, finalized.is_error, emit).await,
+                let bounded = bound_tool_result_for_call(
+                    tc,
+                    &finalized.result,
+                    AgentToolResultInlineKind::Final,
+                    config,
                 );
+                results.push(emit_tool_call_outcome(tc, &bounded, finalized.is_error, emit).await);
             }
         }
     }
@@ -184,7 +213,13 @@ async fn execute_tool_calls_parallel(
 
         match preparation {
             ToolCallPreparation::Immediate { result, is_error } => {
-                results.push(emit_tool_call_outcome(tc, &result, is_error, emit).await);
+                let bounded = bound_tool_result_for_call(
+                    tc,
+                    &result,
+                    AgentToolResultInlineKind::Final,
+                    config,
+                );
+                results.push(emit_tool_call_outcome(tc, &bounded, is_error, emit).await);
             }
             ToolCallPreparation::AwaitApproval {
                 tool,
@@ -201,7 +236,13 @@ async fn execute_tool_calls_parallel(
                         });
                     }
                     ApprovalResolution::Rejected { result } => {
-                        results.push(emit_tool_result_message(tc, &result, emit).await);
+                        let bounded = bound_tool_result_for_call(
+                            tc,
+                            &result,
+                            AgentToolResultInlineKind::Final,
+                            config,
+                        );
+                        results.push(emit_tool_result_message(tc, &bounded, emit).await);
                     }
                 }
             }
@@ -223,7 +264,11 @@ async fn execute_tool_calls_parallel(
             let tc_id = entry.tc.id.clone();
             let args = entry.args.clone();
             let cancel = cancel.clone();
-            let on_update = Some(build_on_update(&entry.tc, emit));
+            let on_update = Some(build_on_update(
+                &entry.tc,
+                emit,
+                config.tool_result_ref_context.clone(),
+            ));
             tokio::spawn(async move {
                 execute_prepared_tool_call_inner(&tc_id, &tool, &args, cancel, on_update).await
             })
@@ -253,9 +298,13 @@ async fn execute_tool_calls_parallel(
             cancel,
         )
         .await;
-        results.push(
-            emit_tool_call_outcome(&entry.tc, &finalized.result, finalized.is_error, emit).await,
+        let bounded = bound_tool_result_for_call(
+            &entry.tc,
+            &finalized.result,
+            AgentToolResultInlineKind::Final,
+            config,
         );
+        results.push(emit_tool_call_outcome(&entry.tc, &bounded, finalized.is_error, emit).await);
     }
 
     Ok(results)
@@ -455,26 +504,37 @@ async fn execute_prepared_tool_call(
     tc: &ToolCallInfo,
     tool: &DynAgentTool,
     args: &serde_json::Value,
+    config: &AgentLoopConfig,
     cancel: &CancellationToken,
     emit: &AgentEventSink,
 ) -> ExecutedOutcome {
-    let on_update = build_on_update(tc, emit);
+    let on_update = build_on_update(tc, emit, config.tool_result_ref_context.clone());
     execute_prepared_tool_call_inner(&tc.id, tool, args, cancel.clone(), Some(on_update)).await
 }
 
 /// 构建 `on_update` 回调 — 对齐 Pi `executePreparedToolCall` 内联闭包
-fn build_on_update(tc: &ToolCallInfo, emit: &AgentEventSink) -> ToolUpdateCallback {
+fn build_on_update(
+    tc: &ToolCallInfo,
+    emit: &AgentEventSink,
+    ref_context: Option<ToolResultRefContext>,
+) -> ToolUpdateCallback {
     let emit = emit.clone();
     let tc_id = tc.id.clone();
     let tc_name = tc.name.clone();
     let tc_args = tc.arguments.clone();
     Arc::new(move |partial_result: AgentToolResult| {
         let emit = emit.clone();
+        let bounded_partial = bound_tool_result_for_call_with_context(
+            &tc_id,
+            &partial_result,
+            AgentToolResultInlineKind::Update,
+            ref_context.as_ref(),
+        );
         let event = AgentEvent::ToolExecutionUpdate {
             tool_call_id: tc_id.clone(),
             tool_name: tc_name.clone(),
             args: tc_args.clone(),
-            partial_result: serde_json::to_value(&partial_result).unwrap_or_default(),
+            partial_result: serde_json::to_value(&bounded_partial).unwrap_or_default(),
         };
         tokio::spawn(async move {
             emit(event).await;
@@ -668,6 +728,60 @@ async fn emit_tool_result_message(
     .await;
 
     tool_result_msg
+}
+
+fn bound_tool_result_for_call(
+    tc: &ToolCallInfo,
+    result: &AgentToolResult,
+    inline_kind: AgentToolResultInlineKind,
+    config: &AgentLoopConfig,
+) -> AgentToolResult {
+    bound_tool_result_for_call_with_context(
+        &tc.id,
+        result,
+        inline_kind,
+        config.tool_result_ref_context.as_ref(),
+    )
+}
+
+fn bound_tool_result_for_call_with_context(
+    tool_call_id: &str,
+    result: &AgentToolResult,
+    inline_kind: AgentToolResultInlineKind,
+    ref_context: Option<&ToolResultRefContext>,
+) -> AgentToolResult {
+    let item_id = ref_context
+        .map(|context| stable_tool_result_item_id(&context.turn_id, tool_call_id))
+        .unwrap_or_else(|| tool_call_id.to_string());
+    bound_agent_tool_result_text(result, &item_id, inline_kind, |write| {
+        record_agent_tool_result_cache_write(ref_context, write);
+    })
+}
+
+fn record_agent_tool_result_cache_write(
+    ref_context: Option<&ToolResultRefContext>,
+    write: AgentToolResultCacheWrite<'_>,
+) {
+    if let Some(context) = ref_context
+        && let Some(writer) = context.cache_writer.as_ref()
+    {
+        writer(ToolResultCacheWrite {
+            session_id: context.session_id.clone(),
+            item_id: write.item_id.to_string(),
+            lifecycle_path: write.lifecycle_path.to_string(),
+            text: write.text.to_string(),
+            original_bytes: write.original_bytes,
+        });
+        return;
+    }
+
+    tracing::debug!(
+        item_id = write.item_id,
+        lifecycle_path = write.lifecycle_path,
+        original_bytes = write.original_bytes,
+        cache_text_bytes = write.text.len(),
+        "agent tool result cache write requested"
+    );
 }
 
 enum ApprovalResolution {

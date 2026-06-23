@@ -26,6 +26,16 @@
 
 - `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`，item 类型为
   `AgentDashThreadItem`；
+- `AssistantStreamEvent::ToolCallDelta` 表示工具输入生成阶段的更新：
+  - 对非 `fs_apply_patch` 工具，只有当 `draft` 是完整 JSON 时才更新该工具 item 的
+    `arguments`，并以同一 `item_id` 发送 `ItemStarted(..., status=in_progress)`；
+  - 对 `fs_apply_patch`，可以从未闭合 JSON `draft` 中提取已完成转义的 `patch`
+    字符串，解析出 `FileChangeSpec` 后用同一 `item_id` 发送
+    `ItemStarted(fileChange, status=in_progress)`；
+  - 无法解析出可信输入时只更新 `ToolCallEmitState`，不发送 UI 事件。
+- `AgentEvent::ToolExecutionUpdate` 表示工具执行阶段的输出/进度更新，不能作为工具输入
+  生成阶段的事实源。shell 输出继续映射为 `CommandOutputDelta`，普通工具输出继续更新
+  同一 `dynamicToolCall.contentItems`。
 - `ToolCallResult` 完成映射为 `BackboneEvent::ItemCompleted`；
 - `ToolCallEmitState` 追踪每个 `tool_call_id` 的 `entry_index` 和元数据。
 - PiAgent 进入 `ToolExecutionEnd`、`ToolExecutionUpdate` 和 `AgentMessage::ToolResult`

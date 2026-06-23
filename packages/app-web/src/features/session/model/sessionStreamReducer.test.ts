@@ -65,6 +65,21 @@ function commandItem(id: string, aggregatedOutput: string | null): Extract<Threa
   };
 }
 
+function fileChangeItem(id: string, diff: string): Extract<ThreadItem, { type: "fileChange" }> {
+  return {
+    type: "fileChange",
+    id,
+    changes: [
+      {
+        path: "workspace://notes.txt",
+        kind: { type: "add" },
+        diff,
+      },
+    ],
+    status: "inProgress",
+  };
+}
+
 describe("sessionStreamReducer", () => {
   it("按 event_seq 排序、去重，并累积 agent message delta", () => {
     const state = reduceStreamState(createInitialStreamState([]), [
@@ -167,5 +182,42 @@ describe("sessionStreamReducer", () => {
     expect(state.entries[0]?.accumulatedText).toContain("output_truncated: true");
     expect(state.entries[0]?.accumulatedText).toContain("final bounded output");
     expect(state.entries[0]?.accumulatedText).not.toBe("live preview\n");
+  });
+
+  it("相同 item_id 的 repeated item_started 更新 fileChange 条目而非追加", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      streamEvent(1, {
+        type: "item_started",
+        payload: {
+          item: fileChangeItem("patch-1", "+hello"),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          startedAtMs: 1,
+        },
+      }),
+      streamEvent(2, {
+        type: "item_started",
+        payload: {
+          item: fileChangeItem("patch-1", "+hello\n+world"),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          startedAtMs: 2,
+        },
+      }),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.eventSeq).toBe(2);
+    const event = state.entries[0]?.event;
+    expect(event?.type).toBe("item_started");
+    if (event?.type !== "item_started") {
+      throw new Error("expected item_started");
+    }
+    const item = event.payload.item;
+    expect(item.type).toBe("fileChange");
+    if (item.type !== "fileChange") {
+      throw new Error("expected fileChange");
+    }
+    expect(item.changes[0]?.diff).toBe("+hello\n+world");
   });
 });

@@ -759,12 +759,70 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert!(delta_envelopes.is_empty());
+    assert_eq!(delta_envelopes.len(), 1);
+    match &delta_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let item = serde_json::to_value(&n.item).expect("thread item should serialize");
+            assert_eq!(
+                item.get("type").and_then(|value| value.as_str()),
+                Some("shellExec")
+            );
+            assert_eq!(
+                item.get("command").and_then(|value| value.as_str()),
+                Some("echo hello")
+            );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
     assert!(end_envelopes.is_empty());
 }
 
 #[test]
 fn tool_call_delta_preserves_unparseable_draft_in_meta() {
+    let delta_event = AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-fs-apply-patch-1".to_string(),
+                call_id: Some("tool-fs-apply-patch-1".to_string()),
+                name: "fs_apply_patch".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-fs-apply-patch-1".to_string(),
+            name: "fs_apply_patch".to_string(),
+            delta: "\"hello".to_string(),
+            draft: "{\"patch\":\"not a patch".to_string(),
+            is_parseable: false,
+        },
+    };
+
+    let mut entry_index = 0;
+
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &delta_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert!(envelopes.is_empty());
+    assert!(tool_call_states.contains_key("tool-fs-apply-patch-1"));
+}
+
+#[test]
+fn tool_call_delta_apply_patch_partial_draft_emits_file_change_preview() {
     let delta_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {
             content: vec![],
@@ -790,7 +848,6 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
     };
 
     let mut entry_index = 0;
-
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
     let envelopes = convert_event_to_envelopes(
@@ -803,8 +860,159 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
         &mut tool_call_states,
     );
 
-    assert!(envelopes.is_empty());
-    assert!(tool_call_states.contains_key("tool-fs-apply-patch-1"));
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let Some(codex::ThreadItem::FileChange {
+                id,
+                changes,
+                status,
+            }) = n.item.as_codex()
+            else {
+                panic!("expected fileChange preview, got {:?}", n.item);
+            };
+            assert_eq!(id, "turn-1:tool-fs-apply-patch-1");
+            assert!(matches!(status, codex::PatchApplyStatus::InProgress));
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].path, "notes.txt");
+            assert!(matches!(changes[0].kind, codex::PatchChangeKind::Add));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn tool_call_delta_apply_patch_reuses_item_id_for_later_preview() {
+    let make_event = |draft: &str| AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-fs-apply-patch-1".to_string(),
+                call_id: Some("tool-fs-apply-patch-1".to_string()),
+                name: "fs_apply_patch".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-fs-apply-patch-1".to_string(),
+            name: "fs_apply_patch".to_string(),
+            delta: String::new(),
+            draft: draft.to_string(),
+            is_parseable: false,
+        },
+    };
+    let first_event = make_event("{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello");
+    let second_event = make_event(
+        "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello\\n*** Update File: src/lib.rs\\n@@\\n-old\\n+new",
+    );
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let first_envelopes = convert_event_to_envelopes(
+        &first_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+    let second_envelopes = convert_event_to_envelopes(
+        &second_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    let first_id = match &first_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => match n.item.as_codex() {
+            Some(codex::ThreadItem::FileChange { id, .. }) => id.clone(),
+            other => panic!("expected fileChange preview, got {other:?}"),
+        },
+        other => panic!("unexpected backbone event: {other:?}"),
+    };
+    match &second_envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let Some(codex::ThreadItem::FileChange { id, changes, .. }) = n.item.as_codex() else {
+                panic!("expected fileChange preview, got {:?}", n.item);
+            };
+            assert_eq!(id, &first_id);
+            assert_eq!(changes.len(), 2);
+            assert_eq!(changes[1].path, "src/lib.rs");
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn tool_call_delta_non_apply_patch_parseable_draft_updates_input_preview() {
+    let delta_event = AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-external-1".to_string(),
+                call_id: Some("tool-external-1".to_string()),
+                name: "mcp_code_analyzer_long_task".to_string(),
+                arguments: serde_json::json!({ "query": "scan repo" }),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-external-1".to_string(),
+            name: "mcp_code_analyzer_long_task".to_string(),
+            delta: "repo\"}".to_string(),
+            draft: "{\"query\":\"scan repo\"}".to_string(),
+            is_parseable: true,
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &delta_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                arguments,
+                status,
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool input preview, got {:?}", n.item);
+            };
+            assert_eq!(id, "turn-1:tool-external-1");
+            assert_eq!(tool, "mcp_code_analyzer_long_task");
+            assert_eq!(*arguments, serde_json::json!({ "query": "scan repo" }));
+            assert!(matches!(status, codex::DynamicToolCallStatus::InProgress));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    assert!(tool_call_states.contains_key("tool-external-1"));
 }
 
 #[test]

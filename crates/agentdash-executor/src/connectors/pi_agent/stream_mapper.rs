@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::{iter::Peekable, str::Chars, sync::Arc};
 
 use agentdash_agent::{
     AgentEvent, AgentMessage, AgentToolResult, ContentPart, ReadableIdRegistry, TokenUsage,
@@ -397,6 +397,135 @@ fn make_apply_patch_file_change_item(
     }
 }
 
+fn apply_patch_preview_args_from_draft(
+    draft: &str,
+    is_parseable: bool,
+) -> Option<serde_json::Value> {
+    let patch = extract_patch_string_from_tool_call_draft(draft, is_parseable)?;
+    let specs = parse_apply_patch_specs(&patch).ok()?;
+    if specs.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "patch": patch }))
+}
+
+fn extract_patch_string_from_tool_call_draft(draft: &str, is_parseable: bool) -> Option<String> {
+    if is_parseable {
+        let value = serde_json::from_str::<serde_json::Value>(draft).ok()?;
+        return string_arg(&value, "patch");
+    }
+    extract_json_string_field_prefix(draft, "patch")
+}
+
+fn parse_tool_call_args_from_draft(draft: &str, is_parseable: bool) -> Option<serde_json::Value> {
+    if !is_parseable {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(draft).ok()
+}
+
+fn extract_json_string_field_prefix(draft: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let bytes = draft.as_bytes();
+    let mut search_from = 0;
+
+    while let Some(relative_index) = draft[search_from..].find(&needle) {
+        let mut index = search_from + relative_index + needle.len();
+        index = skip_json_whitespace(bytes, index);
+        if bytes.get(index) != Some(&b':') {
+            search_from += relative_index + needle.len();
+            continue;
+        }
+        index = skip_json_whitespace(bytes, index + 1);
+        if bytes.get(index) != Some(&b'"') {
+            return None;
+        }
+        return decode_json_string_prefix(&draft[index + 1..]);
+    }
+
+    None
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut index: usize) -> usize {
+    while matches!(bytes.get(index), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        index += 1;
+    }
+    index
+}
+
+fn decode_json_string_prefix(input: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Some(output),
+            '\\' => match chars.next() {
+                Some('"') => output.push('"'),
+                Some('\\') => output.push('\\'),
+                Some('n') => output.push('\n'),
+                Some('r') => output.push('\r'),
+                Some('t') => output.push('\t'),
+                Some('/') => output.push('/'),
+                Some('b') => output.push('\u{0008}'),
+                Some('f') => output.push('\u{000c}'),
+                Some('u') => match decode_json_unicode_escape(&mut chars) {
+                    Some(decoded) => output.push(decoded),
+                    None => {
+                        return if output.is_empty() {
+                            None
+                        } else {
+                            Some(output)
+                        };
+                    }
+                },
+                Some(other) => output.push(other),
+                None => {
+                    return if output.is_empty() {
+                        None
+                    } else {
+                        Some(output)
+                    };
+                }
+            },
+            other => output.push(other),
+        }
+    }
+
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
+}
+
+fn decode_json_unicode_escape(chars: &mut Peekable<Chars<'_>>) -> Option<char> {
+    let value = decode_json_hex_code_unit(chars)?;
+    if (0xD800..=0xDBFF).contains(&value) {
+        if chars.next()? != '\\' || chars.next()? != 'u' {
+            return None;
+        }
+        let low = decode_json_hex_code_unit(chars)?;
+        if !(0xDC00..=0xDFFF).contains(&low) {
+            return None;
+        }
+        let scalar = 0x10000 + (((value - 0xD800) << 10) | (low - 0xDC00));
+        return char::from_u32(scalar);
+    }
+    if (0xDC00..=0xDFFF).contains(&value) {
+        return None;
+    }
+    char::from_u32(value)
+}
+
+fn decode_json_hex_code_unit(chars: &mut Peekable<Chars<'_>>) -> Option<u32> {
+    let mut value = 0_u32;
+    for _ in 0..4 {
+        value = (value << 4) | chars.next()?.to_digit(16)?;
+    }
+    Some(value)
+}
+
 fn patch_apply_status_from_dynamic(
     status: &codex::DynamicToolCallStatus,
 ) -> codex::PatchApplyStatus {
@@ -637,17 +766,59 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             agentdash_agent::types::AssistantStreamEvent::ToolCallDelta {
                 tool_call_id,
                 name,
+                draft,
+                is_parseable,
                 ..
             } => {
-                let (_state, _) = upsert_state_from_message(
+                let (state, _) = upsert_state_from_message(
                     tool_call_states,
                     entry_index,
                     message,
                     tool_call_id,
                     name,
                 );
-                // 参数增量在 Codex 协议中没有对应的独立通知，仅影响最终 ItemCompleted。
-                Vec::new()
+                let args = if state.tool_name == "fs_apply_patch" {
+                    apply_patch_preview_args_from_draft(draft, *is_parseable)
+                } else {
+                    parse_tool_call_args_from_draft(draft, *is_parseable)
+                };
+                let Some(args) = args else {
+                    return Vec::new();
+                };
+                let (state, _) = upsert_tool_call_state(
+                    tool_call_states,
+                    entry_index,
+                    tool_call_id,
+                    state.tool_name,
+                    Some(args),
+                );
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, &state.tool_name);
+                let item = if is_shell_exec(&state.tool_name) {
+                    make_shell_exec_item(
+                        &item_id,
+                        &state,
+                        codex::CommandExecutionStatus::InProgress,
+                        None,
+                        None,
+                    )
+                } else {
+                    make_dynamic_tool_item(
+                        &item_id,
+                        &state,
+                        codex::DynamicToolCallStatus::InProgress,
+                        None,
+                        None,
+                    )
+                };
+                vec![wrap(
+                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                        item,
+                        session_id.to_string(),
+                        turn_id.to_string(),
+                    )),
+                    state.entry_index,
+                )]
             }
             agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
                 let (_state, _) = upsert_tool_call_state(

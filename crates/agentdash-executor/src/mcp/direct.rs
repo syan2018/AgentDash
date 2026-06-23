@@ -230,26 +230,39 @@ pub async fn discover_mcp_tool_entries(
 
         let listed = pool.list_tools(&server_spec).await?;
 
-        let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
-        for tool in listed {
-            if !capability_state.is_capability_tool_enabled(
-                &capability_key,
-                tool.name.as_ref(),
-                None,
-            ) {
-                continue;
-            }
+        entries.extend(build_direct_discovered_entries_from_listed_tools(
+            server_spec,
+            pool.clone(),
+            listed,
+            capability_state,
+        ));
+    }
+
+    Ok(entries)
+}
+
+fn build_direct_discovered_entries_from_listed_tools(
+    server_spec: McpHttpServerSpec,
+    pool: Arc<DirectMcpClientPool>,
+    listed: Vec<Tool>,
+    capability_state: &CapabilityState,
+) -> Vec<DiscoveredMcpTool> {
+    let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
+    listed
+        .into_iter()
+        .filter(|tool| {
+            capability_state.is_capability_tool_enabled(&capability_key, tool.name.as_ref(), None)
+        })
+        .map(|tool| {
             let adapter = Arc::new(McpToolAdapter::from_tool(
                 server_spec.clone(),
                 pool.clone(),
                 tool,
             ));
             let tool = adapter.clone() as DynAgentTool;
-            entries.push(build_discovered_entry(&adapter.surface, false, tool));
-        }
-    }
-
-    Ok(entries)
+            build_discovered_entry(&adapter.surface, false, tool)
+        })
+        .collect()
 }
 
 async fn connect_http_server(
@@ -335,12 +348,25 @@ fn parse_http_mcp_server(server: &RuntimeMcpServer) -> Option<McpHttpServerSpec>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{borrow::Cow, sync::Arc};
+
+    use agentdash_spi::{ToolCapability, ToolCapabilityFilter};
 
     fn header(value: &str) -> McpHttpHeader {
         McpHttpHeader {
             name: "x-session".to_string(),
             value: value.to_string(),
         }
+    }
+
+    fn listed_tool(name: &str) -> Tool {
+        let mut tool = Tool::default();
+        tool.name = Cow::Owned(name.to_string());
+        tool.description = Some(Cow::Owned(format!("{name} description")));
+        let mut input_schema = serde_json::Map::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+        tool.input_schema = Arc::new(input_schema);
+        tool
     }
 
     #[test]
@@ -385,5 +411,45 @@ mod tests {
         assert_eq!(base_key, pool.key(&same));
         assert_ne!(base_key, pool.key(&different_headers));
         assert_ne!(base_key, pool.key(&different_url));
+    }
+
+    #[test]
+    fn direct_discovery_filters_custom_mcp_raw_tool_policy_from_entries_and_callables() {
+        let server_spec = McpHttpServerSpec {
+            name: "code-analyzer".to_string(),
+            url: "http://127.0.0.1:8999/mcp".to_string(),
+            headers: vec![],
+        };
+        let mut capability_state = CapabilityState::default();
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        capability_state.tool.tool_policy.insert(
+            "mcp:code-analyzer".to_string(),
+            ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["blocked_tool".to_string()].into_iter().collect(),
+            },
+        );
+
+        let entries = build_direct_discovered_entries_from_listed_tools(
+            server_spec,
+            Arc::new(DirectMcpClientPool::default()),
+            vec![listed_tool("allowed_tool"), listed_tool("blocked_tool")],
+            &capability_state,
+        );
+
+        let raw_tool_names = entries
+            .iter()
+            .map(|entry| entry.tool_name.as_str())
+            .collect::<Vec<_>>();
+        let callable_names = entries
+            .iter()
+            .map(|entry| entry.tool.name())
+            .collect::<Vec<_>>();
+
+        assert_eq!(raw_tool_names, vec!["allowed_tool"]);
+        assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
     }
 }

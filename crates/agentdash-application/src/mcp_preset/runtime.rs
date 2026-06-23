@@ -415,11 +415,11 @@ pub async fn resolve_preset_mcp_presets(
     for (index, key) in keys.iter().enumerate() {
         let key = key.trim();
         if key.is_empty() {
-            return Err(format!("mcp_preset_keys[{index}] 不能为空字符串"));
+            return Err(format!("MCP preset reference[{index}] 不能为空字符串"));
         }
         let preset = preset_map
             .get(key)
-            .ok_or_else(|| format!("mcp_preset_keys[{index}] 引用了不存在的 preset: {key}"))?;
+            .ok_or_else(|| format!("MCP preset reference[{index}] 引用了不存在的 preset: {key}"))?;
         if !seen.insert(preset.key.clone()) {
             continue;
         }

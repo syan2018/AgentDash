@@ -41,7 +41,7 @@ use crate::lifecycle::{
     OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
     writable_port_keys_for_active_workflow,
 };
-use crate::mcp_preset::{McpRuntimeBindingContext, resolve_preset_mcp_server};
+use crate::mcp_preset::McpRuntimeBindingContext;
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
 use crate::repository_set::RepositorySet;
@@ -107,12 +107,6 @@ impl<'a> OwnerScope<'a> {
     }
 }
 
-/// agent 级 MCP 配置，来自 ProjectAgent / Routine agent context。
-#[derive(Default, Clone)]
-pub(crate) struct AgentLevelMcp {
-    pub preset_mcp_presets: Vec<agentdash_domain::mcp_preset::McpPreset>,
-}
-
 /// Owner bootstrap compose 的完整输入。
 pub(crate) struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
@@ -126,7 +120,6 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub subject_workspace: Option<&'a Workspace>,
     pub executor_config: AgentConfig,
     pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
-    pub agent_mcp: AgentLevelMcp,
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     pub agent_skill_asset_keys: Vec<String>,
     pub agent_vfs_access_grants: Vec<AgentVfsAccessGrant>,
@@ -261,16 +254,8 @@ impl<'a> OwnerBootstrapComposer<'a> {
             crate::session::capability_state::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
             );
-        let mcp_runtime_context = McpRuntimeBindingContext {
-            vfs: vfs.as_ref(),
-            backend_anchor: None,
-        };
-        let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
-            &mut cap_output,
-            &spec.request_mcp_servers,
-            &spec.agent_mcp,
-            &mcp_runtime_context,
-        )?;
+        let runtime_mcp_servers =
+            normalize_owner_bootstrap_mcp_projection(&mut cap_output, &spec.request_mcp_servers);
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -888,27 +873,22 @@ async fn resolve_owner_workflow_tool_directives(
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
     request_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
-    agent_mcp: &AgentLevelMcp,
-    runtime_context: &McpRuntimeBindingContext<'_>,
-) -> Result<Vec<agentdash_spi::RuntimeMcpServer>, String> {
+) -> Vec<agentdash_spi::RuntimeMcpServer> {
     let mut servers = Vec::new();
     servers.extend(request_mcp_servers.iter().cloned());
     servers.extend(capability_state.tool.mcp_servers.iter().cloned());
-    for preset in &agent_mcp.preset_mcp_presets {
-        let server = resolve_preset_mcp_server(preset, Some(runtime_context))
-            .map_err(|error| error.to_string())?;
-        servers.push(server);
-    }
     normalize_runtime_mcp_servers(&mut servers);
 
-    for server in &servers {
+    // Request-level MCP servers are a runtime override surface. ProjectAgent MCP
+    // presets must already be granted by ToolCapabilityDirective + CapabilityResolver.
+    for server in request_mcp_servers {
         capability_state
             .tool
             .capabilities
             .insert(capability_for_runtime_mcp_server(server));
     }
     capability_state.tool.mcp_servers = servers.clone();
-    Ok(servers)
+    servers
 }
 
 fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
@@ -961,20 +941,6 @@ mod tests {
         }
     }
 
-    fn runtime_mcp_preset(name: &str, url: &str) -> agentdash_domain::mcp_preset::McpPreset {
-        agentdash_domain::mcp_preset::McpPreset::new_user(
-            Uuid::new_v4(),
-            name,
-            name,
-            None,
-            agentdash_domain::mcp_preset::McpTransportConfig::Http {
-                url: url.to_string(),
-                headers: vec![],
-            },
-            agentdash_domain::mcp_preset::McpRoutePolicy::Direct,
-        )
-    }
-
     fn project_agent_with_companion_config(
         project_id: Uuid,
         name: &str,
@@ -1025,25 +991,17 @@ mod tests {
     }
 
     #[test]
-    fn owner_bootstrap_mcp_projection_grants_agent_preset_without_directive() {
-        let agent_server = runtime_mcp_server("code_analyzer", "http://agent/mcp");
+    fn owner_bootstrap_mcp_projection_grants_request_level_mcp_override() {
+        let request_server = runtime_mcp_server("code_analyzer", "http://request/mcp");
         let mut capability_state = CapabilityState::default();
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
-            &[],
-            &AgentLevelMcp {
-                preset_mcp_presets: vec![runtime_mcp_preset("code_analyzer", "http://agent/mcp")],
-            },
-            &McpRuntimeBindingContext {
-                vfs: None,
-                backend_anchor: None,
-            },
-        )
-        .expect("static agent preset should resolve");
+            std::slice::from_ref(&request_server),
+        );
 
-        assert_eq!(servers, vec![agent_server.clone()]);
-        assert_eq!(capability_state.tool.mcp_servers, vec![agent_server]);
+        assert_eq!(servers, vec![request_server.clone()]);
+        assert_eq!(capability_state.tool.mcp_servers, vec![request_server]);
         assert!(
             capability_state
                 .tool
@@ -1064,28 +1022,21 @@ mod tests {
             runtime_mcp_server("shared", "http://resolver/mcp"),
             runtime_mcp_server("resolver_only", "http://resolver-only/mcp"),
         ];
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("resolver_only"));
 
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
             &[runtime_mcp_server("shared", "http://request/mcp")],
-            &AgentLevelMcp {
-                preset_mcp_presets: vec![
-                    runtime_mcp_preset("shared", "http://agent/mcp"),
-                    runtime_mcp_preset("agent_only", "http://agent-only/mcp"),
-                ],
-            },
-            &McpRuntimeBindingContext {
-                vfs: None,
-                backend_anchor: None,
-            },
-        )
-        .expect("static agent presets should resolve");
+        );
 
         let names = servers
             .iter()
             .map(|server| server.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["shared", "resolver_only", "agent_only"]);
+        assert_eq!(names, vec!["shared", "resolver_only"]);
         assert_eq!(server_url(&servers[0]), "http://request/mcp");
         assert_eq!(capability_state.tool.mcp_servers, servers);
         assert!(
@@ -1098,28 +1049,27 @@ mod tests {
             capability_state
                 .tool
                 .capabilities
+                .contains(&ToolCapability::custom_mcp("resolver_only"))
+        );
+        assert!(
+            !capability_state
+                .tool
+                .capabilities
                 .contains(&ToolCapability::custom_mcp("agent_only"))
         );
     }
 
     #[test]
-    fn owner_bootstrap_mcp_projection_maps_platform_scoped_server_to_platform_capability() {
+    fn owner_bootstrap_mcp_projection_maps_request_level_platform_scoped_server_to_platform_capability()
+     {
         let mut capability_state = CapabilityState::default();
-        capability_state.tool.mcp_servers = vec![runtime_mcp_server(
-            "agentdash-workflow-tools-123",
-            "http://workflow/mcp",
-        )];
+        let request_server =
+            runtime_mcp_server("agentdash-workflow-tools-123", "http://workflow/mcp");
 
         normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
-            &[],
-            &AgentLevelMcp::default(),
-            &McpRuntimeBindingContext {
-                vfs: None,
-                backend_anchor: None,
-            },
-        )
-        .expect("platform scoped server should normalize");
+            std::slice::from_ref(&request_server),
+        );
 
         assert!(
             capability_state

@@ -1,25 +1,78 @@
-import type { CapabilityKey } from "../../../types";
-import { CAPABILITY_OPTIONS } from "../../../types";
+import type { CapabilityDirective, CapabilityKey } from "../../../types";
+import {
+  CAPABILITY_OPTIONS,
+  directiveKind,
+  directivePath,
+  parseCapabilityPath,
+} from "../../../types";
+import { replaceWellKnownCapabilitySelection } from "./form-state";
+
+const WELL_KNOWN_CAPABILITY_KEYS = new Set<CapabilityKey>(
+  CAPABILITY_OPTIONS.map((option) => option.value),
+);
+
+function isCapabilityKey(value: string): value is CapabilityKey {
+  return WELL_KNOWN_CAPABILITY_KEYS.has(value as CapabilityKey);
+}
+
+function readWellKnownCapabilityState(directives: CapabilityDirective[]): {
+  selected: CapabilityKey[];
+  explicitAddCount: number;
+} {
+  const latest = new Map<CapabilityKey, "add" | "remove">();
+  let explicitAddCount = 0;
+  for (const directive of directives) {
+    try {
+      const path = parseCapabilityPath(directivePath(directive));
+      if (path.tool !== null || !isCapabilityKey(path.capability)) continue;
+      const kind = directiveKind(directive);
+      latest.set(path.capability, kind);
+      if (kind === "add") explicitAddCount += 1;
+    } catch {
+      // 非法 path 不是此 Tab 的编辑对象，保留给保存路径原样处理。
+    }
+  }
+
+  if (explicitAddCount > 0) {
+    return {
+      selected: CAPABILITY_OPTIONS
+        .map((option) => option.value)
+        .filter((key) => latest.get(key) === "add"),
+      explicitAddCount,
+    };
+  }
+
+  return {
+    selected: CAPABILITY_OPTIONS
+      .map((option) => option.value)
+      .filter((key) => latest.get(key) !== "remove"),
+    explicitAddCount,
+  };
+}
 
 export function ToolCapabilitiesField({
-  capabilities,
+  directives,
   onChange,
 }: {
-  capabilities: CapabilityKey[];
-  onChange: (next: CapabilityKey[]) => void;
+  directives: CapabilityDirective[];
+  onChange: (next: CapabilityDirective[]) => void;
 }) {
-  const isAll = capabilities.length === 0;
-  const has = (v: CapabilityKey) => isAll || capabilities.includes(v);
+  const { selected } = readWellKnownCapabilityState(directives);
+  const isAll = selected.length >= CAPABILITY_OPTIONS.length;
+  const has = (v: CapabilityKey) => selected.includes(v);
 
   const toggle = (v: CapabilityKey) => {
     if (isAll) {
-      onChange(CAPABILITY_OPTIONS.map((o) => o.value).filter((c) => c !== v));
+      onChange(replaceWellKnownCapabilitySelection(
+        directives,
+        CAPABILITY_OPTIONS.map((o) => o.value).filter((c) => c !== v),
+      ));
       return;
     }
-    const next = capabilities.includes(v)
-      ? capabilities.filter((c) => c !== v)
-      : [...capabilities, v];
-    onChange(next.length >= CAPABILITY_OPTIONS.length ? [] : next);
+    const next = selected.includes(v)
+      ? selected.filter((c) => c !== v)
+      : [...selected, v];
+    onChange(replaceWellKnownCapabilitySelection(directives, next));
   };
 
   const basicOpts = CAPABILITY_OPTIONS.filter((o) => o.group === "basic");

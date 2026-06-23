@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
-import type { ThinkingLevel } from "../../../types";
-import { THINKING_LEVEL_OPTIONS, CAPABILITY_OPTIONS } from "../../../types";
+import type { CapabilityKey, ThinkingLevel } from "../../../types";
+import {
+  THINKING_LEVEL_OPTIONS,
+  CAPABILITY_OPTIONS,
+  directivePath,
+  parseCapabilityPath,
+} from "../../../types";
 import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../../executor-selector";
 import { CapabilityPicker } from "./capability-picker";
@@ -8,9 +13,16 @@ import { KnowledgeSection } from "./knowledge-section";
 import { McpPresetPicker } from "./mcp-preset-picker";
 import { SkillAssetPicker } from "./skill-asset-picker";
 import { ToolCapabilitiesField } from "./tool-capabilities-field";
-import type { PresetFormState } from "./form-state";
+import {
+  selectedMcpPresetKeysFromDirectives,
+  type PresetFormState,
+} from "./form-state";
 import { VfsAccessPicker } from "./vfs-access-picker";
 import { WorkspaceModuleVisibilityPicker } from "./workspace-module-visibility-picker";
+
+const WELL_KNOWN_CAPABILITY_KEYS = new Set<CapabilityKey>(
+  CAPABILITY_OPTIONS.map((option) => option.value),
+);
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAgentTypeOptions() {
@@ -128,6 +140,20 @@ export function PresetFormFields({
     [form.name, siblingAgents],
   );
   const companionCount = extraCompanionCandidates.length;
+  const selectedMcpPresetKeys = useMemo(
+    () => selectedMcpPresetKeysFromDirectives(form.capability_directives),
+    [form.capability_directives],
+  );
+  const wellKnownCapabilityDirectiveCount = useMemo(() => {
+    return form.capability_directives.filter((directive) => {
+      try {
+        const path = parseCapabilityPath(directivePath(directive));
+        return path.tool === null && WELL_KNOWN_CAPABILITY_KEYS.has(path.capability as CapabilityKey);
+      } catch {
+        return false;
+      }
+    }).length;
+  }, [form.capability_directives]);
 
   // ── 字段渲染（从 Tab 容器调用） ─────────────────────────────
   const renderIdentityGroup = () => (
@@ -409,8 +435,7 @@ export function PresetFormFields({
 
   // ── Tab / 二级 Sidebar 元数据 ────────────────────────────
   const capabilityCount =
-    (form.capability_directives.length > 0 ? form.capability_directives.length : 0) +
-    form.mcp_preset_keys.length +
+    form.capability_directives.length +
     form.vfs_access_grants.length +
     form.skill_asset_keys.length +
     form.visible_workspace_module_refs.length +
@@ -437,14 +462,14 @@ export function PresetFormFields({
     {
       key: 'tool',
       label: '工具能力',
-      badge: form.capability_directives.length > 0
-        ? `${form.capability_directives.length}/${CAPABILITY_OPTIONS.length}`
+      badge: wellKnownCapabilityDirectiveCount > 0
+        ? `${wellKnownCapabilityDirectiveCount}/${CAPABILITY_OPTIONS.length}`
         : '全部',
     },
     {
       key: 'mcp',
       label: 'MCP',
-      badge: form.mcp_preset_keys.length > 0 ? String(form.mcp_preset_keys.length) : undefined,
+      badge: selectedMcpPresetKeys.length > 0 ? String(selectedMcpPresetKeys.length) : undefined,
     },
     {
       key: 'vfs',
@@ -583,15 +608,15 @@ export function PresetFormFields({
           <div className="flex-1 min-w-0">
             {activeCapability === 'tool' && (
               <ToolCapabilitiesField
-                capabilities={form.capability_directives}
+                directives={form.capability_directives}
                 onChange={(v) => patchForm({ capability_directives: v })}
               />
             )}
             {activeCapability === 'mcp' && (
               <McpPresetPicker
                 projectId={projectId}
-                selectedKeys={form.mcp_preset_keys}
-                onChange={(mcp_preset_keys) => patchForm({ mcp_preset_keys })}
+                directives={form.capability_directives}
+                onChange={(capability_directives) => patchForm({ capability_directives })}
               />
             )}
             {activeCapability === 'vfs' && (

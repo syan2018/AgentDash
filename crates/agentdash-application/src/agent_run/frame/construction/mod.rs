@@ -69,7 +69,7 @@ pub struct FrameConstructionDeps {
 }
 
 pub(crate) use owner_bootstrap::{
-    AgentLevelMcp, OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
+    OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
 };
 
 impl FrameConstructionService {

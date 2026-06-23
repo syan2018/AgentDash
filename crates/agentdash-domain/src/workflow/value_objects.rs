@@ -21,7 +21,8 @@ pub use activity_def::{
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
-    ToolCapabilitySlotState, reduce_tool_capability_directives,
+    ToolCapabilitySlotState, mcp_capability_key, mcp_tool_capability_path,
+    reduce_tool_capability_directives,
 };
 pub use contract::{
     AgentProcedureContract, EffectiveSessionContract, WorkflowSessionTerminalState,
@@ -397,6 +398,28 @@ mod tests {
         let long = ToolCapabilityPath::parse("mcp:code_analyzer::scan").unwrap();
         assert_eq!(long.capability, "mcp:code_analyzer");
         assert_eq!(long.tool.as_deref(), Some("scan"));
+    }
+
+    #[test]
+    fn mcp_capability_helpers_trim_and_build_canonical_paths() {
+        assert_eq!(
+            mcp_capability_key(" code_analyzer ").unwrap(),
+            "mcp:code_analyzer"
+        );
+
+        let path = mcp_tool_capability_path(" code_analyzer ", " scan ").unwrap();
+        assert_eq!(path.capability, "mcp:code_analyzer");
+        assert_eq!(path.tool.as_deref(), Some("scan"));
+        assert_eq!(path.to_qualified_string(), "mcp:code_analyzer::scan");
+    }
+
+    #[test]
+    fn mcp_capability_helpers_reject_empty_and_nested_segments() {
+        assert!(mcp_capability_key("").is_err());
+        assert!(mcp_capability_key("   ").is_err());
+        assert!(mcp_capability_key("code::analyzer").is_err());
+        assert!(mcp_tool_capability_path("code_analyzer", "").is_err());
+        assert!(mcp_tool_capability_path("code_analyzer", "scan::deep").is_err());
     }
 
     #[test]

@@ -16,6 +16,7 @@ use agentdash_domain::shared_library::{
     LibraryAssetPayload, LibraryAssetType, McpServerTemplatePayload, ProjectExtensionInstallation,
     SharedLibrarySourceStatus, VfsMountTemplatePayload, normalize_workflow_template_value,
 };
+use agentdash_domain::workflow::{ToolCapabilityDirective, mcp_capability_key};
 
 use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
@@ -412,7 +413,7 @@ async fn install_agent_template(
     )
     .await?;
 
-    let mut mcp_preset_keys = Vec::with_capacity(dependency_plans.len());
+    let mut dependency_mcp_directives = Vec::with_capacity(dependency_plans.len());
     for plan in dependency_plans {
         let preset = mcp_preset_from_template_install(
             input.project_id,
@@ -423,7 +424,7 @@ async fn install_agent_template(
         )?;
         let installed = upsert_mcp_preset(repos, preset, plan.overwrite).await?;
         if let InstallLibraryAssetOutput::McpPreset { .. } = installed {
-            mcp_preset_keys.push(plan.target_key);
+            dependency_mcp_directives.push(plan.add_directive);
         }
     }
 
@@ -437,27 +438,12 @@ async fn install_agent_template(
             .clone()
             .unwrap_or_else(|| "PI_AGENT".to_string()),
     );
-    let agent_config = AgentPresetConfig {
-        executor: config.executor,
-        provider_id: config.provider_id,
-        model_id: config.model_id,
-        agent_id: config.agent_id,
-        thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
-        system_prompt: config.system_prompt,
-        system_prompt_mode: config.system_prompt_mode,
-        display_name: Some(asset.display_name),
-        description: asset.description,
-        capability_directives: (!config.capability_directives.is_empty())
-            .then_some(config.capability_directives),
-        mcp_preset_keys: (!mcp_preset_keys.is_empty()).then_some(mcp_preset_keys),
-        vfs_access_grants: None,
-        skill_asset_keys: None,
-        default_companion_enabled: None,
-        extra_companions: None,
-        // 模板安装不预设 module 可见性（module 为项目作用域），项目内按 agent 编辑。
-        visible_workspace_module_refs: None,
-    };
+    let agent_config = agent_template_preset_config(
+        config,
+        Some(asset.display_name),
+        asset.description,
+        dependency_mcp_directives,
+    );
     agent.config = serde_json::to_value(agent_config).map_err(DomainError::Serialization)?;
     agent.installed_source = Some(installed_source);
     repos.project_agent_repo.create(&agent).await?;
@@ -466,10 +452,49 @@ async fn install_agent_template(
     })
 }
 
+fn agent_template_preset_config(
+    config: agentdash_domain::shared_library::AgentTemplateConfig,
+    display_name: Option<String>,
+    description: Option<String>,
+    mut dependency_mcp_directives: Vec<ToolCapabilityDirective>,
+) -> AgentPresetConfig {
+    dependency_mcp_directives.extend(config.capability_directives);
+    AgentPresetConfig {
+        executor: config.executor,
+        provider_id: config.provider_id,
+        model_id: config.model_id,
+        agent_id: config.agent_id,
+        thinking_level: config.thinking_level,
+        permission_policy: config.permission_policy,
+        system_prompt: config.system_prompt,
+        system_prompt_mode: config.system_prompt_mode,
+        display_name,
+        description,
+        capability_directives: (!dependency_mcp_directives.is_empty())
+            .then_some(dependency_mcp_directives),
+        vfs_access_grants: None,
+        skill_asset_keys: None,
+        default_companion_enabled: None,
+        extra_companions: None,
+        // 模板安装不预设 module 可见性（module 为项目作用域），项目内按 agent 编辑。
+        visible_workspace_module_refs: None,
+    }
+}
+
+fn mcp_dependency_add_directive(target_key: &str) -> Result<ToolCapabilityDirective, DomainError> {
+    let capability_key = mcp_capability_key(target_key).map_err(|reason| {
+        DomainError::InvalidConfig(format!(
+            "Agent MCP 依赖 target_key `{target_key}` 非法: {reason}"
+        ))
+    })?;
+    Ok(ToolCapabilityDirective::add_simple(capability_key))
+}
+
 struct AgentMcpPresetInstallPlan {
     asset: LibraryAsset,
     payload: McpServerTemplatePayload,
     target_key: String,
+    add_directive: ToolCapabilityDirective,
     parameters: Option<Value>,
     overwrite: bool,
 }
@@ -523,6 +548,7 @@ async fn resolve_agent_mcp_preset_install_plans(
                 "Agent MCP 依赖 target_key 重复: {target_key}"
             )));
         }
+        let add_directive = mcp_dependency_add_directive(&target_key)?;
         let parameters = merged_dependency_parameters(dependency, options.dependency_parameters)?;
         // 预先解析一次，确保参数错误发生在任何写入之前。
         payload.resolve_transport(parameters.as_ref())?;
@@ -530,6 +556,7 @@ async fn resolve_agent_mcp_preset_install_plans(
             asset,
             payload,
             target_key,
+            add_directive,
             parameters,
             overwrite: true,
         });
@@ -1030,7 +1057,7 @@ mod tests {
 
     use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
     use agentdash_domain::shared_library::{
-        LibraryAssetScope, LibraryAssetSource, LibraryAssetType, seed_digest,
+        AgentTemplateConfig, LibraryAssetScope, LibraryAssetSource, LibraryAssetType, seed_digest,
     };
 
     use super::*;
@@ -1162,6 +1189,47 @@ mod tests {
             AgentTemplateDependencyMode::Required
         );
         assert!(options.dependency_parameters.is_empty());
+    }
+
+    #[test]
+    fn agent_template_install_config_writes_mcp_directives_without_legacy_keys() {
+        let explicit_remove = ToolCapabilityDirective::remove_tool(
+            "mcp:abc-config-analyzer",
+            "ABCConfigAnalyzer_get_file_content",
+        );
+        let config = AgentTemplateConfig {
+            executor: Some("PI_AGENT".to_string()),
+            capability_directives: vec![explicit_remove.clone()],
+            ..Default::default()
+        };
+
+        let preset_config = agent_template_preset_config(
+            config,
+            Some("ABCCopilot".to_string()),
+            Some("ABC agent template".to_string()),
+            vec![mcp_dependency_add_directive("abc-config-analyzer").expect("mcp add directive")],
+        );
+
+        assert_eq!(
+            preset_config.capability_directives.as_deref(),
+            Some(
+                [
+                    ToolCapabilityDirective::add_simple("mcp:abc-config-analyzer"),
+                    explicit_remove
+                ]
+                .as_slice()
+            )
+        );
+
+        let serialized = serde_json::to_value(&preset_config).expect("serialize preset config");
+        assert_eq!(
+            serialized["capability_directives"],
+            json!([
+                { "add": "mcp:abc-config-analyzer" },
+                { "remove": "mcp:abc-config-analyzer::ABCConfigAnalyzer_get_file_content" }
+            ])
+        );
+        assert!(serialized.get("mcp_preset_keys").is_none());
     }
 
     fn mcp_template_asset(payload: serde_json::Value) -> LibraryAsset {

@@ -67,5 +67,6 @@ pub use value_objects::{
     WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
-    WorkflowSessionTerminalState, reduce_tool_capability_directives, workflow_script_source_digest,
+    WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
+    reduce_tool_capability_directives, workflow_script_source_digest,
 };

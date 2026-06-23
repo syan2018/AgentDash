@@ -150,7 +150,7 @@ pub async fn discover_relay_mcp_tool_entries(
 mod tests {
     use super::*;
     use agentdash_spi::platform::mcp_relay::{RelayMcpCallResult, RelayProbeResult};
-    use agentdash_spi::{ConnectorError, ToolCapabilityFilter};
+    use agentdash_spi::{ConnectorError, ToolCapability, ToolCapabilityFilter};
     use async_trait::async_trait;
 
     #[derive(Debug)]
@@ -247,6 +247,60 @@ mod tests {
         let names = tools.iter().map(|tool| tool.name()).collect::<Vec<_>>();
 
         assert_eq!(names, vec!["mcp_agentdash_workflow_tools_get_workflow"]);
+    }
+
+    #[tokio::test]
+    async fn relay_discovery_filters_custom_mcp_raw_tool_policy_from_entries_and_callables() {
+        let provider = Arc::new(FakeRelayProvider {
+            tools: vec![
+                RelayMcpToolInfo {
+                    server_name: "code-analyzer".to_string(),
+                    server: relay_server("code-analyzer"),
+                    tool_name: "allowed_tool".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+                RelayMcpToolInfo {
+                    server_name: "code-analyzer".to_string(),
+                    server: relay_server("code-analyzer"),
+                    tool_name: "blocked_tool".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+            ],
+        });
+        let mut flow = CapabilityState::default();
+        flow.tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        flow.tool.tool_policy.insert(
+            "mcp:code-analyzer".to_string(),
+            ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["blocked_tool".to_string()].into_iter().collect(),
+            },
+        );
+
+        let entries = discover_relay_mcp_tool_entries(
+            provider.clone(),
+            &[relay_server("code-analyzer")],
+            &flow,
+            None,
+        )
+        .await;
+        let raw_tool_names = entries
+            .iter()
+            .map(|entry| entry.tool_name.as_str())
+            .collect::<Vec<_>>();
+        let callable_names =
+            discover_relay_mcp_tools(provider, &[relay_server("code-analyzer")], &flow, None)
+                .await
+                .iter()
+                .map(|tool| tool.name().to_string())
+                .collect::<Vec<_>>();
+
+        assert_eq!(raw_tool_names, vec!["allowed_tool"]);
+        assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
     }
 
     #[tokio::test]

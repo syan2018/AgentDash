@@ -16,7 +16,7 @@ use crate::session::construction_planner::{
 use crate::session::construction_provider::SessionConstructionProviderInput;
 
 use super::{
-    AgentLevelMcp, FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
+    FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
     frame_builder_from_existing, merge_user_executor_config, owner_prompt_launch_path,
     required_user_input,
 };
@@ -105,9 +105,6 @@ pub(super) async fn compose(
                 subject_workspace,
                 executor_config,
                 user_input,
-                agent_mcp: AgentLevelMcp {
-                    preset_mcp_presets: agent_context.preset_mcp_presets.clone(),
-                },
                 agent_tool_directives: agent_context
                     .preset_config
                     .capability_directives

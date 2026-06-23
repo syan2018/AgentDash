@@ -10,7 +10,8 @@ use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_domain::{
-    agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project, workflow::SubjectRef,
+    agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
+    project::Project, workflow::SubjectRef,
 };
 use agentdash_spi::AgentConfig;
 use axum::{
@@ -68,6 +69,26 @@ mod tests {
         assert!(value.get("preset_name").is_some());
         assert!(value.get("displayName").is_none());
         assert!(value.get("presetName").is_none());
+    }
+
+    #[test]
+    fn normalize_project_agent_config_converts_legacy_mcp_preset_keys() {
+        let value = normalize_project_agent_config(serde_json::json!({
+            "mcp_preset_keys": ["abc-config"],
+            "capability_directives": [
+                { "remove": "mcp:abc-config::ABCConfigAnalyzer_get_file_content" }
+            ]
+        }))
+        .expect("normalize config");
+
+        assert!(value.get("mcp_preset_keys").is_none());
+        assert_eq!(
+            value["capability_directives"],
+            serde_json::json!([
+                { "add": "mcp:abc-config" },
+                { "remove": "mcp:abc-config::ABCConfigAnalyzer_get_file_content" }
+            ])
+        );
     }
 }
 
@@ -439,17 +460,24 @@ fn parse_subject_ref(subject_ref: Option<SubjectRefDto>) -> Result<Option<Subjec
 // ─── Project Agent API ───
 
 fn build_project_agent_response(agent: &ProjectAgent) -> Result<ProjectAgentResponse, ApiError> {
+    let config = AgentPresetConfig::normalize_json_value(&agent.config).map_err(ApiError::from)?;
     Ok(ProjectAgentResponse {
         id: agent.id.to_string(),
         project_id: agent.project_id.to_string(),
         name: agent.name.clone(),
         agent_type: agent.agent_type.clone(),
-        config: agent.config.clone(),
+        config,
         default_lifecycle_key: agent.default_lifecycle_key.clone(),
         knowledge_enabled: agent.knowledge_enabled,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     })
+}
+
+fn normalize_project_agent_config(
+    config: serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
+    AgentPresetConfig::normalize_json_value(&config).map_err(ApiError::from)
 }
 
 /// GET /projects/{id}/agents — 列出项目内所有 Project Agent
@@ -524,7 +552,7 @@ pub async fn create_project_agent(
 
     let mut agent = ProjectAgent::new(project_id, name, agent_type);
     if let Some(config) = req.config {
-        agent.config = config;
+        agent.config = normalize_project_agent_config(config)?;
     }
     agent.default_lifecycle_key = lifecycle_key;
 
@@ -578,7 +606,7 @@ pub async fn update_project_agent(
         agent.agent_type = trimmed;
     }
     if let Some(config) = req.config {
-        agent.config = config;
+        agent.config = normalize_project_agent_config(config)?;
     }
     if let Some(default_lifecycle_key) = req.default_lifecycle_key {
         agent.default_lifecycle_key = resolve_lifecycle_key_for_project_agent(

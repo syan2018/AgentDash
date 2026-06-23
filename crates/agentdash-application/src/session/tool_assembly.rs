@@ -186,6 +186,73 @@ mod tests {
         }
     }
 
+    struct NamedStubTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl AgentTool for NamedStubTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "MCP test tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({ "type": "object" })
+        }
+
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _args: Value,
+            _cancel: CancellationToken,
+            _on_update: Option<ToolUpdateCallback>,
+        ) -> Result<AgentToolResult, AgentToolError> {
+            Ok(AgentToolResult {
+                content: vec![ContentPart::text("ok")],
+                is_error: false,
+                details: None,
+            })
+        }
+    }
+
+    struct FilteringMcpDiscovery;
+
+    #[async_trait]
+    impl McpToolDiscovery for FilteringMcpDiscovery {
+        async fn discover_tool_entries(
+            &self,
+            request: McpToolDiscoveryRequest,
+        ) -> Result<Vec<DiscoveredMcpTool>, agentdash_spi::ConnectorError> {
+            let entries = ["allowed_tool", "blocked_tool"]
+                .into_iter()
+                .map(|tool_name| {
+                    let runtime_name = format!("mcp_code_analyzer_{tool_name}");
+                    DiscoveredMcpTool {
+                        runtime_name: runtime_name.clone(),
+                        server_name: "code-analyzer".to_string(),
+                        tool_name: tool_name.to_string(),
+                        uses_relay: false,
+                        description: format!("{tool_name} description"),
+                        parameters_schema: serde_json::json!({ "type": "object" }),
+                        tool: Arc::new(NamedStubTool { name: runtime_name }),
+                    }
+                })
+                .filter(|entry| {
+                    request.capability_state.is_capability_tool_enabled(
+                        "mcp:code-analyzer",
+                        &entry.tool_name,
+                        None,
+                    )
+                })
+                .collect();
+            Ok(entries)
+        }
+    }
+
     #[tokio::test]
     async fn assembly_surface_preserves_project_mcp_schema_provenance() {
         let captured_anchor = Arc::new(Mutex::new(None));
@@ -249,5 +316,78 @@ mod tests {
                 .map(|anchor| anchor.backend_id()),
             Some(runtime_backend_anchor.backend_id())
         );
+    }
+
+    #[tokio::test]
+    async fn assembly_surface_uses_filtered_mcp_entries_for_schema_and_callable_tools() {
+        let runtime_backend_anchor = agentdash_spi::RuntimeBackendAnchor::new(
+            "backend-1",
+            agentdash_spi::RuntimeBackendAnchorSource::System,
+        )
+        .expect("anchor");
+        let mut capability_state = agentdash_spi::CapabilityState::default();
+        capability_state
+            .tool
+            .capabilities
+            .insert(agentdash_spi::ToolCapability::custom_mcp("code-analyzer"));
+        capability_state.tool.tool_policy.insert(
+            "mcp:code-analyzer".to_string(),
+            agentdash_spi::ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["blocked_tool".to_string()].into_iter().collect(),
+            },
+        );
+        let context = ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory: std::path::PathBuf::from("."),
+                environment_variables: std::collections::HashMap::new(),
+                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                mcp_servers: vec![agentdash_spi::RuntimeMcpServer {
+                    name: "code-analyzer".to_string(),
+                    transport: agentdash_spi::McpTransportConfig::Http {
+                        url: "http://localhost:18000/mcp".to_string(),
+                        headers: Default::default(),
+                    },
+                    uses_relay: false,
+                }],
+                vfs: None,
+                backend_execution: None,
+                runtime_backend_anchor: Some(runtime_backend_anchor),
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame {
+                capability_state,
+                ..Default::default()
+            },
+        };
+
+        let surface = assemble_tool_surface_for_execution_context(
+            "session-1",
+            &context,
+            None,
+            Some(&FilteringMcpDiscovery),
+        )
+        .await;
+
+        let tool_names = surface
+            .tools
+            .iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>();
+        let schema_names = surface
+            .schemas
+            .iter()
+            .map(|schema| schema.name.as_str())
+            .collect::<Vec<_>>();
+        let schema_paths = surface
+            .schemas
+            .iter()
+            .filter_map(|schema| schema.tool_path.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_names, vec!["mcp_code_analyzer_allowed_tool"]);
+        assert_eq!(schema_names, vec!["mcp_code_analyzer_allowed_tool"]);
+        assert_eq!(schema_paths, vec!["mcp:code-analyzer::allowed_tool"]);
     }
 }

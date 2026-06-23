@@ -6,7 +6,24 @@ import type {
   SystemPromptMode,
   ThinkingLevel,
 } from "../../../types";
-import { isThinkingLevel } from "../../../types";
+import {
+  CAPABILITY_OPTIONS,
+  directiveKind,
+  directivePath,
+  isThinkingLevel,
+  parseCapabilityPath,
+} from "../../../types";
+import {
+  addDirective,
+  normalizeDirectives,
+  removeDirective,
+} from "../../workflow/capability-directive-ops";
+
+const MCP_CAPABILITY_PREFIX = "mcp:";
+const TOOL_PATH_SEPARATOR = "::";
+const WELL_KNOWN_CAPABILITY_KEYS = new Set<CapabilityKey>(
+  CAPABILITY_OPTIONS.map((option) => option.value),
+);
 
 export interface PresetFormState {
   name: string;
@@ -20,32 +37,136 @@ export interface PresetFormState {
   permission_policy: string;
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
-  mcp_preset_keys: string[];
   vfs_access_grants: AgentVfsAccessGrant[];
   skill_asset_keys: string[];
-  capability_directives: CapabilityKey[];
+  capability_directives: CapabilityDirective[];
   default_companion_enabled: boolean;
   extra_companions: string[];
   visible_workspace_module_refs: string[];
+}
+
+export function mcpCapabilityKey(presetKey: string): string {
+  const key = presetKey.trim();
+  if (!key) throw new Error("MCP Preset key 不能为空");
+  if (key.includes(":") || key.includes(TOOL_PATH_SEPARATOR)) {
+    throw new Error(`MCP Preset key 非法：${presetKey}`);
+  }
+  return `${MCP_CAPABILITY_PREFIX}${key}`;
+}
+
+export function mcpToolCapabilityPath(presetKey: string, toolName: string): string {
+  const tool = toolName.trim();
+  if (!tool) throw new Error("MCP tool name 不能为空");
+  if (tool.includes(TOOL_PATH_SEPARATOR)) {
+    throw new Error(`MCP tool name 非法：${toolName}`);
+  }
+  return `${mcpCapabilityKey(presetKey)}${TOOL_PATH_SEPARATOR}${tool}`;
+}
+
+export function isMcpCapabilityKey(value: string): boolean {
+  return extractMcpPresetKey(value) !== null;
+}
+
+export function extractMcpPresetKey(value: string): string | null {
+  if (!value.startsWith(MCP_CAPABILITY_PREFIX)) return null;
+  if (value.includes(TOOL_PATH_SEPARATOR)) return null;
+  const key = value.slice(MCP_CAPABILITY_PREFIX.length);
+  return key.trim() ? key : null;
+}
+
+function isCapabilityDirective(value: unknown): value is CapabilityDirective {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const hasAdd = typeof record.add === "string";
+  const hasRemove = typeof record.remove === "string";
+  return hasAdd !== hasRemove;
+}
+
+function isCapabilityKey(value: string): value is CapabilityKey {
+  return WELL_KNOWN_CAPABILITY_KEYS.has(value as CapabilityKey);
+}
+
+function isOwnedWellKnownCapabilityDirective(directive: CapabilityDirective): boolean {
+  try {
+    const path = parseCapabilityPath(directivePath(directive));
+    return path.tool === null && isCapabilityKey(path.capability);
+  } catch {
+    return false;
+  }
+}
+
+export function selectedMcpPresetKeysFromDirectives(
+  directives: CapabilityDirective[],
+): string[] {
+  const states = new Map<string, boolean>();
+  for (const directive of directives) {
+    const path = directivePath(directive);
+    const presetKey = extractMcpPresetKey(path);
+    if (!presetKey) continue;
+    states.set(presetKey, directiveKind(directive) === "add");
+  }
+  return Array.from(states.entries())
+    .filter(([, selected]) => selected)
+    .map(([presetKey]) => presetKey);
+}
+
+export function addMcpPresetDirective(
+  directives: CapabilityDirective[],
+  presetKey: string,
+): CapabilityDirective[] {
+  const capability = mcpCapabilityKey(presetKey);
+  const next = directives.filter((directive) => directivePath(directive) !== capability);
+  return normalizeDirectives(addDirective(next, { add: capability }));
+}
+
+export function removeMcpPresetDirective(
+  directives: CapabilityDirective[],
+  presetKey: string,
+): CapabilityDirective[] {
+  const capability = mcpCapabilityKey(presetKey);
+  return directives.filter((directive) => {
+    const path = directivePath(directive);
+    return path !== capability && !path.startsWith(`${capability}${TOOL_PATH_SEPARATOR}`);
+  });
+}
+
+export function setMcpToolBlockedDirective(
+  directives: CapabilityDirective[],
+  presetKey: string,
+  toolName: string,
+  blocked: boolean,
+): CapabilityDirective[] {
+  const target: CapabilityDirective = { remove: mcpToolCapabilityPath(presetKey, toolName) };
+  if (blocked) return normalizeDirectives(addDirective(directives, target));
+  return removeDirective(directives, target);
+}
+
+export function replaceWellKnownCapabilitySelection(
+  directives: CapabilityDirective[],
+  selected: CapabilityKey[],
+): CapabilityDirective[] {
+  const preserved = directives.filter((directive) => !isOwnedWellKnownCapabilityDirective(directive));
+  if (selected.length >= CAPABILITY_OPTIONS.length) return preserved;
+  return normalizeDirectives([
+    ...preserved,
+    ...selected.map((key): CapabilityDirective => ({ add: key })),
+  ]);
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
   const cfg = (preset?.config && typeof preset.config === "object" && !Array.isArray(preset.config)
     ? preset.config
     : {}) as Record<string, unknown>;
-  const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
-    ? (cfg.mcp_preset_keys as string[])
-    : [];
   const rawSkillAssetKeys = Array.isArray(cfg.skill_asset_keys)
     ? (cfg.skill_asset_keys as string[])
     : [];
   const rawVfsAccessGrants = Array.isArray(cfg.vfs_access_grants)
     ? (cfg.vfs_access_grants as AgentVfsAccessGrant[])
     : [];
-  const rawDirectives = Array.isArray(cfg.capability_directives) ? cfg.capability_directives as CapabilityDirective[] : [];
-  const capKeys: CapabilityKey[] = rawDirectives
-    .filter((d): d is { add: CapabilityKey } => "add" in d)
-    .map((d) => d.add);
+  const rawDirectives = Array.isArray(cfg.capability_directives)
+    ? cfg.capability_directives.filter(isCapabilityDirective)
+    : [];
+  const capabilityDirectives = normalizeDirectives(rawDirectives);
   const rawCompanions = Array.isArray(cfg.extra_companions) ? (cfg.extra_companions as string[]) : [];
   const rawVisibleModuleRefs = Array.isArray(cfg.visible_workspace_module_refs)
     ? (cfg.visible_workspace_module_refs as string[])
@@ -62,10 +183,9 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
-    mcp_preset_keys: rawMcpPresetKeys,
     vfs_access_grants: rawVfsAccessGrants,
     skill_asset_keys: rawSkillAssetKeys,
-    capability_directives: capKeys,
+    capability_directives: capabilityDirectives,
     default_companion_enabled: cfg.default_companion_enabled === true,
     extra_companions: rawCompanions,
     visible_workspace_module_refs: rawVisibleModuleRefs,
@@ -83,11 +203,10 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
-  if (form.mcp_preset_keys.length > 0) config.mcp_preset_keys = form.mcp_preset_keys;
   if (form.vfs_access_grants.length > 0) config.vfs_access_grants = form.vfs_access_grants;
   if (form.skill_asset_keys.length > 0) config.skill_asset_keys = form.skill_asset_keys;
   if (form.capability_directives.length > 0) {
-    config.capability_directives = form.capability_directives.map((key) => ({ add: key }));
+    config.capability_directives = normalizeDirectives(form.capability_directives);
   }
   if (form.default_companion_enabled) config.default_companion_enabled = true;
   if (form.extra_companions.length > 0) config.extra_companions = form.extra_companions;
@@ -123,7 +242,10 @@ export function formatPresetSummary(preset: AgentPreset): string {
   if (displayName && displayName !== preset.name) parts.unshift(displayName);
   const desc = String(cfg.description ?? "").trim();
   if (desc) parts.push(desc);
-  const presetKeys = Array.isArray(cfg.mcp_preset_keys) ? (cfg.mcp_preset_keys as string[]) : [];
+  const directives = Array.isArray(cfg.capability_directives)
+    ? cfg.capability_directives.filter(isCapabilityDirective)
+    : [];
+  const presetKeys = selectedMcpPresetKeysFromDirectives(directives);
   if (presetKeys.length > 0) parts.push(`${presetKeys.length} MCP Preset`);
   const skillKeys = Array.isArray(cfg.skill_asset_keys) ? (cfg.skill_asset_keys as string[]) : [];
   if (skillKeys.length > 0) parts.push(`${skillKeys.length} Skill`);

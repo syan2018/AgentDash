@@ -462,23 +462,6 @@ impl<'a> SessionRequestAssembler<'a> {
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
         capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
 
-        for preset in &context.preset_mcp_presets {
-            let server = crate::mcp_preset::resolve_preset_mcp_server(
-                preset,
-                Some(&crate::mcp_preset::McpRuntimeBindingContext {
-                    vfs: active_vfs,
-                    backend_anchor: None,
-                }),
-            )
-            .map_err(|error| error.to_string())?;
-            capability_state
-                .tool
-                .capabilities
-                .insert(agentdash_spi::ToolCapability::custom_mcp(&server.name));
-            capability_state.tool.mcp_servers.push(server);
-        }
-        dedupe_runtime_mcp_servers(&mut capability_state.tool.mcp_servers);
-
         if let Some(caps) = derive_session_skill_baseline(SessionCapabilityProjectionInput {
             vfs_service: Some(self.vfs_service),
             active_vfs,
@@ -1004,32 +987,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
             .await
             .map_err(|error| error.to_string())?;
     }
-    if let Some(context) = comp.selected_context.as_ref() {
-        let active_vfs = Some(&activation.lifecycle_vfs);
-        for preset in &context.preset_mcp_presets {
-            let server = crate::mcp_preset::resolve_preset_mcp_server(
-                preset,
-                Some(&crate::mcp_preset::McpRuntimeBindingContext {
-                    vfs: active_vfs,
-                    backend_anchor: None,
-                }),
-            )
-            .map_err(|error| error.to_string())?;
-            activation
-                .capability_state
-                .tool
-                .capabilities
-                .insert(agentdash_spi::ToolCapability::custom_mcp(&server.name));
-            activation
-                .capability_state
-                .tool
-                .mcp_servers
-                .push(server.clone());
-            activation.mcp_servers.push(server);
-        }
-        dedupe_runtime_mcp_servers(&mut activation.capability_state.tool.mcp_servers);
-        dedupe_runtime_mcp_servers(&mut activation.mcp_servers);
-    }
+    dedupe_runtime_mcp_servers(&mut activation.mcp_servers);
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //
@@ -1167,7 +1125,6 @@ mod tests {
             preset_config: AgentPresetConfig::default(),
             preset_name: Some(name.to_string()),
             source: "test".to_string(),
-            preset_mcp_presets: Vec::new(),
             project_agent,
         }
     }

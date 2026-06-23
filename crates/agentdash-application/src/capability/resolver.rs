@@ -1279,6 +1279,51 @@ mod tests {
     }
 
     #[test]
+    fn agent_custom_mcp_add_with_tool_remove_injects_server_and_excludes_raw_tool() {
+        let mut input = base_input();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
+            tool: Some(ToolContribution {
+                directives: vec![
+                    ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
+                    ToolCapabilityDirective::remove_tool("mcp:code_analyzer", "scan_repo"),
+                ],
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer")),
+            "add mcp:<key> 应通过 resolver 授权 custom MCP capability"
+        );
+        assert!(
+            state_mcp_server(&output, "code_analyzer").is_some(),
+            "custom MCP capability 应从 candidates 注入 RuntimeMcpServer"
+        );
+        assert!(output.is_capability_tool_enabled("mcp:code_analyzer", "inspect_repo", None));
+        assert!(!output.is_capability_tool_enabled("mcp:code_analyzer", "scan_repo", None));
+        assert_eq!(
+            output
+                .tool
+                .tool_policy
+                .get("mcp:code_analyzer")
+                .map(|filter| filter.exclude.clone()),
+            Some(BTreeSet::from(["scan_repo".to_string()])),
+            "remove mcp:<key>::<raw_tool> 应编译到 tool_policy.exclude"
+        );
+    }
+
+    #[test]
     fn workflow_directive_add_tool_whitelist_excludes_other_tools() {
         // Add(file_read::fs_read) → whitelist 只保留 fs_read，
         // 其他 read 工具（mounts_list/fs_glob/fs_grep）不再可见。

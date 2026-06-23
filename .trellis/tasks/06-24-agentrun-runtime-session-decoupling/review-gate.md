@@ -1,5 +1,9 @@
 # Final Review Gate
 
+Status: passed
+
+Last verified: 2026-06-24
+
 ## Purpose
 
 The final review gate proves that `session` has been demoted to RuntimeSession substrate and that AgentRun/Lifecycle own the application control plane and current runtime surface. Passing compile is not enough; the gate must prove dependency direction, consumer behavior and public facade shape.
@@ -8,13 +12,13 @@ The final review gate proves that `session` has been demoted to RuntimeSession s
 
 ### Boundary Evidence
 
-- `session` public facade exposes RuntimeSession substrate use cases only.
-- `AgentFrameRuntimeTarget` and live surface adoption port belong to AgentRun.
-- RuntimeSession live adoption is an implementation adapter, not a business/API entry.
-- AgentRun current/resource surface facades return DTOs without exposing domain `AgentFrame`.
-- RuntimeGateway MCP access consumes AgentRun query port and does not import SessionHub/current frame resolver.
-- RuntimeGateway-facing AgentRun surface/MCP access contracts live in `agentdash-application-ports`, not in a RuntimeGateway-to-AgentRun implementation dependency.
-- Surface-changing business paths submit typed AgentRun update requests.
+- [x] `session` public facade exposes RuntimeSession substrate use cases only.
+- [x] `AgentFrameRuntimeTarget` and live surface adoption port belong to AgentRun.
+- [x] RuntimeSession live adoption is an implementation adapter, not a business/API entry.
+- [x] AgentRun current/resource surface facades return DTOs without exposing domain `AgentFrame`.
+- [x] RuntimeGateway MCP access consumes AgentRun query port and does not import SessionHub/current frame resolver.
+- [x] RuntimeGateway-facing AgentRun surface/MCP access contracts live in `agentdash-application-ports`, not in a RuntimeGateway-to-AgentRun implementation dependency.
+- [x] Surface-changing business paths submit typed AgentRun update requests.
 
 ### Import Evidence
 
@@ -28,18 +32,20 @@ rg -n "AgentFrameBuilder" crates/agentdash-application/src/canvas crates/agentda
 
 Expected result: no production call sites except explicitly documented internal adapters/tests.
 
+Result: passed on 2026-06-24. The first, second and frame/vfs internal-submodule searches returned no matches. The `AgentFrameBuilder` search returned only `#[cfg(test)]` fixtures in `permission::service::tests` and `workspace_module::tools::tests`.
+
 ### Behavioral Evidence
 
-- Canvas idle `mcp.list_tools` works through RuntimeGateway and AgentRun current surface with backend anchor.
-- `mcp.call_tool` uses current visible MCP tools and capability policy.
-- Canvas runtime invoke rejects mismatched Canvas Project / runtime session Project.
-- Canvas runtime bridge manifest rejects mismatched Canvas Project / runtime session Project.
-- Extension runtime action/channel rejects path Project / runtime session Project mismatch.
-- Terminal launch target derives backend/root from AgentRun current surface.
-- VFS `SessionRuntime` and `AgentRun` resource surfaces share AgentRun resource surface facade.
-- Permission grant surface-changing effect writes/adopts through AgentRun update facade.
-- WorkspaceModule Canvas bind/update submits typed AgentRun update request.
-- Session launch still accepts connector turns and streams events after AgentFrame/Lifecycle write ownership moves out.
+- [x] Canvas idle `mcp.list_tools` works through RuntimeGateway and AgentRun current surface with backend anchor.
+- [x] `mcp.call_tool` uses current visible MCP tools and capability policy.
+- [x] Canvas runtime invoke rejects mismatched Canvas Project / runtime session Project.
+- [x] Canvas runtime bridge manifest rejects mismatched Canvas Project / runtime session Project.
+- [x] Extension runtime action/channel rejects path Project / runtime session Project mismatch.
+- [x] Terminal launch target derives backend/root from AgentRun current surface.
+- [x] VFS `SessionRuntime` and `AgentRun` resource surfaces share AgentRun resource surface facade.
+- [x] Permission grant surface-changing effect writes/adopts through AgentRun update facade.
+- [x] WorkspaceModule Canvas bind/update submits typed AgentRun update request.
+- [x] Session launch still accepts connector turns and streams events after AgentFrame/Lifecycle write ownership moves out.
 
 ### Compile And Test Gate
 
@@ -53,6 +59,8 @@ cargo test -p agentdash-application runtime_gateway
 cargo test -p agentdash-application agent_run::runtime_surface
 ```
 
+Result: passed on 2026-06-24. Additional touched-scope tests recorded in `work-items/WI-10-final-review-gate.md`.
+
 Additional targeted tests are required for touched areas:
 
 - Permission runtime surface update/adoption.
@@ -63,11 +71,13 @@ Additional targeted tests are required for touched areas:
 
 ### Documentation Gate
 
-- Update this task's work item docs with final status.
-- Update `parent-child-coverage.md` if implementation changes the work item mapping.
-- Update `.trellis/spec/backend/session/architecture.md` or an appropriate appendix if implementation establishes a durable contract not already captured.
-- Update `.trellis/spec/backend/runtime-gateway.md` only if Gateway-facing contracts change.
-- Do not record obsolete "do not do X" history. Document why the new boundary exists and what owns each fact.
+- [x] Update this task's work item docs with final status.
+- [x] Update `parent-child-coverage.md` if implementation changes the work item mapping.
+- [x] Update `.trellis/spec/backend/session/architecture.md` or an appropriate appendix if implementation establishes a durable contract not already captured.
+- [x] Update `.trellis/spec/backend/runtime-gateway.md` only if Gateway-facing contracts change.
+- [x] Do not record obsolete "do not do X" history. Document why the new boundary exists and what owns each fact.
+
+Result: passed. The parent coverage mapping remains complete with no missing or partial item, so the matrix did not require remapping. Session and RuntimeGateway specs were updated for AgentRun project-agent context ownership and Project/session guard requirements.
 
 ## Review Failure Conditions
 

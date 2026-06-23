@@ -8,7 +8,7 @@ After this decoupling task, `agentdash-application` should still be one crate, b
 
 | Module | Final responsibility |
 | --- | --- |
-| `agent_run` | AgentRun command surface, current runtime surface query, resource surface query, effective capability/admission, runtime surface update command boundary, frame construction/update internals. |
+| `agent_run` | AgentRun command surface, current runtime surface query, resource surface query, effective capability/admission, runtime surface update command boundary, project-agent context/workspace resolution, frame construction/update internals. |
 | `lifecycle` | LifecycleRun control plane, dispatch/materialization, orchestration reducer, AgentRun materialization, lifecycle/resource projection. |
 | `session` | RuntimeSession substrate: delivery session metadata/events, turn processing, connector live runtime, stream/trace projection, runtime command delivery, live adoption adapter implementation. |
 | `runtime_gateway` | Runtime action registry, actor/context admission, Session/Setup/Extension providers, and provider implementations consuming gateway-facing ports. |
@@ -46,6 +46,8 @@ RuntimeSession implementation
   -> domain/spi/ports
   -> no AgentRun current-surface query ownership
 ```
+
+Final verification: API, MCP and local crates consume AgentRun/VFS facades or ports rather than public implementation submodules. `session::construction_planner` has been removed; project-agent context/workspace resolution is owned by AgentRun.
 
 ## Crate Split Readiness
 

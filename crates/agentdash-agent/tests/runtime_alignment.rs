@@ -23,9 +23,15 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 enum ScriptStep {
-    Chunk(agentdash_agent::StreamChunk),
+    Chunk(Box<agentdash_agent::StreamChunk>),
     Signal(Arc<Notify>),
     Wait(Arc<Notify>),
+}
+
+impl ScriptStep {
+    fn chunk(chunk: agentdash_agent::StreamChunk) -> Self {
+        Self::Chunk(Box::new(chunk))
+    }
 }
 
 #[derive(Clone)]
@@ -81,7 +87,7 @@ impl LlmBridge for ScriptedBridge {
             for step in script {
                 match step {
                     ScriptStep::Chunk(chunk) => {
-                        if tx.send(chunk).await.is_err() {
+                        if tx.send(*chunk).await.is_err() {
                             return;
                         }
                     }
@@ -317,6 +323,16 @@ fn event_kind(event: &AgentEvent) -> &'static str {
     }
 }
 
+fn provider_statuses(events: &[AgentEvent]) -> Vec<agentdash_agent::ProviderAttemptStatus> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ProviderAttemptStatus { status } => Some(status.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 const LARGE_RESULT_SENTINEL: &str = "AGENTDASH_RUNTIME_ALIGNMENT_LARGE_RESULT_SENTINEL";
 
 fn large_result_text() -> String {
@@ -368,7 +384,7 @@ fn lifecycle_path_for_test_item(item_id: &str) -> String {
 
 #[tokio::test]
 async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
-    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::chunk(
         agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("hi"))),
     )]]);
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -424,10 +440,10 @@ async fn pre_delta_retry_does_not_pollute_context_and_retries_request() {
             .with_retry_after_ms(0),
     );
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Error(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
             retryable_error,
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("recovered")),
         ))],
     ]);
@@ -475,14 +491,271 @@ async fn pre_delta_retry_does_not_pollute_context_and_retries_request() {
 }
 
 #[tokio::test]
+async fn pre_delta_retryable_error_exhaustion_emits_single_final_failure_without_polluting_context()
+{
+    let retryable_error = BridgeError::provider(
+        "upstream unavailable",
+        agentdash_agent::ProviderErrorClassification::retryable()
+            .with_http_status(503)
+            .with_retry_after_ms(0),
+    );
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
+            retryable_error.clone(),
+        ))],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
+            retryable_error.clone(),
+        ))],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
+            retryable_error,
+        ))],
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &[],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should resolve exhausted retry as final assistant failure");
+
+    let snapshots = bridge.message_snapshots().await;
+    assert_eq!(snapshots.len(), 3);
+    assert!(
+        snapshots
+            .iter()
+            .all(|snapshot| snapshot == &vec!["hello".to_string()])
+    );
+    assert_eq!(new_messages.len(), 2);
+    assert_eq!(context.messages.len(), 2);
+    assert!(matches!(
+        context.messages.last(),
+        Some(AgentMessage::Assistant {
+            stop_reason: Some(StopReason::Error),
+            ..
+        })
+    ));
+    assert_eq!(
+        context
+            .messages
+            .iter()
+            .filter(|message| message.first_text() == Some("upstream unavailable"))
+            .count(),
+        1
+    );
+
+    let collected = events.lock().await.clone();
+    let statuses = provider_statuses(&collected);
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| status.phase == agentdash_agent::ProviderAttemptPhase::RetryScheduled)
+            .count(),
+        2
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| status.phase == agentdash_agent::ProviderAttemptPhase::Failed)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn retryable_error_after_visible_delta_does_not_retry() {
+    let retryable_error = BridgeError::provider(
+        "upstream 503 after delta",
+        agentdash_agent::ProviderErrorClassification::retryable()
+            .with_http_status(503)
+            .with_retry_after_ms(0),
+    );
+    let bridge = ScriptedBridge::new(vec![
+        vec![
+            ScriptStep::chunk(agentdash_agent::StreamChunk::TextDelta(
+                "partial".to_string(),
+            )),
+            ScriptStep::chunk(agentdash_agent::StreamChunk::Error(retryable_error)),
+        ],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("should not retry")),
+        ))],
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &[],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should surface post-delta provider error without retrying");
+
+    assert_eq!(bridge.message_snapshots().await.len(), 1);
+    assert!(matches!(
+        new_messages.last(),
+        Some(AgentMessage::Assistant {
+            stop_reason: Some(StopReason::Error),
+            ..
+        })
+    ));
+    assert_eq!(
+        context.messages.last().and_then(AgentMessage::first_text),
+        Some("upstream 503 after delta")
+    );
+
+    let collected = events.lock().await.clone();
+    let statuses = provider_statuses(&collected);
+    assert!(statuses.iter().any(|status| {
+        status.phase == agentdash_agent::ProviderAttemptPhase::Streaming && status.attempt == 1
+    }));
+    assert!(
+        !statuses
+            .iter()
+            .any(|status| status.phase == agentdash_agent::ProviderAttemptPhase::RetryScheduled)
+    );
+}
+
+#[tokio::test]
+async fn provider_abort_error_does_not_retry() {
+    let aborted_error = BridgeError::provider(
+        "request aborted",
+        agentdash_agent::ProviderErrorClassification::aborted(),
+    );
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
+            aborted_error,
+        ))],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("should not retry")),
+        ))],
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &[],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should surface provider abort without retrying");
+
+    assert_eq!(bridge.message_snapshots().await.len(), 1);
+    assert!(matches!(
+        new_messages.last(),
+        Some(AgentMessage::Assistant {
+            stop_reason: Some(StopReason::Aborted),
+            ..
+        })
+    ));
+
+    let collected = events.lock().await.clone();
+    assert!(
+        !provider_statuses(&collected)
+            .iter()
+            .any(|status| status.phase == agentdash_agent::ProviderAttemptPhase::RetryScheduled)
+    );
+}
+
+#[tokio::test]
+async fn fatal_provider_error_does_not_retry() {
+    let fatal_error = BridgeError::provider(
+        "invalid request schema",
+        agentdash_agent::ProviderErrorClassification::fatal().with_provider_code("invalid_request"),
+    );
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Error(
+            fatal_error,
+        ))],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("should not retry")),
+        ))],
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &[],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should surface fatal provider error without retrying");
+
+    assert_eq!(bridge.message_snapshots().await.len(), 1);
+    assert!(matches!(
+        new_messages.last(),
+        Some(AgentMessage::Assistant {
+            stop_reason: Some(StopReason::Error),
+            ..
+        })
+    ));
+    assert_eq!(
+        context.messages.last().and_then(AgentMessage::first_text),
+        Some("invalid request schema")
+    );
+
+    let collected = events.lock().await.clone();
+    assert!(
+        !provider_statuses(&collected)
+            .iter()
+            .any(|status| status.phase == agentdash_agent::ProviderAttemptPhase::RetryScheduled)
+    );
+}
+
+#[tokio::test]
 async fn agent_updates_runtime_state_and_rejects_reentrancy() {
     let first_delta_sent = Arc::new(Notify::new());
     let release_stream = Arc::new(Notify::new());
     let bridge = ScriptedBridge::new(vec![vec![
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
+        ScriptStep::chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
         ScriptStep::Signal(first_delta_sent.clone()),
         ScriptStep::Wait(release_stream.clone()),
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+        ScriptStep::chunk(agentdash_agent::StreamChunk::Done(bridge_response(
             assistant_text("hello"),
         ))),
     ]]);
@@ -540,10 +813,10 @@ async fn agent_updates_runtime_state_and_rejects_reentrancy() {
 #[tokio::test]
 async fn continue_from_assistant_tail_consumes_queued_messages_one_at_a_time() {
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("after steering 1")),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("after steering 2")),
         ))],
     ]);
@@ -581,7 +854,7 @@ async fn continue_from_assistant_tail_consumes_queued_messages_one_at_a_time() {
 
 #[tokio::test]
 async fn continue_from_assistant_tail_consumes_follow_up_messages() {
-    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::chunk(
         agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("after follow up"))),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
@@ -616,11 +889,11 @@ async fn running_agent_refreshes_tool_schema_before_next_llm_request() {
         vec![
             ScriptStep::Signal(first_request_started.clone()),
             ScriptStep::Wait(release_first_response.clone()),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+            ScriptStep::chunk(agentdash_agent::StreamChunk::Done(bridge_response(
                 assistant_text("first pass"),
             ))),
         ],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("second pass")),
         ))],
     ]);
@@ -660,18 +933,18 @@ async fn running_agent_uses_live_tool_instances_for_tool_lookup() {
         vec![
             ScriptStep::Signal(first_request_started.clone()),
             ScriptStep::Wait(release_first_response.clone()),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+            ScriptStep::chunk(agentdash_agent::StreamChunk::Done(bridge_response(
                 assistant_text("first pass"),
             ))),
         ],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call_named(
                 "tool-new-1",
                 "new_tool",
                 serde_json::json!({ "value": "from live registry" }),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -709,10 +982,10 @@ async fn running_agent_uses_live_tool_instances_for_tool_lookup() {
 #[tokio::test]
 async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("first pass")),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("second pass")),
         ))],
     ]);
@@ -750,10 +1023,10 @@ async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
 #[tokio::test]
 async fn repeated_empty_continue_decision_fails_instead_of_spinning() {
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("first pass")),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("second pass")),
         ))],
     ]);
@@ -798,13 +1071,13 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
         executed: executed.clone(),
     });
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call(
                 "tool-1",
                 serde_json::json!({ "value": 1 }),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -861,14 +1134,14 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
 async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
     let tool_call_id = "tool-large-final-1";
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call_named(
                 tool_call_id,
                 "large_tool",
                 serde_json::json!({}),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -976,23 +1249,25 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
         })
         .expect("tool result message_end should exist");
     assert_bounded_tool_result(&message_end_result, &stable_item_id);
-    let writes = cache_writes.lock().expect("cache write lock poisoned");
-    assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].session_id, "session-large");
-    assert_eq!(writes[0].item_id, stable_item_id);
-    assert_eq!(writes[0].turn_alias, "turn_001");
-    assert_eq!(writes[0].body_alias, "tool_001");
-    assert_eq!(writes[0].body_kind, "tool_result");
-    assert_eq!(writes[0].raw_turn_id, "turn-large");
-    assert_eq!(writes[0].raw_tool_call_id, tool_call_id);
-    assert!(
-        writes[0].text.contains(LARGE_RESULT_SENTINEL),
-        "cache writer should receive the original body"
-    );
-    assert_eq!(
-        writes[0].lifecycle_path,
-        "lifecycle://session/tool-results/turn_001/tool_001/result.txt"
-    );
+    {
+        let writes = cache_writes.lock().expect("cache write lock poisoned");
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].session_id, "session-large");
+        assert_eq!(writes[0].item_id, stable_item_id);
+        assert_eq!(writes[0].turn_alias, "turn_001");
+        assert_eq!(writes[0].body_alias, "tool_001");
+        assert_eq!(writes[0].body_kind, "tool_result");
+        assert_eq!(writes[0].raw_turn_id, "turn-large");
+        assert_eq!(writes[0].raw_tool_call_id, tool_call_id);
+        assert!(
+            writes[0].text.contains(LARGE_RESULT_SENTINEL),
+            "cache writer should receive the original body"
+        );
+        assert_eq!(
+            writes[0].lifecycle_path,
+            "lifecycle://session/tool-results/turn_001/tool_001/result.txt"
+        );
+    }
 
     let snapshots = bridge.message_snapshots().await;
     let second_request_messages = snapshots
@@ -1014,14 +1289,14 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
 async fn large_tool_update_partial_result_is_bounded_before_serialization() {
     let tool_call_id = "tool-large-update-1";
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call_named(
                 tool_call_id,
                 "large_update_tool",
                 serde_json::json!({}),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -1082,13 +1357,13 @@ async fn large_immediate_tool_result_is_bounded() {
         executed: executed.clone(),
     });
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call(
                 tool_call_id,
                 serde_json::json!({ "value": "x" }),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -1171,13 +1446,13 @@ async fn large_approval_rejection_result_is_bounded_without_tool_execution_end()
         executed: executed.clone(),
     });
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call(
                 tool_call_id,
                 serde_json::json!({ "value": "x" }),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -1276,17 +1551,17 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
     });
     let bridge = ScriptedBridge::new(vec![
         vec![
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCallDelta {
+            ScriptStep::chunk(agentdash_agent::StreamChunk::ToolCallDelta {
                 id: "tool-echo-1".to_string(),
                 content: agentdash_agent::ToolCallDeltaContent::Name("echo".to_string()),
             }),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCallDelta {
+            ScriptStep::chunk(agentdash_agent::StreamChunk::ToolCallDelta {
                 id: "tool-echo-1".to_string(),
                 content: agentdash_agent::ToolCallDeltaContent::Arguments(
                     "{\"value\":\"hello".to_string(),
                 ),
             }),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::ToolCall {
+            ScriptStep::chunk(agentdash_agent::StreamChunk::ToolCall {
                 info: ToolCallInfo {
                     id: "tool-echo-1".to_string(),
                     call_id: Some("tool-echo-1".to_string()),
@@ -1296,7 +1571,7 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
                     }),
                 },
             }),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+            ScriptStep::chunk(agentdash_agent::StreamChunk::Done(bridge_response(
                 AgentMessage::Assistant {
                     content: vec![],
                     tool_calls: vec![ToolCallInfo {
@@ -1314,7 +1589,7 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
                 },
             ))),
         ],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("done")),
         ))],
     ]);
@@ -1377,7 +1652,7 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
 
 #[tokio::test]
 async fn stream_errors_become_error_assistant_messages() {
-    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::chunk(
         agentdash_agent::StreamChunk::Error(BridgeError::CompletionFailed("boom".to_string())),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
@@ -1411,7 +1686,7 @@ async fn stream_errors_become_error_assistant_messages() {
 
 #[tokio::test]
 async fn runtime_delegate_errors_after_assistant_do_not_become_assistant_messages() {
-    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::Chunk(
+    let bridge = ScriptedBridge::new(vec![vec![ScriptStep::chunk(
         agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("done"))),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
@@ -1452,10 +1727,10 @@ async fn abort_becomes_aborted_assistant_message() {
     let first_delta_sent = Arc::new(Notify::new());
     let release_stream = Arc::new(Notify::new());
     let bridge = ScriptedBridge::new(vec![vec![
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
+        ScriptStep::chunk(agentdash_agent::StreamChunk::TextDelta("hel".to_string())),
         ScriptStep::Signal(first_delta_sent.clone()),
         ScriptStep::Wait(release_stream.clone()),
-        ScriptStep::Chunk(agentdash_agent::StreamChunk::TextDelta(
+        ScriptStep::chunk(agentdash_agent::StreamChunk::TextDelta(
             "ignored".to_string(),
         )),
     ]]);
@@ -1498,11 +1773,11 @@ async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
         vec![
             ScriptStep::Signal(provider_stream_started.clone()),
             ScriptStep::Wait(release_provider_task.clone()),
-            ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(bridge_response(
+            ScriptStep::chunk(agentdash_agent::StreamChunk::Done(bridge_response(
                 assistant_text("ignored after cancel"),
             ))),
         ],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("second turn")),
         ))],
     ]);
@@ -1596,13 +1871,13 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
     let approval_requested = Arc::new(Notify::new());
     let release_approval = Arc::new(Notify::new());
     let bridge = ScriptedBridge::new(vec![
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_tool_call(
                 "tool-approval-1",
                 serde_json::json!({ "value": "x" }),
             )),
         ))],
-        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
             bridge_response(assistant_text("收到拒绝，改走别的方案")),
         ))],
     ]);

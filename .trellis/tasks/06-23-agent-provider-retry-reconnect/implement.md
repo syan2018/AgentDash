@@ -16,10 +16,10 @@
 Current execution status:
 
 - [x] Track A0/A1: protocol contract and generated TS binding landed.
-- [x] Track B/C: Pi Agent-level pre-delta retry, provider status, and visible-delta boundary landed.
+- [x] Track B/C: Pi Agent-level pre-delta retry, provider status, visible-delta boundary, provider bridge classification and retry boundary tests landed.
 - [x] Track D: append-only `SessionRewound` marker and failed-turn context exclusion landed.
 - [x] Track E: frontend Codex-style retry/status feed, duration display, and rewind refresh landed.
-- [x] Track F: focused integration checks passed for the integrated slice.
+- [x] Track F: focused integration checks and Trellis check review passed for the integrated slice.
 
 Directed dependency graph:
 
@@ -110,14 +110,14 @@ Sub-agent coordination rules:
   - provider retry delay 优先
   - max server delay cap
   - cancel-aware sleep
-- [ ] OpenAI Responses bridge 接入：
+- [x] OpenAI Responses bridge 接入：
   - send failure
   - 429/5xx
   - transport error
   - empty stream before visible delta
-- [ ] OpenAI Completions bridge 接入。
-- [ ] Anthropic bridge 接入。
-- [ ] OpenAI Codex Responses bridge 接入，保留 OAuth refresh / friendly error 语义。
+- [x] OpenAI Completions bridge 接入。
+- [x] Anthropic bridge 接入。
+- [x] OpenAI Codex Responses bridge 接入，保留 OAuth refresh / friendly error 语义。
 - [x] Provider stream 建立成功时发 connected/waiting first delta status。
 - [ ] First visible delta 时记录 `time_to_first_delta_ms`，并发 streaming/succeeded 状态或本地更新 attempt state。
 
@@ -212,13 +212,18 @@ Sub-agent coordination rules:
   - `pnpm --filter app-web run lint`
   - `cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts`
 
-Remaining validation candidates before closing the task:
+Additional validation completed before closing the task:
 
-- [ ] retryable before first delta exhausts
-- [ ] error after visible delta does not retry
-- [ ] abort does not retry
-- [ ] fatal errors do not retry
-- [ ] provider-specific HTTP classification and `Retry-After` behavior for OpenAI/Anthropic/Codex bridge implementations
+- [x] retryable before first delta exhausts
+- [x] error after visible delta does not retry
+- [x] abort does not retry
+- [x] fatal errors do not retry
+- [x] provider-specific HTTP classification and `Retry-After` behavior for OpenAI/Anthropic/Codex bridge implementations
+- [x] empty 2xx stream before visible output maps to retryable provider error for OpenAI Responses, OpenAI Chat Completions and Anthropic
+- [x] Codex usage/rate-limit friendly errors remain fatal while ordinary provider transient HTTP errors remain retryable
+
+Remaining follow-up candidate:
+
 - [ ] full `cargo test -p agentdash-application session --no-fail-fast` if this grows into a broader session runtime change
 
 ## Risky Files

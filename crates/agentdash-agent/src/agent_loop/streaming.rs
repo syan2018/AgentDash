@@ -628,8 +628,9 @@ pub(super) async fn stream_assistant_response(
                     if is_retryable_pre_delta(&error, has_visible_delta) {
                         retry_error = Some(error);
                     } else {
+                        let aborted = error.is_aborted();
                         stream_failure =
-                            Some(AgentMessage::error_assistant(error.to_string(), false));
+                            Some(AgentMessage::error_assistant(error.to_string(), aborted));
                     }
                     break;
                 }

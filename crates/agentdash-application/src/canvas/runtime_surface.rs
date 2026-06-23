@@ -1,10 +1,17 @@
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
-use agentdash_spi::AgentToolError;
+use agentdash_spi::{AgentToolError, Vfs};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::agent_run::{CanvasVisibilityReason, RuntimeSurfaceUpdateRequest};
+use crate::agent_run::{
+    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
+    AgentRunRuntimeSurfaceUpdateAdapter, CanvasVisibilityReason, RejectingFrameConstructionAdapter,
+    RuntimeSurfaceUpdateRequest,
+};
 use crate::canvas::normalize_canvas_mount_id;
 use crate::runtime_tools::SharedSessionToolServicesHandle;
+use crate::session::SessionCapabilityService;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 
 pub(crate) async fn submit_canvas_runtime_surface_update(
@@ -26,11 +33,19 @@ pub(crate) async fn submit_canvas_runtime_surface_update(
         ))
     })?;
 
-    // Lane B 的临时 adapter：正式 AgentRunFrameSurfaceService 落地前，Canvas/WorkspaceModule
-    // 只提交 typed request；旧 expose/adopt primitive 暂时封装在这个 adapter 内部。
-    let active_vfs = session_services
-        .capability
-        .expose_canvas_mount_revision_and_adopt(session_id, canvas)
+    let active_vfs = Arc::new(Mutex::new(None));
+    let adapter = CanvasRuntimeSurfaceUpdateAdapter {
+        capability: session_services.capability,
+        session_id: session_id.to_string(),
+        canvas: canvas.clone(),
+        active_vfs: active_vfs.clone(),
+    };
+    let service = AgentRunFrameSurfaceService::new(
+        Arc::new(RejectingFrameConstructionAdapter),
+        Arc::new(adapter),
+    );
+    service
+        .update_runtime_surface(request.clone())
         .await
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!(
@@ -38,9 +53,41 @@ pub(crate) async fn submit_canvas_runtime_surface_update(
             ))
         })?;
     if let Some(vfs) = vfs {
-        vfs.replace(active_vfs).await;
+        if let Some(active_vfs) = active_vfs.lock().await.take() {
+            vfs.replace(active_vfs).await;
+        }
     }
     Ok(())
+}
+
+struct CanvasRuntimeSurfaceUpdateAdapter {
+    capability: SessionCapabilityService,
+    session_id: String,
+    canvas: Canvas,
+    active_vfs: Arc<Mutex<Option<Vfs>>>,
+}
+
+#[async_trait::async_trait]
+impl AgentRunRuntimeSurfaceUpdateAdapter for CanvasRuntimeSurfaceUpdateAdapter {
+    async fn execute_runtime_surface_update(
+        &self,
+        request: RuntimeSurfaceUpdateRequest,
+    ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError> {
+        ensure_canvas_surface_request_targets_canvas(&request, &self.canvas).map_err(|error| {
+            AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected(error.to_string())
+        })?;
+        let active_vfs = self
+            .capability
+            .expose_canvas_mount_revision_and_adopt(&self.session_id, &self.canvas)
+            .await
+            .map_err(AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected)?;
+        *self.active_vfs.lock().await = Some(active_vfs);
+        let mut outcome = AgentRunFrameSurfaceCommandOutcome::runtime_surface_update();
+        outcome.runtime_session_id = Some(self.session_id.clone());
+        outcome.wrote_frame_revision = true;
+        outcome.adopted_active_runtime = true;
+        Ok(outcome)
+    }
 }
 
 pub(crate) async fn submit_existing_canvas_visibility_request(

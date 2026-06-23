@@ -1,9 +1,7 @@
 //! Permission grant runtime surface update adapter.
 //!
-//! This is the Lane-D narrow adapter for the AgentRun runtime surface update
-//! boundary. It accepts typed permission update requests and owns the temporary
-//! projection/write/adopt path until the shared AgentRun frame-surface service
-//! is integrated.
+//! Permission accepts typed update requests through the AgentRun frame/surface
+//! facade while keeping grant-state orchestration in the permission service.
 
 use std::sync::Arc;
 
@@ -11,9 +9,11 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::AgentFrameBuilder;
-use crate::agent_run::AgentRunGrantProjection;
-use crate::agent_run::RuntimeSurfaceUpdateRequest;
+use crate::agent_run::{
+    AgentFrameBuilder, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
+    AgentRunFrameSurfaceService, AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateAdapter,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceUpdateRequest,
+};
 use crate::session::capability_state::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
@@ -24,6 +24,7 @@ use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{
     CapabilityState, RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
 };
+use tokio::sync::Mutex;
 
 use super::compiler::PermissionGrantCompiler;
 
@@ -91,6 +92,35 @@ impl PermissionRuntimeSurfaceUpdateService {
     }
 
     pub async fn apply_update_request(
+        &self,
+        grant: &PermissionGrant,
+        request: RuntimeSurfaceUpdateRequest,
+    ) -> Result<PermissionRuntimeSurfaceUpdateOutcome, ApplicationError> {
+        let outcome = Arc::new(Mutex::new(None));
+        let adapter = PermissionGrantRuntimeSurfaceUpdateAdapter {
+            projector: Self {
+                frame_repo: self.frame_repo.clone(),
+                adopter: None,
+            },
+            grant: grant.clone(),
+            outcome: outcome.clone(),
+        };
+        let service = AgentRunFrameSurfaceService::new(
+            Arc::new(RejectingFrameConstructionAdapter),
+            Arc::new(adapter),
+        );
+        service
+            .update_runtime_surface(request)
+            .await
+            .map_err(permission_frame_surface_error_to_application)?;
+        outcome.lock().await.take().ok_or_else(|| {
+            ApplicationError::Internal(
+                "Permission runtime surface adapter did not return an update outcome".to_string(),
+            )
+        })
+    }
+
+    async fn project_update_request(
         &self,
         grant: &PermissionGrant,
         request: RuntimeSurfaceUpdateRequest,
@@ -203,6 +233,53 @@ impl PermissionRuntimeSurfaceUpdateService {
             .build(self.frame_repo.as_ref())
             .await
             .map_err(ApplicationError::from)
+    }
+}
+
+struct PermissionGrantRuntimeSurfaceUpdateAdapter {
+    projector: PermissionRuntimeSurfaceUpdateService,
+    grant: PermissionGrant,
+    outcome: Arc<Mutex<Option<PermissionRuntimeSurfaceUpdateOutcome>>>,
+}
+
+#[async_trait]
+impl AgentRunRuntimeSurfaceUpdateAdapter for PermissionGrantRuntimeSurfaceUpdateAdapter {
+    async fn execute_runtime_surface_update(
+        &self,
+        request: RuntimeSurfaceUpdateRequest,
+    ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError> {
+        let outcome = self
+            .projector
+            .project_update_request(&self.grant, request)
+            .await
+            .map_err(|error| {
+                AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected(error.to_string())
+            })?;
+        let mut command_outcome = AgentRunFrameSurfaceCommandOutcome::runtime_surface_update();
+        command_outcome.runtime_session_id = Some(self.grant.source_runtime_session_id.clone());
+        if let Some(frame) = outcome.effect_frame.as_ref() {
+            command_outcome.frame_id = Some(frame.id);
+            command_outcome.agent_id = Some(frame.agent_id);
+            command_outcome.wrote_frame_revision = true;
+        }
+        *self.outcome.lock().await = Some(outcome);
+        Ok(command_outcome)
+    }
+}
+
+fn permission_frame_surface_error_to_application(
+    error: AgentRunFrameSurfaceError,
+) -> ApplicationError {
+    match error {
+        AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected(message) => {
+            ApplicationError::BadRequest(message)
+        }
+        AgentRunFrameSurfaceError::ConstructionRejected(message) => {
+            ApplicationError::Internal(message)
+        }
+        AgentRunFrameSurfaceError::RoleMismatch { expected, actual } => ApplicationError::Internal(
+            format!("permission runtime surface adapter returned {actual:?} for {expected:?}"),
+        ),
     }
 }
 

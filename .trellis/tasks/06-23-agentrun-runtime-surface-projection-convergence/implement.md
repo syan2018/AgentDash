@@ -108,9 +108,10 @@
 - [x] Lane B 已将 Canvas / WorkspaceModule 业务调用点迁移为 typed runtime surface request adapter；旧 expose/adopt primitive 只保留在 application 内部 adapter 路径中。
 - [x] Lane C 已完成 runtime skill projection identity 传递、provider-aware skill merge、空 capability key delta 后端过滤和前端 runtime surface 标签展示。
 - [x] Lane D 已将 Permission grant apply/revoke 迁移到 typed runtime surface update service；API route 不再 direct adopt，active-runtime adoption failure 作为可见错误返回。
+- [x] Canvas 与 Permission adapter 已经经由 `AgentRunFrameSurfaceService::update_runtime_surface` 分发，统一入口负责 runtime update role 校验。
 - [x] 最终 check 已将 `SessionCapabilityService::adopt_persisted_agent_frame_revision` 收回为 crate 内部 primitive，避免 API crate 重新绕过 application update 边界。
 - [x] 已将 AgentRun frame/surface command boundary 的可执行契约同步到 backend session spec。
-- [ ] 完整 AgentRun projection context resolver 与 Canvas/Permission adapter 全量接入 `AgentRunFrameSurfaceService` 仍可继续收束；当前实现已经消除业务模块/API route 直接写 frame 或 direct adopt 的主要旁路。
+- [ ] 完整 AgentRun projection context resolver 仍可继续深化；当前实现已经消除业务模块/API route 直接写 frame 或 direct adopt 的主要旁路，并让 Canvas/Permission 通过统一 facade 分发。
 
 ## 验证命令
 

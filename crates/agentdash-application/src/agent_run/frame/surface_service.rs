@@ -270,6 +270,22 @@ pub trait AgentRunFrameConstructionAdapter: Send + Sync {
     ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError>;
 }
 
+/// Construction adapter for runtime-update-only call sites.
+#[derive(Debug, Default)]
+pub struct RejectingFrameConstructionAdapter;
+
+#[async_trait::async_trait]
+impl AgentRunFrameConstructionAdapter for RejectingFrameConstructionAdapter {
+    async fn execute_frame_construction_command(
+        &self,
+        command: FrameConstructionCommand,
+    ) -> Result<AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError> {
+        Err(AgentRunFrameSurfaceError::ConstructionRejected(format!(
+            "runtime surface adapter cannot execute frame construction command: {command:?}"
+        )))
+    }
+}
+
 /// Adapter implemented by the runtime surface projector/adoption path.
 #[async_trait::async_trait]
 pub trait AgentRunRuntimeSurfaceUpdateAdapter: Send + Sync {

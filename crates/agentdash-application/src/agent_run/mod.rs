@@ -40,8 +40,8 @@ pub use frame::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunRuntimeSurfaceUpdateAdapter, CanvasVisibilityReason, FrameConstructionCommand,
     FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
-    FrameRuntimeSurface, FrameSurfaceDraft, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
-    agent_frame_write_boundaries,
+    FrameRuntimeSurface, FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
 };
 pub use mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,

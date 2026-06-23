@@ -1,0 +1,29 @@
+{
+  "id": "release-crate-boundary-review",
+  "name": "release-crate-boundary-review",
+  "title": "Release 前模块与 crate 拆分边界调研",
+  "description": "以 session 为主切入点，完整 review AgentDash 后端模块耦合、lifecycle/agentrun/session/runtime surface 边界，并为 release 前 crates 拆分建立阶段化调研与实施追踪任务。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-06-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-24-agentrun-runtime-session-decoupling",
+    "06-24-release-crate-split-draft"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

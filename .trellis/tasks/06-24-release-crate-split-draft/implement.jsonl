@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/05-crate-split-coupling-map.md","reason":"Primary crate split evidence and proposed waves."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/00-index.md","reason":"Parent synthesis and split order."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/prd.md","reason":"Required decoupling prerequisite before physical crate extraction."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Backend clean architecture and crate baseline."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Current crate/layer structure and application-ports role."}

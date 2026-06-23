@@ -1,0 +1,11 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Backend clean architecture and crate baseline."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Layering and crate split baseline."}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession target semantics and AgentRun frame/surface boundary."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway and Session MCP Action boundary."}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle/AgentRun/RuntimeSessionExecutionAnchor control-plane contract."}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"AgentRun effective capability/admission contract."}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"AgentRun resource surface and VFS runtime surface contract."}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"Permission grant effect and AgentFrame surface update contract."}
+{"file":".trellis/tasks/06-23-session-hub-boundary-cleanup/prd.md","reason":"Existing detailed session/hub boundary evidence."}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/prd.md","reason":"Existing AgentRun runtime surface projection evidence."}

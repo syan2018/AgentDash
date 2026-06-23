@@ -1,0 +1,12 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/00-index.md","reason":"Parent synthesis and release split order."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/01-session-runtime-inventory.md","reason":"Session substrate and migration inventory."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/02-agentrun-lifecycle-surface.md","reason":"AgentRun/Lifecycle ownership and facade gaps."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/03-api-runtime-gateway-consumers.md","reason":"API and RuntimeGateway consumer cleanup inventory."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/04-business-surface-update-paths.md","reason":"Canvas/WorkspaceModule/Permission surface update paths."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/05-crate-split-coupling-map.md","reason":"Import hotspot and split prerequisite map."}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession target semantics."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway session action boundary."}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle/AgentRun/RuntimeSessionExecutionAnchor contract."}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"AgentRun effective capability/admission contract."}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"AgentRun resource surface and VFS contract."}

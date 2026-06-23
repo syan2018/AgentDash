@@ -3,7 +3,7 @@
   "name": "session-hub-boundary-cleanup",
   "title": "清理 session hub 错误归属路径",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -31,7 +31,7 @@ RuntimeGateway MCP action
 - 现有代码没有一个统一的 AgentRun/Lifecycle 粒度 closed runtime surface query。已有的 `resolve_current_frame_from_delivery_trace_ref` 只解决 `runtime_session_id -> anchor -> agent -> current AgentFrame` 的内部查找；`resolve_session_frame_vfs` 只返回 VFS/frame，并把 backend anchor 继续交给 active-turn-only helper；hub MCP discovery idle 分支只拼了 MCP/VFS/capability，缺 backend anchor/identity。
 - RuntimeGateway MCP provider 本身边界是干净的：provider 只做 action input/output 与 actor/context admission，错误归属在 `RuntimeSessionMcpAccess` 当前由 `SessionCapabilityService` 实现并委托 hub。
 - Prompt tool assembly 与 active turn tool refresh 是合法 live runtime coordination：它们消费已闭合的 `ExecutionContext`，并更新 connector tools / active turn cache / hook runtime。它们不应被当成 current surface query 来迁走。
-- API current surface consumers 已经超过 Canvas：Extension runtime、VFS surface `SessionRuntime` source、Terminal spawn 都通过 `resolve_session_frame_vfs` 或同类 backend anchor helper 间接依赖旧路径。
+- API current surface consumers 已经超过 Canvas：Extension runtime、VFS surface `SessionRuntime` source、Terminal spawn 都通过 `resolve_session_frame_vfs` 或同类 backend anchor helper 间接依赖旧路径；VFS surface `AgentRun` source 也在 API 层独立执行 current frame + lifecycle projection，必须纳入同一 resource surface facade，避免与 `SessionRuntime` 分叉。
 - Surface-changing mutation 与 query 必须分离：Canvas create/present、WorkspaceModule Canvas exposure、Permission grant adoption 是 update/use case；Canvas snapshot、Extension target、VFS session source、Terminal target、MCP list/call 是 current surface query。
 
 因此本任务的第一阶段不是“改 hub 的 idle 分支补 anchor”，而是建立 AgentRun/Lifecycle 粒度的 current runtime surface query facade，再迁移所有 query consumer；第二阶段再把 Canvas/Permission/WorkspaceModule 的 update/adoption 旧入口赶出 `SessionCapabilityService`。
@@ -99,7 +99,7 @@ pub struct AgentRunRuntimeSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
     pub mcp_servers: Vec<RuntimeMcpServer>,
-    pub runtime_backend_anchor: RuntimeBackendAnchor,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub active_turn_id: Option<String>,
 }
 ```
@@ -115,6 +115,18 @@ pub async fn current_runtime_surface(
 ```
 
 `purpose` 用于诊断和未来 admission，不让 caller 自行拼 `component` 字符串。
+
+`runtime_backend_anchor` 在基础 current surface 中保持 `Option`，因为 VFS/resource projection 可以在没有 default runtime backend mount 时仍返回可展示的 resource surface。需要执行 backend-bound runtime action 的 caller 必须使用 backend-required purpose 或专门 helper：
+
+```rust
+pub async fn current_runtime_surface_for_backend(
+    &self,
+    runtime_session_id: &str,
+    purpose: RuntimeSurfaceQueryPurpose,
+) -> Result<AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryError>
+```
+
+`AgentRunRuntimeSurfaceWithBackend` 只是在类型层保证 `runtime_backend_anchor: RuntimeBackendAnchor`，供 MCP discovery、Extension runtime action/channel、Terminal spawn 等必须落到 runtime backend 的路径消费。这样 VFS 浏览类 query 不会因为缺 backend anchor 被错误阻断，执行类路径也不会吞掉 missing anchor。
 
 #### Surface Closure
 
@@ -132,7 +144,7 @@ AgentFrame typed surface
 
 - 提取共享的 VFS -> `RuntimeBackendAnchor` helper，例如 `runtime_backend_anchor_from_vfs(...)`，让 launch closure 与 current surface query 使用同一派生规则。
 - query facade 内部可定义 `ClosedRuntimeSurface::from_revision(...)` 或等价私有结构闭合 capability/VFS/MCP/backend；但 query path 不直接暴露 launch-only 语义或 `AgentFrame` 给 consumer。
-- 如果内部 current frame revision 缺少 closure 字段，应返回 typed query error，而不是落到 hub active-turn-only fallback。
+- 如果内部 current frame revision 缺少必需 closure 字段，应返回 typed query error，而不是落到 hub active-turn-only fallback；如果仅缺 runtime backend anchor，则 resource query 返回 `None`，backend-required query 返回带 purpose/component 的 typed missing-anchor error。
 
 ### 3. RuntimeGateway MCP Access
 
@@ -179,7 +191,7 @@ RuntimeGateway 的依赖边界：
 本任务实施范围硬收以下路径：
 
 - RuntimeGateway MCP session action backing access。
-- API current surface consumers：Canvas snapshot、Extension runtime、VFS `SessionRuntime`、Terminal launch target。
+- API current surface consumers：Canvas snapshot、Extension runtime、VFS `SessionRuntime`、VFS `AgentRun` current delivery source、Terminal launch target。
 - `session/hub` idle query / MCP discovery / active-turn-only backend anchor 对外暴露。
 - Canvas、WorkspaceModule、Permission 的 surface-changing business update/adoption 旧路径。
 
@@ -199,6 +211,7 @@ RuntimeGateway 的依赖边界：
 | Canvas runtime snapshot VFS | `resolve_session_frame_vfs` | AgentRun runtime surface query / resource context |
 | Extension runtime action/channel | `resolve_session_frame_vfs` + active-turn anchor helper | AgentRun runtime surface query |
 | VFS surface `SessionRuntime` source | `resolve_session_frame_vfs` | AgentRun runtime surface query |
+| VFS surface `AgentRun` current delivery source | API route 内独立 anchor/current frame/lifecycle projection | AgentRun resource surface facade |
 | Terminal/session VFS launch target | `resolve_session_frame_vfs` + active-turn-only backend anchor helper | AgentRun runtime surface query where it is a query path |
 | WorkspaceModule Canvas exposure | `SessionCapabilityService` update/adopt helpers | runtime surface update use case |
 | Permission grant adoption | route/service direct adoption path | runtime surface update use case |
@@ -233,6 +246,7 @@ business event
 | Canvas `/runtime-snapshot` | VFS binding via session frame helper | Canvas runtime resource + runtime surface query | Migrate VFS/session context source |
 | Extension runtime invoke/channel | backend target + workspace context | Extension API route + runtime surface query | Replace frame helper and active anchor helper |
 | VFS surface resolver `SessionRuntime` | session VFS query | VFS API + runtime surface query | Replace frame helper |
+| VFS surface resolver `AgentRun` | run/agent -> latest delivery anchor/current frame/lifecycle projection | AgentRun resource surface facade | Replace duplicated API projection; ensure same delivery runtime does not diverge from `SessionRuntime` source |
 | WorkspaceModule Canvas exposure helpers | business mutation + frame write/adopt | Runtime surface update use case | Migrate/update, then private/delete helper |
 | Permission route adoption | grant state + active runtime adoption | Permission service + runtime surface update use case | Remove route-level adoption |
 | Presentation lifecycle/session views | UI projection from current frame | Read-model facade | Keep separate from runtime surface query; no action/provider reuse |
@@ -293,6 +307,7 @@ Minimum tests:
 - Canvas runtime invoke test or route-level test for `mcp.list_tools` without active turn.
 - Regression test that `runtime_mcp_tool_discovery` receives non-empty backend anchor in idle branch.
 - Extension runtime target selection test migrated from `resolve_session_frame_vfs` helper to AgentRun runtime surface query.
+- VFS surface test proving `SessionRuntime` and `AgentRun` source for the same delivery runtime share one resource surface policy, including lifecycle evidence handling.
 - Grep/static check or focused unit test ensuring API consumers no longer call active-turn-only `get_current_runtime_backend_anchor`.
 
 Potential validation commands:
@@ -313,6 +328,7 @@ Exact commands should be finalized after research.
 - Moving `RuntimeSessionMcpAccess` may require dependency injection changes in `AppState` bootstrap, because current AppState wires RuntimeGateway before late session construction provider is installed.
 - `SessionCapabilityService` currently acts as a convenient facade for unrelated services; splitting it may reveal hidden dependency cycles.
 - Extension runtime and VFS surface routes currently share `resolve_session_frame_vfs`; replacing it must preserve project permission checks.
+- VFS `AgentRun` source currently applies lifecycle evidence projection while `SessionRuntime` source only reads frame VFS; the new resource surface facade must explicitly own that policy so the two entry points cannot drift.
 - Some helpers are `pub(crate)` only because API and application live in different crates; moving query ownership may require introducing a narrow port or API adapter.
 
 ## Research Inputs

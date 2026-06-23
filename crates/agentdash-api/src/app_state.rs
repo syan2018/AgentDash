@@ -6,6 +6,9 @@ use tokio::sync::broadcast;
 
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::agent_run::{
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
+};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
@@ -14,7 +17,7 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
+use agentdash_application::runtime_gateway::{CurrentSurfaceRuntimeMcpAccess, RuntimeGateway};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
@@ -202,7 +205,7 @@ impl AppState {
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,
                 shell_output_registry: shell_output_registry.clone(),
-                mcp_tool_discovery,
+                mcp_tool_discovery: mcp_tool_discovery.clone(),
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
                 integration_connectors: integration_registration.connectors,
@@ -229,8 +232,18 @@ impl AppState {
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
 
-        let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
-            Arc::new(session_capability.clone());
+        let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+            AgentRunRuntimeSurfaceQueryDeps {
+                anchor_repo: repos.execution_anchor_repo.clone(),
+                run_repo: repos.lifecycle_run_repo.clone(),
+                agent_repo: repos.lifecycle_agent_repo.clone(),
+                frame_repo: repos.agent_frame_repo.clone(),
+            },
+        ));
+        let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
+            runtime_surface_query,
+            mcp_tool_discovery,
+        ));
         let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
             mcp_probe_relay,
             setup_action_transport,
@@ -238,8 +251,8 @@ impl AppState {
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
-        // RuntimeGateway 装配序晚于 session runtime tool composer（gateway 依赖 session_mcp_access，
-        // 后者依赖 composer 产出的工具集），此处把 gateway 回填进延迟句柄，供 workspace_module_invoke。
+        // RuntimeGateway 装配序晚于 session runtime tool composer；此处把 gateway
+        // 回填进延迟句柄，供 workspace_module_invoke。
         runtime_gateway_handle.set(runtime_gateway.clone()).await;
 
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();

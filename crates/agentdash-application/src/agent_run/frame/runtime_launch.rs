@@ -188,30 +188,37 @@ impl FrameLaunchSurface {
         &self,
         source_detail: Option<String>,
     ) -> Result<Option<RuntimeBackendAnchor>, RuntimeBackendAnchorError> {
-        let Some(mount) = self.vfs.default_mount() else {
-            return Ok(None);
-        };
-        let backend_id = mount.backend_id.trim();
-        if backend_id.is_empty() {
-            return Ok(None);
-        }
-
-        let workspace_id = uuid_metadata(&mount.metadata, "workspace_id");
-        let workspace_binding_id = uuid_metadata(&mount.metadata, "workspace_binding_id");
-        let source = if workspace_binding_id.is_some() || workspace_id.is_some() {
-            RuntimeBackendAnchorSource::WorkspaceBinding
-        } else {
-            RuntimeBackendAnchorSource::System
-        };
-
-        Ok(Some(
-            RuntimeBackendAnchor::new(backend_id, source)?
-                .with_workspace_id(workspace_id)
-                .with_workspace_binding_id(workspace_binding_id)
-                .with_root_ref(Some(mount.root_ref.clone()))
-                .with_source_detail(source_detail),
-        ))
+        runtime_backend_anchor_from_vfs(&self.vfs, source_detail)
     }
+}
+
+pub fn runtime_backend_anchor_from_vfs(
+    vfs: &Vfs,
+    source_detail: Option<String>,
+) -> Result<Option<RuntimeBackendAnchor>, RuntimeBackendAnchorError> {
+    let Some(mount) = vfs.default_mount() else {
+        return Ok(None);
+    };
+    let backend_id = mount.backend_id.trim();
+    if backend_id.is_empty() {
+        return Ok(None);
+    }
+
+    let workspace_id = uuid_metadata(&mount.metadata, "workspace_id");
+    let workspace_binding_id = uuid_metadata(&mount.metadata, "workspace_binding_id");
+    let source = if workspace_binding_id.is_some() || workspace_id.is_some() {
+        RuntimeBackendAnchorSource::WorkspaceBinding
+    } else {
+        RuntimeBackendAnchorSource::System
+    };
+
+    Ok(Some(
+        RuntimeBackendAnchor::new(backend_id, source)?
+            .with_workspace_id(workspace_id)
+            .with_workspace_binding_id(workspace_binding_id)
+            .with_root_ref(Some(mount.root_ref.clone()))
+            .with_source_detail(source_detail),
+    ))
 }
 
 fn uuid_metadata(metadata: &serde_json::Value, key: &str) -> Option<Uuid> {

@@ -6,6 +6,7 @@ pub mod frame;
 pub mod mailbox;
 pub mod message_delivery;
 mod project_agent_start;
+pub mod runtime_surface;
 pub mod workspace;
 
 pub use command_receipt::AgentRunCommandReceiptView;
@@ -50,4 +51,9 @@ pub use project_agent_start::{
     ProjectAgentRunInitialMailboxCommand, ProjectAgentRunInitialMailboxCommandPort,
     ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
     ProjectAgentRunStartService,
+};
+pub use runtime_surface::{
+    AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryError,
+    AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
 };

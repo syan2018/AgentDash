@@ -5,6 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
+use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_application::vfs::PROVIDER_RELAY_FS;
 use agentdash_relay::*;
@@ -13,7 +14,7 @@ use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::sessions::ensure_session_permission;
-use crate::session_construction::resolve_session_frame_vfs;
+use crate::session_construction::resolve_current_runtime_surface_with_backend_for_api;
 use crate::{app_state::AppState, rpc::ApiError};
 
 /// GET /api/sessions/:session_id/terminals
@@ -267,22 +268,17 @@ async fn resolve_terminal_launch_target(
         ProjectPermission::View,
     )
     .await?;
-    let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
-    let backend_anchor = result.runtime_backend_anchor.as_ref().ok_or_else(|| {
-        ApiError::Conflict(
-            agentdash_spi::RuntimeBackendAnchorError::Missing {
-                component: "terminal_spawn".to_string(),
-                session_id: Some(session_id.to_string()),
-                turn_id: None,
-            }
-            .to_string(),
-        )
-    })?;
-    let vfs = result
-        .vfs
-        .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("AgentFrame 未记录 VFS，无法创建终端".into()))?;
-    let target = terminal_launch_target_from_vfs(vfs, backend_anchor)?;
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
+        state,
+        current_user,
+        session_id,
+        RuntimeSurfaceQueryPurpose::new("terminal_spawn"),
+    )
+    .await?;
+    let target = terminal_launch_target_from_vfs(
+        &runtime_surface.surface.vfs,
+        &runtime_surface.runtime_backend_anchor,
+    )?;
     if !state
         .services
         .backend_registry

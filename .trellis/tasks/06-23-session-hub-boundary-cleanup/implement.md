@@ -26,7 +26,7 @@
 - [ ] 新增 AgentRun/Lifecycle runtime surface query facade 与窄 query port。
 - [ ] 从 `RuntimeSessionExecutionAnchor` 解析 run / agent / runtime address。
 - [ ] 在 query facade 内部读取 current surface revision，并闭合 typed capability / VFS / MCP / execution metadata。
-- [ ] 从 closed VFS surface 派生 `RuntimeBackendAnchor`。
+- [ ] 从 closed VFS surface 派生可选 `RuntimeBackendAnchor`，并提供 backend-required query/helper 供 MCP、Extension runtime、Terminal 等执行路径使用。
 - [ ] 保留 project/run/agent/runtime address/surface revision provenance 与 typed error。
 - [ ] 将 `resolve_current_frame_from_delivery_trace_ref` 降级为 query facade 内部实现 helper，或至少停止让 RuntimeGateway/API current-surface consumer 直接调用。
 - [ ] 新 query port 的 public result 不包含 `AgentFrame`、`AgentFrameRepository` 或 `FrameLaunchSurface`。
@@ -36,6 +36,8 @@
   - [ ] current surface revision 缺 VFS/capability/MCP closure。
   - [ ] default mount backend id 生成 backend anchor。
   - [ ] workspace metadata 生成 workspace binding anchor。
+  - [ ] resource query 在缺 backend anchor 时仍返回 closed resource surface。
+  - [ ] backend-required query 在缺 backend anchor 时返回带 purpose 的 typed error。
 
 ## Phase 2: RuntimeGateway MCP Access Migration
 
@@ -58,6 +60,7 @@
 - [ ] Canvas runtime snapshot / binding resource path 改为消费 query facade VFS。
 - [ ] Extension runtime action/channel target 解析改为消费 query facade backend anchor + VFS workspace context。
 - [ ] VFS surface `SessionRuntime` source 改为消费 query facade。
+- [ ] VFS surface `AgentRun` current delivery source 改为消费同一 resource surface facade，不再在 API route 内独立执行 current frame + lifecycle projection。
 - [ ] Terminal spawn / launch target 改为消费 query facade 的 backend anchor + VFS。
 - [ ] 检查 terminal/session VFS target 相关路径是否仍依赖 active-turn-only backend anchor helper。
 - [ ] 保留 API route 的 project permission 校验，并明确权限校验发生在 API adapter 还是 query facade。
@@ -66,6 +69,7 @@
   - [ ] Canvas runtime snapshot 使用同一 current surface VFS。
   - [ ] Extension runtime invoke 使用 query facade backend target。
   - [ ] SessionRuntime VFS surface 与 Canvas snapshot 看到同一 VFS/default mount。
+  - [ ] VFS `AgentRun` source 与 `SessionRuntime` source 对同一 delivery runtime 使用同一 resource surface policy，生命周期 evidence projection 是否叠加由 facade 统一决定。
 
 ## Phase 4: Business Update / Adoption Old Path Cleanup
 
@@ -111,6 +115,7 @@ Must not touch:
 Output:
 - AgentRunRuntimeSurfaceQuery / AgentRunRuntimeSurfaceQueryPort
 - public result without AgentFrame / FrameLaunchSurface
+- resource-surface result supports optional backend anchor, while backend-required helper returns typed missing-anchor error
 - unit tests for idle/current surface closure
 ```
 
@@ -155,7 +160,7 @@ Must not touch:
 Output:
 - resolve_session_frame_vfs replaced or reduced to a thin query adapter
 - SessionFrameVfsResult no longer exposes AgentFrame
-- Canvas/Extension/VFS/Terminal consume the same current surface result
+- Canvas/Extension/VFS SessionRuntime/VFS AgentRun/Terminal consume the same current/resource surface result
 ```
 
 ```text
@@ -208,6 +213,7 @@ Runs after A/B/C and can overlap with D if D only changes business mutation path
 - cargo test -p agentdash-application runtime_gateway
 - cargo test -p agentdash-api canvases
 - cargo test -p agentdash-api extension_runtime
+- cargo test -p agentdash-api vfs_surfaces
 - cargo check -p agentdash-application
 - cargo check -p agentdash-api
 ```
@@ -232,6 +238,7 @@ cargo test -p agentdash-application runtime_gateway::session_actions
 cargo test -p agentdash-application session::hub
 cargo test -p agentdash-api canvases
 cargo test -p agentdash-api extension_runtime
+cargo test -p agentdash-api vfs_surfaces
 cargo check -p agentdash-application
 cargo check -p agentdash-api
 ```

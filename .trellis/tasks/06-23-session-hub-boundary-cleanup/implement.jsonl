@@ -1,14 +1,30 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": "crates/agentdash-application/src/session/capability_service.rs", "reason": "SessionCapabilityService 当前混合 facade 与 RuntimeSessionMcpAccess 实现"}
-{"file": "crates/agentdash-application/src/session/hub/tool_builder.rs", "reason": "当前 MCP discovery 和 hub tool builder 错误归属路径"}
-{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway session action 与 Canvas runtime bridge 约束"}
-{"file": "crates/agentdash-api/src/routes/canvases.rs", "reason": "Canvas runtime invoke 与 runtime bridge surface 调用点"}
-{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Session runtime live state 与 AgentRun surface 边界"}
-{"file": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs", "reason": "RuntimeGateway provider 装配与 MCP access 注入点"}
+{"file": "crates/agentdash-application/src/lifecycle/session_association.rs", "reason": "现有 runtime_session_id -> anchor -> current AgentFrame helper，应降为 query facade 内部实现"}
+{"file": "crates/agentdash-application/src/agent_run/frame/runtime_launch.rs", "reason": "FrameLaunchSurface 已有 VFS -> RuntimeBackendAnchor 派生语义，query facade 需要复用该规则"}
+{"file": "crates/agentdash-application/src/agent_run/frame/construction/mod.rs", "reason": "launch envelope closed surface 与 backend anchor 生成路径，可作为 current surface closure 对照"}
+{"file": "crates/agentdash-application/src/agent_run/frame/surface.rs", "reason": "AgentFrame typed surface reader，query facade 内部读取 capability/VFS/MCP surface 需要复用"}
+{"file": "crates/agentdash-application/src/session/capability_state.rs", "reason": "CapabilityState 与 AgentFrame surface projection 规则"}
+{"file": "crates/agentdash-application/src/runtime_gateway/session_actions.rs", "reason": "RuntimeSessionMcpAccess trait 与 mcp.list_tools / mcp.call_tool provider 边界"}
+{"file": "crates/agentdash-application/src/session/capability_service.rs", "reason": "SessionCapabilityService 当前混合 facade、RuntimeSessionMcpAccess 实现与旧 adoption/query helper"}
+{"file": "crates/agentdash-application/src/session/hub/tool_builder.rs", "reason": "当前 MCP discovery idle fallback、active tool refresh 与 active runtime adoption primitive"}
+{"file": "crates/agentdash-application/src/session/tool_assembly.rs", "reason": "合法 active turn tool assembly 消费 closed ExecutionContext 的对照路径"}
 {"file": "crates/agentdash-api/src/app_state.rs", "reason": "AppState service bootstrap 中 RuntimeSessionMcpAccess 当前绑定"}
-{"file": "crates/agentdash-api/src/routes/vfs_surfaces/resolver.rs", "reason": "SessionRuntime VFS surface consumer 当前路径"}
-{"file": "crates/agentdash-api/src/routes/extension_runtime.rs", "reason": "Extension runtime 当前 backend anchor 与 VFS consumer"}
+{"file": "crates/agentdash-api/src/bootstrap/runtime_gateway.rs", "reason": "RuntimeGateway provider 装配与 MCP access 注入点"}
 {"file": "crates/agentdash-api/src/session_construction.rs", "reason": "API session frame/VFS/backend helper 当前路径"}
+{"file": "crates/agentdash-api/src/routes/canvases.rs", "reason": "Canvas runtime invoke、runtime snapshot 与 bridge surface 调用点"}
+{"file": "crates/agentdash-api/src/routes/extension_runtime.rs", "reason": "Extension runtime 当前 backend anchor 与 VFS workspace consumer"}
+{"file": "crates/agentdash-api/src/routes/vfs_surfaces/resolver.rs", "reason": "VFS SessionRuntime 与 AgentRun source 当前各自解析 resource surface 的路径"}
+{"file": "crates/agentdash-api/src/routes/terminals.rs", "reason": "Terminal spawn 当前通过 resolve_session_frame_vfs 获取 backend anchor 与 VFS target"}
+{"file": "crates/agentdash-application/src/canvas/tools.rs", "reason": "Canvas create/attach/present exposure 当前通过 SessionCapabilityService 写 frame 并 adopt"}
+{"file": "crates/agentdash-application/src/workspace_module/tools.rs", "reason": "WorkspaceModule visibility 与 Canvas present/create mutation 当前依赖 session capability facade"}
+{"file": "crates/agentdash-application/src/workspace_module/runtime_tool_provider.rs", "reason": "WorkspaceModule active turn tool assembly 对 ExecutionContext backend anchor 的合法用法"}
+{"file": "crates/agentdash-application/src/permission/service.rs", "reason": "Permission grant surface-changing effect 写 AgentFrame revision 的 application 服务"}
+{"file": "crates/agentdash-api/src/routes/permission_grants.rs", "reason": "Permission route 当前直接调用 active runtime adoption primitive"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway session action 与 Canvas runtime bridge 约束"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session 与 AgentRun effective surface 边界"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Session runtime live state 与 AgentRun surface query 边界"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability/admission 与 AgentFrame revision 写入边界"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS resource surface query 的 application 层归属"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "Permission grant surface-changing effect 与 active adoption 边界"}
 {"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/session-hub-inventory.md", "reason": "session hub 职责清单与迁移矩阵研究"}
 {"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/runtime-gateway-mcp-boundary.md", "reason": "RuntimeGateway MCP access 迁出设计研究"}
 {"file": ".trellis/tasks/06-23-session-hub-boundary-cleanup/research/business-consumer-migration-map.md", "reason": "Canvas/Extension/VFS/Permission/Terminal consumer 迁移研究"}

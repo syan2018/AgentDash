@@ -5,8 +5,7 @@
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //!
 use agentdash_agent_types::DynAgentTool;
-use agentdash_application_ports::mcp_discovery::{DiscoveredMcpTool, McpToolDiscoveryRequest};
-use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeBackendAnchor, RuntimeMcpServer};
+use agentdash_spi::{ConnectorError, ExecutionContext, RuntimeBackendAnchor};
 use uuid::Uuid;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
@@ -20,43 +19,6 @@ use crate::session::tool_assembly::{
 use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 
 impl SessionRuntimeInner {
-    /// 读取 delivery RuntimeSession 当前生效的 MCP server 列表。
-    ///
-    /// Active turn 返回 connector session frame 的执行快照；idle 时通过
-    /// `RuntimeSessionExecutionAnchor` 反查当前 AgentFrame surface。
-    pub async fn get_runtime_mcp_servers(&self, session_id: &str) -> Vec<RuntimeMcpServer> {
-        let active = self
-            .runtime_registry
-            .with_runtime(session_id, |runtime| {
-                runtime
-                    .and_then(|runtime| runtime.turn_state.active_turn())
-                    .map(|turn| turn.session_frame.mcp_servers.clone())
-            })
-            .await;
-        if let Some(servers) = active {
-            return servers;
-        }
-
-        let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
-            self.execution_anchor_repo.as_ref(),
-            self.lifecycle_agent_repo.as_ref(),
-            self.agent_frame_repo.as_ref(),
-        ) else {
-            return Vec::new();
-        };
-        resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
-        .await
-        .ok()
-        .flatten()
-        .map(|(_anchor, _agent, frame)| frame.typed_mcp_servers())
-        .unwrap_or_default()
-    }
-
     /// 读取 session 当前 turn 生效的能力状态（AgentFrame revision 的内存投影）。
     pub async fn get_current_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         self.runtime_registry
@@ -369,102 +331,6 @@ impl SessionRuntimeInner {
             self.mcp_tool_discovery.as_deref(),
         )
         .await
-    }
-
-    pub(in crate::session) async fn discover_runtime_mcp_tool_entries(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
-        let active_surface = self
-            .runtime_registry
-            .with_runtime(session_id, |runtime| {
-                runtime
-                    .and_then(|runtime| runtime.turn_state.active_turn())
-                    .map(|turn| {
-                        (
-                            turn.session_frame.mcp_servers.clone(),
-                            turn.session_frame.runtime_backend_anchor.clone(),
-                            turn.session_frame.vfs.clone(),
-                            turn.session_frame.identity.clone(),
-                            turn.session_frame.turn_id.clone(),
-                            turn.capability_state.clone(),
-                        )
-                    })
-            })
-            .await;
-        let (servers, backend_anchor, vfs, identity, turn_id, capability_state) = if let Some(
-            surface,
-        ) =
-            active_surface
-        {
-            surface
-        } else {
-            let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
-                self.execution_anchor_repo.as_ref(),
-                self.lifecycle_agent_repo.as_ref(),
-                self.agent_frame_repo.as_ref(),
-            ) else {
-                return Err(ConnectorError::Runtime(format!(
-                    "session `{session_id}` 缺少 AgentFrame surface repository，无法发现 MCP 工具"
-                )));
-            };
-            let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
-                session_id,
-                anchor_repo.as_ref(),
-                agent_repo.as_ref(),
-                frame_repo.as_ref(),
-            )
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "通过 anchor 查找 session `{session_id}` 当前 AgentFrame surface 失败: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "session `{session_id}` 未关联当前 AgentFrame surface，无法发现 MCP 工具"
-                ))
-            })?;
-            (
-                frame.typed_mcp_servers(),
-                None,
-                frame.typed_vfs(),
-                None,
-                String::new(),
-                project_capability_state_from_frame(&frame),
-            )
-        };
-        let backend_anchor = backend_anchor.ok_or_else(|| {
-            ConnectorError::Runtime(
-                agentdash_spi::RuntimeBackendAnchorError::Missing {
-                    component: "runtime_mcp_tool_discovery".to_string(),
-                    session_id: Some(session_id.to_string()),
-                    turn_id: (!turn_id.is_empty()).then_some(turn_id.clone()),
-                }
-                .to_string(),
-            )
-        })?;
-        let capability_state = self
-            .capability_state_with_agent_run_admission_projection(session_id, &capability_state)
-            .await;
-        let discovery = self.mcp_tool_discovery.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string())
-        })?;
-
-        discovery
-            .discover_tool_entries(McpToolDiscoveryRequest {
-                servers,
-                capability_state,
-                call_context: Some(agentdash_spi::RelayMcpCallContext {
-                    session_id: session_id.to_string(),
-                    turn_id: (!turn_id.is_empty()).then_some(turn_id),
-                    tool_call_id: None,
-                    backend_anchor: Some(backend_anchor),
-                    vfs,
-                    identity,
-                }),
-            })
-            .await
     }
 
     async fn execution_context_with_agent_run_admission_projection(

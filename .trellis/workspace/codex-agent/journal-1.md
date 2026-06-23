@@ -983,3 +983,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: PiAgent readable lifecycle ID 降噪
+
+**Date**: 2026-06-23
+**Task**: PiAgent readable lifecycle ID 降噪
+**Branch**: `main`
+
+### Summary
+
+收束 PiAgent tool/command/terminal lifecycle 可见 ID 为 turn_001/tool_001/cmd_001/term_001 风格，保留 raw trace metadata，并补充 Canvas binding snapshot path 解析。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf300d988` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

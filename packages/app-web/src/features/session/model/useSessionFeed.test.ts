@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { aggregateEntries } from "./useSessionFeed";
+import { aggregateEntries, segmentByTurn } from "./useSessionFeed";
 import type {
   SessionDisplayEntry,
   AggregatedEntryGroup,
+  SessionEventEnvelope,
 } from "./types";
-import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEnvelope, BackboneEvent, ThreadItem, Turn } from "../../../generated/backbone-protocol";
 
 let nextSeq = 1;
 function seq(): number {
@@ -89,7 +90,138 @@ function mkMessageEntry(id: string, text: string): SessionDisplayEntry {
     type: "agent_message_delta",
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: text },
   };
-  return asEntry(id, event, { accumulatedText: text });
+  return asEntry(id, event, { accumulatedText: text, turnId: "u1" });
+}
+
+function backboneEnvelope(event: BackboneEvent, turnId = "u1"): BackboneEnvelope {
+  return {
+    sessionId: "s1",
+    source: {
+      connectorId: "connector",
+      connectorType: "test",
+      executorId: null,
+    },
+    trace: {
+      turnId,
+      entryIndex: 0,
+    },
+    observedAt: "2026-06-23T00:00:00.000Z",
+    event,
+  };
+}
+
+function rawEvent(eventSeq: number, event: BackboneEvent, turnId = "u1"): SessionEventEnvelope {
+  return {
+    session_id: "s1",
+    event_seq: eventSeq,
+    occurred_at_ms: eventSeq,
+    committed_at_ms: eventSeq,
+    session_update_type: event.type,
+    turn_id: turnId,
+    entry_index: 0,
+    notification: backboneEnvelope(event, turnId),
+  };
+}
+
+function turnPayload(id: string, status: Turn["status"], durationMs: number | null): Turn {
+  return {
+    id,
+    items: [],
+    itemsView: "full",
+    status,
+    error: null,
+    startedAt: null,
+    completedAt: null,
+    durationMs,
+  };
+}
+
+function rawTurnStarted(eventSeq: number, turnId = "u1"): SessionEventEnvelope {
+  return rawEvent(eventSeq, {
+    type: "turn_started",
+    payload: {
+      threadId: "t1",
+      turn: turnPayload(turnId, "inProgress", null),
+    },
+  }, turnId);
+}
+
+function rawTurnCompleted(
+  eventSeq: number,
+  status: Turn["status"],
+  durationMs: number,
+  turnId = "u1",
+): SessionEventEnvelope {
+  return rawEvent(eventSeq, {
+    type: "turn_completed",
+    payload: {
+      threadId: "t1",
+      turn: turnPayload(turnId, status, durationMs),
+    },
+  }, turnId);
+}
+
+function rawTurnTerminal(
+  eventSeq: number,
+  terminalType: "turn_completed" | "turn_failed" | "turn_interrupted",
+  durationMs: number,
+  turnId = "u1",
+): SessionEventEnvelope {
+  return rawEvent(eventSeq, {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "turn_terminal",
+        value: {
+          terminal_type: terminalType,
+          turn_id: turnId,
+          duration_ms: durationMs,
+          message: terminalType,
+        },
+      },
+    },
+  }, turnId);
+}
+
+function rawProviderAttemptStatus(
+  eventSeq: number,
+  value: Record<string, unknown>,
+  turnId = "u1",
+): SessionEventEnvelope {
+  return rawEvent(eventSeq, {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "provider_attempt_status",
+        value: {
+          turn_id: turnId,
+          ...value,
+        },
+      },
+    },
+  }, turnId);
+}
+
+function mkProviderStatusEntry(id: string): SessionDisplayEntry {
+  const event: BackboneEvent = {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "provider_attempt_status",
+        value: {
+          turn_id: "u1",
+          phase: "retrying",
+          attempt: 2,
+          max_attempts: 3,
+          will_retry: true,
+        },
+      },
+    },
+  };
+  return asEntry(id, event, { turnId: "u1" });
 }
 
 function mkTurnStarted(id = "ts"): SessionDisplayEntry {
@@ -530,5 +662,68 @@ describe("aggregateEntries — tool burst", () => {
     expect(isToolGroup(result[0])).toBe(false);
     expect((result[0] as SessionDisplayEntry).id).toBe("c1");
     expect((result[1] as SessionDisplayEntry).id).toBe("c2");
+  });
+
+  it("T23: provider retry status is a system boundary and exposes reconnecting turn activity", () => {
+    const statusEntry = mkProviderStatusEntry("provider-status");
+    const aggregated = aggregateEntries([statusEntry]);
+    expect(aggregated).toHaveLength(1);
+    expect((aggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
+
+    const segments = segmentByTurn([], [
+      rawTurnStarted(1),
+      rawProviderAttemptStatus(2, {
+        phase: "retrying",
+        attempt: 2,
+        max_attempts: 3,
+        will_retry: true,
+      }),
+    ]);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.activity?.kind).toBe("reconnecting");
+    expect(segments[0]?.activity?.label).toBe("Reconnecting... 2/3");
+  });
+
+  it("T24: active turn without visible output appears as thinking", () => {
+    const segments = segmentByTurn([], [rawTurnStarted(1)]);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.activity?.kind).toBe("thinking");
+    expect(segments[0]?.activity?.label).toBe("正在思考");
+  });
+
+  it("T25: durationMs is read from completed, failed and interrupted terminal facts", () => {
+    const completed = segmentByTurn([mkMessageEntry("completed-message", "done")], [
+      rawTurnCompleted(1, "completed", 12_000),
+    ]);
+    const failed = segmentByTurn([mkMessageEntry("failed-message", "partial")], [
+      rawTurnTerminal(1, "turn_failed", 34_000),
+    ]);
+    const interrupted = segmentByTurn([mkMessageEntry("interrupted-message", "partial")], [
+      rawTurnTerminal(1, "turn_interrupted", 56_000),
+    ]);
+
+    expect(completed[0]?.status).toBe("completed");
+    expect(completed[0]?.durationMs).toBe(12_000);
+    expect(failed[0]?.status).toBe("failed");
+    expect(failed[0]?.durationMs).toBe(34_000);
+    expect(interrupted[0]?.status).toBe("interrupted");
+    expect(interrupted[0]?.durationMs).toBe(56_000);
+  });
+
+  it("T26: retry exhausted appears as terminal provider activity", () => {
+    const segments = segmentByTurn([], [
+      rawTurnStarted(1),
+      rawProviderAttemptStatus(2, {
+        phase: "failed",
+        attempt: 3,
+        max_attempts: 3,
+        will_retry: false,
+      }),
+    ]);
+
+    expect(segments[0]?.activity?.kind).toBe("retry_exhausted");
+    expect(segments[0]?.activity?.label).toBe("重试已耗尽");
   });
 });

@@ -3,7 +3,7 @@
   "name": "agent-provider-retry-reconnect",
   "title": "Agent 执行 Provider 波动重试与重连事件评估",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

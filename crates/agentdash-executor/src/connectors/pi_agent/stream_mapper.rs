@@ -7,8 +7,9 @@ use agentdash_agent::{
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent, SourceInfo, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo,
-    backbone::thread_item,
+    PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
+    ProviderAttemptStatus as ProtocolProviderAttemptStatus, SourceInfo, ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
 };
 use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
 use agentdash_agent_types::{
@@ -157,6 +158,44 @@ fn tool_result_item_id(
                 .item_id
         })
         .unwrap_or_else(|| stable_tool_result_item_id(turn_id, tool_call_id))
+}
+
+fn provider_attempt_phase_to_protocol(
+    phase: agentdash_agent::ProviderAttemptPhase,
+) -> ProtocolProviderAttemptPhase {
+    match phase {
+        agentdash_agent::ProviderAttemptPhase::Connecting => {
+            ProtocolProviderAttemptPhase::Connecting
+        }
+        agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta => {
+            ProtocolProviderAttemptPhase::ConnectedWaitingFirstDelta
+        }
+        agentdash_agent::ProviderAttemptPhase::Streaming => ProtocolProviderAttemptPhase::Streaming,
+        agentdash_agent::ProviderAttemptPhase::RetryScheduled => {
+            ProtocolProviderAttemptPhase::RetryScheduled
+        }
+        agentdash_agent::ProviderAttemptPhase::Retrying => ProtocolProviderAttemptPhase::Retrying,
+        agentdash_agent::ProviderAttemptPhase::Failed => ProtocolProviderAttemptPhase::Failed,
+        agentdash_agent::ProviderAttemptPhase::Succeeded => ProtocolProviderAttemptPhase::Succeeded,
+    }
+}
+
+fn provider_attempt_status_to_protocol(
+    status: &agentdash_agent::ProviderAttemptStatus,
+    turn_id: &str,
+) -> ProtocolProviderAttemptStatus {
+    ProtocolProviderAttemptStatus {
+        turn_id: turn_id.to_string(),
+        phase: provider_attempt_phase_to_protocol(status.phase),
+        attempt: status.attempt,
+        max_attempts: status.max_attempts,
+        will_retry: status.will_retry,
+        delay_ms: status.delay_ms,
+        reason_code: status.reason_code.clone(),
+        message: status.message.clone(),
+        provider: status.provider.clone(),
+        model: status.model.clone(),
+    }
 }
 
 /// 从 shell_exec 的 args JSON 中提取 command / cwd。
@@ -587,6 +626,15 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
         |event: BackboneEvent, idx: u32| make_envelope(event, session_id, source, turn_id, idx);
 
     match event {
+        AgentEvent::ProviderAttemptStatus { status } => {
+            vec![wrap(
+                BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(
+                    provider_attempt_status_to_protocol(status, turn_id),
+                )),
+                *entry_index,
+            )]
+        }
+
         AgentEvent::MessageUpdate {
             message,
             event: stream_event,

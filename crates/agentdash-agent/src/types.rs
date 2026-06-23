@@ -68,6 +68,9 @@ pub enum AgentEvent {
         item_id: String,
         error: String,
     },
+    ProviderAttemptStatus {
+        status: ProviderAttemptStatus,
+    },
     ToolExecutionStart {
         tool_call_id: String,
         tool_name: String,
@@ -101,6 +104,38 @@ pub enum AgentEvent {
         result: serde_json::Value,
         is_error: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProviderAttemptStatus {
+    pub phase: ProviderAttemptPhase,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    #[serde(default)]
+    pub will_retry: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAttemptPhase {
+    Connecting,
+    ConnectedWaitingFirstDelta,
+    Streaming,
+    RetryScheduled,
+    Retrying,
+    Failed,
+    Succeeded,
 }
 
 // ─── AgentState ─────────────────────────────────────────────

@@ -639,6 +639,55 @@ fn context_compaction_failure_maps_diagnostic_and_error() {
 }
 
 #[test]
+fn provider_attempt_status_maps_to_platform_event() {
+    let event = AgentEvent::ProviderAttemptStatus {
+        status: agentdash_agent::ProviderAttemptStatus {
+            phase: agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+            attempt: 1,
+            max_attempts: 3,
+            will_retry: true,
+            delay_ms: Some(0),
+            reason_code: Some("stream_disconnected".to_string()),
+            message: Some("Reconnecting... 1/3".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-4.1".to_string()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::ProviderAttemptStatus(status),
+        ) => {
+            assert_eq!(status.turn_id, "turn-1");
+            assert_eq!(
+                status.phase,
+                agentdash_agent_protocol::ProviderAttemptPhase::RetryScheduled
+            );
+            assert_eq!(status.attempt, 1);
+            assert_eq!(status.max_attempts, 3);
+            assert!(status.will_retry);
+            assert_eq!(status.delay_ms, Some(0));
+            assert_eq!(status.reason_code.as_deref(), Some("stream_disconnected"));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
 fn tool_call_stream_events_map_to_pending_start_and_updates() {
     let start_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {

@@ -49,6 +49,40 @@ function agentDelta(event_seq: number, delta: string): SessionEventEnvelope {
   });
 }
 
+function retryError(event_seq: number): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "error",
+    payload: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      willRetry: true,
+      error: {
+        message: "Reconnecting... 1/3",
+        codexErrorInfo: null,
+        additionalDetails: null,
+      },
+    },
+  });
+}
+
+function sessionRewound(event_seq: number, stableEventSeq: number): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "session_rewound",
+        value: {
+          discarded_turn_id: "turn-1",
+          stable_event_seq: stableEventSeq,
+          reason: "provider_retry",
+          message: "已丢弃失败轮次，恢复到上一稳定状态",
+        },
+      },
+    },
+  });
+}
+
 function commandItem(id: string, aggregatedOutput: string | null): Extract<ThreadItem, { type: "commandExecution" }> {
   return {
     type: "commandExecution",
@@ -127,6 +161,42 @@ describe("sessionStreamReducer", () => {
     });
 
     expect(shouldFlushStreamEventImmediately(approvalEvent)).toBe(true);
+  });
+
+  it("willRetry error 保留 raw event，但不生成普通 fatal error entry", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      retryError(1),
+    ]);
+
+    expect(state.rawEvents).toHaveLength(1);
+    expect(state.rawEvents[0]?.notification.event.type).toBe("error");
+    expect(state.entries).toHaveLength(0);
+    expect(state.lastAppliedSeq).toBe(1);
+  });
+
+  it("session_rewound 会按稳定边界移除失败轮次的半截展示", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      agentDelta(1, "partial failed output"),
+      streamEvent(2, {
+        type: "platform",
+        payload: {
+          kind: "session_meta_update",
+          data: {
+            key: "turn_terminal",
+            value: {
+              terminal_type: "turn_failed",
+              turn_id: "turn-1",
+              message: "provider disconnected",
+            },
+          },
+        },
+      }),
+      sessionRewound(3, 0),
+    ]);
+
+    expect(state.lastAppliedSeq).toBe(3);
+    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([3]);
+    expect(state.entries.some((entry) => entry.accumulatedText?.includes("partial failed output"))).toBe(false);
   });
 
   it("command completed 后使用 final aggregatedOutput 作为终态 bounded 展示源", () => {

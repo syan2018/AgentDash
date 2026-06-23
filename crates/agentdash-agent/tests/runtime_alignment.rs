@@ -308,6 +308,7 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::ContextCompactionStarted { .. } => "context_compaction_started",
         AgentEvent::ContextCompacted { .. } => "context_compacted",
         AgentEvent::ContextCompactionFailed { .. } => "context_compaction_failed",
+        AgentEvent::ProviderAttemptStatus { .. } => "provider_attempt_status",
         AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
         AgentEvent::ToolExecutionUpdate { .. } => "tool_execution_update",
         AgentEvent::ToolExecutionPendingApproval { .. } => "tool_execution_pending_approval",
@@ -401,6 +402,9 @@ async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
             "turn_start",
             "message_start",
             "message_end",
+            "provider_attempt_status",
+            "provider_attempt_status",
+            "provider_attempt_status",
             "message_start",
             "message_end",
             "turn_end",
@@ -409,6 +413,65 @@ async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
     );
     assert_eq!(new_messages.len(), 2);
     assert_eq!(context.messages.len(), 2);
+}
+
+#[tokio::test]
+async fn pre_delta_retry_does_not_pollute_context_and_retries_request() {
+    let retryable_error = BridgeError::provider(
+        "upstream 503",
+        agentdash_agent::ProviderErrorClassification::retryable()
+            .with_http_status(503)
+            .with_retry_after_ms(0),
+    );
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Error(
+            retryable_error,
+        ))],
+        vec![ScriptStep::Chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("recovered")),
+        ))],
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = collecting_sink(events.clone());
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![],
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("hello")],
+        &mut context,
+        &[],
+        &AgentLoopConfig::default(),
+        &bridge,
+        &sink,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should recover from pre-delta retryable provider error");
+
+    let snapshots = bridge.message_snapshots().await;
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(new_messages.len(), 2);
+    assert_eq!(context.messages.len(), 2);
+    assert_eq!(context.messages[1].first_text(), Some("recovered"));
+    assert!(
+        !context
+            .messages
+            .iter()
+            .any(|message| message.first_text() == Some("upstream 503"))
+    );
+
+    let provider_status_count = events
+        .lock()
+        .await
+        .iter()
+        .map(event_kind)
+        .filter(|kind| *kind == "provider_attempt_status")
+        .count();
+    assert!(provider_status_count >= 5);
 }
 
 #[tokio::test]
@@ -1494,6 +1557,34 @@ fn assistant_stream_event_type_is_tool_call_delta_complete() {
         is_parseable: true,
     };
     assert!(matches!(event, AssistantStreamEvent::ToolCallDelta { .. }));
+}
+
+#[test]
+fn provider_attempt_status_serializes_as_snake_case_contract() {
+    let event = AgentEvent::ProviderAttemptStatus {
+        status: agentdash_agent::ProviderAttemptStatus {
+            phase: agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+            attempt: 2,
+            max_attempts: 3,
+            will_retry: true,
+            delay_ms: Some(2_000),
+            reason_code: Some("stream_disconnected".to_string()),
+            message: Some("Reconnecting... 2/3".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-4.1".to_string()),
+        },
+    };
+
+    let value = serde_json::to_value(event).expect("serialize provider status");
+    assert_eq!(value["type"], "provider_attempt_status");
+    assert_eq!(value["status"]["phase"], "retry_scheduled");
+    assert_eq!(value["status"]["attempt"], 2);
+    assert_eq!(value["status"]["max_attempts"], 3);
+    assert_eq!(value["status"]["will_retry"], true);
+    assert_eq!(value["status"]["delay_ms"], 2_000);
+    assert_eq!(value["status"]["reason_code"], "stream_disconnected");
+    assert_eq!(value["status"]["provider"], "openai");
+    assert_eq!(value["status"]["model"], "gpt-4.1");
 }
 
 #[tokio::test]

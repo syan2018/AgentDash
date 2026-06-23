@@ -40,6 +40,7 @@ pub(super) fn build_turn_started_envelope(
     session_id: &str,
     source: &SourceInfo,
     turn_id: &str,
+    started_at_ms: i64,
 ) -> BackboneEnvelope {
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     BackboneEnvelope::new(
@@ -51,7 +52,7 @@ pub(super) fn build_turn_started_envelope(
                 items_view: codex::TurnItemsView::NotLoaded,
                 status: codex::TurnStatus::InProgress,
                 error: None,
-                started_at: Some(chrono::Utc::now().timestamp()),
+                started_at: Some(started_at_ms.div_euclid(1000)),
                 completed_at: None,
                 duration_ms: None,
             },
@@ -65,14 +66,22 @@ pub(super) fn build_turn_started_envelope(
     })
 }
 
-pub(super) fn build_turn_terminal_notification(
+pub(super) fn build_turn_terminal_notification_with_timing(
     session_id: &str,
     source: &SourceInfo,
     turn_id: &str,
     terminal_kind: TurnTerminalKind,
     message: Option<String>,
+    timing: Option<TurnTiming>,
 ) -> BackboneEnvelope {
-    build_turn_terminal_envelope(session_id, source, turn_id, terminal_kind, message)
+    build_turn_terminal_envelope_with_timing(
+        session_id,
+        source,
+        turn_id,
+        terminal_kind,
+        message,
+        timing,
+    )
 }
 
 pub(super) fn build_turn_terminal_envelope(
@@ -82,10 +91,44 @@ pub(super) fn build_turn_terminal_envelope(
     terminal_kind: TurnTerminalKind,
     message: Option<String>,
 ) -> BackboneEnvelope {
-    let value = serde_json::json!({
+    build_turn_terminal_envelope_with_timing(
+        session_id,
+        source,
+        turn_id,
+        terminal_kind,
+        message,
+        None,
+    )
+}
+
+pub(super) fn build_turn_terminal_envelope_with_timing(
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    terminal_kind: TurnTerminalKind,
+    message: Option<String>,
+    timing: Option<TurnTiming>,
+) -> BackboneEnvelope {
+    let mut value = serde_json::json!({
         "terminal_type": terminal_kind.event_type(),
         "message": message,
     });
+    if let Some(timing) = timing
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "started_at_ms".to_string(),
+            serde_json::Value::from(timing.started_at_ms),
+        );
+        object.insert(
+            "completed_at_ms".to_string(),
+            serde_json::Value::from(timing.completed_at_ms),
+        );
+        object.insert(
+            "duration_ms".to_string(),
+            serde_json::Value::from(timing.duration_ms),
+        );
+    }
     BackboneEnvelope::new(
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
             key: "turn_terminal".to_string(),
@@ -129,9 +172,15 @@ pub(super) fn parse_turn_terminal_event_from_envelope(
                 .map(ToString::to_string);
             Some((turn_id.to_string(), kind, message))
         }
-        BackboneEvent::TurnCompleted(_) => {
-            Some((turn_id.to_string(), TurnTerminalKind::Completed, None))
-        }
+        BackboneEvent::TurnCompleted(completed) => Some((
+            turn_id.to_string(),
+            TurnTerminalKind::from(completed.turn.status.clone()),
+            completed
+                .turn
+                .error
+                .as_ref()
+                .map(|error| error.message.clone()),
+        )),
         _ => None,
     }
 }
@@ -248,6 +297,9 @@ pub(super) struct SessionRuntime {
 pub(super) struct TurnExecution {
     /// 当前 turn 标识。
     pub turn_id: String,
+    /// Turn accepted/started 的毫秒时间戳，用于 terminal duration 诊断和
+    /// Codex Turn.durationMs 对齐。
+    pub started_at_ms: i64,
     /// Session 级执行环境快照（turn_id / working_dir / env / executor_config /
     /// mcp_servers / vfs / identity）。放在这里的动机是 MCP 热更新路径需要
     /// 拿到 turn 生效的 session frame 重建工具集。
@@ -274,6 +326,7 @@ pub(super) struct TurnExecution {
 
 impl TurnExecution {
     /// 新建一个 turn 执行态，其余字段由 launch preparation 在组装完成后填入。
+    #[cfg(test)]
     pub fn new(
         turn_id: String,
         session_frame: ExecutionSessionFrame,
@@ -281,8 +334,28 @@ impl TurnExecution {
         context_audit_bundle_id: Uuid,
         context_audit_session_id: Uuid,
     ) -> Self {
+        let started_at_ms = chrono::Utc::now().timestamp_millis();
+        Self::new_with_started_at(
+            turn_id,
+            session_frame,
+            capability_state,
+            context_audit_bundle_id,
+            context_audit_session_id,
+            started_at_ms,
+        )
+    }
+
+    pub fn new_with_started_at(
+        turn_id: String,
+        session_frame: ExecutionSessionFrame,
+        capability_state: CapabilityState,
+        context_audit_bundle_id: Uuid,
+        context_audit_session_id: Uuid,
+        started_at_ms: i64,
+    ) -> Self {
         Self {
             turn_id,
+            started_at_ms,
             session_frame,
             capability_state,
             runtime_injection_fragments: Vec::new(),
@@ -291,6 +364,23 @@ impl TurnExecution {
             cancel_requested: false,
             processor_tx: None,
             stream_adapter_abort: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TurnTiming {
+    pub started_at_ms: i64,
+    pub completed_at_ms: i64,
+    pub duration_ms: i64,
+}
+
+impl TurnTiming {
+    pub fn complete(started_at_ms: i64, completed_at_ms: i64) -> Self {
+        Self {
+            started_at_ms,
+            completed_at_ms,
+            duration_ms: completed_at_ms.saturating_sub(started_at_ms).max(0),
         }
     }
 }
@@ -345,6 +435,23 @@ impl From<TurnTerminalKind> for super::types::ExecutionStatus {
             TurnTerminalKind::Failed => Self::Failed,
             TurnTerminalKind::Interrupted => Self::Interrupted,
             TurnTerminalKind::Lost => Self::Lost,
+        }
+    }
+}
+
+impl From<agentdash_agent_protocol::codex_app_server_protocol::TurnStatus> for TurnTerminalKind {
+    fn from(status: agentdash_agent_protocol::codex_app_server_protocol::TurnStatus) -> Self {
+        match status {
+            agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Completed => {
+                Self::Completed
+            }
+            agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Failed => Self::Failed,
+            agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::Interrupted => {
+                Self::Interrupted
+            }
+            agentdash_agent_protocol::codex_app_server_protocol::TurnStatus::InProgress => {
+                Self::Interrupted
+            }
         }
     }
 }

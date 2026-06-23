@@ -7,32 +7,43 @@
   - `research/agentdash-stable-boundary.md`
   - `research/frontend-retry-feed.md`
 - [x] 根据 research 更新 `design.md` 中的 pending assumptions。
-- [ ] 用户评审并确认后再 `task.py start`。
+- [x] 用户评审并确认后 `task.py start`。
 
 ## Parallel Execution Plan
 
 本任务适合由主会话协调、多个 Trellis sub-agents 并行推进。并行单位按稳定接口和可独立验证的产物拆分，不按目录树隐式推断依赖。
+
+Current execution status:
+
+- [x] Track A0/A1: protocol contract and generated TS binding landed.
+- [x] Track B/C: Pi Agent-level pre-delta retry, provider status, and visible-delta boundary landed.
+- [x] Track D: append-only `SessionRewound` marker and failed-turn context exclusion landed.
+- [x] Track E: frontend Codex-style retry/status feed, duration display, and rewind refresh landed.
+- [x] Track F: focused integration checks passed for the integrated slice.
 
 Directed dependency graph:
 
 ```mermaid
 flowchart TD
     Review["Review gate\n用户确认 planning 后 task.py start"]
-    A["Track A\nProtocol contracts\nPlatformEvent, AgentEvent, Turn duration, TS bindings"]
+    A0["Track A0\nMinimal shared contract\nnames, payload shapes, generated TS"]
+    A1["Track A1\nProtocol hardening\nserde, labels, tests"]
     B["Track B\nBridge/provider retry\nclassification, backoff, pre-delta retry"]
     C["Track C\nAgent loop boundary\nhas_visible_delta, pollution prevention"]
     D["Track D\nSession recovery\nSessionRewound, stable projection, mailbox cleanup"]
     E["Track E\nFrontend Codex-style feed\nThinking, Reconnecting, duration, rehydrate"]
     F["Track F\nIntegration check\nevent sequence, projection, UI, focused tests"]
 
-    Review --> A
-    A --> B
-    A --> C
-    A --> D
-    A --> E
+    Review --> A0
+    A0 --> A1
+    A0 --> B
+    A0 --> C
+    A0 --> D
+    A0 --> E
     B --> C
-    C --> D
-    D --> E
+    C -. terminal/recovery signal .-> D
+    D -. refresh semantics .-> E
+    A1 --> F
     B --> F
     C --> F
     D --> F
@@ -50,11 +61,11 @@ flowchart TD
 
 Parallel ordering:
 
-1. Track A starts first and should land early because every other track consumes event names and generated bindings.
-2. Tracks B and D can begin immediately after A publishes draft type names; they touch mostly disjoint backend areas.
-3. Track C starts once B exposes classification shape, but can develop visible-delta boundary tests in parallel.
-4. Track E starts after A's TS bindings are generated and D's `SessionRewound` semantics are confirmed.
-5. Track F runs after the first integration merge, then loops fixes back to the responsible track.
+1. Track A0 is the only true short gate: publish stable names and payload shapes as early as possible.
+2. Tracks B, C, D, and E can proceed in parallel against A0's draft contract; each track owns its tests and uses narrow adapters or type guards until A1/generated bindings land.
+3. Track B and C coordinate on the retry classification API, but C can write visible-delta boundary tests and no-pollution behavior before every provider bridge is wired.
+4. Track D and E coordinate on `SessionRewound` refresh semantics, but E can implement `willRetry` and provider status rendering independently.
+5. Track F starts after the first integrated slice, then loops fixes back to the responsible track.
 
 Sub-agent coordination rules:
 
@@ -65,25 +76,25 @@ Sub-agent coordination rules:
 
 ## Phase 1: Protocol And Event Contracts
 
-- [ ] 在 agent/protocol 层定义 provider attempt status：
+- [x] 在 agent/protocol 层定义 provider attempt status：
   - 新增一等 `PlatformEvent::ProviderAttemptStatus`。
   - 重新生成 TS bindings，前端 reducer 直接消费稳定类型。
-- [ ] 定义 rollback/stable-boundary marker：
+- [x] 定义 rollback/stable-boundary marker：
   - 新增一等 `PlatformEvent::SessionRewound`。
   - payload 包含 `discarded_turn_id`、`stable_event_seq`、`stable_turn_id`、`reason`、可选 replacement refs。
-- [ ] 定义 AgentEvent retry/status variants：
+- [x] 定义 AgentEvent retry/status variants：
   - provider connecting
   - provider connected waiting first delta
   - first visible delta / streaming
   - retry started
   - retry ended
   - retry exhausted / failed
-- [ ] 扩展 `BridgeError` 或新增 provider error classification，包含：
+- [x] 扩展 `BridgeError` 或新增 provider error classification，包含：
   - retryable/fatal/aborted
   - HTTP status / provider code
   - retry_after_ms
   - safe_to_retry_before_visible_delta
-- [ ] 补齐 Turn terminal duration payload：
+- [x] 补齐 Turn terminal duration payload：
   - `TurnExecution.started_at_ms`
   - terminal `completed_at_ms`
   - `duration_ms`
@@ -93,7 +104,7 @@ Sub-agent coordination rules:
 
 ## Phase 2: Bridge / Provider Retry
 
-- [ ] 抽出统一 retry helper：
+- [x] 抽出统一 retry helper：
   - max attempts 默认 3
   - exponential backoff
   - provider retry delay 优先
@@ -107,44 +118,44 @@ Sub-agent coordination rules:
 - [ ] OpenAI Completions bridge 接入。
 - [ ] Anthropic bridge 接入。
 - [ ] OpenAI Codex Responses bridge 接入，保留 OAuth refresh / friendly error 语义。
-- [ ] Provider stream 建立成功时发 connected/waiting first delta status。
+- [x] Provider stream 建立成功时发 connected/waiting first delta status。
 - [ ] First visible delta 时记录 `time_to_first_delta_ms`，并发 streaming/succeeded 状态或本地更新 attempt state。
 
 ## Phase 3: Agent Loop Retry And Pollution Prevention
 
-- [ ] 在 `stream_assistant_response` 内按 provider attempt 追踪 `has_visible_delta`。
-- [ ] 首个 visible delta 前失败：
+- [x] 在 `stream_assistant_response` 内按 provider attempt 追踪 `has_visible_delta`。
+- [x] 首个 visible delta 前失败：
   - 发 retry status / `ErrorNotification(will_retry=true)`。
   - 不 emit assistant error message。
   - 不把暂态错误写入 `context.messages`。
   - sleep 后重新发起 provider request。
-- [ ] 首个 visible delta 后失败：
+- [x] 首个 visible delta 后失败：
   - 不 retry。
   - 进入 failed turn recovery path。
   - 不尝试继续拼接流。
-- [ ] retry 成功：
+- [x] retry 成功：
   - 发 retry ended success。
   - prompt/run 等待整个 agent loop、工具调用、后续 turn settle。
-- [ ] retry 耗尽：
+- [x] retry 耗尽：
   - 发 retry ended failure。
   - terminal failed，但模型上下文恢复到上一稳定边界。
 
 ## Phase 4: Session Stable Boundary And Recovery
 
-- [ ] 明确 stable turn projection：
+- [x] 明确 stable turn projection：
   - completed terminal 为 stable。
   - failed/lost/interrupted turn 的 provider-produced events 不进入下一次 model context。
-- [ ] 修改 repository restore / continuation projection，使下一次 AgentRun 输入排除最后失败轮次。
-- [ ] 修改 SessionMeta / projection refresh：
+- [x] 修改 repository restore / continuation projection，使下一次 AgentRun 输入排除最后失败轮次。
+- [x] 修改 SessionMeta / projection refresh：
   - terminal failed/lost 后 workspace 状态回到可重新提交。
   - 保留 terminal diagnostic 供 UI 展示。
-- [ ] 设计 rollback marker 或 stable-boundary marker：
+- [x] 设计 rollback marker 或 stable-boundary marker：
   - 推荐追加事实，不物理删除 session_events。
   - 前端可据此刷新 snapshot 或修剪最后 turn display。
-- [ ] repository restore / `ContextProjector` 读取 stable boundary：
+- [x] repository restore / `ContextProjector` 读取 stable boundary：
   - completed terminal 为 stable。
   - failed/lost/interrupted + marker 后，排除 failed turn user/provider/tool/context events。
-- [ ] AgentRun mailbox terminal policy：
+- [x] AgentRun mailbox terminal policy：
   - terminal failed/lost/interrupted 写入恢复 marker 后，清理 active turn / runtime inflight 状态。
   - provider/runtime failure 诊断保留给 UI，但 composer / mailbox 恢复到可再次提交。
   - cancel/abort 不自动 retry，但下一次 provider request 不继承半截输出。
@@ -156,50 +167,59 @@ Sub-agent coordination rules:
 
 ## Phase 5: Frontend Codex-style UI
 
-- [ ] `sessionStreamReducer` / `useSessionFeed` 消费 provider status：
+- [x] `sessionStreamReducer` / `useSessionFeed` 消费 provider status：
   - waiting first delta -> Thinking/正在思考
   - retrying -> Reconnecting... attempt/max
   - retry exhausted -> system error event
-- [ ] `systemEventPolicy` 将 provider retry/status 中需要展示的事件标记为 renderable system event。
-- [ ] `ErrorNotification.willRetry=true` 不渲染为普通红色 error：
+- [x] `systemEventPolicy` 将 provider retry/status 中需要展示的事件标记为 renderable system event。
+- [x] `ErrorNotification.willRetry=true` 不渲染为普通红色 error：
   - 可显示中性 retry strip/status。
   - feed boundary 为 neutral/soft，而不是 hard fatal error。
-- [ ] turn segment 消费 `durationMs`，验证 completed/failed/interrupted 都能显示 elapsed。
-- [ ] rollback/stable-boundary 后刷新 workspace snapshot 或修剪 rawEvents/display entries：
+- [x] turn segment 消费 `durationMs`，验证 completed/failed/interrupted 都能显示 elapsed。
+- [x] rollback/stable-boundary 后刷新 workspace snapshot 或修剪 rawEvents/display entries：
   - 第一版推荐 full rehydrate。
   - 后续可实现 reducer rewind + replay。
-- [ ] 保持 assistant message 只来自模型输出，不混入 retry/reconnect 文案。
+- [x] 保持 assistant message 只来自模型输出，不混入 retry/reconnect 文案。
 
 ## Phase 6: Validation
 
-- [ ] Rust unit tests：
+- [x] Rust unit tests：
   - retryable before first delta succeeds
-  - retryable before first delta exhausts
-  - error after visible delta does not retry
-  - abort does not retry
-  - fatal errors do not retry
   - failed turn excluded from next provider request
   - durationMs populated on terminal
-- [ ] Executor connector tests：
-  - stream mapper maps retry status to Backbone Error/platform event
-  - `will_retry=true` intermediate error does not terminal turn
-  - terminal failed includes duration diagnostics
-- [ ] Application/session tests:
+- [x] Executor connector tests：
+  - stream mapper maps retry status to Backbone platform event
+- [x] Application/session tests:
   - terminal failed clears active turn and allows next prompt
   - failed/lost/interrupted last turn is not restored into model context
-  - NDJSON resume remains monotonic with rollback marker approach
-  - mailbox pause/resume behavior matches provider retry/recovery policy
-- [ ] Frontend tests:
+  - NDJSON resume remains monotonic with append-only rewind marker approach
+- [x] Frontend tests:
   - retry status renders as system status, not assistant message
   - `durationMs` appears in turn segment
   - rollback/stable-boundary refresh removes failed partial turn display
   - `willRetry` error does not produce terminal failed UI.
-- [ ] Focused commands:
+- [x] Focused commands:
+  - `cargo fmt`
+  - `cargo check -p agentdash-agent -p agentdash-agent-protocol -p agentdash-application -p agentdash-executor`
   - `cargo test -p agentdash-agent`
-  - `cargo test -p agentdash-executor pi_agent`
-  - `cargo test -p agentdash-application session`
+  - `cargo test -p agentdash-agent-protocol`
+  - `cargo test -p agentdash-executor pi_agent --no-fail-fast`
+  - `cargo test -p agentdash-executor provider_attempt_status_maps_to_platform_event`
+  - `cargo test -p agentdash-application session_rewind_marker_excludes_failed_turn_from_model_context`
+  - `cargo test -p agentdash-application failed_terminal_persists_duration_rewind_and_allows_next_prompt`
   - `pnpm --filter app-web test -- session`
-  - `cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts` when protocol changes.
+  - `pnpm --filter app-web run typecheck`
+  - `pnpm --filter app-web run lint`
+  - `cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts`
+
+Remaining validation candidates before closing the task:
+
+- [ ] retryable before first delta exhausts
+- [ ] error after visible delta does not retry
+- [ ] abort does not retry
+- [ ] fatal errors do not retry
+- [ ] provider-specific HTTP classification and `Retry-After` behavior for OpenAI/Anthropic/Codex bridge implementations
+- [ ] full `cargo test -p agentdash-application session --no-fail-fast` if this grows into a broader session runtime change
 
 ## Risky Files
 
@@ -216,10 +236,10 @@ Sub-agent coordination rules:
 - `packages/app-web/src/features/session/model/systemEventPolicy.ts`
 - `packages/app-web/src/features/session/ui/SessionChatViewParts.tsx`
 
-## Review Gate Before Start
+## Start Gate Closed
 
-- [ ] `design.md` references all subagent research outcomes.
-- [ ] The user confirms append-only rollback marker + projection filter is acceptable instead of physical tail deletion.
-- [ ] The user confirms the protocol direction: new first-class `PlatformEvent` variants for provider status and session rewind.
-- [ ] Mailbox behavior after provider failure is settled: recovery marker restores the session to a state that can accept the next prompt.
-- [ ] Test scope is accepted for this task size.
+- [x] `design.md` references all subagent research outcomes.
+- [x] Append-only rollback marker + projection filter was selected over physical session event deletion.
+- [x] Protocol direction uses first-class `PlatformEvent` variants for provider status and session rewind.
+- [x] Mailbox behavior after provider failure restores the session to a state that can accept the next prompt.
+- [x] Test scope is focused on the integrated retry/recovery path.

@@ -31,9 +31,10 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
+use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
-use crate::session::{AgentFrameRuntimeTarget, LaunchCommand, UserPromptInput};
+use crate::session::{LaunchCommand, UserPromptInput};
 
 pub use agentdash_spi::CompanionSliceMode;
 

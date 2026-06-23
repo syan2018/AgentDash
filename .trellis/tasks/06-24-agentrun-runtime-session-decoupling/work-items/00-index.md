@@ -9,8 +9,8 @@ See `../parallel-dag.md`.
 | Item | Status | Summary |
 | --- | --- | --- |
 | `WI-00-baseline-import-contract-inventory.md` | done | Establish baseline imports, contracts and forbidden dependency list. |
-| `WI-01-agentrun-target-adoption-port.md` | pending | Move AgentFrame runtime target/adoption ownership to AgentRun. |
-| `WI-02-current-resource-surface-facades.md` | pending | Stabilize current/resource surface DTOs and facades. |
+| `WI-01-agentrun-target-adoption-port.md` | done | Move AgentFrame runtime target/adoption ownership to AgentRun. |
+| `WI-02-current-resource-surface-facades.md` | done | Stabilize current/resource surface DTOs and facades. |
 | `WI-03-runtime-session-public-facade.md` | pending | Tighten `session` public facade to RuntimeSession substrate. |
 | `WI-04-runtime-gateway-mcp-boundary.md` | pending | Harden RuntimeGateway MCP access against SessionHub/current frame fallback. |
 | `WI-05-api-current-surface-consumers.md` | pending | Migrate API, VFS and Terminal current-surface consumers. |

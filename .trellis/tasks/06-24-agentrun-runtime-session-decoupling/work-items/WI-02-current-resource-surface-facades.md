@@ -1,15 +1,26 @@
 # WI-02 AgentRun Current And Resource Surface Facades
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: Codex WI-02
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
-- Blockers: None recorded.
-- Handoff summary: TBD.
+- Files changed:
+  - `crates/agentdash-application/src/agent_run/runtime_surface.rs`
+  - `crates/agentdash-application/src/agent_run/runtime_surface_update.rs`
+  - `crates/agentdash-application/src/lifecycle/surface/surface_projector.rs`
+  - `crates/agentdash-application/src/runtime_gateway/mcp_access.rs`
+  - `crates/agentdash-api/src/app_state.rs`
+  - `crates/agentdash-api/src/session_construction.rs`
+  - `crates/agentdash-api/src/routes/vfs_surfaces/resolver.rs`
+- Tests run:
+  - `cargo fmt -p agentdash-application -p agentdash-api` — passed.
+  - `cargo test -p agentdash-application agent_run::runtime_surface` — passed, 8 tests.
+  - `cargo check -p agentdash-application` — passed.
+  - `cargo check -p agentdash-api` — passed. Warning: `ApiCurrentRuntimeSurface` has fields not yet read by current API consumers; those fields preserve the explicit current-surface DTO contract for upcoming route migrations.
+- Blockers: None.
+- Handoff summary: Current surface DTO now exposes `launch_evidence_frame_id` and `current_surface_frame_id` separately. Added `AgentRunResourceSurfaceQuery` facade backed by the current runtime surface port plus lifecycle surface projector, with runtime-session and AgentRun-address entrypoints. API resource VFS resolution now calls the application facade and only performs session existence, project permission, DTO, and error mapping; route-local AgentRun run/agent/anchor/projector assembly was removed.
 
 ## Purpose
 

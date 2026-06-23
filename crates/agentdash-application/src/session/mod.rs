@@ -117,10 +117,9 @@ pub use tool_result_cache::{
 };
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget, ApplyMountOperationsEffect,
-    ApplyVfsOverlayEffect, CapabilityArtifactSource, CapabilityContributionRecord,
-    CapabilityDeclarationRecord, CapabilityDimensionKey, CapabilityState,
-    DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
+    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
+    CapabilityState, DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
     EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, HookSnapshotReloadTrigger,

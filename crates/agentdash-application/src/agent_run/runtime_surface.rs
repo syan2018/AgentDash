@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
@@ -13,6 +14,11 @@ use crate::agent_run::frame::runtime_launch::runtime_backend_anchor_from_vfs;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::lifecycle::AgentRunRuntimeAddress;
+use crate::lifecycle::surface::surface_projector::{
+    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
+    AgentRunLifecycleSurface, AgentRunLifecycleSurfaceProjector, MessageStreamProjectionRef,
+    MessageStreamTraceKind, OrchestrationNodeEvidenceRef,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSurfaceQueryPurpose {
@@ -66,6 +72,125 @@ pub trait AgentRunRuntimeSurfaceQueryPort: Send + Sync {
         runtime_session_id: &str,
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunRuntimeSurfaceWithBackend, AgentRunRuntimeSurfaceQueryError>;
+}
+
+#[derive(Clone)]
+pub struct AgentRunResourceSurfaceQuery {
+    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    skill_asset_repo: Arc<dyn SkillAssetRepository>,
+    surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+}
+
+#[derive(Clone)]
+pub struct AgentRunResourceSurfaceQueryDeps {
+    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
+    pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+}
+
+impl AgentRunResourceSurfaceQuery {
+    pub fn new(deps: AgentRunResourceSurfaceQueryDeps) -> Self {
+        Self {
+            anchor_repo: deps.anchor_repo,
+            skill_asset_repo: deps.skill_asset_repo,
+            surface_query: deps.surface_query,
+        }
+    }
+
+    pub async fn resource_surface_for_runtime_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<AgentRunResourceSurface, AgentRunResourceSurfaceQueryError> {
+        let runtime_surface = self
+            .surface_query
+            .current_runtime_surface(
+                runtime_session_id,
+                RuntimeSurfaceQueryPurpose::resource_surface(),
+            )
+            .await
+            .map_err(AgentRunResourceSurfaceQueryError::RuntimeSurface)?;
+        self.project_resource_surface(runtime_surface).await
+    }
+
+    pub async fn resource_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<AgentRunResourceSurface, AgentRunResourceSurfaceQueryError> {
+        let anchor = self
+            .anchor_repo
+            .latest_updated_anchor_for_agent(agent_id)
+            .await
+            .map_err(|error| AgentRunResourceSurfaceQueryError::Repository {
+                operation: "latest runtime session execution anchor",
+                message: error.to_string(),
+            })?
+            .ok_or(AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor { run_id, agent_id })?;
+
+        if anchor.run_id != run_id || anchor.agent_id != agent_id {
+            return Err(AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
+                field: "runtime_session_execution_anchor",
+                expected: format!("run_id={run_id}, agent_id={agent_id}"),
+                actual: format!("run_id={}, agent_id={}", anchor.run_id, anchor.agent_id),
+            });
+        }
+
+        let surface = self
+            .resource_surface_for_runtime_session(&anchor.runtime_session_id)
+            .await?;
+        if surface.runtime.run_id != run_id || surface.runtime.agent_id != agent_id {
+            return Err(AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
+                field: "current_runtime_surface",
+                expected: format!("run_id={run_id}, agent_id={agent_id}"),
+                actual: format!(
+                    "run_id={}, agent_id={}",
+                    surface.runtime.run_id, surface.runtime.agent_id
+                ),
+            });
+        }
+        Ok(surface)
+    }
+
+    async fn project_resource_surface(
+        &self,
+        runtime_surface: AgentRunRuntimeSurface,
+    ) -> Result<AgentRunResourceSurface, AgentRunResourceSurfaceQueryError> {
+        let node_evidence = match (
+            runtime_surface.provenance.orchestration_id,
+            runtime_surface.provenance.node_path.as_ref(),
+            runtime_surface.provenance.node_attempt,
+        ) {
+            (Some(orchestration_id), Some(node_path), Some(attempt)) => {
+                Some(OrchestrationNodeEvidenceRef {
+                    run_id: runtime_surface.run_id,
+                    orchestration_id,
+                    node_path: node_path.clone(),
+                    attempt,
+                })
+            }
+            _ => None,
+        };
+        let lifecycle_surface =
+            AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(self.skill_asset_repo.clone())
+                .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
+                    base_vfs: Some(runtime_surface.vfs.clone()),
+                    address: runtime_surface.runtime_address.clone(),
+                    message_stream: MessageStreamProjectionRef {
+                        runtime_session_id: runtime_surface.runtime_session_id.clone(),
+                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                    },
+                    project_id: runtime_surface.project_id,
+                    node_evidence,
+                    skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(),
+                })
+                .await
+                .map_err(|message| AgentRunResourceSurfaceQueryError::Projection { message })?;
+
+        Ok(AgentRunResourceSurface {
+            runtime: runtime_surface,
+            lifecycle_surface,
+        })
+    }
 }
 
 impl AgentRunRuntimeSurfaceQuery {
@@ -228,7 +353,8 @@ impl AgentRunRuntimeSurfaceQuery {
                 agent_id: agent.id,
                 frame_id: frame.id,
             },
-            surface_frame_id: frame.id,
+            launch_evidence_frame_id: anchor.launch_frame_id,
+            current_surface_frame_id: frame.id,
             surface_revision: frame.revision,
             capability_state: projected_capability_state,
             vfs,
@@ -290,7 +416,8 @@ pub struct AgentRunRuntimeSurface {
     pub project_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_address: AgentRunRuntimeAddress,
-    pub surface_frame_id: Uuid,
+    pub launch_evidence_frame_id: Uuid,
+    pub current_surface_frame_id: Uuid,
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
@@ -303,6 +430,12 @@ pub struct AgentRunRuntimeSurface {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentRunResourceSurface {
+    pub runtime: AgentRunRuntimeSurface,
+    pub lifecycle_surface: AgentRunLifecycleSurface,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentRunRuntimeSurfaceWithBackend {
     pub surface: AgentRunRuntimeSurface,
     pub runtime_backend_anchor: RuntimeBackendAnchor,
@@ -310,9 +443,9 @@ pub struct AgentRunRuntimeSurfaceWithBackend {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunRuntimeSurfaceProvenance {
-    pub launch_frame_id: Uuid,
+    pub launch_evidence_frame_id: Uuid,
     pub launch_created_by_kind: String,
-    pub surface_frame_id: Uuid,
+    pub current_surface_frame_id: Uuid,
     pub surface_revision: i32,
     pub surface_created_by_kind: String,
     pub anchor_updated_at: chrono::DateTime<chrono::Utc>,
@@ -324,14 +457,14 @@ pub struct AgentRunRuntimeSurfaceProvenance {
 impl AgentRunRuntimeSurfaceProvenance {
     fn from_anchor(
         anchor: &RuntimeSessionExecutionAnchor,
-        surface_frame_id: Uuid,
+        current_surface_frame_id: Uuid,
         surface_revision: i32,
         surface_created_by_kind: String,
     ) -> Self {
         Self {
-            launch_frame_id: anchor.launch_frame_id,
+            launch_evidence_frame_id: anchor.launch_frame_id,
             launch_created_by_kind: anchor.created_by_kind.clone(),
-            surface_frame_id,
+            current_surface_frame_id,
             surface_revision,
             surface_created_by_kind,
             anchor_updated_at: anchor.updated_at,
@@ -347,6 +480,29 @@ pub struct AgentRunRuntimeSurfaceClosure {
     pub capability_field_present: bool,
     pub vfs_field_present: bool,
     pub mcp_field_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AgentRunResourceSurfaceQueryError {
+    #[error("{0}")]
+    RuntimeSurface(#[from] AgentRunRuntimeSurfaceQueryError),
+    #[error("AgentRun resource surface 缺少 delivery anchor: run_id={run_id}, agent_id={agent_id}")]
+    MissingDeliveryAnchor { run_id: Uuid, agent_id: Uuid },
+    #[error(
+        "AgentRun resource surface 控制面不一致: field={field}, expected={expected}, actual={actual}"
+    )]
+    ControlPlaneMismatch {
+        field: &'static str,
+        expected: String,
+        actual: String,
+    },
+    #[error("AgentRun resource surface projection 失败: {message}")]
+    Projection { message: String },
+    #[error("AgentRun resource surface repository 失败: operation={operation}, message={message}")]
+    Repository {
+        operation: &'static str,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -475,6 +631,7 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::backend::RuntimeBackendAnchorSource;
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_domain::workflow::{
         AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
@@ -693,6 +850,48 @@ mod tests {
                 .filter(|anchor| anchor.agent_id == agent_id)
                 .max_by_key(|anchor| anchor.updated_at)
                 .cloned())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestSkillAssetRepo;
+
+    #[async_trait::async_trait]
+    impl SkillAssetRepository for TestSkillAssetRepo {
+        async fn create(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, _id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            _project_id: Uuid,
+            _key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_builtin_key(
+            &self,
+            _project_id: Uuid,
+            _builtin_key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
         }
     }
 
@@ -933,8 +1132,19 @@ mod tests {
         assert_eq!(surface.run_id, fixture.run_id);
         assert_eq!(surface.project_id, fixture.project_id);
         assert_eq!(surface.agent_id, fixture.agent_id);
-        assert_eq!(surface.runtime_address.frame_id, surface.surface_frame_id);
-        assert_eq!(surface.provenance.launch_frame_id, fixture.launch_frame_id);
+        assert_eq!(
+            surface.runtime_address.frame_id,
+            surface.current_surface_frame_id
+        );
+        assert_eq!(surface.launch_evidence_frame_id, fixture.launch_frame_id);
+        assert_eq!(
+            surface.provenance.launch_evidence_frame_id,
+            fixture.launch_frame_id
+        );
+        assert_eq!(
+            surface.provenance.current_surface_frame_id,
+            surface.current_surface_frame_id
+        );
     }
 
     #[tokio::test]
@@ -1019,5 +1229,53 @@ mod tests {
                     && session_id.as_deref() == Some("session-1")
                     && turn_id.is_none()
         ));
+    }
+
+    #[tokio::test]
+    async fn resource_surface_facade_projects_lifecycle_mount_from_current_surface() {
+        let fixture = fixture().await;
+        let current_frame = frame(
+            fixture.agent_id,
+            2,
+            Some(vfs_with_default_backend("backend-current")),
+        );
+        let current_frame_id = current_frame.id;
+        insert_current_frame(&fixture, current_frame).await;
+        let surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+            AgentRunRuntimeSurfaceQueryDeps {
+                anchor_repo: fixture.anchor_repo.clone(),
+                run_repo: fixture.run_repo.clone(),
+                agent_repo: fixture.agent_repo.clone(),
+                frame_repo: fixture.frame_repo.clone(),
+            },
+        ));
+        let resource_query = AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
+            anchor_repo: fixture.anchor_repo.clone(),
+            skill_asset_repo: Arc::new(TestSkillAssetRepo),
+            surface_query,
+        });
+
+        let resource_surface = resource_query
+            .resource_surface_for_runtime_session("session-1")
+            .await
+            .expect("resource surface");
+
+        assert_eq!(
+            resource_surface.runtime.launch_evidence_frame_id,
+            fixture.launch_frame_id
+        );
+        assert_eq!(
+            resource_surface.runtime.current_surface_frame_id,
+            current_frame_id
+        );
+        assert_eq!(
+            resource_surface
+                .lifecycle_surface
+                .lifecycle_mount
+                .metadata
+                .get("launch_frame_id")
+                .and_then(serde_json::Value::as_str),
+            Some(current_frame_id.to_string().as_str())
+        );
     }
 }

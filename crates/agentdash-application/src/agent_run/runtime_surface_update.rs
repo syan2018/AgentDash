@@ -6,6 +6,7 @@ use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{CapabilityState, Vfs};
 use async_trait::async_trait;
 
+use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::agent_run::runtime_capability_projection::{
@@ -16,7 +17,6 @@ use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
 };
 use crate::canvas::resolve_canvas_binding_files;
-use crate::session::types::AgentFrameRuntimeTarget;
 use crate::vfs::{VfsService, append_canvas_mounts, refresh_canvas_mount_binding_files};
 
 #[async_trait]
@@ -83,10 +83,10 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .map_err(|error| error.to_string())?;
         let current_frame = self
             .frame_repo
-            .get(surface.surface_frame_id)
+            .get(surface.current_surface_frame_id)
             .await
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.surface_frame_id))?;
+            .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.current_surface_frame_id))?;
 
         let before_state = project_capability_state_from_frame(&current_frame);
         let mut after_state = before_state.clone();
@@ -145,15 +145,15 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .await
             .map_err(|error| error.to_string())?;
         let target = AgentFrameRuntimeTarget {
-            frame_id: surface.surface_frame_id,
+            frame_id: surface.current_surface_frame_id,
             delivery_runtime_session_id: session_id.to_string(),
         };
         let frame = self
             .frame_repo
-            .get(surface.surface_frame_id)
+            .get(surface.current_surface_frame_id)
             .await
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.surface_frame_id))?;
+            .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.current_surface_frame_id))?;
         Ok(AgentRunEffectiveCapabilityService::effective_view_from_frame(target, &frame))
     }
 

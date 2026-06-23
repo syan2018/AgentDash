@@ -1169,7 +1169,7 @@ mod tests {
     use super::*;
     use crate::agent_run::frame::surface::FrameSurfaceDraft;
     use crate::agent_run::{
-        AgentRunEffectiveCapabilityService, AgentRunRuntimeSurfaceQuery,
+        AgentFrameRuntimeTarget, AgentRunEffectiveCapabilityService, AgentRunRuntimeSurfaceQuery,
         AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
         AgentRunRuntimeSurfaceUpdateService, frame::builder::AgentFrameBuilder,
     };
@@ -1182,9 +1182,7 @@ mod tests {
         RuntimeContextInspectionPlan,
     };
     use crate::session::hub::SessionRuntimeInner;
-    use crate::session::{
-        AgentFrameRuntimeTarget, MemorySessionPersistence, UserPromptInput, local_workspace_vfs,
-    };
+    use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::test_support::{
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
@@ -1865,7 +1863,7 @@ mod tests {
         .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
-        .with_lifecycle_agent_repo(agent_repo)
+        .with_lifecycle_agent_repo(agent_repo.clone())
         .with_execution_anchor_repo(anchor_repo.clone());
         let session = hub
             .create_session("create-workspace-module")
@@ -1891,7 +1889,7 @@ mod tests {
         let stale_runtime = hub
             .hook_service()
             .ensure_hook_runtime_for_target(
-                &crate::session::types::AgentFrameRuntimeTarget {
+                &crate::agent_run::AgentFrameRuntimeTarget {
                     frame_id,
                     delivery_runtime_session_id: session.id.clone(),
                 },
@@ -1991,7 +1989,7 @@ mod tests {
             .expect("frame should exist");
         let refreshed_runtime = hub
             .hook_service()
-            .get_hook_runtime_for_target(&crate::session::types::AgentFrameRuntimeTarget {
+            .get_hook_runtime_for_target(&crate::agent_run::AgentFrameRuntimeTarget {
                 frame_id: updated_frame.id,
                 delivery_runtime_session_id: session.id.clone(),
             })
@@ -2111,7 +2109,7 @@ mod tests {
         .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
-        .with_lifecycle_agent_repo(agent_repo)
+        .with_lifecycle_agent_repo(agent_repo.clone())
         .with_execution_anchor_repo(anchor_repo.clone());
         let session = hub
             .create_session("present-workspace-module")
@@ -2137,7 +2135,7 @@ mod tests {
         let stale_runtime = hub
             .hook_service()
             .ensure_hook_runtime_for_target(
-                &crate::session::types::AgentFrameRuntimeTarget {
+                &crate::agent_run::AgentFrameRuntimeTarget {
                     frame_id,
                     delivery_runtime_session_id: session.id.clone(),
                 },
@@ -2214,7 +2212,7 @@ mod tests {
             .expect("frame should exist");
         let refreshed_runtime = hub
             .hook_service()
-            .get_hook_runtime_for_target(&crate::session::types::AgentFrameRuntimeTarget {
+            .get_hook_runtime_for_target(&crate::agent_run::AgentFrameRuntimeTarget {
                 frame_id: updated_frame.id,
                 delivery_runtime_session_id: session.id.clone(),
             })
@@ -2712,7 +2710,7 @@ mod tests {
         .with_vfs_service(vfs_service.clone())
         .with_agent_frame_repo(frame_repo.clone())
         .with_lifecycle_gate_repo(gate_repo)
-        .with_lifecycle_agent_repo(agent_repo)
+        .with_lifecycle_agent_repo(agent_repo.clone())
         .with_execution_anchor_repo(anchor_repo.clone());
         let session = hub
             .create_session("bind-workspace-module")

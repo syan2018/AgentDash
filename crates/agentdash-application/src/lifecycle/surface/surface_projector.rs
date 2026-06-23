@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::{
     canvas::CANVAS_SYSTEM_SKILL_NAME, companion::COMPANION_SYSTEM_SKILL_NAME,
     routine::ROUTINE_MEMORY_SKILL_NAME, workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
 };
 use agentdash_spi::Vfs;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
@@ -204,13 +206,19 @@ pub struct OrchestrationNodeProjectionFacts {
     pub writable_port_keys: Vec<String>,
 }
 
-pub struct AgentRunLifecycleSurfaceProjector<'a> {
-    repos: &'a RepositorySet,
+pub struct AgentRunLifecycleSurfaceProjector {
+    skill_asset_repo: Arc<dyn SkillAssetRepository>,
 }
 
-impl<'a> AgentRunLifecycleSurfaceProjector<'a> {
-    pub fn new(repos: &'a RepositorySet) -> Self {
-        Self { repos }
+impl AgentRunLifecycleSurfaceProjector {
+    pub fn new(repos: &RepositorySet) -> Self {
+        Self {
+            skill_asset_repo: repos.skill_asset_repo.clone(),
+        }
+    }
+
+    pub fn from_skill_asset_repo(skill_asset_repo: Arc<dyn SkillAssetRepository>) -> Self {
+        Self { skill_asset_repo }
     }
 
     pub async fn project_workspace_read_surface(
@@ -275,7 +283,7 @@ impl<'a> AgentRunLifecycleSurfaceProjector<'a> {
         skill_asset_keys.extend(input.explicit_skill_asset_keys.iter().cloned());
 
         if let BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) = &input.builtin_skills {
-            let service = SkillAssetService::new(self.repos.skill_asset_repo.as_ref());
+            let service = SkillAssetService::new(self.skill_asset_repo.as_ref());
             for skill in skills {
                 service
                     .bootstrap_builtins(input.project_id, Some(skill.key()))

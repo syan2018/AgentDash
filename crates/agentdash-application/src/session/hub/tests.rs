@@ -57,6 +57,7 @@ use super::super::{
     SessionToolResultCache,
 };
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
+use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::runtime_capability::{
@@ -64,7 +65,6 @@ use crate::agent_run::runtime_capability::{
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::session::SetToolAccessEffect;
-use crate::session::types::AgentFrameRuntimeTarget;
 use crate::test_support::{
     AgentRunSteeringCommand, AgentRunSteeringService, MemoryAgentFrameRepository,
     MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,

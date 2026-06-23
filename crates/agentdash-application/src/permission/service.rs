@@ -387,9 +387,9 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_run::AgentFrameRuntimeTarget;
     use crate::agent_run::runtime_capability::project_capability_state_from_frame;
-    use crate::agent_run::{AgentFrameBuilder, AgentFrameSurfaceExt, AgentRunGrantProjection};
-    use crate::session::AgentFrameRuntimeTarget;
+    use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
         PolicyOutcome,

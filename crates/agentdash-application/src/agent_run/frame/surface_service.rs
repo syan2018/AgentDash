@@ -13,7 +13,7 @@ use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, Runtime
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::session::AgentFrameRuntimeTarget;
+use crate::agent_run::AgentFrameRuntimeTarget;
 
 /// The single command boundary for AgentRun frame construction and runtime
 /// surface mutation.

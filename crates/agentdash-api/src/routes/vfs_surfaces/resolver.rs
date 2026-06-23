@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::session::construction_planner::resolve_project_workspace;
 use agentdash_application::task::plan::find_task_plan_item_for_subject;
 use agentdash_application::vfs::{
@@ -18,8 +17,7 @@ use crate::{
     routes::sessions::ensure_session_permission,
     rpc::ApiError,
     session_construction::{
-        project_runtime_surface_resource_vfs, resolve_current_runtime_surface_for_api,
-        resolve_runtime_session_resource_vfs_for_api,
+        resolve_agent_run_resource_vfs_for_api, resolve_runtime_session_resource_vfs_for_api,
     },
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
@@ -240,56 +238,7 @@ async fn resolve_agent_run_resource_vfs(
     agent_id: uuid::Uuid,
     permission: ProjectPermission,
 ) -> Result<Vfs, ApiError> {
-    let run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(run_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))?;
-    load_project_with_permission(state.as_ref(), current_user, run.project_id, permission).await?;
-
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(agent_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {agent_id}")))?;
-    if agent.run_id != run.id || agent.project_id != run.project_id {
-        return Err(ApiError::Conflict(
-            "agent_id 与 run_id 不属于同一 AgentRun".to_string(),
-        ));
-    }
-
-    let anchor = state
-        .repos
-        .execution_anchor_repo
-        .list_by_run(run_id)
-        .await
-        .map_err(ApiError::from)?
-        .into_iter()
-        .filter(|anchor| anchor.agent_id == agent_id)
-        .max_by_key(|anchor| anchor.updated_at);
-
-    let Some(anchor) = anchor else {
-        return Err(ApiError::NotFound(format!(
-            "lifecycle_agent {agent_id} 没有可用 delivery runtime surface"
-        )));
-    };
-    let surface = resolve_current_runtime_surface_for_api(
-        state,
-        current_user,
-        &anchor.runtime_session_id,
-        RuntimeSurfaceQueryPurpose::resource_surface(),
-    )
-    .await?;
-    if surface.run_id != run_id || surface.agent_id != agent_id {
-        return Err(ApiError::Conflict(
-            "AgentRun delivery anchor 与 current runtime surface 不一致".into(),
-        ));
-    }
-    project_runtime_surface_resource_vfs(state, &surface).await
+    resolve_agent_run_resource_vfs_for_api(state, current_user, run_id, agent_id, permission).await
 }
 
 pub(crate) async fn build_surface_summary(

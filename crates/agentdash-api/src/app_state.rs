@@ -6,6 +6,9 @@ use tokio::sync::broadcast;
 
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::agent_run::runtime_surface::{
+    AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
+};
 use agentdash_application::agent_run::{
     AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceUpdateService,
@@ -61,6 +64,7 @@ pub struct ServiceSet {
     pub session_hooks: SessionHookService,
     pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
+    pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -243,6 +247,12 @@ impl AppState {
                 frame_repo: repos.agent_frame_repo.clone(),
             },
         ));
+        let resource_surface_query =
+            AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
+                anchor_repo: repos.execution_anchor_repo.clone(),
+                skill_asset_repo: repos.skill_asset_repo.clone(),
+                surface_query: runtime_surface_query.clone(),
+            });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query,
             mcp_tool_discovery,
@@ -327,6 +337,7 @@ impl AppState {
                 session_hooks,
                 session_runtime_transition,
                 runtime_surface_update,
+                resource_surface_query,
                 session_effects,
                 session_title,
                 connector,

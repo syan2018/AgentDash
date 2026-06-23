@@ -1,17 +1,10 @@
 use std::sync::Arc;
 
+use agentdash_application::agent_run::runtime_surface::AgentRunResourceSurfaceQueryError;
 use agentdash_application::agent_run::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
-};
-use agentdash_application::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
-    OrchestrationNodeEvidenceRef,
-};
-use agentdash_application::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, MessageStreamProjectionRef,
-    MessageStreamTraceKind,
 };
 use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::{RuntimeBackendAnchor, Vfs};
@@ -31,7 +24,8 @@ pub(crate) struct ApiCurrentRuntimeSurface {
     pub run_id: Uuid,
     pub project_id: Uuid,
     pub agent_id: Uuid,
-    pub launch_frame_id: Uuid,
+    pub launch_evidence_frame_id: Uuid,
+    pub current_surface_frame_id: Uuid,
     pub vfs: Vfs,
     pub orchestration_id: Option<Uuid>,
     pub node_path: Option<String>,
@@ -91,56 +85,44 @@ pub(crate) async fn resolve_runtime_session_resource_vfs_for_api(
     current_user: &AuthIdentity,
     session_id: &str,
 ) -> Result<Vfs, ApiError> {
-    let surface = resolve_current_runtime_surface_for_api(
-        state,
+    ensure_runtime_session_exists(state, session_id).await?;
+    let resource_surface = state
+        .services
+        .resource_surface_query
+        .resource_surface_for_runtime_session(session_id)
+        .await
+        .map_err(resource_surface_query_error_to_api)?;
+    load_project_with_permission(
+        state.as_ref(),
         current_user,
-        session_id,
-        RuntimeSurfaceQueryPurpose::resource_surface(),
+        resource_surface.runtime.project_id,
+        ProjectPermission::View,
     )
     .await?;
-    project_runtime_surface_resource_vfs(state, &surface).await
+    Ok(resource_surface.lifecycle_surface.vfs)
 }
 
-pub(crate) async fn project_runtime_surface_resource_vfs(
+pub(crate) async fn resolve_agent_run_resource_vfs_for_api(
     state: &Arc<AppState>,
-    surface: &ApiCurrentRuntimeSurface,
+    current_user: &AuthIdentity,
+    run_id: Uuid,
+    agent_id: Uuid,
+    permission: ProjectPermission,
 ) -> Result<Vfs, ApiError> {
-    let node_evidence = match (
-        surface.orchestration_id,
-        surface.node_path.as_ref(),
-        surface.node_attempt,
-    ) {
-        (Some(orchestration_id), Some(node_path), Some(attempt)) => {
-            Some(OrchestrationNodeEvidenceRef {
-                run_id: surface.run_id,
-                orchestration_id,
-                node_path: node_path.clone(),
-                attempt,
-            })
-        }
-        _ => None,
-    };
-    let resource_surface = AgentRunLifecycleSurfaceProjector::new(&state.repos)
-        .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
-            base_vfs: Some(surface.vfs.clone()),
-            address: AgentRunRuntimeAddress {
-                run_id: surface.run_id,
-                agent_id: surface.agent_id,
-                frame_id: surface.launch_frame_id,
-            },
-            message_stream: MessageStreamProjectionRef {
-                runtime_session_id: surface.runtime_session_id.clone(),
-                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-            },
-            project_id: surface.project_id,
-            node_evidence,
-            skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(),
-        })
+    let resource_surface = state
+        .services
+        .resource_surface_query
+        .resource_surface_for_agent_run(run_id, agent_id)
         .await
-        .map_err(|error| {
-            ApiError::Internal(format!("构建 AgentRun resource surface 失败: {error}"))
-        })?;
-    Ok(resource_surface.vfs)
+        .map_err(resource_surface_query_error_to_api)?;
+    load_project_with_permission(
+        state.as_ref(),
+        current_user,
+        resource_surface.runtime.project_id,
+        permission,
+    )
+    .await?;
+    Ok(resource_surface.lifecycle_surface.vfs)
 }
 
 fn runtime_surface_query(state: &Arc<AppState>) -> AgentRunRuntimeSurfaceQuery {
@@ -198,6 +180,26 @@ fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -
     }
 }
 
+fn resource_surface_query_error_to_api(error: AgentRunResourceSurfaceQueryError) -> ApiError {
+    match error {
+        AgentRunResourceSurfaceQueryError::RuntimeSurface(error) => {
+            runtime_surface_query_error_to_api(error)
+        }
+        AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor { agent_id, .. } => {
+            ApiError::NotFound(format!(
+                "lifecycle_agent {agent_id} 没有可用 delivery runtime surface"
+            ))
+        }
+        AgentRunResourceSurfaceQueryError::ControlPlaneMismatch { .. }
+        | AgentRunResourceSurfaceQueryError::Projection { .. } => {
+            ApiError::Conflict(error.to_string())
+        }
+        AgentRunResourceSurfaceQueryError::Repository { message, .. } => {
+            ApiError::Internal(message)
+        }
+    }
+}
+
 impl From<AgentRunRuntimeSurface> for ApiCurrentRuntimeSurface {
     fn from(surface: AgentRunRuntimeSurface) -> Self {
         Self {
@@ -205,7 +207,8 @@ impl From<AgentRunRuntimeSurface> for ApiCurrentRuntimeSurface {
             run_id: surface.run_id,
             project_id: surface.project_id,
             agent_id: surface.agent_id,
-            launch_frame_id: surface.provenance.launch_frame_id,
+            launch_evidence_frame_id: surface.launch_evidence_frame_id,
+            current_surface_frame_id: surface.current_surface_frame_id,
             vfs: surface.vfs,
             orchestration_id: surface.provenance.orchestration_id,
             node_path: surface.provenance.node_path,

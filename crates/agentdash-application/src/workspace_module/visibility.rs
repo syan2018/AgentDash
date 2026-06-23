@@ -99,9 +99,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::agent_run::AgentFrameRuntimeTarget;
     use crate::agent_run::AgentRunEffectiveCapabilityService;
     use crate::canvas::build_canvas;
-    use crate::session::AgentFrameRuntimeTarget;
 
     #[derive(Default)]
     struct FakeInstallationRepo {

@@ -9,6 +9,7 @@ use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
+use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::agent_run::AgentRunEffectiveCapabilityService;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
@@ -17,7 +18,7 @@ use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
 };
-use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
+use crate::session::types::CapabilityState;
 
 impl SessionRuntimeInner {
     /// 读取 session 当前 turn 生效的能力状态（AgentFrame revision 的内存投影）。

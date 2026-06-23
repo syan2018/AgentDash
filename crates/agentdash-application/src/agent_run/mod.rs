@@ -11,6 +11,7 @@ pub mod runtime_capability;
 pub mod runtime_capability_projection;
 pub mod runtime_surface;
 mod runtime_surface_update;
+mod runtime_target;
 pub mod workspace;
 
 pub use command_receipt::AgentRunCommandReceiptView;
@@ -93,3 +94,4 @@ pub use runtime_surface_update::{
     AgentRunActiveRuntimeSurfaceAdopter, AgentRunRuntimeSurfaceUpdateDeps,
     AgentRunRuntimeSurfaceUpdateService,
 };
+pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};

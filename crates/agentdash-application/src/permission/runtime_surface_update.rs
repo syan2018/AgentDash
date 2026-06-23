@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::ApplicationError;
+use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::runtime_capability::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
@@ -18,7 +19,6 @@ use crate::agent_run::{
     AgentRunRuntimeSurfaceUpdateService, RejectingFrameConstructionAdapter,
     RuntimeSurfaceUpdateRequest,
 };
-use crate::session::AgentFrameRuntimeTarget;
 use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;

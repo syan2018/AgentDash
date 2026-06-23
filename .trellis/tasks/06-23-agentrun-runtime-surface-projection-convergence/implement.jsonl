@@ -1,0 +1,13 @@
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/prd.md","reason":"任务需求、约束、验收标准。"}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/design.md","reason":"统一 AgentRun runtime surface projection 设计与边界。"}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/research/scattered-runtime-surface-paths.md","reason":"散落路径、冗余链路和风险文件调研结果。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"Session/RuntimeSession 与 AgentFrame 事实源边界。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"FrameLaunchEnvelope、FrameSurfaceDraft、runtime command replay 合同。"}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"AgentRun effective capability/admission 单一入口约束。"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"RuntimeCapabilityTransition 只保存 declaration/effect records 的合同。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"Canvas session visibility 与 VFS surface mutation 现有合同。"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"Permission grant surface-changing effect 与 adoption 现有合同。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle Workflow、AgentProcedure、AgentFrame construction 与 orchestration runtime 边界。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Workflow AgentCall materialization、AgentProcedure executor contract 与 runtime node 生命周期。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"前端状态消费与 session/context frame 刷新约束。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"前后端 workspace module / runtime surface contract。"}

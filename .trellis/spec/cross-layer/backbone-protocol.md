@@ -135,6 +135,11 @@ terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingSe
 `details.truncation` 与 `lifecycle_path`；读取 `lifecycle_path` 必须通过 lifecycle VFS + `fs_read`
 的受控路径完成，读取失败返回有界状态，而不是把原始 body 写回 `SessionEvent`。
 
+PiAgent 工具结果的 ThreadItem id 与 `lifecycle_path` item id 必须同源，形状为
+`{turn_id}:{tool_call_id}`。`entry_index` 可以继续作为 envelope trace / ordering 字段存在，
+但不能参与 tool result body ref，原因是 producer 在进入模型上下文前需要生成与 Backbone
+ThreadItem、`SessionToolResultCache` 和 lifecycle VFS 一致的 stable id。
+
 ## NDJSON Session Stream
 
 `GET /api/acp/sessions/{id}/stream/ndjson`

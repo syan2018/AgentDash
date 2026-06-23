@@ -14,7 +14,7 @@ use agentdash_application::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionCapabilityService,
     SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
     SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
-    SessionRuntimeService, SessionTerminalCallback, SessionTitleService,
+    SessionRuntimeService, SessionTerminalCallback, SessionTitleService, SessionToolResultCache,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
@@ -33,6 +33,7 @@ use crate::relay::registry::BackendRegistry;
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
+    pub tool_result_cache: Arc<SessionToolResultCache>,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
@@ -71,6 +72,7 @@ pub(crate) async fn build_session_runtime(
     let SessionBootstrapInput {
         repos,
         session_persistence,
+        tool_result_cache,
         backend_registry,
         vfs_service,
         vfs_materialization_service,
@@ -92,6 +94,7 @@ pub(crate) async fn build_session_runtime(
         llm_provider_repo: repos.llm_provider_repo.clone(),
         llm_provider_credential_repo: repos.llm_provider_credential_repo.clone(),
         llm_provider_secret: llm_provider_secret.clone(),
+        tool_result_cache: tool_result_cache.clone(),
     })
     .await
     {
@@ -313,6 +316,7 @@ struct PiAgentConnectorDeps {
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
     llm_provider_credential_repo: Arc<dyn LlmProviderCredentialRepository>,
     llm_provider_secret: Arc<dyn LlmSecretCodec>,
+    tool_result_cache: Arc<SessionToolResultCache>,
 }
 
 struct PiAgentConnectorBuildResult {
@@ -333,5 +337,15 @@ async fn build_pi_agent_connector(
     connector.set_llm_provider_repository(deps.llm_provider_repo);
     connector.set_llm_provider_credential_repository(deps.llm_provider_credential_repo);
     connector.set_llm_secret_codec(deps.llm_provider_secret);
+    let cache = deps.tool_result_cache;
+    connector.set_tool_result_cache_writer(Some(Arc::new(move |write| {
+        let metadata = cache.put_text(
+            write.session_id,
+            write.item_id,
+            write.text,
+            write.original_bytes,
+        );
+        debug_assert_eq!(metadata.lifecycle_path, write.lifecycle_path);
+    })));
     Some(PiAgentConnectorBuildResult { connector })
 }

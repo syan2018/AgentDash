@@ -95,16 +95,18 @@ impl MountProviderRegistryBuilder {
         routine_execution_repo: Arc<dyn agentdash_domain::routine::RoutineExecutionRepository>,
         skill_asset_repo: Arc<dyn agentdash_domain::skill_asset::SkillAssetRepository>,
         session_persistence: Arc<dyn crate::session::SessionPersistence>,
+        tool_result_cache: Arc<crate::session::SessionToolResultCache>,
     ) -> Self {
         self.registry.register(Arc::new(
             super::provider_inline::InlineFsMountProvider::new(inline_file_repo.clone()),
         ));
         self.registry.register(Arc::new(
-            super::provider_lifecycle::LifecycleMountProvider::new(
+            super::provider_lifecycle::LifecycleMountProvider::new_with_tool_result_cache(
                 lifecycle_run_repo,
                 inline_file_repo.clone(),
                 skill_asset_repo.clone(),
                 session_persistence,
+                tool_result_cache,
             ),
         ));
         self.registry.register(Arc::new(

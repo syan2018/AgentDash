@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn truncation_summary_uses_details_without_result_body() {
         let details = serde_json::json!({
-            "lifecycle_path": "lifecycle://session/tool-results/tool-1/result.txt",
+            "lifecycle_path": "lifecycle://session/tool-results/turn-1:tool-1/result.txt",
             "truncation": {
                 "truncated": true,
                 "original_bytes": 123456,
@@ -943,7 +943,7 @@ mod tests {
 
         let summary = render_truncation_summary(&details).expect("summary");
 
-        assert!(summary.contains("lifecycle://session/tool-results/tool-1/result.txt"));
+        assert!(summary.contains("lifecycle://session/tool-results/turn-1:tool-1/result.txt"));
         assert!(summary.contains("policy: head_tail"));
         assert!(summary.contains("original_bytes: 123456"));
         assert!(!summary.contains("result.txt body"));

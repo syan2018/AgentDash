@@ -59,6 +59,18 @@ fn content_item_text(items: &[codex::DynamicToolCallOutputContentItem]) -> Strin
         .join("\n")
 }
 
+fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
+    let path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("lifecycle_path: "))
+        .expect("bounded tool result should include lifecycle_path marker");
+    let path_item_id = path
+        .strip_prefix("lifecycle://session/tool-results/")
+        .and_then(|rest| rest.strip_suffix("/result.txt"))
+        .expect("lifecycle_path should use tool-results result.txt shape");
+    assert_eq!(path_item_id, item_id);
+}
+
 #[derive(Default)]
 struct RecordingBridge {
     requests: StdMutex<Vec<agentdash_agent::BridgeRequest>>,
@@ -1225,7 +1237,8 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
 #[test]
 fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
     let raw_sentinel = "RAW_TOOL_RESULT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
-    let lifecycle_path = "lifecycle://session/tool-results/tool-1/result.txt";
+    let stable_item_id = "turn-1:tool-1";
+    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-1/result.txt";
     let bounded_text = format!(
         "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded preview"
     );
@@ -1289,6 +1302,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             let item_json = serde_json::to_string(&n.item).expect("item should serialize");
             assert!(!item_json.contains(raw_sentinel));
             let Some(codex::ThreadItem::DynamicToolCall {
+                id,
                 tool,
                 content_items: Some(content_items),
                 ..
@@ -1296,10 +1310,12 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             else {
                 panic!("expected dynamic tool update, got {:?}", n.item);
             };
+            assert_eq!(id, stable_item_id);
             assert_eq!(tool, "echo");
             let text = content_item_text(content_items);
             assert!(text.contains("bounded preview"));
             assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
             assert!(!text.contains(raw_sentinel));
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -1310,6 +1326,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             let item_json = serde_json::to_string(&n.item).expect("item should serialize");
             assert!(!item_json.contains(raw_sentinel));
             let Some(codex::ThreadItem::DynamicToolCall {
+                id,
                 tool,
                 content_items: Some(content_items),
                 success,
@@ -1318,11 +1335,13 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             else {
                 panic!("expected dynamic tool completion, got {:?}", n.item);
             };
+            assert_eq!(id, stable_item_id);
             assert_eq!(tool, "echo");
             assert_eq!(*success, Some(true));
             let text = content_item_text(content_items);
             assert!(text.contains("bounded preview"));
             assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
             assert!(!text.contains(raw_sentinel));
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -1332,7 +1351,8 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 #[test]
 fn shell_exec_final_uses_bounded_output_and_structured_details() {
     let raw_sentinel = "RAW_SHELL_OUTPUT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
-    let lifecycle_path = "lifecycle://session/tool-results/tool-shell-1/result.txt";
+    let stable_item_id = "turn-1:tool-shell-1";
+    let lifecycle_path = "lifecycle://session/tool-results/turn-1:tool-shell-1/result.txt";
     let bounded_output = format!(
         "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded shell preview"
     );
@@ -1408,6 +1428,7 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
                 agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
                     agentdash_agent_protocol::AgentDashNativeThreadItem::ShellExec {
                         command,
+                        id,
                         cwd: Some(cwd),
                         status: codex::DynamicToolCallStatus::Failed,
                         aggregated_output: Some(aggregated_output),
@@ -1415,10 +1436,15 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
                         success: Some(false),
                         ..
                     }
-                ) if command == "cargo test -p agentdash-executor pi_agent"
+                ) if id == stable_item_id
+                    && command == "cargo test -p agentdash-executor pi_agent"
                     && cwd == "workspace://repo"
                     && aggregated_output == &bounded_output
                     && aggregated_output.contains(lifecycle_path)
+                    && {
+                        assert_lifecycle_path_matches_item_id(aggregated_output, id);
+                        true
+                    }
                     && !aggregated_output.contains(raw_sentinel)
             ));
         }

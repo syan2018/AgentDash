@@ -1615,7 +1615,7 @@ mod tests {
     #[tokio::test]
     async fn agent_run_session_mount_exposes_tool_result_metadata_and_miss_body() {
         let session_id = "session-1";
-        let item_id = "turn-1:0:call-1";
+        let item_id = "turn-1:call-1";
         let persistence = Arc::new(MemorySessionPersistence::default());
         persistence
             .create_session(&session_meta(session_id))
@@ -1690,7 +1690,7 @@ mod tests {
     #[tokio::test]
     async fn agent_run_session_mount_reads_tool_result_cache_body() {
         let session_id = "session-1";
-        let item_id = "turn-1:0:call-1";
+        let item_id = "turn-1:call-1";
         let persistence = Arc::new(MemorySessionPersistence::default());
         persistence
             .create_session(&session_meta(session_id))
@@ -1739,7 +1739,7 @@ mod tests {
     #[tokio::test]
     async fn agent_run_session_mount_returns_expired_tool_result_status() {
         let session_id = "session-1";
-        let item_id = "turn-1:0:call-1";
+        let item_id = "turn-1:call-1";
         let persistence = Arc::new(MemorySessionPersistence::default());
         persistence
             .create_session(&session_meta(session_id))

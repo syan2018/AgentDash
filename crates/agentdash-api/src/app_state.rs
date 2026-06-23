@@ -154,6 +154,7 @@ impl AppState {
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
+        let tool_result_cache = agentdash_application::session::SessionToolResultCache::new();
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
@@ -178,6 +179,7 @@ impl AppState {
         let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
             repos.clone(),
             session_persistence.clone(),
+            tool_result_cache.clone(),
             backend_registry.clone(),
             integration_registration.mount_providers,
         );
@@ -195,6 +197,7 @@ impl AppState {
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
                 session_persistence: session_persistence.clone(),
+                tool_result_cache: tool_result_cache.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,

@@ -3085,9 +3085,9 @@ fn inject_session_meta_envelope(
 }
 
 const LARGE_OUTPUT_SENTINEL: &str = "AGENTDASH_WP6_RESULT_TXT_BODY_SENTINEL";
-const LARGE_OUTPUT_ITEM_ID: &str = "t-large:1:tool-large";
+const LARGE_OUTPUT_ITEM_ID: &str = "t-large:tool-large";
 const LARGE_OUTPUT_LIFECYCLE_PATH: &str =
-    "lifecycle://session/tool-results/t-large:1:tool-large/result.txt";
+    "lifecycle://session/tool-results/t-large:tool-large/result.txt";
 
 fn bounded_large_tool_preview() -> String {
     format!(

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{
-    Arc,
+    Arc, Mutex as StdMutex,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -12,7 +12,8 @@ use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
     BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, StopDecision, StopReason,
-    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, agent_loop::AgentEventSink,
+    ToolApprovalOutcome, ToolCallInfo, ToolDefinition, ToolResultCacheWrite, ToolResultRefContext,
+    agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;
@@ -812,12 +813,28 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
         tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let events = Arc::new(Mutex::new(Vec::new()));
+    let cache_writes = Arc::new(StdMutex::new(Vec::<ToolResultCacheWrite>::new()));
+    let cache_writes_for_writer = cache_writes.clone();
+    let stable_item_id = format!("turn-large:{tool_call_id}");
+    let config = AgentLoopConfig {
+        tool_result_ref_context: Some(ToolResultRefContext {
+            session_id: "session-large".to_string(),
+            turn_id: "turn-large".to_string(),
+            cache_writer: Some(Arc::new(move |write| {
+                cache_writes_for_writer
+                    .lock()
+                    .expect("cache write lock poisoned")
+                    .push(write);
+            })),
+        }),
+        ..AgentLoopConfig::default()
+    };
 
     let new_messages = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("run large tool")],
         &mut context,
         &[tool],
-        &AgentLoopConfig::default(),
+        &config,
         &bridge,
         &collecting_sink(events.clone()),
         CancellationToken::new(),
@@ -842,7 +859,7 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
         })
         .expect("tool result message should exist");
     assert!(!tool_result_message.is_error);
-    assert_bounded_tool_result(&tool_result_message, tool_call_id);
+    assert_bounded_tool_result(&tool_result_message, &stable_item_id);
 
     let collected = events.lock().await.clone();
     let end_result = collected
@@ -864,7 +881,7 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
             _ => None,
         })
         .expect("tool execution end should exist");
-    assert_bounded_tool_result(&end_result, tool_call_id);
+    assert_bounded_tool_result(&end_result, &stable_item_id);
 
     let message_end_result = collected
         .iter()
@@ -885,7 +902,22 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
             _ => None,
         })
         .expect("tool result message_end should exist");
-    assert_bounded_tool_result(&message_end_result, tool_call_id);
+    assert_bounded_tool_result(&message_end_result, &stable_item_id);
+    let writes = cache_writes.lock().expect("cache write lock poisoned");
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].session_id, "session-large");
+    assert_eq!(writes[0].item_id, stable_item_id);
+    assert!(
+        writes[0].text.contains(LARGE_RESULT_SENTINEL),
+        "cache writer should receive the original body"
+    );
+    assert_eq!(
+        writes[0].lifecycle_path,
+        format!(
+            "lifecycle://session/tool-results/{}/result.txt",
+            writes[0].item_id
+        )
+    );
 
     let snapshots = bridge.message_snapshots().await;
     let second_request_messages = snapshots

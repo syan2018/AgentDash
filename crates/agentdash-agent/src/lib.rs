@@ -7,6 +7,9 @@ pub mod tools;
 pub mod types;
 
 pub use agent::{Agent, AgentConfig, QueueMode, process_event};
+pub use agent_loop::{
+    ToolResultCacheWrite, ToolResultCacheWriter, ToolResultRefContext, stable_tool_result_item_id,
+};
 pub use bridge::{
     BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
 };

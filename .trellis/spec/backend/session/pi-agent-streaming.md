@@ -76,6 +76,12 @@
 - `AgentToolResult.details.truncation`:
   `truncated: bool`、`original_bytes: usize`、`inline_bytes: usize`、
   `omitted_bytes: usize`、`policy: string`。
+- PiAgent tool result stable item id:
+  `{turn_id}:{tool_call_id}`。该 id 必须同时用于 `AgentToolResult` lifecycle ref、
+  `SessionToolResultCache` key、Backbone ThreadItem id 和 lifecycle VFS
+  `session/tool-results/{item_id}` 路径。`entry_index` 只属于 stream mapper 的展示/排序状态，
+  不能放进 tool result lifecycle ref，原因是 producer 边界需要在进入模型上下文前生成同一个
+  可读地址。
 - `AgentToolResult.details.lifecycle_path`:
   `lifecycle://session/tool-results/{item_id}/result.txt`。
 - lifecycle VFS paths:
@@ -91,6 +97,12 @@
 
 - Producer boundary owns bounding. Final result, partial update and terminal live output must be
   bounded before they become `AgentEvent` / `BackboneEnvelope`.
+- PiAgent 每轮 prompt 必须刷新 `ToolResultRefContext(session_id, turn_id, cache_writer)`。
+  hot agent 复用时也使用当前 turn 的 context，避免 lifecycle ref 和 cache write 落到上一轮
+  `turn_id`。
+- Oversized `AgentToolResult` 写入 `SessionToolResultCache` 时，cache key 使用
+  `(session_id, stable_item_id)`；bounded preview 与 `details.lifecycle_path` 使用同一个
+  stable item id。lifecycle provider 必须读取同一个共享 cache 实例。
 - `SessionEventingService` append guard is a persistence and stream safety net. It may replace
   known oversized output fields with `session_eventing_append_guard` diagnostics while preserving
   `turn_id`、`entry_index`、item id and event kind.
@@ -105,6 +117,9 @@
 | --- | --- |
 | Tool result text exceeds inline cap | Write bounded preview, set `details.truncation`, attach `lifecycle_path` |
 | Non-text tool content serializes above inline cap | Replace content with bounded text preview and ref metadata |
+| PiAgent hot agent starts a new turn | Refresh `ToolResultRefContext`; new lifecycle paths use the new `turn_id` |
+| Stream mapper maps tool start/update/end | ThreadItem id equals the item id embedded in `details.lifecycle_path` |
+| Lifecycle provider reads tool result body | Use shared `SessionToolResultCache` keyed by `(session_id, {turn_id}:{tool_call_id})` |
 | Cache body missing or expired | lifecycle read returns bounded miss/expired status |
 | Terminal live output exceeds event budget | Relay/platform event carries bounded data and truncation status |
 | Oversized Backbone envelope reaches append | Known output fields are replaced before store/broadcast |
@@ -114,14 +129,19 @@
 - Good: A large dynamic tool result persists as bounded preview plus `lifecycle_path`; model resume sees
   the same preview and ref text.
 - Base: A small tool result remains unchanged and has no truncation metadata.
+- Base: A cache-available lifecycle `result.txt` read returns the cached original body through
+  lifecycle VFS / `fs_read`, while persisted events still contain only bounded preview.
 - Bad: A sentinel embedded in tool/terminal output appears in `session_events.notification_json`,
   NDJSON backlog, projected transcript, or frontend `rawEvents`.
+- Bad: ThreadItem id and the id embedded in `lifecycle_path` differ.
 
 ### 6. Tests Required
 
 - Agent loop tests assert final/update/immediate/rejected tool result sentinel does not reach events
-  or next provider request.
-- Executor mapping tests assert bounded content remains bounded after `stream_mapper`.
+  or next provider request; oversized final/update paths also assert cache writer receives the
+  original body with `(session_id, {turn_id}:{tool_call_id})`.
+- Executor mapping tests assert bounded content remains bounded after `stream_mapper`, and parse
+  `lifecycle_path` to prove the embedded item id equals ThreadItem id.
 - Application tests assert append/backlog, lifecycle VFS read, projection, continuation and repository
   rehydrate do not re-inline sentinel.
 - Local/relay/API tests assert shell and terminal live output are bounded before cloud SessionEvent.

@@ -1,10 +1,13 @@
-//! AgentFrameBuilder — 从 ActivityActivation / CapabilityResolver / Context
-//! projection 等输入收束 AgentFrame revision 的唯一构造路径。
+//! AgentFrameBuilder — AgentRun frame/surface 边界内部的 revision writer
+//! primitive。
 //!
 //! ## 设计定位
 //!
 //! - **唯一事实源**：capability / context / VFS / MCP surface 只从 builder 写入
 //!   frame revision，runtime launch 从已持久化 frame 投影。
+//! - **内部 primitive**：业务模块不应直接持有 builder 来拼完整
+//!   `CapabilityState` 或 adopt runtime surface；外部变化先进入
+//!   `AgentRunFrameSurfaceService` 的 typed command/update boundary。
 //! - **不可变快照**：`build()` 产出新 revision，旧 revision 保持不变，
 //!   revision 序列天然提供 provenance。
 //! - **面向 dispatch**：`LifecycleDispatchService` 在创建 agent 后通过

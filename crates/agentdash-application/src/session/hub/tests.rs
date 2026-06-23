@@ -1516,12 +1516,13 @@ fn canvas_skill_vfs() -> agentdash_spi::Vfs {
 #[tokio::test]
 async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
     let session = hub
         .create_session("capability-surface")
         .await
         .expect("create");
-    let frame = attach_test_frame(&hub, "another-session").await;
+    let frame = attach_test_lifecycle_frame(&hub, "another-session").await;
 
     let error = match hub
         .adopt_persisted_agent_frame_revision(AgentFrameRuntimeTarget {
@@ -1536,7 +1537,7 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
 
     match error {
         ConnectorError::Runtime(message) => {
-            assert!(message.contains("未绑定 delivery RuntimeSession"));
+            assert!(message.contains("缺少可用 RuntimeSessionExecutionAnchor/AgentFrame"));
         }
         other => panic!("expected runtime error, got {other}"),
     }
@@ -1545,12 +1546,13 @@ async fn adopt_persisted_agent_frame_revision_requires_matching_frame_target() {
 #[tokio::test]
 async fn adopt_persisted_agent_frame_revision_updates_runtime_without_writing_frame() {
     let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None)
+        .with_lifecycle_agent_repo(Arc::new(MemoryLifecycleAgentRepository::default()));
     let session = hub
         .create_session("persisted-adoption")
         .await
         .expect("create");
-    let initial_frame = attach_test_frame(&hub, &session.id).await;
+    let initial_frame = attach_test_lifecycle_frame(&hub, &session.id).await;
     let mut persisted_state = CapabilityState::default();
     persisted_state
         .tool

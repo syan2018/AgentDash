@@ -103,7 +103,7 @@ const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
   continuation_context: "CONTINUATION",
   capability_state_snapshot: "CAPABILITY SNAPSHOT",
-  capability_state_delta: "CAPABILITY DELTA",
+  capability_state_delta: "RUNTIME SURFACE",
   assignment_context: "ASSIGNMENT",
   pending_action: "ACTION",
   auto_resume: "RESUME",
@@ -112,11 +112,18 @@ const FRAME_KIND_LABELS: Record<string, string> = {
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {
-  const kindSet = new Set(frames.map((f) => f.kind));
-  const labels = [...kindSet]
-    .map((kind) => FRAME_KIND_LABELS[kind] ?? kind.toUpperCase())
+  const labels = frames
+    .map(frameKindLabel)
+    .filter((label, index, all) => all.indexOf(label) === index)
     .slice(0, 4);
   return labels.join(" / ");
+}
+
+function frameKindLabel(frame: ContextFrame): string {
+  if (frame.kind === "capability_state_delta") {
+    return runtimeSurfaceFrameLabel(frame);
+  }
+  return FRAME_KIND_LABELS[frame.kind] ?? frame.kind.toUpperCase();
 }
 
 /**
@@ -197,6 +204,25 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
   if (removed > 0) tokens.push(`−${removed}`);
   if (changed > 0) tokens.push(`↻${changed}`);
   return tokens.join(" ");
+}
+
+function runtimeSurfaceFrameLabel(frame: ContextFrame): string {
+  const sectionKinds = new Set(frame.sections.map((section) => section.kind));
+  const capabilitySection = frame.sections.find(
+    (section) => section.kind === "capability_key_delta",
+  );
+  const hasCapabilityKeyDelta =
+    capabilitySection?.kind === "capability_key_delta" &&
+    capabilitySection.added_capabilities.length + capabilitySection.removed_capabilities.length > 0;
+  if (hasCapabilityKeyDelta) return "CAPABILITY DELTA";
+  if (sectionKinds.size === 1) {
+    if (sectionKinds.has("skill_delta")) return "SKILL UPDATE";
+    if (sectionKinds.has("vfs_delta")) return "VFS UPDATE";
+    if (sectionKinds.has("mcp_server_delta")) return "MCP UPDATE";
+    if (sectionKinds.has("tool_schema_delta")) return "TOOL SURFACE";
+    if (sectionKinds.has("companion_agent_roster_delta")) return "COMPANION UPDATE";
+  }
+  return "RUNTIME SURFACE";
 }
 
 export default ContextFrameStream;

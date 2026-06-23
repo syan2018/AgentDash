@@ -1,6 +1,6 @@
 use agentdash_agent_types::DynAgentTool;
 use agentdash_domain::canvas::Canvas;
-use agentdash_spi::{RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
+use agentdash_spi::{AuthIdentity, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
 
@@ -89,7 +89,7 @@ impl SessionCapabilityService {
     }
 
     /// 将已持久化的 AgentFrame revision 采用到 active runtime。
-    pub async fn adopt_persisted_agent_frame_revision(
+    pub(crate) async fn adopt_persisted_agent_frame_revision(
         &self,
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, String> {
@@ -130,8 +130,12 @@ impl SessionCapabilityService {
             refresh_canvas_mount_binding_files(&mut active_vfs, canvas, &binding_files);
         }
         after_state.vfs.active = Some(active_vfs.clone());
-        self.derive_skill_baseline_for_transition_state(Some(&before_state), &mut after_state)
-            .await;
+        self.derive_skill_baseline_for_transition_state(
+            session_id,
+            Some(&before_state),
+            &mut after_state,
+        )
+        .await;
 
         let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
@@ -209,6 +213,7 @@ impl SessionCapabilityService {
         mut input: PendingRuntimeContextTransitionInput,
     ) -> Result<(), String> {
         self.derive_skill_baseline_for_transition_state(
+            &input.delivery_runtime_session_id,
             input.before_state.as_ref(),
             &mut input.after_state,
         )
@@ -220,13 +225,17 @@ impl SessionCapabilityService {
 
     async fn derive_skill_baseline_for_transition_state(
         &self,
+        session_id: &str,
         before_state: Option<&CapabilityState>,
         after_state: &mut CapabilityState,
     ) {
         let Some(active_vfs) = after_state.vfs.active.as_ref() else {
             return;
         };
-        let Some(skills) = self.derive_skill_entries_for_active_vfs(active_vfs).await else {
+        let Some(skills) = self
+            .derive_skill_entries_for_active_vfs(session_id, active_vfs)
+            .await
+        else {
             return;
         };
         let existing = before_state
@@ -237,18 +246,31 @@ impl SessionCapabilityService {
 
     async fn derive_skill_entries_for_active_vfs(
         &self,
+        session_id: &str,
         active_vfs: &Vfs,
     ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
+        let identity = self.runtime_skill_projection_identity(session_id).await;
         derive_session_skill_baseline(SessionCapabilityProjectionInput {
             vfs_service: self.hub.vfs_service.as_deref(),
             active_vfs: Some(active_vfs),
-            identity: None,
+            identity: identity.as_ref(),
             extra_skill_dirs: &self.hub.extra_skill_dirs,
             skill_discovery_providers: &self.hub.skill_discovery_providers,
             diagnostics_label: "runtime_context_transition",
         })
         .await
         .map(|caps| caps.skills)
+    }
+
+    async fn runtime_skill_projection_identity(&self, session_id: &str) -> Option<AuthIdentity> {
+        self.hub
+            .runtime_registry
+            .with_runtime(session_id, |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .and_then(|turn| turn.session_frame.identity.clone())
+            })
+            .await
     }
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(

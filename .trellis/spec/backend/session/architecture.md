@@ -64,6 +64,101 @@ LaunchCommand
 - 用户输入在 session 链路只有单一 canonical 表示 `UserInputBlock`（`agentdash-agent-protocol` 对 Codex app-server v2 `UserInput` 的封名别名），贯穿 API 入参 → `UserPromptInput.input` → `PromptPayload::Input` → connector。连接器边界用唯一映射 `user_input_blocks_to_content_parts` 转 `Vec<ContentPart>`：图片（data URL / 可读 `LocalImage`）直达 `ContentPart::Image`，`Skill`/`Mention` 收敛为定义集中一处的文本语义。原因是历史上 prompt / steer / continuation 三路各自把输入拍平成文本（图片因此丢失多模态），且 ACP `ContentBlock` / codex `UserInput` / `ContentPart` 三套表示并存产生 ≥4 个平行 flattener；收敛为单表示 + 单映射后，多模态可结构化直达模型，且后续替换为自定义扩展类型只需改别名与映射单点。`ContentBlock` 仅保留在 relay 远程边界的单处双向转换，`codex_user_input_to_text` 仅作标题 / trace 摘要、非投递路径。
 - AgentRun lifecycle naming uses `AgentRunThread` for workspace-level thread, `AgentRunTurn` for the user-visible `start_prompt -> terminal` execution, and `AgentLoopTurn` only for PiAgent/agent loop `AgentEvent::TurnStart/TurnEnd` boundaries referenced by mailbox scheduling. This keeps public control-plane language aligned with Codex `Thread/Turn` while avoiding ambiguity with internal loop turns.
 
+## Scenario: AgentRun Frame Surface Command Boundary
+
+### 1. Scope / Trigger
+
+- Trigger: AgentFrame construction、accepted launch commit 或运行期 Canvas / WorkspaceModule / Permission / MCP / VFS / Skill surface 变化需要写入 model-visible frame revision 或同步 active runtime。
+- Scope: 业务来源只提交 typed command；AgentRun frame/surface boundary 统一解析 current frame、delivery runtime、active turn、identity、VFS、MCP、permission/admission、skill providers 与 hook runtime target。
+
+### 2. Signatures
+
+```rust
+pub struct AgentRunFrameSurfaceService<Construction, Update> {
+    construction: Construction,
+    update: Update,
+}
+
+pub enum AgentRunFrameSurfaceCommand {
+    Construct(FrameConstructionCommand),
+    Update(RuntimeSurfaceUpdateRequest),
+}
+
+pub enum FrameConstructionCommand {
+    DispatchLaunchAnchor { reason: FrameConstructionReason },
+    ComposeLaunchSurface { reason: FrameConstructionReason },
+    CommitAcceptedLaunch { reason: FrameConstructionReason },
+}
+
+pub enum RuntimeSurfaceUpdateRequest {
+    CanvasBindingChanged { canvas_mount_id: String },
+    CanvasVisibilityRequested { canvas_mount_id: String, reason: CanvasVisibilityReason },
+    PermissionGrantApplied { grant_id: Uuid },
+    PermissionGrantRevoked { grant_id: Uuid },
+    McpPresetChanged { preset_key: String },
+    ProjectVfsMountChanged { mount_id: String },
+    WorkspaceModuleVisibilityChanged { module_ref: String },
+    SkillInventoryChanged { provider_key: String },
+    AgentProcedureContractChanged { procedure_id: Uuid },
+}
+```
+
+### 3. Contracts
+
+- `Construct` owns initial frame creation, Lifecycle Workflow / AgentProcedure construction surface, definition/contract projection, and accepted launch commit.
+- `Update` owns live runtime surface mutation. It may write an AgentFrame revision, adopt that revision into active runtime, and emit semantic context-frame deltas.
+- Business modules pass stable change identifiers such as `canvas_mount_id` or `grant_id`; they do not pass a prebuilt `CapabilityState`, `AuthIdentity`, `AgentFrameRuntimeTarget`, active VFS, or skill discovery context.
+- `AgentFrameBuilder` is a frame/surface boundary primitive. Production writes are owned by frame construction, launch commit, or runtime surface update adapters.
+- `SessionCapabilityService::adopt_persisted_agent_frame_revision` is an application-internal live adoption primitive. API routes and business modules consume higher-level application services.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Adapter returns a write role that does not match command kind | Return `AgentRunFrameSurfaceCommandError::RoleMismatch`; do not hide ownership drift. |
+| Runtime update target cannot resolve current AgentFrame / delivery runtime anchor | Return a visible surface update error; do not synthesize a partial projection from local business facts. |
+| Permission grant state is persisted but active-runtime adoption fails | Return visible adoption diagnostics while preserving the durable grant fact. |
+| Canvas visibility request references a different canvas mount than the loaded Canvas domain object | Reject the request before frame write/adoption. |
+| Capability key delta has no added/removed keys | Omit the capability key section so pure runtime surface updates are not labeled as capability-key changes. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `workspace_module_invoke(canvas.bind_data)` mutates Canvas domain state, then submits `RuntimeSurfaceUpdateRequest::CanvasBindingChanged`; the boundary decides whether frame revision/adoption is required.
+- Base: Lifecycle Workflow materializes an AgentProcedure node by composing construction input into a pending AgentFrame; this is `Construct`, not runtime surface update.
+- Bad: API route approving a PermissionGrant directly calls an active-runtime adoption primitive with a locally assembled `AgentFrameRuntimeTarget`, because the route lacks full AgentRun projection context.
+
+### 6. Tests Required
+
+- Unit test the facade routes `Construct` and `Update` commands to matching adapters and rejects role mismatch.
+- Static/behavioral tests assert business owners such as Canvas, WorkspaceModule, Permission, and API route are not AgentFrame write boundary owners.
+- Runtime skill projection tests assert identity-aware provider discovery and provider/capability-key merge keep external integration skills across Canvas/VFS refresh.
+- Permission tests assert approve/revoke uses the application update path and surfaces adoption failure after grant state changes.
+- Frontend/session delta tests assert empty capability-key deltas are omitted and pure Skill/VFS/MCP/runtime-surface updates do not display as capability-key changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let mut next_state = project_capability_state_from_frame(&current_frame)?;
+next_state.merge_business_change(change);
+let next_frame = AgentFrameBuilder::new(agent_id)
+    .with_capability_state(&next_state)
+    .build(frame_repo.as_ref())
+    .await?;
+session_capability.adopt_persisted_agent_frame_revision(target).await?;
+```
+
+#### Correct
+
+```rust
+runtime_surface.update_runtime_surface(
+    RuntimeSurfaceUpdateRequest::PermissionGrantApplied { grant_id },
+).await?;
+```
+
+The boundary owns context resolution and live adoption because AgentFrame surface, runtime tool cache, hook target, skill discovery identity, and semantic context-frame emission must move as one observable AgentRun fact.
+
 ## Contract Appendices
 
 - [Session Startup Pipeline](./session-startup-pipeline.md)

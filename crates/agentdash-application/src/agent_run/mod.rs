@@ -34,8 +34,14 @@ pub use effective_capability::{
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
 };
 pub use frame::{
-    AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt, FrameContextBundleSummary,
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, FrameSurfaceDraft,
+    AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
+    AgentFrameWriteBoundary, AgentFrameWritePrimitive, AgentFrameWriteRole,
+    AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
+    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
+    AgentRunRuntimeSurfaceUpdateAdapter, CanvasVisibilityReason, FrameConstructionCommand,
+    FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
+    FrameRuntimeSurface, FrameSurfaceDraft, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    agent_frame_write_boundaries,
 };
 pub use mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,

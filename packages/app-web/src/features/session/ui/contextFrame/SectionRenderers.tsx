@@ -46,6 +46,13 @@ import { skillDisplayLabel, skillIdentityKey } from "../../../../types/context";
 
 /** 渲染单个 section：标题行 + body 平铺，不加外框 */
 export function SectionBlock({ section }: { section: ContextFrameSection }) {
+  if (
+    section.kind === "capability_key_delta" &&
+    section.added_capabilities.length + section.removed_capabilities.length === 0
+  ) {
+    return null;
+  }
+
   const token = sectionKindToToken(section.kind);
   const title = sectionTitle(section);
   const hint = sectionHint(section);

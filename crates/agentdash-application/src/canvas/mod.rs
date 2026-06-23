@@ -3,6 +3,7 @@ mod management;
 mod promotion;
 mod runtime;
 mod runtime_resource;
+pub(crate) mod runtime_surface;
 mod tools;
 mod visibility;
 
@@ -29,9 +30,8 @@ pub use runtime::{
     unresolved_canvas_binding_files,
 };
 pub use runtime_resource::CanvasRuntimeResourceService;
-pub use tools::expose_existing_canvas_for_session;
 pub(crate) use tools::{
     BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session,
+    create_or_attach_canvas_for_session, request_existing_canvas_visibility_for_runtime,
 };
 pub use visibility::append_visible_canvas_mounts;

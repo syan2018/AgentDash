@@ -6,7 +6,33 @@
 - [x] 派出 research agent 调研散落路径。
 - [x] 将散落路径与冗余链路纳入设计。
 - [x] 补充核查 Lifecycle Workflow / AgentProcedure 相关 AgentFrame 写入路径，并纳入收束边界。
-- [ ] 进入实现前，由用户 review `prd.md`、`design.md`、`implement.md`。
+- [x] 进入实现前，由用户 review `prd.md`、`design.md`、`implement.md`。
+
+## 并行执行方案
+
+本任务按职责拆成 4 条实现 lane，避免多个 subagent 同时修改同一高风险文件。main session 只做计划更新、集成冲突处理、最终 check / spec update / commit / PR。
+
+| Lane | Owner | 写入范围 | 目标 | 依赖 |
+| --- | --- | --- | --- | --- |
+| A：Frame surface boundary | trellis-implement A | `crates/agentdash-application/src/agent_run/frame/**`、必要的 `mod.rs` export、相关 tests | 新增 `AgentRunFrameSurfaceService` / command/request 类型和写入白名单测试骨架。 | 无；其它 lane 可先基于现有路径实现，main 集成时接入。 |
+| B：Canvas / WorkspaceModule | trellis-implement B | `crates/agentdash-application/src/workspace_module/**`、`crates/agentdash-application/src/canvas/**`、必要的应用测试 | `workspace_module_invoke/present` 不再直接 expose/adopt；改为 typed runtime surface request adapter。 | 依赖 Lane A 类型；若 A 未完成，先放本地 adapter trait/调用点，main 集成到正式 service。 |
+| C：Skill / Semantic delta / Frontend | trellis-implement C | `session/capability_projection.rs`、`session/dimension/**`、`session/hub/runtime_context_transition.rs`、`packages/app-web/src/features/session/ui/**` | identity-aware skill projection、provider-aware merge、空 capability key delta 不生成、前端不误报 CAPABILITY DELTA。 | 可独立实现；注意不改 Canvas/Permission 业务链路。 |
+| D：Permission / API adoption | trellis-implement D | `crates/agentdash-application/src/permission/**`、`crates/agentdash-api/src/routes/permission_grants.rs`、相关 tests | grant apply/revoke 不直接写完整 `CapabilityState` 并 route 不直接 adopt；改为 update request/service path。 | 依赖 Lane A 类型；若 A 未完成，先实现最小 service hook 并标出 main 需集成点。 |
+
+串行集成顺序：
+
+1. 先合入 Lane A，固定 command boundary 和 public/internal module exports。
+2. 合入 Lane C，解决 shared projection/delta 逻辑，降低 Canvas/Permission 变更风险。
+3. 合入 Lane B，迁移 Canvas / WorkspaceModule 调用点。
+4. 合入 Lane D，迁移 Permission/API route adoption。
+5. main session 统一运行冗余链路 `rg` 检查、Rust/前端验证、必要 spec update、commit、PR。
+
+并行约束：
+
+- subagent 必须直接实现，不得再 spawn `trellis-implement` / `trellis-check`。
+- subagent 不得 revert 其它 lane 的修改；遇到冲突以 main session 集成为准。
+- subagent final 必须列出修改文件、验证命令、未完成/需 main 集成点。
+- subagent 只在自己 lane 的写入范围内修改文件；确需跨 lane 修改时先在 final 中说明，不直接扩大范围。
 
 ## 阶段 1：测试护栏
 
@@ -76,14 +102,25 @@
 - [ ] `rg "SessionCapabilityProjectionInput"`，确认生产业务路径不手写 projection input。
 - [ ] 补静态或单元测试防止新增旁路。
 
+## 最终质量审阅记录
+
+- [x] Lane A 已落地 `AgentRunFrameSurfaceService`、construction/update command 分类、runtime surface request enum 和 AgentFrame 写入白名单测试。
+- [x] Lane B 已将 Canvas / WorkspaceModule 业务调用点迁移为 typed runtime surface request adapter；旧 expose/adopt primitive 只保留在 application 内部 adapter 路径中。
+- [x] Lane C 已完成 runtime skill projection identity 传递、provider-aware skill merge、空 capability key delta 后端过滤和前端 runtime surface 标签展示。
+- [x] Lane D 已将 Permission grant apply/revoke 迁移到 typed runtime surface update service；API route 不再 direct adopt，active-runtime adoption failure 作为可见错误返回。
+- [x] 最终 check 已将 `SessionCapabilityService::adopt_persisted_agent_frame_revision` 收回为 crate 内部 primitive，避免 API crate 重新绕过 application update 边界。
+- [x] 已将 AgentRun frame/surface command boundary 的可执行契约同步到 backend session spec。
+- [ ] 完整 AgentRun projection context resolver 与 Canvas/Permission adapter 全量接入 `AgentRunFrameSurfaceService` 仍可继续收束；当前实现已经消除业务模块/API route 直接写 frame 或 direct adopt 的主要旁路。
+
 ## 验证命令
 
-- [ ] `cargo test -p agentdash-application --lib`
-- [ ] `cargo test -p agentdash-api --lib`
+- [x] `cargo test -p agentdash-application --lib`
+- [x] `cargo test -p agentdash-api --lib`
 - [ ] `cargo check --workspace`
-- [ ] 如触及前端：`pnpm --filter app-web test -- --run`
+- [x] 如触及前端：`pnpm --filter app-web test -- ContextFrameCard.test.tsx --run`
+- [x] 如触及前端：`pnpm --filter app-web run typecheck`
 - [ ] 如触及生成契约：`pnpm run contracts:check`
-- [ ] `git diff --check`
+- [x] `git diff --check`
 
 ## 风险文件
 

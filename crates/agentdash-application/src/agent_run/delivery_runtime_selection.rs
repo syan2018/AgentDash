@@ -152,6 +152,15 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             .current_delivery
             .clone()
             .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
+        let expected_anchor = self
+            .repos
+            .execution_anchors
+            .find_by_session(&binding.runtime_session_id)
+            .await?
+            .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
+                runtime_session_id: binding.runtime_session_id.clone(),
+            })?;
+        validate_anchor_matches(&expected_anchor, run_id, agent_id, binding.launch_frame_id)?;
         let (anchor, _resolved_agent, current_frame) =
             resolve_current_frame_from_delivery_trace_ref(
                 &binding.runtime_session_id,
@@ -173,7 +182,6 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
                 runtime_session_id: binding.runtime_session_id.clone(),
             });
         }
-        validate_anchor_matches(&anchor, run_id, agent_id, binding.launch_frame_id)?;
 
         self.selection_from_anchor(
             agent,

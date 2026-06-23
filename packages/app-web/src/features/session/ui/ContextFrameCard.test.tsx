@@ -8,7 +8,7 @@ describe("ContextFrameCard", () => {
     const markup = renderToStaticMarkup(<ContextFrameCard frame={readFrame(sampleNotice())} />);
 
     expect(markup).toContain("CTX");
-    expect(markup).toContain("CAPABILITY");
+    expect(markup).toContain("RUNTIME SURFACE");
     // 折叠态：phase node 出现在 summary 小字
     expect(markup).toContain("apply");
     // 折叠态：不渲染内层 section body
@@ -20,8 +20,9 @@ describe("ContextFrameCard", () => {
       <ContextFrameCard frame={readFrame(sampleNotice())} defaultExpanded />,
     );
 
-    // section header token + title + hint
-    expect(markup).toContain("Capability Keys");
+    // 空 capability_key_delta 兼容旧事件解析，但不在 UI 中展示成“no change”能力变更。
+    expect(markup).not.toContain("Capability Keys");
+    expect(markup).not.toContain("本次无能力 key 变更");
     expect(markup).toContain("Tool Paths");
     expect(markup).toContain("MCP Servers");
     expect(markup).toContain("Tool Schema");
@@ -110,6 +111,8 @@ describe("ContextFrameCard", () => {
     const markup = renderToStaticMarkup(
       <ContextFrameCard frame={readFrame(sampleSkillDeltaNotice())} defaultExpanded />,
     );
+    expect(markup).toContain("SKILL UPDATE");
+    expect(markup).not.toContain("CAPABILITY DELTA");
     expect(markup).toContain("Skills");
     expect(markup).toContain("+2");
     expect(markup).toContain("−1");
@@ -119,6 +122,16 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("workspace");
     expect(markup).toContain("workspace/config-edit");
     expect(markup).toContain("explicit only");
+  });
+
+  it("有能力 key 增删时仍展示 capability delta", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard frame={readFrame(sampleCapabilityKeyDeltaNotice())} defaultExpanded />,
+    );
+
+    expect(markup).toContain("CAPABILITY DELTA");
+    expect(markup).toContain("Capability Keys");
+    expect(markup).toContain("workflow_management");
   });
 
   it("渲染 companion agent roster delta", () => {
@@ -467,6 +480,28 @@ function sampleSkillDeltaNotice(): Record<string, unknown> {
             exposure: "explicit_only",
           },
         ],
+      },
+    ],
+  };
+}
+
+function sampleCapabilityKeyDeltaNotice(): Record<string, unknown> {
+  return {
+    id: "capability-key-delta-1",
+    kind: "capability_state_delta",
+    source: "runtime_context_update",
+    phase_node: "grant",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Capability State Update",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "capability_key_delta",
+        added_capabilities: ["workflow_management"],
+        removed_capabilities: [],
+        effective_capabilities: ["workflow_management"],
       },
     ],
   };

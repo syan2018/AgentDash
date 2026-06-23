@@ -267,21 +267,47 @@ pub fn normalize_capability_state_dimensions(
 
 pub fn merge_live_vfs_skill_entries(
     existing: &[SkillEntry],
-    refreshed_vfs_skills: Vec<SkillEntry>,
+    refreshed_skills: Vec<SkillEntry>,
 ) -> Vec<SkillEntry> {
-    let mut merged = refreshed_vfs_skills;
+    let mut merged = Vec::new();
+    let mut refreshed_identities = HashSet::new();
+    for skill in refreshed_skills {
+        refreshed_identities.insert(skill_entry_merge_identity(&skill));
+        merged.push(skill);
+    }
+    let mut merged_identities = refreshed_identities.clone();
     for skill in existing {
-        if skill.file_path.contains("://") {
+        let identity = skill_entry_merge_identity(skill);
+        if refreshed_identities.contains(&identity) {
             continue;
         }
-        if !merged
-            .iter()
-            .any(|item| item.capability_key_or_name() == skill.capability_key_or_name())
-        {
+        if skill.provider_key == WORKSPACE_SKILL_PROVIDER_KEY {
+            continue;
+        }
+        if merged_identities.insert(identity) {
             merged.push(skill.clone());
         }
     }
     merged
+}
+
+fn skill_entry_merge_identity(skill: &SkillEntry) -> (String, String) {
+    let provider_key = skill.provider_key.trim();
+    let capability_key = skill.capability_key.trim();
+    let local_name = skill.local_name.trim();
+    let name = skill.name.trim();
+    (
+        provider_key.to_string(),
+        if capability_key.is_empty() {
+            if local_name.is_empty() {
+                name.to_string()
+            } else {
+                local_name.to_string()
+            }
+        } else {
+            capability_key.to_string()
+        },
+    )
 }
 
 fn skill_discovery_context_from_vfs_and_identity(
@@ -686,12 +712,12 @@ mod tests {
     }
 
     #[test]
-    fn live_vfs_skill_merge_replaces_uri_skills_and_preserves_local_skills() {
+    fn live_vfs_skill_merge_uses_provider_identity_instead_of_uri_shape() {
         let existing = vec![
             skill("workspace/old-vfs", "main://skills/old-vfs/SKILL.md"),
             skill(
-                "integration-static/plugin-skill",
-                "/plugins/plugin-skill/SKILL.md",
+                "external-integration/plugin-skill",
+                "external-integration://skills/plugin-skill/SKILL.md",
             ),
         ];
         let refreshed = vec![skill(
@@ -710,12 +736,43 @@ mod tests {
         assert!(
             merged
                 .iter()
-                .any(|item| item.capability_key == "integration-static/plugin-skill")
+                .any(|item| item.capability_key == "external-integration/plugin-skill")
         );
         assert!(
             !merged
                 .iter()
                 .any(|item| item.capability_key == "workspace/old-vfs")
+        );
+    }
+
+    #[test]
+    fn live_skill_merge_replaces_same_provider_capability_identity() {
+        let existing = vec![
+            skill("workspace/review", "main://skills/review/SKILL.md"),
+            skill("external/review", "external://skills/review-old/SKILL.md"),
+        ];
+        let refreshed = vec![
+            skill("workspace/review", "main://skills/review-new/SKILL.md"),
+            skill("external/review", "external://skills/review-new/SKILL.md"),
+        ];
+
+        let merged = merge_live_vfs_skill_entries(&existing, refreshed);
+
+        assert_eq!(merged.len(), 2);
+        assert!(
+            merged
+                .iter()
+                .any(|item| item.file_path == "main://skills/review-new/SKILL.md")
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|item| item.file_path == "external://skills/review-new/SKILL.md")
+        );
+        assert!(
+            !merged
+                .iter()
+                .any(|item| item.file_path.ends_with("review-old/SKILL.md"))
         );
     }
 

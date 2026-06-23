@@ -6,6 +6,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent_run::{CanvasVisibilityReason, RuntimeSurfaceUpdateRequest};
+use crate::canvas::runtime_surface::{
+    submit_canvas_runtime_surface_update, submit_existing_canvas_visibility_request,
+};
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::canvas::{
     canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id, normalize_canvas_mount_id,
@@ -147,7 +151,17 @@ pub(crate) async fn create_or_attach_canvas_for_session(
         (canvas, "created".to_string())
     };
 
-    expose_canvas_to_session(vfs, session_services_handle, current_session_id, &canvas).await?;
+    submit_canvas_runtime_surface_update(
+        Some(vfs),
+        session_services_handle,
+        current_session_id,
+        &canvas,
+        RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+            canvas_mount_id: canvas.mount_id.clone(),
+            reason: CanvasVisibilityReason::Created,
+        },
+    )
+    .await?;
 
     let result = CanvasToolResult {
         action,
@@ -196,7 +210,7 @@ pub(crate) async fn bind_canvas_data_for_project(
     Ok((canvas, result))
 }
 
-pub async fn expose_existing_canvas_for_session(
+pub async fn request_existing_canvas_visibility_for_runtime(
     canvas_repo: &dyn CanvasRepository,
     project_id: Uuid,
     canvas_mount_id: &str,
@@ -204,9 +218,15 @@ pub async fn expose_existing_canvas_for_session(
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
 ) -> Result<Canvas, AgentToolError> {
-    let canvas = load_canvas_by_project_mount_id(canvas_repo, project_id, canvas_mount_id).await?;
-    expose_canvas_to_session(vfs, session_services_handle, current_session_id, &canvas).await?;
-    Ok(canvas)
+    submit_existing_canvas_visibility_request(
+        canvas_repo,
+        project_id,
+        canvas_mount_id,
+        Some(vfs),
+        session_services_handle,
+        current_session_id,
+    )
+    .await
 }
 
 async fn load_canvas_by_project_mount_id(
@@ -239,33 +259,4 @@ fn ensure_canvas_project(
             "当前 session 无权操作其它 Project 的 Canvas".to_string(),
         ))
     }
-}
-
-pub(crate) async fn expose_canvas_to_session(
-    vfs: &SharedRuntimeVfs,
-    session_services_handle: &SharedSessionToolServicesHandle,
-    current_session_id: Option<&str>,
-    canvas: &Canvas,
-) -> Result<(), AgentToolError> {
-    let session_services = session_services_handle.get().await.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(
-            "Session services 尚未完成初始化，无法暴露 Canvas".to_string(),
-        )
-    })?;
-    let session_id = current_session_id.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(
-            "当前工具调用缺少 RuntimeSession id，无法暴露 Canvas".to_string(),
-        )
-    })?;
-    let active_vfs = session_services
-        .capability
-        .expose_canvas_mount_revision_and_adopt(session_id, canvas)
-        .await
-        .map_err(|error| {
-            AgentToolError::ExecutionFailed(format!(
-                "Canvas exposure 写入 AgentFrame 失败: {error}"
-            ))
-        })?;
-    vfs.replace(active_vfs).await;
-    Ok(())
 }

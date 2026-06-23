@@ -24,10 +24,11 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::agent_run::AgentRunEffectiveCapabilityView;
+use crate::agent_run::{AgentRunEffectiveCapabilityView, RuntimeSurfaceUpdateRequest};
+use crate::canvas::runtime_surface::submit_canvas_runtime_surface_update;
 use crate::canvas::{
     BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session, expose_existing_canvas_for_session,
+    create_or_attach_canvas_for_session, request_existing_canvas_visibility_for_runtime,
 };
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::{
@@ -665,24 +666,16 @@ impl WorkspaceModuleInvokeTool {
         })
     }
 
-    async fn refresh_canvas_mount_for_runtime(
+    async fn submit_canvas_runtime_surface_request(
         &self,
         canvas: &Canvas,
+        request: RuntimeSurfaceUpdateRequest,
     ) -> Result<(), AgentToolError> {
         let Some(handle) = self.session_services_handle.as_ref() else {
             return Ok(());
         };
-        let Some(session_services) = handle.get().await else {
-            return Err(AgentToolError::ExecutionFailed(
-                "Session services 尚未完成初始化，无法刷新 Canvas mount".to_string(),
-            ));
-        };
-        session_services
-            .capability
-            .expose_canvas_mount_revision_and_adopt(&self.session_id, canvas)
+        submit_canvas_runtime_surface_update(None, handle, Some(&self.session_id), canvas, request)
             .await
-            .map(|_| ())
-            .map_err(AgentToolError::ExecutionFailed)
     }
 }
 
@@ -878,7 +871,13 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                         bind_params,
                     )
                     .await?;
-                    self.refresh_canvas_mount_for_runtime(&canvas).await?;
+                    self.submit_canvas_runtime_surface_request(
+                        &canvas,
+                        RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+                            canvas_mount_id: canvas.mount_id.clone(),
+                        },
+                    )
+                    .await?;
                     let content = format!(
                         "canvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
                         result.canvas_id,
@@ -1034,7 +1033,7 @@ impl AgentTool for WorkspaceModulePresentTool {
             };
 
         if presentation.renderer_kind == "canvas" {
-            expose_existing_canvas_for_session(
+            request_existing_canvas_visibility_for_runtime(
                 self.canvas_repo.as_ref(),
                 self.project_id,
                 &module.summary.source,

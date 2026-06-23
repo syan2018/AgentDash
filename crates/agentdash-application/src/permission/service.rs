@@ -8,23 +8,18 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::AgentFrameBuilder;
-use crate::agent_run::AgentRunGrantProjection;
-use crate::session::capability_state::{
-    ToolCapabilityDimensionModule, project_capability_state_from_frame,
-};
+use crate::agent_run::RuntimeSurfaceUpdateRequest;
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
     GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,
 };
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
-use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
-use agentdash_spi::{
-    CapabilityState, RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
-};
+use agentdash_spi::RuntimeCapabilityTransition;
 
-use super::compiler::PermissionGrantCompiler;
 use super::policy::PermissionPolicyService;
+use super::runtime_surface_update::{
+    PermissionRuntimeSurfaceAdopter, PermissionRuntimeSurfaceUpdateService,
+};
 
 /// Grant 创建请求参数。
 #[derive(Debug, Clone)]
@@ -59,7 +54,7 @@ pub enum GrantRequestResult {
 /// Permission Grant 生命周期服务。
 pub struct PermissionGrantService {
     repo: Arc<dyn PermissionGrantRepository>,
-    frame_repo: Arc<dyn AgentFrameRepository>,
+    runtime_surface_updates: PermissionRuntimeSurfaceUpdateService,
 }
 
 impl PermissionGrantService {
@@ -67,7 +62,23 @@ impl PermissionGrantService {
         repo: Arc<dyn PermissionGrantRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
     ) -> Self {
-        Self { repo, frame_repo }
+        Self {
+            repo,
+            runtime_surface_updates: PermissionRuntimeSurfaceUpdateService::new(frame_repo),
+        }
+    }
+
+    pub fn new_with_runtime_surface_adopter(
+        repo: Arc<dyn PermissionGrantRepository>,
+        frame_repo: Arc<dyn AgentFrameRepository>,
+        adopter: Arc<dyn PermissionRuntimeSurfaceAdopter>,
+    ) -> Self {
+        Self {
+            repo,
+            runtime_surface_updates: PermissionRuntimeSurfaceUpdateService::with_adopter(
+                frame_repo, adopter,
+            ),
+        }
     }
 
     /// 创建 grant 请求并执行 policy 评估。
@@ -121,16 +132,25 @@ impl PermissionGrantService {
 
         match decision.outcome {
             PolicyOutcome::AutoApproved => {
-                let (transition, effect_frame) = self.apply_grant_effect(&grant, true).await?;
+                let outcome = self
+                    .runtime_surface_updates
+                    .apply_update_request(
+                        &grant,
+                        RuntimeSurfaceUpdateRequest::PermissionGrantApplied { grant_id: grant.id },
+                    )
+                    .await?;
                 grant.mark_applied().map_err(map_grant_transition_error)?;
                 self.repo
                     .update(&grant)
                     .await
                     .map_err(ApplicationError::from)?;
+                self.runtime_surface_updates
+                    .adopt_update_outcome(&grant, &outcome)
+                    .await?;
                 Ok(GrantRequestResult::AutoApproved {
                     grant,
-                    transition,
-                    effect_frame: effect_frame.map(Box::new),
+                    transition: outcome.transition,
+                    effect_frame: outcome.effect_frame.map(Box::new),
                 })
             }
             PolicyOutcome::NeedsUserApproval => {
@@ -157,7 +177,13 @@ impl PermissionGrantService {
             .user_approve(user_id)
             .map_err(map_grant_transition_error)?;
 
-        let (transition, effect_frame) = self.apply_grant_effect(&grant, true).await?;
+        let outcome = self
+            .runtime_surface_updates
+            .apply_update_request(
+                &grant,
+                RuntimeSurfaceUpdateRequest::PermissionGrantApplied { grant_id },
+            )
+            .await?;
 
         grant.mark_applied().map_err(map_grant_transition_error)?;
 
@@ -166,10 +192,14 @@ impl PermissionGrantService {
             .await
             .map_err(ApplicationError::from)?;
 
+        self.runtime_surface_updates
+            .adopt_update_outcome(&grant, &outcome)
+            .await?;
+
         Ok(PermissionGrantEffectResult {
             grant,
-            transition,
-            effect_frame,
+            transition: outcome.transition,
+            effect_frame: outcome.effect_frame,
         })
     }
 
@@ -204,7 +234,13 @@ impl PermissionGrantService {
             .map_err(ApplicationError::from)?
             .ok_or_else(|| ApplicationError::NotFound(format!("grant not found: {grant_id}")))?;
 
-        let (transition, effect_frame) = self.apply_grant_effect(&grant, false).await?;
+        let outcome = self
+            .runtime_surface_updates
+            .apply_update_request(
+                &grant,
+                RuntimeSurfaceUpdateRequest::PermissionGrantRevoked { grant_id },
+            )
+            .await?;
 
         grant.revoke().map_err(map_grant_transition_error)?;
 
@@ -213,10 +249,14 @@ impl PermissionGrantService {
             .await
             .map_err(ApplicationError::from)?;
 
+        self.runtime_surface_updates
+            .adopt_update_outcome(&grant, &outcome)
+            .await?;
+
         Ok(PermissionGrantEffectResult {
             grant,
-            transition,
-            effect_frame,
+            transition: outcome.transition,
+            effect_frame: outcome.effect_frame,
         })
     }
 
@@ -242,7 +282,13 @@ impl PermissionGrantService {
             )));
         }
 
-        let (transition, effect_frame) = self.apply_grant_effect(&grant, false).await?;
+        let outcome = self
+            .runtime_surface_updates
+            .apply_update_request(
+                &grant,
+                RuntimeSurfaceUpdateRequest::PermissionGrantRevoked { grant_id },
+            )
+            .await?;
 
         grant.expire().map_err(map_grant_transition_error)?;
 
@@ -251,10 +297,14 @@ impl PermissionGrantService {
             .await
             .map_err(ApplicationError::from)?;
 
+        self.runtime_surface_updates
+            .adopt_update_outcome(&grant, &outcome)
+            .await?;
+
         Ok(PermissionGrantEffectResult {
             grant,
-            transition,
-            effect_frame,
+            transition: outcome.transition,
+            effect_frame: outcome.effect_frame,
         })
     }
 
@@ -318,70 +368,6 @@ impl PermissionGrantService {
 
         Ok(grant)
     }
-
-    async fn apply_grant_effect(
-        &self,
-        grant: &PermissionGrant,
-        approve: bool,
-    ) -> Result<(RuntimeCapabilityTransition, Option<AgentFrame>), ApplicationError> {
-        let mut transition = if approve {
-            PermissionGrantCompiler::compile(grant)
-        } else {
-            PermissionGrantCompiler::compile_revoke(grant)
-        };
-        let (_, surface_paths) = AgentRunGrantProjection::partition_paths(&grant.requested_paths);
-        if surface_paths.is_empty() {
-            return Ok((transition, None));
-        }
-
-        let effect_frame_id = grant.effect_frame_id.ok_or_else(|| {
-            ApplicationError::BadRequest(format!(
-                "permission grant {} missing effect_frame_id; cannot apply capability effect",
-                grant.id
-            ))
-        })?;
-        let anchor_frame = self
-            .frame_repo
-            .get(effect_frame_id)
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or_else(|| {
-                ApplicationError::NotFound(format!("effect frame not found: {effect_frame_id}"))
-            })?;
-        let current_frame = self
-            .frame_repo
-            .get_current(anchor_frame.agent_id)
-            .await
-            .map_err(ApplicationError::from)?
-            .unwrap_or(anchor_frame);
-
-        let mut next_state = project_capability_state_from_frame(&current_frame);
-        apply_requested_paths(&mut next_state, &surface_paths, approve)?;
-
-        push_toolset_effect(&mut transition, &next_state)?;
-        let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
-            .with_capability_state(&next_state)
-            .with_created_by(
-                if approve {
-                    "permission_grant_toolset_add"
-                } else {
-                    "permission_grant_toolset_remove"
-                },
-                Some(grant.id.to_string()),
-            );
-
-        if let Some(context) = current_frame.context_slice_json.clone() {
-            builder = builder.with_context(context);
-        }
-        if let Some(profile) = current_frame.execution_profile_json.clone() {
-            builder = builder.with_execution_profile_raw(profile);
-        }
-        let effect_frame = builder
-            .build(self.frame_repo.as_ref())
-            .await
-            .map_err(ApplicationError::from)?;
-        Ok((transition, Some(effect_frame)))
-    }
 }
 
 #[derive(Debug)]
@@ -389,105 +375,6 @@ pub struct PermissionGrantEffectResult {
     pub grant: PermissionGrant,
     pub transition: RuntimeCapabilityTransition,
     pub effect_frame: Option<AgentFrame>,
-}
-
-fn push_toolset_effect(
-    transition: &mut RuntimeCapabilityTransition,
-    state: &CapabilityState,
-) -> Result<(), ApplicationError> {
-    transition.effects.push(
-        ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
-            capabilities: state.tool.capabilities.clone(),
-            enabled_clusters: state.tool.enabled_clusters.clone(),
-            tool_policy: state.tool.tool_policy.clone(),
-        })
-        .map_err(ApplicationError::Internal)?,
-    );
-    Ok(())
-}
-
-fn apply_requested_paths(
-    state: &mut CapabilityState,
-    paths: &[ToolCapabilityPath],
-    approve: bool,
-) -> Result<(), ApplicationError> {
-    for path in paths {
-        if approve {
-            apply_add_path(state, path);
-        } else {
-            apply_remove_path(state, path);
-        }
-    }
-    recompute_tool_clusters(state);
-    Ok(())
-}
-
-fn apply_add_path(state: &mut CapabilityState, path: &ToolCapabilityPath) {
-    let capability = ToolCapability::new(path.capability.clone());
-    let already_full = state.tool.capabilities.contains(&capability)
-        && state
-            .tool
-            .tool_policy
-            .get(&path.capability)
-            .is_none_or(|filter| filter.include_only.is_empty());
-    state.tool.capabilities.insert(capability);
-
-    match &path.tool {
-        Some(tool) if !already_full => {
-            state
-                .tool
-                .tool_policy
-                .entry(path.capability.clone())
-                .or_default()
-                .include_only
-                .insert(tool.clone());
-        }
-        None => {
-            if let Some(filter) = state.tool.tool_policy.get_mut(&path.capability) {
-                filter.include_only.clear();
-                filter.exclude.clear();
-            }
-            state
-                .tool
-                .tool_policy
-                .retain(|_, filter| !filter.is_empty());
-        }
-        Some(_) => {}
-    }
-}
-
-fn apply_remove_path(state: &mut CapabilityState, path: &ToolCapabilityPath) {
-    match &path.tool {
-        Some(tool) => {
-            if let Some(filter) = state.tool.tool_policy.get_mut(&path.capability) {
-                filter.include_only.remove(tool);
-                if filter.include_only.is_empty() && filter.exclude.is_empty() {
-                    state.tool.tool_policy.remove(&path.capability);
-                    state
-                        .tool
-                        .capabilities
-                        .remove(&ToolCapability::new(path.capability.clone()));
-                }
-            }
-        }
-        None => {
-            state
-                .tool
-                .capabilities
-                .remove(&ToolCapability::new(path.capability.clone()));
-            state.tool.tool_policy.remove(&path.capability);
-        }
-    }
-}
-
-fn recompute_tool_clusters(state: &mut CapabilityState) {
-    state.tool.enabled_clusters.clear();
-    for capability in &state.tool.capabilities {
-        state
-            .tool
-            .enabled_clusters
-            .extend(capability_to_tool_clusters(capability));
-    }
 }
 
 fn map_grant_transition_error(error: DomainError) -> ApplicationError {
@@ -500,12 +387,15 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
+    use crate::session::AgentFrameRuntimeTarget;
+    use crate::session::capability_state::project_capability_state_from_frame;
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
         PolicyOutcome,
     };
     use agentdash_domain::workflow::AgentFrameRepository;
-    use agentdash_spi::ToolCluster;
+    use agentdash_spi::{ToolCapability, ToolCluster};
     use tokio::sync::Mutex;
 
     #[derive(Default)]
@@ -650,6 +540,18 @@ mod tests {
     #[derive(Default)]
     struct InMemoryFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
+    }
+
+    struct FailingSurfaceAdopter;
+
+    #[async_trait::async_trait]
+    impl PermissionRuntimeSurfaceAdopter for FailingSurfaceAdopter {
+        async fn adopt_permission_runtime_surface(
+            &self,
+            _target: AgentFrameRuntimeTarget,
+        ) -> Result<(), String> {
+            Err("connector refresh failed".to_string())
+        }
     }
 
     #[async_trait::async_trait]
@@ -872,6 +774,50 @@ mod tests {
                 .contains(&ToolCapability::new("file_write"))
         );
         assert!(!state.tool.enabled_clusters.contains(&ToolCluster::Write));
+    }
+
+    #[tokio::test]
+    async fn approve_returns_visible_error_after_grant_state_success_when_adoption_fails() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("runtime-session-1")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
+
+        let error = PermissionGrantService::new_with_runtime_surface_adopter(
+            grant_repo.clone(),
+            frame_repo.clone(),
+            Arc::new(FailingSurfaceAdopter),
+        )
+        .approve(grant.id, "user-1")
+        .await
+        .expect_err("adoption failure must be visible");
+
+        assert!(
+            error
+                .to_string()
+                .contains("PermissionGrant active-runtime adoption failed"),
+            "unexpected error: {error}"
+        );
+        let stored = grant_repo
+            .find_by_id(grant.id)
+            .await
+            .expect("grant lookup")
+            .expect("grant");
+        assert_eq!(stored.status, GrantStatus::Applied);
+        assert_eq!(
+            frame_repo
+                .list_by_agent(agent_id)
+                .await
+                .expect("frames")
+                .len(),
+            2,
+            "surface revision is persisted before live adoption is attempted"
+        );
     }
 
     #[tokio::test]

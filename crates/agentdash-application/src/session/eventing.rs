@@ -1,4 +1,4 @@
-use std::{io, sync::Arc};
+use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SessionRewindReason, SessionRewound,
@@ -392,13 +392,14 @@ impl SessionEventingService {
         envelope: &mut AgentContextEnvelope,
     ) -> io::Result<()> {
         let events = self.stores.events.list_all_events(session_id).await?;
-        let Some(boundary) = latest_session_rewind_boundary(&events) else {
+        let boundaries = session_rewind_boundaries(&events);
+        if boundaries.is_empty() {
             return Ok(());
-        };
+        }
         envelope.messages.retain(|message| {
-            if message.message_ref.turn_id != boundary.discarded_turn_id {
+            let Some(boundary) = boundaries.get(&message.message_ref.turn_id) else {
                 return true;
-            }
+            };
             let source_end = message
                 .source_range
                 .as_ref()
@@ -850,18 +851,35 @@ fn latest_stable_terminal_before(
         .max_by_key(|boundary| boundary.event_seq)
 }
 
-fn latest_session_rewind_boundary(
+fn session_rewind_boundaries(
     events: &[PersistedSessionEvent],
-) -> Option<SessionRewindBoundary> {
-    if let Some(boundary) = events
-        .iter()
-        .filter_map(parse_session_rewound_marker)
-        .max_by_key(|(_, event_seq)| *event_seq)
-        .map(|(boundary, _)| boundary)
-    {
-        return Some(boundary);
+) -> HashMap<String, SessionRewindBoundary> {
+    let mut boundaries_by_turn: HashMap<String, (u64, SessionRewindBoundary)> = HashMap::new();
+    for (boundary, event_seq) in events.iter().filter_map(parse_session_rewound_marker) {
+        let entry = boundaries_by_turn
+            .entry(boundary.discarded_turn_id.clone())
+            .or_insert((event_seq, boundary.clone()));
+        if event_seq >= entry.0 {
+            *entry = (event_seq, boundary);
+        }
     }
 
+    if !boundaries_by_turn.is_empty() {
+        return boundaries_by_turn
+            .into_values()
+            .map(|(_, boundary)| (boundary.discarded_turn_id.clone(), boundary))
+            .collect();
+    }
+
+    latest_failed_terminal_rewind_boundary(events)
+        .into_iter()
+        .map(|boundary| (boundary.discarded_turn_id.clone(), boundary))
+        .collect()
+}
+
+fn latest_failed_terminal_rewind_boundary(
+    events: &[PersistedSessionEvent],
+) -> Option<SessionRewindBoundary> {
     let mut stable = StableTerminalBoundary {
         event_seq: 0,
         turn_id: String::new(),
@@ -1941,6 +1959,124 @@ mod tests {
         assert!(rendered.contains("stable answer"));
         assert!(!rendered.contains("failed prompt"));
         assert!(!rendered.contains("partial failed answer"));
+    }
+
+    #[tokio::test]
+    async fn multiple_session_rewind_markers_exclude_all_failed_turns_from_model_context() {
+        let session_id = "sess-multiple-rewind-projection";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+        let source = test_source_info();
+
+        service
+            .emit_user_input_submitted(
+                session_id,
+                "turn-stable",
+                "turn-stable:user-input:0",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                vec![codex::UserInput::Text {
+                    text: "stable prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect("persist stable user input");
+        service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-stable", "stable answer"),
+            )
+            .await
+            .expect("persist stable assistant");
+        service
+            .persist_notification(
+                session_id,
+                crate::session::hub_support::build_turn_terminal_envelope(
+                    session_id,
+                    &source,
+                    "turn-stable",
+                    TurnTerminalKind::Completed,
+                    None,
+                ),
+            )
+            .await
+            .expect("persist stable terminal");
+
+        for failed_turn in ["turn-failed-a", "turn-failed-b"] {
+            service
+                .emit_user_input_submitted(
+                    session_id,
+                    failed_turn,
+                    &format!("{failed_turn}:user-input:0"),
+                    agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                    vec![codex::UserInput::Text {
+                        text: format!("{failed_turn} prompt"),
+                        text_elements: Vec::new(),
+                    }],
+                )
+                .await
+                .expect("persist failed user input");
+            service
+                .persist_notification(
+                    session_id,
+                    assistant_delta_envelope(
+                        session_id,
+                        failed_turn,
+                        &format!("{failed_turn} partial answer"),
+                    ),
+                )
+                .await
+                .expect("persist failed assistant");
+            let failed_terminal = service
+                .persist_notification(
+                    session_id,
+                    crate::session::hub_support::build_turn_terminal_envelope(
+                        session_id,
+                        &source,
+                        failed_turn,
+                        TurnTerminalKind::Failed,
+                        Some("provider disconnected".to_string()),
+                    ),
+                )
+                .await
+                .expect("persist failed terminal");
+            service
+                .persist_session_rewound_marker(
+                    session_id,
+                    &source,
+                    failed_turn,
+                    "runtime_failure",
+                    Some("provider disconnected".to_string()),
+                    failed_terminal.event_seq,
+                    true,
+                )
+                .await
+                .expect("persist rewind marker");
+        }
+
+        let transcript = service
+            .build_projected_transcript(session_id)
+            .await
+            .expect("build transcript");
+        let rendered = transcript
+            .into_messages()
+            .into_iter()
+            .filter_map(|message| message.first_text().map(ToString::to_string))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("stable prompt"));
+        assert!(rendered.contains("stable answer"));
+        assert!(!rendered.contains("turn-failed-a prompt"));
+        assert!(!rendered.contains("turn-failed-a partial answer"));
+        assert!(!rendered.contains("turn-failed-b prompt"));
+        assert!(!rendered.contains("turn-failed-b partial answer"));
     }
 
     #[tokio::test]

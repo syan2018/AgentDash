@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Defines active turn, terminal cleanup, AgentRun mailbox, and runtime execution state boundaries affected by retry/recovery."}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Defines NDJSON session event delivery and resume invariants for status and rollback events."}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "Defines PiAgent AgentEvent to Backbone mapping and event emission contracts."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Defines BackboneEvent, PlatformEvent, ErrorNotification, persisted event, and frontend consumption contracts."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Defines Session UI and AgentRun workspace state ownership and projection refresh rules."}
+{"file": ".trellis/tasks/06-23-agent-provider-retry-reconnect/research/codex-turn-status.md", "reason": "Subagent research for Codex turn duration, thinking, waiting, and reconnect status references."}
+{"file": ".trellis/tasks/06-23-agent-provider-retry-reconnect/research/agentdash-stable-boundary.md", "reason": "Subagent research for AgentDash failed turn stable-boundary and restore behavior."}
+{"file": ".trellis/tasks/06-23-agent-provider-retry-reconnect/research/frontend-retry-feed.md", "reason": "Subagent research for frontend retry/feed/status rendering and rollback handling."}

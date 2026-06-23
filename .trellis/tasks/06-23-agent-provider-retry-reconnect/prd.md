@@ -12,6 +12,8 @@
 - 明确重连事件在运行事件流中的表达方式，使 UI 和持久化事件能展示“正在重连/重试”，而不是把暂态错误当作终态失败。
 - 识别半截流式输出、工具调用、上下文污染、重复事件等风险边界，为后续设计和实现拆分提供依据。
 - 数据层需要支持失败轮次恢复：当 provider 中途失败、连接异常或其他非连接问题导致当前运行不可继续时，应丢弃/回滚最后一个未稳定完成的轮次，把会话恢复到可以重新开始提交的状态。
+- 每个 Agent turn / provider attempt 需要记录可展示的执行耗时。优先补齐 Codex `Turn.durationMs` 对齐字段，并让前端 turn segment 能稳定展示“已处理 x 秒/分钟”。
+- 需要表达 provider 已连接但尚未吐出首个可见 delta 的运行状态。该状态用于告诉用户 Agent 已进入模型等待/思考阶段，区别于本地启动中、重连中、工具执行中和已经输出内容。
 
 ## Confirmed Facts
 
@@ -24,6 +26,8 @@
 - `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` 已经能把 `AgentEvent::ContextCompactionFailed` 映射成 `BackboneEvent::Error(ErrorNotification { will_retry: false, ... })`，说明 PiAgent -> Backbone 的错误事件路径存在，但 provider retry/reconnect 还没有对应事件。
 - `crates/agentdash-agent-protocol/src/backbone/event.rs` 已有 `BackboneEvent::Error(codex::ErrorNotification)`；生成到前端的 `ErrorNotification` 包含 `willRetry`。`crates/agentdash-executor/src/connectors/codex_bridge.rs` 会直接透传 Codex bridge 的 `error` notification。
 - `crates/agentdash-agent-protocol/src/backbone/platform.rs` 提供 `PlatformEvent::SessionMetaUpdate` 作为平台结构化扩展，但 cross-layer spec 要求平台能力保持结构化 payload，不能把业务语义塞进自由文本。
+- Codex `Turn` wire shape 已包含 `startedAt`、`completedAt`、`durationMs`；AgentDash 当前 `build_turn_started_envelope` 填 `started_at`，但 `duration_ms` 为 `None`，turn terminal 主要通过 `Platform(SessionMetaUpdate key="turn_terminal")` 表达。
+- 前端 `useSessionFeed.segmentByTurn` 已读取 `turn_completed.payload.turn.durationMs`，`SessionChatViewParts` 已能展示“已处理 {duration}”。当前 PiAgent terminal 不稳定产出 `TurnCompleted` 时，这条展示链路不会完整发挥作用。
 
 ### pi-mono reference facts
 
@@ -43,6 +47,9 @@
 - `references/codex/codex-rs/core/src/responses_retry.rs` 处理 Responses stream retry：retryable stream error 会通知 `Reconnecting... {retry_count}/{max_retries}`，并通过 `notify_stream_error` 形成可见中间状态。
 - `references/codex/codex-rs/protocol/src/error.rs` 的 `CodexErr::Stream` 表达 SSE 已建立但在 `response.completed` 前断开；`is_retryable()` 明确区分 usage limit、quota、context window、invalid request 等 fatal 与 stream/timeout/transport/5xx 等 retryable。
 - `references/codex/codex-rs/app-server/src/bespoke_event_handling.rs` 将 `EventMsg::StreamError` 映射成 `ErrorNotification { will_retry: true, ... }`。注释说明 stream error 是 retry 的 intermediate state，不更新 turn summary。
+- Codex app-server `TurnStartedNotification` / `TurnCompletedNotification` 均承载 `Turn`；TUI 使用 turn lifecycle 维护 running 状态和 final separator duration。
+- Codex TUI 有 `Thinking` 状态头，并在 stream error 时暂存原状态、显示 `Reconnecting... n/m`，重连成功后恢复状态头。Codex 没有 public `stream_connected` / `waiting_for_first_token` / durable `thinking` 一等事件；这些更多由 `TurnStarted/InProgress` 到首个 delta 之间推断，最终 TTFT 只在完成事件中记录。
+- Codex `ErrorNotification.will_retry` 是二值字段，attempt/max/delay/provider/source 没有结构化 public DTO 字段，主要藏在 message/details 里。
 
 ## Research Notes
 
@@ -58,10 +65,17 @@
 - retry 机制采用 pi agent 风格：provider/bridge 层负责把 provider 暂态失败规范化并在首个可见 delta 前做可控 retry；AgentRun/session 层负责识别可重试失败、移除错误 assistant / 未稳定轮次、退避后重新开始，并确保 prompt/run 等待 retry 完整结束。
 - 前端提示采用 Codex 风格：重连/重试作为运行中的系统状态或错误通知表达，类似 `ErrorNotification { will_retry: true }` / `Reconnecting... attempt/max`，不能写成 assistant 消息。
 - 最后一个未稳定轮次失败后，数据层必须能恢复到上一稳定边界。恢复目标不是保留失败半截继续拼接，而是让用户或自动 retry 可以从干净状态重新开始；连接问题和其它会话运行炸掉的问题都应走这个恢复原则。
+- turn elapsed time 对齐 Codex `Turn.durationMs`。AgentDash 应在 turn start 记录毫秒时间戳，terminal 时计算 duration，并让持久化/NDJSON/前端 feed 使用同一事实。
+- “已连接，等待首字/思考中”应是运行状态事件，不是 assistant 文本。若 Codex 没有 app-server 一等事件，可使用 AgentDash 结构化 platform/provider status 事件承载，并在前端用 Codex Thinking/Reconnecting 的交互风格展示。
+- 失败轮次恢复采用 append-only rollback/stable-boundary marker + projection filter，不优先物理删除 `session_events` 尾部。原因是当前 `SessionEventStore` 没有 truncate API，`event_seq` 是 NDJSON resume 游标，且 `SessionMeta.save` 使用 `GREATEST(last_event_seq)`，普通 meta save 不能回退 head。
+- 前端当前 `rawEvents` reducer 是 append-only，且没有 rewind/truncate/replacement 语义；后端丢弃最后失败轮次时，必须发显式 `session_rewound/session_rebuilt` 类事件或触发 full rehydrate，不能只改变后端历史读取结果。
+- 协议落点采用类型安全的一等 `PlatformEvent` variants：`ProviderAttemptStatus` 表达连接、等待首字、重连与 retry 生命周期；`SessionRewound` 表达失败轮次恢复。原因是项目处于预研期，直接补正确协议比把关键业务状态塞进 `SessionMetaUpdate` 自由 key 更利于 Rust/TS 类型同步与前端 reducer 测试。
+- provider/runtime failure 写入 terminal failed/lost/interrupted 与 recovery marker 后，会话应恢复到可再次提交的状态。失败诊断保留给 UI，但下一次 prompt 不继承半截 provider 输出，也不因为已恢复的失败轮次继续停在 mailbox paused 状态。
+- 后续实现按 `implement.md` 的 parallel execution plan 拆成 protocol、bridge/provider retry、agent loop boundary、session recovery、frontend feed、integration check 六条可独立验证的工作流。
 
 ## Open Questions
 
-- 失败轮次恢复的精确稳定边界需要继续从 session event store、projection、turn terminal、frontend feed 聚合中取证：是以 `TurnCompleted` 为提交边界，还是需要额外标记 provider attempt / run attempt 边界。
+- 当前没有阻塞 planning 的 open question。进入实现前只需要用户评审 `design.md` 与 `implement.md`，确认 append-only recovery marker、类型安全事件协议、mailbox 恢复行为和测试范围。
 
 ## Acceptance Criteria
 
@@ -69,7 +83,10 @@
 - [ ] 记录 `references/pi-mono` 中与 provider retry/reconnect 最相关的参考入口。
 - [ ] 记录 `references/codex` 中可借鉴的 retry/reconnect 事件语义对照。
 - [ ] 明确失败轮次恢复策略，覆盖 session event store、projection、前端 feed 与下一次 AgentRun 输入上下文。
+- [ ] turn terminal 或等价事件携带可展示 `durationMs`，前端 turn segment 能显示每轮已执行时间。
+- [ ] 连接成功等待首字/思考中、重连中、retry 成功/耗尽等状态在事件流中可观测，且不进入 assistant message。
 - [ ] 在进入实现前补充设计与执行计划，覆盖 Bridge 层、Agent loop、AgentRun/session 事件链路的边界。
+- [ ] 并行推进方案清晰记录每条 workstream 的范围、依赖、产物和验证方式，便于后续 Trellis sub-agents 分工。
 
 ## Notes
 

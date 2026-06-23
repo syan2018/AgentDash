@@ -266,7 +266,11 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } } | { "kind": "mailbox_state_changed", "data": { reason: string, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } } | { "kind": "mailbox_state_changed", "data": { reason: string, } };
+
+export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
+
+export type ProviderAttemptStatus = { turn_id: string, phase: ProviderAttemptPhase, attempt: number, max_attempts: number, will_retry: boolean, delay_ms: bigint | null, reason_code: string | null, message: string | null, provider: string | null, model: string | null, };
 
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
@@ -280,6 +284,10 @@ export type ReasoningTextDeltaNotification = { threadId: string, turnId: string,
 export type RequestId = string | number;
 
 export type RequestPermissionProfile = { network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
+
+export type SessionRewindReason = "provider_retry" | "provider_failure" | "runtime_failure";
+
+export type SessionRewound = { discarded_turn_id: string, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
 
 export type ShellExecExecutionMode = "platform" | "mountExec";
 

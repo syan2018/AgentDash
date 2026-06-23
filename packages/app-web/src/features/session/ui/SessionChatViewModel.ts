@@ -4,7 +4,7 @@ import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
-import { extractPlatformEventType } from "../model/platformEvent";
+import { extractPlatformEventType, isRecord } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
 export type SessionTurnLifecycleEventType =
@@ -152,6 +152,23 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
     value.kind === "compaction_summary";
 }
 
+function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {
+  if (event.type !== "platform") {
+    return false;
+  }
+  if (isRecord(event.payload)) {
+    const kind = typeof event.payload.kind === "string" ? event.payload.kind : null;
+    if (kind === "session_rewound") {
+      return true;
+    }
+  }
+  const eventType = extractPlatformEventType(event);
+  return eventType === "session_rewound" ||
+    eventType === "session_rebuilt" ||
+    eventType === "turn_discarded" ||
+    eventType === "projection_invalidated";
+}
+
 function isProjectionRefreshEvent(event: BackboneEvent): boolean {
   const turnLifecycleType = extractTurnLifecycleEventType(event);
   if (turnLifecycleType && turnLifecycleType !== "turn_started") {
@@ -161,6 +178,7 @@ function isProjectionRefreshEvent(event: BackboneEvent): boolean {
     return false;
   }
   return extractPlatformEventType(event) === "context_compacted" ||
+    isSessionRewindRefreshEvent(event) ||
     isCompactionSummaryFrame(event);
 }
 

@@ -1,10 +1,12 @@
 use std::{io, sync::Arc};
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
-    codex_app_server_protocol as codex,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SessionRewindReason, SessionRewound,
+    SourceInfo, TraceInfo, UserInputBlock, codex_app_server_protocol as codex,
 };
-use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem, MessageRef};
+use agentdash_agent_types::{
+    AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, MessageRef,
+};
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
@@ -16,7 +18,9 @@ use super::context_usage_projection::{
     build_session_context_projection_read_model, context_usage_items_from_context_frame,
 };
 use super::continuation::build_raw_projected_transcript_from_events;
-use super::hub_support::SessionEventSubscription;
+use super::hub_support::{
+    SessionEventSubscription, TurnTerminalKind, parse_turn_terminal_event_from_envelope,
+};
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
     SessionCompactionRecord, SessionCompactionStatus, SessionEventPage,
@@ -329,18 +333,81 @@ impl SessionEventingService {
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::ProjectedTranscript> {
-        ContextProjector::new(self.stores.clone())
-            .build_projected_transcript(session_id)
-            .await
+        Ok(self
+            .build_agent_context_envelope(session_id)
+            .await?
+            .into_projected_transcript())
     }
 
     pub async fn build_agent_context_envelope(
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
-        ContextProjector::new(self.stores.clone())
+        let mut envelope = ContextProjector::new(self.stores.clone())
             .build_model_context(session_id)
+            .await?;
+        self.apply_session_rewind_boundary(session_id, &mut envelope)
+            .await?;
+        Ok(envelope)
+    }
+
+    pub(crate) async fn persist_session_rewound_marker(
+        &self,
+        session_id: &str,
+        source: &SourceInfo,
+        discarded_turn_id: &str,
+        reason: &str,
+        message: Option<String>,
+        terminal_event_seq: u64,
+        broadcast: bool,
+    ) -> io::Result<PersistedSessionEvent> {
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let stable = latest_stable_terminal_before(&events, terminal_event_seq);
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
+                discarded_turn_id: discarded_turn_id.to_string(),
+                stable_event_seq: stable
+                    .as_ref()
+                    .map(|boundary| boundary.event_seq)
+                    .unwrap_or_default(),
+                stable_turn_id: stable.map(|boundary| boundary.turn_id),
+                reason: session_rewind_reason_from_str(reason),
+                replacement_turn_id: None,
+                message,
+            })),
+            session_id,
+            source.clone(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(discarded_turn_id.to_string()),
+            entry_index: None,
+        });
+        self.persist_notification_inner(session_id, envelope, broadcast)
             .await
+    }
+
+    async fn apply_session_rewind_boundary(
+        &self,
+        session_id: &str,
+        envelope: &mut AgentContextEnvelope,
+    ) -> io::Result<()> {
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let Some(boundary) = latest_session_rewind_boundary(&events) else {
+            return Ok(());
+        };
+        envelope.messages.retain(|message| {
+            if message.message_ref.turn_id != boundary.discarded_turn_id {
+                return true;
+            }
+            let source_end = message
+                .source_range
+                .as_ref()
+                .map(|range| range.end_event_seq)
+                .or(message.source_event_seq);
+            source_end.is_some_and(|seq| seq <= boundary.stable_event_seq)
+        });
+        envelope.token_estimate = None;
+        Ok(())
     }
 
     pub async fn build_context_projection_read_model(
@@ -746,6 +813,119 @@ fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::V
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StableTerminalBoundary {
+    event_seq: u64,
+    turn_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionRewindBoundary {
+    discarded_turn_id: String,
+    stable_event_seq: u64,
+}
+
+fn session_rewind_reason_from_str(reason: &str) -> SessionRewindReason {
+    match reason {
+        "provider_retry" => SessionRewindReason::ProviderRetry,
+        "provider_failure" => SessionRewindReason::ProviderFailure,
+        _ => SessionRewindReason::RuntimeFailure,
+    }
+}
+
+fn latest_stable_terminal_before(
+    events: &[PersistedSessionEvent],
+    event_seq: u64,
+) -> Option<StableTerminalBoundary> {
+    events
+        .iter()
+        .filter(|event| event.event_seq < event_seq)
+        .filter_map(|event| {
+            let (turn_id, kind, _) = parse_turn_terminal_event_from_envelope(&event.notification)?;
+            (kind == TurnTerminalKind::Completed).then_some(StableTerminalBoundary {
+                event_seq: event.event_seq,
+                turn_id,
+            })
+        })
+        .max_by_key(|boundary| boundary.event_seq)
+}
+
+fn latest_session_rewind_boundary(
+    events: &[PersistedSessionEvent],
+) -> Option<SessionRewindBoundary> {
+    if let Some(boundary) = events
+        .iter()
+        .filter_map(parse_session_rewound_marker)
+        .max_by_key(|(_, event_seq)| *event_seq)
+        .map(|(boundary, _)| boundary)
+    {
+        return Some(boundary);
+    }
+
+    let mut stable = StableTerminalBoundary {
+        event_seq: 0,
+        turn_id: String::new(),
+    };
+    let mut latest_terminal: Option<(u64, String, TurnTerminalKind, u64)> = None;
+    for event in events {
+        let Some((turn_id, kind, _message)) =
+            parse_turn_terminal_event_from_envelope(&event.notification)
+        else {
+            continue;
+        };
+        latest_terminal = Some((event.event_seq, turn_id.clone(), kind, stable.event_seq));
+        if kind == TurnTerminalKind::Completed {
+            stable = StableTerminalBoundary {
+                event_seq: event.event_seq,
+                turn_id,
+            };
+        }
+    }
+
+    let (_event_seq, discarded_turn_id, kind, stable_event_seq) = latest_terminal?;
+    matches!(
+        kind,
+        TurnTerminalKind::Failed | TurnTerminalKind::Interrupted | TurnTerminalKind::Lost
+    )
+    .then_some(SessionRewindBoundary {
+        discarded_turn_id,
+        stable_event_seq,
+    })
+}
+
+fn parse_session_rewound_marker(
+    event: &PersistedSessionEvent,
+) -> Option<(SessionRewindBoundary, u64)> {
+    let (discarded_turn_id, stable_event_seq) = match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => {
+            (marker.discarded_turn_id.clone(), marker.stable_event_seq)
+        }
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "session_rewound" =>
+        {
+            let discarded_turn_id = value
+                .get("discarded_turn_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let stable_event_seq = value
+                .get("stable_event_seq")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default();
+            (discarded_turn_id, stable_event_seq)
+        }
+        _ => return None,
+    };
+    Some((
+        SessionRewindBoundary {
+            discarded_turn_id,
+            stable_event_seq,
+        },
+        event.event_seq,
+    ))
+}
+
 fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<BackboneEnvelope> {
     let original_bytes = serialized_envelope_len(&envelope)?;
     if original_bytes <= SESSION_EVENT_APPEND_GUARD_MAX_BYTES {
@@ -1144,6 +1324,10 @@ fn backbone_event_type_name_for_guard(event: &BackboneEvent) -> &'static str {
         BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
         BackboneEvent::ApprovalRequest(_) => "approval_request",
         BackboneEvent::Error(_) => "error",
+        BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(_)) => {
+            "provider_attempt_status"
+        }
+        BackboneEvent::Platform(PlatformEvent::SessionRewound(_)) => "session_rewound",
         BackboneEvent::Platform(_) => "platform_event",
     }
 }
@@ -1321,6 +1505,23 @@ mod tests {
             connector_type: "local_executor".to_string(),
             executor_id: Some("CODEX".to_string()),
         }
+    }
+
+    fn assistant_delta_envelope(session_id: &str, turn_id: &str, text: &str) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                delta: text.to_string(),
+                thread_id: session_id.to_string(),
+                turn_id: turn_id.to_string(),
+                item_id: format!("{turn_id}:assistant:0"),
+            }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id.to_string()),
+            entry_index: Some(1),
+        })
     }
 
     fn context_compacted_envelope(session_id: &str, value: serde_json::Value) -> BackboneEnvelope {
@@ -1618,6 +1819,128 @@ mod tests {
             .expect("projection head exists");
         assert_eq!(head.head_event_seq, 0);
         assert_eq!(head.updated_by_event_seq, None);
+    }
+
+    #[tokio::test]
+    async fn session_rewind_marker_excludes_failed_turn_from_model_context() {
+        let session_id = "sess-rewind-projection";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+        let source = test_source_info();
+
+        service
+            .emit_user_input_submitted(
+                session_id,
+                "turn-stable",
+                "turn-stable:user-input:0",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                vec![codex::UserInput::Text {
+                    text: "stable prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect("persist stable user input");
+        service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-stable", "stable answer"),
+            )
+            .await
+            .expect("persist stable assistant");
+        let stable_terminal = service
+            .persist_notification(
+                session_id,
+                crate::session::hub_support::build_turn_terminal_envelope(
+                    session_id,
+                    &source,
+                    "turn-stable",
+                    TurnTerminalKind::Completed,
+                    None,
+                ),
+            )
+            .await
+            .expect("persist stable terminal");
+
+        service
+            .emit_user_input_submitted(
+                session_id,
+                "turn-failed",
+                "turn-failed:user-input:0",
+                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                vec![codex::UserInput::Text {
+                    text: "failed prompt".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect("persist failed user input");
+        service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-failed", "partial failed answer"),
+            )
+            .await
+            .expect("persist failed assistant");
+        let failed_terminal = service
+            .persist_notification(
+                session_id,
+                crate::session::hub_support::build_turn_terminal_envelope(
+                    session_id,
+                    &source,
+                    "turn-failed",
+                    TurnTerminalKind::Failed,
+                    Some("provider disconnected".to_string()),
+                ),
+            )
+            .await
+            .expect("persist failed terminal");
+        let marker = service
+            .persist_session_rewound_marker(
+                session_id,
+                &source,
+                "turn-failed",
+                "runtime_failure",
+                Some("provider disconnected".to_string()),
+                failed_terminal.event_seq,
+                true,
+            )
+            .await
+            .expect("persist rewind marker");
+
+        assert_eq!(failed_terminal.event_seq, stable_terminal.event_seq + 3);
+        assert_eq!(marker.event_seq, failed_terminal.event_seq + 1);
+        match &marker.notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => {
+                assert_eq!(marker.discarded_turn_id, "turn-failed");
+                assert_eq!(marker.stable_event_seq, stable_terminal.event_seq);
+                assert_eq!(marker.stable_turn_id.as_deref(), Some("turn-stable"));
+                assert_eq!(marker.reason, SessionRewindReason::RuntimeFailure);
+            }
+            event => panic!("expected session_rewound marker, got {event:?}"),
+        }
+
+        let transcript = service
+            .build_projected_transcript(session_id)
+            .await
+            .expect("build transcript");
+        let rendered = transcript
+            .into_messages()
+            .into_iter()
+            .filter_map(|message| message.first_text().map(ToString::to_string))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("stable prompt"));
+        assert!(rendered.contains("stable answer"));
+        assert!(!rendered.contains("failed prompt"));
+        assert!(!rendered.contains("partial failed answer"));
     }
 
     #[tokio::test]

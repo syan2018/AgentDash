@@ -46,6 +46,7 @@ impl TurnCommitter {
             &prepared.source,
             turn_id,
             &prepared.resolved_payload,
+            prepared.started_at_ms,
         )
         .await;
 
@@ -120,6 +121,7 @@ impl TurnCommitter {
         source: &agentdash_agent_protocol::SourceInfo,
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
+        started_at_ms: i64,
     ) {
         // 直接使用 resolve 阶段已转换好的 canonical 输入，不再二次 round-trip ContentBlock。
         if !resolved_payload.input.is_empty() {
@@ -138,7 +140,7 @@ impl TurnCommitter {
                 .await;
         }
 
-        let started = build_turn_started_envelope(session_id, source, turn_id);
+        let started = build_turn_started_envelope(session_id, source, turn_id, started_at_ms);
         let _ = self
             .deps
             .eventing

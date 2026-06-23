@@ -4,7 +4,7 @@
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
 //! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
 
-use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -121,34 +121,35 @@ impl SessionTurnProcessor {
             terminal_message = message;
         }
 
+        let completed_at_ms = chrono::Utc::now().timestamp_millis();
+        let terminal_timing = deps
+            .turn_supervisor
+            .active_turn_started_at_ms(&session_id, &turn_id)
+            .await
+            .map(|started_at_ms| TurnTiming::complete(started_at_ms, completed_at_ms));
+
         // 生成并持久化终态 notification
-        let terminal_notification = build_turn_terminal_notification(
+        let terminal_notification = build_turn_terminal_notification_with_timing(
             &session_id,
             &source,
             &turn_id,
             terminal_kind,
             terminal_message.clone(),
+            terminal_timing,
         );
         let terminal_event = deps
             .eventing
             .persist_notification_deferred_broadcast(&session_id, terminal_notification)
             .await;
 
-        // 清理 turn 状态 — 回到 Idle。
-        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
-        // 会被当前 terminal turn 拦住。即使 terminal event 持久化失败，也必须
-        // 释放 active turn，避免 session 永久卡在 running。
-        deps.turn_supervisor.clear_active_turn(&session_id).await;
-
-        let terminal_event_seq = match terminal_event {
+        let (terminal_event_seq, terminal_event) = match terminal_event {
             Ok(event) => {
                 let event_seq = event.event_seq;
-                deps.eventing
-                    .broadcast_persisted_event(&session_id, event)
-                    .await;
-                event_seq
+                (event_seq, event)
             }
             Err(error) => {
+                // terminal 持久化失败仍然释放 active turn，避免 session 永久卡住。
+                deps.turn_supervisor.clear_active_turn(&session_id).await;
                 tracing::error!(
                     session_id = %session_id,
                     turn_id = %turn_id,
@@ -158,6 +159,51 @@ impl SessionTurnProcessor {
                 return;
             }
         };
+
+        let rewind_event = if terminal_kind.requires_rewind_marker() {
+            match deps
+                .eventing
+                .persist_session_rewound_marker(
+                    &session_id,
+                    &source,
+                    &turn_id,
+                    terminal_kind.rewind_reason(),
+                    terminal_message.clone(),
+                    terminal_event_seq,
+                    false,
+                )
+                .await
+            {
+                Ok(event) => Some(event),
+                Err(error) => {
+                    tracing::error!(
+                        session_id = %session_id,
+                        turn_id = %turn_id,
+                        terminal_event_seq,
+                        error = %error,
+                        "Session rewind marker 持久化失败，仍释放 active turn"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // 清理 turn 状态 — 回到 Idle。
+        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
+        // 会被当前 terminal turn 拦住。即使 rewind marker 持久化失败，也必须
+        // 释放 active turn，避免 session 永久卡在 running。
+        deps.turn_supervisor.clear_active_turn(&session_id).await;
+
+        deps.eventing
+            .broadcast_persisted_event(&session_id, terminal_event)
+            .await;
+        if let Some(rewind_event) = rewind_event {
+            deps.eventing
+                .broadcast_persisted_event(&session_id, rewind_event)
+                .await;
+        }
 
         let terminal_effect_input = TerminalEffectDispatchInput {
             session_id: session_id.clone(),
@@ -188,10 +234,63 @@ impl SessionTurnProcessor {
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, envelope).await;
         }
+        let notification = Self::notification_with_turn_duration(deps, session_id, envelope).await;
         let _ = deps
             .eventing
-            .persist_notification(session_id, envelope.clone())
+            .persist_notification(session_id, notification)
             .await;
+    }
+
+    async fn notification_with_turn_duration(
+        deps: &SessionTurnProcessorDeps,
+        session_id: &str,
+        envelope: &BackboneEnvelope,
+    ) -> BackboneEnvelope {
+        let BackboneEvent::TurnCompleted(completed) = &envelope.event else {
+            return envelope.clone();
+        };
+        let turn_id = envelope
+            .trace
+            .turn_id
+            .as_deref()
+            .unwrap_or(completed.turn.id.as_str());
+        let Some(started_at_ms) = deps
+            .turn_supervisor
+            .active_turn_started_at_ms(session_id, turn_id)
+            .await
+        else {
+            return envelope.clone();
+        };
+        let completed_at_ms = chrono::Utc::now().timestamp_millis();
+        let timing = TurnTiming::complete(started_at_ms, completed_at_ms);
+        let mut envelope = envelope.clone();
+        if let BackboneEvent::TurnCompleted(completed) = &mut envelope.event {
+            completed.turn.started_at = completed
+                .turn
+                .started_at
+                .or(Some(timing.started_at_ms.div_euclid(1000)));
+            completed.turn.completed_at = completed
+                .turn
+                .completed_at
+                .or(Some(timing.completed_at_ms.div_euclid(1000)));
+            completed.turn.duration_ms = completed.turn.duration_ms.or(Some(timing.duration_ms));
+        }
+        envelope
+    }
+}
+
+impl TurnTerminalKind {
+    fn requires_rewind_marker(self) -> bool {
+        matches!(self, Self::Failed | Self::Interrupted | Self::Lost)
+    }
+
+    fn rewind_reason(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "runtime_failure",
+            Self::Interrupted => "runtime_interrupted",
+            Self::Lost => "runtime_lost",
+        }
     }
 }
 
@@ -201,7 +300,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use agentdash_agent_protocol::SourceInfo;
+    use agentdash_agent_protocol::{PlatformEvent, SourceInfo};
     use agentdash_spi::hooks::{HookEffect, HookRuntimeAccess};
     use agentdash_spi::{
         AgentConfig, AgentConnector, CapabilityState, ConnectorCapabilities, ConnectorError,
@@ -226,6 +325,7 @@ mod tests {
         TerminalHookTriggerPort, TerminalHookTriggerRequest,
     };
     use super::super::turn_supervisor::TurnSupervisor;
+    use super::super::types::{ExecutionStatus, SessionMeta, TitleSource};
     use super::*;
     use crate::session::persistence::{SessionStoreError, SessionStoreResult};
 
@@ -309,6 +409,146 @@ mod tests {
         SessionTurnProcessor::run(deps, config, rx).await;
 
         assert!(!registry.has_active_turn(session_id).await);
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_persists_duration_rewind_and_allows_next_prompt() {
+        let session_id = "sess-terminal-failed-recovers";
+        let turn_id = "turn-1";
+        let registry = SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new())));
+        let supervisor = TurnSupervisor::new(registry.clone());
+        supervisor
+            .claim_prompt(session_id)
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                session_id,
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                TurnExecution::new_with_started_at(
+                    turn_id.to_string(),
+                    ExecutionSessionFrame {
+                        turn_id: turn_id.to_string(),
+                        working_directory: PathBuf::from("."),
+                        environment_variables: HashMap::new(),
+                        executor_config: AgentConfig::new("PI_AGENT"),
+                        mcp_servers: Vec::new(),
+                        vfs: None,
+                        backend_execution: None,
+                        runtime_backend_anchor: None,
+                        identity: None,
+                    },
+                    CapabilityState::default(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    chrono::Utc::now().timestamp_millis().saturating_sub(1_500),
+                ),
+            )
+            .await;
+        assert!(registry.has_active_turn(session_id).await);
+
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&SessionMeta {
+                id: session_id.to_string(),
+                title: "Test".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_delivery_status: ExecutionStatus::Running,
+                last_turn_id: Some(turn_id.to_string()),
+                last_terminal_message: None,
+                executor_session_id: None,
+            })
+            .await
+            .expect("create session meta");
+        let deps = SessionTurnProcessorDeps {
+            turn_supervisor: supervisor.clone(),
+            eventing: SessionEventingService::new(
+                stores.clone(),
+                registry.clone(),
+                Arc::new(NoopConnector),
+            ),
+            effects: SessionEffectsService::new(TerminalEffectDeps {
+                terminal_effects: stores.terminal_effects.clone(),
+                hook_trigger: Arc::new(NoopHookTrigger),
+                terminal_callback: Arc::new(RwLock::new(None)),
+                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+                auto_resume: Arc::new(NoopAutoResume),
+            }),
+        };
+        let config = SessionTurnProcessorConfig {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.to_string(),
+            source: SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "unit".to_string(),
+                executor_id: None,
+            },
+            hook_runtime: None,
+            post_turn_handler: None,
+        };
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(TurnEvent::Terminal {
+            kind: TurnTerminalKind::Failed,
+            message: Some("provider disconnected".to_string()),
+        })
+        .expect("terminal event should be queued");
+        drop(tx);
+
+        SessionTurnProcessor::run(deps, config, rx).await;
+
+        assert!(!registry.has_active_turn(session_id).await);
+        supervisor
+            .claim_prompt(session_id)
+            .await
+            .expect("failed terminal cleanup should allow next prompt");
+        supervisor.clear_active_turn(session_id).await;
+
+        let events = stores
+            .events
+            .list_all_events(session_id)
+            .await
+            .expect("read events");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_seq + 1, events[1].event_seq);
+
+        match &events[0].notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
+                assert_eq!(key, "turn_terminal");
+                assert_eq!(
+                    value
+                        .get("terminal_type")
+                        .and_then(serde_json::Value::as_str),
+                    Some("turn_failed")
+                );
+                let duration_ms = value
+                    .get("duration_ms")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("duration_ms should be present");
+                assert!(duration_ms >= 1_000);
+                assert!(value.get("started_at_ms").is_some());
+                assert!(value.get("completed_at_ms").is_some());
+            }
+            event => panic!("expected turn_terminal event, got {event:?}"),
+        }
+
+        match &events[1].notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => {
+                assert_eq!(marker.discarded_turn_id, turn_id);
+                assert_eq!(marker.stable_event_seq, 0);
+                assert_eq!(
+                    marker.reason,
+                    agentdash_agent_protocol::SessionRewindReason::RuntimeFailure
+                );
+            }
+            event => panic!("expected session_rewound event, got {event:?}"),
+        }
     }
 
     struct FailingEventStore;

@@ -35,6 +35,12 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "workspace_module_presented",
   "workspace_module_present_failed",
   "context_frame",
+  "provider_attempt_status",
+  "provider_retry",
+  "provider_status",
+  "session_rewound",
+  "session_rebuilt",
+  "turn_discarded",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([

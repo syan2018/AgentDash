@@ -1,6 +1,6 @@
 use agentdash_agent_types::DynAgentTool;
 use agentdash_domain::canvas::Canvas;
-use agentdash_spi::{AuthIdentity, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
+use agentdash_spi::{RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
 
@@ -19,8 +19,11 @@ use super::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
+    AgentRunFrameSurfaceError, AgentRunSurfaceProjectionContext,
+    AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
 };
 use crate::canvas::resolve_canvas_binding_files;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
@@ -99,30 +102,23 @@ impl SessionCapabilityService {
             .map_err(|error| error.to_string())
     }
 
-    /// Canvas expose 的生产写入路径：先写新的 AgentFrame revision，再采用到 active runtime。
-    pub(crate) async fn expose_canvas_mount_revision_and_adopt(
+    pub(crate) async fn expose_canvas_mount_revision_and_adopt_with_context(
         &self,
-        session_id: &str,
+        context: &AgentRunSurfaceProjectionContext,
         canvas: &Canvas,
     ) -> Result<Vfs, String> {
-        let target = self.resolve_runtime_session_target(session_id).await?;
+        let session_id = context.delivery_runtime_session_id.as_str();
         let frame_repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
             format!("session `{session_id}` 无 AgentFrame repository，无法写入 Canvas exposure")
         })?;
-        let current_frame = frame_repo
-            .get(target.frame_id)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("AgentFrame `{}` 不存在", target.frame_id))?;
+        let current_frame = &context.current_frame;
 
-        let before_state = project_capability_state_from_frame(&current_frame);
+        let before_state = context.capability_state.clone();
         let mut after_state = before_state.clone();
-        let Some(mut active_vfs) = after_state.vfs.active.clone() else {
-            return Err(format!(
-                "AgentFrame `{}` 缺少 VFS surface，拒绝将 live VFS 作为 Canvas exposure 事实源",
-                current_frame.id
-            ));
-        };
+        let mut active_vfs = context
+            .require_active_vfs()
+            .map_err(|error| error.to_string())?
+            .clone();
         append_canvas_mounts(&mut active_vfs, std::slice::from_ref(canvas));
         if let Some(vfs_service) = self.hub.vfs_service.as_deref() {
             let binding_files =
@@ -130,8 +126,8 @@ impl SessionCapabilityService {
             refresh_canvas_mount_binding_files(&mut active_vfs, canvas, &binding_files);
         }
         after_state.vfs.active = Some(active_vfs.clone());
-        self.derive_skill_baseline_for_transition_state(
-            session_id,
+        self.derive_skill_baseline_for_projection_context(
+            context,
             Some(&before_state),
             &mut after_state,
         )
@@ -160,6 +156,150 @@ impl SessionCapabilityService {
         next_frame
             .typed_vfs()
             .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))
+    }
+
+    pub(crate) async fn resolve_agent_run_surface_projection_context(
+        &self,
+        source: AgentRunSurfaceProjectionContextSource,
+    ) -> Result<AgentRunSurfaceProjectionContext, String> {
+        match source {
+            AgentRunSurfaceProjectionContextSource::DeliveryRuntimeSession {
+                runtime_session_id,
+            } => {
+                self.resolve_surface_projection_context_for_session(&runtime_session_id)
+                    .await
+            }
+            AgentRunSurfaceProjectionContextSource::RuntimeTarget { target } => {
+                let context = self
+                    .resolve_surface_projection_context_for_session(
+                        &target.delivery_runtime_session_id,
+                    )
+                    .await?;
+                if context.target.frame_id != target.frame_id {
+                    return Err(format!(
+                        "AgentFrame `{}` 不是 delivery RuntimeSession `{}` 当前 projection target（当前为 `{}`）",
+                        target.frame_id,
+                        target.delivery_runtime_session_id,
+                        context.target.frame_id
+                    ));
+                }
+                Ok(context)
+            }
+            AgentRunSurfaceProjectionContextSource::EffectFrame {
+                effect_frame_id,
+                delivery_runtime_session_id,
+            } => {
+                let context = self
+                    .resolve_surface_projection_context_for_session(&delivery_runtime_session_id)
+                    .await?;
+                let frame_repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+                    format!(
+                        "session `{delivery_runtime_session_id}` 无 AgentFrame repository，无法校验 effect frame `{effect_frame_id}`"
+                    )
+                })?;
+                let effect_frame = frame_repo
+                    .get(effect_frame_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("effect AgentFrame `{effect_frame_id}` 不存在"))?;
+                if effect_frame.agent_id != context.current_frame.agent_id {
+                    return Err(format!(
+                        "effect AgentFrame `{effect_frame_id}` 属于 Agent `{}`，不匹配 delivery RuntimeSession `{}` 当前 Agent `{}`",
+                        effect_frame.agent_id,
+                        delivery_runtime_session_id,
+                        context.current_frame.agent_id
+                    ));
+                }
+                Ok(context)
+            }
+        }
+    }
+
+    async fn resolve_surface_projection_context_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<AgentRunSurfaceProjectionContext, String> {
+        let frame_repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!("session `{session_id}` 无 AgentFrame repository，无法解析 AgentRun projection context")
+        })?;
+        let anchor_repo = self.hub.execution_anchor_repo.as_ref().ok_or_else(|| {
+            format!("session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法解析 AgentRun projection context")
+        })?;
+        let agent_repo = self.hub.lifecycle_agent_repo.as_ref().ok_or_else(|| {
+            format!("session `{session_id}` 无 LifecycleAgent repository，无法解析 AgentRun projection context")
+        })?;
+        let (_anchor, _agent, current_frame) = resolve_current_frame_from_delivery_trace_ref(
+            session_id,
+            anchor_repo.as_ref(),
+            agent_repo.as_ref(),
+            frame_repo.as_ref(),
+        )
+        .await
+        .map_err(|error| format!("通过 anchor 查找 session `{session_id}` 当前 AgentFrame surface 失败: {error}"))?
+        .ok_or_else(|| {
+            format!("session `{session_id}` 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame，无法解析 AgentRun projection context")
+        })?;
+
+        let active = self
+            .hub
+            .runtime_registry
+            .with_runtime(session_id, |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.turn_state.active_turn())
+                    .map(|turn| {
+                        (
+                            turn.turn_id.clone(),
+                            turn.session_frame.identity.clone(),
+                            turn.session_frame.vfs.clone(),
+                            turn.session_frame.mcp_servers.clone(),
+                            turn.session_frame.runtime_backend_anchor.clone(),
+                        )
+                    })
+            })
+            .await;
+
+        let frame_state = project_capability_state_from_frame(&current_frame);
+        let (
+            active_turn_id,
+            identity,
+            active_turn_vfs,
+            active_turn_mcp_servers,
+            runtime_backend_anchor,
+        ) = match active {
+            Some((turn_id, identity, vfs, mcp_servers, runtime_backend_anchor)) => (
+                Some(turn_id),
+                identity,
+                vfs,
+                mcp_servers,
+                runtime_backend_anchor,
+            ),
+            None => (None, None, None, current_frame.typed_mcp_servers(), None),
+        };
+        let active_vfs = active_turn_vfs
+            .or_else(|| frame_state.vfs.active.clone())
+            .or_else(|| current_frame.typed_vfs());
+        let mcp_servers = if active_turn_mcp_servers.is_empty() {
+            current_frame.typed_mcp_servers()
+        } else {
+            active_turn_mcp_servers
+        };
+
+        Ok(AgentRunSurfaceProjectionContext {
+            target: AgentFrameRuntimeTarget {
+                frame_id: current_frame.id,
+                delivery_runtime_session_id: session_id.to_string(),
+            },
+            delivery_runtime_session_id: session_id.to_string(),
+            active_turn_id,
+            current_frame,
+            identity,
+            active_vfs,
+            mcp_servers,
+            runtime_backend_anchor,
+            capability_state: frame_state,
+            skill_discovery_provider_count: self.hub.skill_discovery_providers.len(),
+            extra_skill_dirs: self.hub.extra_skill_dirs.clone(),
+        })
     }
 
     pub(crate) async fn effective_capability_view_for_runtime_session(
@@ -223,6 +363,7 @@ impl SessionCapabilityService {
             .await
     }
 
+    #[cfg(test)]
     async fn derive_skill_baseline_for_transition_state(
         &self,
         session_id: &str,
@@ -244,6 +385,45 @@ impl SessionCapabilityService {
         after_state.skill.skills = merge_live_vfs_skill_entries(existing, skills);
     }
 
+    async fn derive_skill_baseline_for_projection_context(
+        &self,
+        context: &AgentRunSurfaceProjectionContext,
+        before_state: Option<&CapabilityState>,
+        after_state: &mut CapabilityState,
+    ) {
+        let Some(active_vfs) = after_state.vfs.active.as_ref() else {
+            return;
+        };
+        let Some(skills) = self
+            .derive_skill_entries_for_projection_context(context, active_vfs)
+            .await
+        else {
+            return;
+        };
+        let existing = before_state
+            .map(|state| state.skill.skills.as_slice())
+            .unwrap_or_else(|| after_state.skill.skills.as_slice());
+        after_state.skill.skills = merge_live_vfs_skill_entries(existing, skills);
+    }
+
+    async fn derive_skill_entries_for_projection_context(
+        &self,
+        context: &AgentRunSurfaceProjectionContext,
+        active_vfs: &Vfs,
+    ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
+        derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: self.hub.vfs_service.as_deref(),
+            active_vfs: Some(active_vfs),
+            identity: context.identity.as_ref(),
+            extra_skill_dirs: &self.hub.extra_skill_dirs,
+            skill_discovery_providers: &self.hub.skill_discovery_providers,
+            diagnostics_label: "agentrun_runtime_surface_projection",
+        })
+        .await
+        .map(|caps| caps.skills)
+    }
+
+    #[cfg(test)]
     async fn derive_skill_entries_for_active_vfs(
         &self,
         session_id: &str,
@@ -262,7 +442,11 @@ impl SessionCapabilityService {
         .map(|caps| caps.skills)
     }
 
-    async fn runtime_skill_projection_identity(&self, session_id: &str) -> Option<AuthIdentity> {
+    #[cfg(test)]
+    async fn runtime_skill_projection_identity(
+        &self,
+        session_id: &str,
+    ) -> Option<agentdash_spi::AuthIdentity> {
         self.hub
             .runtime_registry
             .with_runtime(session_id, |runtime| {
@@ -280,6 +464,18 @@ impl SessionCapabilityService {
         self.hub
             .apply_pending_runtime_context_transitions_on_turn(input)
             .await
+    }
+}
+
+#[async_trait]
+impl AgentRunSurfaceProjectionContextResolver for SessionCapabilityService {
+    async fn resolve_surface_projection_context(
+        &self,
+        source: AgentRunSurfaceProjectionContextSource,
+    ) -> Result<AgentRunSurfaceProjectionContext, AgentRunFrameSurfaceError> {
+        self.resolve_agent_run_surface_projection_context(source)
+            .await
+            .map_err(AgentRunFrameSurfaceError::ProjectionContextUnavailable)
     }
 }
 

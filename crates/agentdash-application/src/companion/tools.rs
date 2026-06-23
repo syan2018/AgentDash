@@ -479,6 +479,7 @@ impl CompanionRequestTool {
                 &dispatch_result.delivery_runtime_session_id,
                 LaunchCommand::companion_dispatch_input(
                     UserPromptInput::from_text(&dispatch_result.launch_source.dispatch_prompt),
+                    self.tool_context.identity().cloned(),
                     dispatch_result.launch_source.clone(),
                 ),
             )

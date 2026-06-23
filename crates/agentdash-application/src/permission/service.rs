@@ -387,7 +387,11 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
+    use crate::agent_run::{
+        AgentFrameBuilder, AgentFrameSurfaceExt, AgentRunFrameSurfaceError,
+        AgentRunGrantProjection, AgentRunSurfaceProjectionContext,
+        AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
+    };
     use crate::session::AgentFrameRuntimeTarget;
     use crate::session::capability_state::project_capability_state_from_frame;
     use agentdash_domain::permission::{
@@ -542,18 +546,6 @@ mod tests {
         items: Mutex<Vec<AgentFrame>>,
     }
 
-    struct FailingSurfaceAdopter;
-
-    #[async_trait::async_trait]
-    impl PermissionRuntimeSurfaceAdopter for FailingSurfaceAdopter {
-        async fn adopt_permission_runtime_surface(
-            &self,
-            _target: AgentFrameRuntimeTarget,
-        ) -> Result<(), String> {
-            Err("connector refresh failed".to_string())
-        }
-    }
-
     #[async_trait::async_trait]
     impl AgentFrameRepository for InMemoryFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
@@ -604,6 +596,111 @@ mod tests {
         }
     }
 
+    struct TestSurfaceBoundary {
+        frame_repo: Arc<InMemoryFrameRepo>,
+        fail_adoption: bool,
+    }
+
+    impl TestSurfaceBoundary {
+        fn new(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+            Self {
+                frame_repo,
+                fail_adoption: false,
+            }
+        }
+
+        fn failing(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+            Self {
+                frame_repo,
+                fail_adoption: true,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunSurfaceProjectionContextResolver for TestSurfaceBoundary {
+        async fn resolve_surface_projection_context(
+            &self,
+            source: AgentRunSurfaceProjectionContextSource,
+        ) -> Result<AgentRunSurfaceProjectionContext, AgentRunFrameSurfaceError> {
+            let (effect_frame_id, runtime_session_id) = match source {
+                AgentRunSurfaceProjectionContextSource::EffectFrame {
+                    effect_frame_id,
+                    delivery_runtime_session_id,
+                } => (effect_frame_id, delivery_runtime_session_id),
+                other => {
+                    return Err(AgentRunFrameSurfaceError::ProjectionContextUnavailable(
+                        format!("test resolver expected effect frame source, got {other:?}"),
+                    ));
+                }
+            };
+            let effect_frame = self
+                .frame_repo
+                .get(effect_frame_id)
+                .await
+                .map_err(|error| {
+                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(error.to_string())
+                })?
+                .ok_or_else(|| {
+                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
+                        "effect frame not found: {effect_frame_id}"
+                    ))
+                })?;
+            let current_frame = self
+                .frame_repo
+                .get_current(effect_frame.agent_id)
+                .await
+                .map_err(|error| {
+                    AgentRunFrameSurfaceError::ProjectionContextUnavailable(error.to_string())
+                })?
+                .unwrap_or(effect_frame);
+            let capability_state = project_capability_state_from_frame(&current_frame);
+            Ok(AgentRunSurfaceProjectionContext {
+                target: AgentFrameRuntimeTarget {
+                    frame_id: current_frame.id,
+                    delivery_runtime_session_id: runtime_session_id.clone(),
+                },
+                delivery_runtime_session_id: runtime_session_id,
+                active_turn_id: Some("turn-test".to_string()),
+                current_frame: current_frame.clone(),
+                identity: Some(agentdash_spi::AuthIdentity::system_routine(
+                    "permission-test",
+                )),
+                active_vfs: capability_state.vfs.active.clone(),
+                mcp_servers: current_frame.typed_mcp_servers(),
+                runtime_backend_anchor: None,
+                capability_state,
+                skill_discovery_provider_count: 0,
+                extra_skill_dirs: Vec::new(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PermissionRuntimeSurfaceAdopter for TestSurfaceBoundary {
+        async fn adopt_permission_runtime_surface(
+            &self,
+            _target: AgentFrameRuntimeTarget,
+        ) -> Result<(), String> {
+            if self.fail_adoption {
+                Err("connector refresh failed".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn permission_service(
+        grant_repo: Arc<InMemoryGrantRepo>,
+        frame_repo: Arc<InMemoryFrameRepo>,
+    ) -> PermissionGrantService {
+        PermissionGrantService::new_with_runtime_surface_adopter(
+            grant_repo,
+            frame_repo.clone(),
+            Arc::new(TestSurfaceBoundary::new(frame_repo)),
+        )
+    }
+
     async fn pending_grant(
         repo: &InMemoryGrantRepo,
         frame_id: Uuid,
@@ -651,7 +748,7 @@ mod tests {
             .expect("initial frame");
         let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
 
-        let result = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+        let result = permission_service(grant_repo.clone(), frame_repo.clone())
             .approve(grant.id, "user-1")
             .await
             .expect("approve");
@@ -751,7 +848,7 @@ mod tests {
             .await
             .expect("initial frame");
         let grant = pending_grant(&grant_repo, initial_frame.id, "file_write").await;
-        let service = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone());
+        let service = permission_service(grant_repo.clone(), frame_repo.clone());
 
         service.approve(grant.id, "user-1").await.expect("approve");
         let result = service.revoke(grant.id).await.expect("revoke");
@@ -791,7 +888,7 @@ mod tests {
         let error = PermissionGrantService::new_with_runtime_surface_adopter(
             grant_repo.clone(),
             frame_repo.clone(),
-            Arc::new(FailingSurfaceAdopter),
+            Arc::new(TestSurfaceBoundary::failing(frame_repo.clone())),
         )
         .approve(grant.id, "user-1")
         .await
@@ -837,7 +934,7 @@ mod tests {
         )
         .await;
 
-        let result = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+        let result = permission_service(grant_repo.clone(), frame_repo.clone())
             .approve(grant.id, "user-1")
             .await
             .expect("approve");
@@ -901,7 +998,7 @@ mod tests {
             .expect("policy");
         grant_repo.create(&grant).await.expect("persist");
 
-        let service = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone());
+        let service = permission_service(grant_repo.clone(), frame_repo.clone());
         service.approve(grant.id, "user-1").await.expect("approve");
         let result = service
             .expire(grant.id, Utc::now() + chrono::Duration::seconds(2))
@@ -935,7 +1032,7 @@ mod tests {
             .build(frame_repo.as_ref())
             .await
             .expect("initial frame");
-        let service = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone());
+        let service = permission_service(grant_repo.clone(), frame_repo.clone());
         let surface_grant =
             pending_grant_with_ttl(&grant_repo, initial_frame.id, "file_write", Some(1)).await;
         let admission_grant = pending_grant_with_ttl(
@@ -1032,7 +1129,7 @@ mod tests {
         grant.mark_scope_escalated().expect("scope escalated");
         grant_repo.update(&grant).await.expect("update grant");
 
-        let results = PermissionGrantService::new(grant_repo.clone(), frame_repo.clone())
+        let results = permission_service(grant_repo.clone(), frame_repo.clone())
             .expire_overdue_with_agent_run_effects(Utc::now() + chrono::Duration::seconds(2))
             .await
             .expect("bulk expire");

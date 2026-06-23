@@ -5,10 +5,15 @@
 //! own `AgentFrameBuilder`, full `CapabilityState` projection, or live-runtime
 //! adoption timing.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use agentdash_domain::workflow::AgentFrame;
+use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use thiserror::Error;
 use uuid::Uuid;
+
+use crate::session::AgentFrameRuntimeTarget;
 
 /// The single command boundary for AgentRun frame construction and runtime
 /// surface mutation.
@@ -151,6 +156,77 @@ pub enum RuntimeSurfaceKind {
     AgentProcedure,
 }
 
+/// Resolver input for AgentRun runtime surface projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentRunSurfaceProjectionContextSource {
+    /// Resolve current AgentRun surface from a delivery RuntimeSession.
+    DeliveryRuntimeSession { runtime_session_id: String },
+    /// Resolve and validate a concrete frame target against its delivery runtime.
+    RuntimeTarget { target: AgentFrameRuntimeTarget },
+    /// Resolve the AgentRun that owns an existing effect frame.
+    EffectFrame {
+        effect_frame_id: Uuid,
+        delivery_runtime_session_id: String,
+    },
+}
+
+impl AgentRunSurfaceProjectionContextSource {
+    pub fn delivery_runtime_session_id(&self) -> &str {
+        match self {
+            Self::DeliveryRuntimeSession { runtime_session_id } => runtime_session_id,
+            Self::RuntimeTarget { target } => &target.delivery_runtime_session_id,
+            Self::EffectFrame {
+                delivery_runtime_session_id,
+                ..
+            } => delivery_runtime_session_id,
+        }
+    }
+}
+
+/// AgentRun-owned projection facts used by runtime surface update adapters.
+///
+/// Business domains must not construct this object from partial local facts.
+/// It is resolved from the current delivery runtime, active turn and current
+/// AgentFrame so VFS/MCP/capability/identity move as one observable surface.
+#[derive(Debug, Clone)]
+pub struct AgentRunSurfaceProjectionContext {
+    pub target: AgentFrameRuntimeTarget,
+    pub delivery_runtime_session_id: String,
+    pub active_turn_id: Option<String>,
+    pub current_frame: AgentFrame,
+    pub identity: Option<AuthIdentity>,
+    pub active_vfs: Option<Vfs>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
+    pub capability_state: CapabilityState,
+    pub skill_discovery_provider_count: usize,
+    pub extra_skill_dirs: Vec<PathBuf>,
+}
+
+impl AgentRunSurfaceProjectionContext {
+    pub fn has_active_turn(&self) -> bool {
+        self.active_turn_id.is_some()
+    }
+
+    pub fn require_identity(&self) -> Result<&AuthIdentity, AgentRunFrameSurfaceError> {
+        self.identity.as_ref().ok_or_else(|| {
+            AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
+                "delivery RuntimeSession `{}` 缺少 active turn identity",
+                self.delivery_runtime_session_id
+            ))
+        })
+    }
+
+    pub fn require_active_vfs(&self) -> Result<&Vfs, AgentRunFrameSurfaceError> {
+        self.active_vfs.as_ref().ok_or_else(|| {
+            AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
+                "AgentFrame `{}` 缺少 active VFS surface",
+                self.current_frame.id
+            ))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentFrameWriteRole {
     FrameConstruction,
@@ -254,11 +330,22 @@ pub enum AgentRunFrameSurfaceError {
     ConstructionRejected(String),
     #[error("runtime surface update request rejected: {0}")]
     RuntimeSurfaceUpdateRejected(String),
+    #[error("runtime surface projection context unavailable: {0}")]
+    ProjectionContextUnavailable(String),
     #[error("frame surface adapter returned {actual:?} for {expected:?}")]
     RoleMismatch {
         expected: AgentFrameWriteRole,
         actual: AgentFrameWriteRole,
     },
+}
+
+/// Resolves AgentRun-owned facts for runtime surface update adapters.
+#[async_trait::async_trait]
+pub trait AgentRunSurfaceProjectionContextResolver: Send + Sync {
+    async fn resolve_surface_projection_context(
+        &self,
+        source: AgentRunSurfaceProjectionContextSource,
+    ) -> Result<AgentRunSurfaceProjectionContext, AgentRunFrameSurfaceError>;
 }
 
 /// Adapter implemented by the existing frame construction path.
@@ -366,6 +453,7 @@ fn ensure_role(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -504,6 +592,47 @@ mod tests {
     }
 
     #[test]
+    fn projection_context_exposes_runtime_update_target_and_identity() {
+        let agent_id = Uuid::new_v4();
+        let frame = AgentFrame::new_revision(agent_id, 7, "test");
+        let target = AgentFrameRuntimeTarget {
+            frame_id: frame.id,
+            delivery_runtime_session_id: "runtime-a".to_string(),
+        };
+        let identity = AuthIdentity::system_routine("surface-context-test");
+
+        let context = AgentRunSurfaceProjectionContext {
+            target: target.clone(),
+            delivery_runtime_session_id: "runtime-a".to_string(),
+            active_turn_id: Some("turn-a".to_string()),
+            current_frame: frame,
+            identity: Some(identity.clone()),
+            active_vfs: None,
+            mcp_servers: Vec::new(),
+            runtime_backend_anchor: None,
+            capability_state: CapabilityState::default(),
+            skill_discovery_provider_count: 0,
+            extra_skill_dirs: Vec::new(),
+        };
+
+        assert!(context.has_active_turn());
+        assert_eq!(context.target, target);
+        assert_eq!(
+            context.require_identity().expect("identity").user_id,
+            identity.user_id
+        );
+        assert_eq!(
+            AgentRunFrameSurfaceCommand::Update(
+                RuntimeSurfaceUpdateRequest::SkillInventoryChanged {
+                    provider_key: "external".to_string(),
+                },
+            )
+            .write_role(),
+            AgentFrameWriteRole::RuntimeSurfaceUpdate
+        );
+    }
+
+    #[test]
     fn agent_frame_write_boundary_allowlist_excludes_business_domains() {
         let boundaries = agent_frame_write_boundaries();
 
@@ -530,6 +659,50 @@ mod tests {
                     .any(|prefix| boundary.owner.starts_with(prefix)),
                 "{} must submit typed RuntimeSurfaceUpdateRequest instead of writing AgentFrame",
                 boundary.owner
+            );
+        }
+    }
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root")
+    }
+
+    fn read_workspace_file(relative_path: &str) -> String {
+        std::fs::read_to_string(workspace_root().join(relative_path))
+            .unwrap_or_else(|error| panic!("failed to read {relative_path}: {error}"))
+    }
+
+    #[test]
+    fn business_modules_and_api_routes_do_not_direct_adopt_runtime_surface() {
+        for path in [
+            "crates/agentdash-application/src/workspace_module/tools.rs",
+            "crates/agentdash-application/src/canvas/tools.rs",
+            "crates/agentdash-application/src/permission/service.rs",
+            "crates/agentdash-api/src/routes/permission_grants.rs",
+        ] {
+            let source = read_workspace_file(path);
+            assert!(
+                !source.contains("adopt_persisted_agent_frame_revision"),
+                "{path} must submit typed runtime surface requests instead of directly adopting persisted AgentFrame revisions"
+            );
+        }
+    }
+
+    #[test]
+    fn business_modules_and_api_routes_do_not_direct_expose_canvas_mount_revision() {
+        for path in [
+            "crates/agentdash-application/src/workspace_module/tools.rs",
+            "crates/agentdash-application/src/canvas/tools.rs",
+            "crates/agentdash-application/src/permission/service.rs",
+            "crates/agentdash-api/src/routes/permission_grants.rs",
+        ] {
+            let source = read_workspace_file(path);
+            assert!(
+                !source.contains("expose_canvas_mount_revision_and_adopt"),
+                "{path} must route Canvas visibility through the AgentRun frame/surface boundary"
             );
         }
     }

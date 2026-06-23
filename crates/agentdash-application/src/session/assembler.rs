@@ -29,7 +29,7 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx, SkillDiscoveryProvider};
+use agentdash_spi::{AuthIdentity, CapabilityScope, CapabilityScopeCtx, SkillDiscoveryProvider};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -232,8 +232,13 @@ impl<'a> SessionRequestAssembler<'a> {
         )
         .await?;
         if let Some(context) = selected_context.as_ref() {
-            self.resolve_selected_companion_capabilities(&mut prepared, context, spec.slice_mode)
-                .await?;
+            self.resolve_selected_companion_capabilities(
+                &mut prepared,
+                context,
+                spec.slice_mode,
+                spec.identity.as_ref(),
+            )
+            .await?;
         }
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
             frame_builder,
@@ -430,6 +435,7 @@ impl<'a> SessionRequestAssembler<'a> {
         prepared: &mut SessionAssemblyBuilder,
         context: &crate::session::construction_planner::ResolvedProjectAgentContext,
         slice_mode: CompanionSliceMode,
+        identity: Option<&AuthIdentity>,
     ) -> Result<(), String> {
         let active_vfs = prepared.vfs.as_ref();
         let cap_input = CapabilityResolverInput {
@@ -462,14 +468,13 @@ impl<'a> SessionRequestAssembler<'a> {
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
         capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
 
-        if let Some(caps) = derive_session_skill_baseline(SessionCapabilityProjectionInput {
-            vfs_service: Some(self.vfs_service),
+        if let Some(caps) = derive_companion_selected_project_agent_skill_baseline(
+            Some(self.vfs_service),
             active_vfs,
-            identity: None,
-            extra_skill_dirs: self.extra_skill_dirs,
-            skill_discovery_providers: self.skill_discovery_providers,
-            diagnostics_label: "companion_selected_project_agent",
-        })
+            identity,
+            self.extra_skill_dirs,
+            self.skill_discovery_providers,
+        )
         .await
         {
             capability_state.skill.skills = caps.skills;
@@ -479,6 +484,24 @@ impl<'a> SessionRequestAssembler<'a> {
         prepared.capability_state = Some(capability_state);
         Ok(())
     }
+}
+
+async fn derive_companion_selected_project_agent_skill_baseline(
+    vfs_service: Option<&VfsService>,
+    active_vfs: Option<&Vfs>,
+    identity: Option<&AuthIdentity>,
+    extra_skill_dirs: &[PathBuf],
+    skill_discovery_providers: &[Arc<dyn SkillDiscoveryProvider>],
+) -> Option<agentdash_spi::SessionBaselineCapabilities> {
+    derive_session_skill_baseline(SessionCapabilityProjectionInput {
+        vfs_service,
+        active_vfs,
+        identity,
+        extra_skill_dirs,
+        skill_discovery_providers,
+        diagnostics_label: "companion_selected_project_agent",
+    })
+    .await
 }
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
@@ -834,6 +857,7 @@ pub struct CompanionParentSpec<'a> {
     pub dispatch_prompt: String,
     pub selected_project_agent_id: Option<Uuid>,
     pub selected_agent_key: Option<String>,
+    pub identity: Option<AuthIdentity>,
 }
 
 pub struct CompanionParentWorkflowSpec<'a> {
@@ -1062,7 +1086,9 @@ mod tests {
         AgentProcedureContract, DefinitionSource, InputPortDefinition, LifecycleNodeType,
         OutputPortDefinition, WorkflowGraph, WorkflowGraphDraft, WorkflowInjectionSpec,
     };
+    use async_trait::async_trait;
     use std::collections::BTreeSet;
+    use std::sync::{Arc, Mutex};
 
     // ── companion bundle fragment 裁剪回归 ──
 
@@ -1129,6 +1155,45 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CapturingCompanionSkillProvider {
+        context: Mutex<Option<agentdash_spi::SkillDiscoveryContext>>,
+    }
+
+    #[async_trait]
+    impl SkillDiscoveryProvider for CapturingCompanionSkillProvider {
+        fn provider_key(&self) -> &str {
+            "test.companion.capture"
+        }
+
+        async fn discover(
+            &self,
+            context: agentdash_spi::SkillDiscoveryContext,
+        ) -> Result<agentdash_spi::SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError>
+        {
+            *self.context.lock().expect("context lock") = Some(context);
+            Ok(agentdash_spi::SkillDiscoveryOutput::default())
+        }
+    }
+
+    fn companion_projection_identity() -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: agentdash_spi::AuthMode::Enterprise,
+            user_id: "user-companion".to_string(),
+            subject: "subject-companion".to_string(),
+            display_name: Some("Companion User".to_string()),
+            email: Some("companion@example.com".to_string()),
+            avatar_url: None,
+            groups: vec![agentdash_spi::AuthGroup {
+                group_id: "design".to_string(),
+                display_name: Some("Design".to_string()),
+            }],
+            is_admin: false,
+            provider: Some("test".to_string()),
+            extra: serde_json::Value::Null,
+        }
+    }
+
     #[test]
     fn selected_agent_key_snapshot_must_match_project_agent_name() {
         let context = selected_context_with_name("reviewer");
@@ -1137,6 +1202,45 @@ mod tests {
         assert!(validate_selected_agent_key_snapshot(&context, Some("Reviewer")).is_ok());
         assert!(validate_selected_agent_key_snapshot(&context, None).is_ok());
         assert!(validate_selected_agent_key_snapshot(&context, Some("planner")).is_err());
+    }
+
+    #[tokio::test]
+    async fn companion_selected_project_agent_skill_provider_receives_identity() {
+        let vfs = Vfs {
+            mounts: vec![test_workspace_mount()],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let identity = companion_projection_identity();
+        let provider = Arc::new(CapturingCompanionSkillProvider::default());
+        let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider.clone()];
+
+        let _ = derive_companion_selected_project_agent_skill_baseline(
+            None,
+            Some(&vfs),
+            Some(&identity),
+            &[],
+            &providers,
+        )
+        .await;
+
+        let captured = provider
+            .context
+            .lock()
+            .expect("context lock")
+            .clone()
+            .expect("provider context");
+        assert_eq!(
+            captured.workspace_root_ref.as_deref(),
+            Some("workspace://test")
+        );
+        let user = captured.user.expect("user context");
+        assert_eq!(user.user_id, "user-companion");
+        assert_eq!(user.display_name.as_deref(), Some("Companion User"));
+        assert_eq!(user.email.as_deref(), Some("companion@example.com"));
+        assert_eq!(user.groups, vec!["design"]);
     }
 
     fn slot_set(bundle: &agentdash_spi::SessionContextBundle) -> std::collections::HashSet<String> {

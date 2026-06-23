@@ -1149,6 +1149,7 @@ mod tests {
         AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
         RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
+    use agentdash_spi::SkillContextExposure;
     use agentdash_spi::connector::RuntimeToolProvider;
     use agentdash_spi::hooks::{
         ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
@@ -1160,6 +1161,7 @@ mod tests {
         AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionContext,
         ExecutionSessionFrame, ExecutionTurnFrame, PromptPayload, ToolCapability, ToolCluster,
         ToolDefinition, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
+        context::capability::SkillEntry,
     };
     use futures::stream;
     use tokio::sync::RwLock;
@@ -1555,6 +1557,21 @@ mod tests {
             capability_state,
             runtime_refs,
         )
+    }
+
+    fn external_integration_skill_entry() -> SkillEntry {
+        SkillEntry {
+            name: "jira-issue-lookup".to_string(),
+            capability_key: "external-integration/jira-issue-lookup".to_string(),
+            provider_key: "external-integration".to_string(),
+            local_name: "jira-issue-lookup".to_string(),
+            display_name: Some("Jira Issue Lookup".to_string()),
+            description: "Look up linked Jira issues.".to_string(),
+            file_path: "external-integration://skills/jira-issue-lookup/SKILL.md".to_string(),
+            base_dir: Some("external-integration://skills/jira-issue-lookup".to_string()),
+            exposure: SkillContextExposure::DefaultExposed,
+            disable_model_invocation: false,
+        }
     }
 
     #[tokio::test]
@@ -2549,6 +2566,150 @@ mod tests {
             .expect("binding should be saved");
         assert_eq!(binding.source_uri, "project://data/stats.csv");
         assert_eq!(binding.content_type, "text/csv");
+    }
+
+    #[tokio::test]
+    async fn invoke_canvas_bind_data_runtime_update_preserves_external_integration_skill() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
+        let base = tempfile::tempdir().expect("tempdir");
+        let active_run_id = Uuid::new_v4();
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let frame = AgentFrame::new_initial(Uuid::new_v4());
+        let frame_id = frame.id;
+        let agent_id = frame.agent_id;
+        frame_repo.create(&frame).await.expect("frame should save");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let mut agent =
+            LifecycleAgent::new_root(active_run_id, Uuid::new_v4(), AgentSource::Unknown);
+        agent.id = agent_id;
+        agent_repo.create(&agent).await.expect("agent should save");
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+            Arc::new(PendingConnector),
+            Some(Arc::new(EmptyHookProvider { active_run_id })),
+            Arc::new(MemorySessionPersistence::default()),
+        )
+        .with_vfs_service(vfs_service)
+        .with_agent_frame_repo(frame_repo.clone())
+        .with_lifecycle_gate_repo(gate_repo)
+        .with_lifecycle_agent_repo(agent_repo)
+        .with_execution_anchor_repo(anchor_repo.clone());
+        let session = hub
+            .create_session("bind-workspace-module")
+            .await
+            .expect("session should create");
+        anchor_repo
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                &session.id,
+                active_run_id,
+                frame_id,
+                agent_id,
+            ))
+            .await
+            .expect("runtime anchor should save");
+        hub.ensure_session(&session.id).await;
+        let turn_id = hub
+            .start_prompt(
+                &session.id,
+                prompt_construction(&session.id, project_id, base.path()),
+            )
+            .await
+            .expect("prompt should start");
+
+        let mut frame_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        frame_state.workspace_module = WorkspaceModuleDimension::all();
+        frame_state.vfs.active = Some(local_workspace_vfs(base.path()));
+        frame_state.skill.skills = vec![external_integration_skill_entry()];
+        let external_skill_key = frame_state.skill.skills[0].capability_key.clone();
+        AgentFrameBuilder::new(agent_id)
+            .with_capability_state(&frame_state)
+            .with_created_by("test_frame_switch", Some("canvas_bind".to_string()))
+            .with_runtime_session(session.id.clone())
+            .build(frame_repo.as_ref())
+            .await
+            .expect("test frame switch should save");
+
+        let handle = SharedSessionToolServicesHandle::default();
+        handle
+            .set(SessionToolServices {
+                core: hub.core_service(),
+                eventing: hub.eventing_service(),
+                control: hub.control_service(),
+                launch: hub.launch_service(),
+                hooks: hub.hook_service(),
+                capability: hub.capability_service(),
+            })
+            .await;
+
+        let gateway = Arc::new(RuntimeGateway::new());
+        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+            install_repo.clone(),
+            Arc::new(NoopChannelTransport),
+        ));
+        let tool = WorkspaceModuleInvokeTool::new(
+            install_repo,
+            canvas_repo.clone(),
+            project_id,
+            session.id.clone(),
+            None,
+            None,
+            gateway,
+            channel_invoker,
+        )
+        .with_runtime_visibility(handle);
+
+        let result = tool
+            .execute(
+                "tool-bind",
+                serde_json::json!({
+                    "module_id": "canvas:cvs-dashboard-a",
+                    "operation_key": "canvas.bind_data",
+                    "input": {
+                        "alias": "stats",
+                        "source_uri": "project://data/stats.csv"
+                    }
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("invoke canvas bind data");
+
+        assert!(!result.is_error, "expected success, got {result:?}");
+        let state = hub
+            .get_current_capability_state(&session.id)
+            .await
+            .expect("current capability state should exist");
+        let skill_debug = state
+            .skill
+            .skills
+            .iter()
+            .map(|skill| format!("{}@{}", skill.capability_key, skill.file_path))
+            .collect::<Vec<_>>();
+        assert!(
+            state
+                .skill
+                .skills
+                .iter()
+                .any(|skill| skill.capability_key == external_skill_key
+                    && skill.file_path.starts_with("external-integration://")),
+            "Canvas binding runtime update must preserve existing external integration skills; got {skill_debug:?}"
+        );
+        let active_vfs = state.vfs.active.expect("active VFS should exist");
+        assert!(
+            active_vfs
+                .mounts
+                .iter()
+                .any(|mount| mount.id == "cvs-dashboard-a"),
+            "Canvas binding should still refresh the Canvas VFS mount"
+        );
+        assert!(!turn_id.is_empty());
     }
 
     #[tokio::test]

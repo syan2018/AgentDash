@@ -13,7 +13,9 @@ pub use surface_service::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameWriteBoundary, AgentFrameWritePrimitive,
     AgentFrameWriteRole, AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
-    AgentRunRuntimeSurfaceUpdateAdapter, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameConstructionReason, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
+    AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
+    AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
+    CanvasVisibilityReason, FrameConstructionCommand, FrameConstructionReason,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    agent_frame_write_boundaries,
 };

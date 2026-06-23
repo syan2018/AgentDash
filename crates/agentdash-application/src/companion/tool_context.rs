@@ -1,5 +1,5 @@
 use agentdash_spi::hooks::{HookRuntimeAccess, RuntimeAdapterProvenance, SharedHookRuntime};
-use agentdash_spi::{AgentToolError, ExecutionContext};
+use agentdash_spi::{AgentToolError, AuthIdentity, ExecutionContext};
 use uuid::Uuid;
 
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
@@ -17,6 +17,7 @@ pub(crate) struct CompanionLifecycleAnchor {
 pub(crate) struct CompanionToolContext {
     delivery_runtime_session_id: Option<String>,
     turn_id: String,
+    identity: Option<AuthIdentity>,
     hook_runtime: Option<SharedHookRuntime>,
 }
 
@@ -31,6 +32,7 @@ impl CompanionToolContext {
         Self {
             delivery_runtime_session_id,
             turn_id: context.session.turn_id.clone(),
+            identity: context.session.identity.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
         }
     }
@@ -41,6 +43,10 @@ impl CompanionToolContext {
 
     pub(crate) fn hook_runtime(&self) -> Option<&SharedHookRuntime> {
         self.hook_runtime.as_ref()
+    }
+
+    pub(crate) fn identity(&self) -> Option<&AuthIdentity> {
+        self.identity.as_ref()
     }
 
     pub(crate) fn require_hook_runtime(

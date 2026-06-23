@@ -6,8 +6,9 @@ use uuid::Uuid;
 
 use crate::agent_run::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
-    AgentRunRuntimeSurfaceUpdateAdapter, CanvasVisibilityReason, RejectingFrameConstructionAdapter,
-    RuntimeSurfaceUpdateRequest,
+    AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContextResolver,
+    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceUpdateRequest,
 };
 use crate::canvas::normalize_canvas_mount_id;
 use crate::runtime_tools::SharedSessionToolServicesHandle;
@@ -76,14 +77,23 @@ impl AgentRunRuntimeSurfaceUpdateAdapter for CanvasRuntimeSurfaceUpdateAdapter {
         ensure_canvas_surface_request_targets_canvas(&request, &self.canvas).map_err(|error| {
             AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected(error.to_string())
         })?;
+        let context = self
+            .capability
+            .resolve_surface_projection_context(
+                AgentRunSurfaceProjectionContextSource::DeliveryRuntimeSession {
+                    runtime_session_id: self.session_id.clone(),
+                },
+            )
+            .await?;
         let active_vfs = self
             .capability
-            .expose_canvas_mount_revision_and_adopt(&self.session_id, &self.canvas)
+            .expose_canvas_mount_revision_and_adopt_with_context(&context, &self.canvas)
             .await
             .map_err(AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected)?;
         *self.active_vfs.lock().await = Some(active_vfs);
         let mut outcome = AgentRunFrameSurfaceCommandOutcome::runtime_surface_update();
-        outcome.runtime_session_id = Some(self.session_id.clone());
+        outcome.runtime_session_id = Some(context.delivery_runtime_session_id);
+        outcome.agent_id = Some(context.current_frame.agent_id);
         outcome.wrote_frame_revision = true;
         outcome.adopted_active_runtime = true;
         Ok(outcome)

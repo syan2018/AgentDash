@@ -12,11 +12,11 @@ use crate::ApplicationError;
 use crate::agent_run::{
     AgentFrameBuilder, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
     AgentRunFrameSurfaceService, AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateAdapter,
-    RejectingFrameConstructionAdapter, RuntimeSurfaceUpdateRequest,
+    AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
+    AgentRunSurfaceProjectionContextSource, RejectingFrameConstructionAdapter,
+    RuntimeSurfaceUpdateRequest,
 };
-use crate::session::capability_state::{
-    ToolCapabilityDimensionModule, project_capability_state_from_frame,
-};
+use crate::session::capability_state::ToolCapabilityDimensionModule;
 use crate::session::{AgentFrameRuntimeTarget, SessionCapabilityService};
 use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
@@ -30,7 +30,9 @@ use super::compiler::PermissionGrantCompiler;
 
 /// Live runtime adoption port used by the permission adapter.
 #[async_trait]
-pub trait PermissionRuntimeSurfaceAdopter: Send + Sync {
+pub trait PermissionRuntimeSurfaceAdopter:
+    AgentRunSurfaceProjectionContextResolver + Send + Sync
+{
     async fn adopt_permission_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
@@ -100,7 +102,7 @@ impl PermissionRuntimeSurfaceUpdateService {
         let adapter = PermissionGrantRuntimeSurfaceUpdateAdapter {
             projector: Self {
                 frame_repo: self.frame_repo.clone(),
-                adopter: None,
+                adopter: self.adopter.clone(),
             },
             grant: grant.clone(),
             outcome: outcome.clone(),
@@ -151,17 +153,24 @@ impl PermissionRuntimeSurfaceUpdateService {
                 grant.id
             ))
         })?;
-        let current_frame = self.resolve_current_effect_frame(effect_frame_id).await?;
-        let mut next_state = project_capability_state_from_frame(&current_frame);
+        let context = self
+            .resolve_projection_context(grant, effect_frame_id)
+            .await?;
+        let mut next_state = context.capability_state.clone();
         apply_requested_paths(&mut next_state, &surface_paths, approve)?;
 
         push_toolset_effect(&mut transition, &next_state)?;
         let effect_frame = self
-            .write_effect_frame(&current_frame, &next_state, created_by_kind, grant.id)
+            .write_effect_frame(
+                &context.current_frame,
+                &next_state,
+                created_by_kind,
+                grant.id,
+            )
             .await?;
         let adoption_target = AgentFrameRuntimeTarget {
             frame_id: effect_frame.id,
-            delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
+            delivery_runtime_session_id: context.delivery_runtime_session_id.clone(),
         };
 
         Ok(PermissionRuntimeSurfaceUpdateOutcome {
@@ -193,11 +202,27 @@ impl PermissionRuntimeSurfaceUpdateService {
             })
     }
 
-    async fn resolve_current_effect_frame(
+    async fn resolve_projection_context(
         &self,
+        grant: &PermissionGrant,
         effect_frame_id: Uuid,
-    ) -> Result<AgentFrame, ApplicationError> {
-        let anchor_frame = self
+    ) -> Result<AgentRunSurfaceProjectionContext, ApplicationError> {
+        let Some(resolver) = self.adopter.as_ref() else {
+            return Err(ApplicationError::Conflict(format!(
+                "PermissionGrant {} 缺少 AgentRun projection context resolver，拒绝从 effect_frame_id `{effect_frame_id}` 局部重建 runtime surface",
+                grant.id
+            )));
+        };
+        let context = resolver
+            .resolve_surface_projection_context(
+                AgentRunSurfaceProjectionContextSource::EffectFrame {
+                    effect_frame_id,
+                    delivery_runtime_session_id: grant.source_runtime_session_id.clone(),
+                },
+            )
+            .await
+            .map_err(permission_frame_surface_error_to_application)?;
+        let effect_frame = self
             .frame_repo
             .get(effect_frame_id)
             .await
@@ -205,11 +230,13 @@ impl PermissionRuntimeSurfaceUpdateService {
             .ok_or_else(|| {
                 ApplicationError::NotFound(format!("effect frame not found: {effect_frame_id}"))
             })?;
-        self.frame_repo
-            .get_current(anchor_frame.agent_id)
-            .await
-            .map_err(ApplicationError::from)
-            .map(|current| current.unwrap_or(anchor_frame))
+        if effect_frame.agent_id != context.current_frame.agent_id {
+            return Err(ApplicationError::Conflict(format!(
+                "permission grant {} effect_frame `{effect_frame_id}` 属于 Agent `{}`，不匹配 resolver 当前 Agent `{}`",
+                grant.id, effect_frame.agent_id, context.current_frame.agent_id
+            )));
+        }
+        Ok(context)
     }
 
     async fn write_effect_frame(
@@ -273,6 +300,9 @@ fn permission_frame_surface_error_to_application(
     match error {
         AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected(message) => {
             ApplicationError::BadRequest(message)
+        }
+        AgentRunFrameSurfaceError::ProjectionContextUnavailable(message) => {
+            ApplicationError::Conflict(message)
         }
         AgentRunFrameSurfaceError::ConstructionRejected(message) => {
             ApplicationError::Internal(message)

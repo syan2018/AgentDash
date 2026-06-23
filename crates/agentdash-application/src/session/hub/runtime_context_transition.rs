@@ -564,7 +564,9 @@ mod tests {
     use agentdash_agent_types::{
         AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     };
-    use agentdash_spi::{ToolCapability, context_usage_kind};
+    use agentdash_spi::{
+        SkillContextExposure, ToolCapability, context::capability::SkillEntry, context_usage_kind,
+    };
     use async_trait::async_trait;
     use serde_json::Value;
     use tokio_util::sync::CancellationToken;
@@ -610,6 +612,21 @@ mod tests {
                 is_error: false,
                 details: None,
             })
+        }
+    }
+
+    fn external_skill_entry() -> SkillEntry {
+        SkillEntry {
+            name: "jira-issue-lookup".to_string(),
+            capability_key: "external-integration/jira-issue-lookup".to_string(),
+            provider_key: "external-integration".to_string(),
+            local_name: "jira-issue-lookup".to_string(),
+            display_name: Some("Jira Issue Lookup".to_string()),
+            description: "Look up linked Jira issues.".to_string(),
+            file_path: "external-integration://skills/jira-issue-lookup/SKILL.md".to_string(),
+            base_dir: Some("external-integration://skills/jira-issue-lookup".to_string()),
+            exposure: SkillContextExposure::DefaultExposed,
+            disable_model_invocation: false,
         }
     }
 
@@ -675,6 +692,53 @@ mod tests {
         assert!(notice.rendered_text.contains("`key` (required, string)"));
         assert!(!notice.rendered_text.contains("```json"));
         assert!(notice.rendered_text.contains("Workflow key"));
+    }
+
+    #[test]
+    fn live_context_frame_omits_empty_capability_key_section_for_skill_only_delta() {
+        let before_state = CapabilityState::default();
+        let mut after_state = CapabilityState::default();
+        after_state.skill.skills = vec![external_skill_entry()];
+        let input = LiveRuntimeContextTransitionInput {
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "canvas-bind".to_string(),
+            before_state: Some(before_state),
+            after_state,
+            capability_keys: BTreeSet::new(),
+            key_delta: SetDelta::default(),
+            apply_mode: "live",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
+
+        assert_eq!(notice.kind, "capability_state_delta");
+        assert!(
+            !notice
+                .sections
+                .iter()
+                .any(|section| matches!(section, ContextFrameSection::CapabilityKeyDelta { .. }))
+        );
+        let added_skills = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::SkillDelta { added_skills, .. } => Some(added_skills),
+                _ => None,
+            })
+            .expect("skill-only semantic delta should still render a skill section");
+        assert_eq!(added_skills.len(), 1);
+        assert_eq!(
+            added_skills[0].capability_key,
+            "external-integration/jira-issue-lookup"
+        );
+        assert!(notice.rendered_text.contains("## Skill Delta"));
+        assert!(!notice.rendered_text.contains("Capability State Update"));
     }
 
     #[test]

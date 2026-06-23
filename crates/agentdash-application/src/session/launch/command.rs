@@ -165,11 +165,12 @@ impl LaunchCommand {
 
     pub fn companion_dispatch_input(
         input: UserPromptInput,
+        identity: Option<agentdash_spi::AuthIdentity>,
         companion: CompanionLaunchSource,
     ) -> Self {
         Self::command_with(
             input,
-            None,
+            identity,
             vec![LaunchModifier::Companion(Box::new(companion))],
             LaunchSource::CompanionDispatch,
         )
@@ -265,6 +266,7 @@ mod tests {
         };
         let companion_command = LaunchCommand::companion_dispatch_input(
             UserPromptInput::from_text("review this"),
+            None,
             companion.clone(),
         );
 

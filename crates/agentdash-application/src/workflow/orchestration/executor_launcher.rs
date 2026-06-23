@@ -479,7 +479,7 @@ mod launcher_drain_tests {
         OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
         RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef,
-        WorkflowGraph,
+        WorkflowGraph, WorkflowInjectionSpec,
     };
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
@@ -912,6 +912,74 @@ mod launcher_drain_tests {
         }
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CapturedAgentNodeComposition {
+        node_path: String,
+        attempt: u32,
+        runtime_session_id: Option<String>,
+        contract_output_ports: Vec<String>,
+        workflow_label: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct CapturingLifecycleFrameComposer {
+        calls: Mutex<Vec<CapturedAgentNodeComposition>>,
+    }
+
+    impl CapturingLifecycleFrameComposer {
+        fn calls(&self) -> Vec<CapturedAgentNodeComposition> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl AgentNodeFrameComposer for CapturingLifecycleFrameComposer {
+        async fn compose_frame(
+            &self,
+            builder: AgentFrameBuilder,
+            run: &LifecycleRun,
+            coordinate: &RuntimeNodeCoordinate,
+            plan_node: &PlanNode,
+            workflow_contract: Option<&AgentProcedureContract>,
+            workflow_label: Option<&str>,
+            runtime_session_id: Option<&str>,
+        ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(CapturedAgentNodeComposition {
+                    node_path: coordinate.node_path.clone(),
+                    attempt: coordinate.attempt,
+                    runtime_session_id: runtime_session_id.map(str::to_string),
+                    contract_output_ports: workflow_contract
+                        .map(|contract| {
+                            contract
+                                .output_ports
+                                .iter()
+                                .map(|port| port.key.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    workflow_label: workflow_label.map(str::to_string),
+                });
+
+            let writable_port_keys = plan_node
+                .output_ports
+                .iter()
+                .map(|port| port.key.clone())
+                .collect::<Vec<_>>();
+            let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
+                run_id: run.id,
+                orchestration_id: coordinate.orchestration_id,
+                node_path: &coordinate.node_path,
+                lifecycle_key: "test_lifecycle",
+                attempt: coordinate.attempt,
+                writable_port_keys,
+            });
+            Ok(builder.with_vfs_typed(&overlay))
+        }
+    }
+
     #[derive(Default)]
     struct InMemoryGateRepo {
         items: Mutex<Vec<LifecycleGate>>,
@@ -1142,6 +1210,24 @@ mod launcher_drain_tests {
         Arc<InMemoryFrameRepo>,
         Arc<InMemoryAnchorRepo>,
     ) {
+        launcher_with_procedure_frame_repo_and_composer(
+            run_repo,
+            gate_repo,
+            procedure_repo,
+            Arc::new(TestLifecycleFrameComposer),
+        )
+    }
+
+    fn launcher_with_procedure_frame_repo_and_composer(
+        run_repo: Arc<InMemoryRunRepo>,
+        gate_repo: Arc<InMemoryGateRepo>,
+        procedure_repo: Arc<dyn AgentProcedureRepository>,
+        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+    ) -> (
+        OrchestrationExecutorLauncher,
+        Arc<InMemoryFrameRepo>,
+        Arc<InMemoryAnchorRepo>,
+    ) {
         let frame_repo = Arc::new(InMemoryFrameRepo::default());
         let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
         let launcher = OrchestrationExecutorLauncher::from_repositories(
@@ -1157,7 +1243,7 @@ mod launcher_drain_tests {
                 execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
             },
-            Arc::new(TestLifecycleFrameComposer),
+            frame_composer,
         );
         (launcher, frame_repo, anchor_repo)
     }
@@ -1173,6 +1259,15 @@ mod launcher_drain_tests {
         OutputPortDefinition {
             key: key.to_string(),
             description: String::new(),
+            gate_strategy: GateStrategy::Existence,
+            gate_params: None,
+        }
+    }
+
+    fn contract_output_port(key: &str) -> OutputPortDefinition {
+        OutputPortDefinition {
+            key: key.to_string(),
+            description: format!("{key} output"),
             gate_strategy: GateStrategy::Existence,
             gate_params: None,
         }
@@ -1281,13 +1376,21 @@ mod launcher_drain_tests {
     }
 
     fn procedure(project_id: Uuid, key: &str) -> AgentProcedure {
+        procedure_with_contract(project_id, key, AgentProcedureContract::default())
+    }
+
+    fn procedure_with_contract(
+        project_id: Uuid,
+        key: &str,
+        contract: AgentProcedureContract,
+    ) -> AgentProcedure {
         AgentProcedure::new(
             project_id,
             key,
             "Agent Review",
-            "",
+            "Agent review procedure used by orchestration launcher tests.",
             DefinitionSource::UserAuthored,
-            AgentProcedureContract::default(),
+            contract,
         )
         .expect("agent procedure")
     }
@@ -1457,6 +1560,89 @@ mod launcher_drain_tests {
                 && mount.get("provider").and_then(serde_json::Value::as_str)
                     == Some("lifecycle_vfs")
         }));
+    }
+
+    #[tokio::test]
+    async fn launcher_materializes_agent_call_contract_through_frame_composer_and_node_started() {
+        let procedure_key = "agent.contract.review";
+        let node = plan_node(
+            "agent",
+            PlanNodeKind::AgentCall,
+            Some(agent_executor(procedure_key)),
+        );
+        let run = run_with_node(node);
+        let run_id = run.id;
+        let project_id = run.project_id;
+        let run_repo = Arc::new(InMemoryRunRepo::default());
+        run_repo.insert(run);
+        let procedure_repo = Arc::new(InMemoryProcedureRepo::default());
+        let contract = AgentProcedureContract {
+            injection: WorkflowInjectionSpec {
+                guidance: Some("Use the review contract.".to_string()),
+                ..WorkflowInjectionSpec::default()
+            },
+            output_ports: vec![contract_output_port("contract_result")],
+            ..AgentProcedureContract::default()
+        };
+        procedure_repo.insert(procedure_with_contract(project_id, procedure_key, contract));
+        let composer = Arc::new(CapturingLifecycleFrameComposer::default());
+        let (launcher, frame_repo, anchor_repo) = launcher_with_procedure_frame_repo_and_composer(
+            run_repo.clone(),
+            Arc::new(InMemoryGateRepo::default()),
+            procedure_repo,
+            composer.clone(),
+        );
+
+        let result = launcher
+            .drain_ready_nodes(run_id)
+            .await
+            .expect("drain ready nodes");
+
+        assert_eq!(result.launched_agent_nodes.len(), 1);
+        let launched = &result.launched_agent_nodes[0];
+        let calls = composer.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].node_path, "agent");
+        assert_eq!(calls[0].attempt, 1);
+        assert_eq!(
+            calls[0].runtime_session_id.as_deref(),
+            Some(launched.runtime_session_id.as_str())
+        );
+        assert_eq!(
+            calls[0].contract_output_ports,
+            vec!["contract_result".to_string()]
+        );
+        assert_eq!(
+            calls[0].workflow_label.as_deref(),
+            Some("`agent.contract.review` (Agent Review)")
+        );
+
+        let latest = latest_run(&run_repo, run_id);
+        let node = runtime_node(&latest, "agent");
+        assert_eq!(node.status, RuntimeNodeStatus::Running);
+        assert_eq!(
+            node.executor_run_ref,
+            Some(ExecutorRunRef::RuntimeSession {
+                session_id: launched.runtime_session_id.clone(),
+            })
+        );
+        assert_eq!(
+            node.trace_refs,
+            vec![RuntimeTraceRef::RuntimeSession {
+                session_id: launched.runtime_session_id.clone(),
+            }]
+        );
+
+        let frame = frame_repo.latest();
+        let anchor = anchor_repo.find(&launched.runtime_session_id);
+        assert_eq!(anchor.launch_frame_id, frame.id);
+        assert_eq!(anchor.run_id, run_id);
+        assert_eq!(
+            anchor.orchestration_id,
+            Some(latest.orchestrations[0].orchestration_id)
+        );
+        assert_eq!(anchor.node_path.as_deref(), Some("agent"));
+        assert_eq!(anchor.node_attempt, Some(1));
     }
 
     #[tokio::test]

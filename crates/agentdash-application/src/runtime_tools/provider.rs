@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::agent_run::AgentRunRuntimeSurfaceUpdateService;
 use crate::runtime_gateway::RuntimeGateway;
 use crate::session::{
-    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionHookService, SessionLaunchService,
+    SessionControlService, SessionCoreService, SessionEventingService, SessionHookService,
+    SessionLaunchService, SessionRuntimeTransitionService,
 };
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 
@@ -41,7 +41,7 @@ pub struct SessionToolServices {
     pub control: SessionControlService,
     pub launch: SessionLaunchService,
     pub hooks: SessionHookService,
-    pub capability: SessionCapabilityService,
+    pub runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
 }
 

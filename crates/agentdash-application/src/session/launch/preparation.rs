@@ -180,7 +180,7 @@ impl TurnPreparer {
             .pending_capability_transitions
             .is_empty()
         {
-            deps.capability
+            deps.runtime_transition
                 .apply_pending_runtime_context_transitions_on_turn(
                     crate::session::hub::ApplyPendingRuntimeContextTransitionInput {
                         session_id: &session_id,

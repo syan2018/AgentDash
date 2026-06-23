@@ -1937,7 +1937,7 @@ mod tests {
                 control: hub.control_service(),
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
-                capability: hub.capability_service(),
+                runtime_transition: hub.runtime_transition_service(),
                 runtime_surface_update: runtime_surface_update_for_test(
                     &hub,
                     frame_repo.clone(),
@@ -2024,7 +2024,7 @@ mod tests {
         );
 
         let state = hub
-            .get_current_capability_state(&session.id)
+            .current_runtime_capability_state(&session.id)
             .await
             .expect("current capability state should exist");
         let active_vfs = state.vfs.active.expect("active VFS should exist");
@@ -2176,7 +2176,7 @@ mod tests {
                 control: hub.control_service(),
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
-                capability: hub.capability_service(),
+                runtime_transition: hub.runtime_transition_service(),
                 runtime_surface_update: runtime_surface_update_for_test(
                     &hub,
                     frame_repo.clone(),
@@ -2247,7 +2247,7 @@ mod tests {
         );
 
         let state = hub
-            .get_current_capability_state(&session.id)
+            .current_runtime_capability_state(&session.id)
             .await
             .expect("current capability state should exist");
         let active_vfs = state.vfs.active.expect("active VFS should exist");

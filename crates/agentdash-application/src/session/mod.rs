@@ -6,7 +6,6 @@ pub mod baseline_capabilities;
 pub mod bootstrap;
 mod branching;
 pub mod capability_projection;
-pub mod capability_service;
 pub mod capability_state;
 mod compaction_checkpoint;
 mod compaction_context_frame;
@@ -19,6 +18,7 @@ mod context_frame;
 mod context_projector;
 mod context_usage_marking;
 mod context_usage_projection;
+pub mod runtime_transition_service;
 // context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
 pub mod continuation;
 pub mod control;
@@ -78,7 +78,6 @@ pub use capability_projection::{
     derive_session_capability_projection, derive_session_guidelines, derive_session_skill_baseline,
     merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
 };
-pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
     CompanionCapabilityDimensionModule, FrameCapabilitySurfaces, McpCapabilityDimensionModule,
@@ -137,6 +136,7 @@ pub use runtime_commands::{
 };
 pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
+pub use runtime_transition_service::SessionRuntimeTransitionService;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };

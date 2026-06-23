@@ -81,6 +81,12 @@ SessionHub 是否存在 active turn。
 需要 current VFS、MCP servers、backend anchor、capability state 或 AgentRun target 的 API/业务路径，
 应消费 AgentRun runtime surface query 或其 resource-surface adapter。
 
+Session 层不保留独立的 capability service。需要留在 session 的 capability 相关读写只限于
+live runtime coordination：active/latest runtime capability snapshot、runtime delivery command
+outbox，以及 turn 边界 pending runtime context transition 应用。这组能力由
+`SessionRuntimeTransitionService` 表达，原因是它协调 delivery session 的运行中转场，而不是拥有
+AgentRun current surface query 或 Canvas/WorkspaceModule/Permission 的业务 surface update。
+
 ## AgentFrame Exposure Boundary
 
 `AgentFrame` 是 AgentRun runtime surface revision 的存储实体，不是 RuntimeGateway/API current

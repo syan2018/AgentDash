@@ -78,8 +78,10 @@ impl SessionRuntimeInner {
         )
     }
 
-    pub fn capability_service(&self) -> super::super::capability_service::SessionCapabilityService {
-        super::super::capability_service::SessionCapabilityService::new(self.clone())
+    pub fn runtime_transition_service(
+        &self,
+    ) -> super::super::runtime_transition_service::SessionRuntimeTransitionService {
+        super::super::runtime_transition_service::SessionRuntimeTransitionService::new(self.clone())
     }
 
     pub fn new_with_hooks_and_persistence(

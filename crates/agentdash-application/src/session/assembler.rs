@@ -108,12 +108,13 @@ pub trait CompanionParentFactsProvider: Send + Sync {
 }
 
 #[async_trait]
-impl CompanionParentFactsProvider for crate::session::SessionCapabilityService {
+impl CompanionParentFactsProvider for crate::session::SessionRuntimeTransitionService {
     async fn latest_companion_parent_capability_state(
         &self,
         parent_session_id: &str,
     ) -> Option<CapabilityState> {
-        self.get_latest_capability_state(parent_session_id).await
+        self.latest_runtime_capability_state(parent_session_id)
+            .await
     }
 }
 

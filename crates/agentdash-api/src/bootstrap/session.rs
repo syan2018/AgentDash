@@ -15,11 +15,11 @@ use agentdash_application::runtime_tools::{
     VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
 use agentdash_application::session::{
-    EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionCapabilityService,
-    SessionControlService, SessionCoreService, SessionEffectsService, SessionEventingService,
-    SessionHookService, SessionLaunchService, SessionPersistence, SessionRuntimeBuilder,
-    SessionRuntimeService, SessionTerminalCallback, SessionTitleService, SessionToolResultCache,
-    SessionToolResultCachePut,
+    EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
+    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
+    SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
+    SessionToolResultCache, SessionToolResultCachePut,
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
@@ -61,7 +61,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_control: SessionControlService,
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
-    pub session_capability: SessionCapabilityService,
+    pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
@@ -190,7 +190,7 @@ pub(crate) async fn build_session_runtime(
     let session_control = session_runtime_builder.control_service();
     let session_launch = session_runtime_builder.launch_service();
     let session_hooks = session_runtime_builder.hook_service();
-    let session_capability = session_runtime_builder.capability_service();
+    let session_runtime_transition = session_runtime_builder.runtime_transition_service();
     let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
         AgentRunRuntimeSurfaceQueryDeps {
             anchor_repo: repos.execution_anchor_repo.clone(),
@@ -241,7 +241,7 @@ pub(crate) async fn build_session_runtime(
             control: session_control.clone(),
             launch: session_launch.clone(),
             hooks: session_hooks.clone(),
-            capability: session_capability.clone(),
+            runtime_transition: session_runtime_transition.clone(),
             runtime_surface_update: runtime_surface_update.clone(),
         })
         .await;
@@ -255,7 +255,7 @@ pub(crate) async fn build_session_runtime(
         session_control,
         session_launch,
         session_hooks,
-        session_capability,
+        session_runtime_transition,
         runtime_surface_update,
         session_effects,
         session_title,

@@ -1,6 +1,6 @@
-use agentdash_spi::Vfs;
 use std::io;
 
+#[cfg(test)]
 use super::capability_projection::{
     SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
 };
@@ -12,22 +12,34 @@ use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
 };
 use super::types::CapabilityState;
+#[cfg(test)]
+use agentdash_spi::Vfs;
 
+/// Session live runtime transition 协调入口。
+///
+/// 这里保留 delivery outbox、turn 边界 pending transition 应用，以及 active runtime
+/// snapshot 读取；AgentRun current surface query 和业务 surface update 不属于 session。
 #[derive(Clone)]
-pub struct SessionCapabilityService {
+pub struct SessionRuntimeTransitionService {
     hub: SessionRuntimeInner,
 }
 
-impl SessionCapabilityService {
+impl SessionRuntimeTransitionService {
     pub(super) fn new(hub: SessionRuntimeInner) -> Self {
         Self { hub }
     }
 
-    pub async fn get_current_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
+    pub async fn current_runtime_capability_state(
+        &self,
+        session_id: &str,
+    ) -> Option<CapabilityState> {
         self.hub.get_current_capability_state(session_id).await
     }
 
-    pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
+    pub async fn latest_runtime_capability_state(
+        &self,
+        session_id: &str,
+    ) -> Option<CapabilityState> {
         self.hub.get_latest_capability_state(session_id).await
     }
 
@@ -73,6 +85,7 @@ impl SessionCapabilityService {
             .await
     }
 
+    #[cfg(test)]
     async fn derive_skill_baseline_for_transition_state(
         &self,
         before_state: Option<&CapabilityState>,
@@ -90,6 +103,7 @@ impl SessionCapabilityService {
         after_state.skill.skills = merge_live_vfs_skill_entries(existing, skills);
     }
 
+    #[cfg(test)]
     async fn derive_skill_entries_for_active_vfs(
         &self,
         active_vfs: &Vfs,

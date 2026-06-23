@@ -6,7 +6,6 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
 use super::branching::SessionBranchingService;
-use super::capability_service::SessionCapabilityService;
 use super::construction_provider::SharedSessionConstructionProvider;
 use super::control::SessionControlService;
 use super::core::SessionCoreService;
@@ -17,6 +16,7 @@ use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
+use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
 use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::context::SharedContextAuditBus;
@@ -136,8 +136,8 @@ impl SessionRuntimeBuilder {
         self.inner.hook_service()
     }
 
-    pub fn capability_service(&self) -> SessionCapabilityService {
-        self.inner.capability_service()
+    pub fn runtime_transition_service(&self) -> SessionRuntimeTransitionService {
+        self.inner.runtime_transition_service()
     }
 
     pub fn active_runtime_surface_adopter(&self) -> Arc<dyn AgentRunActiveRuntimeSurfaceAdopter> {

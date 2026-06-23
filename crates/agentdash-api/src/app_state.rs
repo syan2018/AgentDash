@@ -21,9 +21,9 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{CurrentSurfaceRuntimeMcpAccess, RuntimeGateway};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
-    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
-    SessionRuntimeService, SessionTitleService,
+    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
+    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
@@ -59,7 +59,7 @@ pub struct ServiceSet {
     pub session_control: SessionControlService,
     pub session_launch: SessionLaunchService,
     pub session_hooks: SessionHookService,
-    pub session_capability: SessionCapabilityService,
+    pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
@@ -225,7 +225,7 @@ impl AppState {
         let session_control = session_bootstrap.session_control;
         let session_launch = session_bootstrap.session_launch;
         let session_hooks = session_bootstrap.session_hooks;
-        let session_capability = session_bootstrap.session_capability;
+        let session_runtime_transition = session_bootstrap.session_runtime_transition;
         let runtime_surface_update = session_bootstrap.runtime_surface_update;
         let session_effects = session_bootstrap.session_effects;
         let session_title = session_bootstrap.session_title;
@@ -325,7 +325,7 @@ impl AppState {
                 session_control,
                 session_launch,
                 session_hooks,
-                session_capability,
+                session_runtime_transition,
                 runtime_surface_update,
                 session_effects,
                 session_title,

@@ -37,7 +37,7 @@ impl AppStateSessionConstructionProvider {
             availability: state.services.backend_registry.clone(),
             platform_config: state.config.platform_config.clone(),
             audit_bus: state.services.audit_bus.clone(),
-            companion_facts: Arc::new(state.services.session_capability.clone()),
+            companion_facts: Arc::new(state.services.session_runtime_transition.clone()),
             connector: state.services.connector.clone(),
             extra_skill_dirs: state.services.extra_skill_dirs.clone(),
             skill_discovery_providers: state.services.skill_discovery_providers.clone(),

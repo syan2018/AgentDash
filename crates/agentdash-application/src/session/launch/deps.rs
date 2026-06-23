@@ -11,7 +11,6 @@ use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 
 use crate::context::SharedContextAuditBus;
-use crate::session::capability_service::SessionCapabilityService;
 use crate::session::construction_provider::SharedSessionConstructionProvider;
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
@@ -22,6 +21,7 @@ use crate::session::mailbox_delegate::AgentRunMailboxRuntimeBoundaryDeps;
 use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
+use crate::session::runtime_transition_service::SessionRuntimeTransitionService;
 use crate::session::title_generator::derive_session_title;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
@@ -54,7 +54,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     eventing: SessionEventingService,
     core: SessionCoreService,
     hooks: SessionHookService,
-    capability: SessionCapabilityService,
+    runtime_transition: SessionRuntimeTransitionService,
     effects: SessionEffectsService,
 }
 
@@ -81,7 +81,7 @@ impl SessionLaunchDeps {
             eventing: inner.eventing_service(),
             core: inner.core_service(),
             hooks: inner.hook_service(),
-            capability: inner.capability_service(),
+            runtime_transition: inner.runtime_transition_service(),
             effects: inner.effects_service(),
         }
     }
@@ -115,7 +115,7 @@ impl SessionLaunchDeps {
             runtime_tool_provider: self.runtime_tool_provider.clone(),
             mcp_tool_discovery: self.mcp_tool_discovery.clone(),
             hooks: self.hooks.clone(),
-            capability: self.capability.clone(),
+            runtime_transition: self.runtime_transition.clone(),
         }
     }
 
@@ -176,7 +176,7 @@ pub(super) struct TurnPreparationDeps {
     pub(super) base_system_prompt: String,
     pub(super) settings_repo: Option<Arc<dyn SettingsRepository>>,
     pub(super) hooks: SessionHookService,
-    pub(super) capability: SessionCapabilityService,
+    pub(super) runtime_transition: SessionRuntimeTransitionService,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
 }

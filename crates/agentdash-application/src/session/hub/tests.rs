@@ -1659,7 +1659,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     after_state.vfs.active = Some(canvas_skill_vfs());
     let transition = runtime_transition_from_state(&after_state, after_state.vfs.active.clone());
 
-    hub.capability_service()
+    hub.runtime_transition_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
             target_frame_id: uuid::Uuid::new_v4(),
             delivery_runtime_session_id: session.id.clone(),

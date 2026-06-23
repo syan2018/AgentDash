@@ -950,3 +950,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: PiAgent 大输出 lifecycle 链路收口
+
+**Date**: 2026-06-23
+**Task**: PiAgent 大输出 lifecycle 链路收口
+**Branch**: `codex/piagent-tool-result-bounding`
+
+### Summary
+
+补齐 PiAgent 大工具结果的 stable lifecycle item id、共享 SessionToolResultCache 写入与 lifecycle VFS 读取链路；补强 bounded fact、projection 不扩写和前后端/contract 验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7262091d1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

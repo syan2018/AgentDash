@@ -118,7 +118,7 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 
 `workspace_module_create(kind="canvas")` 同时做两件事：创建或接入 Canvas 资产，并把对应 `canvas:{mount_id}` runtime visible module ref 写入 AgentRun 当前 frame revision。这样 Agent 在同一轮可立即 `workspace_module_describe`、`workspace_module_invoke` 或 `workspace_module_present` 该实例。
 
-这个 runtime exposure 与 VFS Accumulate 维度配合使用：workspace module ref 让实例 operation/UI entry 可见，Canvas VFS exposure 让 `cvs-<mount_id>://...` 文件面和 `canvas-system` skill 可见。二者都表达当前 AgentRun 的可操作面，不改变 ProjectAgent 的长期 preset。
+这个 runtime exposure 与 VFS Accumulate 维度配合使用：workspace module ref 让实例 operation/UI entry 可见，Canvas VFS exposure 让 `cvs-<mount_id>://...` 文件面可见；`canvas-system` 作为 lifecycle-projected SkillAsset 进入同一 AgentRun skill baseline。它们都表达当前 AgentRun 的可操作面，不改变 ProjectAgent 的长期 preset。
 
 ## Registry Ordering
 

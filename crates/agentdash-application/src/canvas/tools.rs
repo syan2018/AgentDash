@@ -1,5 +1,5 @@
 use agentdash_domain::canvas::{
-    CANVAS_SYSTEM_SKILL_NAME, CANVAS_SYSTEM_SKILL_PATH, Canvas, CanvasDataBinding, CanvasRepository,
+    CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasDataBinding, CanvasRepository,
 };
 use agentdash_spi::AgentToolError;
 use schemars::JsonSchema;
@@ -150,11 +150,7 @@ pub(crate) async fn create_or_attach_canvas_for_session(
         title: canvas.title.clone(),
         entry_file: canvas.entry_file.clone(),
         skill_name: CANVAS_SYSTEM_SKILL_NAME.to_string(),
-        skill_path: format!(
-            "{}://{}",
-            build_canvas_mount_id(&canvas),
-            CANVAS_SYSTEM_SKILL_PATH
-        ),
+        skill_path: format!("lifecycle://skills/{CANVAS_SYSTEM_SKILL_NAME}/SKILL.md"),
     };
     Ok((canvas, result))
 }

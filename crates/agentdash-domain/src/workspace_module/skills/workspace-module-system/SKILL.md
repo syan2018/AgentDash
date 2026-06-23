@@ -28,7 +28,7 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 - The current session can edit Canvas files after create or present through `cvs-<mount_id>://...`.
 - The Canvas presentation URI is `canvas://{mount_id}`; `cvs-<mount_id>://...` is the authoring VFS URI.
 - Bind Canvas data by describing the module, then invoking the `canvas.bind_data` operation on that same `canvas:{mount_id}` module.
-- Load `canvas-system` after the Canvas VFS mount is visible, then follow it for source editing, runtime bridge usage, data binding details, and Canvas UI quality rules.
+- Use the lifecycle-projected `canvas-system` skill for source editing, runtime bridge usage, data binding details, and Canvas UI quality rules.
 
 ## Extension Modules
 

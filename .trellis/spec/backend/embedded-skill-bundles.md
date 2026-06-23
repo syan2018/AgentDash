@@ -57,13 +57,11 @@ pub const MY_SKILL_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
 - 若受管文件路径使用 `\`，materializer 应归一为 `/`。
 - 若受管文件内容与源码 bundle 不一致，materializer 以源码 bundle 为准覆盖。
 
-Canvas 当前使用：
-
-```rust
-ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
-```
-
-`ensure_canvas_system_skill` 只是 Canvas 兼容包装，不应继续扩展手写文件同步逻辑。
+Canvas authoring 协议使用项目级内嵌 Skill 路径：`canvas-system` 先通过
+`SkillAssetService::bootstrap_builtins(project_id, Some(key))` 同步到项目 SkillAsset，
+再经 AgentRun lifecycle VFS projection 暴露给 session。这样 Canvas runnable asset
+只保存 `Canvas.files` 的业务源码与数据文件，Agent-facing authoring 指南由 lifecycle skill
+surface 统一提供。
 
 项目级内嵌 Skill 当前通过 `SkillAssetService::bootstrap_builtins(project_id, Some(key))`
 同步到项目 SkillAsset，再由 AgentRun lifecycle VFS projection 暴露给 session。
@@ -87,9 +85,9 @@ Session 默认具备 memory 协议说明，而 skill 内容仍由 embedded bundl
 Workspace Module 操作协议也使用项目级内嵌 Skill 路径：`workspace-module-system` 应作为 builtin SkillAsset
 同步到项目 SkillAsset，并在 session 具备 `workspace_module` capability 时经 lifecycle VFS projection
 暴露。这个 skill 只描述 Agent 调用 `workspace_module_create/list/describe/invoke/present` 的顺序、
-`canvas:{mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态，以及 Canvas create 后再加载
-`canvas-system` 的边界。原因是 workspace module 是 session 级 bootstrap 协议，而 `canvas-system`
-通常依附于 Canvas VFS mount，只有 Canvas 已创建或展示后才稳定可见。
+`canvas:{mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态，以及 Canvas work
+如何进入 `canvas-system` 指南。原因是 workspace module 与 canvas authoring 都是 session 级
+Agent 操作协议，统一经 lifecycle skill surface 投影，避免指南可见性绑定到某个 Canvas 实例文件树。
 
 `workspace-module-system` 的最小注册建议：
 

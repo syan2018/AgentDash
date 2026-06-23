@@ -412,7 +412,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
                     };
                     let skill_projection = AgentRunLifecycleSkillProjectionFacts::ensure(
                         skill_asset_keys.clone(),
-                        [BuiltinLifecycleSkill::CompanionSystem],
+                        [
+                            BuiltinLifecycleSkill::CompanionSystem,
+                            BuiltinLifecycleSkill::CanvasSystem,
+                        ],
                     );
                     let surface = if let Some(workflow) = active_workflow {
                         projector

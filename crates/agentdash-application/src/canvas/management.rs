@@ -5,10 +5,7 @@ use uuid::Uuid;
 use crate::error::ApplicationError;
 use crate::repository_set::RepositorySet;
 use agentdash_domain::DomainError;
-use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, ensure_canvas_system_skill,
-    is_canvas_system_skill_path,
-};
+use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 
 #[derive(Debug, Clone, Default)]
 pub struct CanvasMutationInput {
@@ -120,7 +117,6 @@ pub fn build_canvas(
     let mut canvas = Canvas::new(project_id, mount_id, title, description);
     canvas.sandbox_config = CanvasSandboxConfig::react_default();
     apply_canvas_mutation(&mut canvas, input)?;
-    ensure_canvas_system_skill(&mut canvas.files);
     validate_canvas_contract(&canvas)?;
     Ok(canvas)
 }
@@ -129,11 +125,6 @@ pub fn apply_canvas_mutation(
     canvas: &mut Canvas,
     input: CanvasMutationInput,
 ) -> Result<(), DomainError> {
-    let had_canvas_system_skill = canvas
-        .files
-        .iter()
-        .any(|file| is_canvas_system_skill_path(&file.path));
-
     if let Some(title) = input.title {
         canvas.title = title;
     }
@@ -154,9 +145,6 @@ pub fn apply_canvas_mutation(
     }
 
     normalize_canvas(canvas)?;
-    if had_canvas_system_skill {
-        ensure_canvas_system_skill(&mut canvas.files);
-    }
     validate_canvas_contract(canvas)?;
     canvas.touch();
     Ok(())
@@ -364,7 +352,6 @@ pub fn normalize_canvas_mount_id(raw: &str) -> Result<String, DomainError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::canvas::CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH;
 
     #[test]
     fn build_canvas_uses_react_default_and_seed_file() {
@@ -383,12 +370,8 @@ mod tests {
             canvas
                 .files
                 .iter()
-                .any(|file| file.path == "skills/canvas-system/SKILL.md"
-                    && file.content.contains("name: canvas-system"))
+                .all(|file| !file.path.starts_with("skills/canvas-system/"))
         );
-        assert!(canvas.files.iter().any(|file| file.path
-            == CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH
-            && file.content.contains("mcp.call_tool")));
         assert!(
             canvas
                 .sandbox_config
@@ -398,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_canvas_mutation_preserves_existing_canvas_system_skill() {
+    fn apply_canvas_mutation_replaces_source_files_without_system_skill_injection() {
         let mut canvas = build_canvas(
             Uuid::new_v4(),
             Some("demo".to_string()),
@@ -424,13 +407,7 @@ mod tests {
             canvas
                 .files
                 .iter()
-                .any(|file| file.path == "skills/canvas-system/SKILL.md")
-        );
-        assert!(
-            canvas
-                .files
-                .iter()
-                .any(|file| file.path == CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH)
+                .all(|file| !file.path.starts_with("skills/canvas-system/"))
         );
     }
 

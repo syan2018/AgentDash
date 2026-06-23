@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::{
-    companion::COMPANION_SYSTEM_SKILL_NAME, routine::ROUTINE_MEMORY_SKILL_NAME,
-    workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+    canvas::CANVAS_SYSTEM_SKILL_NAME, companion::COMPANION_SYSTEM_SKILL_NAME,
+    routine::ROUTINE_MEMORY_SKILL_NAME, workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
 };
 use agentdash_spi::Vfs;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,7 @@ impl OrchestrationNodeProjectionInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
+    CanvasSystem,
     CompanionSystem,
     WorkspaceModuleSystem,
     RoutineMemory,
@@ -76,6 +77,7 @@ pub enum BuiltinLifecycleSkill {
 impl BuiltinLifecycleSkill {
     pub fn key(self) -> &'static str {
         match self {
+            Self::CanvasSystem => CANVAS_SYSTEM_SKILL_NAME,
             Self::CompanionSystem => COMPANION_SYSTEM_SKILL_NAME,
             Self::WorkspaceModuleSystem => WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
             Self::RoutineMemory => ROUTINE_MEMORY_SKILL_NAME,

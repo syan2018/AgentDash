@@ -1,4 +1,6 @@
-use agentdash_domain::workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME;
+use agentdash_domain::{
+    canvas::CANVAS_SYSTEM_SKILL_NAME, workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
@@ -11,21 +13,25 @@ pub(crate) async fn ensure_workspace_module_system_skill_asset(
     repos: &RepositorySet,
     project_id: Uuid,
 ) -> Result<(), ApplicationError> {
-    SkillAssetService::new(repos.skill_asset_repo.as_ref())
-        .bootstrap_builtins(project_id, Some(WORKSPACE_MODULE_SYSTEM_SKILL_NAME))
-        .await
-        .map(|_| ())
-        .map_err(|error| ApplicationError::Internal(error.to_string()))
+    let service = SkillAssetService::new(repos.skill_asset_repo.as_ref());
+    for builtin_key in [WORKSPACE_MODULE_SYSTEM_SKILL_NAME, CANVAS_SYSTEM_SKILL_NAME] {
+        service
+            .bootstrap_builtins(project_id, Some(builtin_key))
+            .await
+            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn append_workspace_module_system_skill_key(keys: &mut Vec<String>) {
-    if keys
-        .iter()
-        .any(|key| key.trim() == WORKSPACE_MODULE_SYSTEM_SKILL_NAME)
-    {
-        return;
+    append_unique_skill_key(keys, WORKSPACE_MODULE_SYSTEM_SKILL_NAME);
+    append_unique_skill_key(keys, CANVAS_SYSTEM_SKILL_NAME);
+}
+
+fn append_unique_skill_key(keys: &mut Vec<String>, skill_name: &str) {
+    if !keys.iter().any(|key| key.trim() == skill_name) {
+        keys.push(skill_name.to_string());
     }
-    keys.push(WORKSPACE_MODULE_SYSTEM_SKILL_NAME.to_string());
 }
 
 pub(crate) async fn project_workspace_module_system_skill_to_vfs(
@@ -63,6 +69,13 @@ mod tests {
         append_workspace_module_system_skill_key(&mut keys);
         append_workspace_module_system_skill_key(&mut keys);
 
-        assert_eq!(keys, vec!["writer", WORKSPACE_MODULE_SYSTEM_SKILL_NAME]);
+        assert_eq!(
+            keys,
+            vec![
+                "writer",
+                WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+                CANVAS_SYSTEM_SKILL_NAME
+            ]
+        );
     }
 }

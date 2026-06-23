@@ -22,7 +22,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 - Canvas mounts support `read`, `write`, `list`, and `search`; they do not support `exec`.
 - Use mount URIs such as `cvs-demo://src/main.tsx`; mount URIs are the stable authoring address instead of backend ids or absolute paths.
 - Use `canvas://{mount_id}` only as the presentation URI opened by `workspace_module_present`; use `cvs-<mount_id>://...` for file edits.
-- Keep managed skill files intact under `skills/canvas-system/`.
+- The `canvas-system` guide is provided by the session lifecycle skill surface; Canvas files contain only runnable asset source and supporting data files.
 
 ## Source Files
 

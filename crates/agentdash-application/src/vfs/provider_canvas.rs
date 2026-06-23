@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository, is_canvas_system_skill_path};
+use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository};
 
 use super::mount::PROVIDER_CANVAS_FS;
 use super::mount_inline::list_inline_entries;
@@ -92,11 +92,6 @@ impl MountProvider for CanvasFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
-        if is_canvas_system_skill_path(&normalized) {
-            return Err(MountError::OperationFailed(
-                "Canvas system skill 由系统维护，不能通过 VFS 覆盖".to_string(),
-            ));
-        }
         self.update_canvas(mount, move |canvas| {
             if let Some(file) = canvas.files.iter_mut().find(|file| file.path == normalized) {
                 file.content = content.to_string();
@@ -117,11 +112,6 @@ impl MountProvider for CanvasFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
-        if is_canvas_system_skill_path(&normalized) {
-            return Err(MountError::OperationFailed(
-                "Canvas system skill 由系统维护，不能删除".to_string(),
-            ));
-        }
         self.update_canvas(mount, move |canvas| {
             let before = canvas.files.len();
             canvas.files.retain(|file| file.path != normalized);
@@ -144,11 +134,6 @@ impl MountProvider for CanvasFsMountProvider {
     ) -> Result<(), MountError> {
         let from_path = normalize_mount_relative_path(from_path, false).map_err(map_mount_err)?;
         let to_path = normalize_mount_relative_path(to_path, false).map_err(map_mount_err)?;
-        if is_canvas_system_skill_path(&from_path) || is_canvas_system_skill_path(&to_path) {
-            return Err(MountError::OperationFailed(
-                "Canvas system skill 由系统维护，不能重命名".to_string(),
-            ));
-        }
         self.update_canvas(mount, move |canvas| {
             if canvas.files.iter().any(|file| file.path == to_path) {
                 return Err(MountError::OperationFailed(format!(

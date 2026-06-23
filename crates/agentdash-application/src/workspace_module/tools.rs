@@ -2105,10 +2105,14 @@ mod tests {
                 .iter()
                 .any(|mount| mount.id == "cvs-dashboard-a")
         );
-        assert!(state.skill.skills.iter().any(|skill| {
-            skill.name == "canvas-system"
-                && skill.file_path == "cvs-dashboard-a://skills/canvas-system/SKILL.md"
-        }));
+        assert!(
+            state
+                .skill
+                .skills
+                .iter()
+                .all(|skill| skill.file_path != "cvs-dashboard-a://skills/canvas-system/SKILL.md"),
+            "canvas-system must not be discovered from the Canvas VFS mount"
+        );
 
         let events = hub
             .eventing_service()

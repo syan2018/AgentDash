@@ -458,12 +458,11 @@ mod tests {
             .expect("canvas 应存在");
 
         assert_eq!(persisted.project_id, project_id);
-        assert_eq!(persisted.files.len(), 2);
         assert!(
             persisted
                 .files
                 .iter()
-                .any(|file| file.path == "skills/canvas-system/SKILL.md")
+                .all(|file| !file.path.starts_with("skills/canvas-system/"))
         );
         assert_eq!(persisted.bindings.len(), 1);
     }

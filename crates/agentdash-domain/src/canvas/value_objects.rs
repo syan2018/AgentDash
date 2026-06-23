@@ -2,15 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::embedded_skill::{
-    EmbeddedSkillBundle, EmbeddedSkillFile, EmbeddedSkillFileKind, EmbeddedSkillTargetFile,
-    ensure_embedded_skill_bundle,
-};
+use crate::embedded_skill::{EmbeddedSkillBundle, EmbeddedSkillFile, EmbeddedSkillFileKind};
 
 pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
-pub const CANVAS_SYSTEM_SKILL_PATH: &str = "skills/canvas-system/SKILL.md";
-pub const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH: &str =
-    "skills/canvas-system/references/runtime-bridge.md";
 const CANVAS_SYSTEM_SKILL_CONTENT: &str = include_str!("skills/canvas-system/SKILL.md");
 const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT: &str =
     include_str!("skills/canvas-system/references/runtime-bridge.md");
@@ -98,60 +92,6 @@ root.innerHTML = `
 "#
             .to_string(),
         }
-    }
-
-    pub fn default_canvas_system_skill() -> Self {
-        Self {
-            path: CANVAS_SYSTEM_SKILL_PATH.to_string(),
-            content: canvas_system_skill_content().to_string(),
-        }
-    }
-
-    pub fn default_canvas_system_runtime_bridge_reference() -> Self {
-        Self {
-            path: CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_PATH.to_string(),
-            content: canvas_system_runtime_bridge_reference_content().to_string(),
-        }
-    }
-}
-
-pub fn ensure_canvas_system_skill(files: &mut Vec<CanvasFile>) -> bool {
-    ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
-        .expect("canvas-system embedded skill bundle should be valid")
-        .changed()
-}
-
-pub fn is_canvas_system_skill_path(path: &str) -> bool {
-    path.trim().replace('\\', "/").trim_matches('/') == CANVAS_SYSTEM_SKILL_PATH
-}
-
-pub fn canvas_system_skill_content() -> &'static str {
-    CANVAS_SYSTEM_SKILL_CONTENT
-}
-
-pub fn canvas_system_runtime_bridge_reference_content() -> &'static str {
-    CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT
-}
-
-impl EmbeddedSkillTargetFile for CanvasFile {
-    fn path(&self) -> &str {
-        &self.path
-    }
-
-    fn content(&self) -> &str {
-        &self.content
-    }
-
-    fn set_path(&mut self, path: String) {
-        self.path = path;
-    }
-
-    fn set_content(&mut self, content: String) {
-        self.content = content;
-    }
-
-    fn from_path_content(path: String, content: String) -> Self {
-        Self { path, content }
     }
 }
 

@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 Canvas 跨层 contract 与 frontend/backend drift"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 Canvas VFS visibility 与 binding generated file 语义"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/backend-vfs-canvas-ids.md", "reason": "检查后端/VFS identity 研究要求落实"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 generated DTO 与前端字段命名"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/contracts-api-frontend-canvas-naming.md", "reason": "检查 API/contract/frontend 命名收束落实"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/runtime-bridge-binding-unification.md", "reason": "检查 runtime resource service 与 bridge/binding 底层统一落实"}

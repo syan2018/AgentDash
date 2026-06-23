@@ -1,0 +1,12 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Canvas VFS mount 与 provider 边界"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端架构与模块规范入口"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "VFS surface、blob read 与 Canvas visibility 契约"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "Canvas workspace_module 与 runtime exposure 能力投影契约"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Canvas workspace module、presentation URI 与 generated contract 跨层契约"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "WorkspacePanel Canvas tab 与 runtime surface 前端边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO/generated contract 字段命名与 mapper 约束"}
+{"file": ".trellis/spec/shared/index.md", "reason": "中文与跨端命名基础规范"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/backend-vfs-canvas-ids.md", "reason": "后端/VFS Canvas identity 收束研究"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/contracts-api-frontend-canvas-naming.md", "reason": "API/contract/frontend Canvas 命名收束研究"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/runtime-bridge-binding-unification.md", "reason": "runtime bridge 与 binding 底层统一研究"}

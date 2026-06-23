@@ -34,6 +34,9 @@ use agentdash_domain::canvas::{
     Canvas, CanvasDataBinding, CanvasFile, CanvasImportMap, CanvasSandboxConfig,
 };
 
+use crate::agent_run_runtime_surface::{
+    ApiCurrentRuntimeSurface, resolve_current_runtime_surface_for_project_for_api,
+};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
@@ -41,7 +44,6 @@ use crate::dto::{
     PromoteCanvasToExtensionRequest,
 };
 use crate::rpc::ApiError;
-use crate::session_construction::resolve_current_runtime_surface_for_api;
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -349,12 +351,13 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let vfs =
-        resolve_canvas_runtime_vfs(&state, &current_user, query.session_id.as_deref()).await?;
+    let runtime_surface =
+        resolve_canvas_runtime_surface(&state, &current_user, &canvas, query.session_id.as_deref())
+            .await?;
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id.clone(),
-        vfs.as_ref(),
+        runtime_surface.as_ref().map(|surface| &surface.vfs),
         state.services.vfs_service.as_ref(),
     )
     .await;
@@ -381,6 +384,15 @@ pub async fn invoke_canvas_runtime_action(
             "Canvas runtime invoke 缺少 session_id".to_string(),
         ));
     }
+    resolve_current_runtime_surface_for_project_for_api(
+        &state,
+        &current_user,
+        session_id,
+        canvas.project_id,
+        RuntimeSurfaceQueryPurpose::new("canvas_runtime_invoke"),
+        "Canvas runtime invoke",
+    )
+    .await?;
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -575,23 +587,25 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     }
 }
 
-async fn resolve_canvas_runtime_vfs(
+async fn resolve_canvas_runtime_surface(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
+    canvas: &agentdash_domain::canvas::Canvas,
     session_id: Option<&str>,
-) -> Result<Option<agentdash_spi::Vfs>, ApiError> {
+) -> Result<Option<ApiCurrentRuntimeSurface>, ApiError> {
     let Some(session_id) = session_id else {
         return Ok(None);
     };
 
     Ok(Some(
-        resolve_current_runtime_surface_for_api(
+        resolve_current_runtime_surface_for_project_for_api(
             state,
             current_user,
             session_id,
+            canvas.project_id,
             RuntimeSurfaceQueryPurpose::new("canvas_runtime_snapshot"),
+            "Canvas runtime bridge manifest",
         )
-        .await?
-        .vfs,
+        .await?,
     ))
 }

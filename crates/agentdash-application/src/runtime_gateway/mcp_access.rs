@@ -4,14 +4,13 @@ use agentdash_agent_types::AgentToolResult;
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
+use agentdash_application_ports::runtime_gateway_mcp_surface::{
+    RuntimeGatewayMcpSurfaceQueryError, RuntimeGatewayMcpSurfaceQueryPort,
+    RuntimeGatewayMcpSurfaceQueryPurpose, RuntimeGatewayMcpSurfaceWithBackend,
+};
 use agentdash_spi::{ConnectorError, RelayMcpCallContext};
 use async_trait::async_trait;
 use serde_json::Value;
-
-use crate::agent_run::{
-    AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
-    AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
-};
 
 use super::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
@@ -21,13 +20,13 @@ use super::{
 const RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT: &str = "runtime_mcp_tool_discovery";
 
 pub struct CurrentSurfaceRuntimeMcpAccess {
-    surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
     mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
 }
 
 impl CurrentSurfaceRuntimeMcpAccess {
     pub fn new(
-        surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+        surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
         mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
     ) -> Self {
         Self {
@@ -42,9 +41,9 @@ impl CurrentSurfaceRuntimeMcpAccess {
     ) -> Result<Vec<DiscoveredMcpTool>, RuntimeSessionMcpError> {
         let surface = self
             .surface_query
-            .current_runtime_surface_with_backend(
+            .current_runtime_mcp_surface_with_backend(
                 session_id,
-                RuntimeSurfaceQueryPurpose::new(RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT),
+                RuntimeGatewayMcpSurfaceQueryPurpose::new(RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT),
             )
             .await
             .map_err(runtime_surface_query_error_to_mcp)?;
@@ -89,8 +88,8 @@ impl RuntimeSessionMcpAccess for CurrentSurfaceRuntimeMcpAccess {
     }
 }
 
-fn discovery_request(surface: AgentRunRuntimeSurfaceWithBackend) -> McpToolDiscoveryRequest {
-    let AgentRunRuntimeSurfaceWithBackend {
+fn discovery_request(surface: RuntimeGatewayMcpSurfaceWithBackend) -> McpToolDiscoveryRequest {
+    let RuntimeGatewayMcpSurfaceWithBackend {
         surface,
         runtime_backend_anchor,
     } = surface;
@@ -133,9 +132,9 @@ fn runtime_mcp_entry_matches(entry: &DiscoveredMcpTool, input: &McpCallToolInput
 }
 
 fn runtime_surface_query_error_to_mcp(
-    error: AgentRunRuntimeSurfaceQueryError,
+    error: RuntimeGatewayMcpSurfaceQueryError,
 ) -> RuntimeSessionMcpError {
-    if let Some(anchor_error) = error.as_runtime_backend_anchor_error() {
+    if let Some(anchor_error) = error.runtime_backend_anchor_error {
         return RuntimeSessionMcpError::SessionUnavailable(anchor_error.to_string());
     }
     RuntimeSessionMcpError::SessionUnavailable(error.to_string())
@@ -161,6 +160,7 @@ mod tests {
 
     use agentdash_agent_types::{AgentTool, AgentToolError, ContentPart, ToolUpdateCallback};
     use agentdash_application_ports::mcp_discovery::McpToolDiscoveryRequest;
+    use agentdash_application_ports::runtime_gateway_mcp_surface::RuntimeGatewayMcpSurface;
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::{
@@ -171,11 +171,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::agent_run::{
-        AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
-        AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
-    };
-    use crate::lifecycle::AgentRunRuntimeAddress;
     use crate::runtime_gateway::{
         MCP_CALL_TOOL_ACTION, MCP_LIST_TOOLS_ACTION, RuntimeActionKey, RuntimeActor,
         RuntimeContext, RuntimeGateway, RuntimeInvocationRequest,
@@ -185,11 +180,11 @@ mod tests {
 
     #[derive(Default)]
     struct FakeSurfaceQuery {
-        surface: Mutex<Option<AgentRunRuntimeSurfaceWithBackend>>,
+        surface: Mutex<Option<RuntimeGatewayMcpSurfaceWithBackend>>,
     }
 
     impl FakeSurfaceQuery {
-        fn new(surface: AgentRunRuntimeSurfaceWithBackend) -> Self {
+        fn new(surface: RuntimeGatewayMcpSurfaceWithBackend) -> Self {
             Self {
                 surface: Mutex::new(Some(surface)),
             }
@@ -197,27 +192,13 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunRuntimeSurfaceQueryPort for FakeSurfaceQuery {
-        async fn current_runtime_surface(
+    impl RuntimeGatewayMcpSurfaceQueryPort for FakeSurfaceQuery {
+        async fn current_runtime_mcp_surface_with_backend(
             &self,
             _runtime_session_id: &str,
-            _purpose: RuntimeSurfaceQueryPurpose,
-        ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
-            Ok(self
-                .surface
-                .lock()
-                .expect("surface mutex poisoned")
-                .as_ref()
-                .expect("surface")
-                .surface
-                .clone())
-        }
-
-        async fn current_runtime_surface_with_backend(
-            &self,
-            _runtime_session_id: &str,
-            _purpose: RuntimeSurfaceQueryPurpose,
-        ) -> Result<AgentRunRuntimeSurfaceWithBackend, AgentRunRuntimeSurfaceQueryError> {
+            _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+        ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
+        {
             Ok(self
                 .surface
                 .lock()
@@ -362,27 +343,13 @@ mod tests {
         ))
     }
 
-    fn surface_with_backend() -> AgentRunRuntimeSurfaceWithBackend {
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let frame_id = Uuid::new_v4();
+    fn surface_with_backend() -> RuntimeGatewayMcpSurfaceWithBackend {
         let backend_anchor =
             RuntimeBackendAnchor::new("backend-1", RuntimeBackendAnchorSource::System)
                 .expect("backend anchor");
-        AgentRunRuntimeSurfaceWithBackend {
-            surface: AgentRunRuntimeSurface {
+        RuntimeGatewayMcpSurfaceWithBackend {
+            surface: RuntimeGatewayMcpSurface {
                 runtime_session_id: "session-1".to_string(),
-                run_id,
-                project_id: Uuid::new_v4(),
-                agent_id,
-                runtime_address: AgentRunRuntimeAddress {
-                    run_id,
-                    agent_id,
-                    frame_id,
-                },
-                launch_evidence_frame_id: frame_id,
-                current_surface_frame_id: frame_id,
-                surface_revision: 1,
                 capability_state: capability_state(),
                 vfs: vfs(),
                 mcp_servers: vec![RuntimeMcpServer {
@@ -393,25 +360,8 @@ mod tests {
                     },
                     uses_relay: true,
                 }],
-                runtime_backend_anchor: Some(backend_anchor.clone()),
                 active_turn_id: None,
                 identity: None,
-                provenance: AgentRunRuntimeSurfaceProvenance {
-                    launch_evidence_frame_id: frame_id,
-                    launch_created_by_kind: "test".to_string(),
-                    current_surface_frame_id: frame_id,
-                    surface_revision: 1,
-                    surface_created_by_kind: "test".to_string(),
-                    anchor_updated_at: chrono::Utc::now(),
-                    orchestration_id: None,
-                    node_path: None,
-                    node_attempt: None,
-                },
-                closure: AgentRunRuntimeSurfaceClosure {
-                    capability_field_present: true,
-                    vfs_field_present: true,
-                    mcp_field_present: true,
-                },
             },
             runtime_backend_anchor: backend_anchor,
         }
@@ -508,5 +458,33 @@ mod tests {
             .map(|tool| tool.tool_name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(tool_names, vec!["allowed_tool"]);
+    }
+
+    #[test]
+    fn production_mcp_access_does_not_import_session_or_frame_boundaries() {
+        let production_code = include_str!("mcp_access.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production segment");
+        let forbidden = [
+            concat!("Session", "Hub"),
+            concat!("Agent", "Frame"),
+            concat!("Agent", "Frame", "Surface", "Ext"),
+            concat!(
+                "resolve",
+                "_current",
+                "_frame",
+                "_from",
+                "_delivery",
+                "_trace",
+                "_ref"
+            ),
+        ];
+        for token in forbidden {
+            assert!(
+                !production_code.contains(token),
+                "runtime_gateway::mcp_access production code must not import or reference {token}"
+            );
+        }
     }
 }

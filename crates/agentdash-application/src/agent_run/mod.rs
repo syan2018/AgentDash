@@ -6,6 +6,7 @@ pub mod frame;
 pub mod mailbox;
 mod mailbox_runtime_adapter;
 pub mod message_delivery;
+mod presentation_read_model;
 mod project_agent_start;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
@@ -64,6 +65,12 @@ pub use mailbox_runtime_adapter::{
 pub use message_delivery::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,
 };
+pub use presentation_read_model::{
+    AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
+    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
+    RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel, SessionRuntimeControlPlaneReadModel,
+    SessionRuntimeControlPlaneStatusModel, SessionRuntimeControlReadModel,
+};
 pub use project_agent_start::{
     ProjectAgentRunInitialMailboxCommand, ProjectAgentRunInitialMailboxCommandPort,
     ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
@@ -88,7 +95,9 @@ pub use runtime_capability_projection::{
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
     AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryError,
-    AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
+    AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend,
+    AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
+    terminal_launch_target_from_current_surface, terminal_launch_target_from_vfs,
 };
 pub use runtime_surface_update::{
     AgentRunActiveRuntimeSurfaceAdopter, AgentRunRuntimeSurfaceUpdateDeps,

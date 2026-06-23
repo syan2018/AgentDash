@@ -10,15 +10,15 @@ use agentdash_application::vfs::{
 use agentdash_spi::Vfs;
 
 use crate::{
+    agent_run_runtime_surface::{
+        resolve_agent_run_resource_vfs_for_api, resolve_runtime_session_resource_vfs_for_api,
+    },
     app_state::AppState,
     auth::{
         ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
     },
     routes::sessions::ensure_session_permission,
     rpc::ApiError,
-    session_construction::{
-        resolve_agent_run_resource_vfs_for_api, resolve_runtime_session_resource_vfs_for_api,
-    },
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 

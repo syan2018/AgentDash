@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::runtime_gateway_mcp_surface::{
+    RuntimeGatewayMcpSurface, RuntimeGatewayMcpSurfaceQueryError,
+    RuntimeGatewayMcpSurfaceQueryPort, RuntimeGatewayMcpSurfaceQueryPurpose,
+    RuntimeGatewayMcpSurfaceWithBackend,
+};
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
@@ -19,6 +24,7 @@ use crate::lifecycle::surface::surface_projector::{
     AgentRunLifecycleSurface, AgentRunLifecycleSurfaceProjector, MessageStreamProjectionRef,
     MessageStreamTraceKind, OrchestrationNodeEvidenceRef,
 };
+use crate::vfs::PROVIDER_RELAY_FS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSurfaceQueryPurpose {
@@ -442,6 +448,80 @@ pub struct AgentRunRuntimeSurfaceWithBackend {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunTerminalLaunchTarget {
+    pub backend_id: String,
+    pub mount_root_ref: String,
+}
+
+pub fn terminal_launch_target_from_current_surface(
+    surface: &AgentRunRuntimeSurfaceWithBackend,
+) -> Result<AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError> {
+    terminal_launch_target_from_vfs(&surface.surface.vfs, &surface.runtime_backend_anchor)
+}
+
+pub fn terminal_launch_target_from_vfs(
+    vfs: &Vfs,
+    backend_anchor: &RuntimeBackendAnchor,
+) -> Result<AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError> {
+    let mount = if let Some(root_ref) = backend_anchor
+        .root_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|root_ref| !root_ref.is_empty())
+    {
+        vfs.mounts
+            .iter()
+            .find(|mount| mount.root_ref.trim() == root_ref)
+            .ok_or_else(|| AgentRunTerminalLaunchTargetError::MissingAnchorMount {
+                root_ref: root_ref.to_string(),
+            })?
+    } else {
+        vfs.default_mount()
+            .ok_or(AgentRunTerminalLaunchTargetError::MissingMount)?
+    };
+    if mount.provider != PROVIDER_RELAY_FS {
+        return Err(
+            AgentRunTerminalLaunchTargetError::UnsupportedMountProvider {
+                mount_id: mount.id.clone(),
+                provider: mount.provider.clone(),
+            },
+        );
+    }
+    let backend_id = backend_anchor.backend_id();
+    if backend_id.is_empty() {
+        return Err(AgentRunTerminalLaunchTargetError::MissingBackendId);
+    }
+    let mount_root_ref = mount.root_ref.trim();
+    if mount_root_ref.is_empty() {
+        return Err(AgentRunTerminalLaunchTargetError::MissingMountRootRef {
+            mount_id: mount.id.clone(),
+        });
+    }
+    Ok(AgentRunTerminalLaunchTarget {
+        backend_id: backend_id.to_string(),
+        mount_root_ref: mount_root_ref.to_string(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AgentRunTerminalLaunchTargetError {
+    #[error(
+        "AgentRun runtime surface 缺少 runtime backend anchor root_ref 对应的 relay mount: {root_ref}"
+    )]
+    MissingAnchorMount { root_ref: String },
+    #[error("AgentRun runtime surface 缺少可用 mount，无法创建终端")]
+    MissingMount,
+    #[error(
+        "AgentRun runtime surface mount `{mount_id}` 使用 provider `{provider}`，无法创建交互式终端"
+    )]
+    UnsupportedMountProvider { mount_id: String, provider: String },
+    #[error("AgentRun runtime backend anchor 缺少 backend_id，无法创建终端")]
+    MissingBackendId,
+    #[error("AgentRun runtime surface mount `{mount_id}` 缺少 root_ref，无法创建终端")]
+    MissingMountRootRef { mount_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunRuntimeSurfaceProvenance {
     pub launch_evidence_frame_id: Uuid,
     pub launch_created_by_kind: String,
@@ -621,6 +701,58 @@ impl AgentRunRuntimeSurfaceQueryError {
             Self::BackendAnchorDerivation { source, .. } => Some(source.clone()),
             _ => None,
         }
+    }
+}
+
+impl From<AgentRunRuntimeSurfaceWithBackend> for RuntimeGatewayMcpSurfaceWithBackend {
+    fn from(surface_with_backend: AgentRunRuntimeSurfaceWithBackend) -> Self {
+        let AgentRunRuntimeSurfaceWithBackend {
+            surface,
+            runtime_backend_anchor,
+        } = surface_with_backend;
+        RuntimeGatewayMcpSurfaceWithBackend {
+            surface: RuntimeGatewayMcpSurface {
+                runtime_session_id: surface.runtime_session_id,
+                capability_state: surface.capability_state,
+                vfs: surface.vfs,
+                mcp_servers: surface.mcp_servers,
+                active_turn_id: surface.active_turn_id,
+                identity: surface.identity,
+            },
+            runtime_backend_anchor,
+        }
+    }
+}
+
+impl From<RuntimeGatewayMcpSurfaceQueryPurpose> for RuntimeSurfaceQueryPurpose {
+    fn from(value: RuntimeGatewayMcpSurfaceQueryPurpose) -> Self {
+        RuntimeSurfaceQueryPurpose::new(value.component)
+    }
+}
+
+impl From<AgentRunRuntimeSurfaceQueryError> for RuntimeGatewayMcpSurfaceQueryError {
+    fn from(error: AgentRunRuntimeSurfaceQueryError) -> Self {
+        if let Some(anchor_error) = error.as_runtime_backend_anchor_error() {
+            return RuntimeGatewayMcpSurfaceQueryError::with_runtime_backend_anchor_error(
+                error.to_string(),
+                anchor_error,
+            );
+        }
+        RuntimeGatewayMcpSurfaceQueryError::new(error.to_string())
+    }
+}
+
+#[async_trait]
+impl RuntimeGatewayMcpSurfaceQueryPort for AgentRunRuntimeSurfaceQuery {
+    async fn current_runtime_mcp_surface_with_backend(
+        &self,
+        runtime_session_id: &str,
+        purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+    ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError> {
+        self.current_runtime_surface_with_backend(runtime_session_id, purpose.into())
+            .await
+            .map(RuntimeGatewayMcpSurfaceWithBackend::from)
+            .map_err(RuntimeGatewayMcpSurfaceQueryError::from)
     }
 }
 
@@ -1277,5 +1409,78 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some(current_frame_id.to_string().as_str())
         );
+    }
+
+    #[test]
+    fn terminal_target_uses_backend_anchor_relay_mount() {
+        let vfs = Vfs {
+            mounts: vec![
+                relay_mount("other", "backend-other", "F:/Other"),
+                relay_mount("main", "backend-main", "F:/Projects/AgentDash"),
+            ],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let anchor = RuntimeBackendAnchor::new(
+            "anchor-backend",
+            RuntimeBackendAnchorSource::WorkspaceBinding,
+        )
+        .expect("anchor")
+        .with_root_ref(Some("F:/Projects/AgentDash".to_string()));
+
+        let target = terminal_launch_target_from_vfs(&vfs, &anchor).expect("target");
+
+        assert_eq!(
+            target,
+            AgentRunTerminalLaunchTarget {
+                backend_id: "anchor-backend".to_string(),
+                mount_root_ref: "F:/Projects/AgentDash".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_target_rejects_non_relay_mount() {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "lifecycle".to_string(),
+                provider: "lifecycle_vfs".to_string(),
+                backend_id: String::new(),
+                root_ref: "lifecycle://run/example".to_string(),
+                capabilities: vec![MountCapability::Read],
+                default_write: false,
+                display_name: "Lifecycle".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("lifecycle".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let anchor = RuntimeBackendAnchor::new("backend-main", RuntimeBackendAnchorSource::System)
+            .expect("anchor")
+            .with_root_ref(Some("lifecycle://run/example".to_string()));
+
+        let error = terminal_launch_target_from_vfs(&vfs, &anchor).expect_err("provider");
+
+        assert!(matches!(
+            error,
+            AgentRunTerminalLaunchTargetError::UnsupportedMountProvider { .. }
+        ));
+    }
+
+    fn relay_mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: PROVIDER_RELAY_FS.to_string(),
+            backend_id: backend_id.to_string(),
+            root_ref: root_ref.to_string(),
+            capabilities: vec![MountCapability::Read, MountCapability::List],
+            default_write: true,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
+        }
     }
 }

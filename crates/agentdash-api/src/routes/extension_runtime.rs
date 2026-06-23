@@ -10,12 +10,12 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_project_for_api;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::session_construction::resolve_current_runtime_surface_with_backend_for_api;
 use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
@@ -130,11 +130,13 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 session_id".into(),
         ));
     }
-    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
         &state,
         &current_user,
         session_id,
+        project_id,
         RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+        "Extension runtime action",
     )
     .await?;
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
@@ -189,11 +191,13 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 session_id".into(),
         ));
     }
-    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
         &state,
         &current_user,
         session_id,
+        project_id,
         RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+        "Extension runtime channel",
     )
     .await?;
     let backend_anchor = &runtime_surface.runtime_backend_anchor;

@@ -1,15 +1,27 @@
 # WI-04 RuntimeGateway And MCP Boundary Hardening
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: Codex
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
-- Blockers: None recorded.
-- Handoff summary: TBD.
+- Files changed:
+  - `crates/agentdash-application-ports/src/runtime_gateway_mcp_surface.rs`
+  - `crates/agentdash-application-ports/src/lib.rs`
+  - `crates/agentdash-application/src/runtime_gateway/mcp_access.rs`
+  - `crates/agentdash-application/src/agent_run/runtime_surface.rs`
+- Tests run:
+  - `cargo check -p agentdash-application-ports` passed.
+  - `cargo test -p agentdash-application runtime_gateway::mcp_access` passed in final integration.
+  - `cargo test -p agentdash-application runtime_gateway` passed in final integration.
+  - `rg -n "SessionHub|AgentFrame|AgentFrameSurfaceExt|resolve_current_frame_from_delivery_trace_ref|crate::agent_run::|agentdash_application::agent_run::" crates/agentdash-application/src/runtime_gateway` returned no matches.
+- Blockers:
+  - 无。
+- Handoff summary:
+  - RuntimeGateway MCP access now consumes the `agentdash-application-ports` Gateway MCP surface query contract plus MCP discovery only.
+  - AgentRun current runtime surface remains the implementation source and maps its closed surface DTO into the ports crate Gateway MCP DTO.
+  - `runtime_gateway::mcp_access` includes a production-code static guard for SessionHub, AgentFrame, AgentFrameSurfaceExt, and current frame resolver references.
 
 ## Purpose
 

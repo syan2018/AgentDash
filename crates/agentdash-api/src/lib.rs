@@ -1,4 +1,5 @@
 mod agent_run_mailbox;
+pub mod agent_run_runtime_surface;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
@@ -11,7 +12,6 @@ pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
-pub mod session_construction;
 pub mod stream;
 #[cfg(test)]
 mod vfs_access;

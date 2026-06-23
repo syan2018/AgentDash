@@ -1,15 +1,26 @@
 # WI-11 Canvas And Extension Session Project Binding
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: Codex
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
-- Blockers: None recorded.
-- Handoff summary: TBD.
+- Files changed:
+  - `crates/agentdash-api/src/agent_run_runtime_surface.rs`
+  - `crates/agentdash-api/src/routes/canvases.rs`
+  - `crates/agentdash-api/src/routes/extension_runtime.rs`
+- Tests run:
+  - `cargo fmt -p agentdash-api`
+  - `cargo test -p agentdash-api current_surface_project_guard -- --nocapture` passed in final integration.
+  - `cargo check -p agentdash-api` passed in final integration.
+- Blockers:
+  - 无。
+- Handoff summary:
+  - API current-surface adapter 新增 Project 预校验 helper，先通过 AgentRun current surface facade 解析 runtime session current surface，再比对期望 Project。
+  - Canvas runtime invoke 在解析 action key 和调用 RuntimeGateway 前校验 Canvas Project 与 current surface Project。
+  - Canvas runtime snapshot/bridge manifest 在 `surface_for_actor` 前校验 Canvas Project 与 current surface Project，并复用同一 current surface VFS。
+  - Extension runtime action/channel 在 backend access、Gateway/provider invocation 前校验 path Project 与 current surface Project。
 
 ## Purpose
 

@@ -80,6 +80,53 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_api(
     Ok(ApiCurrentRuntimeSurfaceWithBackend::from(surface))
 }
 
+pub(crate) async fn resolve_current_runtime_surface_for_project_for_api(
+    state: &Arc<AppState>,
+    current_user: &AuthIdentity,
+    session_id: &str,
+    expected_project_id: Uuid,
+    purpose: RuntimeSurfaceQueryPurpose,
+    subject: &str,
+) -> Result<ApiCurrentRuntimeSurface, ApiError> {
+    let surface =
+        resolve_current_runtime_surface_for_api(state, current_user, session_id, purpose).await?;
+    ensure_current_runtime_surface_project_matches(&surface, expected_project_id, subject)?;
+    Ok(surface)
+}
+
+pub(crate) async fn resolve_current_runtime_surface_with_backend_for_project_for_api(
+    state: &Arc<AppState>,
+    current_user: &AuthIdentity,
+    session_id: &str,
+    expected_project_id: Uuid,
+    purpose: RuntimeSurfaceQueryPurpose,
+    subject: &str,
+) -> Result<ApiCurrentRuntimeSurfaceWithBackend, ApiError> {
+    let surface = resolve_current_runtime_surface_with_backend_for_api(
+        state,
+        current_user,
+        session_id,
+        purpose,
+    )
+    .await?;
+    ensure_current_runtime_surface_project_matches(&surface.surface, expected_project_id, subject)?;
+    Ok(surface)
+}
+
+pub(crate) fn ensure_current_runtime_surface_project_matches(
+    surface: &ApiCurrentRuntimeSurface,
+    expected_project_id: Uuid,
+    subject: &str,
+) -> Result<(), ApiError> {
+    if surface.project_id != expected_project_id {
+        return Err(ApiError::Conflict(format!(
+            "{subject} Project 与 runtime session current surface Project 不一致: expected {expected_project_id}, actual {}",
+            surface.project_id
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) async fn resolve_runtime_session_resource_vfs_for_api(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,
@@ -222,6 +269,59 @@ impl From<AgentRunRuntimeSurfaceWithBackend> for ApiCurrentRuntimeSurfaceWithBac
         Self {
             surface: ApiCurrentRuntimeSurface::from(surface_with_backend.surface),
             runtime_backend_anchor: surface_with_backend.runtime_backend_anchor,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime_surface(project_id: Uuid) -> ApiCurrentRuntimeSurface {
+        ApiCurrentRuntimeSurface {
+            runtime_session_id: "runtime-1".to_string(),
+            run_id: Uuid::new_v4(),
+            project_id,
+            agent_id: Uuid::new_v4(),
+            launch_evidence_frame_id: Uuid::new_v4(),
+            current_surface_frame_id: Uuid::new_v4(),
+            vfs: Vfs::default(),
+            orchestration_id: None,
+            node_path: None,
+            node_attempt: None,
+        }
+    }
+
+    #[test]
+    fn current_surface_project_guard_accepts_matching_project() {
+        let project_id = Uuid::new_v4();
+        let surface = runtime_surface(project_id);
+
+        ensure_current_runtime_surface_project_matches(&surface, project_id, "Canvas runtime")
+            .expect("matching project");
+    }
+
+    #[test]
+    fn current_surface_project_guard_rejects_mismatch_before_runtime_invocation() {
+        let expected_project_id = Uuid::new_v4();
+        let actual_project_id = Uuid::new_v4();
+        let surface = runtime_surface(actual_project_id);
+
+        let error = ensure_current_runtime_surface_project_matches(
+            &surface,
+            expected_project_id,
+            "Extension runtime",
+        )
+        .expect_err("project mismatch");
+
+        match error {
+            ApiError::Conflict(message) => {
+                assert!(message.contains("Extension runtime"));
+                assert!(message.contains("current surface Project 不一致"));
+                assert!(message.contains(&expected_project_id.to_string()));
+                assert!(message.contains(&actual_project_id.to_string()));
+            }
+            other => panic!("expected conflict, got {other:?}"),
         }
     }
 }

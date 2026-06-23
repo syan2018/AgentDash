@@ -10,6 +10,7 @@ use agentdash_application::agent_run::runtime_surface::{
     AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
 };
 use agentdash_application::agent_run::{
+    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
     AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceUpdateService,
 };
@@ -64,6 +65,7 @@ pub struct ServiceSet {
     pub session_hooks: SessionHookService,
     pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
+    pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
@@ -253,6 +255,13 @@ impl AppState {
                 skill_asset_repo: repos.skill_asset_repo.clone(),
                 surface_query: runtime_surface_query.clone(),
             });
+        let presentation_read_model_query =
+            AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
+                repos: repos.clone(),
+                session_core: session_core.clone(),
+                session_eventing: session_eventing.clone(),
+                surface_query: runtime_surface_query.clone(),
+            });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query,
             mcp_tool_discovery,
@@ -337,6 +346,7 @@ impl AppState {
                 session_hooks,
                 session_runtime_transition,
                 runtime_surface_update,
+                presentation_read_model_query,
                 resource_surface_query,
                 session_effects,
                 session_title,

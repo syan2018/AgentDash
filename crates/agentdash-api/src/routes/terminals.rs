@@ -5,16 +5,16 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application::agent_run::{
+    AgentRunTerminalLaunchTarget, RuntimeSurfaceQueryPurpose, terminal_launch_target_from_vfs,
+};
 use agentdash_application::session::terminal_cache::TerminalState;
-use agentdash_application::vfs::PROVIDER_RELAY_FS;
 use agentdash_relay::*;
-use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_api;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::sessions::ensure_session_permission;
-use crate::session_construction::resolve_current_runtime_surface_with_backend_for_api;
 use crate::{app_state::AppState, rpc::ApiError};
 
 /// GET /api/sessions/:session_id/terminals
@@ -230,12 +230,6 @@ pub async fn terminal_kill(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TerminalLaunchTarget {
-    backend_id: String,
-    mount_root_ref: String,
-}
-
 async fn load_terminal_for_user(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
@@ -260,7 +254,7 @@ async fn resolve_terminal_launch_target(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
     session_id: &str,
-) -> Result<TerminalLaunchTarget, ApiError> {
+) -> Result<AgentRunTerminalLaunchTarget, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         current_user,
@@ -278,7 +272,8 @@ async fn resolve_terminal_launch_target(
     let target = terminal_launch_target_from_vfs(
         &runtime_surface.surface.vfs,
         &runtime_surface.runtime_backend_anchor,
-    )?;
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if !state
         .services
         .backend_registry
@@ -291,132 +286,4 @@ async fn resolve_terminal_launch_target(
         )));
     }
     Ok(target)
-}
-
-fn terminal_launch_target_from_vfs(
-    vfs: &Vfs,
-    backend_anchor: &RuntimeBackendAnchor,
-) -> Result<TerminalLaunchTarget, ApiError> {
-    let mount = if let Some(root_ref) = backend_anchor
-        .root_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|root_ref| !root_ref.is_empty())
-    {
-        vfs.mounts
-            .iter()
-            .find(|mount| mount.root_ref.trim() == root_ref)
-            .ok_or_else(|| {
-                ApiError::BadRequest(
-                    "Session VFS 缺少 runtime backend anchor root_ref 对应的 mount，无法创建终端"
-                        .into(),
-                )
-            })?
-    } else {
-        vfs.default_mount().ok_or_else(|| {
-            ApiError::BadRequest("Session VFS 缺少可用 mount，无法创建终端".into())
-        })?
-    };
-    if mount.provider != PROVIDER_RELAY_FS {
-        return Err(ApiError::BadRequest(format!(
-            "Session 默认 mount `{}` 使用 provider `{}`，无法创建交互式终端",
-            mount.id, mount.provider
-        )));
-    }
-    let backend_id = backend_anchor.backend_id();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Session runtime backend anchor 缺少 backend_id，无法创建终端".into(),
-        ));
-    }
-    let mount_root_ref = mount.root_ref.trim();
-    if mount_root_ref.is_empty() {
-        return Err(ApiError::BadRequest(format!(
-            "Session 默认 mount `{}` 缺少 root_ref，无法创建终端",
-            mount.id
-        )));
-    }
-    Ok(TerminalLaunchTarget {
-        backend_id: backend_id.to_string(),
-        mount_root_ref: mount_root_ref.to_string(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_spi::{Mount, MountCapability, RuntimeBackendAnchorSource};
-
-    fn relay_mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
-        Mount {
-            id: id.to_string(),
-            provider: PROVIDER_RELAY_FS.to_string(),
-            backend_id: backend_id.to_string(),
-            root_ref: root_ref.to_string(),
-            capabilities: vec![MountCapability::Read, MountCapability::List],
-            default_write: true,
-            display_name: id.to_string(),
-            metadata: serde_json::Value::Null,
-        }
-    }
-
-    #[test]
-    fn terminal_target_uses_vfs_default_relay_mount() {
-        let vfs = Vfs {
-            mounts: vec![
-                relay_mount("other", "backend-other", "F:/Other"),
-                relay_mount("main", "backend-main", "F:/Projects/AgentDash"),
-            ],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let anchor = RuntimeBackendAnchor::new(
-            "anchor-backend",
-            RuntimeBackendAnchorSource::WorkspaceBinding,
-        )
-        .expect("anchor")
-        .with_root_ref(Some("F:/Projects/AgentDash".to_string()));
-
-        let target = terminal_launch_target_from_vfs(&vfs, &anchor).expect("target should resolve");
-
-        assert_eq!(
-            target,
-            TerminalLaunchTarget {
-                backend_id: "anchor-backend".to_string(),
-                mount_root_ref: "F:/Projects/AgentDash".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn terminal_target_rejects_non_relay_default_mount() {
-        let vfs = Vfs {
-            mounts: vec![Mount {
-                id: "lifecycle".to_string(),
-                provider: "lifecycle_vfs".to_string(),
-                backend_id: String::new(),
-                root_ref: "lifecycle://run/example".to_string(),
-                capabilities: vec![MountCapability::Read],
-                default_write: false,
-                display_name: "Lifecycle".to_string(),
-                metadata: serde_json::Value::Null,
-            }],
-            default_mount_id: Some("lifecycle".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let anchor = RuntimeBackendAnchor::new("backend-main", RuntimeBackendAnchorSource::System)
-            .expect("anchor")
-            .with_root_ref(Some("lifecycle://run/example".to_string()));
-
-        let err =
-            terminal_launch_target_from_vfs(&vfs, &anchor).expect_err("target should be rejected");
-
-        assert!(matches!(err, ApiError::BadRequest(message) if message.contains("provider")));
-    }
 }

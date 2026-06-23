@@ -1,15 +1,26 @@
 # WI-05 API, VFS And Terminal Current Surface Consumers
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: Codex WI-05
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
-- Blockers: None recorded.
-- Handoff summary: TBD.
+- Files changed:
+  - `crates/agentdash-api/src/agent_run_runtime_surface.rs`
+  - `crates/agentdash-api/src/lib.rs`
+  - `crates/agentdash-api/src/routes/canvases.rs`
+  - `crates/agentdash-api/src/routes/extension_runtime.rs`
+  - `crates/agentdash-api/src/routes/terminals.rs`
+  - `crates/agentdash-api/src/routes/vfs_surfaces/resolver.rs`
+  - `crates/agentdash-application/src/agent_run/mod.rs`
+  - `crates/agentdash-application/src/agent_run/runtime_surface.rs`
+- Tests run:
+  - `cargo fmt -p agentdash-application -p agentdash-api`
+  - `cargo test -p agentdash-application agent_run::runtime_surface::tests::terminal_target`
+  - `cargo check -p agentdash-api`
+- Blockers: 无。
+- Handoff summary: API current/resource surface adapter 已改为 AgentRun runtime surface 命名。VFS `SessionRuntime` / `AgentRun` source resolution 消费 WI-02 引入的 AgentRun resource surface facade。Terminal launch target 推导已从 API route 迁入 AgentRun runtime surface facade；API route 只保留权限、DTO、backend 在线校验和 relay command dispatch。
 
 ## Purpose
 

@@ -1,15 +1,21 @@
 # WI-08 Presentation And Read-Model Cleanup
 
-Status: pending
+Status: done
 
-Assigned Worker: unassigned
+Assigned Worker: Codex
 
 ## Tracking
 
-- Files changed: TBD.
-- Tests run: TBD.
+- Files changed:
+  - `crates/agentdash-application/src/agent_run/presentation_read_model.rs`
+  - `crates/agentdash-application/src/agent_run/mod.rs`
+  - `crates/agentdash-api/src/app_state.rs`
+  - `crates/agentdash-api/src/routes/lifecycle_views.rs`
+  - `crates/agentdash-api/src/routes/sessions.rs`
+- Tests run:
+  - `cargo check -p agentdash-api`
 - Blockers: None recorded.
-- Handoff summary: TBD.
+- Handoff summary: RuntimeSession trace、AgentFrame runtime view 与 session runtime-control 的 current-frame presentation 拼装已迁入 `AgentRunPresentationReadModelQuery`。API route 保留鉴权、contract DTO 映射和错误映射，既有 response contract 未调整。
 
 ## Purpose
 

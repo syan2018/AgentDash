@@ -16,16 +16,15 @@ use uuid::Uuid;
 use crate::routes::lifecycle_contracts::{
     agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
 };
-use crate::routes::lifecycle_views::{agent_frame_runtime_to_view, runtime_refs_for_agent};
+use crate::routes::lifecycle_views::{
+    agent_frame_runtime_to_view, presentation_read_model_error_to_api,
+    session_runtime_control_status_to_contract,
+};
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_agent::MessageRef;
-use agentdash_application::lifecycle::{
-    resolve_current_frame_from_delivery_trace_ref, run_view_builder,
-};
 use agentdash_application::session::{
-    ExecutionStatus, SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest,
-    SessionMeta, SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest,
-    TitleSource,
+    SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest, SessionMeta,
+    SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
@@ -40,8 +39,8 @@ use agentdash_contracts::session::{
     SessionToolContextContributionResponse,
 };
 use agentdash_contracts::workflow::{
-    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlPlaneStatus,
-    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlPlaneView,
+    SessionRuntimeControlView, SessionShellDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -156,133 +155,39 @@ pub async fn get_session_runtime_control(
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<SessionRuntimeControlView>, ApiError> {
-    let meta = state
+    let view = state
         .services
-        .session_core
-        .get_session_meta(&runtime_session_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", runtime_session_id)))?;
-    let Some(anchor) = state
-        .repos
-        .execution_anchor_repo
-        .find_by_session(&runtime_session_id)
-        .await?
-    else {
-        return Ok(Json(SessionRuntimeControlView {
-            runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-            session_meta: session_shell_dto(&meta),
-            control_plane: SessionRuntimeControlPlaneView {
-                status: SessionRuntimeControlPlaneStatus::UnboundTrace,
-                reason: Some(
-                    "当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string(),
-                ),
-            },
-            anchor: None,
-            run: None,
-            agent: None,
-            frame_runtime: None,
-            subject_associations: Vec::new(),
-        }));
-    };
-
-    let run = load_lifecycle_run_for_session(state.as_ref(), anchor.run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(anchor.agent_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
-        })?;
-    if agent.run_id != run.id || agent.project_id != run.project_id {
-        return Err(ApiError::BadRequest(format!(
-            "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
-        )));
-    }
-    let frame = resolve_current_frame_from_delivery_trace_ref(
-        &runtime_session_id,
-        state.repos.execution_anchor_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-    )
-    .await?
-    .map(|(_anchor, _agent, frame)| frame);
-    let frame_runtime = match frame {
-        Some(frame) => {
-            let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;
-            Some(agent_frame_runtime_to_view(&frame, runtime_refs))
-        }
-        None => None,
-    };
-    let run_view = run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
-    let agent_view = run_view
-        .agents
-        .iter()
-        .find(|view| view.agent_ref.agent_id == agent.id.to_string())
-        .cloned();
-    let agent_id_string = agent.id.to_string();
-    let subject_associations = run_view
-        .subject_associations
-        .iter()
-        .filter(|assoc| {
-            assoc.anchor_agent_id.as_deref() == Some(agent_id_string.as_str())
-                || assoc.anchor_agent_id.is_none()
-        })
-        .cloned()
-        .map(subject_association_to_contract)
-        .collect::<Vec<_>>();
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&runtime_session_id)
+        .presentation_read_model_query
+        .session_runtime_control(&runtime_session_id)
+        .await
+        .map_err(presentation_read_model_error_to_api)?;
+    if let Some(project_id) = view.project_id {
+        load_project_with_permission(
+            state.as_ref(),
+            &current_user,
+            project_id,
+            ProjectPermission::View,
+        )
         .await?;
-    let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
-        || matches!(execution_state, SessionExecutionState::Running { .. });
-    let delivery_cancelling = matches!(execution_state, SessionExecutionState::Cancelling { .. });
-    let terminal_agent = is_terminal_agent_status(&agent.status);
-    let has_frame = frame_runtime.is_some();
-    let control_plane = if terminal_agent {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::Terminal,
-            reason: Some("当前 Agent 已结束。".to_string()),
-        }
-    } else if !has_frame {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::FrameMissing,
-            reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
-        }
-    } else if delivery_cancelling {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredCancelling,
-            reason: Some("当前 Session 正在取消中，等待执行器收口。".to_string()),
-        }
-    } else if delivery_running {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredRunning,
-            reason: Some("当前 Session 正在执行中。".to_string()),
-        }
-    } else {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredIdle,
-            reason: None,
-        }
-    };
+    }
     Ok(Json(SessionRuntimeControlView {
-        runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-        session_meta: session_shell_dto(&meta),
-        control_plane,
-        anchor: Some(anchor_dto(&anchor)),
-        run: Some(lifecycle_run_view_to_contract(run_view)),
-        agent: agent_view.map(agent_run_to_contract),
-        frame_runtime,
-        subject_associations,
+        runtime_session_ref: RuntimeSessionRefDto {
+            runtime_session_id: view.runtime_session_id,
+        },
+        session_meta: session_shell_dto(&view.session_meta),
+        control_plane: SessionRuntimeControlPlaneView {
+            status: session_runtime_control_status_to_contract(view.control_plane.status),
+            reason: view.control_plane.reason,
+        },
+        anchor: view.anchor.as_ref().map(anchor_dto),
+        run: view.run.map(lifecycle_run_view_to_contract),
+        agent: view.agent.map(agent_run_to_contract),
+        frame_runtime: view.frame_runtime.map(agent_frame_runtime_to_view),
+        subject_associations: view
+            .subject_associations
+            .into_iter()
+            .map(subject_association_to_contract)
+            .collect(),
     }))
 }
 
@@ -402,10 +307,6 @@ fn anchor_dto(anchor: &RuntimeSessionExecutionAnchor) -> RuntimeSessionExecution
         created_at: anchor.created_at.to_rfc3339(),
         updated_at: anchor.updated_at.to_rfc3339(),
     }
-}
-
-fn is_terminal_agent_status(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "cancelled")
 }
 
 fn serialized_string<T: serde::Serialize>(value: &T) -> String {

@@ -43,7 +43,7 @@ API / RuntimeGateway / Canvas / WorkspaceModule / Permission / VFS / Terminal / 
   - `AgentRunEffectiveCapabilityQuery`
   - `RuntimeSessionLiveSurfaceAdopter`
 - Move `AgentFrameRuntimeTarget` ownership to AgentRun.
-- Preserve compatibility only inside this branch while refactoring; project is pre-release, so old public routes should be deleted or privatized rather than kept as fallback.
+- Project is pre-release; delete or privatize old public routes during migration instead of keeping compatibility or fallback paths.
 
 ### Phase B: Session Facade Tightening
 
@@ -70,15 +70,38 @@ API / RuntimeGateway / Canvas / WorkspaceModule / Permission / VFS / Terminal / 
 - Run `rg` checks for forbidden imports.
 - Only after this task should physical crate extraction begin.
 
+## Parallel Planning Artifacts
+
+- `parallel-dag.md` defines the implementation DAG and safe parallel waves.
+- `parent-child-coverage.md` maps every parent decoupling child task into this child task's internal work items.
+- `work-items/00-index.md` indexes all dispatchable tracking items.
+- `review-gate.md` defines the complete final review gate.
+- `target-application-state.md` defines the expected `agentdash-application` module state after full decoupling.
+
+The work item DAG is the implementation source of truth. Phase labels above explain architectural intent; dispatch and dependency sequencing should follow `parallel-dag.md`.
+
+This child task is the one-shot decoupling migration. Parent task decoupling child names are retained only as coverage references; implementation tracking happens through `work-items/WI-*.md`.
+
 ## Key Risks
 
 - `AgentRun <-> session` and `AgentRun <-> lifecycle` imports are currently bidirectional; moving files before ports exist will create cycles.
 - SessionHub still implements live adoption. Keep the behavior, but hide it behind AgentRun-owned port.
 - API helpers currently have correct direction but wrong naming and too much projector logic. Rename and move after facade exists.
 - `ApiCurrentRuntimeSurface` must preserve current surface frame id separately from launch frame id.
+- `runtime-gateway-port-boundary` requires `agentdash-application-ports` expansion in this migration; leaving the port move to physical crate extraction would preserve the wrong dependency direction.
 
 ## Validation Strategy
 
 - Compile after each phase.
 - Add regression tests around Project/session binding, current surface query with backend, resource surface projection, and surface update/adoption.
 - Use `rg` checks to enforce dependency cleanup before any crate split task starts.
+
+## Completion State
+
+The task is complete only when:
+
+- every `work-items/WI-*.md` is marked `done` or explicitly deferred with a rationale accepted in `WI-10`;
+- `review-gate.md` passes;
+- `target-application-state.md` matches the production module graph;
+- `parent-child-coverage.md` has no partial or missing parent decoupling goals;
+- the crate split draft can consume the final import graph without rediscovering session/AgentRun/Lifecycle ownership.

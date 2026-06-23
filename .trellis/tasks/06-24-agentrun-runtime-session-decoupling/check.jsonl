@@ -1,4 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/prd.md","reason":"Decoupling task requirements and acceptance criteria."}
 {"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/design.md","reason":"Target architecture and phased boundary design."}
 {"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/implement.md","reason":"Implementation checklist and verification plan."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/parallel-dag.md","reason":"Parallel implementation DAG and dispatch sequencing."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/review-gate.md","reason":"Final complete review gate requirements."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/target-application-state.md","reason":"Expected application module state after decoupling."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/parent-child-coverage.md","reason":"Coverage mapping from parent decoupling goals to this child task's internal work items."}
+{"file":".trellis/tasks/06-24-agentrun-runtime-session-decoupling/work-items/00-index.md","reason":"Work item tracking index."}

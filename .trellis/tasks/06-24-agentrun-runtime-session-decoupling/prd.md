@@ -4,7 +4,7 @@
 
 在 release 前将 session 收束为 RuntimeSession delivery/trace substrate，并把 AgentRun/Lifecycle current surface query/update、API consumer、RuntimeGateway、Canvas/WorkspaceModule/Permission 等路径迁出 session 横向耦合。
 
-本任务是后续实际解耦实施的唯一收束任务。它可以包含多个阶段和很多子工作项，但不再为每个小项创建独立 Trellis child；所有实施、检查和阶段状态都在本任务内追踪。
+本任务是后续实际解耦实施的唯一收束任务。父任务中的所有解耦重构目标都收束为本 child 内部 work items，一口气完成迁移；不再为这些解耦目标创建独立 Trellis child。所有实施、检查和阶段状态都在本任务内追踪。
 
 ## Context
 
@@ -23,6 +23,7 @@
 - 将 `AgentFrameRuntimeTarget`、active runtime surface adoption port、current surface query/update DTO 归属到 AgentRun 边界；RuntimeSession 只实现 live adoption adapter。
 - 将 `session/launch/orchestrator.rs` 与 `session/launch/commit.rs` 中的 AgentFrame write、LifecycleAgent current delivery binding、bootstrap status decision 迁入 AgentRun/Lifecycle launch/commit adapter。
 - 将 AgentRun current runtime surface query/update、effective capability/admission、resource surface query 固化为 public application facade；API、RuntimeGateway、Canvas、Extension、Terminal、VFS consumer 只消费 facade DTO。
+- 将 RuntimeGateway-facing AgentRun surface/MCP access contracts 移入 `agentdash-application-ports`，RuntimeGateway providers 保持在 RuntimeGateway facade 后方。
 - 将 `AgentRunFrameSurfaceService` 或等价 facade 变成 surface-changing business path 的唯一入口；Canvas、WorkspaceModule、Permission、MCP/VFS/Skill/AgentProcedure update 只提交 typed update request。
 - 清理 API route-local anchor/current-frame/read-model 拼接：VFS AgentRun source latest-anchor selection、sessions/lifecycle views current frame resolver 等应迁到 application read-model facade。
 - 补齐 Canvas / Extension runtime route 的 Project/session 一致性校验，防止 path Project 与 runtime session current surface Project 不一致。
@@ -30,6 +31,8 @@
 - 本任务不做物理 crate extraction；crate 拆分只消费本任务输出作为前置条件。
 
 ## Work Items
+
+Detailed tracking docs live under `work-items/`; the implementation dependency graph is `parallel-dag.md`. Parent task decoupling goals are mapped in `parent-child-coverage.md`; those goals are internal work items of this migration task, not separate child tasks.
 
 1. AgentRun current surface facade
    - 稳定 `AgentRunRuntimeSurfaceQueryPort` 和 DTO。
@@ -72,18 +75,27 @@
    - 覆盖 Canvas idle `mcp.list_tools`、MCP call/list、Extension runtime backend target、Terminal launch、VFS SessionRuntime/AgentRun resource surface、Permission grant update/adoption、WorkspaceModule Canvas bind update。
    - 每一阶段保持 Rust compile 通过；触及 API contract 时运行对应 contract/type checks。
 
+9. Canvas / Extension Project binding guard
+   - Canvas runtime invoke/bridge 在 Gateway 调用前校验 Canvas Project 与 runtime session current surface Project 一致。
+   - Extension runtime action/channel 在 provider 调用前校验 path Project 与 runtime session current surface Project 一致。
+
 ## Acceptance Criteria
 
+- [ ] `parallel-dag.md` and every `work-items/WI-*.md` tracking document stays updated through implementation.
+- [ ] `parent-child-coverage.md` shows every parent decoupling child task covered by this child task's internal work items.
 - [ ] `session/mod.rs` 不再 public re-export AgentRun/Lifecycle ownership 类型；production API 不再依赖 session planner/current-frame internals。
 - [ ] `AgentFrameRuntimeTarget` 和 active runtime surface adoption port 归属 AgentRun；SessionHub 只作为 RuntimeSession live adapter 实现该 port。
 - [ ] RuntimeGateway MCP access、Canvas/Extension/Terminal/VFS/API current-surface consumer 全部通过 AgentRun current/resource surface facade，不直接读 SessionHub 或 current frame resolver。
+- [ ] RuntimeGateway-facing AgentRun surface/MCP access contracts 已进入 `agentdash-application-ports`；RuntimeGateway provider 不依赖 AgentRun implementation internals。
 - [ ] `AgentRunFrameSurfaceService` 或等价 facade 是 surface-changing business paths 的唯一 public entry；Canvas/WorkspaceModule/Permission 不直接拥有 `AgentFrameBuilder` 或 active adoption primitive。
 - [ ] `session/launch` 保留 RuntimeSession delivery/trace/connector commit，AgentFrame/Lifecycle write 决策迁到 AgentRun/Lifecycle adapter。
 - [ ] Canvas/Extension runtime route 显式拒绝 path Project/Canvas Project 与 runtime session current surface Project 不一致。
 - [ ] VFS `SessionRuntime` / `AgentRun` resource surface、Terminal launch target、Extension backend placement 共享同一 AgentRun resource/current surface closure。
 - [ ] `cargo check -p agentdash-application`、`cargo check -p agentdash-api` 通过；按触及范围补充并运行相关 Rust tests。
 - [ ] 更新相关 Trellis spec 或本任务 `design.md`，说明 RuntimeSession substrate 与 AgentRun current surface 的依赖方向。
+- [ ] `review-gate.md` 通过，且 `target-application-state.md` 与最终 production module graph 一致。
 
 ## Notes
 
 - 本任务不做物理 crates 拆分；只完成拆分前必须具备的模块/依赖解耦。
+- 父任务中的 `physical-crate-extraction-wave-1/2` 不属于本任务；它们只在本任务完成后消费最终 import graph。

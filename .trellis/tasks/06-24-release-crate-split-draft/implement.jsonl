@@ -26,3 +26,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/08-public-visibility-cleanup.md","reason":"Public facade contraction implementation item."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/09-physical-crate-extraction-runtime.md","reason":"RuntimeGateway/RuntimeSession physical extraction item."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/10-physical-crate-extraction-control-plane-vfs.md","reason":"AgentRun/Lifecycle/VFS physical extraction item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-1.md","reason":"Round 1 worker ids, ownership and checkpoint plan."}

@@ -1,18 +1,10 @@
-use async_trait::async_trait;
-
+use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
 use agentdash_domain::inline_file::InlineFileRepository;
 
 use super::{
-    PROVIDER_INLINE_FS, ResolvedMountEditCapabilities, ResolvedMountSummary, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource, inline_storage_key_from_mount, mount_purpose,
+    PROVIDER_INLINE_FS, ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource,
+    inline_storage_key_from_mount, mount_purpose,
 };
-
-#[async_trait]
-pub trait VfsSurfaceRuntimeProjection: Send + Sync {
-    async fn is_backend_online(&self, backend_id: &str) -> bool;
-
-    fn edit_capabilities(&self, mount: &agentdash_spi::Mount) -> ResolvedMountEditCapabilities;
-}
 
 pub async fn build_surface_summary(
     inline_file_repo: &dyn InlineFileRepository,

@@ -5,16 +5,17 @@
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //!
 use agentdash_agent_types::DynAgentTool;
+use agentdash_application_ports::runtime_surface_adoption::{
+    AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter, RuntimeSurfaceAdoptionError,
+    RuntimeSurfaceAdoptionPort,
+};
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
-use crate::agent_run::AgentFrameRuntimeTarget;
-use crate::agent_run::AgentRunActiveRuntimeSurfaceAdopter;
 use crate::agent_run::AgentRunEffectiveCapabilityService;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
 };
@@ -71,11 +72,6 @@ impl SessionRuntimeInner {
                 "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法采用已持久化能力状态"
             ))
         })?;
-        let agent_repo = self.lifecycle_agent_repo.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 LifecycleAgent repository，无法采用已持久化能力状态"
-            ))
-        })?;
         let target_frame = frame_repo
             .get(target.frame_id)
             .await
@@ -91,21 +87,17 @@ impl SessionRuntimeInner {
                     target.frame_id
                 ))
             })?;
-        let (delivery_anchor, _agent, adopted_frame) = resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
+        let delivery_anchor = anchor_repo
+            .find_by_session(session_id)
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!(
-                    "通过 anchor 查找 delivery RuntimeSession `{session_id}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}"
+                    "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法采用已持久化能力状态: {error}"
                 ))
             })?
             .ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "delivery RuntimeSession `{session_id}` 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame，拒绝采用已持久化能力状态"
+                    "delivery RuntimeSession `{session_id}` 缺少 RuntimeSessionExecutionAnchor，拒绝采用已持久化能力状态"
                 ))
             })?;
         if delivery_anchor.agent_id != target_frame.agent_id {
@@ -114,6 +106,21 @@ impl SessionRuntimeInner {
                 target_frame.agent_id
             )));
         }
+        let adopted_frame = frame_repo
+            .get_current(delivery_anchor.agent_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 Agent `{}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}",
+                    delivery_anchor.agent_id
+                ))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "Agent `{}` 缺少当前 AgentFrame，拒绝采用已持久化能力状态",
+                    delivery_anchor.agent_id
+                ))
+            })?;
         if adopted_frame.id != target.frame_id {
             return Err(ConnectorError::Runtime(format!(
                 "AgentFrame `{}` 不是 delivery RuntimeSession `{session_id}` 当前 revision（当前为 `{}`），拒绝采用不同 revision",
@@ -299,9 +306,24 @@ impl AgentRunActiveRuntimeSurfaceAdopter for SessionRuntimeInner {
     async fn adopt_persisted_frame_revision_into_active_runtime(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String> {
+    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
         SessionRuntimeInner::adopt_persisted_frame_revision_into_active_runtime(self, target)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
+                message: error.to_string(),
+            })
+    }
+}
+
+#[async_trait]
+impl RuntimeSurfaceAdoptionPort for SessionRuntimeInner {
+    async fn adopt_runtime_surface(
+        &self,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
+        <Self as AgentRunActiveRuntimeSurfaceAdopter>::adopt_persisted_frame_revision_into_active_runtime(
+            self, target,
+        )
+        .await
     }
 }

@@ -11,13 +11,13 @@ use crate::{app_state::AppState, rpc::ApiError};
 use super::dto::SurfaceStatFileResponse;
 
 pub(super) fn ensure_not_skill_asset_document_path(
-    source: &agentdash_application::vfs::ResolvedVfsSurfaceSource,
+    source: &agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource,
     path: &str,
     operation: &str,
 ) -> Result<(), ApiError> {
     if matches!(
         source,
-        agentdash_application::vfs::ResolvedVfsSurfaceSource::ProjectSkillAssets { .. }
+        agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::ProjectSkillAssets { .. }
     ) && skill_asset_relative_path(path) == Some("SKILL.md")
     {
         return Err(ApiError::BadRequest(format!(

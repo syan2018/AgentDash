@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
+use agentdash_application_ports::runtime_surface_adoption::AgentRunActiveRuntimeSurfaceAdopter;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -17,8 +18,8 @@ use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
+use crate::agent_run::AgentRunMailboxRuntimeAdapter;
 use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
-use crate::agent_run::{AgentRunActiveRuntimeSurfaceAdopter, AgentRunMailboxRuntimeAdapter};
 use crate::context::SharedContextAuditBus;
 
 pub struct SessionRuntimeBuilder {

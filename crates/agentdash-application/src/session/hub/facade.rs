@@ -4,6 +4,8 @@
 //! 下沉到明确的能力服务或依赖包。
 
 use std::io;
+#[cfg(test)]
+use std::sync::Arc;
 
 #[cfg(test)]
 use super::super::RuntimeCommandRecord;
@@ -11,15 +13,19 @@ use super::super::RuntimeCommandRecord;
 #[allow(deprecated)]
 use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
-use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
+use super::super::launch::LaunchCommand;
 #[cfg(test)]
 use super::super::types::SessionMeta;
+#[cfg(test)]
+use super::super::types::UserPromptInput;
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
 use crate::agent_run::frame::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
+#[cfg(test)]
+use crate::agent_run::frame::{FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput};
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
@@ -87,9 +93,7 @@ impl SessionRuntimeInner {
             .await
     }
 
-    /// 测试专用入口：跳过 source provider，直接进入 launch stage runner。
-    ///
-    /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
+    /// 测试专用入口：将 fixture 装配为 frame launch provider 后走标准 launch path。
     #[cfg(test)]
     #[allow(deprecated)]
     pub(crate) async fn start_prompt(
@@ -99,20 +103,22 @@ impl SessionRuntimeInner {
     ) -> Result<String, ConnectorError> {
         construction.session_id = session_id.to_string();
         construction.session.session_id = session_id.to_string();
-        let requested_runtime_commands = self
-            .stores
-            .runtime_commands
-            .list_requested_runtime_commands(session_id)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let envelope = envelope_from_construction_with_commands(
-            self,
+        let command = LaunchCommand::http_prompt_input(
+            UserPromptInput {
+                input: construction.prompt.input.clone(),
+                env: construction.prompt.environment_variables.clone(),
+                executor_config: construction.execution_profile.executor_config.clone(),
+                backend_selection: None,
+            },
+            None,
+        );
+        self.set_frame_launch_envelope_provider(Arc::new(ConstructionLaunchEnvelopeProvider {
+            hub: self.clone(),
             construction,
-            &requested_runtime_commands,
-        )
-        .await?;
-        SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
-            .launch_with_envelope_for_test(session_id, envelope)
+        }))
+        .await;
+        self.launch_service()
+            .launch_command(session_id, command)
             .await
     }
 
@@ -137,6 +143,33 @@ impl SessionRuntimeInner {
         self.eventing_service()
             .persist_notification(session_id, envelope)
             .await
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+struct ConstructionLaunchEnvelopeProvider {
+    hub: SessionRuntimeInner,
+    construction: RuntimeContextInspectionPlan,
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+#[async_trait::async_trait]
+impl FrameLaunchEnvelopeProvider for ConstructionLaunchEnvelopeProvider {
+    async fn build_frame_launch_envelope(
+        &self,
+        input: FrameLaunchEnvelopeProviderInput,
+    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+        let mut construction = self.construction.clone();
+        construction.session_id = input.session_id.clone();
+        construction.session.session_id = input.session_id.clone();
+        envelope_from_construction_with_commands(
+            &self.hub,
+            construction,
+            &input.requested_runtime_commands,
+        )
+        .await
     }
 }
 
@@ -179,19 +212,14 @@ pub(super) async fn envelope_from_construction_with_commands(
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     let (agent_id, frame_id, frame_revision) = match (
         hub.execution_anchor_repo.as_ref(),
-        hub.lifecycle_agent_repo.as_ref(),
         hub.agent_frame_repo.as_ref(),
     ) {
-        (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) => {
-            match crate::lifecycle::resolve_current_frame_from_delivery_trace_ref(
-                &construction.session_id,
-                anchor_repo.as_ref(),
-                agent_repo.as_ref(),
-                frame_repo.as_ref(),
-            )
-            .await
-            {
-                Ok(Some((_anchor, agent, frame))) => (agent.id, frame.id, frame.revision),
+        (Some(anchor_repo), Some(frame_repo)) => {
+            match anchor_repo.find_by_session(&construction.session_id).await {
+                Ok(Some(anchor)) => match frame_repo.get_current(anchor.agent_id).await {
+                    Ok(Some(frame)) => (anchor.agent_id, frame.id, frame.revision),
+                    _ => (anchor.agent_id, uuid::Uuid::new_v4(), 1),
+                },
                 _ => (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), 1),
             }
         }

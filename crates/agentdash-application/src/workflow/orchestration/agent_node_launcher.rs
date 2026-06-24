@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
+use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
     AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec,
@@ -18,9 +21,9 @@ use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
 use crate::lifecycle::{
-    LifecycleDispatchService, RuntimeSessionCreator, WorkflowAgentNodeFrameMaterializationContext,
-    WorkflowAgentNodeFrameMaterializer, WorkflowAgentNodeMaterializationRequest,
-    WorkflowApplicationError,
+    AgentRunLifecycleSurfaceProjector, LifecycleDispatchService,
+    WorkflowAgentNodeFrameMaterializationContext, WorkflowAgentNodeFrameMaterializer,
+    WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
 };
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -40,7 +43,8 @@ pub(super) struct AgentNodeLauncher {
     lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
     agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
+    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
 }
 
@@ -55,7 +59,8 @@ impl AgentNodeLauncher {
         lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
         agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
+        runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
         frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> Self {
         Self {
@@ -69,6 +74,7 @@ impl AgentNodeLauncher {
             agent_lineage_repo,
             execution_anchor_repo,
             runtime_session_creator,
+            frame_construction,
             frame_materializer,
         }
     }
@@ -167,7 +173,8 @@ impl AgentNodeLauncher {
             self.agent_lineage_repo.as_ref(),
         )
         .with_anchor_repo(self.execution_anchor_repo.as_ref())
-        .with_runtime_session_creator(self.runtime_session_creator.as_ref());
+        .with_runtime_session_creator(self.runtime_session_creator.as_ref())
+        .with_frame_construction_port(self.frame_construction.as_ref());
         let materialized = dispatch_service
             .materialize_workflow_agent_node(
                 WorkflowAgentNodeMaterializationRequest {
@@ -243,13 +250,16 @@ pub(super) trait AgentNodeFrameMaterializer: Send + Sync {
 pub(super) struct RepositoryAgentNodeFrameMaterializer {
     repos: RepositorySet,
     platform_config: SharedPlatformConfig,
+    lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
 }
 
 impl RepositoryAgentNodeFrameMaterializer {
     pub(super) fn new(repos: RepositorySet, platform_config: SharedPlatformConfig) -> Self {
+        let lifecycle_surface_projection = Arc::new(AgentRunLifecycleSurfaceProjector::new(&repos));
         Self {
             repos,
             platform_config,
+            lifecycle_surface_projection,
         }
     }
 }
@@ -271,6 +281,7 @@ impl AgentNodeFrameMaterializer for RepositoryAgentNodeFrameMaterializer {
             frame_repo: self.repos.agent_frame_repo.as_ref(),
             repos: &self.repos,
             platform_config: self.platform_config.as_ref(),
+            lifecycle_surface_projection: self.lifecycle_surface_projection.as_ref(),
             agent_id: context.agent_id,
             runtime_session_ref: context.runtime_session_ref,
             frame_created_by_id: context.frame_created_by_id,

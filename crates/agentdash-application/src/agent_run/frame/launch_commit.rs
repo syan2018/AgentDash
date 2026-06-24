@@ -6,9 +6,11 @@
 
 use std::sync::Arc;
 
+use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, DeliveryBindingStatus, LifecycleAgentRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent,
+    LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{CapabilityState, ConnectorError};
 use async_trait::async_trait;
@@ -17,7 +19,6 @@ use uuid::Uuid;
 use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::agent_run::runtime_capability::capability_state_to_frame_surfaces;
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 
 #[derive(Clone)]
 pub struct AgentRunAcceptedLaunchCommitAdapter {
@@ -220,7 +221,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         turn_id: &str,
         accepted_capability_state: &CapabilityState,
     ) -> AgentRunAcceptedLaunchCommitOutcome {
-        let (anchor, current_frame) = match resolve_current_frame_from_delivery_trace_ref(
+        let (anchor, current_frame) = match resolve_current_agent_frame_for_runtime_session(
             runtime_session_id,
             anchor_repo,
             agent_repo,
@@ -390,7 +391,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         ) else {
             return Ok(None);
         };
-        resolve_current_frame_from_delivery_trace_ref(
+        resolve_current_agent_frame_for_runtime_session(
             runtime_session_id,
             anchor_repo.as_ref(),
             agent_repo.as_ref(),
@@ -398,6 +399,24 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         )
         .await
     }
+}
+
+async fn resolve_current_agent_frame_for_runtime_session(
+    runtime_session_id: &str,
+    anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    agent_repo: &dyn LifecycleAgentRepository,
+    frame_repo: &dyn AgentFrameRepository,
+) -> Result<Option<(RuntimeSessionExecutionAnchor, LifecycleAgent, AgentFrame)>, DomainError> {
+    let Some(anchor) = anchor_repo.find_by_session(runtime_session_id).await? else {
+        return Ok(None);
+    };
+    let Some(agent) = agent_repo.get(anchor.agent_id).await? else {
+        return Ok(None);
+    };
+    let Some(frame) = frame_repo.get_current(agent.id).await? else {
+        return Ok(None);
+    };
+    Ok(Some((anchor, agent, frame)))
 }
 
 #[cfg(test)]

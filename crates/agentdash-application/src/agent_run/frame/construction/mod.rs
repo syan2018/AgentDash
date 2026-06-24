@@ -15,6 +15,7 @@ mod request_assembler;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{
     AgentConfig, AgentConnector, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider,
@@ -52,6 +53,7 @@ pub struct FrameConstructionService {
     pub(crate) platform_config: Arc<PlatformConfig>,
     pub(crate) audit_bus: SharedContextAuditBus,
     pub(crate) companion_facts: Arc<dyn CompanionParentFactsProvider>,
+    pub(crate) lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub(crate) connector: Arc<dyn AgentConnector>,
     pub(crate) extra_skill_dirs: Vec<PathBuf>,
     pub(crate) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -65,6 +67,7 @@ pub struct FrameConstructionDeps {
     pub platform_config: Arc<PlatformConfig>,
     pub audit_bus: SharedContextAuditBus,
     pub companion_facts: Arc<dyn CompanionParentFactsProvider>,
+    pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub connector: Arc<dyn AgentConnector>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
@@ -89,6 +92,7 @@ impl FrameConstructionService {
             platform_config: deps.platform_config,
             audit_bus: deps.audit_bus,
             companion_facts: deps.companion_facts,
+            lifecycle_surface_projection: deps.lifecycle_surface_projection,
             connector: deps.connector,
             extra_skill_dirs: deps.extra_skill_dirs,
             skill_discovery_providers: deps.skill_discovery_providers,
@@ -171,6 +175,7 @@ impl FrameConstructionService {
             self.vfs_service.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),
+            self.lifecycle_surface_projection.as_ref(),
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
@@ -184,6 +189,7 @@ impl FrameConstructionService {
             self.availability.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),
+            self.lifecycle_surface_projection.as_ref(),
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)

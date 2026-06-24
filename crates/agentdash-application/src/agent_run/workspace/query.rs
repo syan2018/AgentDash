@@ -1,3 +1,4 @@
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
@@ -10,14 +11,10 @@ use crate::agent_run::{
     ConversationModelConfigSourceModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
+use crate::lifecycle::WorkflowApplicationError;
 use crate::lifecycle::run_view_builder::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
 };
-use crate::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
-    OrchestrationNodeEvidenceRef,
-};
-use crate::lifecycle::{AgentRunLifecycleSurfaceProjector, WorkflowApplicationError};
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use crate::vfs::{
@@ -39,6 +36,7 @@ pub struct AgentRunWorkspaceQueryService<'a> {
     session_core: SessionCoreService,
     session_control: crate::session::SessionControlService,
     vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
+    lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
 }
 
 impl<'a> AgentRunWorkspaceQueryService<'a> {
@@ -47,12 +45,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         session_core: SessionCoreService,
         session_control: crate::session::SessionControlService,
         vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
+        lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     ) -> Self {
         Self {
             repos,
             session_core,
             session_control,
             vfs_runtime,
+            lifecycle_surface_projection,
         }
     }
 
@@ -346,21 +346,24 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             return Ok(None);
         };
         let vfs = match current_delivery {
-            Some(selection) => {
-                AgentRunLifecycleSurfaceProjector::new(self.repos)
-                    .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
-                        base_vfs: frame.typed_vfs(),
-                        address: selection.address.clone(),
-                        message_stream: selection.message_stream.clone(),
-                        project_id: run.project_id,
-                        node_evidence: orchestration_node_evidence_from_anchor(&selection.anchor),
-                        skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(
-                        ),
-                    })
-                    .await
-                    .map_err(WorkflowApplicationError::Internal)?
-                    .vfs
-            }
+            Some(selection) => self
+                .lifecycle_surface_projection
+                .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                    base_vfs: frame.typed_vfs(),
+                    address: selection.address.clone(),
+                    message_stream: Some(selection.message_stream.clone()),
+                    project_id: run.project_id,
+                    mode:
+                        ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkspaceReadSurface,
+                    explicit_skill_asset_keys: Vec::new(),
+                    builtin_skills:
+                        ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::PreserveProjected,
+                    node_evidence: orchestration_node_evidence_from_anchor(&selection.anchor),
+                    node_projection: None,
+                })
+                .await
+                .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
+                .vfs,
             None => frame.typed_vfs().unwrap_or_else(empty_vfs),
         };
 
@@ -421,14 +424,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
 
 fn orchestration_node_evidence_from_anchor(
     anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
-) -> Option<OrchestrationNodeEvidenceRef> {
+) -> Option<ports_lifecycle_surface::OrchestrationNodeEvidenceRef> {
     match (
         anchor.orchestration_id,
         anchor.node_path.as_ref(),
         anchor.node_attempt,
     ) {
         (Some(orchestration_id), Some(node_path), Some(attempt)) => {
-            Some(OrchestrationNodeEvidenceRef {
+            Some(ports_lifecycle_surface::OrchestrationNodeEvidenceRef {
                 run_id: anchor.run_id,
                 orchestration_id,
                 node_path: node_path.clone(),

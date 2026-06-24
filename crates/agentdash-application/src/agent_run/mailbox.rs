@@ -4,6 +4,10 @@ use uuid::Uuid;
 use agentdash_agent_protocol::{
     UserInputBlock, UserInputSubmissionKind, user_input_blocks_to_content_parts,
 };
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
+use agentdash_application_ports::lifecycle_surface_projection::{
+    MessageStreamProjectionRef, MessageStreamTraceKind,
+};
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
@@ -26,10 +30,7 @@ use crate::agent_run::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
 };
-use crate::lifecycle::{
-    AgentRunRuntimeAddress, MessageStreamProjectionRef, MessageStreamTraceKind,
-    WorkflowApplicationError,
-};
+use crate::lifecycle::WorkflowApplicationError;
 use crate::session::{
     LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
     SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,

@@ -5,6 +5,8 @@
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
@@ -38,14 +40,8 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
 };
-use crate::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleNodeRuntimeFacts, AgentRunLifecycleSessionEvidenceFacts,
-    AgentRunLifecycleSkillProjectionFacts,
-};
 use crate::lifecycle::{
-    ActiveWorkflowProjection, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,
-    BuiltinLifecycleSkill, MessageStreamProjectionRef, MessageStreamTraceKind,
-    OrchestrationNodeProjectionInput, project_active_workflow_lifecycle_vfs,
+    ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
     writable_port_keys_for_active_workflow,
 };
 use crate::mcp_preset::McpRuntimeBindingContext;
@@ -173,6 +169,8 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
+    pub lifecycle_surface_projection:
+        &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     pub audit_bus: Option<SharedContextAuditBus>,
     pub extra_skill_dirs: &'a [PathBuf],
     pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
@@ -186,6 +184,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
+        lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     ) -> Self {
         Self {
             vfs_service,
@@ -193,6 +192,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             availability,
             repos,
             platform_config,
+            lifecycle_surface_projection,
             audit_bus: None,
             extra_skill_dirs: &[],
             skill_discovery_providers: &[],
@@ -417,58 +417,68 @@ impl<'a> OwnerBootstrapComposer<'a> {
             };
             match anchor {
                 Some(anchor) => {
-                    let projector = AgentRunLifecycleSurfaceProjector::new(self.repos);
-                    let address = AgentRunRuntimeAddress {
+                    let address = ports_agent_run_surface::AgentRunRuntimeAddress {
                         run_id: anchor.run_id,
                         agent_id: anchor.agent_id,
                         frame_id: anchor.launch_frame_id,
                     };
-                    let message_stream = MessageStreamProjectionRef {
+                    let message_stream = ports_lifecycle_surface::MessageStreamProjectionRef {
                         runtime_session_id: anchor.runtime_session_id,
-                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+                        trace_kind:
+                            ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
                     };
-                    let skill_projection = AgentRunLifecycleSkillProjectionFacts::ensure(
-                        skill_asset_keys.clone(),
-                        [
-                            BuiltinLifecycleSkill::CompanionSystem,
-                            BuiltinLifecycleSkill::CanvasSystem,
-                        ],
-                    );
+                    let builtin_skills =
+                        ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(
+                            vec![
+                                ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
+                                ports_lifecycle_surface::BuiltinLifecycleSkill::CanvasSystem,
+                            ],
+                        );
                     let surface = if let Some(workflow) = active_workflow {
-                        projector
-                            .project_workflow_node_execution_surface(
-                                AgentRunLifecycleNodeRuntimeFacts {
+                        let node_projection =
+                            ports_lifecycle_surface::OrchestrationNodeProjectionInput {
+                                run_id: workflow.run.id,
+                                orchestration_id: workflow.orchestration_id,
+                                node_path: workflow.node_path.clone(),
+                                lifecycle_key: workflow.lifecycle_key.clone(),
+                                attempt: workflow.active_attempt.attempt,
+                                writable_port_keys: writable_port_keys_for_active_workflow(
+                                    workflow,
+                                ),
+                            };
+                        self.lifecycle_surface_projection
+                            .project_lifecycle_surface(
+                                ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                                     base_vfs: vfs,
                                     address,
                                     message_stream: Some(message_stream),
                                     project_id,
-                                    node_projection: OrchestrationNodeProjectionInput {
-                                        run_id: workflow.run.id,
-                                        orchestration_id: workflow.orchestration_id,
-                                        node_path: workflow.node_path.clone(),
-                                        lifecycle_key: workflow.lifecycle_key.clone(),
-                                        attempt: workflow.active_attempt.attempt,
-                                        writable_port_keys: writable_port_keys_for_active_workflow(
-                                            workflow,
-                                        ),
-                                    },
-                                    skill_projection,
+                                    mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                                    explicit_skill_asset_keys: skill_asset_keys.clone(),
+                                    builtin_skills,
+                                    node_evidence: Some(node_projection.evidence_ref()),
+                                    node_projection: Some(node_projection),
                                 },
                             )
-                            .await?
+                            .await
+                            .map_err(|error| error.to_string())?
                     } else {
-                        projector
-                            .project_launch_evidence_surface(
-                                AgentRunLifecycleSessionEvidenceFacts {
+                        self.lifecycle_surface_projection
+                            .project_lifecycle_surface(
+                                ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                                     base_vfs: vfs,
                                     address,
-                                    message_stream,
+                                    message_stream: Some(message_stream),
                                     project_id,
+                                    mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+                                    explicit_skill_asset_keys: skill_asset_keys.clone(),
+                                    builtin_skills,
                                     node_evidence: None,
-                                    skill_projection,
+                                    node_projection: None,
                                 },
                             )
-                            .await?
+                            .await
+                            .map_err(|error| error.to_string())?
                     };
                     Some(surface.vfs)
                 }

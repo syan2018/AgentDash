@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_application::runtime_gateway::{
+use agentdash_application::workspace::WorkspaceDetectionError;
+use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
+use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
+use agentdash_application_runtime_gateway::{
     ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
     McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput, McpProbeTransportProvider,
     RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
@@ -12,9 +15,6 @@ use agentdash_application::runtime_gateway::{
     WorkspaceDiscoverByIdentityOutput, WorkspaceDiscoverByIdentityProvider,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
-use agentdash_application::workspace::WorkspaceDetectionError;
-use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
-use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;

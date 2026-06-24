@@ -148,6 +148,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-application",
  "agentdash-application-ports",
+ "agentdash-application-runtime-gateway",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-executor",
@@ -195,6 +196,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-application-runtime-gateway",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-infrastructure",
@@ -245,6 +247,24 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-application-runtime-gateway"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-types",
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 

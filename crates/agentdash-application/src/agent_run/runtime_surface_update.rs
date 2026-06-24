@@ -1,12 +1,15 @@
 use std::{path::PathBuf, sync::Arc};
 
 use agentdash_agent_types::DynAgentTool;
+pub use agentdash_application_ports::runtime_surface_adoption::AgentRunActiveRuntimeSurfaceAdopter;
+use agentdash_application_ports::runtime_surface_adoption::{
+    AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError,
+};
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
 use async_trait::async_trait;
 
-use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::agent_run::runtime_capability_projection::{
@@ -18,14 +21,6 @@ use crate::agent_run::{
 };
 use crate::canvas::{canvas_runtime_mount_access, resolve_canvas_binding_files};
 use crate::vfs::{VfsService, append_canvas_mount, refresh_canvas_mount_binding_files};
-
-#[async_trait]
-pub trait AgentRunActiveRuntimeSurfaceAdopter: Send + Sync {
-    async fn adopt_persisted_frame_revision_into_active_runtime(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String>;
-}
 
 #[derive(Clone)]
 pub struct AgentRunRuntimeSurfaceUpdateService {
@@ -66,6 +61,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         self.active_adopter
             .adopt_persisted_frame_revision_into_active_runtime(target)
             .await
+            .map_err(|error| error.to_string())
     }
 
     pub async fn expose_canvas_mount(
@@ -142,7 +138,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
                 frame_id: next_frame.id,
                 delivery_runtime_session_id: session_id.to_string(),
             })
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
 
         next_frame
             .typed_vfs()
@@ -232,7 +229,7 @@ impl AgentRunActiveRuntimeSurfaceAdopter for AgentRunRuntimeSurfaceUpdateService
     async fn adopt_persisted_frame_revision_into_active_runtime(
         &self,
         target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, String> {
+    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
         self.active_adopter
             .adopt_persisted_frame_revision_into_active_runtime(target)
             .await
@@ -255,9 +252,9 @@ mod tests {
         AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
         AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
     };
-    use crate::lifecycle::AgentRunRuntimeAddress;
     use crate::test_support::workflow_repositories::MemoryAgentFrameRepository;
     use crate::vfs::MountProviderRegistry;
+    use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 
     struct FixedSurfaceQuery {
         surface: AgentRunRuntimeSurface,
@@ -292,7 +289,7 @@ mod tests {
         async fn adopt_persisted_frame_revision_into_active_runtime(
             &self,
             target: AgentFrameRuntimeTarget,
-        ) -> Result<Vec<DynAgentTool>, String> {
+        ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
             self.targets.lock().await.push(target);
             Ok(Vec::new())
         }

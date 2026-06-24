@@ -24,6 +24,8 @@
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
@@ -55,14 +57,8 @@ use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments,
 };
-use crate::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleNodeRuntimeFacts, AgentRunLifecycleSessionEvidenceFacts,
-    AgentRunLifecycleSkillProjectionFacts,
-};
 use crate::lifecycle::{
-    ActivityActivationInput, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,
-    BuiltinLifecycleSkill, MessageStreamProjectionRef, MessageStreamTraceKind,
-    OrchestrationNodeProjectionInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
+    ActivityActivationInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
     load_scoped_port_output_map,
 };
 use crate::platform_config::PlatformConfig;
@@ -86,6 +82,8 @@ pub struct FrameRequestAssembler<'a> {
     pub vfs_service: &'a VfsService,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
+    pub lifecycle_surface_projection:
+        &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     /// 可选审计总线 —— 每次 compose 产出 Bundle 后批量 emit。
     ///
     /// 为 `None` 时（例如单元测试 / routine 内部降级路径）跳过 emit；
@@ -123,11 +121,13 @@ impl<'a> FrameRequestAssembler<'a> {
         vfs_service: &'a VfsService,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
+        lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     ) -> Self {
         Self {
             vfs_service,
             repos,
             platform_config,
+            lifecycle_surface_projection,
             audit_bus: None,
             companion_parent_facts_provider: None,
             extra_skill_dirs: &[],
@@ -236,6 +236,7 @@ impl<'a> FrameRequestAssembler<'a> {
         let prepared = compose_companion_with_workflow(
             self.repos,
             self.platform_config,
+            self.lifecycle_surface_projection,
             CompanionWorkflowSpec {
                 companion: CompanionSpec {
                     parent_vfs: parent_facts.parent_vfs.as_ref(),
@@ -360,26 +361,32 @@ impl<'a> FrameRequestAssembler<'a> {
                     anchor.run_id
                 )
             })?;
-        let surface = AgentRunLifecycleSurfaceProjector::new(self.repos)
-            .project_companion_child_surface(AgentRunLifecycleSessionEvidenceFacts {
+        let surface = self
+            .lifecycle_surface_projection
+            .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
                 base_vfs: prepared.vfs.take(),
-                address: AgentRunRuntimeAddress {
+                address: ports_agent_run_surface::AgentRunRuntimeAddress {
                     run_id: anchor.run_id,
                     agent_id: anchor.agent_id,
                     frame_id: anchor.launch_frame_id,
                 },
-                message_stream: MessageStreamProjectionRef {
+                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
                     runtime_session_id: anchor.runtime_session_id,
-                    trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                },
+                    trace_kind:
+                        ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
                 project_id: run.project_id,
+                mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::CompanionChildSurface,
+                explicit_skill_asset_keys,
+                builtin_skills:
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                        ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
+                    ]),
                 node_evidence: None,
-                skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
-                    explicit_skill_asset_keys,
-                    [BuiltinLifecycleSkill::CompanionSystem],
-                ),
+                node_projection: None,
             })
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
         let vfs = surface.vfs;
         prepared.vfs = Some(vfs.clone());
         if let Some(capability_state) = prepared.capability_state.as_mut() {
@@ -450,6 +457,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
+    lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
@@ -463,6 +471,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     let prepared = compose_lifecycle_node_with_audit(
         repos,
         platform_config,
+        lifecycle_surface_projection,
         spec,
         audit_bus,
         audit_session_key,
@@ -474,6 +483,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
 async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
+    lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
@@ -523,41 +533,45 @@ async fn compose_lifecycle_node_with_audit(
         None => None,
     } {
         let base_vfs = activation.lifecycle_vfs.clone();
-        AgentRunLifecycleSurfaceProjector::new(repos)
-            .project_workflow_node_activation(
-                &mut activation,
-                AgentRunLifecycleNodeRuntimeFacts {
-                    base_vfs: Some(base_vfs),
-                    address: AgentRunRuntimeAddress {
-                        run_id: anchor.run_id,
-                        agent_id: anchor.agent_id,
-                        frame_id: anchor.launch_frame_id,
-                    },
-                    message_stream: Some(MessageStreamProjectionRef {
-                        runtime_session_id: anchor.runtime_session_id,
-                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                    }),
-                    project_id: spec.run.project_id,
-                    node_projection: OrchestrationNodeProjectionInput {
-                        run_id: spec.run.id,
-                        orchestration_id: spec.orchestration_id,
-                        node_path: spec.node_path.to_string(),
-                        lifecycle_key: spec.lifecycle_key.to_string(),
-                        attempt: spec.attempt,
-                        writable_port_keys: spec
-                            .activity
-                            .output_ports
-                            .iter()
-                            .map(|port| port.key.clone())
-                            .collect(),
-                    },
-                    skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
-                        Vec::new(),
-                        [BuiltinLifecycleSkill::CompanionSystem],
-                    ),
+        let node_projection = ports_lifecycle_surface::OrchestrationNodeProjectionInput {
+            run_id: spec.run.id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path.to_string(),
+            lifecycle_key: spec.lifecycle_key.to_string(),
+            attempt: spec.attempt,
+            writable_port_keys: spec
+                .activity
+                .output_ports
+                .iter()
+                .map(|port| port.key.clone())
+                .collect(),
+        };
+        let surface = lifecycle_surface_projection
+            .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                base_vfs: Some(base_vfs),
+                address: ports_agent_run_surface::AgentRunRuntimeAddress {
+                    run_id: anchor.run_id,
+                    agent_id: anchor.agent_id,
+                    frame_id: anchor.launch_frame_id,
                 },
-            )
-            .await?;
+                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
+                    runtime_session_id: anchor.runtime_session_id,
+                    trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id: spec.run.project_id,
+                mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                explicit_skill_asset_keys: Vec::new(),
+                builtin_skills:
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                        ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
+                    ]),
+                node_evidence: Some(node_projection.evidence_ref()),
+                node_projection: Some(node_projection),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        activation.lifecycle_vfs = surface.vfs;
+        activation.lifecycle_mount = surface.lifecycle_mount;
     } else {
         project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
             .await
@@ -832,6 +846,7 @@ pub struct CompanionWorkflowSpec<'a> {
 async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
+    lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     spec: CompanionWorkflowSpec<'_>,
 ) -> Result<FrameAssemblyBuilder, String> {
     use crate::companion::tools::build_companion_execution_slice;
@@ -902,44 +917,49 @@ async fn compose_companion_with_workflow(
         .map_err(|error| error.to_string())?
     {
         let base_vfs = activation.lifecycle_vfs.clone();
-        AgentRunLifecycleSurfaceProjector::new(repos)
-            .project_workflow_node_activation(
-                &mut activation,
-                AgentRunLifecycleNodeRuntimeFacts {
-                    base_vfs: Some(base_vfs),
-                    address: AgentRunRuntimeAddress {
-                        run_id: anchor.run_id,
-                        agent_id: anchor.agent_id,
-                        frame_id: anchor.launch_frame_id,
-                    },
-                    message_stream: Some(MessageStreamProjectionRef {
-                        runtime_session_id: anchor.runtime_session_id,
-                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                    }),
-                    project_id,
-                    node_projection: OrchestrationNodeProjectionInput {
-                        run_id: spec.run.id,
-                        orchestration_id: spec.orchestration_id,
-                        node_path: spec.node_path.to_string(),
-                        lifecycle_key: spec.lifecycle.key.clone(),
-                        attempt: spec.attempt,
-                        writable_port_keys: spec
-                            .activity
-                            .output_ports
-                            .iter()
-                            .map(|port| port.key.clone())
-                            .collect(),
-                    },
-                    skill_projection: AgentRunLifecycleSkillProjectionFacts::ensure(
-                        comp.selected_context
-                            .as_ref()
-                            .and_then(|context| context.preset_config.skill_asset_keys.clone())
-                            .unwrap_or_default(),
-                        [BuiltinLifecycleSkill::CompanionSystem],
-                    ),
+        let node_projection = ports_lifecycle_surface::OrchestrationNodeProjectionInput {
+            run_id: spec.run.id,
+            orchestration_id: spec.orchestration_id,
+            node_path: spec.node_path.to_string(),
+            lifecycle_key: spec.lifecycle.key.clone(),
+            attempt: spec.attempt,
+            writable_port_keys: spec
+                .activity
+                .output_ports
+                .iter()
+                .map(|port| port.key.clone())
+                .collect(),
+        };
+        let surface = lifecycle_surface_projection
+            .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                base_vfs: Some(base_vfs),
+                address: ports_agent_run_surface::AgentRunRuntimeAddress {
+                    run_id: anchor.run_id,
+                    agent_id: anchor.agent_id,
+                    frame_id: anchor.launch_frame_id,
                 },
-            )
-            .await?;
+                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
+                    runtime_session_id: anchor.runtime_session_id,
+                    trace_kind: ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id,
+                mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
+                explicit_skill_asset_keys: comp
+                    .selected_context
+                    .as_ref()
+                    .and_then(|context| context.preset_config.skill_asset_keys.clone())
+                    .unwrap_or_default(),
+                builtin_skills:
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![
+                        ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
+                    ]),
+                node_evidence: Some(node_projection.evidence_ref()),
+                node_projection: Some(node_projection),
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        activation.lifecycle_vfs = surface.vfs;
+        activation.lifecycle_mount = surface.lifecycle_mount;
     } else {
         project_companion_system_skill_to_activation(repos, project_id, &mut activation)
             .await

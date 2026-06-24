@@ -131,55 +131,6 @@ impl SessionLaunchOrchestrator {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) async fn launch_with_envelope_for_test(
-        &self,
-        session_id: &str,
-        envelope: FrameLaunchEnvelope,
-    ) -> Result<String, ConnectorError> {
-        let user_input = UserPromptInput {
-            input: envelope.intent.input.clone(),
-            env: envelope.intent.environment_variables.clone(),
-            executor_config: Some(envelope.launch_executor_config().clone()),
-            backend_selection: None,
-        };
-        let command = LaunchCommand::http_prompt_input(user_input, None);
-        let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
-        let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
-        let _cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
-        let sid = session_id.to_string();
-        let session_meta = self
-            .deps
-            .stores
-            .meta
-            .get_session_meta(&sid)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let Some(session_meta) = session_meta else {
-            self.deps
-                .turn_supervisor
-                .clear_turn_and_hook(session_id)
-                .await;
-            return Err(ConnectorError::Runtime(format!("session {sid} 不存在")));
-        };
-        let requested_runtime_commands = self
-            .deps
-            .stores
-            .runtime_commands
-            .list_requested_runtime_commands(&sid)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let facts = LaunchRuntimeFacts {
-            turn_id,
-            had_existing_runtime,
-            session_meta,
-            requested_runtime_commands,
-            context_sources: Vec::new(),
-        };
-        self.launch_with_envelope(session_id, &command, envelope, facts)
-            .await
-    }
-
     /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。
     async fn launch_with_envelope(
         &self,

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
@@ -31,8 +33,6 @@ use agentdash_domain::workflow::{
     WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
-
-use crate::lifecycle::RuntimeSessionCreator;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 ///
@@ -76,7 +76,8 @@ pub struct RepositorySet {
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
-    pub runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
+    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,

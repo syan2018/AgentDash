@@ -19,7 +19,7 @@ use agentdash_application::extension_package::{
     StoreExtensionPackageArchiveInput, install_extension_package_artifact,
     store_extension_package_archive,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };

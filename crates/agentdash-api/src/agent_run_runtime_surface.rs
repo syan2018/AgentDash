@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::runtime_surface::AgentRunResourceSurfaceQueryError;
 use agentdash_application::agent_run::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
     AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
@@ -123,51 +122,6 @@ pub(crate) fn ensure_current_runtime_surface_project_matches(
     Ok(())
 }
 
-pub(crate) async fn resolve_runtime_session_resource_vfs_for_api(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    session_id: &str,
-) -> Result<Vfs, ApiError> {
-    ensure_runtime_session_exists(state, session_id).await?;
-    let resource_surface = state
-        .services
-        .resource_surface_query
-        .resource_surface_for_runtime_session(session_id)
-        .await
-        .map_err(resource_surface_query_error_to_api)?;
-    load_project_with_permission(
-        state.as_ref(),
-        current_user,
-        resource_surface.runtime.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    Ok(resource_surface.lifecycle_surface.vfs)
-}
-
-pub(crate) async fn resolve_agent_run_resource_vfs_for_api(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    run_id: Uuid,
-    agent_id: Uuid,
-    permission: ProjectPermission,
-) -> Result<Vfs, ApiError> {
-    let resource_surface = state
-        .services
-        .resource_surface_query
-        .resource_surface_for_agent_run(run_id, agent_id)
-        .await
-        .map_err(resource_surface_query_error_to_api)?;
-    load_project_with_permission(
-        state.as_ref(),
-        current_user,
-        resource_surface.runtime.project_id,
-        permission,
-    )
-    .await?;
-    Ok(resource_surface.lifecycle_surface.vfs)
-}
-
 pub(crate) async fn resolve_terminal_launch_target_for_api(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,
@@ -240,26 +194,6 @@ fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -
         AgentRunRuntimeSurfaceQueryError::MissingRuntimeBackendAnchor { .. }
         | AgentRunRuntimeSurfaceQueryError::BackendAnchorDerivation { .. } => {
             ApiError::Conflict(error.to_string())
-        }
-    }
-}
-
-fn resource_surface_query_error_to_api(error: AgentRunResourceSurfaceQueryError) -> ApiError {
-    match error {
-        AgentRunResourceSurfaceQueryError::RuntimeSurface(error) => {
-            runtime_surface_query_error_to_api(error)
-        }
-        AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor { agent_id, .. } => {
-            ApiError::NotFound(format!(
-                "lifecycle_agent {agent_id} 没有可用 delivery runtime surface"
-            ))
-        }
-        AgentRunResourceSurfaceQueryError::ControlPlaneMismatch { .. }
-        | AgentRunResourceSurfaceQueryError::Projection { .. } => {
-            ApiError::Conflict(error.to_string())
-        }
-        AgentRunResourceSurfaceQueryError::Repository { message, .. } => {
-            ApiError::Internal(message)
         }
     }
 }

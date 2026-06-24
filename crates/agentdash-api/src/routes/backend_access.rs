@@ -5,17 +5,17 @@ use axum::extract::{Path, State};
 use uuid::Uuid;
 
 use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
-use agentdash_application::runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceDetectInput,
-};
 use agentdash_application::workspace::{
     WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult, WorkspaceDetectionResult,
     WorkspaceInventoryCandidate as ApplicationWorkspaceInventoryCandidate,
 };
 use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
+};
+use agentdash_application_runtime_gateway::{
+    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput, WorkspaceDetectInput,
 };
 use agentdash_contracts::backend::{
     BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest,

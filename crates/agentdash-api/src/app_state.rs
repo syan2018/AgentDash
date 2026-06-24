@@ -19,12 +19,10 @@ use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
+use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{
-    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
-};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
@@ -32,7 +30,13 @@ use agentdash_application::session::{
     SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
+use agentdash_application::vfs::{
+    VfsMutationDispatcher, VfsService, VfsSurfaceResolver, VfsSurfaceResolverDeps,
+};
+use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
+use agentdash_application_runtime_gateway::{
+    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+};
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -71,6 +75,7 @@ pub struct ServiceSet {
     pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
+    pub vfs_surface_resolver: VfsSurfaceResolver,
     pub session_effects: SessionEffectsService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
@@ -263,9 +268,18 @@ impl AppState {
         let resource_surface_query =
             AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
                 anchor_repo: repos.execution_anchor_repo.clone(),
-                skill_asset_repo: repos.skill_asset_repo.clone(),
                 surface_query: runtime_surface_query_port.clone(),
+                lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
+                    &repos,
+                )),
             });
+        let resource_surface_query_port: Arc<dyn AgentRunResourceSurfaceQueryPort> =
+            Arc::new(resource_surface_query.clone());
+        let vfs_surface_resolver = VfsSurfaceResolver::new(VfsSurfaceResolverDeps {
+            repos: repos.clone(),
+            vfs_service: vfs_service.clone(),
+            resource_surface_query: resource_surface_query_port,
+        });
         let presentation_read_model_query =
             AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
                 repos: repos.clone(),
@@ -364,6 +378,7 @@ impl AppState {
                 runtime_surface_query: runtime_surface_query_port,
                 presentation_read_model_query,
                 resource_surface_query,
+                vfs_surface_resolver,
                 session_effects,
                 session_title,
                 connector,

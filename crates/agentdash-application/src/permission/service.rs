@@ -383,10 +383,11 @@ fn map_grant_transition_error(error: DomainError) -> ApplicationError {
 mod tests {
     use super::*;
     use crate::agent_run::runtime_capability::project_capability_state_from_frame;
-    use crate::agent_run::{
-        AgentFrameBuilder, AgentRunActiveRuntimeSurfaceAdopter, AgentRunGrantProjection,
-    };
+    use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
     use agentdash_agent_types::DynAgentTool;
+    use agentdash_application_ports::runtime_surface_adoption::{
+        AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter, RuntimeSurfaceAdoptionError,
+    };
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
         PolicyOutcome,
@@ -611,10 +612,12 @@ mod tests {
     impl AgentRunActiveRuntimeSurfaceAdopter for TestSurfaceBoundary {
         async fn adopt_persisted_frame_revision_into_active_runtime(
             &self,
-            _target: crate::agent_run::AgentFrameRuntimeTarget,
-        ) -> Result<Vec<DynAgentTool>, String> {
+            _target: AgentFrameRuntimeTarget,
+        ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
             if self.fail_adoption {
-                Err("connector refresh failed".to_string())
+                Err(RuntimeSurfaceAdoptionError::Failed {
+                    message: "connector refresh failed".to_string(),
+                })
             } else {
                 Ok(Vec::new())
             }

@@ -7,11 +7,11 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::lifecycle::{
-    AgentRunRuntimeAddress, MessageStreamProjectionRef, MessageStreamTraceKind,
-    resolve_current_frame_from_delivery_trace_ref,
-};
 use crate::repository_set::RepositorySet;
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
+use agentdash_application_ports::lifecycle_surface_projection::{
+    MessageStreamProjectionRef, MessageStreamTraceKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryRuntimeSelectionPolicy {
@@ -161,17 +161,13 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
                 runtime_session_id: binding.runtime_session_id.clone(),
             })?;
         validate_anchor_matches(&expected_anchor, run_id, agent_id, binding.launch_frame_id)?;
-        let (anchor, _resolved_agent, current_frame) =
-            resolve_current_frame_from_delivery_trace_ref(
-                &binding.runtime_session_id,
-                self.repos.execution_anchors,
-                self.repos.lifecycle_agents,
-                self.repos.agent_frames,
-            )
+        let current_frame = self
+            .repos
+            .agent_frames
+            .get_current(agent.id)
             .await?
-            .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
-                runtime_session_id: binding.runtime_session_id.clone(),
-            })?;
+            .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id: agent.id })?;
+        let anchor = expected_anchor;
         if current_frame.agent_id != agent_id {
             return Err(DeliveryRuntimeSelectionError::CurrentFrameNotFound {
                 frame_id: current_frame.id,

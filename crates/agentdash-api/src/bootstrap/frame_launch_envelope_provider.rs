@@ -12,6 +12,7 @@ use agentdash_application::agent_run::frame::{
     FrameConstructionDeps, FrameConstructionService, FrameLaunchEnvelope,
     FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput,
 };
+use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -35,6 +36,9 @@ impl AppStateFrameLaunchEnvelopeProvider {
             platform_config: state.config.platform_config.clone(),
             audit_bus: state.services.audit_bus.clone(),
             companion_facts: Arc::new(state.services.session_runtime_transition.clone()),
+            lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
+                &state.repos,
+            )),
             connector: state.services.connector.clone(),
             extra_skill_dirs: state.services.extra_skill_dirs.clone(),
             skill_discovery_providers: state.services.skill_discovery_providers.clone(),

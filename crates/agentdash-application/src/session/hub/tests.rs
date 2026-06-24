@@ -43,6 +43,8 @@ use futures::stream;
 use serde_json::json;
 use tokio::sync::Mutex as TokioMutex;
 
+use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
+
 use super::super::MemorySessionPersistence;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::hook_messages as msg;
@@ -57,7 +59,6 @@ use super::super::{
     SessionToolResultCache,
 };
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
-use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::runtime_capability::{

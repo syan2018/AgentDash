@@ -8,7 +8,6 @@ use agentdash_application_ports::runtime_gateway_mcp_surface::{
     RuntimeGatewayMcpSurfaceWithBackend,
 };
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
-use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
@@ -20,13 +19,9 @@ use uuid::Uuid;
 use crate::agent_run::frame::runtime_launch::runtime_backend_anchor_from_vfs;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
-use crate::lifecycle::AgentRunRuntimeAddress;
-use crate::lifecycle::surface::surface_projector::{
-    AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
-    AgentRunLifecycleSurface, AgentRunLifecycleSurfaceProjector, MessageStreamProjectionRef,
-    MessageStreamTraceKind, OrchestrationNodeEvidenceRef,
-};
 use crate::vfs::PROVIDER_RELAY_FS;
+
+pub use ports_agent_run_surface::AgentRunRuntimeAddress;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSurfaceQueryPurpose {
@@ -85,23 +80,24 @@ pub trait AgentRunRuntimeSurfaceQueryPort: Send + Sync {
 #[derive(Clone)]
 pub struct AgentRunResourceSurfaceQuery {
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    skill_asset_repo: Arc<dyn SkillAssetRepository>,
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    lifecycle_surface_projection: Arc<dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort>,
 }
 
 #[derive(Clone)]
 pub struct AgentRunResourceSurfaceQueryDeps {
     pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
     pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    pub lifecycle_surface_projection:
+        Arc<dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort>,
 }
 
 impl AgentRunResourceSurfaceQuery {
     pub fn new(deps: AgentRunResourceSurfaceQueryDeps) -> Self {
         Self {
             anchor_repo: deps.anchor_repo,
-            skill_asset_repo: deps.skill_asset_repo,
             surface_query: deps.surface_query,
+            lifecycle_surface_projection: deps.lifecycle_surface_projection,
         }
     }
 
@@ -169,7 +165,7 @@ impl AgentRunResourceSurfaceQuery {
             runtime_surface.provenance.node_attempt,
         ) {
             (Some(orchestration_id), Some(node_path), Some(attempt)) => {
-                Some(OrchestrationNodeEvidenceRef {
+                Some(ports_lifecycle_surface::OrchestrationNodeEvidenceRef {
                     run_id: runtime_surface.run_id,
                     orchestration_id,
                     node_path: node_path.clone(),
@@ -178,21 +174,28 @@ impl AgentRunResourceSurfaceQuery {
             }
             _ => None,
         };
-        let lifecycle_surface =
-            AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(self.skill_asset_repo.clone())
-                .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
-                    base_vfs: Some(runtime_surface.vfs.clone()),
-                    address: runtime_surface.runtime_address.clone(),
-                    message_stream: MessageStreamProjectionRef {
-                        runtime_session_id: runtime_surface.runtime_session_id.clone(),
-                        trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-                    },
-                    project_id: runtime_surface.project_id,
-                    node_evidence,
-                    skill_projection: AgentRunLifecycleSkillProjectionFacts::preserve_projected(),
-                })
-                .await
-                .map_err(|message| AgentRunResourceSurfaceQueryError::Projection { message })?;
+        let lifecycle_surface = self
+            .lifecycle_surface_projection
+            .project_lifecycle_surface(ports_lifecycle_surface::AgentRunLifecycleSurfaceInput {
+                base_vfs: Some(runtime_surface.vfs.clone()),
+                address: runtime_surface.runtime_address.clone(),
+                message_stream: Some(ports_lifecycle_surface::MessageStreamProjectionRef {
+                    runtime_session_id: runtime_surface.runtime_session_id.clone(),
+                    trace_kind:
+                        ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
+                }),
+                project_id: runtime_surface.project_id,
+                mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkspaceReadSurface,
+                explicit_skill_asset_keys: Vec::new(),
+                builtin_skills:
+                    ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::PreserveProjected,
+                node_evidence,
+                node_projection: None,
+            })
+            .await
+            .map_err(|error| AgentRunResourceSurfaceQueryError::Projection {
+                message: error.to_string(),
+            })?;
 
         Ok(AgentRunResourceSurface {
             runtime: runtime_surface,
@@ -440,7 +443,7 @@ pub struct AgentRunRuntimeSurface {
 #[derive(Debug, Clone)]
 pub struct AgentRunResourceSurface {
     pub runtime: AgentRunRuntimeSurface,
-    pub lifecycle_surface: AgentRunLifecycleSurface,
+    pub lifecycle_surface: ports_lifecycle_surface::AgentRunLifecycleSurface,
 }
 
 #[derive(Debug, Clone)]
@@ -778,63 +781,12 @@ fn port_runtime_surface_with_backend(
     }
 }
 
-fn port_message_stream_trace_kind(
-    trace_kind: MessageStreamTraceKind,
-) -> ports_lifecycle_surface::MessageStreamTraceKind {
-    match trace_kind {
-        MessageStreamTraceKind::ConnectorRuntimeSession => {
-            ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession
-        }
-        MessageStreamTraceKind::RestoredTranscript => {
-            ports_lifecycle_surface::MessageStreamTraceKind::RestoredTranscript
-        }
-    }
-}
-
-fn port_lifecycle_surface(
-    surface: AgentRunLifecycleSurface,
-) -> ports_lifecycle_surface::AgentRunLifecycleSurface {
-    ports_lifecycle_surface::AgentRunLifecycleSurface {
-        vfs: surface.vfs,
-        lifecycle_mount: surface.lifecycle_mount,
-        projections: ports_lifecycle_surface::AgentRunLifecycleProjectionSet {
-            agent_run_identity: surface.projections.agent_run_identity,
-            message_stream: surface.projections.message_stream.map(|facts| {
-                ports_lifecycle_surface::MessageStreamProjectionFacts {
-                    runtime_session_id: facts.runtime_session_id,
-                    trace_kind: port_message_stream_trace_kind(facts.trace_kind),
-                }
-            }),
-            node_evidence: surface.projections.node_evidence.map(|facts| {
-                ports_lifecycle_surface::OrchestrationNodeEvidenceFacts {
-                    run_id: facts.run_id,
-                    orchestration_id: facts.orchestration_id,
-                    node_path: facts.node_path,
-                    attempt: facts.attempt,
-                }
-            }),
-            orchestration_node: surface.projections.orchestration_node.map(|facts| {
-                ports_lifecycle_surface::OrchestrationNodeProjectionFacts {
-                    run_id: facts.run_id,
-                    orchestration_id: facts.orchestration_id,
-                    node_path: facts.node_path,
-                    lifecycle_key: facts.lifecycle_key,
-                    attempt: facts.attempt,
-                    writable_port_keys: facts.writable_port_keys,
-                }
-            }),
-            skill_assets: surface.projections.skill_assets,
-        },
-        skill_asset_keys: surface.skill_asset_keys,
-    }
-}
-
 fn port_resource_surface(
     surface: AgentRunResourceSurface,
 ) -> ports_agent_run_surface::AgentRunResourceSurface {
     ports_agent_run_surface::AgentRunResourceSurface {
         runtime: port_runtime_surface(surface.runtime),
-        lifecycle_surface: port_lifecycle_surface(surface.lifecycle_surface),
+        lifecycle_surface: surface.lifecycle_surface,
     }
 }
 
@@ -1690,8 +1642,12 @@ mod tests {
             Arc::new(AgentRunResourceSurfaceQuery::new(
                 AgentRunResourceSurfaceQueryDeps {
                     anchor_repo: fixture.anchor_repo.clone(),
-                    skill_asset_repo: Arc::new(TestSkillAssetRepo),
                     surface_query,
+                    lifecycle_surface_projection: Arc::new(
+                        crate::lifecycle::AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+                            Arc::new(TestSkillAssetRepo),
+                        ),
+                    ),
                 },
             ));
 

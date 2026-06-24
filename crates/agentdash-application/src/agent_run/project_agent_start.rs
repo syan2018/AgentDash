@@ -1,5 +1,11 @@
 use uuid::Uuid;
 
+#[cfg(test)]
+use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+#[cfg(test)]
+use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
+use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_contracts::workflow::{
     ConversationEffectiveExecutorConfigView, ConversationModelConfigSource,
 };
@@ -31,7 +37,7 @@ use crate::agent_run::{
     },
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
-use crate::lifecycle::{LifecycleDispatchService, RuntimeSessionCreator, WorkflowApplicationError};
+use crate::lifecycle::{LifecycleDispatchService, WorkflowApplicationError};
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 
@@ -100,7 +106,8 @@ pub struct ProjectAgentRunStartRepos<'a> {
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     pub command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub mailbox_repo: &'a dyn AgentRunMailboxRepository,
-    pub runtime_session_creator: &'a dyn RuntimeSessionCreator,
+    pub runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
+    pub agent_frame_construction: &'a dyn AgentRunFrameConstructionPort,
 }
 
 impl<'a> ProjectAgentRunStartRepos<'a> {
@@ -118,6 +125,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
             mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
             runtime_session_creator: repos.runtime_session_creator.as_ref(),
+            agent_frame_construction: repos.agent_frame_construction.as_ref(),
         }
     }
 
@@ -349,7 +357,8 @@ impl<'a> ProjectAgentRunStartService<'a> {
             self.repos.agent_lineage_repo,
         )
         .with_anchor_repo(self.repos.execution_anchor_repo)
-        .with_runtime_session_creator(self.repos.runtime_session_creator);
+        .with_runtime_session_creator(self.repos.runtime_session_creator)
+        .with_frame_construction_port(self.repos.agent_frame_construction);
 
         tracing::info!(
             project_id = %command.project_id,
@@ -1132,6 +1141,57 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl AgentRunFrameConstructionPort for FrameRepo {
+        async fn execute_frame_construction_command(
+            &self,
+            command: agent_frame_materialization_port::FrameConstructionCommand,
+        ) -> Result<
+            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
+            agent_frame_materialization_port::AgentRunFrameSurfaceError,
+        > {
+            let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+                agent_id,
+                runtime_session_id,
+                created_by_id,
+                ..
+            } = command
+            else {
+                return Err(
+                    agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                        message: "test frame repo only supports DispatchLaunchAnchor".to_string(),
+                    },
+                );
+            };
+            let next_revision = self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .map(|frame| frame.revision)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            let mut frame = AgentFrame::new_revision(agent_id, next_revision, "frame_construction");
+            frame.created_by_id = created_by_id;
+            self.create(&frame).await.map_err(|error| {
+                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: error.to_string(),
+                }
+            })?;
+            let mut outcome =
+                agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
+                    agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
+                );
+            outcome.frame_id = Some(frame.id);
+            outcome.agent_id = Some(frame.agent_id);
+            outcome.runtime_session_id = Some(runtime_session_id);
+            outcome.wrote_frame_revision = true;
+            Ok(outcome)
+        }
+    }
+
     #[derive(Default)]
     struct AssociationRepo {
         items: Mutex<Vec<LifecycleSubjectAssociation>>,
@@ -1633,11 +1693,14 @@ mod tests {
     }
 
     #[async_trait]
-    impl RuntimeSessionCreator for RuntimeCreator {
+    impl RuntimeSessionCreationPort for RuntimeCreator {
         async fn create_runtime_session(
             &self,
-            _request: crate::lifecycle::RuntimeSessionCreationRequest,
-        ) -> Result<Uuid, WorkflowApplicationError> {
+            _request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
+        ) -> Result<
+            runtime_session_delivery_port::RuntimeSessionCreationResult,
+            runtime_session_delivery_port::RuntimeSessionDeliveryError,
+        > {
             let id = Uuid::new_v4();
             self.metas.lock().unwrap().insert(
                 id.to_string(),
@@ -1654,7 +1717,11 @@ mod tests {
                     executor_session_id: None,
                 },
             );
-            Ok(id)
+            Ok(
+                runtime_session_delivery_port::RuntimeSessionCreationResult {
+                    runtime_session_id: id,
+                },
+            )
         }
     }
 
@@ -1917,6 +1984,7 @@ mod tests {
                     command_receipt_repo: &self.command_receipt_repo,
                     mailbox_repo: &self.mailbox_repo,
                     runtime_session_creator: &self.runtime_creator,
+                    agent_frame_construction: &self.frame_repo,
                 },
                 &self.runtime_creator,
             )
@@ -1976,6 +2044,7 @@ mod tests {
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
+                agent_frame_construction: &frame_repo,
             },
             &runtime_creator,
         );
@@ -2139,6 +2208,7 @@ mod tests {
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
+                agent_frame_construction: &frame_repo,
             },
             &runtime_creator,
         );
@@ -2205,6 +2275,7 @@ mod tests {
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
+                agent_frame_construction: &frame_repo,
             },
             &runtime_creator,
         );
@@ -2285,6 +2356,7 @@ mod tests {
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
+                agent_frame_construction: &frame_repo,
             },
             &runtime_creator,
         );

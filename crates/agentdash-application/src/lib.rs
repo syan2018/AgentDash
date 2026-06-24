@@ -24,7 +24,7 @@ pub mod repository_set;
 pub mod routine;
 pub mod runtime;
 pub mod runtime_bridge;
-pub mod runtime_gateway;
+pub use agentdash_application_runtime_gateway as runtime_gateway;
 pub mod runtime_tools;
 pub mod scheduling;
 pub mod session;

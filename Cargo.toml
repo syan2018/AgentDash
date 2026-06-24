@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
+    "crates/agentdash-application-runtime-gateway",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
     "crates/agentdash-spi",
@@ -70,6 +71,7 @@ rhai = { version = "1.24", features = ["serde", "sync"] }
 # 工作区内部 crate 互相引用
 agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
+agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }

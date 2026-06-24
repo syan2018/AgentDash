@@ -244,9 +244,9 @@ impl From<agentdash_application::shared_library::ExternalMarketplaceLibraryError
     }
 }
 
-impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for ApiError {
-    fn from(err: agentdash_application::runtime_gateway::RuntimeInvocationError) -> Self {
-        use agentdash_application::runtime_gateway::{
+impl From<agentdash_application_runtime_gateway::RuntimeInvocationError> for ApiError {
+    fn from(err: agentdash_application_runtime_gateway::RuntimeInvocationError) -> Self {
+        use agentdash_application_runtime_gateway::{
             RuntimeInvocationError as E, RuntimeInvocationErrorKind,
         };
 

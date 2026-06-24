@@ -85,11 +85,18 @@ Checkpoint result on 2026-06-25:
 
 ### Wave 3: Runtime Crate Extraction
 
-- [ ] Add workspace crate `agentdash-application-runtime-gateway`.
-- [ ] Move RuntimeGateway modules and rewire dependencies.
+- [x] Add workspace crate `agentdash-application-runtime-gateway`.
+- [x] Move RuntimeGateway modules and rewire dependencies.
 - [ ] Add workspace crate `agentdash-application-runtime-session`.
 - [ ] Move RuntimeSession substrate modules and rewire dependencies.
-- [ ] Rewire API/local/MCP composition roots.
+- [x] Rewire API/local/MCP composition roots for RuntimeGateway.
+
+Checkpoint result on 2026-06-25:
+
+- `agentdash-application-runtime-gateway` is a clean extracted crate and does not depend on monolithic `agentdash-application`.
+- API/local/MCP no longer import `agentdash_application::runtime_gateway`.
+- RuntimeSession extraction is explicitly deferred because production adoption, launch envelope, accepted launch commit, mailbox/effective capability and hook target resolution still need ports.
+- Full checkpoint details live in `checkpoint-wave-2.md`.
 
 Gate:
 
@@ -172,6 +179,15 @@ Round 2 checkpoint checks:
 | `check-control-plane-crates` | AgentRun / Lifecycle crates | Ensure mutual links are ports/facades, not implementation imports. |
 | `check-vfs-core` | generic VFS crate | Ensure generic VFS core is free of session/lifecycle/canvas owner internals. |
 | `check-final-contract` | final gates | Run cargo metadata, static gates, target crate checks and summarize workspace blockers. |
+
+Round 2 actual checkpoint:
+
+| Worker | Agent id | Result |
+| --- | --- | --- |
+| `check-runtime-gateway-crate` | `019efafd-3959-7b32-9da1-fc9d9e860c28` | Gateway extraction passed; only temporary umbrella re-export remains. |
+| `check-session-port-wiring` | `019efafd-4db5-7971-9453-125757ec0ba8` | Session/Lifecycle direct import gate passed; RuntimeSession extraction still blocked by production port wiring. |
+| `check-control-plane-port-wiring` | `019efafd-6277-7b53-9d58-d4633c50658c` | AgentFrameBuilder/current-frame resolver gates passed; AgentRun/Lifecycle extraction still blocked by remaining dispatch/helper couplings. |
+| `check-api-vfs-facade` | `019efafd-76c5-75a1-b79f-b43289097343` | API VFS facade cleanup passed; VFS physical extraction still blocked by owner-specific providers. |
 
 Each worker prompt starts with:
 

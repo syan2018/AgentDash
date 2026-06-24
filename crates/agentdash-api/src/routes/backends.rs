@@ -30,7 +30,7 @@ use agentdash_application::backend::{
     LocalRuntimeScopeInput, add_backend_record, can_manage_global_backend_scope,
     ensure_local_runtime_record, remove_backend_record,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,

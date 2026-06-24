@@ -25,10 +25,12 @@ pub mod search;
 pub mod service;
 pub mod surface;
 pub mod surface_query;
+pub mod surface_resolver;
 pub mod tools;
 pub mod types;
 
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
+pub use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
 pub use apply_patch::{
     AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
     NormalizedPatchEntryTargets, ParseError as ApplyPatchParseError, PatchEntry, PatchPathTarget,
@@ -90,7 +92,8 @@ pub use surface::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource,
 };
-pub use surface_query::{VfsSurfaceRuntimeProjection, build_surface_summary};
+pub use surface_query::build_surface_summary;
+pub use surface_resolver::{ResolvedVfsSurfaceBundle, VfsSurfaceResolver, VfsSurfaceResolverDeps};
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
     ListResult, MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,

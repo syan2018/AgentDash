@@ -97,6 +97,7 @@ pub(super) async fn compose(
         builder,
         &svc.repos,
         svc.platform_config.as_ref(),
+        svc.lifecycle_surface_projection.as_ref(),
         LifecycleNodeSpec {
             run: &run,
             orchestration_id,

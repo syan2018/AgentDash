@@ -55,6 +55,44 @@ After these workers finish, dispatch:
 - `check-control-plane-port-wiring`: verify AgentRun/Lifecycle mutual links use ports/facades.
 - `check-api-vfs-facade`: verify API route/helper VFS direct imports are removed or classified as presentation/debug read-model.
 
+## Checkpoint Checks Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `check-runtime-gateway-crate` | `019efafd-3959-7b32-9da1-fc9d9e860c28` | Anscombe |
+| `check-session-port-wiring` | `019efafd-4db5-7971-9453-125757ec0ba8` | Carver |
+| `check-control-plane-port-wiring` | `019efafd-6277-7b53-9d58-d4633c50658c` | Hypatia |
+| `check-api-vfs-facade` | `019efafd-76c5-75a1-b79f-b43289097343` | Curie |
+
+## Completed
+
+All four implement workers completed and were closed after handoff. All four checkpoint check workers completed and were closed after review.
+
+Validation passed:
+
+- `cargo metadata --no-deps --format-version 1`
+- `cargo fmt --check`
+- `cargo check -p agentdash-application-runtime-gateway`
+- `cargo test -p agentdash-application-runtime-gateway --no-run`
+- `cargo check -p agentdash-application-ports`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
+- `cargo check -p agentdash-local -p agentdash-mcp`
+- `cargo test -p agentdash-application agent_run::runtime_surface`
+- `cargo test -p agentdash-application-ports vfs_surface_runtime`
+- `git diff --check`
+
+## Checkpoint Results
+
+| Worker | Agent id | Result |
+| --- | --- | --- |
+| `check-runtime-gateway-crate` | `019efafd-3959-7b32-9da1-fc9d9e860c28` | Gateway extraction passed; temporary umbrella re-export may remain until visibility cleanup. |
+| `check-session-port-wiring` | `019efafd-4db5-7971-9453-125757ec0ba8` | Session no longer imports Lifecycle, but RuntimeSession extraction is not ready. |
+| `check-control-plane-port-wiring` | `019efafd-6277-7b53-9d58-d4633c50658c` | Old AgentFrameBuilder/current-frame resolver gates passed, but AgentRun/Lifecycle extraction is not ready. |
+| `check-api-vfs-facade` | `019efafd-76c5-75a1-b79f-b43289097343` | API/VFS facade cleanup passed; VFS extraction is not ready. |
+
+Full checkpoint notes: `checkpoint-wave-2.md`.
+
 ## Expected Stage Commit
 
 Use a checkpoint commit after worker integration, even if some port-wiring gates remain red, as long as failures are owner-attributed.

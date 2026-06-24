@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::PgPool;
 
+use agentdash_application::agent_run::frame::AgentRunLaunchAnchorFrameConstructionAdapter;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::lifecycle::SessionPersistenceRuntimeSessionCreator;
 use agentdash_application::repository_set::RepositorySet;
@@ -124,6 +125,9 @@ pub(crate) async fn build_repositories(
     let agent_run_command_receipt_repo =
         Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
+    let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
+        agent_frame_repo.clone(),
+    ));
 
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
@@ -164,6 +168,7 @@ pub(crate) async fn build_repositories(
         agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
+        agent_frame_construction,
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),

@@ -7,14 +7,14 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentdash_application::runtime_gateway::{
+use agentdash_application::workspace::WorkspaceDetectionResult;
+use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
     WorkspaceDetectGitInput, WorkspaceDetectGitOutput, WorkspaceDetectInput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentityWorkspaceInput,
 };
-use agentdash_application::workspace::WorkspaceDetectionResult;
 use agentdash_contracts::backend::BackendWorkspaceInventoryResponse;
 use agentdash_contracts::common_response::{DeletedIdResponse, UpdatedIdResponse};
 use agentdash_contracts::workspace::{

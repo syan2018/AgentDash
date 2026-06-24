@@ -6,6 +6,7 @@ use agentdash_application::agent_run::{
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
 };
+use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
@@ -878,11 +879,13 @@ async fn load_agent_run_workspace_snapshot(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
+    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&state.repos);
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         &state.repos,
         state.services.session_core.clone(),
         state.services.session_control.clone(),
         &vfs_runtime,
+        &lifecycle_surface_projection,
     );
     service
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {
@@ -903,11 +906,13 @@ async fn load_agent_run_list_projection(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
+    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&state.repos);
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         &state.repos,
         state.services.session_core.clone(),
         state.services.session_control.clone(),
         &vfs_runtime,
+        &lifecycle_surface_projection,
     );
     service
         .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput { run, agent })

@@ -1,5 +1,11 @@
 use std::sync::Arc;
 
+#[cfg(test)]
+use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+#[cfg(test)]
+use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
+use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository, ArtifactAliasPolicy,
     ExecutorRunRef, LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun,
@@ -10,7 +16,7 @@ use agentdash_spi::FunctionRunner;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::lifecycle::{RuntimeSessionCreator, WorkflowApplicationError};
+use crate::lifecycle::WorkflowApplicationError;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
@@ -87,7 +93,8 @@ struct OrchestrationExecutorRepositories {
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
+    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
 impl From<RepositorySet> for OrchestrationExecutorRepositories {
@@ -103,6 +110,7 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
             agent_lineage_repo: repos.agent_lineage_repo,
             execution_anchor_repo: repos.execution_anchor_repo,
             runtime_session_creator: repos.runtime_session_creator,
+            agent_frame_construction: repos.agent_frame_construction,
         }
     }
 }
@@ -142,6 +150,7 @@ impl OrchestrationExecutorLauncher {
             repos.agent_lineage_repo.clone(),
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
+            repos.agent_frame_construction.clone(),
             frame_materializer,
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
@@ -486,11 +495,10 @@ mod launcher_drain_tests {
     use chrono::Utc;
     use serde_json::json;
 
-    use crate::agent_run::frame::lifecycle_materialization::materialize_launch_anchor_frame_with_vfs;
+    use crate::agent_run::frame::lifecycle_materialization::construct_launch_anchor_frame_with_vfs;
     use crate::lifecycle::{
-        LifecycleLaunchFrameMaterializationRequest, LifecycleMountSurface,
-        RuntimeSessionCreationRequest, RuntimeSessionCreator,
-        WorkflowAgentNodeFrameMaterializationContext, lifecycle_mount_overlay_for_surface,
+        LifecycleMountSurface, WorkflowAgentNodeFrameMaterializationContext,
+        lifecycle_mount_overlay_for_surface,
     };
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
 
@@ -881,6 +889,57 @@ mod launcher_drain_tests {
         }
     }
 
+    #[async_trait]
+    impl AgentRunFrameConstructionPort for InMemoryFrameRepo {
+        async fn execute_frame_construction_command(
+            &self,
+            command: agent_frame_materialization_port::FrameConstructionCommand,
+        ) -> Result<
+            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
+            agent_frame_materialization_port::AgentRunFrameSurfaceError,
+        > {
+            let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+                agent_id,
+                runtime_session_id,
+                created_by_id,
+                ..
+            } = command
+            else {
+                return Err(
+                    agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                        message: "test frame repo only supports DispatchLaunchAnchor".to_string(),
+                    },
+                );
+            };
+            let next_revision = self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .map(|frame| frame.revision)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            let mut frame = AgentFrame::new_revision(agent_id, next_revision, "frame_construction");
+            frame.created_by_id = created_by_id;
+            self.create(&frame).await.map_err(|error| {
+                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: error.to_string(),
+                }
+            })?;
+            let mut outcome =
+                agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
+                    agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
+                );
+            outcome.frame_id = Some(frame.id);
+            outcome.agent_id = Some(frame.agent_id);
+            outcome.runtime_session_id = Some(runtime_session_id);
+            outcome.wrote_frame_revision = true;
+            Ok(outcome)
+        }
+    }
+
     struct TestLifecycleFrameMaterializer {
         frame_repo: Arc<InMemoryFrameRepo>,
     }
@@ -908,13 +967,11 @@ mod launcher_drain_tests {
                 attempt: coordinate.attempt,
                 writable_port_keys,
             });
-            materialize_launch_anchor_frame_with_vfs(
+            construct_launch_anchor_frame_with_vfs(
                 self.frame_repo.as_ref(),
-                LifecycleLaunchFrameMaterializationRequest {
-                    agent_id: context.agent_id,
-                    runtime_session_ref: Some(context.runtime_session_ref),
-                    frame_created_by_id: context.frame_created_by_id,
-                },
+                context.agent_id,
+                Some(context.runtime_session_ref),
+                context.frame_created_by_id,
                 &overlay,
             )
             .await
@@ -990,13 +1047,11 @@ mod launcher_drain_tests {
                 attempt: coordinate.attempt,
                 writable_port_keys,
             });
-            materialize_launch_anchor_frame_with_vfs(
+            construct_launch_anchor_frame_with_vfs(
                 self.frame_repo.as_ref(),
-                LifecycleLaunchFrameMaterializationRequest {
-                    agent_id: context.agent_id,
-                    runtime_session_ref: Some(context.runtime_session_ref),
-                    frame_created_by_id: context.frame_created_by_id,
-                },
+                context.agent_id,
+                Some(context.runtime_session_ref),
+                context.frame_created_by_id,
                 &overlay,
             )
             .await
@@ -1165,12 +1220,19 @@ mod launcher_drain_tests {
     struct EmptyRuntimeSessionCreator;
 
     #[async_trait]
-    impl RuntimeSessionCreator for EmptyRuntimeSessionCreator {
+    impl RuntimeSessionCreationPort for EmptyRuntimeSessionCreator {
         async fn create_runtime_session(
             &self,
-            _request: RuntimeSessionCreationRequest,
-        ) -> Result<Uuid, WorkflowApplicationError> {
-            Ok(Uuid::new_v4())
+            _request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
+        ) -> Result<
+            runtime_session_delivery_port::RuntimeSessionCreationResult,
+            runtime_session_delivery_port::RuntimeSessionDeliveryError,
+        > {
+            Ok(
+                runtime_session_delivery_port::RuntimeSessionCreationResult {
+                    runtime_session_id: Uuid::new_v4(),
+                },
+            )
         }
     }
 
@@ -1270,6 +1332,7 @@ mod launcher_drain_tests {
                 agent_lineage_repo: Arc::new(EmptyLineageRepo),
                 execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
+                agent_frame_construction: frame_repo.clone(),
             },
             frame_materializer,
         );

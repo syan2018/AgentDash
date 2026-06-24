@@ -20,6 +20,7 @@ pub use launch_envelope_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeProvider,
     FrameLaunchEnvelopeProviderInput, RoutineLaunchSource, SharedFrameLaunchEnvelopeProvider,
 };
+pub use lifecycle_materialization::AgentRunLaunchAnchorFrameConstructionAdapter;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
 pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
 pub use surface_service::{

@@ -1,4 +1,4 @@
-use agentdash_domain::canvas::Canvas;
+use agentdash_domain::canvas::{Canvas, CanvasAccessProjection};
 
 use crate::canvas::{CanvasResolvedBindingFile, canvas_provider_root_ref, canvas_vfs_mount_id};
 use crate::runtime::{Mount, MountCapability, Vfs};
@@ -9,18 +9,66 @@ pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
     canvas_vfs_mount_id(canvas)
 }
 
-pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanvasMountAccess {
+    pub runtime_write_allowed: bool,
+}
+
+impl CanvasMountAccess {
+    pub const fn read_only() -> Self {
+        Self {
+            runtime_write_allowed: false,
+        }
+    }
+
+    pub const fn writable() -> Self {
+        Self {
+            runtime_write_allowed: true,
+        }
+    }
+
+    pub const fn from_runtime_write_allowed(runtime_write_allowed: bool) -> Self {
+        Self {
+            runtime_write_allowed,
+        }
+    }
+}
+
+impl From<CanvasAccessProjection> for CanvasMountAccess {
+    fn from(access: CanvasAccessProjection) -> Self {
+        Self::from_runtime_write_allowed(access.runtime_write_allowed)
+    }
+}
+
+impl From<&CanvasAccessProjection> for CanvasMountAccess {
+    fn from(access: &CanvasAccessProjection) -> Self {
+        Self::from_runtime_write_allowed(access.runtime_write_allowed)
+    }
+}
+
+impl From<bool> for CanvasMountAccess {
+    fn from(runtime_write_allowed: bool) -> Self {
+        Self::from_runtime_write_allowed(runtime_write_allowed)
+    }
+}
+
+pub fn build_canvas_mount(canvas: &Canvas, access: impl Into<CanvasMountAccess>) -> Mount {
+    let access = access.into();
+    let mut capabilities = vec![
+        MountCapability::Read,
+        MountCapability::List,
+        MountCapability::Search,
+    ];
+    if access.runtime_write_allowed {
+        capabilities.insert(1, MountCapability::Write);
+    }
+
     Mount {
         id: build_canvas_mount_id(canvas),
         provider: PROVIDER_CANVAS_FS.to_string(),
         backend_id: String::new(),
         root_ref: canvas_provider_root_ref(canvas),
-        capabilities: vec![
-            MountCapability::Read,
-            MountCapability::Write,
-            MountCapability::List,
-            MountCapability::Search,
-        ],
+        capabilities,
         default_write: false,
         display_name: if canvas.title.trim().is_empty() {
             format!("Canvas {}", canvas.id)
@@ -37,18 +85,26 @@ pub fn build_canvas_mount(canvas: &Canvas) -> Mount {
     }
 }
 
-pub fn append_canvas_mounts(vfs: &mut Vfs, canvases: &[Canvas]) {
+pub fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: impl Into<CanvasMountAccess>) {
+    let mount = build_canvas_mount(canvas, access);
+    if let Some(existing) = vfs
+        .mounts
+        .iter_mut()
+        .find(|existing| existing.id == mount.id)
+    {
+        *existing = mount;
+    } else {
+        vfs.mounts.push(mount);
+    }
+}
+
+pub fn append_canvas_mounts(
+    vfs: &mut Vfs,
+    canvases: &[Canvas],
+    access: impl Into<CanvasMountAccess> + Copy,
+) {
     for canvas in canvases {
-        let mount = build_canvas_mount(canvas);
-        if let Some(existing) = vfs
-            .mounts
-            .iter_mut()
-            .find(|existing| existing.id == mount.id)
-        {
-            *existing = mount;
-        } else {
-            vfs.mounts.push(mount);
-        }
+        append_canvas_mount(vfs, canvas, access);
     }
 }
 
@@ -112,7 +168,11 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        append_canvas_mounts(&mut vfs, std::slice::from_ref(&canvas));
+        append_canvas_mounts(
+            &mut vfs,
+            std::slice::from_ref(&canvas),
+            CanvasMountAccess::writable(),
+        );
         vfs.mounts.push(relay_mount("tail"));
         let before_order = vfs
             .mounts
@@ -120,7 +180,11 @@ mod tests {
             .map(|mount| mount.id.clone())
             .collect::<Vec<_>>();
 
-        append_canvas_mounts(&mut vfs, std::slice::from_ref(&canvas));
+        append_canvas_mounts(
+            &mut vfs,
+            std::slice::from_ref(&canvas),
+            CanvasMountAccess::writable(),
+        );
 
         let after_order = vfs
             .mounts
@@ -131,10 +195,42 @@ mod tests {
     }
 
     #[test]
+    fn build_canvas_mount_caps_write_to_runtime_access() {
+        let canvas = canvas("cvs-dashboard-a");
+
+        let writable = build_canvas_mount(&canvas, CanvasMountAccess::writable());
+        assert!(writable.supports(MountCapability::Read));
+        assert!(writable.supports(MountCapability::Write));
+        assert!(writable.supports(MountCapability::List));
+        assert!(writable.supports(MountCapability::Search));
+        assert!(!writable.default_write);
+
+        let read_only = build_canvas_mount(&canvas, CanvasMountAccess::read_only());
+        assert!(read_only.supports(MountCapability::Read));
+        assert!(!read_only.supports(MountCapability::Write));
+        assert!(read_only.supports(MountCapability::List));
+        assert!(read_only.supports(MountCapability::Search));
+        assert!(!read_only.default_write);
+
+        let projection_mount = build_canvas_mount(
+            &canvas,
+            CanvasAccessProjection {
+                runtime_write_allowed: false,
+                ..CanvasAccessProjection::default()
+            },
+        );
+        assert!(!projection_mount.supports(MountCapability::Write));
+    }
+
+    #[test]
     fn refresh_canvas_mount_binding_files_omits_empty_binding_metadata() {
         let canvas = canvas("cvs-dashboard-a");
         let mut vfs = Vfs::default();
-        append_canvas_mounts(&mut vfs, std::slice::from_ref(&canvas));
+        append_canvas_mounts(
+            &mut vfs,
+            std::slice::from_ref(&canvas),
+            CanvasMountAccess::writable(),
+        );
 
         refresh_canvas_mount_binding_files(&mut vfs, &canvas, &[]);
 

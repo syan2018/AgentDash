@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
+use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
@@ -168,9 +168,10 @@ impl FrameAssemblyBuilder {
         canvas_repo: &dyn CanvasRepository,
         project_id: Uuid,
         mount_ids: &[String],
+        identity: Option<&AuthIdentity>,
     ) -> Result<Self, String> {
         if let Some(space) = self.vfs.as_mut() {
-            append_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids)
+            append_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids, identity)
                 .await
                 .map_err(|e| e.to_string())?;
         }

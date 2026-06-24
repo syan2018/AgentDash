@@ -15,7 +15,7 @@ use super::provider::{
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
-use crate::runtime::Mount;
+use crate::runtime::{Mount, MountCapability};
 use crate::vfs::parse_mount_uri;
 
 pub struct CanvasFsMountProvider {
@@ -56,11 +56,15 @@ impl MountProvider for CanvasFsMountProvider {
         PROVIDER_CANVAS_FS
     }
 
-    fn edit_capabilities(&self, _mount: &Mount) -> MountEditCapabilities {
-        MountEditCapabilities {
-            create: true,
-            delete: true,
-            rename: true,
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities {
+        if mount.supports(MountCapability::Write) {
+            MountEditCapabilities {
+                create: true,
+                delete: true,
+                rename: true,
+            }
+        } else {
+            MountEditCapabilities::default()
         }
     }
 
@@ -107,6 +111,7 @@ impl MountProvider for CanvasFsMountProvider {
         content: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
+        ensure_canvas_mount_writable(mount)?;
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
             reject_generated_binding_file_write(canvas, &normalized)?;
@@ -128,6 +133,7 @@ impl MountProvider for CanvasFsMountProvider {
         path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
+        ensure_canvas_mount_writable(mount)?;
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
             reject_generated_binding_file_write(canvas, &normalized)?;
@@ -150,6 +156,7 @@ impl MountProvider for CanvasFsMountProvider {
         to_path: &str,
         _ctx: &MountOperationContext,
     ) -> Result<(), MountError> {
+        ensure_canvas_mount_writable(mount)?;
         let from_path = normalize_mount_relative_path(from_path, false).map_err(map_mount_err)?;
         let to_path = normalize_mount_relative_path(to_path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
@@ -255,6 +262,16 @@ impl MountProvider for CanvasFsMountProvider {
     ) -> Result<ExecResult, MountError> {
         Err(MountError::NotSupported(
             "canvas_fs 不支持 exec".to_string(),
+        ))
+    }
+}
+
+fn ensure_canvas_mount_writable(mount: &Mount) -> Result<(), MountError> {
+    if mount.supports(MountCapability::Write) {
+        Ok(())
+    } else {
+        Err(MountError::NotSupported(
+            "Canvas mount is read-only".to_string(),
         ))
     }
 }
@@ -381,7 +398,7 @@ mod tests {
     use agentdash_spi::platform::mount::MountRuntimeTextResolver;
 
     use super::*;
-    use crate::vfs::build_canvas_mount;
+    use crate::vfs::{CanvasMountAccess, build_canvas_mount};
 
     #[derive(Default)]
     struct FakeCanvasRepo {
@@ -464,6 +481,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_only_canvas_mount_rejects_write_delete_and_rename() {
+        let project_id = Uuid::new_v4();
+        let mut canvas = Canvas::new(
+            project_id,
+            "cvs-dashboard".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        canvas.files = vec![
+            CanvasFile::new("src/main.tsx".to_string(), "console.log('hi')".to_string()),
+            CanvasFile::new("src/old.ts".to_string(), "old".to_string()),
+        ];
+
+        let mount = build_canvas_mount(&canvas, CanvasMountAccess::read_only());
+        let repo = Arc::new(FakeCanvasRepo::default());
+        repo.create(&canvas).await.expect("create canvas");
+        let provider = CanvasFsMountProvider::new(repo.clone());
+        let ctx = MountOperationContext::default();
+
+        assert_eq!(
+            provider.edit_capabilities(&mount),
+            MountEditCapabilities::default()
+        );
+
+        let write_error = provider
+            .write_text(&mount, "src/main.tsx", "changed", &ctx)
+            .await
+            .expect_err("read-only mount should reject write");
+        assert!(matches!(write_error, MountError::NotSupported(_)));
+
+        let delete_error = provider
+            .delete_text(&mount, "src/old.ts", &ctx)
+            .await
+            .expect_err("read-only mount should reject delete");
+        assert!(matches!(delete_error, MountError::NotSupported(_)));
+
+        let rename_error = provider
+            .rename_text(&mount, "src/old.ts", "src/new.ts", &ctx)
+            .await
+            .expect_err("read-only mount should reject rename");
+        assert!(matches!(rename_error, MountError::NotSupported(_)));
+
+        let saved = repo
+            .get_by_id(canvas.id)
+            .await
+            .expect("load canvas")
+            .expect("canvas still exists");
+        let saved_files = saved
+            .files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_str()))
+            .collect::<Vec<_>>();
+        let original_files = canvas
+            .files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            saved_files, original_files,
+            "provider guard must reject before mutating Canvas files"
+        );
+    }
+
+    #[tokio::test]
     async fn canvas_mount_exposes_resolved_binding_files_as_read_only_generated_files() {
         let project_id = Uuid::new_v4();
         let mut canvas = Canvas::new(
@@ -479,7 +560,7 @@ mod tests {
 
         let vfs = agentdash_spi::Vfs {
             mounts: vec![
-                build_canvas_mount(&canvas),
+                build_canvas_mount(&canvas, CanvasMountAccess::writable()),
                 Mount {
                     id: "main".to_string(),
                     provider: "inline_fs".to_string(),

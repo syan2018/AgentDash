@@ -452,6 +452,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 project_id,
                 space,
                 &spec.visible_canvas_mount_ids,
+                spec.identity,
             )
             .await
             .map_err(|e| e.to_string())?;

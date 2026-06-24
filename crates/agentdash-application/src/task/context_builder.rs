@@ -149,6 +149,7 @@ pub async fn build_task_session_context(
             run.project_id,
             space,
             &visible_canvas_mount_ids,
+            None,
         )
         .await
         .is_err()

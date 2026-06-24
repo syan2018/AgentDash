@@ -16,8 +16,8 @@ use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
 };
-use crate::canvas::resolve_canvas_binding_files;
-use crate::vfs::{VfsService, append_canvas_mounts, refresh_canvas_mount_binding_files};
+use crate::canvas::{canvas_runtime_mount_access, resolve_canvas_binding_files};
+use crate::vfs::{VfsService, append_canvas_mount, refresh_canvas_mount_binding_files};
 
 #[async_trait]
 pub trait AgentRunActiveRuntimeSurfaceAdopter: Send + Sync {
@@ -96,7 +96,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
                 current_frame.id
             ));
         };
-        append_canvas_mounts(&mut active_vfs, std::slice::from_ref(canvas));
+        let mount_access = canvas_runtime_mount_access(canvas, surface.identity.as_ref());
+        append_canvas_mount(&mut active_vfs, canvas, mount_access);
         if let Some(vfs_service) = self.vfs_service.as_deref() {
             let binding_files =
                 resolve_canvas_binding_files(canvas, &active_vfs, vfs_service).await;
@@ -239,7 +240,7 @@ mod tests {
     use agentdash_domain::canvas::Canvas;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{AgentConfig, RuntimeMcpServer, ToolCluster};
+    use agentdash_spi::{AgentConfig, AuthIdentity, AuthMode, RuntimeMcpServer, ToolCluster};
     use chrono::Utc;
     use tokio::sync::Mutex;
     use uuid::Uuid;
@@ -328,6 +329,7 @@ mod tests {
                     &frame,
                     capability_state,
                     active_vfs.clone(),
+                    None,
                 ),
             }),
             frame_repo: frame_repo.clone(),
@@ -358,6 +360,69 @@ mod tests {
             adopter.targets.lock().await.is_empty(),
             "unchanged Canvas exposure must not adopt active runtime"
         );
+    }
+
+    #[tokio::test]
+    async fn project_shared_canvas_expose_appends_read_only_runtime_mount() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let canvas = Canvas::new(
+            project_id,
+            "cvs-dashboard-a".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        let active_vfs = base_vfs(project_id);
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(active_vfs.clone());
+
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
+        frame.mcp_surface_json =
+            Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
+        frame.execution_profile_json =
+            Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo.create(&frame).await.expect("frame should save");
+        let adopter = Arc::new(RecordingAdopter::default());
+        let service = AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: Arc::new(FixedSurfaceQuery {
+                surface: runtime_surface_for_frame(
+                    "runtime-1",
+                    run_id,
+                    project_id,
+                    &frame,
+                    capability_state,
+                    active_vfs,
+                    Some(identity("alice")),
+                ),
+            }),
+            frame_repo,
+            vfs_service: Some(Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistry::default(),
+            )))),
+            active_adopter: adopter,
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        });
+
+        let returned_vfs = service
+            .expose_canvas_mount("runtime-1", &canvas)
+            .await
+            .expect("project shared canvas expose should succeed");
+
+        let mount = returned_vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == canvas.mount_id)
+            .expect("Canvas mount should be appended");
+        assert!(mount.supports(MountCapability::Read));
+        assert!(!mount.supports(MountCapability::Write));
+        assert!(mount.supports(MountCapability::List));
+        assert!(mount.supports(MountCapability::Search));
     }
 
     #[test]
@@ -393,6 +458,7 @@ mod tests {
         frame: &AgentFrame,
         capability_state: CapabilityState,
         vfs: Vfs,
+        identity: Option<AuthIdentity>,
     ) -> AgentRunRuntimeSurface {
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
@@ -412,7 +478,7 @@ mod tests {
             mcp_servers: Vec::new(),
             runtime_backend_anchor: None,
             active_turn_id: None,
-            identity: None,
+            identity,
             provenance: AgentRunRuntimeSurfaceProvenance {
                 launch_evidence_frame_id: frame.id,
                 launch_created_by_kind: frame.created_by_kind.clone(),
@@ -432,8 +498,23 @@ mod tests {
         }
     }
 
-    fn vfs_with_canvas(canvas: &Canvas) -> Vfs {
-        let mut vfs = Vfs {
+    fn identity(user_id: &str) -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: user_id.to_string(),
+            subject: user_id.to_string(),
+            display_name: Some(user_id.to_string()),
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: Some("test".to_string()),
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    fn base_vfs(project_id: Uuid) -> Vfs {
+        Vfs {
             mounts: vec![Mount {
                 id: "workspace".to_string(),
                 provider: "relay_fs".to_string(),
@@ -445,11 +526,15 @@ mod tests {
                 metadata: serde_json::Value::Null,
             }],
             default_mount_id: Some("workspace".to_string()),
-            source_project_id: Some(canvas.project_id.to_string()),
+            source_project_id: Some(project_id.to_string()),
             source_story_id: None,
             links: Vec::new(),
-        };
-        append_canvas_mounts(&mut vfs, std::slice::from_ref(canvas));
+        }
+    }
+
+    fn vfs_with_canvas(canvas: &Canvas) -> Vfs {
+        let mut vfs = base_vfs(canvas.project_id);
+        append_canvas_mount(&mut vfs, canvas, crate::vfs::CanvasMountAccess::read_only());
         vfs
     }
 }

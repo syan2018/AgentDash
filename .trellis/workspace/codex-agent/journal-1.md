@@ -1129,3 +1129,42 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: Agent Memory Discovery System
+
+**Date**: 2026-06-25
+**Task**: Agent Memory Discovery System
+**Branch**: `main`
+
+### Summary
+
+规划并实现 Agent Memory Discovery System：以 ProjectAgent agent:// VFS mount 作为默认 memory home，新增 MemoryDiscoveryProvider SPI、默认 memory-manager skill、runtime memory inventory 投影与 memory_context 注入，并将相关运行时契约固化到 Trellis specs。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a3804e86` | (see git log) |
+| `1cdb1d70` | (see git log) |
+| `68289460` | (see git log) |
+| `fb3d8b07` | (see git log) |
+| `b6c39c08` | (see git log) |
+| `f5524659` | (see git log) |
+| `24eb03e2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

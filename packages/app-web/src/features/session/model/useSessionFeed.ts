@@ -15,6 +15,7 @@ import { isRecord } from "./platformEvent";
 import { isToolBurstEligible } from "./threadItemKind";
 import type {
   AggregatedContextFrameGroup,
+  AggregatedThinkingGroup,
   SessionDisplayEntry,
   SessionDisplayItem,
   AggregatedEntryGroup,
@@ -112,6 +113,7 @@ function isWillRetryErrorEvent(event: BackboneEvent): boolean {
 type EntryClassification =
   | "tool_like"
   | "active_tool"
+  | "thinking"
   | "hard_boundary"
   | "neutral";
 
@@ -156,10 +158,13 @@ function classifyEntry(
   }
 
   if (
-    event.type === "agent_message_delta" ||
     event.type === "reasoning_text_delta" ||
     event.type === "reasoning_summary_delta"
   ) {
+    return isEffectivelyEmptyTextEntry(entry) ? "neutral" : "thinking";
+  }
+
+  if (event.type === "agent_message_delta") {
     return isEffectivelyEmptyTextEntry(entry) ? "neutral" : "hard_boundary";
   }
 
@@ -250,6 +255,157 @@ function createCtxSideGroup(entry: SessionDisplayEntry): AggregatedContextFrameG
   };
 }
 
+function isThinkingEvent(event: BackboneEvent): boolean {
+  return event.type === "reasoning_text_delta" || event.type === "reasoning_summary_delta";
+}
+
+function isAgentMessageEvent(event: BackboneEvent): boolean {
+  return event.type === "agent_message_delta";
+}
+
+function isUserInputItem(item: SessionDisplayItem): boolean {
+  return "event" in item && (item as SessionDisplayEntry).event.type === "user_input_submitted";
+}
+
+function displayItemSeq(item: SessionDisplayItem): number {
+  if ("eventSeq" in item && typeof item.eventSeq === "number") {
+    return item.eventSeq;
+  }
+  if ("entries" in item) {
+    return item.entries[0]?.eventSeq ?? Number.MAX_SAFE_INTEGER;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function displayItemTurnId(item: SessionDisplayItem): string | undefined {
+  if ("turnId" in item && typeof item.turnId === "string") {
+    return item.turnId;
+  }
+  if ("entries" in item) {
+    return item.entries[0]?.turnId;
+  }
+  return undefined;
+}
+
+interface TurnThinkingState {
+  turnId: string;
+  waitingSeq?: number;
+  firstSeq: number;
+  hasAgentMessage: boolean;
+  entries: SessionDisplayEntry[];
+}
+
+function ensureTurnThinkingState(
+  map: Map<string, TurnThinkingState>,
+  turnId: string,
+  firstSeq: number,
+): TurnThinkingState {
+  const existing = map.get(turnId);
+  if (existing) {
+    if (firstSeq < existing.firstSeq) existing.firstSeq = firstSeq;
+    return existing;
+  }
+  const created: TurnThinkingState = {
+    turnId,
+    firstSeq,
+    hasAgentMessage: false,
+    entries: [],
+  };
+  map.set(turnId, created);
+  return created;
+}
+
+function extractProviderWaitingSeqs(rawEvents: SessionEventEnvelope[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const event of [...rawEvents].sort((a, b) => a.event_seq - b.event_seq)) {
+    const status = extractProviderAttemptStatus(event);
+    if (!status?.turnId) {
+      continue;
+    }
+    if (status.phase === "connected_waiting_first_delta") {
+      result.set(status.turnId, event.event_seq);
+    } else {
+      result.delete(status.turnId);
+    }
+  }
+  return result;
+}
+
+function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup | null {
+  const hasThinkingText = state.entries.length > 0;
+  const isStreamingThinking = state.waitingSeq != null && !state.hasAgentMessage;
+  if (!hasThinkingText && !isStreamingThinking) {
+    return null;
+  }
+
+  const eventSeq = state.waitingSeq ?? state.entries[0]?.eventSeq ?? state.firstSeq;
+  return {
+    type: "aggregated_thinking",
+    entries: state.entries,
+    id: `thinking:${state.turnId}:${eventSeq}`,
+    groupKey: `thinking:${state.turnId}`,
+    turnId: state.turnId,
+    eventSeq,
+    isStreamingThinking,
+  };
+}
+
+function mergeThinkingIntoDisplayItems(
+  displayItems: SessionDisplayItem[],
+  rawEvents: SessionEventEnvelope[],
+): SessionDisplayItem[] {
+  const waitingSeqs = extractProviderWaitingSeqs(rawEvents);
+  if (displayItems.length === 0 && waitingSeqs.size === 0) {
+    return displayItems;
+  }
+
+  const thinkingStates = new Map<string, TurnThinkingState>();
+  for (const [turnId, waitingSeq] of waitingSeqs.entries()) {
+    const state = ensureTurnThinkingState(thinkingStates, turnId, waitingSeq);
+    state.waitingSeq = waitingSeq;
+  }
+
+  const nonThinkingItems: SessionDisplayItem[] = [];
+  for (const item of displayItems) {
+    const turnId = displayItemTurnId(item);
+    const eventSeq = displayItemSeq(item);
+
+    if ("event" in item && isThinkingEvent(item.event)) {
+      if (turnId) {
+        ensureTurnThinkingState(thinkingStates, turnId, eventSeq).entries.push(item);
+      }
+      continue;
+    }
+
+    if ("type" in item && (item as AggregatedThinkingGroup).type === "aggregated_thinking") {
+      const group = item as AggregatedThinkingGroup;
+      const groupTurnId = group.turnId ?? group.entries[0]?.turnId;
+      if (groupTurnId) {
+        const state = ensureTurnThinkingState(thinkingStates, groupTurnId, group.eventSeq);
+        state.entries.push(...group.entries);
+      }
+      continue;
+    }
+
+    if ("event" in item && isAgentMessageEvent(item.event) && turnId) {
+      ensureTurnThinkingState(thinkingStates, turnId, eventSeq).hasAgentMessage = true;
+    }
+    nonThinkingItems.push(item);
+  }
+
+  const thinkingGroups = [...thinkingStates.values()]
+    .map(createThinkingGroup)
+    .filter((item): item is AggregatedThinkingGroup => item != null);
+
+  return [...nonThinkingItems, ...thinkingGroups]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const seqDelta = displayItemSeq(a.item) - displayItemSeq(b.item);
+      return seqDelta !== 0 ? seqDelta : a.index - b.index;
+    })
+    .map(({ item }) => item);
+}
+
 function pushCtxSideGroup(
   result: SessionDisplayItem[],
   group: AggregatedContextFrameGroup | null,
@@ -321,6 +477,13 @@ function aggregateEntries(
         break;
       }
 
+      case "thinking": {
+        flushToolGroup();
+        flushCtxGroup();
+        result.push(entry);
+        break;
+      }
+
       case "hard_boundary": {
         flushToolGroup();
         if (isContextFrameEvent(entry.event)) {
@@ -345,7 +508,7 @@ function aggregateEntries(
   return result;
 }
 
-export { aggregateEntries };
+export { aggregateEntries, mergeThinkingIntoDisplayItems };
 
 // ── Turn 分段 ──
 
@@ -353,7 +516,6 @@ export type TurnStatus = "active" | "completed" | "failed" | "interrupted";
 
 export type TurnActivityKind =
   | "connecting"
-  | "thinking"
   | "reconnecting"
   | "retry_exhausted";
 
@@ -376,6 +538,8 @@ export interface TurnSegment {
 }
 
 function extractTurnId(item: SessionDisplayItem): string | undefined {
+  const thinkingTurnId = displayItemTurnId(item);
+  if (thinkingTurnId) return thinkingTurnId;
   if ("type" in item && (item as AggregatedEntryGroup).type === "aggregated_group") {
     const group = item as AggregatedEntryGroup;
     return group.entries[0]?.turnId;
@@ -567,83 +731,11 @@ function extractProviderAttemptStatus(event: SessionEventEnvelope): ProviderAtte
   };
 }
 
-function formatAttempt(status: ProviderAttemptStatusPayload): string | null {
-  if (status.attempt == null && status.maxAttempts == null) return null;
-  if (status.attempt != null && status.maxAttempts != null) {
-    return `${status.attempt}/${status.maxAttempts}`;
-  }
-  if (status.attempt != null) return `${status.attempt}`;
-  return `/${status.maxAttempts}`;
-}
-
-function providerStatusToActivity(status: ProviderAttemptStatusPayload): TurnActivityStatus | null {
-  const attemptText = formatAttempt(status);
-  switch (status.phase) {
-    case "connecting":
-      return {
-        kind: "connecting",
-        label: "连接模型服务",
-        phase: status.phase,
-        attempt: status.attempt,
-        maxAttempts: status.maxAttempts,
-      };
-    case "connected_waiting_first_delta":
-      return {
-        kind: "thinking",
-        label: "正在思考",
-        phase: status.phase,
-        attempt: status.attempt,
-        maxAttempts: status.maxAttempts,
-      };
-    case "retry_scheduled":
-    case "retrying":
-      return {
-        kind: "reconnecting",
-        label: status.message ?? (attemptText ? `Reconnecting... ${attemptText}` : "正在重连模型服务"),
-        phase: status.phase,
-        attempt: status.attempt,
-        maxAttempts: status.maxAttempts,
-      };
-    case "failed":
-    case "retry_exhausted":
-    case "exhausted":
-      if (status.willRetry === false || status.phase !== "failed") {
-        return {
-          kind: "retry_exhausted",
-          label: status.message ?? "重试已耗尽",
-          phase: status.phase,
-          attempt: status.attempt,
-          maxAttempts: status.maxAttempts,
-        };
-      }
-      return null;
-    default:
-      return null;
-  }
-}
-
-function isVisibleTurnOutput(event: SessionEventEnvelope): boolean {
-  const bbEvent = event.notification.event;
-  if (
-    bbEvent.type === "agent_message_delta" ||
-    bbEvent.type === "reasoning_text_delta" ||
-    bbEvent.type === "reasoning_summary_delta"
-  ) {
-    return bbEvent.payload.delta.trim().length > 0;
-  }
-  return bbEvent.type === "item_started" ||
-    bbEvent.type === "item_completed" ||
-    bbEvent.type === "command_output_delta" ||
-    bbEvent.type === "file_change_delta" ||
-    bbEvent.type === "mcp_tool_call_progress";
-}
-
 export function segmentByTurn(
   displayItems: SessionDisplayItem[],
   rawEvents: SessionEventEnvelope[],
 ): TurnSegment[] {
   const turnMeta = new Map<string, TurnMeta>();
-  const visibleOutputTurnIds = new Set<string>();
 
   for (const event of rawEvents) {
     const bbEvent = event.notification.event;
@@ -660,28 +752,11 @@ export function segmentByTurn(
       });
     }
 
-    const providerStatus = extractProviderAttemptStatus(event);
-    if (providerStatus?.turnId) {
-      const activity = providerStatusToActivity(providerStatus);
-      if (activity) {
-        updateTurnMeta(turnMeta, providerStatus.turnId, event.event_seq, { activity });
-      }
-    }
-
-    const turnId = eventTurnId(event);
-    if (turnId && isVisibleTurnOutput(event)) {
-      visibleOutputTurnIds.add(turnId);
-    }
-  }
-
-  for (const [turnId, meta] of turnMeta.entries()) {
-    if (meta.status === "active" && !meta.activity && !visibleOutputTurnIds.has(turnId)) {
-      meta.activity = { kind: "thinking", label: "正在思考", phase: "in_progress" };
-    }
   }
 
   if (displayItems.length === 0) {
     return [...turnMeta.entries()]
+      .filter(([, meta]) => meta.activity)
       .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
       .map(([turnId, meta]) => ({
         turnId,
@@ -722,7 +797,25 @@ export function segmentByTurn(
     currentItems = [];
   };
 
+  const pushUserItem = (item: SessionDisplayItem) => {
+    segments.push({
+      turnId: null,
+      status: "active",
+      durationMs: undefined,
+      activity: undefined,
+      items: [item],
+      finalOutput: null,
+    });
+  };
+
   for (const item of displayItems) {
+    if (isUserInputItem(item)) {
+      flush();
+      currentTurnId = null;
+      pushUserItem(item);
+      continue;
+    }
+
     const turnId = extractTurnId(item) ?? null;
     if (turnId !== currentTurnId) {
       flush();
@@ -734,6 +827,7 @@ export function segmentByTurn(
 
   const missingStatusSegments = [...turnMeta.entries()]
     .filter(([turnId]) => !seenTurnIds.has(turnId))
+    .filter(([, meta]) => meta.activity)
     .sort((a, b) => a[1].firstSeq - b[1].firstSeq)
     .map(([turnId, meta]): TurnSegment => ({
       turnId,
@@ -771,10 +865,13 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   });
 
   const displayItems = useMemo(() => {
-    return enableAggregation
+    const baseDisplayItems = enableAggregation
       ? aggregateEntries(entries, { includeVerboseEvents: prefs.hookVerbose })
       : (entries as SessionDisplayItem[]);
-  }, [entries, enableAggregation, prefs.hookVerbose]);
+    return enableAggregation
+      ? mergeThinkingIntoDisplayItems(baseDisplayItems, rawEvents)
+      : baseDisplayItems;
+  }, [entries, rawEvents, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
     () => segmentByTurn(displayItems, rawEvents),

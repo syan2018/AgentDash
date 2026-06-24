@@ -245,33 +245,16 @@ function AggregatedToolGroupEntry({
 }
 
 function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGroup }) {
-  const [expanded, setExpanded] = useState(false);
-  const { entries } = group;
-
-  const combinedContent = entries
+  const combinedContent = group.entries
     .map((entry) => entry.accumulatedText ?? "")
     .join("");
 
   return (
-    <div className="group">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 py-1 text-left text-xs text-muted-foreground/70 transition-colors hover:text-muted-foreground"
-      >
-        <span className="inline-block h-px flex-1 max-w-4 bg-border/60" />
-        <span className="shrink-0 font-medium">思考 · {entries.length} 条</span>
-        <span className="inline-block h-px flex-1 bg-border/60" />
-        <span className="shrink-0 text-[10px]">{expanded ? "收起" : "展开"}</span>
-      </button>
-      {expanded && (
-        <div className="pl-1 pt-1">
-          <pre className="whitespace-pre-wrap text-xs leading-6 text-muted-foreground/75">
-            {combinedContent}
-          </pre>
-        </div>
-      )}
-    </div>
+    <SessionMessageCard
+      type="thinking"
+      content={combinedContent}
+      isStreaming={group.isStreamingThinking}
+    />
   );
 }
 

@@ -381,7 +381,6 @@ function turnActivityClassName(activity: TurnActivityStatus): string {
     case "reconnecting":
       return "border-warning/25 bg-warning/10 text-warning";
     case "connecting":
-    case "thinking":
     default:
       return "border-info/20 bg-info/8 text-info";
   }

@@ -10,6 +10,7 @@ import {
 } from "../../file-reference/fileReferenceUi";
 import { SessionUserImageBlock } from "./SessionUserImageBlock";
 import type { UserMessageImage } from "../model/types";
+import { ST } from "./bodies/cardBodyTokens";
 
 export interface SessionMessageCardProps {
   type: "user" | "agent" | "thinking";
@@ -64,33 +65,37 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   content,
   isStreaming,
   collapsible: _collapsible = false,
-  defaultCollapsed = false,
+  defaultCollapsed,
   badgeOverride: _badgeOverride,
   labelOverride: _labelOverride,
   images,
 }: SessionMessageCardProps) {
-  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed ?? type === "thinking");
   const hasImages = type === "user" && Boolean(images && images.length > 0);
   const hasText = content.trim().length > 0;
 
-  // ── Thinking：轻量折叠行 ──
   if (type === "thinking") {
+    const canExpand = hasText;
+    const label = isStreaming ? "正在思考" : "思考";
     return (
-      <div className="group">
+      <div>
         <button
           type="button"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex w-full items-center gap-2 py-1 text-left text-xs text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+          onClick={() => {
+            if (canExpand) setIsCollapsed(!isCollapsed);
+          }}
+          className={ST.groupRow}
         >
-          <span className="inline-block h-px flex-1 max-w-4 bg-border/60" />
-          <span className="shrink-0 font-medium">思考</span>
-          <span className="inline-block h-px flex-1 bg-border/60" />
-          <span className="shrink-0 text-[10px]">{isCollapsed ? "展开" : "收起"}</span>
+          <span className={ST.chevron}>{canExpand ? (isCollapsed ? "▶" : "▼") : "•"}</span>
+          <span className={ST.badge}>THINK</span>
+          <span className={ST.hint}>{label}</span>
         </button>
 
-        {!isCollapsed && (
-          <div className="pl-1 pt-1">
-            <pre className="whitespace-pre-wrap text-xs leading-6 text-muted-foreground/75">{content}</pre>
+        {canExpand && !isCollapsed && (
+          <div className={ST.itemList}>
+            <div className={ST.bodyArea}>
+              <pre className="whitespace-pre-wrap text-xs leading-6 text-muted-foreground/75">{content}</pre>
+            </div>
           </div>
         )}
       </div>

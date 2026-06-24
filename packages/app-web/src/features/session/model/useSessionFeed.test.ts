@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { aggregateEntries, segmentByTurn } from "./useSessionFeed";
+import { aggregateEntries, mergeThinkingIntoDisplayItems, segmentByTurn } from "./useSessionFeed";
 import type {
   SessionDisplayEntry,
   AggregatedEntryGroup,
+  AggregatedThinkingGroup,
   SessionEventEnvelope,
 } from "./types";
 import type { BackboneEnvelope, BackboneEvent, ThreadItem, Turn } from "../../../generated/backbone-protocol";
@@ -91,6 +92,20 @@ function mkMessageEntry(id: string, text: string): SessionDisplayEntry {
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: text },
   };
   return asEntry(id, event, { accumulatedText: text, turnId: "u1" });
+}
+
+function mkUserInputEntry(id: string, text: string, eventSeq?: number): SessionDisplayEntry {
+  const event: BackboneEvent = {
+    type: "user_input_submitted",
+    payload: {
+      threadId: "t1",
+      turnId: "u1",
+      itemId: id,
+      submissionKind: "prompt",
+      content: [{ type: "text", text, text_elements: [] }],
+    },
+  };
+  return asEntry(id, event, { accumulatedText: text, turnId: "u1", eventSeq });
 }
 
 function backboneEnvelope(event: BackboneEvent, turnId = "u1"): BackboneEnvelope {
@@ -309,7 +324,7 @@ function mkReasoningEntry(id: string): SessionDisplayEntry {
     type: "reasoning_text_delta",
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: "...", contentIndex: 0 },
   };
-  return asEntry(id, event, { accumulatedText: "..." });
+  return asEntry(id, event, { accumulatedText: "...", turnId: "u1" });
 }
 
 function mkReasoningEntryWithText(id: string, text: string): SessionDisplayEntry {
@@ -317,7 +332,7 @@ function mkReasoningEntryWithText(id: string, text: string): SessionDisplayEntry
     type: "reasoning_text_delta",
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: text, contentIndex: 0 },
   };
-  return asEntry(id, event, { accumulatedText: text });
+  return asEntry(id, event, { accumulatedText: text, turnId: "u1" });
 }
 
 function mkContextFrameEntry(id: string): SessionDisplayEntry {
@@ -339,6 +354,9 @@ function isToolGroup(item: unknown): item is AggregatedEntryGroup {
 }
 function isContextFrameGroup(item: unknown): boolean {
   return (item as { type: string })?.type === "aggregated_context_frames";
+}
+function isThinkingGroup(item: unknown): item is AggregatedThinkingGroup {
+  return (item as AggregatedThinkingGroup)?.type === "aggregated_thinking";
 }
 
 describe("aggregateEntries — tool burst", () => {
@@ -664,7 +682,7 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[1] as SessionDisplayEntry).id).toBe("c2");
   });
 
-  it("T23: provider retry status is only visible in verbose mode and exposes reconnecting turn activity", () => {
+  it("T23: provider retry status is only visible in verbose mode and does not create turn activity", () => {
     const statusEntry = mkProviderStatusEntry("provider-status");
     const aggregated = aggregateEntries([statusEntry]);
     expect(aggregated).toHaveLength(0);
@@ -683,17 +701,13 @@ describe("aggregateEntries — tool burst", () => {
       }),
     ]);
 
-    expect(segments).toHaveLength(1);
-    expect(segments[0]?.activity?.kind).toBe("reconnecting");
-    expect(segments[0]?.activity?.label).toBe("Reconnecting... 2/3");
+    expect(segments).toHaveLength(0);
   });
 
-  it("T24: active turn without visible output appears as thinking", () => {
+  it("T24: active turn without provider waiting does not create turn-level thinking", () => {
     const segments = segmentByTurn([], [rawTurnStarted(1)]);
 
-    expect(segments).toHaveLength(1);
-    expect(segments[0]?.activity?.kind).toBe("thinking");
-    expect(segments[0]?.activity?.label).toBe("正在思考");
+    expect(segments).toHaveLength(0);
   });
 
   it("T25: durationMs is read from completed, failed and interrupted terminal facts", () => {
@@ -715,7 +729,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(interrupted[0]?.durationMs).toBe(56_000);
   });
 
-  it("T26: retry exhausted appears as terminal provider activity", () => {
+  it("T26: retry exhausted does not create a status-only turn segment", () => {
     const segments = segmentByTurn([], [
       rawTurnStarted(1),
       rawProviderAttemptStatus(2, {
@@ -726,7 +740,83 @@ describe("aggregateEntries — tool burst", () => {
       }),
     ]);
 
-    expect(segments[0]?.activity?.kind).toBe("retry_exhausted");
-    expect(segments[0]?.activity?.label).toBe("重试已耗尽");
+    expect(segments).toHaveLength(0);
+  });
+
+  it("T27: provider waiting creates a streaming thinking card without reasoning text", () => {
+    const display = mergeThinkingIntoDisplayItems([], [
+      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(1);
+    expect(isThinkingGroup(display[0])).toBe(true);
+    const group = display[0] as AggregatedThinkingGroup;
+    expect(group.turnId).toBe("u1");
+    expect(group.entries).toHaveLength(0);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
+  it("T28: provider waiting merges with reasoning into one streaming thinking card", () => {
+    const reasoning = mkReasoningEntryWithText("r1", "分析中");
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning]), [
+      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(1);
+    expect(isThinkingGroup(display[0])).toBe(true);
+    const group = display[0] as AggregatedThinkingGroup;
+    expect(group.entries.map((entry) => entry.id)).toEqual(["r1"]);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
+  it("T29: agent message removes empty provider thinking placeholder", () => {
+    const agent = mkMessageEntry("m1", "正式输出");
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), [
+      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(1);
+    expect(isThinkingGroup(display[0])).toBe(false);
+    expect((display[0] as SessionDisplayEntry).id).toBe("m1");
+  });
+
+  it("T30: reasoning stays as historical thinking once agent message arrives", () => {
+    const reasoning = mkReasoningEntryWithText("r1", "分析中");
+    const agent = mkMessageEntry("m1", "正式输出");
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), [
+      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(2);
+    expect(isThinkingGroup(display[0])).toBe(true);
+    const group = display[0] as AggregatedThinkingGroup;
+    expect(group.entries.map((entry) => entry.id)).toEqual(["r1"]);
+    expect(group.isStreamingThinking).toBe(false);
+    expect((display[1] as SessionDisplayEntry).id).toBe("m1");
+  });
+
+  it("T31: user message remains outside completed assistant turn segment", () => {
+    const user = mkUserInputEntry("u-input", "hello", 1);
+    const segments = segmentByTurn([user], [
+      rawTurnStarted(1),
+      rawTurnCompleted(2, "completed", 1_000),
+    ]);
+
+    expect(segments[0]?.turnId).toBeNull();
+    expect(segments[0]?.items).toHaveLength(1);
+    expect((segments[0]?.items[0] as SessionDisplayEntry | undefined)?.event.type).toBe("user_input_submitted");
+    expect(segments.some((segment) =>
+      segment.status === "completed" &&
+      segment.items.some((item) => (item as SessionDisplayEntry).event?.type === "user_input_submitted")
+    )).toBe(false);
+  });
+
+  it("T32: later provider status clears waiting thinking placeholder", () => {
+    const display = mergeThinkingIntoDisplayItems([], [
+      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
+      rawProviderAttemptStatus(2, { phase: "succeeded" }),
+    ]);
+
+    expect(display).toHaveLength(0);
   });
 });

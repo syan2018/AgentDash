@@ -344,6 +344,9 @@ export interface AggregatedThinkingGroup {
   entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
+  turnId?: string;
+  eventSeq: number;
+  isStreamingThinking?: boolean;
 }
 
 /** 相邻 ContextFrame 的用户侧聚合组 */

@@ -589,6 +589,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseDiscover { .. }
             | RelayMessage::ResponseWorkspaceDetect { .. }
             | RelayMessage::ResponseWorkspaceDetectGit { .. }
+            | RelayMessage::ResponseWorkspaceDiscoverByIdentity { .. }
             | RelayMessage::ResponseToolFileRead { .. }
             | RelayMessage::ResponseToolFileReadBinary { .. }
             | RelayMessage::ResponseToolFileWrite { .. }

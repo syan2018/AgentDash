@@ -109,6 +109,13 @@ pub enum RelayMessage {
         payload: CommandWorkspaceDetectGitPayload,
     },
 
+    /// 按 Workspace identity 反向发现本机候选目录
+    #[serde(rename = "command.workspace_discover_by_identity")]
+    CommandWorkspaceDiscoverByIdentity {
+        id: String,
+        payload: CommandWorkspaceDiscoverByIdentityPayload,
+    },
+
     /// 浏览本地目录（盘符列表 / 子目录列表）
     #[serde(rename = "command.browse_directory")]
     CommandBrowseDirectory {
@@ -256,6 +263,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseWorkspaceDetectGitPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.workspace_discover_by_identity")]
+    ResponseWorkspaceDiscoverByIdentity {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseWorkspaceDiscoverByIdentityPayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -617,6 +633,7 @@ impl RelayMessage {
             | Self::CommandDiscoverOptions { id, .. }
             | Self::CommandWorkspaceDetect { id, .. }
             | Self::CommandWorkspaceDetectGit { id, .. }
+            | Self::CommandWorkspaceDiscoverByIdentity { id, .. }
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
             | Self::CommandToolFileReadBinary { id, .. }
@@ -637,6 +654,7 @@ impl RelayMessage {
             | Self::ResponseDiscover { id, .. }
             | Self::ResponseWorkspaceDetect { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
+            | Self::ResponseWorkspaceDiscoverByIdentity { id, .. }
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
             | Self::ResponseToolFileReadBinary { id, .. }

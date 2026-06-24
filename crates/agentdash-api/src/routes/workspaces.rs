@@ -1,22 +1,35 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
+use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectInput,
+    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
+    WorkspaceDetectGitInput, WorkspaceDetectGitOutput, WorkspaceDetectInput,
+    WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
+    WorkspaceDiscoverByIdentityWorkspaceInput,
 };
 use agentdash_application::workspace::WorkspaceDetectionResult;
+use agentdash_contracts::backend::BackendWorkspaceInventoryResponse;
 use agentdash_contracts::common_response::{DeletedIdResponse, UpdatedIdResponse};
+use agentdash_contracts::workspace::{
+    BindDiscoveredWorkspaceBindingsRequest, BindDiscoveredWorkspaceBindingsResponse,
+    DiscoverLocalWorkspaceBindingsRequest, DiscoverLocalWorkspaceBindingsResponse,
+    DiscoveredWorkspaceBindingCandidate, WorkspaceIdentityDiscoverySkipped,
+};
+use agentdash_domain::backend::{
+    BackendType, BackendWorkspaceInventory, BackendWorkspaceInventorySource,
+    BackendWorkspaceInventoryStatus,
+};
 use agentdash_domain::workspace::{
-    Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy, WorkspaceStatus, identity_payload_matches,
-    normalize_identity_payload,
+    P4WorkspaceIdentityContract, P4WorkspaceMatchMode, Workspace, WorkspaceBinding,
+    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceStatus,
+    identity_payload_matches, normalize_identity_payload,
 };
 
 use crate::app_state::AppState;
@@ -68,6 +81,14 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/projects/{project_id}/workspaces/detect",
             axum::routing::post(detect_workspace),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/discover-local-bindings",
+            axum::routing::post(discover_local_bindings),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/bind-discovered",
+            axum::routing::post(bind_discovered),
         )
         .route("/workspaces/detect-git", axum::routing::post(detect_git))
         .route(
@@ -321,6 +342,410 @@ pub async fn detect_git(
         branch: result.branch,
         commit_hash: result.commit_hash,
     }))
+}
+
+pub async fn discover_local_bindings(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    AxumPath(project_id): AxumPath<String>,
+    Json(req): Json<DiscoverLocalWorkspaceBindingsRequest>,
+) -> Result<Json<DiscoverLocalWorkspaceBindingsResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let backend_id = normalize_required_string("backend_id", &req.backend_id)?;
+    ensure_local_project_backend_access(&state, project_id, &backend_id).await?;
+
+    let workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await?;
+    let workspace_names = workspaces
+        .iter()
+        .map(|workspace| (workspace.id, workspace.name.clone()))
+        .collect::<HashMap<_, _>>();
+    if workspaces.is_empty() {
+        return Ok(Json(DiscoverLocalWorkspaceBindingsResponse {
+            backend_id,
+            candidates: Vec::new(),
+            skipped: Vec::new(),
+            warnings: Vec::new(),
+        }));
+    }
+
+    let input_workspaces = workspaces
+        .iter()
+        .map(|workspace| WorkspaceDiscoverByIdentityWorkspaceInput {
+            workspace_id: workspace.id,
+            identity_kind: workspace.identity_kind.clone(),
+            identity_payload: workspace.identity_payload.clone(),
+        })
+        .collect();
+    let discovered = invoke_workspace_discover_by_identity(
+        &state,
+        Some(current_user.user_id.as_str()),
+        project_id,
+        &backend_id,
+        input_workspaces,
+    )
+    .await?;
+
+    let candidates = discovered
+        .candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let workspace_name = workspace_names.get(&candidate.workspace_id)?.clone();
+            Some(DiscoveredWorkspaceBindingCandidate {
+                workspace_id: candidate.workspace_id.to_string(),
+                workspace_name,
+                root_ref: candidate.root_ref,
+                identity_kind: agentdash_contracts::workspace::WorkspaceIdentityKind::from(
+                    candidate.identity_kind,
+                ),
+                identity_payload: candidate.identity_payload,
+                detected_facts: candidate.detected_facts,
+                confidence: candidate.confidence,
+                display_name: candidate.display_name,
+                client_name: candidate.client_name,
+                server_address: candidate.server_address,
+                stream: candidate.stream,
+                warnings: candidate.warnings,
+            })
+        })
+        .collect();
+    let skipped = discovered
+        .skipped
+        .into_iter()
+        .filter_map(|skipped| {
+            let workspace_name = workspace_names.get(&skipped.workspace_id)?.clone();
+            Some(WorkspaceIdentityDiscoverySkipped {
+                workspace_id: skipped.workspace_id.to_string(),
+                workspace_name,
+                identity_kind: agentdash_contracts::workspace::WorkspaceIdentityKind::from(
+                    skipped.identity_kind,
+                ),
+                reason: skipped.reason,
+                message: skipped.message,
+            })
+        })
+        .collect();
+
+    Ok(Json(DiscoverLocalWorkspaceBindingsResponse {
+        backend_id,
+        candidates,
+        skipped,
+        warnings: discovered.warnings,
+    }))
+}
+
+pub async fn bind_discovered(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    AxumPath(project_id): AxumPath<String>,
+    Json(req): Json<BindDiscoveredWorkspaceBindingsRequest>,
+) -> Result<Json<BindDiscoveredWorkspaceBindingsResponse>, ApiError> {
+    let project_id = parse_project_id(&project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    if req.bindings.is_empty() {
+        return Err(ApiError::BadRequest("bindings 不能为空".into()));
+    }
+    let mut commands = Vec::new();
+    let mut seen = HashSet::new();
+    for binding in req.bindings {
+        let workspace_id = parse_workspace_id(&binding.workspace_id)?;
+        let backend_id = normalize_required_string("binding.backend_id", &binding.backend_id)?;
+        let root_ref = normalize_required_string("binding.root_ref", &binding.root_ref)?;
+        let key = (workspace_id, binding_unique_key(&backend_id, &root_ref));
+        if seen.insert(key) {
+            commands.push(BindDiscoveredCommand {
+                workspace_id,
+                backend_id,
+                root_ref,
+            });
+        }
+    }
+
+    let backend_id = commands
+        .first()
+        .map(|command| command.backend_id.clone())
+        .ok_or_else(|| ApiError::BadRequest("bindings 不能为空".into()))?;
+    if commands
+        .iter()
+        .any(|command| command.backend_id != backend_id)
+    {
+        return Err(ApiError::BadRequest(
+            "bind-discovered 单次请求只能绑定同一个 backend".into(),
+        ));
+    }
+    let access = ensure_local_project_backend_access(&state, project_id, &backend_id).await?;
+
+    let mut workspaces = state
+        .repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await?
+        .into_iter()
+        .map(|workspace| (workspace.id, workspace))
+        .collect::<HashMap<_, _>>();
+    let mut touched_workspace_ids = HashSet::new();
+    let mut created_bindings = 0;
+    let mut updated_bindings = 0;
+    let mut inventory_items = Vec::new();
+    let mut warnings = Vec::new();
+
+    for command in commands {
+        let workspace = workspaces
+            .get_mut(&command.workspace_id)
+            .ok_or_else(|| ApiError::NotFound("Workspace 不存在或不属于当前 Project".into()))?;
+        let detected = invoke_workspace_detect(
+            &state,
+            Some(current_user.user_id.as_str()),
+            project_id,
+            &command.backend_id,
+            &command.root_ref,
+        )
+        .await?;
+        if detected.identity_kind != workspace.identity_kind
+            || !discovery_identity_payload_matches(
+                workspace.identity_kind.clone(),
+                &workspace.identity_payload,
+                &detected.identity_payload,
+                Some(&detected.binding.detected_facts),
+            )
+        {
+            return Err(ApiError::BadRequest(format!(
+                "目录 `{}` 与 Workspace `{}` 的 identity 不匹配",
+                command.root_ref, workspace.name
+            )));
+        }
+
+        warnings.extend(detected.warnings.clone());
+        let inventory = inventory_from_detected(
+            access.backend_id.clone(),
+            detected.binding.root_ref.clone(),
+            detected.clone(),
+            BackendWorkspaceInventoryStatus::Available,
+            BackendWorkspaceInventorySource::IdentityDiscovery,
+            None,
+        );
+        state
+            .repos
+            .backend_workspace_inventory_repo
+            .upsert(&inventory)
+            .await?;
+
+        let priority = access.priority;
+        let now = Utc::now();
+        if let Some(existing) = workspace.bindings.iter_mut().find(|binding| {
+            binding.backend_id == command.backend_id
+                && binding.root_ref == detected.binding.root_ref
+        }) {
+            existing.status = WorkspaceBindingStatus::Ready;
+            existing.detected_facts = detected.binding.detected_facts;
+            existing.last_verified_at = Some(inventory.last_seen_at);
+            existing.priority = priority;
+            existing.updated_at = now;
+            updated_bindings += 1;
+        } else {
+            let mut binding = WorkspaceBinding::new(
+                workspace.id,
+                command.backend_id,
+                detected.binding.root_ref,
+                detected.binding.detected_facts,
+            );
+            binding.status = WorkspaceBindingStatus::Ready;
+            binding.last_verified_at = Some(inventory.last_seen_at);
+            binding.priority = priority;
+            workspace.bindings.push(binding);
+            created_bindings += 1;
+        }
+        workspace.status = derive_workspace_status(&workspace.bindings);
+        workspace.refresh_default_binding();
+        touched_workspace_ids.insert(workspace.id);
+        inventory_items.push(BackendWorkspaceInventoryResponse::from(inventory));
+    }
+
+    let mut stored_workspaces = Vec::new();
+    let mut bound_workspace_ids = touched_workspace_ids.into_iter().collect::<Vec<_>>();
+    bound_workspace_ids.sort_unstable();
+    for workspace_id in &bound_workspace_ids {
+        let workspace = workspaces
+            .get(workspace_id)
+            .ok_or_else(|| ApiError::Internal("Workspace 更新缓存缺失".into()))?;
+        state.repos.workspace_repo.update(workspace).await?;
+        let stored = state
+            .repos
+            .workspace_repo
+            .get_by_id(*workspace_id)
+            .await?
+            .ok_or_else(|| ApiError::Internal("Workspace 更新后读取失败".into()))?;
+        stored_workspaces.push(WorkspaceResponse::from(stored));
+    }
+
+    Ok(Json(BindDiscoveredWorkspaceBindingsResponse {
+        backend_id,
+        workspaces: stored_workspaces,
+        bound_workspace_ids: bound_workspace_ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+        created_bindings,
+        updated_bindings,
+        inventory_items,
+        warnings,
+    }))
+}
+
+#[derive(Debug)]
+struct BindDiscoveredCommand {
+    workspace_id: Uuid,
+    backend_id: String,
+    root_ref: String,
+}
+
+async fn ensure_local_project_backend_access(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+    backend_id: &str,
+) -> Result<agentdash_domain::backend::ProjectBackendAccess, ApiError> {
+    let access = ensure_project_backend_access(state, project_id, backend_id).await?;
+    if !access.is_active() {
+        return Err(ApiError::Conflict("ProjectBackendAccess 当前未启用".into()));
+    }
+    let backend = state
+        .repos
+        .backend_repo
+        .get_backend(&access.backend_id)
+        .await?;
+    if backend.backend_type != BackendType::Local {
+        return Err(ApiError::BadRequest(
+            "本机 Workspace discovery 仅支持 local backend".into(),
+        ));
+    }
+    Ok(access)
+}
+
+fn normalize_required_string(field: &str, raw: &str) -> Result<String, ApiError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!("{field} 不能为空")));
+    }
+    Ok(value.to_string())
+}
+
+async fn invoke_workspace_discover_by_identity(
+    state: &Arc<AppState>,
+    user_id: Option<&str>,
+    project_id: Uuid,
+    backend_id: &str,
+    workspaces: Vec<WorkspaceDiscoverByIdentityWorkspaceInput>,
+) -> Result<WorkspaceDiscoverByIdentityOutput, ApiError> {
+    let input = serde_json::to_value(WorkspaceDiscoverByIdentityInput {
+        backend_id: backend_id.to_string(),
+        workspaces,
+    })
+    .map_err(|error| {
+        ApiError::BadRequest(format!("workspace.discover_by_identity 输入非法: {error}"))
+    })?;
+    let request = RuntimeInvocationRequest::new(
+        RuntimeActionKey::parse(WORKSPACE_DISCOVER_BY_IDENTITY_ACTION).map_err(|error| {
+            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
+        })?,
+        RuntimeActor::PlatformUser {
+            user_id: user_id.map(str::to_string),
+        },
+        RuntimeContext::Setup {
+            project_id: Some(project_id),
+            workspace_id: None,
+            backend_id: Some(backend_id.to_string()),
+            root_ref: None,
+        },
+        input,
+    );
+    let invocation = state.services.runtime_gateway.invoke(request).await?;
+    serde_json::from_value::<WorkspaceDiscoverByIdentityOutput>(invocation.output.output).map_err(
+        |error| {
+            ApiError::Internal(format!(
+                "workspace.discover_by_identity 返回值解析失败: {error}"
+            ))
+        },
+    )
+}
+
+fn discovery_identity_payload_matches(
+    kind: WorkspaceIdentityKind,
+    expected_payload: &Value,
+    actual_payload: &Value,
+    actual_binding_facts: Option<&Value>,
+) -> bool {
+    if identity_payload_matches(
+        kind.clone(),
+        expected_payload,
+        actual_payload,
+        actual_binding_facts,
+    ) {
+        return true;
+    }
+
+    if kind != WorkspaceIdentityKind::P4Workspace {
+        return false;
+    }
+    let Some(relaxed_payload) = relaxed_p4_discovery_payload(expected_payload) else {
+        return false;
+    };
+    identity_payload_matches(
+        WorkspaceIdentityKind::P4Workspace,
+        &relaxed_payload,
+        actual_payload,
+        actual_binding_facts,
+    )
+}
+
+fn relaxed_p4_discovery_payload(expected_payload: &Value) -> Option<Value> {
+    let normalized =
+        normalize_identity_payload(WorkspaceIdentityKind::P4Workspace, expected_payload).ok()?;
+    let mut contract = serde_json::from_value::<P4WorkspaceIdentityContract>(normalized).ok()?;
+    if contract.match_mode != P4WorkspaceMatchMode::ServerStreamClient {
+        return None;
+    }
+    contract.match_mode = P4WorkspaceMatchMode::ServerStream;
+    contract.client_name = None;
+    serde_json::to_value(contract).ok()
+}
+
+fn inventory_from_detected(
+    backend_id: String,
+    root_ref: String,
+    detected: WorkspaceDetectionResult,
+    status: BackendWorkspaceInventoryStatus,
+    source: BackendWorkspaceInventorySource,
+    last_error: Option<String>,
+) -> BackendWorkspaceInventory {
+    let mut item = BackendWorkspaceInventory::available(
+        backend_id,
+        root_ref,
+        detected.identity_kind,
+        detected.identity_payload,
+        detected.binding.detected_facts,
+        source,
+    );
+    item.status = status;
+    item.last_error = last_error;
+    item
 }
 
 async fn derive_workspace_shape(

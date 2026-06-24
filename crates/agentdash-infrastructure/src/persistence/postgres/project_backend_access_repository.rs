@@ -471,6 +471,7 @@ fn str_to_inventory_source(value: &str) -> Result<BackendWorkspaceInventorySourc
         | "manual_refresh"
         | "scheduled_refresh"
         | "capability_expansion_ack" => Ok(BackendWorkspaceInventorySource::ManualRegister),
+        "identity_discovery" => Ok(BackendWorkspaceInventorySource::IdentityDiscovery),
         _ => Err(DomainError::InvalidConfig(format!(
             "backend_workspace_inventory.source: 未知值 `{value}`"
         ))),

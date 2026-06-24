@@ -309,6 +309,7 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventoryStatus>
 #[serde(rename_all = "snake_case")]
 pub enum BackendWorkspaceInventorySource {
     ManualRegister,
+    IdentityDiscovery,
 }
 
 impl From<agentdash_domain::backend::BackendWorkspaceInventorySource>
@@ -318,6 +319,9 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventorySource>
         match value {
             agentdash_domain::backend::BackendWorkspaceInventorySource::ManualRegister => {
                 Self::ManualRegister
+            }
+            agentdash_domain::backend::BackendWorkspaceInventorySource::IdentityDiscovery => {
+                Self::IdentityDiscovery
             }
         }
     }

@@ -2,14 +2,28 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { BackendWorkspaceInventoryStatus } from "./backend-contracts";
+import type { BackendWorkspaceInventoryResponse, BackendWorkspaceInventoryStatus } from "./backend-contracts";
 import type { VfsCapabilityDto } from "./context-contracts";
+
+export type BindDiscoveredWorkspaceBindingRequest = { workspace_id: string, backend_id: string, root_ref: string, };
+
+export type BindDiscoveredWorkspaceBindingsRequest = { bindings: Array<BindDiscoveredWorkspaceBindingRequest>, };
+
+export type BindDiscoveredWorkspaceBindingsResponse = { backend_id: string, workspaces: Array<WorkspaceResponse>, bound_workspace_ids: Array<string>, created_bindings: number, updated_bindings: number, inventory_items: Array<BackendWorkspaceInventoryResponse>, warnings: Array<string>, };
+
+export type DiscoverLocalWorkspaceBindingsRequest = { backend_id: string, };
+
+export type DiscoverLocalWorkspaceBindingsResponse = { backend_id: string, candidates: Array<DiscoveredWorkspaceBindingCandidate>, skipped: Array<WorkspaceIdentityDiscoverySkipped>, warnings: Array<string>, };
+
+export type DiscoveredWorkspaceBindingCandidate = { workspace_id: string, workspace_name: string, root_ref: string, identity_kind: WorkspaceIdentityKind, identity_payload: { [key in string]?: JsonValue }, detected_facts: { [key in string]?: JsonValue }, confidence: string, display_name: string | null, client_name: string | null, server_address: string | null, stream: string | null, warnings: Array<string>, };
 
 export type WorkspaceBindingResponse = { id: string, workspace_id: string, backend_id: string, root_ref: string, status: WorkspaceBindingStatus, detected_facts: JsonValue, last_verified_at: string | null, priority: number, created_at: string, updated_at: string, };
 
 export type WorkspaceBindingStatus = "pending" | "ready" | "offline" | "error";
 
 export type WorkspaceBindingSyncResult = { updated_workspace_ids: Array<string>, created_bindings: number, updated_bindings: number, candidates: Array<WorkspaceInventoryCandidate>, conflicts: Array<WorkspaceInventoryCandidate>, };
+
+export type WorkspaceIdentityDiscoverySkipped = { workspace_id: string, workspace_name: string, identity_kind: WorkspaceIdentityKind, reason: string, message: string, };
 
 export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
 

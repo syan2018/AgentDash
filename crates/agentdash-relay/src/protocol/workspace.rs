@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::prompt::WorkspaceIdentityKindRelay;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceDetectPayload {
@@ -12,6 +15,18 @@ pub struct CommandWorkspaceDetectGitPayload {
     /// 待检测的 workspace 根目录。
     /// 本机必须先校验它存在、是目录且可读取；该命令只做 workspace facts 探测。
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandWorkspaceDiscoverByIdentityPayload {
+    pub workspaces: Vec<WorkspaceIdentityDiscoveryWorkspaceRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceIdentityDiscoveryWorkspaceRelay {
+    pub workspace_id: String,
+    pub identity_kind: WorkspaceIdentityKindRelay,
+    pub identity_payload: Value,
 }
 
 // ── command.browse_directory ──
@@ -56,6 +71,42 @@ pub struct ResponseWorkspaceDetectPayload {
     pub p4: Option<WorkspaceP4ProbePayload>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseWorkspaceDiscoverByIdentityPayload {
+    pub candidates: Vec<WorkspaceIdentityDiscoveryCandidateRelay>,
+    pub skipped: Vec<WorkspaceIdentityDiscoverySkippedRelay>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceIdentityDiscoveryCandidateRelay {
+    pub workspace_id: String,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKindRelay,
+    pub identity_payload: Value,
+    pub detected_facts: Value,
+    pub confidence: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceIdentityDiscoverySkippedRelay {
+    pub workspace_id: String,
+    pub identity_kind: WorkspaceIdentityKindRelay,
+    pub reason: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

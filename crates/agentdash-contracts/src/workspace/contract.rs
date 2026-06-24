@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::backend::BackendWorkspaceInventoryStatus;
+use crate::backend::{BackendWorkspaceInventoryResponse, BackendWorkspaceInventoryStatus};
 use crate::context::VfsCapabilityDto;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -180,4 +180,67 @@ pub struct WorkspaceBindingSyncResult {
     pub updated_bindings: usize,
     pub candidates: Vec<WorkspaceInventoryCandidate>,
     pub conflicts: Vec<WorkspaceInventoryCandidate>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct DiscoverLocalWorkspaceBindingsRequest {
+    pub backend_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DiscoverLocalWorkspaceBindingsResponse {
+    pub backend_id: String,
+    pub candidates: Vec<DiscoveredWorkspaceBindingCandidate>,
+    pub skipped: Vec<WorkspaceIdentityDiscoverySkipped>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DiscoveredWorkspaceBindingCandidate {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub identity_payload: Value,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub detected_facts: Value,
+    pub confidence: String,
+    pub display_name: Option<String>,
+    pub client_name: Option<String>,
+    pub server_address: Option<String>,
+    pub stream: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct WorkspaceIdentityDiscoverySkipped {
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub reason: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct BindDiscoveredWorkspaceBindingsRequest {
+    pub bindings: Vec<BindDiscoveredWorkspaceBindingRequest>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct BindDiscoveredWorkspaceBindingRequest {
+    pub workspace_id: String,
+    pub backend_id: String,
+    pub root_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BindDiscoveredWorkspaceBindingsResponse {
+    pub backend_id: String,
+    pub workspaces: Vec<WorkspaceResponse>,
+    pub bound_workspace_ids: Vec<String>,
+    pub created_bindings: usize,
+    pub updated_bindings: usize,
+    pub inventory_items: Vec<BackendWorkspaceInventoryResponse>,
+    pub warnings: Vec<String>,
 }

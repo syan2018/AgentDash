@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "校验 contract 生成与前端 DTO drift"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "校验 workspace discovery/binding 是否仍遵守本机访问边界"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "校验 migration 与 repository 变更"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验 API/runtime 错误语义"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验前端 generated type 使用"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "校验 Project 设置页 UI 一致性"}

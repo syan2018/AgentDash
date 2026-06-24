@@ -411,7 +411,7 @@ function CandidateGroup({
                   className="mt-0.5"
                 />
               ) : (
-                <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
+                <span className="mt-1 h-2 w-2 rounded-[4px] bg-primary" />
               )}
               <span className="min-w-0">
                 <span className="block truncate font-mono text-foreground">

@@ -3,7 +3,7 @@
   "name": "identity-workspace-discovery",
   "title": "按 Identity 策略发现本机 Workspace",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

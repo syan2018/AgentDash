@@ -91,6 +91,7 @@ mod tests {
     fn session_rewound_platform_event_uses_stable_boundary_contract() {
         let event = BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
             discarded_turn_id: "turn-failed".to_string(),
+            discarded_entry_index: Some(1),
             stable_event_seq: 120,
             stable_turn_id: Some("turn-stable".to_string()),
             reason: SessionRewindReason::ProviderFailure,
@@ -102,6 +103,7 @@ mod tests {
         assert_eq!(value["type"], "platform");
         assert_eq!(value["payload"]["kind"], "session_rewound");
         assert_eq!(value["payload"]["data"]["discarded_turn_id"], "turn-failed");
+        assert_eq!(value["payload"]["data"]["discarded_entry_index"], 1);
         assert_eq!(value["payload"]["data"]["stable_event_seq"], 120);
         assert_eq!(value["payload"]["data"]["stable_turn_id"], "turn-stable");
         assert_eq!(value["payload"]["data"]["reason"], "provider_failure");

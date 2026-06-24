@@ -68,94 +68,6 @@ function isWillRetryErrorEvent(event: BackboneEvent): boolean {
   return event.type === "error" && event.payload.willRetry === true;
 }
 
-function readNumberField(record: Record<string, unknown>, ...keys: string[]): number | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (
-      typeof value === "bigint" &&
-      value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-      value <= BigInt(Number.MAX_SAFE_INTEGER)
-    ) {
-      return Number(value);
-    }
-  }
-  return undefined;
-}
-
-function readStringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-interface SessionRewindInfo {
-  stableEventSeq?: number;
-  discardedTurnId?: string;
-}
-
-const REWIND_META_KEYS = new Set([
-  "session_rewound",
-  "session_rebuilt",
-  "projection_invalidated",
-  "turn_discarded",
-]);
-
-function extractSessionRewindInfo(event: BackboneEvent): SessionRewindInfo | null {
-  if (event.type !== "platform" || !isRecord(event.payload)) {
-    return null;
-  }
-
-  const platform: Record<string, unknown> = event.payload;
-  const kind = typeof platform.kind === "string" ? platform.kind : null;
-  let data: Record<string, unknown> | null = null;
-
-  if (kind === "session_rewound") {
-    data = isRecord(platform.data) ? platform.data : null;
-  } else if (kind === "session_meta_update" && isRecord(platform.data)) {
-    const metaData = platform.data;
-    const key = typeof metaData.key === "string" ? metaData.key : null;
-    if (key && REWIND_META_KEYS.has(key) && isRecord(metaData.value)) {
-      data = metaData.value;
-    }
-  }
-
-  if (!data) {
-    return null;
-  }
-
-  const stableEventSeq = readNumberField(data, "stable_event_seq", "rewind_after_seq");
-  const discardedTurnId = readStringField(data, "discarded_turn_id");
-  if (stableEventSeq == null && discardedTurnId == null) {
-    return null;
-  }
-  return { stableEventSeq, discardedTurnId };
-}
-
-function eventTurnId(event: SessionEventEnvelope): string | undefined {
-  return event.turn_id ?? event.notification.trace.turnId ?? undefined;
-}
-
-function applySessionRewind(
-  rawEvents: SessionEventEnvelope[],
-  rewind: SessionRewindInfo,
-): SessionEventEnvelope[] {
-  if (rewind.stableEventSeq != null) {
-    const stableEventSeq = rewind.stableEventSeq;
-    return rawEvents.filter((event) => event.event_seq <= stableEventSeq);
-  }
-  if (rewind.discardedTurnId) {
-    return rawEvents.filter((event) => eventTurnId(event) !== rewind.discardedTurnId);
-  }
-  return rawEvents;
-}
-
 function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
   const itemId = getItemIdFromEvent(bbEvent);
   if (itemId) {
@@ -474,24 +386,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   return [...prev, makeDisplayEntry(event, bbEvent)];
 }
 
-function replayStreamState(rawEvents: SessionEventEnvelope[]): {
-  entries: SessionDisplayEntry[];
-  tokenUsage: TokenUsageInfo | null;
-} {
-  let entries: SessionDisplayEntry[] = [];
-  let tokenUsage: TokenUsageInfo | null = null;
-
-  for (const event of [...rawEvents].sort((a, b) => a.event_seq - b.event_seq)) {
-    entries = applyEventToEntries(entries, event);
-    const usage = extractTokenUsageFromEvent(event.notification.event);
-    if (usage) {
-      tokenUsage = tokenUsage ? Object.assign({}, tokenUsage, usage) : usage;
-    }
-  }
-
-  return { entries, tokenUsage };
-}
-
 export function reduceStreamState(
   prev: SessionStreamState,
   incomingEvents: SessionEventEnvelope[],
@@ -527,16 +421,6 @@ export function reduceStreamState(
 
   for (const event of normalized) {
     if (event.event_seq <= lastAppliedSeq) {
-      continue;
-    }
-
-    const rewind = extractSessionRewindInfo(event.notification.event);
-    if (rewind) {
-      rawEvents = [...applySessionRewind(rawEvents, rewind), event];
-      const replayed = replayStreamState(rawEvents);
-      entries = replayed.entries;
-      tokenUsage = replayed.tokenUsage;
-      lastAppliedSeq = event.event_seq;
       continue;
     }
 

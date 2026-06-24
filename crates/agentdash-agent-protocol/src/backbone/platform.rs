@@ -87,6 +87,8 @@ pub enum ProviderAttemptPhase {
 #[serde(rename_all = "snake_case")]
 pub struct SessionRewound {
     pub discarded_turn_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discarded_entry_index: Option<u32>,
     pub stable_event_seq: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stable_turn_id: Option<String>,

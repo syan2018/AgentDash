@@ -44,6 +44,7 @@ describe("platformEvent", () => {
         kind: "session_rewound",
         data: {
           discarded_turn_id: "turn-failed",
+          discarded_entry_index: 1,
           stable_event_seq: 42n,
           stable_turn_id: "turn-stable",
           reason: "runtime_failure",

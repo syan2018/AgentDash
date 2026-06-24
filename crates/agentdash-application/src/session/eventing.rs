@@ -5,7 +5,7 @@ use agentdash_agent_protocol::{
     SourceInfo, TraceInfo, UserInputBlock, codex_app_server_protocol as codex,
 };
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, MessageRef,
+    AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, AgentMessage, MessageRef,
 };
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
@@ -397,9 +397,12 @@ impl SessionEventingService {
     ) -> io::Result<PersistedSessionEvent> {
         let events = self.stores.events.list_all_events(session_id).await?;
         let stable = latest_stable_terminal_before(&events, terminal_event_seq);
+        let discarded_entry_index =
+            latest_agent_loop_entry_index_before(&events, discarded_turn_id, terminal_event_seq);
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
                 discarded_turn_id: discarded_turn_id.to_string(),
+                discarded_entry_index,
                 stable_event_seq: stable
                     .as_ref()
                     .map(|boundary| boundary.event_seq)
@@ -434,12 +437,13 @@ impl SessionEventingService {
             let Some(boundary) = boundaries.get(&message.message_ref.turn_id) else {
                 return true;
             };
-            let source_end = message
-                .source_range
-                .as_ref()
-                .map(|range| range.end_event_seq)
-                .or(message.source_event_seq);
-            source_end.is_some_and(|seq| seq <= boundary.stable_event_seq)
+            if Some(message.message_ref.entry_index) != boundary.discarded_entry_index {
+                return true;
+            }
+            !matches!(
+                message.message,
+                AgentMessage::Assistant { .. } | AgentMessage::ToolResult { .. }
+            )
         });
         envelope.token_estimate = None;
         Ok(())
@@ -857,6 +861,7 @@ struct StableTerminalBoundary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SessionRewindBoundary {
     discarded_turn_id: String,
+    discarded_entry_index: Option<u32>,
     stable_event_seq: u64,
 }
 
@@ -889,7 +894,14 @@ fn session_rewind_boundaries(
     events: &[PersistedSessionEvent],
 ) -> HashMap<String, SessionRewindBoundary> {
     let mut boundaries_by_turn: HashMap<String, (u64, SessionRewindBoundary)> = HashMap::new();
-    for (boundary, event_seq) in events.iter().filter_map(parse_session_rewound_marker) {
+    for (mut boundary, event_seq) in events.iter().filter_map(parse_session_rewound_marker) {
+        if boundary.discarded_entry_index.is_none() {
+            boundary.discarded_entry_index = latest_agent_loop_entry_index_before(
+                events,
+                &boundary.discarded_turn_id,
+                event_seq,
+            );
+        }
         let entry = boundaries_by_turn
             .entry(boundary.discarded_turn_id.clone())
             .or_insert((event_seq, boundary.clone()));
@@ -940,6 +952,11 @@ fn latest_failed_terminal_rewind_boundary(
         TurnTerminalKind::Failed | TurnTerminalKind::Interrupted | TurnTerminalKind::Lost
     )
     .then_some(SessionRewindBoundary {
+        discarded_entry_index: latest_agent_loop_entry_index_before(
+            events,
+            &discarded_turn_id,
+            _event_seq,
+        ),
         discarded_turn_id,
         stable_event_seq,
     })
@@ -948,34 +965,71 @@ fn latest_failed_terminal_rewind_boundary(
 fn parse_session_rewound_marker(
     event: &PersistedSessionEvent,
 ) -> Option<(SessionRewindBoundary, u64)> {
-    let (discarded_turn_id, stable_event_seq) = match &event.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => {
-            (marker.discarded_turn_id.clone(), marker.stable_event_seq)
-        }
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-            if key == "session_rewound" =>
-        {
-            let discarded_turn_id = value
-                .get("discarded_turn_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?
-                .to_string();
-            let stable_event_seq = value
-                .get("stable_event_seq")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default();
-            (discarded_turn_id, stable_event_seq)
-        }
-        _ => return None,
-    };
+    let (discarded_turn_id, discarded_entry_index, stable_event_seq) =
+        match &event.notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => (
+                marker.discarded_turn_id.clone(),
+                marker.discarded_entry_index,
+                marker.stable_event_seq,
+            ),
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                if key == "session_rewound" =>
+            {
+                let discarded_turn_id = value
+                    .get("discarded_turn_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())?
+                    .to_string();
+                let stable_event_seq = value
+                    .get("stable_event_seq")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default();
+                let discarded_entry_index = value
+                    .get("discarded_entry_index")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok());
+                (discarded_turn_id, discarded_entry_index, stable_event_seq)
+            }
+            _ => return None,
+        };
     Some((
         SessionRewindBoundary {
             discarded_turn_id,
+            discarded_entry_index,
             stable_event_seq,
         },
         event.event_seq,
     ))
+}
+
+fn latest_agent_loop_entry_index_before(
+    events: &[PersistedSessionEvent],
+    turn_id: &str,
+    event_seq: u64,
+) -> Option<u32> {
+    events
+        .iter()
+        .filter(|event| event.event_seq < event_seq)
+        .filter(|event| event.turn_id.as_deref() == Some(turn_id))
+        .filter(|event| is_agent_context_output_event(&event.notification.event))
+        .filter_map(|event| event.entry_index)
+        .max()
+}
+
+fn is_agent_context_output_event(event: &BackboneEvent) -> bool {
+    matches!(
+        event,
+        BackboneEvent::AgentMessageDelta(_)
+            | BackboneEvent::ReasoningTextDelta(_)
+            | BackboneEvent::ReasoningSummaryDelta(_)
+            | BackboneEvent::ItemStarted(_)
+            | BackboneEvent::ItemUpdated(_)
+            | BackboneEvent::ItemCompleted(_)
+            | BackboneEvent::CommandOutputDelta(_)
+            | BackboneEvent::FileChangeDelta(_)
+            | BackboneEvent::McpToolCallProgress(_)
+    )
 }
 
 fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<BackboneEnvelope> {
@@ -1616,8 +1670,17 @@ mod tests {
         turn_id: &str,
         text: &str,
     ) -> BackboneEnvelope {
+        final_assistant_message_envelope_at_entry(session_id, turn_id, 1, text)
+    }
+
+    fn final_assistant_message_envelope_at_entry(
+        session_id: &str,
+        turn_id: &str,
+        entry_index: u32,
+        text: &str,
+    ) -> BackboneEnvelope {
         let item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
-            id: format!("{turn_id}:assistant:0"),
+            id: format!("{turn_id}:{entry_index}:msg"),
             text: text.to_string(),
             phase: None,
             memory_citation: None,
@@ -1634,7 +1697,7 @@ mod tests {
         )
         .with_trace(TraceInfo {
             turn_id: Some(turn_id.to_string()),
-            entry_index: Some(1),
+            entry_index: Some(entry_index),
         })
     }
 
@@ -1998,7 +2061,24 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                final_assistant_message_envelope(session_id, "turn-failed", "partial failed answer"),
+                final_assistant_message_envelope_at_entry(
+                    session_id,
+                    "turn-failed",
+                    0,
+                    "completed loop answer",
+                ),
+            )
+            .await
+            .expect("persist completed loop assistant");
+        service
+            .persist_notification(
+                session_id,
+                final_assistant_message_envelope_at_entry(
+                    session_id,
+                    "turn-failed",
+                    1,
+                    "partial failed answer",
+                ),
             )
             .await
             .expect("persist failed assistant");
@@ -2028,11 +2108,12 @@ mod tests {
             .await
             .expect("persist rewind marker");
 
-        assert_eq!(failed_terminal.event_seq, stable_terminal.event_seq + 3);
+        assert_eq!(failed_terminal.event_seq, stable_terminal.event_seq + 4);
         assert_eq!(marker.event_seq, failed_terminal.event_seq + 1);
         match &marker.notification.event {
             BackboneEvent::Platform(PlatformEvent::SessionRewound(marker)) => {
                 assert_eq!(marker.discarded_turn_id, "turn-failed");
+                assert_eq!(marker.discarded_entry_index, Some(1));
                 assert_eq!(marker.stable_event_seq, stable_terminal.event_seq);
                 assert_eq!(marker.stable_turn_id.as_deref(), Some("turn-stable"));
                 assert_eq!(marker.reason, SessionRewindReason::RuntimeFailure);
@@ -2053,7 +2134,8 @@ mod tests {
 
         assert!(rendered.contains("stable prompt"));
         assert!(rendered.contains("stable answer"));
-        assert!(!rendered.contains("failed prompt"));
+        assert!(rendered.contains("failed prompt"));
+        assert!(rendered.contains("completed loop answer"));
         assert!(!rendered.contains("partial failed answer"));
     }
 
@@ -2121,9 +2203,22 @@ mod tests {
             service
                 .persist_notification(
                     session_id,
-                    final_assistant_message_envelope(
+                    final_assistant_message_envelope_at_entry(
                         session_id,
                         failed_turn,
+                        0,
+                        &format!("{failed_turn} completed loop answer"),
+                    ),
+                )
+                .await
+                .expect("persist completed loop assistant");
+            service
+                .persist_notification(
+                    session_id,
+                    final_assistant_message_envelope_at_entry(
+                        session_id,
+                        failed_turn,
+                        1,
                         &format!("{failed_turn} partial answer"),
                     ),
                 )
@@ -2169,9 +2264,11 @@ mod tests {
 
         assert!(rendered.contains("stable prompt"));
         assert!(rendered.contains("stable answer"));
-        assert!(!rendered.contains("turn-failed-a prompt"));
+        assert!(rendered.contains("turn-failed-a prompt"));
+        assert!(rendered.contains("turn-failed-a completed loop answer"));
         assert!(!rendered.contains("turn-failed-a partial answer"));
-        assert!(!rendered.contains("turn-failed-b prompt"));
+        assert!(rendered.contains("turn-failed-b prompt"));
+        assert!(rendered.contains("turn-failed-b completed loop answer"));
         assert!(!rendered.contains("turn-failed-b partial answer"));
     }
 

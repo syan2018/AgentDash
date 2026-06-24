@@ -130,6 +130,7 @@ PlatformEvent::SessionRewound(SessionRewound)
 `SessionRewound` 字段：
 
 - `discarded_turn_id: String`
+- `discarded_entry_index?: u32`
 - `stable_event_seq: u64`
 - `stable_turn_id?: String`
 - `reason: provider_retry | provider_failure | runtime_failure`
@@ -143,8 +144,10 @@ PlatformEvent::SessionRewound(SessionRewound)
 - `ErrorNotification { will_retry: true }` 是 Codex-style intermediate state；它不是 terminal
   failed，也不更新 turn summary。attempt/max/delay/provider 等细节来自
   `ProviderAttemptStatus`。
-- `SessionRewound` 是 append-only stable-boundary fact。事件流不物理删除尾部事件；projection、
-  frontend reducer 或 full rehydrate 必须按 `stable_event_seq` / `discarded_turn_id` 排除失败轮次。
+- `SessionRewound` 是 append-only agent-context rewind marker。事件流不物理删除尾部事件；
+  前端 reducer 不能按该事件裁剪 timeline/rawEvents；model context projection 只按
+  `discarded_turn_id + discarded_entry_index` 排除失败 AgentLoop 子轮次中的 agent 产物。
+- `stable_event_seq` 只保留为诊断/旧稳定边界信息，不表达前端或上下文应裁到该事件序号。
 - 新增或修改 `PlatformEvent` 一等 variant 后必须重新生成 TypeScript binding：
 
 ```powershell

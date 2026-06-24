@@ -289,7 +289,7 @@ export type RequestPermissionProfile = { network: AdditionalNetworkPermissions |
 
 export type SessionRewindReason = "provider_retry" | "provider_failure" | "runtime_failure";
 
-export type SessionRewound = { discarded_turn_id: string, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
+export type SessionRewound = { discarded_turn_id: string, discarded_entry_index: number | null, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
 
 export type ShellExecExecutionMode = "platform" | "mountExec";
 

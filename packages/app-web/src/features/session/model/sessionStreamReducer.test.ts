@@ -216,7 +216,7 @@ describe("sessionStreamReducer", () => {
     expect(state.lastAppliedSeq).toBe(1);
   });
 
-  it("session_rewound 会按稳定边界移除失败轮次的半截展示", () => {
+  it("session_rewound 不裁剪前端 rawEvents 或失败轮次展示", () => {
     const state = reduceStreamState(createInitialStreamState([]), [
       agentDelta(1, "partial failed output"),
       streamEvent(2, {
@@ -237,8 +237,8 @@ describe("sessionStreamReducer", () => {
     ]);
 
     expect(state.lastAppliedSeq).toBe(3);
-    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([3]);
-    expect(state.entries.some((entry) => entry.accumulatedText?.includes("partial failed output"))).toBe(false);
+    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([1, 2, 3]);
+    expect(state.entries.some((entry) => entry.accumulatedText?.includes("partial failed output"))).toBe(true);
   });
 
   it("command completed 后使用 final aggregatedOutput 作为终态 bounded 展示源", () => {

@@ -181,8 +181,10 @@ provider_fatal_error(message, code)
   and rate-limit headers populate `ProviderErrorClassification`.
 - Executor tests assert `AgentEvent::ProviderAttemptStatus` maps to
   `PlatformEvent::ProviderAttemptStatus`.
-- Session/application tests assert failed turns append `SessionRewound` and next projected transcript
-  excludes the failed turn.
+- Session/application tests assert failed turns append `SessionRewound` with the failed
+  `entry_index`, and next projected transcript excludes only that AgentLoop child round's
+  assistant/tool output while preserving user input and earlier successful child rounds in the same
+  turn.
 
 ### 7. Wrong vs Correct
 
@@ -208,7 +210,7 @@ assistant delta emitted -> provider stream error -> retry same prompt
 #### Correct
 
 ```text
-assistant delta emitted -> provider stream error -> failed turn -> SessionRewound stable boundary
+assistant delta emitted -> provider stream error -> failed turn -> SessionRewound(turn_id, entry_index)
 ```
 
 ---

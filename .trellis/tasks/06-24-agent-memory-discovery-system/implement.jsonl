@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Defines VFS address model, inline_fs storage keys, surface mutation, mount capabilities, and ProjectAgent knowledge storage coordinates."}
+{"file": ".trellis/spec/backend/capability/integration-api.md", "reason": "Defines Host Integration assembly rules, contract crate constraints, and fail-fast provider conflict policy used by discovery providers."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Defines frame construction, launch surface, capability projection, and context injection invariants for runtime startup."}
+{"file": ".trellis/tasks/06-24-agent-memory-discovery-system/research/claude-code-memory-prompts.md", "reason": "Captures prompt and file-layout rules to adapt into the memory-manager skill."}

@@ -5,7 +5,9 @@ pub mod backbone;
 pub use backbone::approval::ApprovalRequest;
 pub use backbone::envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
 pub use backbone::event::BackboneEvent;
-pub use backbone::item::{ItemCompletedNotification, ItemStartedNotification};
+pub use backbone::item::{
+    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+};
 pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,

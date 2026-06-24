@@ -7,7 +7,7 @@ use agentdash_agent::{
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
+    ItemUpdatedNotification, PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
     ProviderAttemptStatus as ProtocolProviderAttemptStatus, SourceInfo, ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
 };
@@ -860,7 +860,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                     )
                 };
                 vec![wrap(
-                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                    BackboneEvent::ItemUpdated(ItemUpdatedNotification::new(
                         item,
                         session_id.to_string(),
                         turn_id.to_string(),
@@ -1242,7 +1242,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                     None,
                 );
                 vec![wrap(
-                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                    BackboneEvent::ItemUpdated(ItemUpdatedNotification::new(
                         item,
                         session_id.to_string(),
                         turn_id.to_string(),

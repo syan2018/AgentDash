@@ -290,4 +290,54 @@ describe("sessionStreamReducer", () => {
     }
     expect(item.changes[0]?.diff).toBe("+hello\n+world");
   });
+
+  it("item_updated 更新同一 item_id 的卡片而非追加", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      streamEvent(1, {
+        type: "item_started",
+        payload: {
+          item: fileChangeItem("patch-1", "+hello"),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          startedAtMs: 1,
+        },
+      }),
+      streamEvent(2, {
+        type: "item_updated",
+        payload: {
+          item: fileChangeItem("patch-1", "+hello\n+world"),
+          threadId: "thread-1",
+          turnId: "turn-1",
+          updatedAtMs: 2,
+        },
+      }),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.eventSeq).toBe(2);
+    const event = state.entries[0]?.event;
+    expect(event?.type).toBe("item_updated");
+    if (event?.type !== "item_updated") {
+      throw new Error("expected item_updated");
+    }
+    const item = event.payload.item;
+    if (item.type !== "fileChange") {
+      throw new Error("expected fileChange");
+    }
+    expect(item.changes[0]?.diff).toBe("+hello\n+world");
+  });
+
+  it("item_updated 不属于立即 flush 的可重放谓词", () => {
+    const updatedEvent = streamEvent(1, {
+      type: "item_updated",
+      payload: {
+        item: fileChangeItem("patch-1", "+hello"),
+        threadId: "thread-1",
+        turnId: "turn-1",
+        updatedAtMs: 1,
+      },
+    });
+
+    expect(shouldFlushStreamEventImmediately(updatedEvent)).toBe(false);
+  });
 });

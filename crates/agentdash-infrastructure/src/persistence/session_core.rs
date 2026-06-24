@@ -741,6 +741,7 @@ pub(crate) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::ReasoningTextDelta(_) => "reasoning_text_delta",
         BackboneEvent::ReasoningSummaryDelta(_) => "reasoning_summary_delta",
         BackboneEvent::ItemStarted(_) => "item_started",
+        BackboneEvent::ItemUpdated(_) => "item_updated",
         BackboneEvent::ItemCompleted(_) => "item_completed",
         BackboneEvent::CommandOutputDelta(_) => "command_output_delta",
         BackboneEvent::FileChangeDelta(_) => "file_change_delta",
@@ -767,6 +768,7 @@ fn thread_item_tool_call_id(item: &AgentDashThreadItem) -> Option<String> {
 fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
     match &envelope.event {
         BackboneEvent::ItemStarted(n) => thread_item_tool_call_id(&n.item),
+        BackboneEvent::ItemUpdated(n) => thread_item_tool_call_id(&n.item),
         BackboneEvent::ItemCompleted(n) => thread_item_tool_call_id(&n.item),
         _ => None,
     }

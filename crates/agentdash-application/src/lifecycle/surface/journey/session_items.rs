@@ -296,6 +296,9 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
             BackboneEvent::ItemStarted(notification) => {
                 apply_thread_item_event(&mut builders, event, &notification.item);
             }
+            BackboneEvent::ItemUpdated(notification) => {
+                apply_thread_item_event(&mut builders, event, &notification.item);
+            }
             BackboneEvent::ItemCompleted(notification) => {
                 apply_thread_item_event(&mut builders, event, &notification.item);
             }

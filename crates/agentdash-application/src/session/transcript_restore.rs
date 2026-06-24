@@ -4,8 +4,8 @@ use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent,
-    user_input_blocks_to_content_parts,
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ItemStartedNotification,
+    ItemUpdatedNotification, user_input_blocks_to_content_parts,
 };
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
@@ -167,8 +167,9 @@ fn build_raw_projected_transcript_from_iter<'a>(
                         .push(ContentPart::reasoning(&delta.delta, None, None));
                 }
             }
-            BackboneEvent::ItemStarted(n) => {
-                if let Some(tc) = extract_tool_call_from_thread_item(&n.item) {
+            BackboneEvent::ItemStarted(ItemStartedNotification { item, .. })
+            | BackboneEvent::ItemUpdated(ItemUpdatedNotification { item, .. }) => {
+                if let Some(tc) = extract_tool_call_from_thread_item(item) {
                     let key = restored_assistant_key(event, None);
                     let state = assistant_messages.entry(key).or_insert_with(|| {
                         RestoredAssistantMessageState {
@@ -737,7 +738,8 @@ fn json_preview(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use agentdash_agent_protocol::{
-        BackboneEnvelope, ItemCompletedNotification, SourceInfo, TraceInfo, backbone::thread_item,
+        BackboneEnvelope, ItemCompletedNotification, ItemUpdatedNotification, SourceInfo, TraceInfo,
+        backbone::thread_item,
     };
 
     fn test_source() -> SourceInfo {
@@ -841,6 +843,47 @@ mod tests {
             }
             other => panic!("expected restored placeholder tool result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn item_updated_restores_in_flight_tool_call_like_item_started() {
+        let tool_call_id = "turn_001:tool_042";
+        let file_change = thread_item::file_change(
+            tool_call_id,
+            vec![thread_item::FileChangeSpec::Edit {
+                path: "workspace://src/lib.rs".to_string(),
+                unified_diff: "@@\n-old\n+new".to_string(),
+            }],
+            codex::PatchApplyStatus::InProgress,
+        )
+        .expect("file change item should build");
+        let event = persisted_event(
+            1,
+            "item_updated",
+            "turn-raw",
+            0,
+            BackboneEvent::ItemUpdated(ItemUpdatedNotification::new(
+                file_change,
+                "session-1".to_string(),
+                "turn-raw".to_string(),
+            )),
+            Some(tool_call_id),
+        );
+
+        let transcript = build_raw_projected_transcript_from_events(&[event]);
+
+        // 与 ItemStarted 一致：in-flight tool call 在重放中可见。
+        let assistant = transcript
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.message {
+                AgentMessage::Assistant { tool_calls, .. } => Some(tool_calls),
+                _ => None,
+            })
+            .expect("expected restored assistant message with tool call");
+        assert_eq!(assistant.len(), 1);
+        assert_eq!(assistant[0].id, tool_call_id);
+        assert_eq!(assistant[0].name, "file_change");
     }
 
     #[test]

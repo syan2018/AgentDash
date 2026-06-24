@@ -810,7 +810,7 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
     }
     assert_eq!(delta_envelopes.len(), 1);
     match &delta_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
+        BackboneEvent::ItemUpdated(n) => {
             let item = serde_json::to_value(&n.item).expect("thread item should serialize");
             assert_eq!(
                 item.get("type").and_then(|value| value.as_str()),
@@ -911,7 +911,7 @@ fn tool_call_delta_apply_patch_partial_draft_emits_file_change_preview() {
 
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
+        BackboneEvent::ItemUpdated(n) => {
             let Some(codex::ThreadItem::FileChange {
                 id,
                 changes,
@@ -983,14 +983,14 @@ fn tool_call_delta_apply_patch_reuses_item_id_for_later_preview() {
     );
 
     let first_id = match &first_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => match n.item.as_codex() {
+        BackboneEvent::ItemUpdated(n) => match n.item.as_codex() {
             Some(codex::ThreadItem::FileChange { id, .. }) => id.clone(),
             other => panic!("expected fileChange preview, got {other:?}"),
         },
         other => panic!("unexpected backbone event: {other:?}"),
     };
     match &second_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
+        BackboneEvent::ItemUpdated(n) => {
             let Some(codex::ThreadItem::FileChange { id, changes, .. }) = n.item.as_codex() else {
                 panic!("expected fileChange preview, got {:?}", n.item);
             };
@@ -1043,7 +1043,7 @@ fn tool_call_delta_non_apply_patch_parseable_draft_updates_input_preview() {
 
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
+        BackboneEvent::ItemUpdated(n) => {
             let Some(codex::ThreadItem::DynamicToolCall {
                 id,
                 tool,
@@ -1563,7 +1563,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 
     assert_eq!(update_envelopes.len(), 1);
     match &update_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
+        BackboneEvent::ItemUpdated(n) => {
             let item_json = serde_json::to_string(&n.item).expect("item should serialize");
             assert!(!item_json.contains(raw_sentinel));
             let Some(codex::ThreadItem::DynamicToolCall {

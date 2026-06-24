@@ -32,6 +32,7 @@ function threadItemId(item: AgentDashThreadItem): string {
 function getItemIdFromEvent(event: BackboneEvent): string | undefined {
   switch (event.type) {
     case "item_started":
+    case "item_updated":
     case "item_completed":
       return threadItemId(event.payload.item);
     case "command_output_delta":
@@ -244,7 +245,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
   }
 
-  if (bbEvent.type === "item_started") {
+  if (bbEvent.type === "item_started" || bbEvent.type === "item_updated") {
     const entryId = buildEntryId(event, bbEvent);
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];

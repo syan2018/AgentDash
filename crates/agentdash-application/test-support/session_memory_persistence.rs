@@ -1430,6 +1430,7 @@ pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::ReasoningTextDelta(_) => "reasoning_text_delta",
         BackboneEvent::ReasoningSummaryDelta(_) => "reasoning_summary_delta",
         BackboneEvent::ItemStarted(_) => "item_started",
+        BackboneEvent::ItemUpdated(_) => "item_updated",
         BackboneEvent::ItemCompleted(_) => "item_completed",
         BackboneEvent::CommandOutputDelta(_) => "command_output_delta",
         BackboneEvent::FileChangeDelta(_) => "file_change_delta",

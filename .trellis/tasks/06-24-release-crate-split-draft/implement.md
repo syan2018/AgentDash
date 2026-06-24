@@ -7,6 +7,9 @@
 - 工作项文件：`.trellis/tasks/06-24-release-crate-split-draft/work-items/*.md`
 - 工作项保存在本任务目录；subagent 派发时直接引用工作项文件，保证所有 worker 共享同一边界图。
 - 阶段提交以边界固定为检查点；提交说明写清已固定的边界、当前验证状态和下一步收敛点。
+- implement agents 优先使用命令完成机械迁移：`rg` 定位、整目录 move、批量 import rewrite、`cargo metadata`、精确 `cargo check -p`、可控 `cargo fix`。避免逐行手工 import 修补。
+- implement agents 只运行 work item 最小 gate；大测试、波次 readiness 和架构一致性判断交给 checkpoint check agents。
+- 发现冗余路径、重复 facade、错误链路、旧命名兼容壳，或只被业务无关 test 锚定的陈旧行为时，按目标架构删除路径和对应 test，并在 handoff 说明删除理由。
 
 ## Main Checklist
 
@@ -120,7 +123,7 @@ cargo check --workspace
 
 ## Subagent Dispatch Plan
 
-Use one Trellis channel for the active task. Spawn at most six live workers at a time.
+Use one Trellis channel for the active task. Spawn at most six live implement workers at a time. Check agents run at wave checkpoints and do not ask implement agents to preserve old behavior for compatibility.
 
 Round 1 after Wave 0:
 
@@ -133,6 +136,15 @@ Round 1 after Wave 0:
 | `session-impl` | `work-items/04-runtime-session-substrate-boundary.md` | `crates/agentdash-application/src/session/**` and RuntimeSession port implementations. |
 | `lifecycle-impl` | `work-items/05-agentrun-lifecycle-boundary.md` | `crates/agentdash-application/src/lifecycle/**`, `workflow/orchestration/**`, materialization ports. |
 
+Round 1 checkpoint checks:
+
+| Worker | File / focus | Check ownership |
+| --- | --- | --- |
+| `check-boundary-ports` | `work-items/01-ports-boundary-expansion.md` | Verify ports purity and flag concrete service / AppState / route DTO leakage. |
+| `check-import-graph` | `design.md` static gates | Run rg gates and assign remaining direct imports to owners. |
+| `check-dead-paths` | research + current diff | Find obsolete helpers, duplicate facades, stale compatibility paths and tests that should be deleted. |
+| `check-wave-readiness` | `implement.md` Wave 2/Wave 3 gates | Decide whether runtime crate extraction can start or which owner blocks it. |
+
 Round 2 after first checkpoint commit:
 
 | Worker | File | Edit ownership |
@@ -141,6 +153,15 @@ Round 2 after first checkpoint commit:
 | `visibility-impl` | `work-items/08-public-visibility-cleanup.md` | module `mod.rs` / `lib.rs` facade contraction after imports move. |
 | `runtime-crates-impl` | `work-items/09-physical-crate-extraction-runtime.md` | Cargo manifests and RuntimeGateway/RuntimeSession crate moves. |
 | `control-crates-impl` | `work-items/10-physical-crate-extraction-control-plane-vfs.md` | AgentRun/Lifecycle/VFS crate moves after runtime crates settle. |
+
+Round 2 checkpoint checks:
+
+| Worker | Focus | Check ownership |
+| --- | --- | --- |
+| `check-runtime-crates` | RuntimeGateway / RuntimeSession crates | Ensure extracted crates do not depend on monolithic application or owner implementations. |
+| `check-control-plane-crates` | AgentRun / Lifecycle crates | Ensure mutual links are ports/facades, not implementation imports. |
+| `check-vfs-core` | generic VFS crate | Ensure generic VFS core is free of session/lifecycle/canvas owner internals. |
+| `check-final-contract` | final gates | Run cargo metadata, static gates, target crate checks and summarize workspace blockers. |
 
 Each worker prompt starts with:
 
@@ -151,6 +172,22 @@ Work item: <path>
 ```
 
 Worker handoff must include changed files, commands run, failing commands, unresolved imports and suggested next owner.
+
+Implement worker prompt bias:
+
+- State file ownership and conflict boundaries explicitly.
+- Prefer mechanical moves/replacements and command-driven fixes over hand-edited import churn.
+- Run only minimal gates listed in the work item; leave broad tests to check agents.
+- Delete obsolete path/test pairs when the old behavior contradicts the target architecture, and report the deletion.
+- Do not revert parallel worker edits; adapt to them or report owner conflict.
+
+Check worker prompt bias:
+
+- Prioritize boundary violations, stale paths, duplicate facades, incorrect chains and obsolete tests.
+- Classify each finding as delete, move, port, or keep as presentation/debug read-model.
+- Assign each finding to a work item owner.
+- Treat tests as evidence only when they encode target architecture; recommend deleting tests that only preserve stale behavior.
+- Keep output ordered by severity and wave readiness impact.
 
 ## Batch Strategy
 

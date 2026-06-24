@@ -26,6 +26,30 @@
 - Physical file moves into new crates happen after a checkpoint commit, so compile errors map to one extraction owner.
 - A worker may leave compile errors if the error list is the expected handoff to another work item.
 - Every handoff includes changed files, commands run, failing commands, unresolved imports, and next owner.
+- Implement workers use command-driven mechanical migration first: `rg`, batch move, batch import rewrite, `cargo metadata`, precise `cargo check -p`, controlled `cargo fix`.
+- Implement workers run minimal gates for their work item; broad tests are delegated to checkpoint check agents.
+- If a stale path or test exists only to preserve a legacy chain that conflicts with the target graph, delete the path and the test together and explain why.
+- Workers are not alone in the codebase; they must preserve unrelated edits and report owner conflicts instead of reverting.
+
+## Checkpoint Checks
+
+After first-wave implementation, dispatch check agents before moving to physical crate extraction:
+
+| Check worker | Focus |
+| --- | --- |
+| `check-boundary-ports` | ports purity: DTO/trait/error only; no `AppState`, `RepositorySet`, route DTO, builder, concrete adapter. |
+| `check-import-graph` | static rg gates and remaining implementation import owners. |
+| `check-dead-paths` | stale helpers, duplicate facades, legacy compatibility paths, obsolete tests. |
+| `check-wave-readiness` | readiness for RuntimeGateway/RuntimeSession extraction. |
+
+After runtime/control crate extraction waves:
+
+| Check worker | Focus |
+| --- | --- |
+| `check-runtime-crates` | RuntimeGateway/RuntimeSession crates free of monolithic application and owner implementation deps. |
+| `check-control-plane-crates` | AgentRun/Lifecycle mutual dependencies are ports/facades. |
+| `check-vfs-core` | generic VFS core free of session/lifecycle/canvas owner internals. |
+| `check-final-contract` | final cargo metadata, static gates, target crate checks, workspace blockers. |
 
 ## Checkpoint Commit Pattern
 

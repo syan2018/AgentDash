@@ -20,6 +20,9 @@ agentdash-api / agentdash-local / agentdash-mcp
 - 前置实施任务：`.trellis/tasks/06-24-agentrun-runtime-session-decoupling`
 - 本项目尚未上线，重构以正确边界为准，module/API 形态直接收束到目标模型。
 - 允许在此分支内做阶段性提交；阶段提交以边界锚定或机械迁移为检查点，最终集成收敛以 workspace-level gate 为准。
+- 高并发重构以文件所有权隔离为第一约束；implement agents 优先使用 `rg`、批量 move、批量 import rewrite、`cargo metadata`、精确 `cargo check -p` 和可控 `cargo fix` 推动机械迁移，减少逐行手工 import 修补。
+- implement agents 只运行自己 work item 的最小 gate；大测试、波次 readiness 和架构一致性判断由 check agents 在 checkpoint 统一收口。
+- 冗余路径、重复 facade、错误链路、旧命名兼容壳，以及只被业务无关 test 锚定的陈旧行为，按目标架构优先删除路径和对应 test，再由 check agent 确认删除是否符合事实源。
 
 ## Current Baseline
 
@@ -46,6 +49,7 @@ agentdash-api / agentdash-local / agentdash-mcp
 - AgentRun owns current/runtime/resource surface query、effective capability/admission、frame construction/update、surface update/adoption command boundary、mailbox/workspace command surface。
 - Lifecycle owns LifecycleRun control ledger、subject association、orchestration activation/reducer/scheduler/materialization、RuntimeSessionExecutionAnchor 写入与 terminal callback 到 reducer。
 - VFS core 抽取晚于 AgentRun resource surface 和 owner-specific provider 边界收束。
+- 每个 wave checkpoint 必须派 check agents 检查 boundary purity、import graph、dead path/test deletion 和下一 wave readiness，原因是高并发 implement 的局部验证不足以证明整体边界已经可移动。
 
 ## Work Item Files
 

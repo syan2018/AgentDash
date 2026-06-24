@@ -9,6 +9,8 @@
 - Cargo graph 当前不是主要阻塞；`agentdash-application` 内部 module graph 才是阻塞。
 - 先补 ports/facades，再清理 import/public visibility，最后物理移动 crate。
 - 允许先锚定 crate 边界并产生 compile errors，再按工作项修复；这个分支用于承载完整迁移。
+- 高并发实现阶段以机械迁移为主：批量移动、批量替换、crate-level check 和 static grep gates 比逐点手工 import 更可靠。
+- 波次收口由 check agents 执行，重点检查 direct implementation import、重复 facade、错误链路、陈旧 test 锚定和下一 wave readiness。
 
 ## Current Facts
 
@@ -142,6 +144,20 @@ Dashed arrows are runtime wiring through ports; implementation crates remain ind
 | D | `04-runtime-session-substrate-boundary`, `05-agentrun-lifecycle-boundary` | Highest conflict lane; run with explicit file ownership and frequent checkpoint commits. |
 | E | `08-public-visibility-cleanup` | Runs after facade consumers are mostly moved; uses compile errors and grep gates. |
 | F | `09-physical-crate-extraction-runtime`, `10-physical-crate-extraction-control-plane-vfs` | Runs after import graph has target direction. |
+
+## Checkpoint Review Model
+
+每个 wave 的 implement agents 只负责自己的文件所有权和最小 gate。主 session 在 checkpoint 派 check agents 做横向验证：
+
+| Check agent | Timing | Focus |
+| --- | --- | --- |
+| `check-boundary-ports` | after Wave 1 | ports 是否保持纯 DTO/trait/error，是否引入 AppState、RepositorySet、builder、route DTO、concrete adapter。 |
+| `check-import-graph` | after Wave 1 / Wave 2 | static rg gates；implementation imports 是否已转为 ports/facades。 |
+| `check-dead-paths` | after every major import cleanup | 旧 helper、重复 facade、旧命名兼容壳、仅 test 锚定旧行为；给出删除/移动/port 化/保留 read-model 判定。 |
+| `check-wave-readiness` | before Wave 3 and Wave 4 | 是否具备 RuntimeGateway/RuntimeSession 或 AgentRun/Lifecycle crate extraction 条件。 |
+| `check-runtime-crates` | after Wave 3 | RuntimeGateway/RuntimeSession crates 是否仍依赖 monolithic application 或 implementation owners。 |
+| `check-control-plane-crates` | after Wave 4 | AgentRun/Lifecycle 是否仍互相 implementation import。 |
+| `check-final-contract` | final | cargo metadata、static gates、target crate checks、workspace check blockers。 |
 
 ## Extraction Waves
 

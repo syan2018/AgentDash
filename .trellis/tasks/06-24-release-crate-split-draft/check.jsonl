@@ -14,3 +14,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave checkpoint verdicts and remaining extraction blockers to verify."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-2.md","reason":"RuntimeGateway extraction checkpoint and remaining RuntimeSession/AgentRun/Lifecycle/VFS blockers."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 checkpoint check focus, stale-path policy and readiness classification rules."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 checkpoint verdicts and next extraction readiness blockers."}

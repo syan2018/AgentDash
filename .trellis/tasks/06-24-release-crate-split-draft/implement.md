@@ -196,6 +196,17 @@ Round 3 planned dispatch:
 - Implement lanes: session adoption port, session launch/commit port, control dispatch facade, frame construction helper port, VFS owner-adapter prep.
 - Check lanes: session adoption, session launch/commit, control dispatch boundary, VFS owner adapters, Gateway regression.
 
+Round 3 checkpoint result on 2026-06-25:
+
+- Runtime surface adoption passed and stale `AgentRunActiveRuntimeSurfaceAdopter` was deleted.
+- Old Session launch/commit adapter names are gone from Session/API bootstrap.
+- AgentRun/workflow no longer construct `LifecycleDispatchService` directly.
+- AgentRun frame construction no longer imports Lifecycle helper implementation paths.
+- Generic VFS registry no longer owns Session/Lifecycle/Canvas provider registration.
+- RuntimeSession extraction remains blocked by concrete AgentRun `FrameLaunchEnvelope`, mailbox/effective-capability/surface helper imports.
+- VFS physical extraction remains blocked by owner-specific providers and application-level `VfsSurfaceResolver`.
+- Full checkpoint details live in `checkpoint-wave-3.md`.
+
 Each worker prompt starts with:
 
 ```text

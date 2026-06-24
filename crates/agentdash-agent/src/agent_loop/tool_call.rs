@@ -773,10 +773,9 @@ fn bound_tool_result_for_call_with_context(
                 write,
             );
         });
-    let should_attach_readable_ref = ref_context.is_some()
-        || bounded.details.as_ref().is_some_and(|details| {
-            details.get("truncation").is_some() || details.get("lifecycle_path").is_some()
-        });
+    let should_attach_readable_ref = bounded.details.as_ref().is_some_and(|details| {
+        details.get("truncation").is_some() || details.get("lifecycle_path").is_some()
+    });
     if should_attach_readable_ref {
         attach_readable_ref_details(bounded, &readable_ref, tool_name)
     } else {

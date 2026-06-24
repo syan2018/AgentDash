@@ -1131,6 +1131,87 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
 }
 
 #[tokio::test]
+async fn small_tool_result_with_readable_context_does_not_attach_lifecycle_ref() {
+    let tool_call_id = "tool-small-1";
+    let bridge = ScriptedBridge::new(vec![
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_tool_call_named(
+                tool_call_id,
+                "small_tool",
+                serde_json::json!({ "value": "ok" }),
+            )),
+        ))],
+        vec![ScriptStep::chunk(agentdash_agent::StreamChunk::Done(
+            bridge_response(assistant_text("done")),
+        ))],
+    ]);
+    let executed = Arc::new(AtomicUsize::new(0));
+    let tool: DynAgentTool = Arc::new(NamedTool::new("small_tool", executed.clone()));
+    let mut context = AgentContext {
+        system_prompt: String::new(),
+        messages: vec![],
+        message_refs: vec![],
+        tools: vec![ToolDefinition::from_tool(tool.as_ref())],
+    };
+    let cache_writes = Arc::new(StdMutex::new(Vec::<ToolResultCacheWrite>::new()));
+    let cache_writes_for_writer = cache_writes.clone();
+    let config = AgentLoopConfig {
+        tool_result_ref_context: Some(ToolResultRefContext {
+            session_id: "session-small".to_string(),
+            raw_turn_id: "turn-small".to_string(),
+            readable_ids: ReadableIdRegistry::new(),
+            cache_writer: Some(Arc::new(move |write| {
+                cache_writes_for_writer
+                    .lock()
+                    .expect("cache write lock poisoned")
+                    .push(write);
+            })),
+        }),
+        ..AgentLoopConfig::default()
+    };
+
+    let new_messages = agentdash_agent::agent_loop::agent_loop(
+        vec![AgentMessage::user("run small tool")],
+        &mut context,
+        &[tool],
+        &config,
+        &bridge,
+        &collecting_sink(Arc::new(Mutex::new(Vec::new()))),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent loop should succeed");
+
+    assert_eq!(executed.load(Ordering::SeqCst), 1);
+    assert!(
+        cache_writes
+            .lock()
+            .expect("cache write lock poisoned")
+            .is_empty(),
+        "small inline result should not write cache"
+    );
+    let tool_result = new_messages
+        .iter()
+        .find(|message| matches!(message, AgentMessage::ToolResult { .. }))
+        .expect("tool result should exist");
+    match tool_result {
+        AgentMessage::ToolResult {
+            content, details, ..
+        } => {
+            assert_eq!(
+                content.first().and_then(ContentPart::extract_text),
+                Some("small_tool:{\"value\":\"ok\"}")
+            );
+            assert!(
+                details.is_none(),
+                "small inline result should stay unchanged and not expose a cache-backed lifecycle path"
+            );
+        }
+        other => panic!("expected tool result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
     let tool_call_id = "tool-large-final-1";
     let bridge = ScriptedBridge::new(vec![

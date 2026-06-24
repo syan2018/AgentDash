@@ -17,7 +17,6 @@ use super::context_usage_projection::{
     SessionContextProjectionReadModel, SessionContextUsageItem,
     build_session_context_projection_read_model, context_usage_items_from_context_frame,
 };
-use super::continuation::build_raw_projected_transcript_from_events;
 use super::hub_support::{
     SessionEventSubscription, TurnTerminalKind, parse_turn_terminal_event_from_envelope,
 };
@@ -27,6 +26,7 @@ use super::persistence::{
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreSet,
 };
 use super::runtime_registry::SessionRuntimeRegistry;
+use super::transcript_restore::build_raw_projected_transcript_from_events;
 use super::types::TitleSource;
 
 const SESSION_EVENT_APPEND_GUARD_MAX_BYTES: usize = 256 * 1024;

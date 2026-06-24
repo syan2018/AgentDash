@@ -51,6 +51,7 @@ pub(crate) mod title_generator;
 pub(crate) mod title_service;
 pub(crate) mod tool_assembly;
 pub(crate) mod tool_result_cache;
+mod transcript_restore;
 pub(crate) mod turn_processor;
 mod turn_supervisor;
 pub mod types;

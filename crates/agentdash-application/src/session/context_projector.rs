@@ -13,8 +13,8 @@ use super::compaction_checkpoint::{
     CompactionCheckpointError, projection_entries_from_checkpoint_records,
     suffix_start_event_seq_from_compaction,
 };
-use super::continuation::build_raw_projected_transcript_from_filtered_events;
 use super::persistence::{PersistedSessionEvent, SessionStoreSet};
+use super::transcript_restore::build_raw_projected_transcript_from_filtered_events;
 
 #[derive(Clone)]
 pub struct ContextProjector {

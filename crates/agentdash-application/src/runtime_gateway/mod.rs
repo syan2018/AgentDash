@@ -31,9 +31,13 @@ pub use session_actions::{
 pub use setup_actions::{
     MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, McpProbeTransportProvider,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
-    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WORKSPACE_DISCOVER_BY_IDENTITY_ACTION, WorkspaceBrowseDirectoryEntry,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
     WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
     WorkspaceDetectGitProvider, WorkspaceDetectInput, WorkspaceDetectProvider,
+    WorkspaceDiscoverByIdentityCandidateOutput, WorkspaceDiscoverByIdentityInput,
+    WorkspaceDiscoverByIdentityOutput, WorkspaceDiscoverByIdentityProvider,
+    WorkspaceDiscoverByIdentitySkippedOutput, WorkspaceDiscoverByIdentityWorkspaceInput,
 };
 pub use tool_adapter::{RuntimeActionToolAdapter, RuntimeActionToolSpec};
 pub use types::{

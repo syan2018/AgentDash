@@ -4,6 +4,7 @@ use agentdash_application::runtime_gateway::{
     ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider,
     McpProbeTransportProvider, RuntimeGateway, RuntimeSessionMcpAccess,
     WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider, WorkspaceDetectProvider,
+    WorkspaceDiscoverByIdentityProvider,
 };
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
@@ -30,6 +31,9 @@ pub(crate) fn build_runtime_gateway(
                 setup_action_transport.clone(),
             )))
             .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
+                setup_action_transport.clone(),
+            )))
+            .with_provider(Arc::new(WorkspaceDiscoverByIdentityProvider::new(
                 setup_action_transport,
             )))
             .with_provider(Arc::new(McpListToolsProvider::new(

@@ -13,12 +13,19 @@ use super::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeInvocationError,
     RuntimeInvocationOutput, RuntimeInvocationRequest, RuntimeProvider,
 };
-use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
+use agentdash_application_ports::backend_transport::{
+    BackendTransport, TransportError, WorkspaceIdentityDiscoveryCandidate,
+    WorkspaceIdentityDiscoveryInfo, WorkspaceIdentityDiscoveryRequest,
+    WorkspaceIdentityDiscoverySkipped,
+};
+use agentdash_domain::workspace::WorkspaceIdentityKind;
+use uuid::Uuid;
 
 pub const MCP_PROBE_TRANSPORT_ACTION: &str = "mcp.probe_transport";
 pub const WORKSPACE_BROWSE_DIRECTORY_ACTION: &str = "workspace.browse_directory";
 pub const WORKSPACE_DETECT_ACTION: &str = "workspace.detect";
 pub const WORKSPACE_DETECT_GIT_ACTION: &str = "workspace.detect_git";
+pub const WORKSPACE_DISCOVER_BY_IDENTITY_ACTION: &str = "workspace.discover_by_identity";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceDetectInput {
@@ -58,6 +65,49 @@ pub struct WorkspaceBrowseDirectoryEntry {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceDiscoverByIdentityInput {
+    pub backend_id: String,
+    pub workspaces: Vec<WorkspaceDiscoverByIdentityWorkspaceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceDiscoverByIdentityWorkspaceInput {
+    pub workspace_id: Uuid,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceDiscoverByIdentityOutput {
+    pub candidates: Vec<WorkspaceDiscoverByIdentityCandidateOutput>,
+    pub skipped: Vec<WorkspaceDiscoverByIdentitySkippedOutput>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceDiscoverByIdentityCandidateOutput {
+    pub workspace_id: Uuid,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: serde_json::Value,
+    pub detected_facts: serde_json::Value,
+    pub confidence: String,
+    pub display_name: Option<String>,
+    pub client_name: Option<String>,
+    pub server_address: Option<String>,
+    pub stream: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceDiscoverByIdentitySkippedOutput {
+    pub workspace_id: Uuid,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub reason: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -395,6 +445,145 @@ impl RuntimeProvider for WorkspaceBrowseDirectoryProvider {
         })?;
 
         Ok(RuntimeInvocationOutput::new(output))
+    }
+}
+
+pub struct WorkspaceDiscoverByIdentityProvider {
+    action_key: RuntimeActionKey,
+    transport: Arc<dyn BackendTransport>,
+}
+
+impl WorkspaceDiscoverByIdentityProvider {
+    pub fn new(transport: Arc<dyn BackendTransport>) -> Self {
+        Self {
+            action_key: RuntimeActionKey::parse(WORKSPACE_DISCOVER_BY_IDENTITY_ACTION)
+                .expect("builtin runtime action key should be valid"),
+            transport,
+        }
+    }
+}
+
+#[async_trait]
+impl RuntimeProvider for WorkspaceDiscoverByIdentityProvider {
+    fn action_key(&self) -> &RuntimeActionKey {
+        &self.action_key
+    }
+
+    fn action_kind(&self) -> RuntimeActionKind {
+        RuntimeActionKind::Setup
+    }
+
+    fn describe_action(&self) -> RuntimeActionDescriptor {
+        RuntimeActionDescriptor {
+            action_key: self.action_key.clone(),
+            kind: RuntimeActionKind::Setup,
+            description: Some(
+                "按 Workspace identity 发现目标本机 backend 上的候选目录".to_string(),
+            ),
+            input_schema: None,
+            output_schema: None,
+            default_policy: Default::default(),
+        }
+    }
+
+    async fn invoke(
+        &self,
+        request: RuntimeInvocationRequest,
+    ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError> {
+        let input =
+            serde_json::from_value::<WorkspaceDiscoverByIdentityInput>(request.input.clone())
+                .map_err(|error| {
+                    RuntimeInvocationError::invalid_request(
+                        format!(
+                            "workspace.discover_by_identity 输入必须是 WorkspaceDiscoverByIdentityInput: {error}"
+                        ),
+                        Some(request.trace.clone()),
+                    )
+                })?;
+        let backend_id = input.backend_id.trim();
+        if backend_id.is_empty() {
+            return Err(RuntimeInvocationError::invalid_request(
+                "backend_id 不能为空",
+                Some(request.trace.clone()),
+            ));
+        }
+        if !self.transport.is_online(backend_id).await {
+            return Err(RuntimeInvocationError::conflict(
+                format!("目标 Backend 当前不在线: {backend_id}"),
+                Some(request.trace.clone()),
+            ));
+        }
+
+        let discovery_input = input
+            .workspaces
+            .into_iter()
+            .map(|workspace| WorkspaceIdentityDiscoveryRequest {
+                workspace_id: workspace.workspace_id,
+                identity_kind: workspace.identity_kind,
+                identity_payload: workspace.identity_payload,
+            })
+            .collect();
+        let result = self
+            .transport
+            .discover_workspace_by_identity(backend_id, discovery_input)
+            .await
+            .map_err(|error| runtime_error_from_transport(error, &request))?;
+        let output = WorkspaceDiscoverByIdentityOutput::from(result);
+        let output = serde_json::to_value(output).map_err(|error| {
+            RuntimeInvocationError::provider_failed(
+                format!("序列化 workspace.discover_by_identity 结果失败: {error}"),
+                Some(request.trace.clone()),
+            )
+        })?;
+
+        Ok(RuntimeInvocationOutput::new(output))
+    }
+}
+
+impl From<WorkspaceIdentityDiscoveryInfo> for WorkspaceDiscoverByIdentityOutput {
+    fn from(value: WorkspaceIdentityDiscoveryInfo) -> Self {
+        Self {
+            candidates: value
+                .candidates
+                .into_iter()
+                .map(WorkspaceDiscoverByIdentityCandidateOutput::from)
+                .collect(),
+            skipped: value
+                .skipped
+                .into_iter()
+                .map(WorkspaceDiscoverByIdentitySkippedOutput::from)
+                .collect(),
+            warnings: value.warnings,
+        }
+    }
+}
+
+impl From<WorkspaceIdentityDiscoveryCandidate> for WorkspaceDiscoverByIdentityCandidateOutput {
+    fn from(value: WorkspaceIdentityDiscoveryCandidate) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            root_ref: value.root_ref,
+            identity_kind: value.identity_kind,
+            identity_payload: value.identity_payload,
+            detected_facts: value.detected_facts,
+            confidence: value.confidence,
+            display_name: value.display_name,
+            client_name: value.client_name,
+            server_address: value.server_address,
+            stream: value.stream,
+            warnings: value.warnings,
+        }
+    }
+}
+
+impl From<WorkspaceIdentityDiscoverySkipped> for WorkspaceDiscoverByIdentitySkippedOutput {
+    fn from(value: WorkspaceIdentityDiscoverySkipped) -> Self {
+        Self {
+            workspace_id: value.workspace_id,
+            identity_kind: value.identity_kind,
+            reason: value.reason,
+            message: value.message,
+        }
     }
 }
 

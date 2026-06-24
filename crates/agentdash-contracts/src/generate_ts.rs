@@ -199,9 +199,12 @@ use agentdash_contracts::workflow::{
     WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace::{
+    BindDiscoveredWorkspaceBindingRequest, BindDiscoveredWorkspaceBindingsRequest,
+    BindDiscoveredWorkspaceBindingsResponse, DiscoverLocalWorkspaceBindingsRequest,
+    DiscoverLocalWorkspaceBindingsResponse, DiscoveredWorkspaceBindingCandidate,
     WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceBindingSyncResult,
-    WorkspaceIdentityKind, WorkspaceInventoryCandidate, WorkspaceResolutionPolicy,
-    WorkspaceResponse, WorkspaceStatus,
+    WorkspaceIdentityDiscoverySkipped, WorkspaceIdentityKind, WorkspaceInventoryCandidate,
+    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -412,6 +415,13 @@ fn main() {
             export_all::<WorkspaceResponse>(dir);
             export_all::<WorkspaceInventoryCandidate>(dir);
             export_all::<WorkspaceBindingSyncResult>(dir);
+            export_all::<DiscoverLocalWorkspaceBindingsRequest>(dir);
+            export_all::<DiscoveredWorkspaceBindingCandidate>(dir);
+            export_all::<WorkspaceIdentityDiscoverySkipped>(dir);
+            export_all::<DiscoverLocalWorkspaceBindingsResponse>(dir);
+            export_all::<BindDiscoveredWorkspaceBindingRequest>(dir);
+            export_all::<BindDiscoveredWorkspaceBindingsRequest>(dir);
+            export_all::<BindDiscoveredWorkspaceBindingsResponse>(dir);
         },
     );
 

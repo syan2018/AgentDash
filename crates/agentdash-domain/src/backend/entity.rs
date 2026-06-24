@@ -392,12 +392,14 @@ impl BackendWorkspaceInventoryStatus {
 #[serde(rename_all = "snake_case")]
 pub enum BackendWorkspaceInventorySource {
     ManualRegister,
+    IdentityDiscovery,
 }
 
 impl BackendWorkspaceInventorySource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ManualRegister => "manual_register",
+            Self::IdentityDiscovery => "identity_discovery",
         }
     }
 }

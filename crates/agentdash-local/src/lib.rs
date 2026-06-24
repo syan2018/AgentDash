@@ -15,6 +15,7 @@ mod process_executor;
 mod search_executor;
 mod shell_session_manager;
 mod tool_executor;
+mod workspace_identity_discovery;
 mod workspace_prepare;
 mod workspace_probe;
 mod ws_client;

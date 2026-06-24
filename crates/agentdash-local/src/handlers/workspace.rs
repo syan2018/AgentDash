@@ -98,6 +98,35 @@ impl WorkspaceCommandHandler {
         }
     }
 
+    pub(super) async fn handle_workspace_discover_by_identity(
+        &self,
+        id: String,
+        payload: CommandWorkspaceDiscoverByIdentityPayload,
+    ) -> RelayMessage {
+        let discovered = match tokio::task::spawn_blocking(move || {
+            crate::workspace_identity_discovery::discover_workspaces_by_identity(payload)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_discover_by_identity 任务失败: {err}"
+                    ))),
+                };
+            }
+        };
+
+        RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+            id,
+            payload: Some(discovered),
+            error: None,
+        }
+    }
+
     pub(super) async fn handle_browse_directory(
         &self,
         id: String,

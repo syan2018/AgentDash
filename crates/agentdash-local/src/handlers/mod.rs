@@ -154,6 +154,13 @@ impl LocalCommandRouter {
                         .await,
                 ]
             }
+            RelayMessage::CommandWorkspaceDiscoverByIdentity { id, payload } => {
+                vec![
+                    self.workspace
+                        .handle_workspace_discover_by_identity(id, payload)
+                        .await,
+                ]
+            }
             RelayMessage::CommandBrowseDirectory { id, payload } => {
                 vec![self.workspace.handle_browse_directory(id, payload).await]
             }

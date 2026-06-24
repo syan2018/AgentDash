@@ -23,7 +23,7 @@ export type BackendWithStatusResponse = { online: boolean, runtime_health: Backe
 
 export type BackendWorkspaceInventoryResponse = { id: string, backend_id: string, root_ref: string, identity_kind: "git_repo" | "p4_workspace" | "local_dir", identity_payload: { [key in string]?: JsonValue }, detected_facts: { [key in string]?: JsonValue }, status: BackendWorkspaceInventoryStatus, source: BackendWorkspaceInventorySource, last_seen_at: string, last_error: string | null, created_at: string, updated_at: string, };
 
-export type BackendWorkspaceInventorySource = "manual_register";
+export type BackendWorkspaceInventorySource = "manual_register" | "identity_discovery";
 
 export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";
 

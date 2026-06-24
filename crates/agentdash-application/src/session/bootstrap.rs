@@ -1,6 +1,5 @@
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
-use agentdash_domain::workspace::Workspace;
 
 use super::context::{
     SessionContextSnapshot, SessionEffectiveContext, SessionExecutorSummary, SessionOwnerContext,
@@ -10,7 +9,6 @@ use super::context::{
 use super::plan::{
     SessionRuntimePolicySummary, SessionToolVisibilitySummary, summarize_runtime_policy,
 };
-use crate::lifecycle::ActiveWorkflowProjection;
 use crate::runtime::{AgentConfig, McpServerSummary, Vfs};
 
 /// 统一的 session bootstrap 计划。
@@ -23,76 +21,41 @@ use crate::runtime::{AgentConfig, McpServerSummary, Vfs};
 pub struct SessionBootstrapPlan {
     pub owner: BootstrapOwnerSummary,
     pub executor: SessionExecutorSummary,
-    pub resolved_config: Option<AgentConfig>,
     pub vfs: Option<Vfs>,
-    pub mcp_servers: Vec<McpServerSummary>,
-    pub working_dir: Option<String>,
     pub tool_visibility: SessionToolVisibilitySummary,
     pub runtime_policy: SessionRuntimePolicySummary,
-    pub workflow: Option<ActiveWorkflowProjection>,
 }
 
 /// Bootstrap plan 中的 owner 摘要信息。
 #[derive(Debug, Clone)]
 pub struct BootstrapOwnerSummary {
-    pub variant: BootstrapOwnerVariant,
     pub project: Project,
     pub story: Option<Story>,
-    pub workspace: Option<Workspace>,
-    pub workspace_attached: bool,
-}
-
-/// Owner 级别差异（与 `SessionOwnerVariant` 映射）。
-#[derive(Debug, Clone)]
-pub enum BootstrapOwnerVariant {
-    Task {
-        story_overrides: SessionStoryOverrides,
-    },
-    Story {
-        story_overrides: SessionStoryOverrides,
-    },
-    Project {
-        agent_key: String,
-        agent_display_name: String,
-    },
+    pub story_overrides: SessionStoryOverrides,
 }
 
 /// 构建 `SessionBootstrapPlan` 的输入参数。
 pub struct BootstrapPlanInput {
     pub project: Project,
     pub story: Option<Story>,
-    pub workspace: Option<Workspace>,
+    pub workspace_attached: bool,
     pub resolved_config: Option<AgentConfig>,
     pub vfs: Option<Vfs>,
     pub mcp_servers: Vec<McpServerSummary>,
-    pub working_dir: Option<String>,
     pub executor_preset_name: Option<String>,
     pub executor_resolution: super::context::ExecutorResolution,
-    pub owner_variant: BootstrapOwnerVariant,
-    pub workflow: Option<ActiveWorkflowProjection>,
+    pub story_overrides: SessionStoryOverrides,
 }
 
 /// 从输入构建统一 bootstrap plan。
 pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
-    let workspace_attached = input.workspace.is_some();
-
-    let mut working_dir = input.working_dir;
-    if working_dir.is_none() && input.workspace.is_some() {
-        working_dir = Some(".".to_string());
-    }
-
-    let owner_type = match &input.owner_variant {
-        BootstrapOwnerVariant::Task { .. } => agentdash_spi::CapabilityScope::Task,
-        BootstrapOwnerVariant::Story { .. } => agentdash_spi::CapabilityScope::Story,
-        BootstrapOwnerVariant::Project { .. } => agentdash_spi::CapabilityScope::Project,
-    };
     let tool_visibility = super::plan::summarize_tool_visibility_with_context(
         input.vfs.as_ref(),
         &input.mcp_servers,
-        Some(owner_type),
+        Some(agentdash_spi::CapabilityScope::Task),
     );
     let runtime_policy = summarize_runtime_policy(
-        workspace_attached,
+        input.workspace_attached,
         input.vfs.as_ref(),
         &input.mcp_servers,
         &tool_visibility.tool_names,
@@ -105,20 +68,14 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
 
     SessionBootstrapPlan {
         owner: BootstrapOwnerSummary {
-            variant: input.owner_variant,
             project: input.project,
             story: input.story,
-            workspace: input.workspace,
-            workspace_attached,
+            story_overrides: input.story_overrides,
         },
         executor,
-        resolved_config: input.resolved_config,
         vfs: input.vfs,
-        mcp_servers: input.mcp_servers,
-        working_dir,
         tool_visibility,
         runtime_policy,
-        workflow: input.workflow,
     }
 }
 
@@ -133,20 +90,8 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
     let effective_session_composition =
         super::plan::resolve_story_session_composition(story).unwrap_or_default();
 
-    let owner_context = match &plan.owner.variant {
-        BootstrapOwnerVariant::Task { story_overrides } => SessionOwnerContext::Task {
-            story_overrides: story_overrides.clone(),
-        },
-        BootstrapOwnerVariant::Story { story_overrides } => SessionOwnerContext::Story {
-            story_overrides: story_overrides.clone(),
-        },
-        BootstrapOwnerVariant::Project {
-            agent_key,
-            agent_display_name,
-        } => SessionOwnerContext::Project {
-            agent_key: agent_key.clone(),
-            agent_display_name: agent_display_name.clone(),
-        },
+    let owner_context = SessionOwnerContext::Task {
+        story_overrides: plan.owner.story_overrides.clone(),
     };
 
     SessionContextSnapshot {
@@ -164,84 +109,5 @@ pub fn derive_session_context_snapshot(plan: &SessionBootstrapPlan) -> SessionCo
         },
         owner_context,
         session_capabilities: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_domain::project::Project;
-
-    #[test]
-    fn build_plan_applies_workspace_defaults() {
-        use agentdash_domain::workspace::{
-            Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
-            WorkspaceResolutionPolicy,
-        };
-
-        let project = Project::new("test".to_string(), "desc".to_string());
-        let mut workspace = Workspace::new(
-            project.id,
-            "test-ws".to_string(),
-            WorkspaceIdentityKind::LocalDir,
-            serde_json::json!({ "root_hint": "/workspace/test" }),
-            WorkspaceResolutionPolicy::PreferOnline,
-        );
-        let mut binding = WorkspaceBinding::new(
-            workspace.id,
-            "backend".to_string(),
-            "/workspace/test".to_string(),
-            serde_json::json!({}),
-        );
-        binding.status = WorkspaceBindingStatus::Ready;
-        workspace.set_bindings(vec![binding]);
-        workspace.refresh_default_binding();
-
-        let plan = build_bootstrap_plan(BootstrapPlanInput {
-            project: project.clone(),
-            story: None,
-            workspace: Some(workspace),
-            resolved_config: None,
-            vfs: None,
-            mcp_servers: vec![],
-            working_dir: None,
-            executor_preset_name: None,
-            executor_resolution: crate::session::ExecutorResolution::resolved("test"),
-            owner_variant: BootstrapOwnerVariant::Project {
-                agent_key: "default".to_string(),
-                agent_display_name: "Default Agent".to_string(),
-            },
-            workflow: None,
-        });
-
-        assert_eq!(plan.working_dir.as_deref(), Some("."));
-        assert!(plan.owner.workspace_attached);
-    }
-
-    #[test]
-    fn derive_snapshot_from_plan_produces_consistent_output() {
-        let project = Project::new("test".to_string(), "desc".to_string());
-
-        let plan = build_bootstrap_plan(BootstrapPlanInput {
-            project: project.clone(),
-            story: None,
-            workspace: None,
-            resolved_config: None,
-            vfs: None,
-            mcp_servers: vec![],
-            working_dir: None,
-            executor_preset_name: None,
-            executor_resolution: crate::session::ExecutorResolution::resolved("test"),
-            owner_variant: BootstrapOwnerVariant::Project {
-                agent_key: "default".to_string(),
-                agent_display_name: "Default Agent".to_string(),
-            },
-            workflow: None,
-        });
-
-        let snapshot = derive_session_context_snapshot(&plan);
-        assert_eq!(snapshot.executor.source, "test");
-        assert!(!snapshot.effective.runtime_policy.workspace_attached);
-        assert!(!snapshot.effective.runtime_policy.vfs_attached);
     }
 }

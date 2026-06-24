@@ -7,22 +7,6 @@ use agentdash_spi::{SkillContextExposure, SkillDiscoveryDiagnostic, skill_capabi
 pub const WORKSPACE_SKILL_PROVIDER_KEY: &str = "workspace";
 pub const INTEGRATION_STATIC_SKILL_PROVIDER_KEY: &str = "integration-static";
 
-/// 从已发现 skills 构建统一的 session baseline capabilities。
-///
-/// Companion agents 已迁移到 `CapabilityState.companion` 维度（由 Resolver 直接产出），
-/// 不再通过 hook snapshot markdown 解析。
-pub fn build_session_baseline_capabilities(skills: &[SkillRef]) -> SessionBaselineCapabilities {
-    let clusters = skills_to_provider_clusters(
-        WORKSPACE_SKILL_PROVIDER_KEY,
-        "Workspace Skills",
-        Some("Skills discovered from the active workspace.".to_string()),
-        Some("当前 workspace 中声明的 skills。".to_string()),
-        None,
-        skills,
-    );
-    build_session_baseline_capabilities_from_clusters(clusters, Vec::new())
-}
-
 pub fn build_session_baseline_capabilities_from_clusters(
     skill_clusters: Vec<SkillProviderCluster>,
     skill_diagnostics: Vec<SkillDiscoveryDiagnostic>,
@@ -95,7 +79,15 @@ mod tests {
             disable_model_invocation: false,
         }];
 
-        let caps = build_session_baseline_capabilities(&skills);
+        let clusters = skills_to_provider_clusters(
+            WORKSPACE_SKILL_PROVIDER_KEY,
+            "Workspace Skills",
+            Some("Skills discovered from the active workspace.".to_string()),
+            Some("当前 workspace 中声明的 skills。".to_string()),
+            None,
+            &skills,
+        );
+        let caps = build_session_baseline_capabilities_from_clusters(clusters, Vec::new());
         assert_eq!(caps.skills.len(), 1);
         assert_eq!(caps.skills[0].name, "test-skill");
         assert_eq!(caps.skills[0].capability_key, "workspace/test-skill");
@@ -105,7 +97,7 @@ mod tests {
 
     #[test]
     fn build_capabilities_without_skills() {
-        let caps = build_session_baseline_capabilities(&[]);
+        let caps = build_session_baseline_capabilities_from_clusters(Vec::new(), Vec::new());
         assert!(caps.is_empty());
     }
 

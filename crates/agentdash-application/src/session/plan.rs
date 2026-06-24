@@ -10,30 +10,11 @@ use crate::runtime::{McpServerSummary, Mount, MountCapability, Vfs};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
     ProjectAgent,
-    TaskStart,
-    TaskContinue,
     StoryOwner,
-}
-
-pub trait CapabilityScopeExt {
-    fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase;
-}
-
-impl CapabilityScopeExt for CapabilityScope {
-    fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase {
-        match self {
-            CapabilityScope::Project => SessionPlanPhase::ProjectAgent,
-            CapabilityScope::Story => SessionPlanPhase::StoryOwner,
-            CapabilityScope::Task if is_continuation => SessionPlanPhase::TaskContinue,
-            CapabilityScope::Task => SessionPlanPhase::TaskStart,
-        }
-    }
 }
 
 pub struct SessionVfsSummary {
     pub markdown: String,
-    pub default_mount_id: Option<String>,
-    pub mount_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,17 +150,11 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
 }
 
 pub fn summarize_vfs(vfs: &Vfs) -> SessionVfsSummary {
-    let default_mount_id = vfs.default_mount_id.clone();
-    let mount_ids = vfs
-        .mounts
-        .iter()
-        .map(|mount| mount.id.clone())
-        .collect::<Vec<_>>();
-
+    let default_mount_id = vfs.default_mount_id.as_deref();
     let markdown = if vfs.mounts.is_empty() {
         "## VFS\n- 当前会话未挂载可访问的 mount".to_string()
     } else {
-        let default_mount = default_mount_id.as_deref().unwrap_or("-");
+        let default_mount = default_mount_id.unwrap_or("-");
         let mount_lines = vfs
             .mounts
             .iter()
@@ -194,18 +169,7 @@ pub fn summarize_vfs(vfs: &Vfs) -> SessionVfsSummary {
         )
     };
 
-    SessionVfsSummary {
-        markdown,
-        default_mount_id,
-        mount_ids,
-    }
-}
-
-pub fn summarize_tool_visibility(
-    vfs: Option<&Vfs>,
-    mcp_servers: &[McpServerSummary],
-) -> SessionToolVisibilitySummary {
-    summarize_tool_visibility_with_context(vfs, mcp_servers, None)
+    SessionVfsSummary { markdown }
 }
 
 pub fn summarize_tool_visibility_with_context(
@@ -371,22 +335,6 @@ fn build_workflow_markdown(input: &SessionPlanInput<'_>) -> String {
                 "先理解项目目标、共享上下文与当前可见 mounts".to_string(),
                 "优先把项目资料组织为用户可理解的资料目录，而不是暴露底层运行时细节".to_string(),
                 "需要沉淀共享上下文时，明确说明写入位置、内容结构与后续复用方式".to_string(),
-            ],
-        ),
-        SessionPlanPhase::TaskStart => (
-            "task_start",
-            vec![
-                "先理解任务、Story、VFS Mount 与工具边界".to_string(),
-                "优先用声明的 mounts 和 tools 读取信息，不要猜测".to_string(),
-                "完成实现后明确说明验证结果与剩余风险".to_string(),
-            ],
-        ),
-        SessionPlanPhase::TaskContinue => (
-            "task_continue",
-            vec![
-                "延续现有会话上下文，优先收敛未完成项".to_string(),
-                "先核对已有 mounts、tools、上次执行状态，再继续推进".to_string(),
-                "输出本轮新增进展与下一步建议".to_string(),
             ],
         ),
         SessionPlanPhase::StoryOwner => (
@@ -621,11 +569,6 @@ mod tests {
 
         let summary = summarize_vfs(&vfs);
 
-        assert_eq!(summary.default_mount_id.as_deref(), Some("main"));
-        assert_eq!(
-            summary.mount_ids,
-            vec!["main".to_string(), "km".to_string()]
-        );
         assert!(summary.markdown.contains("default_mount: `main`"));
         assert!(summary.markdown.contains("`main`: 主工作空间"));
         assert!(summary.markdown.contains("service_id: `km-gateway`"));
@@ -659,7 +602,7 @@ mod tests {
             target: "http://127.0.0.1:3001/mcp/story/123".to_string(),
         }];
 
-        let summary = summarize_tool_visibility(Some(&vfs), &mcp_servers);
+        let summary = summarize_tool_visibility_with_context(Some(&vfs), &mcp_servers, None);
 
         assert!(summary.resolved);
         assert!(summary.tool_names.contains(&"mounts_list".to_string()));
@@ -673,69 +616,6 @@ mod tests {
         assert!(summary.markdown.contains("## Tool Visibility"));
         assert!(summary.markdown.contains("`agentdash-story-tools`"));
         assert!(!summary.markdown.contains("/mcp/story/123"));
-    }
-
-    #[test]
-    fn build_session_plan_fragments_includes_persona_workflow_and_runtime_policy() {
-        let vfs = Vfs {
-            mounts: vec![Mount {
-                id: "main".to_string(),
-                provider: "relay_fs".to_string(),
-                backend_id: "backend-a".to_string(),
-                root_ref: "/workspace/repo".to_string(),
-                capabilities: vec![
-                    MountCapability::Read,
-                    MountCapability::List,
-                    MountCapability::Search,
-                ],
-                default_write: false,
-                display_name: "主工作空间".to_string(),
-                metadata: serde_json::Value::Null,
-            }],
-            default_mount_id: Some("main".to_string()),
-            ..Default::default()
-        };
-
-        let built = build_session_plan_fragments(SessionPlanInput {
-            scope: CapabilityScope::Task,
-            phase: SessionPlanPhase::TaskStart,
-            vfs: Some(&vfs),
-            mcp_servers: &[],
-            session_composition: Some(&SessionComposition {
-                persona_label: Some("实现代理".to_string()),
-                persona_prompt: Some("优先核对 mount 摘要，再动手实现".to_string()),
-                workflow_steps: vec![
-                    "先读取项目容器摘要".to_string(),
-                    "完成实现后回报验证结果".to_string(),
-                ],
-                required_context_blocks: vec![SessionRequiredContextBlock {
-                    title: "必读约束".to_string(),
-                    content: "所有路径必须通过 mount + 相对路径访问".to_string(),
-                }],
-            }),
-            agent_type: Some("PI_AGENT"),
-            preset_name: Some("default"),
-            has_custom_prompt_template: true,
-            has_initial_context: true,
-            workspace_attached: true,
-        });
-
-        let merged = built
-            .fragments
-            .iter()
-            .map(|fragment| fragment.content.clone())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        assert!(merged.contains("## Persona"));
-        assert!(merged.contains("identity: `PI_AGENT`"));
-        assert!(merged.contains("configured_persona: `实现代理`"));
-        assert!(merged.contains("优先核对 mount 摘要，再动手实现"));
-        assert!(merged.contains("## 必读约束"));
-        assert!(merged.contains("## Workflow"));
-        assert!(merged.contains("先读取项目容器摘要"));
-        assert!(merged.contains("## Runtime Policy"));
-        assert!(merged.contains("workspace_attached: yes"));
     }
 
     #[test]
@@ -789,7 +669,7 @@ mod tests {
 
     #[test]
     fn summarize_tool_visibility_marks_runtime_as_unresolved_without_fake_tools() {
-        let summary = summarize_tool_visibility(None, &[]);
+        let summary = summarize_tool_visibility_with_context(None, &[], None);
 
         assert!(!summary.resolved);
         assert_eq!(summary.toolset_label, "runtime_unresolved");
@@ -805,7 +685,7 @@ mod tests {
             target: "http://127.0.0.1:3001/mcp/project/123".to_string(),
         }];
 
-        let summary = summarize_tool_visibility(None, &mcp_servers);
+        let summary = summarize_tool_visibility_with_context(None, &mcp_servers, None);
 
         assert!(!summary.resolved);
         assert_eq!(summary.toolset_label, "runtime_unresolved");

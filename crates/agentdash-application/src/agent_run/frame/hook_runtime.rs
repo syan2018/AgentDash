@@ -66,15 +66,6 @@ impl std::fmt::Debug for AgentFrameHookRuntime {
     }
 }
 
-/// Hook query scope — 替代 session-indexed `AgentFrameHookSnapshotQuery`。
-#[derive(Debug, Clone)]
-pub struct FrameHookQuery {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    pub turn_id: Option<String>,
-}
-
 impl AgentFrameHookRuntime {
     pub fn new(
         run_id: Uuid,

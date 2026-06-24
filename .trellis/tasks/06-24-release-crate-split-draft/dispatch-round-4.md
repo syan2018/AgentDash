@@ -42,6 +42,15 @@ Round 4 is still a port-wiring / visibility convergence round. Do not start Runt
 
 If a worker needs another lane's file, stop at the nearest compile boundary and report the conflict instead of widening ownership.
 
+## Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `session-neutral-envelope-impl` | `019efb37-1afa-7f42-8a89-4f6d46b2bf86` | Plato |
+| `session-mailbox-capability-ports-impl` | `019efb37-2f70-7b23-a659-633a99ccbceb` | Fermat |
+| `gateway-visibility-cleanup-impl` | `019efb37-443f-7f92-8d2e-44396d9a5bd1` | Gibbs |
+| `vfs-owner-adapter-split-impl` | `019efb37-58f8-7b20-9ab1-8ad2d918300c` | Feynman |
+
 ## Implement Prompt Injection
 
 Every implement worker prompt must start with:

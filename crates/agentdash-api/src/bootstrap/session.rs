@@ -50,6 +50,7 @@ pub(crate) struct SessionBootstrapInput {
     pub integration_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
     pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
@@ -71,6 +72,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub runtime_gateway_handle: SharedRuntimeGatewayHandle,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
 }
 
 pub(crate) async fn build_session_runtime(
@@ -90,6 +92,7 @@ pub(crate) async fn build_session_runtime(
         integration_connectors,
         extra_skill_dirs,
         skill_discovery_providers,
+        memory_discovery_providers,
         llm_provider_secret,
     } = input;
 
@@ -276,6 +279,7 @@ pub(crate) async fn build_session_runtime(
         runtime_gateway_handle,
         extra_skill_dirs,
         skill_discovery_providers,
+        memory_discovery_providers,
     })
 }
 

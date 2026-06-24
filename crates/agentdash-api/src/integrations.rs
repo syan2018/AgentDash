@@ -5,7 +5,8 @@ use std::sync::Arc;
 use agentdash_application::shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
     AgentDashIntegration, AuthProvider, IdentityDirectoryProvider, LibraryAssetType,
-    MarketplaceSourceDescriptor, MarketplaceSourceProvider, SkillDiscoveryProvider,
+    MarketplaceSourceDescriptor, MarketplaceSourceProvider, MemoryDiscoveryProvider,
+    SkillDiscoveryProvider,
 };
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
@@ -28,6 +29,7 @@ pub(crate) struct HostIntegrationRegistration {
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
 }
@@ -80,6 +82,16 @@ pub(crate) enum IntegrationRegistrationError {
     #[error("Host Integration `{integration_name}` 的 Skill Discovery Provider key 不能为空")]
     InvalidSkillDiscoveryProviderKey { integration_name: String },
     #[error(
+        "Memory Discovery Provider `{provider_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一 provider"
+    )]
+    DuplicateMemoryDiscoveryProviderKey {
+        provider_key: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error("Host Integration `{integration_name}` 的 Memory Discovery Provider key 不能为空")]
+    InvalidMemoryDiscoveryProviderKey { integration_name: String },
+    #[error(
         "Host Integration `{integration_name}` 的 Marketplace Source descriptor 非法: {message}"
     )]
     InvalidMarketplaceSourceDescriptor {
@@ -103,6 +115,8 @@ pub(crate) fn collect_integration_registration(
     let mut marketplace_source_owners: HashMap<String, String> = HashMap::new();
     let mut skill_discovery_providers = Vec::new();
     let mut skill_provider_owners: HashMap<String, String> = HashMap::new();
+    let mut memory_discovery_providers = Vec::new();
+    let mut memory_provider_owners: HashMap<String, String> = HashMap::new();
     let mut extra_skill_dirs = Vec::new();
     let mut library_asset_seeds = Vec::new();
 
@@ -168,6 +182,37 @@ pub(crate) fn collect_integration_registration(
                 );
             }
             skill_discovery_providers.push(provider);
+        }
+
+        let memory_providers = integration.memory_discovery_providers();
+        if !memory_providers.is_empty() {
+            tracing::info!(
+                "  Host Integration `{}` 注册了 {} 个 MemoryDiscoveryProvider",
+                integration_name,
+                memory_providers.len()
+            );
+        }
+        for provider in memory_providers {
+            let provider_key = provider.provider_key().trim().to_string();
+            if provider_key.is_empty() {
+                return Err(
+                    IntegrationRegistrationError::InvalidMemoryDiscoveryProviderKey {
+                        integration_name: integration_name.clone(),
+                    },
+                );
+            }
+            if let Some(first_owner) =
+                memory_provider_owners.insert(provider_key.clone(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateMemoryDiscoveryProviderKey {
+                        provider_key,
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            memory_discovery_providers.push(provider);
         }
 
         let seeds = integration.library_asset_seeds();
@@ -259,6 +304,7 @@ pub(crate) fn collect_integration_registration(
         mount_providers,
         marketplace_source_providers,
         skill_discovery_providers,
+        memory_discovery_providers,
         extra_skill_dirs,
         library_asset_seeds,
     })
@@ -345,7 +391,8 @@ mod tests {
         IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail,
         MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
         MarketplaceSourceDescriptor, MarketplaceSourceError, MarketplaceSourceProvider,
-        MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel, SkillDiscoveryContext,
+        MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel, MemoryDiscoveryContext,
+        MemoryDiscoveryOutput, MemoryDiscoveryProvider, SkillDiscoveryContext,
         SkillDiscoveryOutput, SkillDiscoveryProvider,
     };
     use agentdash_spi::{
@@ -373,6 +420,11 @@ mod tests {
     }
 
     struct SkillProviderIntegration {
+        name: &'static str,
+        provider_key: &'static str,
+    }
+
+    struct MemoryProviderIntegration {
         name: &'static str,
         provider_key: &'static str,
     }
@@ -439,7 +491,23 @@ mod tests {
         }
     }
 
+    impl AgentDashIntegration for MemoryProviderIntegration {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn memory_discovery_providers(&self) -> Vec<Arc<dyn MemoryDiscoveryProvider>> {
+            vec![Arc::new(TestMemoryDiscoveryProvider {
+                provider_key: self.provider_key,
+            })]
+        }
+    }
+
     struct TestSkillDiscoveryProvider {
+        provider_key: &'static str,
+    }
+
+    struct TestMemoryDiscoveryProvider {
         provider_key: &'static str,
     }
 
@@ -454,6 +522,20 @@ mod tests {
             _context: SkillDiscoveryContext,
         ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
             Ok(SkillDiscoveryOutput::default())
+        }
+    }
+
+    #[async_trait]
+    impl MemoryDiscoveryProvider for TestMemoryDiscoveryProvider {
+        fn provider_key(&self) -> &str {
+            self.provider_key
+        }
+
+        async fn discover(
+            &self,
+            _context: MemoryDiscoveryContext,
+        ) -> Result<MemoryDiscoveryOutput, agentdash_spi::MemoryDiscoveryError> {
+            Ok(MemoryDiscoveryOutput::default())
         }
     }
 
@@ -751,6 +833,22 @@ mod tests {
     }
 
     #[test]
+    fn collects_memory_discovery_provider() {
+        let registration =
+            collect_integration_registration(vec![Box::new(MemoryProviderIntegration {
+                name: "memory-a",
+                provider_key: "memory.a",
+            })])
+            .expect("collect");
+
+        assert_eq!(registration.memory_discovery_providers.len(), 1);
+        assert_eq!(
+            registration.memory_discovery_providers[0].provider_key(),
+            "memory.a"
+        );
+    }
+
+    #[test]
     fn rejects_duplicate_skill_discovery_provider_key() {
         let err = match collect_integration_registration(vec![
             Box::new(SkillProviderIntegration {
@@ -775,6 +873,51 @@ mod tests {
             } if provider_key == "skills.shared"
                 && first_owner == "skills-a"
                 && second_owner == "skills-b"
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_memory_discovery_provider_key() {
+        let err = match collect_integration_registration(vec![
+            Box::new(MemoryProviderIntegration {
+                name: "memory-a",
+                provider_key: "memory.shared",
+            }),
+            Box::new(MemoryProviderIntegration {
+                name: "memory-b",
+                provider_key: "memory.shared",
+            }),
+        ]) {
+            Ok(_) => panic!("重复 memory discovery provider key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::DuplicateMemoryDiscoveryProviderKey {
+                provider_key,
+                first_owner,
+                second_owner,
+            } if provider_key == "memory.shared"
+                && first_owner == "memory-a"
+                && second_owner == "memory-b"
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_memory_discovery_provider_key() {
+        let err =
+            match collect_integration_registration(vec![Box::new(MemoryProviderIntegration {
+                name: "memory-a",
+                provider_key: " ",
+            })]) {
+                Ok(_) => panic!("空 memory discovery provider key 应失败"),
+                Err(err) => err,
+            };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::InvalidMemoryDiscoveryProviderKey { .. }
         ));
     }
 

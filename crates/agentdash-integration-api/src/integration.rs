@@ -4,6 +4,7 @@ use std::sync::Arc;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::MarketplaceSourceProvider;
+use agentdash_spi::MemoryDiscoveryProvider;
 use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::SkillDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
@@ -127,6 +128,14 @@ pub trait AgentDashIntegration: Send + Sync {
     /// Provider 可基于 session/workspace/user 等通用上下文贡献 skill inventory 与
     /// 默认上下文暴露列表。该扩展点只描述 context exposure，不表达权限控制。
     fn skill_discovery_providers(&self) -> Vec<Arc<dyn SkillDiscoveryProvider>> {
+        vec![]
+    }
+
+    /// 注册动态 Memory Discovery provider。
+    ///
+    /// Provider 只贡献 active VFS 上可发现的 memory source inventory 与索引指针；
+    /// 真实读写权限仍由对应 mount capability 决定。
+    fn memory_discovery_providers(&self) -> Vec<Arc<dyn MemoryDiscoveryProvider>> {
         vec![]
     }
 

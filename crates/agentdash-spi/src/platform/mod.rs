@@ -4,6 +4,7 @@ pub mod marketplace_source;
 pub mod mcp_injection;
 pub mod mcp_probe;
 pub mod mcp_relay;
+pub mod memory_discovery;
 pub mod mount;
 pub mod routine;
 pub mod skill;

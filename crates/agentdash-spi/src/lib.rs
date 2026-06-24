@@ -108,6 +108,13 @@ pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
 };
+pub use platform::memory_discovery::{
+    DiscoveredMemorySource, MemoryDiscoveryCluster, MemoryDiscoveryContext,
+    MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
+    MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
+    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, MemorySourceFormat,
+    MemorySourceScope, MemorySourceTrustLevel, is_controlled_vfs_memory_uri,
+};
 pub use platform::mount::MountEditCapabilities;
 pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use platform::skill::SkillRef;

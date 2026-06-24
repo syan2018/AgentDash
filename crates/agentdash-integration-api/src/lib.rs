@@ -28,11 +28,17 @@ pub mod integration;
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
 pub use agentdash_spi::platform::marketplace_source;
+pub use agentdash_spi::platform::memory_discovery;
 pub use agentdash_spi::{
-    DiscoveredSkill, RoutineTriggerProvider, SkillContextExposure, SkillDiscoveryCluster,
-    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError, SkillDiscoveryOutput,
-    SkillDiscoveryOwnerKind, SkillDiscoveryProvider, SkillDiscoveryUserContext,
-    SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver, VfsDiscoveryProvider,
+    DiscoveredMemorySource, DiscoveredSkill, MemoryDiscoveryCluster, MemoryDiscoveryContext,
+    MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
+    MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
+    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, MemorySourceFormat,
+    MemorySourceScope, MemorySourceTrustLevel, RoutineTriggerProvider, SkillContextExposure,
+    SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError,
+    SkillDiscoveryOutput, SkillDiscoveryOwnerKind, SkillDiscoveryProvider,
+    SkillDiscoveryUserContext, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver,
+    VfsDiscoveryProvider, is_controlled_vfs_memory_uri,
 };
 pub use agentdash_spi::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,

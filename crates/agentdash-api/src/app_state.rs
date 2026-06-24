@@ -38,6 +38,7 @@ use agentdash_executor::AgentConnector;
 use agentdash_integration_api::AgentDashIntegration;
 use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
+use agentdash_integration_api::MemoryDiscoveryProvider;
 use agentdash_integration_api::SkillDiscoveryProvider;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
@@ -79,6 +80,8 @@ pub struct ServiceSet {
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
     /// Host Integration 动态 skill discovery providers — frame construction 阶段统一聚合。
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    /// Host Integration 动态 memory discovery providers — 启动期统一聚合，供 frame construction 消费。
+    pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
     /// Host Integration Marketplace Source providers — 后续 external marketplace API 统一从这里读取来源。
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
@@ -219,6 +222,7 @@ impl AppState {
                 integration_connectors: integration_registration.connectors,
                 extra_skill_dirs: integration_registration.extra_skill_dirs,
                 skill_discovery_providers: integration_registration.skill_discovery_providers,
+                memory_discovery_providers: integration_registration.memory_discovery_providers,
                 llm_provider_secret: llm_provider_secret.clone(),
             },
         )
@@ -240,6 +244,7 @@ impl AppState {
         let runtime_gateway_handle = session_bootstrap.runtime_gateway_handle;
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
+        let memory_discovery_providers = session_bootstrap.memory_discovery_providers;
 
         let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
             AgentRunRuntimeSurfaceQueryDeps {
@@ -355,6 +360,7 @@ impl AppState {
                 vfs_mutation_dispatcher,
                 extra_skill_dirs,
                 skill_discovery_providers,
+                memory_discovery_providers,
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 backend_runtime_events,

@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端架构、repository、migration、错误映射规范入口"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Canvas schema migration 与索引约束设计"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "CanvasRepository trait 与 Postgres repository 边界"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Canvas runtime mount、provider capability 与只读 VFS surface 语义"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "权限事实与 runtime surface 授权链路的项目内语义参考"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Canvas DTO、generated TS 与 API/frontend drift 约束"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "Canvas 发布为插件现状、Project asset 发布语义与未来 canvas_template 分发路径"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Canvas assets UI、WorkspacePanel 与 runtime surface 前端边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO facade、generated contract 与 mapper 约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Canvas assets UI 列表/选择状态与 store 使用约束"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/prd.md", "reason": "Canvas identity、VFS mount id、runtime binding 收束依赖"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/implement.md", "reason": "Canvas identity 和 runtime resource 实施顺序参考"}
+{"file": ".trellis/tasks/06-23-agentframe-canvas-projection-convergence/prd.md", "reason": "Canvas runtime surface 与 AgentFrame projection 事实源依赖"}
+{"file": "docs/enterprise-auth-project-sharing.md", "reason": "Project template / clone 与 Project 权限模型的既有产品语义参考"}
+{"file": ".trellis/tasks/06-24-canvas-personal-shared-distribution-permission/research/dispatch-context.md", "reason": "当前主会话整理的子代理调度状态、文件归属和已确认代码事实"}

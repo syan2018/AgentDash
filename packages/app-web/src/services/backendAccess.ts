@@ -7,6 +7,10 @@ import type {
   UpdateProjectBackendAccessRequest,
 } from "../generated/backend-contracts";
 import type {
+  BindDiscoveredWorkspaceBindingsRequest,
+  BindDiscoveredWorkspaceBindingsResponse,
+  DiscoverLocalWorkspaceBindingsRequest,
+  DiscoverLocalWorkspaceBindingsResponse,
   WorkspaceBindingSyncResult,
   WorkspaceInventoryCandidate,
 } from "../generated/workspace-contracts";
@@ -74,5 +78,25 @@ export function syncWorkspaceBackendBindings(
   return api.post<WorkspaceBindingSyncResult>(
     `/projects/${projectId}/workspaces/sync-backend-bindings`,
     {},
+  );
+}
+
+export function discoverLocalWorkspaceBindings(
+  projectId: string,
+  payload: DiscoverLocalWorkspaceBindingsRequest,
+): Promise<DiscoverLocalWorkspaceBindingsResponse> {
+  return api.post<DiscoverLocalWorkspaceBindingsResponse>(
+    `/projects/${projectId}/workspaces/discover-local-bindings`,
+    payload,
+  );
+}
+
+export function bindDiscoveredWorkspaceBindings(
+  projectId: string,
+  payload: BindDiscoveredWorkspaceBindingsRequest,
+): Promise<BindDiscoveredWorkspaceBindingsResponse> {
+  return api.post<BindDiscoveredWorkspaceBindingsResponse>(
+    `/projects/${projectId}/workspaces/bind-discovered`,
+    payload,
   );
 }

@@ -15,6 +15,7 @@ import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
+import { LocalWorkspaceDiscoveryPanel } from "../features/workspace/workspace-list/LocalWorkspaceDiscoveryPanel";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { WorkspaceModulesPanel } from "../features/workspace-module/ui/WorkspaceModulesPanel";
 import { VfsBrowser } from "../features/vfs";
@@ -639,7 +640,7 @@ function BackendAccessPanel({
                       </p>
                     ) : inventory.length === 0 ? (
                       <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                        当前还没有可用目录快照。等待 backend 上报，或在 Workspace 详情中登记新的可用目录。
+                        当前还没有可用目录快照。等待 backend 上报，或使用本机 Workspace 发现登记新的可用目录。
                       </p>
                     ) : (
                       inventory.map((item) => (
@@ -807,6 +808,12 @@ export function ProjectSettingsPage() {
     project?.access.can_manage_sharing,
     project?.id,
   ]);
+
+  const refreshWorkspaceBindings = useCallback(async () => {
+    if (!projectId) return;
+    await fetchWorkspaces(projectId);
+    setWorkspaceInventoryRefreshKey((key) => key + 1);
+  }, [fetchWorkspaces, projectId]);
 
   if (!project) {
     return (
@@ -1155,12 +1162,25 @@ export function ProjectSettingsPage() {
                 <>
                   <SectionCard
                     title="Backend Access"
-                    description="Project 绑定可使用的 backend；可用目录由 backend 上报或在 Workspace 详情中登记。"
+                    description="Project 绑定可使用的 backend；可用目录由 backend 上报或本机发现流程登记。"
                   >
                     <BackendAccessPanel
                       projectId={project.id}
                       canEdit={canEditProject}
                       inventoryRefreshKey={workspaceInventoryRefreshKey}
+                    />
+                  </SectionCard>
+
+                  <SectionCard
+                    title="本机 Workspace 发现"
+                    description="按 Project 内 Workspace identity 在已授权本机 backend 上发现候选目录，确认后写入 binding。"
+                  >
+                    <LocalWorkspaceDiscoveryPanel
+                      projectId={project.id}
+                      workspaces={workspaces}
+                      canEdit={canEditProject}
+                      refreshKey={workspaceInventoryRefreshKey}
+                      onBound={refreshWorkspaceBindings}
                     />
                   </SectionCard>
 

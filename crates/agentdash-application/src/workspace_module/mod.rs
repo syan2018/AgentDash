@@ -25,7 +25,9 @@ use agentdash_domain::shared_library::{
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
 };
 
-use crate::canvas::{canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id};
+use crate::canvas::{
+    CanvasWithAccess, canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id,
+};
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::backend::RuntimeBackendAnchor;
@@ -184,6 +186,21 @@ pub fn build_workspace_modules(
         let access = default_canvas_access_for_descriptor(canvas);
         build_canvas_module(canvas, &access)
     }));
+    modules
+}
+
+pub fn build_workspace_modules_with_canvas_access(
+    ext: &ExtensionRuntimeProjection,
+    canvases: &[CanvasWithAccess],
+) -> Vec<WorkspaceModuleDescriptor> {
+    let mut modules = Vec::new();
+    modules.extend(build_extension_modules(ext));
+    modules.extend(
+        canvases
+            .iter()
+            .filter(|value| value.access.can_view)
+            .map(|value| build_canvas_module(&value.canvas, &value.access)),
+    );
     modules
 }
 
@@ -805,6 +822,77 @@ mod tests {
         assert_eq!(
             module.ui_entries[0].presentation_uri.as_deref(),
             Some("canvas://cvs-shared-dashboard")
+        );
+    }
+
+    #[test]
+    fn access_aware_aggregation_filters_hidden_canvas_and_uses_access_operations() {
+        let projection =
+            extension_runtime_projection_from_installations(vec![installation("demo", true)])
+                .expect("projection");
+        let visible_personal = build_personal_canvas(
+            Uuid::new_v4(),
+            "user-1".to_string(),
+            Some("cvs-visible-personal".to_string()),
+            "Visible Personal".to_string(),
+            "editable canvas".to_string(),
+            Default::default(),
+        )
+        .expect("visible personal canvas");
+        let hidden_personal = build_personal_canvas(
+            visible_personal.project_id,
+            "user-2".to_string(),
+            Some("cvs-hidden-personal".to_string()),
+            "Hidden Personal".to_string(),
+            "hidden canvas".to_string(),
+            Default::default(),
+        )
+        .expect("hidden personal canvas");
+        let shared = build_canvas(
+            visible_personal.project_id,
+            Some("cvs-shared-dashboard".to_string()),
+            "Shared Dashboard".to_string(),
+            "read-only canvas".to_string(),
+            Default::default(),
+        )
+        .expect("project shared canvas");
+
+        let modules = build_workspace_modules_with_canvas_access(
+            &projection,
+            &[
+                CanvasWithAccess {
+                    canvas: visible_personal,
+                    access: editable_canvas_access(),
+                },
+                CanvasWithAccess {
+                    canvas: hidden_personal,
+                    access: CanvasAccessProjection::default(),
+                },
+                CanvasWithAccess {
+                    canvas: shared,
+                    access: read_only_canvas_access(),
+                },
+            ],
+        );
+
+        let module_ids = modules
+            .iter()
+            .map(|module| module.summary.module_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(module_ids.contains(&"ext:demo"));
+        assert!(module_ids.contains(&"canvas:cvs-visible-personal"));
+        assert!(module_ids.contains(&"canvas:cvs-shared-dashboard"));
+        assert!(!module_ids.contains(&"canvas:cvs-hidden-personal"));
+
+        let shared_module = modules
+            .iter()
+            .find(|module| module.summary.module_id == "canvas:cvs-shared-dashboard")
+            .expect("shared module");
+        assert!(
+            !shared_module
+                .operations
+                .iter()
+                .any(|operation| operation.operation_key == "canvas.bind_data")
         );
     }
 

@@ -35,7 +35,6 @@ pub use runtime::{
 };
 pub use runtime_resource::CanvasRuntimeResourceService;
 pub(crate) use tools::{
-    BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session, request_existing_canvas_visibility_for_runtime,
+    BindCanvasDataParams, StartCanvasParams, request_existing_canvas_visibility_for_runtime,
 };
 pub use visibility::{append_visible_canvas_mounts, canvas_runtime_mount_access};

@@ -1,9 +1,8 @@
 //! Workspace Module Agent 工具：`workspace_module_list` / `workspace_module_describe`。
 //!
 //! 二者由 session runtime tool composer 通过 workspace-module provider 装配，
-//! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + visible canvases，经聚合层
-//! `build_workspace_modules` 投影，再按 capability 的
-//! AgentRun effective capability view 过滤。
+//! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + Canvas 候选，
+//! 先按 AgentRun effective capability view 过滤，再按当前用户 Canvas access 重投影。
 
 use std::sync::Arc;
 
@@ -147,7 +146,10 @@ async fn reproject_canvas_modules_for_access(
     current_user: Option<&ProjectAuthorizationContext>,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, AgentToolError> {
     let Some(current_user) = current_user else {
-        return Ok(modules);
+        return Ok(modules
+            .into_iter()
+            .filter(|module| module.summary.kind != WorkspaceModuleKind::Canvas)
+            .collect());
     };
 
     let mut visible = Vec::with_capacity(modules.len());
@@ -2071,6 +2073,7 @@ mod tests {
     async fn list_returns_extension_and_canvas_summaries() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_current_user(Some(test_current_user()))
             .with_effective_capability_view(test_effective_capability_view(
                 WorkspaceModuleDimension::all(),
                 Vec::new(),
@@ -2088,6 +2091,33 @@ mod tests {
         // 摘要不含完整 schema：summary 没有 operations 字段，只有 operation_summary
         assert!(modules[0].get("operations").is_none());
         assert!(modules[0].get("operation_summary").is_some());
+    }
+
+    #[tokio::test]
+    async fn list_without_current_user_omits_canvas_modules() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
+        let result = tool
+            .execute("t", serde_json::json!({}), CancellationToken::new(), None)
+            .await
+            .expect("list");
+        let details = result.details.expect("details");
+        let modules = details
+            .get("modules")
+            .and_then(serde_json::Value::as_array)
+            .expect("modules array");
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0]
+                .get("module_id")
+                .and_then(serde_json::Value::as_str),
+            Some("ext:demo")
+        );
     }
 
     #[tokio::test]
@@ -2469,6 +2499,7 @@ mod tests {
         );
 
         let describe_tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_current_user(Some(test_current_user()))
             .with_runtime_visibility(handle, session.id.clone());
         let describe = describe_tool
             .execute(

@@ -12,12 +12,14 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
-use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission, project_authorization_context,
+};
 use crate::rpc::ApiError;
-use agentdash_application::canvas::list_project_canvases;
+use agentdash_application::canvas::{CanvasListScopeFilter, list_canvases_for_user};
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
 use agentdash_application::workspace_module::{
-    build_workspace_module_presentation, build_workspace_modules,
+    build_workspace_module_presentation, build_workspace_modules_with_canvas_access,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
@@ -65,10 +67,16 @@ pub async fn get_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let canvases = list_project_canvases(&state.repos, project_id)
-        .await
-        .map_err(ApiError::from)?;
-    let modules = build_workspace_modules(&projection, &canvases);
+    let current_user_context = project_authorization_context(&current_user);
+    let canvases = list_canvases_for_user(
+        &state.repos,
+        &current_user_context,
+        project_id,
+        CanvasListScopeFilter::All,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    let modules = build_workspace_modules_with_canvas_access(&projection, &canvases);
     Ok(Json(modules))
 }
 
@@ -88,7 +96,7 @@ pub async fn present_workspace_module(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::View,
     )
     .await?;
 
@@ -99,7 +107,9 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let modules = load_project_workspace_modules(state.as_ref(), project_id).await?;
+    let current_user_context = project_authorization_context(&current_user);
+    let modules =
+        load_project_workspace_modules(state.as_ref(), &current_user_context, project_id).await?;
     let module = modules
         .iter()
         .find(|module| module.summary.module_id == module_id)
@@ -129,6 +139,7 @@ pub async fn present_workspace_module(
 
 async fn load_project_workspace_modules(
     state: &AppState,
+    current_user: &agentdash_domain::project::ProjectAuthorizationContext,
     project_id: Uuid,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, ApiError> {
     let installations = state
@@ -138,10 +149,18 @@ async fn load_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let canvases = list_project_canvases(&state.repos, project_id)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(build_workspace_modules(&projection, &canvases))
+    let canvases = list_canvases_for_user(
+        &state.repos,
+        current_user,
+        project_id,
+        CanvasListScopeFilter::All,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    Ok(build_workspace_modules_with_canvas_access(
+        &projection,
+        &canvases,
+    ))
 }
 
 async fn ensure_runtime_session_belongs_to_project(

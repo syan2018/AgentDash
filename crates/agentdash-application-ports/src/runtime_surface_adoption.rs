@@ -45,14 +45,6 @@ pub enum RuntimeSurfaceAdoptionError {
 }
 
 #[async_trait]
-pub trait AgentRunActiveRuntimeSurfaceAdopter: Send + Sync {
-    async fn adopt_persisted_frame_revision_into_active_runtime(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError>;
-}
-
-#[async_trait]
 pub trait RuntimeSurfaceAdoptionPort: Send + Sync {
     async fn adopt_runtime_surface(
         &self,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
+    AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
     AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec,
     LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
     LifecycleSubjectAssociationRepository, OrchestrationBindingRefs, OrchestrationInstance,
@@ -10,16 +10,17 @@ use agentdash_domain::workflow::{
 };
 use async_trait::async_trait;
 
-use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::agent_run::frame::construction::{
-    LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
+use crate::agent_run::frame::construction::LifecycleNodeSpec;
+use crate::agent_run::frame::lifecycle_materialization::{
+    AgentRunWorkflowNodeFrameMaterializationRequest, materialize_workflow_agent_node_frame,
 };
 use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
 use crate::lifecycle::{
-    LifecycleDispatchService, RuntimeSessionCreator, WorkflowAgentNodeFrameComposer,
-    WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
+    LifecycleDispatchService, RuntimeSessionCreator, WorkflowAgentNodeFrameMaterializationContext,
+    WorkflowAgentNodeFrameMaterializer, WorkflowAgentNodeMaterializationRequest,
+    WorkflowApplicationError,
 };
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -40,7 +41,7 @@ pub(super) struct AgentNodeLauncher {
     agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
-    frame_composer: Arc<dyn AgentNodeFrameComposer>,
+    frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
 }
 
 impl AgentNodeLauncher {
@@ -55,7 +56,7 @@ impl AgentNodeLauncher {
         agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
-        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> Self {
         Self {
             agent_procedure_repo,
@@ -68,7 +69,7 @@ impl AgentNodeLauncher {
             agent_lineage_repo,
             execution_anchor_repo,
             runtime_session_creator,
-            frame_composer,
+            frame_materializer,
         }
     }
 
@@ -149,8 +150,8 @@ impl AgentNodeLauncher {
             coordinate.node_path.clone(),
             coordinate.attempt,
         );
-        let frame_composer = AgentNodeMaterializationFrameComposer {
-            inner: self.frame_composer.clone(),
+        let frame_materializer = AgentNodeMaterializationFrameMaterializer {
+            inner: self.frame_materializer.clone(),
             coordinate: coordinate.clone(),
             plan_node,
             workflow_contract,
@@ -178,7 +179,7 @@ impl AgentNodeLauncher {
                         coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
                     )),
                 },
-                &frame_composer,
+                &frame_materializer,
             )
             .await?;
         let session_id = materialized.delivery_runtime_ref.to_string();
@@ -201,8 +202,8 @@ impl AgentNodeLauncher {
     }
 }
 
-struct AgentNodeMaterializationFrameComposer<'a> {
-    inner: Arc<dyn AgentNodeFrameComposer>,
+struct AgentNodeMaterializationFrameMaterializer<'a> {
+    inner: Arc<dyn AgentNodeFrameMaterializer>,
     coordinate: RuntimeNodeCoordinate,
     plan_node: &'a PlanNode,
     workflow_contract: Option<&'a AgentProcedureContract>,
@@ -210,48 +211,41 @@ struct AgentNodeMaterializationFrameComposer<'a> {
 }
 
 #[async_trait]
-impl WorkflowAgentNodeFrameComposer for AgentNodeMaterializationFrameComposer<'_> {
-    async fn compose_workflow_agent_node_frame(
+impl WorkflowAgentNodeFrameMaterializer for AgentNodeMaterializationFrameMaterializer<'_> {
+    async fn materialize_workflow_agent_node_frame(
         &self,
-        builder: AgentFrameBuilder,
-        run: &LifecycleRun,
-        runtime_session_ref: uuid::Uuid,
-    ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
-        let runtime_session_id = runtime_session_ref.to_string();
+        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
+    ) -> Result<AgentFrame, WorkflowApplicationError> {
         self.inner
-            .compose_frame(
-                builder,
-                run,
+            .materialize_frame(
+                context,
                 &self.coordinate,
                 self.plan_node,
                 self.workflow_contract,
                 self.workflow_label,
-                Some(runtime_session_id.as_str()),
             )
             .await
     }
 }
 
 #[async_trait]
-pub(super) trait AgentNodeFrameComposer: Send + Sync {
-    async fn compose_frame(
+pub(super) trait AgentNodeFrameMaterializer: Send + Sync {
+    async fn materialize_frame(
         &self,
-        builder: AgentFrameBuilder,
-        run: &LifecycleRun,
+        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
         coordinate: &RuntimeNodeCoordinate,
         plan_node: &PlanNode,
         workflow_contract: Option<&AgentProcedureContract>,
         workflow_label: Option<&str>,
-        runtime_session_id: Option<&str>,
-    ) -> Result<AgentFrameBuilder, WorkflowApplicationError>;
+    ) -> Result<AgentFrame, WorkflowApplicationError>;
 }
 
-pub(super) struct RepositoryAgentNodeFrameComposer {
+pub(super) struct RepositoryAgentNodeFrameMaterializer {
     repos: RepositorySet,
     platform_config: SharedPlatformConfig,
 }
 
-impl RepositoryAgentNodeFrameComposer {
+impl RepositoryAgentNodeFrameMaterializer {
     pub(super) fn new(repos: RepositorySet, platform_config: SharedPlatformConfig) -> Self {
         Self {
             repos,
@@ -261,26 +255,27 @@ impl RepositoryAgentNodeFrameComposer {
 }
 
 #[async_trait]
-impl AgentNodeFrameComposer for RepositoryAgentNodeFrameComposer {
-    async fn compose_frame(
+impl AgentNodeFrameMaterializer for RepositoryAgentNodeFrameMaterializer {
+    async fn materialize_frame(
         &self,
-        builder: AgentFrameBuilder,
-        run: &LifecycleRun,
+        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
         coordinate: &RuntimeNodeCoordinate,
         plan_node: &PlanNode,
         workflow_contract: Option<&AgentProcedureContract>,
         workflow_label: Option<&str>,
-        runtime_session_id: Option<&str>,
-    ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
-        let orchestration = orchestration_for_coordinate(run, coordinate)?;
+    ) -> Result<AgentFrame, WorkflowApplicationError> {
+        let orchestration = orchestration_for_coordinate(context.run, coordinate)?;
         let lifecycle_identity = lifecycle_identity_from_orchestration(orchestration);
         let activity = activity_definition_from_plan_node(plan_node);
-        let (builder, _extras) = compose_lifecycle_node_to_frame_with_audit(
-            builder,
-            &self.repos,
-            self.platform_config.as_ref(),
-            LifecycleNodeSpec {
-                run,
+        materialize_workflow_agent_node_frame(AgentRunWorkflowNodeFrameMaterializationRequest {
+            frame_repo: self.repos.agent_frame_repo.as_ref(),
+            repos: &self.repos,
+            platform_config: self.platform_config.as_ref(),
+            agent_id: context.agent_id,
+            runtime_session_ref: context.runtime_session_ref,
+            frame_created_by_id: context.frame_created_by_id,
+            spec: LifecycleNodeSpec {
+                run: context.run,
                 orchestration_id: coordinate.orchestration_id,
                 node_path: &coordinate.node_path,
                 attempt: coordinate.attempt,
@@ -291,12 +286,8 @@ impl AgentNodeFrameComposer for RepositoryAgentNodeFrameComposer {
                 workflow_label,
                 inherited_executor_config: None,
             },
-            None,
-            runtime_session_id,
-        )
+        })
         .await
-        .map_err(WorkflowApplicationError::Internal)?;
-        Ok(builder)
     }
 }
 

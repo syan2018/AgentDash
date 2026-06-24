@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_application_ports::runtime_gateway_mcp_surface::{
     RuntimeGatewayMcpSurface, RuntimeGatewayMcpSurfaceQueryError,
     RuntimeGatewayMcpSurfaceQueryPort, RuntimeGatewayMcpSurfaceQueryPurpose,
@@ -704,6 +706,309 @@ impl AgentRunRuntimeSurfaceQueryError {
     }
 }
 
+fn local_purpose_from_port(
+    purpose: ports_agent_run_surface::RuntimeSurfaceQueryPurpose,
+) -> RuntimeSurfaceQueryPurpose {
+    RuntimeSurfaceQueryPurpose {
+        component: purpose.component,
+    }
+}
+
+fn port_purpose(
+    purpose: RuntimeSurfaceQueryPurpose,
+) -> ports_agent_run_surface::RuntimeSurfaceQueryPurpose {
+    ports_agent_run_surface::RuntimeSurfaceQueryPurpose {
+        component: purpose.component,
+    }
+}
+
+fn port_runtime_address(
+    address: AgentRunRuntimeAddress,
+) -> ports_agent_run_surface::AgentRunRuntimeAddress {
+    ports_agent_run_surface::AgentRunRuntimeAddress {
+        run_id: address.run_id,
+        agent_id: address.agent_id,
+        frame_id: address.frame_id,
+    }
+}
+
+fn port_runtime_surface(
+    surface: AgentRunRuntimeSurface,
+) -> ports_agent_run_surface::AgentRunRuntimeSurface {
+    ports_agent_run_surface::AgentRunRuntimeSurface {
+        runtime_session_id: surface.runtime_session_id,
+        run_id: surface.run_id,
+        project_id: surface.project_id,
+        agent_id: surface.agent_id,
+        runtime_address: port_runtime_address(surface.runtime_address),
+        launch_evidence_frame_id: surface.launch_evidence_frame_id,
+        current_surface_frame_id: surface.current_surface_frame_id,
+        surface_revision: surface.surface_revision,
+        capability_state: surface.capability_state,
+        vfs: surface.vfs,
+        mcp_servers: surface.mcp_servers,
+        runtime_backend_anchor: surface.runtime_backend_anchor,
+        active_turn_id: surface.active_turn_id,
+        identity: surface.identity,
+        provenance: ports_agent_run_surface::AgentRunRuntimeSurfaceProvenance {
+            launch_evidence_frame_id: surface.provenance.launch_evidence_frame_id,
+            launch_created_by_kind: surface.provenance.launch_created_by_kind,
+            current_surface_frame_id: surface.provenance.current_surface_frame_id,
+            surface_revision: surface.provenance.surface_revision,
+            surface_created_by_kind: surface.provenance.surface_created_by_kind,
+            anchor_updated_at: surface.provenance.anchor_updated_at,
+            orchestration_id: surface.provenance.orchestration_id,
+            node_path: surface.provenance.node_path,
+            node_attempt: surface.provenance.node_attempt,
+        },
+        closure: ports_agent_run_surface::AgentRunRuntimeSurfaceClosure {
+            capability_field_present: surface.closure.capability_field_present,
+            vfs_field_present: surface.closure.vfs_field_present,
+            mcp_field_present: surface.closure.mcp_field_present,
+        },
+    }
+}
+
+fn port_runtime_surface_with_backend(
+    surface: AgentRunRuntimeSurfaceWithBackend,
+) -> ports_agent_run_surface::AgentRunRuntimeSurfaceWithBackend {
+    ports_agent_run_surface::AgentRunRuntimeSurfaceWithBackend {
+        surface: port_runtime_surface(surface.surface),
+        runtime_backend_anchor: surface.runtime_backend_anchor,
+    }
+}
+
+fn port_message_stream_trace_kind(
+    trace_kind: MessageStreamTraceKind,
+) -> ports_lifecycle_surface::MessageStreamTraceKind {
+    match trace_kind {
+        MessageStreamTraceKind::ConnectorRuntimeSession => {
+            ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession
+        }
+        MessageStreamTraceKind::RestoredTranscript => {
+            ports_lifecycle_surface::MessageStreamTraceKind::RestoredTranscript
+        }
+    }
+}
+
+fn port_lifecycle_surface(
+    surface: AgentRunLifecycleSurface,
+) -> ports_lifecycle_surface::AgentRunLifecycleSurface {
+    ports_lifecycle_surface::AgentRunLifecycleSurface {
+        vfs: surface.vfs,
+        lifecycle_mount: surface.lifecycle_mount,
+        projections: ports_lifecycle_surface::AgentRunLifecycleProjectionSet {
+            agent_run_identity: surface.projections.agent_run_identity,
+            message_stream: surface.projections.message_stream.map(|facts| {
+                ports_lifecycle_surface::MessageStreamProjectionFacts {
+                    runtime_session_id: facts.runtime_session_id,
+                    trace_kind: port_message_stream_trace_kind(facts.trace_kind),
+                }
+            }),
+            node_evidence: surface.projections.node_evidence.map(|facts| {
+                ports_lifecycle_surface::OrchestrationNodeEvidenceFacts {
+                    run_id: facts.run_id,
+                    orchestration_id: facts.orchestration_id,
+                    node_path: facts.node_path,
+                    attempt: facts.attempt,
+                }
+            }),
+            orchestration_node: surface.projections.orchestration_node.map(|facts| {
+                ports_lifecycle_surface::OrchestrationNodeProjectionFacts {
+                    run_id: facts.run_id,
+                    orchestration_id: facts.orchestration_id,
+                    node_path: facts.node_path,
+                    lifecycle_key: facts.lifecycle_key,
+                    attempt: facts.attempt,
+                    writable_port_keys: facts.writable_port_keys,
+                }
+            }),
+            skill_assets: surface.projections.skill_assets,
+        },
+        skill_asset_keys: surface.skill_asset_keys,
+    }
+}
+
+fn port_resource_surface(
+    surface: AgentRunResourceSurface,
+) -> ports_agent_run_surface::AgentRunResourceSurface {
+    ports_agent_run_surface::AgentRunResourceSurface {
+        runtime: port_runtime_surface(surface.runtime),
+        lifecycle_surface: port_lifecycle_surface(surface.lifecycle_surface),
+    }
+}
+
+fn port_runtime_surface_query_error(
+    error: AgentRunRuntimeSurfaceQueryError,
+) -> ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError {
+    match error {
+        AgentRunRuntimeSurfaceQueryError::MissingAnchor {
+            purpose,
+            runtime_session_id,
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::MissingAnchor {
+            purpose: port_purpose(purpose),
+            runtime_session_id,
+        },
+        AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun {
+            purpose,
+            runtime_session_id,
+            run_id,
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun {
+            purpose: port_purpose(purpose),
+            runtime_session_id,
+            run_id,
+        },
+        AgentRunRuntimeSurfaceQueryError::MissingLifecycleAgent {
+            purpose,
+            runtime_session_id,
+            agent_id,
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::MissingLifecycleAgent {
+            purpose: port_purpose(purpose),
+            runtime_session_id,
+            agent_id,
+        },
+        AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame {
+            purpose,
+            runtime_session_id,
+            agent_id,
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame {
+            purpose: port_purpose(purpose),
+            runtime_session_id,
+            agent_id,
+        },
+        AgentRunRuntimeSurfaceQueryError::MissingRuntimeBackendAnchor {
+            purpose,
+            runtime_session_id,
+            turn_id,
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor {
+            source: RuntimeBackendAnchorError::Missing {
+                component: purpose.component,
+                session_id: Some(runtime_session_id),
+                turn_id,
+            },
+        },
+        AgentRunRuntimeSurfaceQueryError::BackendAnchorDerivation { source, .. } => {
+            ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::RuntimeBackendAnchor {
+                source,
+            }
+        }
+        AgentRunRuntimeSurfaceQueryError::Repository {
+            operation, message, ..
+        } => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::Repository {
+            operation,
+            message,
+        },
+        other => ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError::Projection {
+            message: other.to_string(),
+        },
+    }
+}
+
+fn port_resource_surface_query_error(
+    error: AgentRunResourceSurfaceQueryError,
+) -> ports_agent_run_surface::AgentRunResourceSurfaceQueryError {
+    match error {
+        AgentRunResourceSurfaceQueryError::RuntimeSurface(error) => {
+            ports_agent_run_surface::AgentRunResourceSurfaceQueryError::RuntimeSurface(
+                port_runtime_surface_query_error(error),
+            )
+        }
+        AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor { run_id, agent_id } => {
+            ports_agent_run_surface::AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor {
+                run_id,
+                agent_id,
+            }
+        }
+        AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
+            field,
+            expected,
+            actual,
+        } => ports_agent_run_surface::AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
+            field,
+            expected,
+            actual,
+        },
+        AgentRunResourceSurfaceQueryError::Projection { message } => {
+            ports_agent_run_surface::AgentRunResourceSurfaceQueryError::Projection { message }
+        }
+        AgentRunResourceSurfaceQueryError::Repository { operation, message } => {
+            ports_agent_run_surface::AgentRunResourceSurfaceQueryError::Repository {
+                operation,
+                message,
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl ports_agent_run_surface::AgentRunRuntimeSurfaceQueryPort for AgentRunRuntimeSurfaceQuery {
+    async fn current_runtime_surface(
+        &self,
+        runtime_session_id: &str,
+        purpose: ports_agent_run_surface::RuntimeSurfaceQueryPurpose,
+    ) -> Result<
+        ports_agent_run_surface::AgentRunRuntimeSurface,
+        ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError,
+    > {
+        AgentRunRuntimeSurfaceQueryPort::current_runtime_surface(
+            self,
+            runtime_session_id,
+            local_purpose_from_port(purpose),
+        )
+        .await
+        .map(port_runtime_surface)
+        .map_err(port_runtime_surface_query_error)
+    }
+
+    async fn current_runtime_surface_with_backend(
+        &self,
+        runtime_session_id: &str,
+        purpose: ports_agent_run_surface::RuntimeSurfaceQueryPurpose,
+    ) -> Result<
+        ports_agent_run_surface::AgentRunRuntimeSurfaceWithBackend,
+        ports_agent_run_surface::AgentRunRuntimeSurfaceQueryError,
+    > {
+        AgentRunRuntimeSurfaceQueryPort::current_runtime_surface_with_backend(
+            self,
+            runtime_session_id,
+            local_purpose_from_port(purpose),
+        )
+        .await
+        .map(port_runtime_surface_with_backend)
+        .map_err(port_runtime_surface_query_error)
+    }
+}
+
+#[async_trait]
+impl ports_agent_run_surface::AgentRunResourceSurfaceQueryPort for AgentRunResourceSurfaceQuery {
+    async fn resource_surface_for_runtime_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<
+        ports_agent_run_surface::AgentRunResourceSurface,
+        ports_agent_run_surface::AgentRunResourceSurfaceQueryError,
+    > {
+        AgentRunResourceSurfaceQuery::resource_surface_for_runtime_session(self, runtime_session_id)
+            .await
+            .map(port_resource_surface)
+            .map_err(port_resource_surface_query_error)
+    }
+
+    async fn resource_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<
+        ports_agent_run_surface::AgentRunResourceSurface,
+        ports_agent_run_surface::AgentRunResourceSurfaceQueryError,
+    > {
+        AgentRunResourceSurfaceQuery::resource_surface_for_agent_run(self, run_id, agent_id)
+            .await
+            .map(port_resource_surface)
+            .map_err(port_resource_surface_query_error)
+    }
+}
+
 impl From<AgentRunRuntimeSurfaceWithBackend> for RuntimeGatewayMcpSurfaceWithBackend {
     fn from(surface_with_backend: AgentRunRuntimeSurfaceWithBackend) -> Self {
         let AgentRunRuntimeSurfaceWithBackend {
@@ -1381,11 +1686,14 @@ mod tests {
                 frame_repo: fixture.frame_repo.clone(),
             },
         ));
-        let resource_query = AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
-            anchor_repo: fixture.anchor_repo.clone(),
-            skill_asset_repo: Arc::new(TestSkillAssetRepo),
-            surface_query,
-        });
+        let resource_query: Arc<dyn ports_agent_run_surface::AgentRunResourceSurfaceQueryPort> =
+            Arc::new(AgentRunResourceSurfaceQuery::new(
+                AgentRunResourceSurfaceQueryDeps {
+                    anchor_repo: fixture.anchor_repo.clone(),
+                    skill_asset_repo: Arc::new(TestSkillAssetRepo),
+                    surface_query,
+                },
+            ));
 
         let resource_surface = resource_query
             .resource_surface_for_runtime_session("session-1")

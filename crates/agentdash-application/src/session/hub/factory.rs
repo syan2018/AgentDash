@@ -313,9 +313,6 @@ impl SessionRuntimeInner {
         if self.lifecycle_agent_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 lifecycle_agent_repo".to_string());
         }
-        if self.permission_grant_repo.is_none() {
-            return Err("SessionRuntimeInner 缺少 permission_grant_repo".to_string());
-        }
         if self
             .agent_run_mailbox_runtime_adapter
             .read()

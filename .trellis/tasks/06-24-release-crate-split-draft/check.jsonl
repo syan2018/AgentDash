@@ -10,3 +10,5 @@
 {"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway review baseline."}
 {"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession review baseline."}
 {"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle review baseline."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-check-prompts.md","reason":"Checkpoint check agent prompt templates and static gate focus."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave checkpoint verdicts and remaining extraction blockers to verify."}

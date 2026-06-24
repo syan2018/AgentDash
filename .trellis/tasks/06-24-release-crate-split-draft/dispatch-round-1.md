@@ -29,3 +29,30 @@ After first-wave workers finish, dispatch:
 - `check-import-graph`
 - `check-dead-paths`
 - `check-wave-readiness`
+
+## Completed
+
+All six implement workers completed and were closed after handoff. Main-session integration fixed the test-only `WorkflowAgentNodeFrameMaterializationContext` import and removed the API unused import warning.
+
+Validation passed:
+
+- `cargo metadata --no-deps --format-version 1`
+- `cargo check -p agentdash-application-ports`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
+- `cargo check -p agentdash-local -p agentdash-mcp`
+- `cargo test -p agentdash-application runtime_gateway::setup_actions`
+- `cargo fmt --check`
+- `git diff --check`
+- `python ./.trellis/scripts/task.py validate .trellis/tasks/06-24-release-crate-split-draft`
+
+## Checkpoint Results
+
+| Worker | Agent id | Result |
+| --- | --- | --- |
+| `check-boundary-ports` | `019efaca-c269-7612-a546-c45ecfaf4c62` | Ports crate is pure DTO / trait / error and does not block the next wave. |
+| `check-import-graph` | `019efaca-d6d0-7562-a14b-3bf94228d735` | Gateway setup and Lifecycle `AgentFrameBuilder` gates are clean; AgentRun/Session/Lifecycle and API/VFS imports still block broader extraction. |
+| `check-dead-paths` | `019efaca-ebbb-71d1-a04a-b16c749c42b9` | Stale SessionConstruction test fixture paths and unanchored RuntimeSession fallback tests should be deleted during RuntimeSession cleanup. |
+| `check-wave-readiness` | `019efacb-00a9-7253-bf96-5a9b7c3e9c87` | RuntimeGateway-only physical extraction is allowed; RuntimeSession, AgentRun/Lifecycle and VFS extraction are not ready. |
+
+Full checkpoint notes: `checkpoint-wave-1.md`.

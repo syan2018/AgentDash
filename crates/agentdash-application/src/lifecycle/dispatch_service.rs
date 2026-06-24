@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -21,7 +22,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
-use crate::agent_run::frame::builder::AgentFrameBuilder;
+use crate::agent_run::frame::lifecycle_materialization::materialize_launch_anchor_frame;
 use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 use crate::workflow::WorkflowGraphCompileDiagnostic;
 use crate::workflow::graph_resolver::WorkflowGraphResolver;
@@ -37,6 +38,19 @@ pub struct RuntimeSessionCreationRequest {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub source: ExecutionSource,
+}
+
+impl From<runtime_session_delivery_port::RuntimeSessionCreationRequest>
+    for RuntimeSessionCreationRequest
+{
+    fn from(value: runtime_session_delivery_port::RuntimeSessionCreationRequest) -> Self {
+        Self {
+            project_id: value.project_id,
+            run_id: value.run_id,
+            agent_id: value.agent_id,
+            source: value.source,
+        }
+    }
 }
 
 #[async_trait]
@@ -88,6 +102,29 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
     }
 }
 
+#[async_trait]
+impl runtime_session_delivery_port::RuntimeSessionCreationPort
+    for SessionPersistenceRuntimeSessionCreator
+{
+    async fn create_runtime_session(
+        &self,
+        request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
+    ) -> Result<
+        runtime_session_delivery_port::RuntimeSessionCreationResult,
+        runtime_session_delivery_port::RuntimeSessionDeliveryError,
+    > {
+        let runtime_session_id =
+            RuntimeSessionCreator::create_runtime_session(self, request.into())
+                .await
+                .map_err(|error| {
+                    runtime_session_delivery_port::RuntimeSessionDeliveryError::Internal {
+                        message: error.to_string(),
+                    }
+                })?;
+        Ok(runtime_session_delivery_port::RuntimeSessionCreationResult { runtime_session_id })
+    }
+}
+
 /// 业务执行进入控制面的统一入口 service。
 ///
 /// 接收 `ExecutionIntent`，根据 policy 决定：
@@ -98,7 +135,7 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
 /// - 创建 AgentFrame initial revision
 /// - 按需创建 LifecycleGate / AgentLineage
 ///
-/// **不拥有** AgentFrame 内部构造细节（T4 AgentFrameBuilder 的工作）
+/// **不拥有** AgentFrame 内部构造细节（由 AgentRun frame materialization 边界处理）
 /// 和 connector launch（T4 的工作）。
 pub struct LifecycleDispatchService<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
@@ -161,14 +198,26 @@ pub struct WorkflowAgentNodeMaterializationResult {
     pub delivery_runtime_ref: Uuid,
 }
 
+#[derive(Debug, Clone)]
+pub struct LifecycleLaunchFrameMaterializationRequest {
+    pub agent_id: Uuid,
+    pub runtime_session_ref: Option<Uuid>,
+    pub frame_created_by_id: Option<String>,
+}
+
+pub struct WorkflowAgentNodeFrameMaterializationContext<'a> {
+    pub agent_id: Uuid,
+    pub run: &'a LifecycleRun,
+    pub runtime_session_ref: Uuid,
+    pub frame_created_by_id: Option<String>,
+}
+
 #[async_trait]
-pub trait WorkflowAgentNodeFrameComposer: Send + Sync {
-    async fn compose_workflow_agent_node_frame(
+pub trait WorkflowAgentNodeFrameMaterializer: Send + Sync {
+    async fn materialize_workflow_agent_node_frame(
         &self,
-        builder: AgentFrameBuilder,
-        run: &LifecycleRun,
-        runtime_session_ref: Uuid,
-    ) -> Result<AgentFrameBuilder, WorkflowApplicationError>;
+        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
+    ) -> Result<AgentFrame, WorkflowApplicationError>;
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {
@@ -356,7 +405,7 @@ impl<'a> LifecycleDispatchService<'a> {
     pub async fn materialize_workflow_agent_node(
         &self,
         request: WorkflowAgentNodeMaterializationRequest,
-        frame_composer: &dyn WorkflowAgentNodeFrameComposer,
+        frame_materializer: &dyn WorkflowAgentNodeFrameMaterializer,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
         let run = self
             .run_repo
@@ -393,13 +442,14 @@ impl<'a> LifecycleDispatchService<'a> {
             RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => id,
         };
 
-        let mut builder =
-            AgentFrameBuilder::new_launch_anchor(agent.id, request.frame_created_by_id.clone())
-                .with_runtime_session(runtime_session_ref.to_string());
-        builder = frame_composer
-            .compose_workflow_agent_node_frame(builder, &run, runtime_session_ref)
+        let frame = frame_materializer
+            .materialize_workflow_agent_node_frame(WorkflowAgentNodeFrameMaterializationContext {
+                agent_id: agent.id,
+                run: &run,
+                runtime_session_ref,
+                frame_created_by_id: request.frame_created_by_id.clone(),
+            })
             .await?;
-        let frame = builder.build(self.frame_repo).await?;
 
         let mut agent = agent;
         let anchor_repo = self.anchor_repo.ok_or_else(|| {
@@ -775,15 +825,15 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new_launch_anchor(
-            agent.id,
-            runtime_session_ref.map(|session_id| session_id.to_string()),
-        );
-        if let Some(session_id) = runtime_session_ref {
-            builder = builder.with_runtime_session(session_id.to_string());
-        }
-        let frame = builder.build(self.frame_repo).await?;
-        Ok(frame)
+        materialize_launch_anchor_frame(
+            self.frame_repo,
+            LifecycleLaunchFrameMaterializationRequest {
+                agent_id: agent.id,
+                runtime_session_ref,
+                frame_created_by_id: runtime_session_ref.map(|session_id| session_id.to_string()),
+            },
+        )
+        .await
     }
 
     async fn create_plain_initial_frame(
@@ -791,15 +841,15 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new_launch_anchor(
-            agent.id,
-            runtime_session_ref.map(|session_id| session_id.to_string()),
-        );
-        if let Some(session_id) = runtime_session_ref {
-            builder = builder.with_runtime_session(session_id.to_string());
-        }
-        let frame = builder.build(self.frame_repo).await?;
-        Ok(frame)
+        materialize_launch_anchor_frame(
+            self.frame_repo,
+            LifecycleLaunchFrameMaterializationRequest {
+                agent_id: agent.id,
+                runtime_session_ref,
+                frame_created_by_id: runtime_session_ref.map(|session_id| session_id.to_string()),
+            },
+        )
+        .await
     }
 
     async fn resolve_or_create_runtime_session(

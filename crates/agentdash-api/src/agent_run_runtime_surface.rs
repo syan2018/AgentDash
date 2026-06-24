@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use agentdash_application::agent_run::runtime_surface::AgentRunResourceSurfaceQueryError;
 use agentdash_application::agent_run::{
-    AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
-    AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
-    AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
+    AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
+    AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
+    terminal_launch_target_from_current_surface,
 };
 use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::{RuntimeBackendAnchor, Vfs};
@@ -37,7 +37,9 @@ pub(crate) async fn resolve_current_runtime_surface_for_api(
     purpose: RuntimeSurfaceQueryPurpose,
 ) -> Result<ApiCurrentRuntimeSurface, ApiError> {
     ensure_runtime_session_exists(state, session_id).await?;
-    let surface = runtime_surface_query(state)
+    let surface = state
+        .services
+        .runtime_surface_query
         .current_runtime_surface(session_id, purpose)
         .await
         .map_err(runtime_surface_query_error_to_api)?;
@@ -58,7 +60,9 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_api(
     purpose: RuntimeSurfaceQueryPurpose,
 ) -> Result<ApiCurrentRuntimeSurfaceWithBackend, ApiError> {
     ensure_runtime_session_exists(state, session_id).await?;
-    let surface = runtime_surface_query(state)
+    let surface = state
+        .services
+        .runtime_surface_query
         .current_runtime_surface_with_backend(session_id, purpose)
         .await
         .map_err(runtime_surface_query_error_to_api)?;
@@ -164,13 +168,30 @@ pub(crate) async fn resolve_agent_run_resource_vfs_for_api(
     Ok(resource_surface.lifecycle_surface.vfs)
 }
 
-fn runtime_surface_query(state: &Arc<AppState>) -> AgentRunRuntimeSurfaceQuery {
-    AgentRunRuntimeSurfaceQuery::new(AgentRunRuntimeSurfaceQueryDeps {
-        anchor_repo: state.repos.execution_anchor_repo.clone(),
-        run_repo: state.repos.lifecycle_run_repo.clone(),
-        agent_repo: state.repos.lifecycle_agent_repo.clone(),
-        frame_repo: state.repos.agent_frame_repo.clone(),
-    })
+pub(crate) async fn resolve_terminal_launch_target_for_api(
+    state: &Arc<AppState>,
+    current_user: &AuthIdentity,
+    session_id: &str,
+) -> Result<AgentRunTerminalLaunchTarget, ApiError> {
+    ensure_runtime_session_exists(state, session_id).await?;
+    let runtime_surface = state
+        .services
+        .runtime_surface_query
+        .current_runtime_surface_with_backend(
+            session_id,
+            RuntimeSurfaceQueryPurpose::new("terminal_spawn"),
+        )
+        .await
+        .map_err(runtime_surface_query_error_to_api)?;
+    load_project_with_permission(
+        state.as_ref(),
+        current_user,
+        runtime_surface.surface.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    terminal_launch_target_from_current_surface(&runtime_surface)
+        .map_err(terminal_launch_target_error_to_api)
 }
 
 async fn ensure_runtime_session_exists(
@@ -184,6 +205,10 @@ async fn ensure_runtime_session_exists(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
     Ok(())
+}
+
+fn terminal_launch_target_error_to_api(error: AgentRunTerminalLaunchTargetError) -> ApiError {
+    ApiError::BadRequest(error.to_string())
 }
 
 fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -> ApiError {

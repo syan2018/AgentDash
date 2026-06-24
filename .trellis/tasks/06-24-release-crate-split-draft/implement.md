@@ -34,16 +34,16 @@ Baseline result on 2026-06-25:
 
 ### Wave 1: Ports Only
 
-- [ ] Add `agentdash-application-ports::agent_run_surface`。
-- [ ] Add `agentdash-application-ports::runtime_session_delivery`。
-- [ ] Add `agentdash-application-ports::runtime_surface_adoption`。
-- [ ] Add `agentdash-application-ports::frame_launch_envelope`。
-- [ ] Add `agentdash-application-ports::lifecycle_surface_projection`。
-- [ ] Add `agentdash-application-ports::lifecycle_materialization`。
-- [ ] Add `agentdash-application-ports::agent_frame_materialization`。
-- [ ] Add `agentdash-application-ports::runtime_gateway_setup`。
-- [ ] Add `agentdash-application-ports::vfs_surface_runtime`。
-- [ ] Keep existing `runtime_gateway_mcp_surface` as reduced Gateway MCP DTO。
+- [x] Add `agentdash-application-ports::agent_run_surface`。
+- [x] Add `agentdash-application-ports::runtime_session_delivery`。
+- [x] Add `agentdash-application-ports::runtime_surface_adoption`。
+- [x] Add `agentdash-application-ports::frame_launch_envelope`。
+- [x] Add `agentdash-application-ports::lifecycle_surface_projection`。
+- [x] Add `agentdash-application-ports::lifecycle_materialization`。
+- [x] Add `agentdash-application-ports::agent_frame_materialization`。
+- [x] Add `agentdash-application-ports::runtime_gateway_setup`。
+- [x] Add `agentdash-application-ports::vfs_surface_runtime`。
+- [x] Keep existing `runtime_gateway_mcp_surface` as reduced Gateway MCP DTO。
 
 Gate:
 
@@ -53,10 +53,10 @@ cargo check -p agentdash-application-ports
 
 ### Wave 2: Import Cleanup And Facade Contraction
 
-- [ ] RuntimeGateway setup actions consume `runtime_gateway_setup` ports.
-- [ ] API current-surface helper consumes AppState-owned query facade instead of reconstructing concrete query per call.
-- [ ] AgentRun resource/current surface DTOs move to stable facade/ports and preserve launch/current frame distinction.
-- [ ] Terminal/runtime placement uses application facade so route code only maps HTTP request/response.
+- [x] RuntimeGateway setup actions consume `runtime_gateway_setup` ports.
+- [x] API current-surface helper consumes AppState-owned query facade instead of reconstructing concrete query per call.
+- [x] AgentRun resource/current surface DTOs move to stable facade/ports and preserve launch/current frame distinction.
+- [x] Terminal/runtime placement uses application facade so route code only maps HTTP request/response.
 - [ ] VFS preview/runtime source construction moves behind VFS/AgentRun facades.
 - [ ] Lifecycle dispatch consumes RuntimeSession creation port.
 - [ ] Lifecycle AgentCall materialization consumes AgentRun frame materialization/update port.
@@ -72,6 +72,16 @@ cargo check -p agentdash-application
 cargo check -p agentdash-api
 cargo check -p agentdash-local -p agentdash-mcp
 ```
+
+Checkpoint result on 2026-06-25:
+
+- Compile/test gates passed for ports, application, API, local/MCP, RuntimeGateway setup targeted tests, `cargo fmt --check`, `git diff --check`, and task manifest validation.
+- Ports purity check passed with no `AppState`, `RepositorySet`, route DTO, builder or concrete adapter leakage.
+- RuntimeGateway-only extraction may proceed because MCP/setup dependencies are port-mediated and the old setup import gate is clean.
+- RuntimeSession extraction is still blocked by direct AgentRun/Lifecycle imports in launch/adoption/mailbox/effective-capability paths.
+- AgentRun/Lifecycle extraction is still blocked by lifecycle projector/current-frame resolver imports and by Lifecycle using AgentRun frame materialization helper instead of a port.
+- VFS extraction is still blocked by API VFS route-local assembly and owner-specific provider dependencies.
+- Full checkpoint details live in `checkpoint-wave-1.md`.
 
 ### Wave 3: Runtime Crate Extraction
 

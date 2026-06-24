@@ -12,6 +12,18 @@ pub use agentdash_application_ports::extension_runtime::{
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
     ExtensionRuntimeChannelTransport,
 };
+pub use agentdash_application_ports::runtime_gateway_setup::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeToolOutput, McpProbeTransportInput,
+    McpProbeTransportOutput, RuntimeGatewaySetupError, WORKSPACE_BROWSE_DIRECTORY_ACTION,
+    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
+    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
+    WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
+    WorkspaceDiscoverByIdentityWorkspaceInput,
+};
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use extension_actions::{
     ExtensionInvocationWorkspaceContext, ExtensionRuntimeActionProvider,
@@ -29,15 +41,8 @@ pub use session_actions::{
     RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
 pub use setup_actions::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, McpProbeTransportProvider,
-    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
-    WORKSPACE_DISCOVER_BY_IDENTITY_ACTION, WorkspaceBrowseDirectoryEntry,
-    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
-    WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
-    WorkspaceDetectGitProvider, WorkspaceDetectInput, WorkspaceDetectProvider,
-    WorkspaceDiscoverByIdentityCandidateOutput, WorkspaceDiscoverByIdentityInput,
-    WorkspaceDiscoverByIdentityOutput, WorkspaceDiscoverByIdentityProvider,
-    WorkspaceDiscoverByIdentitySkippedOutput, WorkspaceDiscoverByIdentityWorkspaceInput,
+    McpProbeTransportProvider, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
+    WorkspaceDetectProvider, WorkspaceDiscoverByIdentityProvider,
 };
 pub use tool_adapter::{RuntimeActionToolAdapter, RuntimeActionToolSpec};
 pub use types::{

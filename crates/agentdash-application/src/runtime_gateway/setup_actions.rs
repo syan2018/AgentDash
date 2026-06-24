@@ -1,138 +1,31 @@
 use std::sync::Arc;
 
-use agentdash_domain::mcp_preset::{McpRuntimeBindingConfig, McpTransportConfig};
-use agentdash_spi::platform::mcp_probe::McpProbeTransport;
-use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
-use crate::mcp_preset::probe_transport_without_runtime_context;
-use crate::workspace::{WorkspaceDetectionError, detect_workspace_from_backend};
 
 use super::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeInvocationError,
     RuntimeInvocationOutput, RuntimeInvocationRequest, RuntimeProvider,
 };
-use agentdash_application_ports::backend_transport::{
-    BackendTransport, TransportError, WorkspaceIdentityDiscoveryCandidate,
-    WorkspaceIdentityDiscoveryInfo, WorkspaceIdentityDiscoveryRequest,
-    WorkspaceIdentityDiscoverySkipped,
+use agentdash_application_ports::runtime_gateway_setup::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTransportInput,
+    RuntimeGatewaySetupError, WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION,
+    WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectSetupPort,
+    WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentitySetupPort,
 };
-use agentdash_domain::workspace::WorkspaceIdentityKind;
-use uuid::Uuid;
-
-pub const MCP_PROBE_TRANSPORT_ACTION: &str = "mcp.probe_transport";
-pub const WORKSPACE_BROWSE_DIRECTORY_ACTION: &str = "workspace.browse_directory";
-pub const WORKSPACE_DETECT_ACTION: &str = "workspace.detect";
-pub const WORKSPACE_DETECT_GIT_ACTION: &str = "workspace.detect_git";
-pub const WORKSPACE_DISCOVER_BY_IDENTITY_ACTION: &str = "workspace.discover_by_identity";
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceDetectInput {
-    pub backend_id: String,
-    pub root_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceDetectGitInput {
-    pub backend_id: String,
-    pub root_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceDetectGitOutput {
-    pub resolved_root_ref: String,
-    pub is_git_repo: bool,
-    pub source_repo: Option<String>,
-    pub branch: Option<String>,
-    pub commit_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceBrowseDirectoryInput {
-    pub backend_id: String,
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceBrowseDirectoryOutput {
-    pub current_path: String,
-    pub entries: Vec<WorkspaceBrowseDirectoryEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WorkspaceBrowseDirectoryEntry {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceDiscoverByIdentityInput {
-    pub backend_id: String,
-    pub workspaces: Vec<WorkspaceDiscoverByIdentityWorkspaceInput>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceDiscoverByIdentityWorkspaceInput {
-    pub workspace_id: Uuid,
-    pub identity_kind: WorkspaceIdentityKind,
-    pub identity_payload: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceDiscoverByIdentityOutput {
-    pub candidates: Vec<WorkspaceDiscoverByIdentityCandidateOutput>,
-    pub skipped: Vec<WorkspaceDiscoverByIdentitySkippedOutput>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceDiscoverByIdentityCandidateOutput {
-    pub workspace_id: Uuid,
-    pub root_ref: String,
-    pub identity_kind: WorkspaceIdentityKind,
-    pub identity_payload: serde_json::Value,
-    pub detected_facts: serde_json::Value,
-    pub confidence: String,
-    pub display_name: Option<String>,
-    pub client_name: Option<String>,
-    pub server_address: Option<String>,
-    pub stream: Option<String>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceDiscoverByIdentitySkippedOutput {
-    pub workspace_id: Uuid,
-    pub identity_kind: WorkspaceIdentityKind,
-    pub reason: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct McpProbeTransportInput {
-    pub transport: McpTransportConfig,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_binding: Option<McpRuntimeBindingConfig>,
-}
 
 pub struct McpProbeTransportProvider {
     action_key: RuntimeActionKey,
-    relay: Option<Arc<dyn McpRelayProvider>>,
-    http_probe: Arc<dyn McpProbeTransport>,
+    probe: Arc<dyn McpProbeSetupPort>,
 }
 
 impl McpProbeTransportProvider {
-    pub fn new(
-        relay: Option<Arc<dyn McpRelayProvider>>,
-        http_probe: Arc<dyn McpProbeTransport>,
-    ) -> Self {
+    pub fn new(probe: Arc<dyn McpProbeSetupPort>) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION)
                 .expect("builtin runtime action key should be valid"),
-            relay,
-            http_probe,
+            probe,
         }
     }
 }
@@ -170,14 +63,12 @@ impl RuntimeProvider for McpProbeTransportProvider {
                 )
             })?;
 
-        let result = probe_transport_without_runtime_context(
-            &input.transport,
-            input.runtime_binding.as_ref(),
-            self.relay.as_deref(),
-            self.http_probe.as_ref(),
-        )
-        .await;
-        let output = serde_json::to_value(result).map_err(|error| {
+        let output = self
+            .probe
+            .probe_transport(input)
+            .await
+            .map_err(|error| runtime_error_from_setup(error, &request))?;
+        let output = serde_json::to_value(output).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 mcp.probe_transport 结果失败: {error}"),
                 Some(request.trace.clone()),
@@ -190,15 +81,15 @@ impl RuntimeProvider for McpProbeTransportProvider {
 
 pub struct WorkspaceDetectProvider {
     action_key: RuntimeActionKey,
-    transport: Arc<dyn BackendTransport>,
+    detector: Arc<dyn WorkspaceDetectSetupPort>,
 }
 
 impl WorkspaceDetectProvider {
-    pub fn new(transport: Arc<dyn BackendTransport>) -> Self {
+    pub fn new(detector: Arc<dyn WorkspaceDetectSetupPort>) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(WORKSPACE_DETECT_ACTION)
                 .expect("builtin runtime action key should be valid"),
-            transport,
+            detector,
         }
     }
 }
@@ -237,24 +128,12 @@ impl RuntimeProvider for WorkspaceDetectProvider {
             },
         )?;
 
-        let result = detect_workspace_from_backend(
-            self.transport.as_ref(),
-            &input.backend_id,
-            &input.root_ref,
-        )
-        .await
-        .map_err(|error| match error {
-            WorkspaceDetectionError::BadRequest(message) => {
-                RuntimeInvocationError::invalid_request(message, Some(request.trace.clone()))
-            }
-            WorkspaceDetectionError::BackendOffline(message) => {
-                RuntimeInvocationError::conflict(message, Some(request.trace.clone()))
-            }
-            WorkspaceDetectionError::TransportFailed(message) => {
-                RuntimeInvocationError::provider_failed(message, Some(request.trace.clone()))
-            }
-        })?;
-        let output = serde_json::to_value(result).map_err(|error| {
+        let output = self
+            .detector
+            .detect_workspace(input)
+            .await
+            .map_err(|error| runtime_error_from_setup(error, &request))?;
+        let output = serde_json::to_value(output).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 workspace.detect 结果失败: {error}"),
                 Some(request.trace.clone()),
@@ -267,15 +146,15 @@ impl RuntimeProvider for WorkspaceDetectProvider {
 
 pub struct WorkspaceDetectGitProvider {
     action_key: RuntimeActionKey,
-    transport: Arc<dyn BackendTransport>,
+    detector: Arc<dyn WorkspaceDetectGitSetupPort>,
 }
 
 impl WorkspaceDetectGitProvider {
-    pub fn new(transport: Arc<dyn BackendTransport>) -> Self {
+    pub fn new(detector: Arc<dyn WorkspaceDetectGitSetupPort>) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(WORKSPACE_DETECT_GIT_ACTION)
                 .expect("builtin runtime action key should be valid"),
-            transport,
+            detector,
         }
     }
 }
@@ -312,39 +191,11 @@ impl RuntimeProvider for WorkspaceDetectGitProvider {
                     Some(request.trace.clone()),
                 )
             })?;
-        let backend_id = input.backend_id.trim();
-        if backend_id.is_empty() {
-            return Err(RuntimeInvocationError::invalid_request(
-                "backend_id 不能为空",
-                Some(request.trace.clone()),
-            ));
-        }
-        let root_ref = input.root_ref.trim();
-        if root_ref.is_empty() {
-            return Err(RuntimeInvocationError::invalid_request(
-                "root_ref 不能为空",
-                Some(request.trace.clone()),
-            ));
-        }
-        if !self.transport.is_online(backend_id).await {
-            return Err(RuntimeInvocationError::conflict(
-                format!("目标 Backend 当前不在线: {backend_id}"),
-                Some(request.trace.clone()),
-            ));
-        }
-
-        let info = self
-            .transport
-            .detect_git_repo(backend_id, root_ref)
+        let output = self
+            .detector
+            .detect_git(input)
             .await
-            .map_err(|error| runtime_error_from_transport(error, &request))?;
-        let output = WorkspaceDetectGitOutput {
-            resolved_root_ref: root_ref.to_string(),
-            is_git_repo: info.is_git_repo,
-            source_repo: info.source_repo,
-            branch: info.branch,
-            commit_hash: info.commit_hash,
-        };
+            .map_err(|error| runtime_error_from_setup(error, &request))?;
         let output = serde_json::to_value(output).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 workspace.detect_git 结果失败: {error}"),
@@ -358,15 +209,15 @@ impl RuntimeProvider for WorkspaceDetectGitProvider {
 
 pub struct WorkspaceBrowseDirectoryProvider {
     action_key: RuntimeActionKey,
-    transport: Arc<dyn BackendTransport>,
+    browser: Arc<dyn WorkspaceBrowseDirectorySetupPort>,
 }
 
 impl WorkspaceBrowseDirectoryProvider {
-    pub fn new(transport: Arc<dyn BackendTransport>) -> Self {
+    pub fn new(browser: Arc<dyn WorkspaceBrowseDirectorySetupPort>) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(WORKSPACE_BROWSE_DIRECTORY_ACTION)
                 .expect("builtin runtime action key should be valid"),
-            transport,
+            browser,
         }
     }
 }
@@ -405,38 +256,11 @@ impl RuntimeProvider for WorkspaceBrowseDirectoryProvider {
                     Some(request.trace.clone()),
                 )
             })?;
-        let backend_id = input.backend_id.trim();
-        if backend_id.is_empty() {
-            return Err(RuntimeInvocationError::invalid_request(
-                "backend_id 不能为空",
-                Some(request.trace.clone()),
-            ));
-        }
-        if !self.transport.is_online(backend_id).await {
-            return Err(RuntimeInvocationError::conflict(
-                format!("目标 Backend 当前不在线: {backend_id}"),
-                Some(request.trace.clone()),
-            ));
-        }
-
-        let path = input.path.as_deref();
-        let result = self
-            .transport
-            .browse_directory(backend_id, path)
+        let output = self
+            .browser
+            .browse_directory(input)
             .await
-            .map_err(|error| runtime_error_from_transport(error, &request))?;
-        let output = WorkspaceBrowseDirectoryOutput {
-            current_path: result.current_path,
-            entries: result
-                .entries
-                .into_iter()
-                .map(|entry| WorkspaceBrowseDirectoryEntry {
-                    name: entry.name,
-                    path: entry.path,
-                    is_dir: entry.is_dir,
-                })
-                .collect(),
-        };
+            .map_err(|error| runtime_error_from_setup(error, &request))?;
         let output = serde_json::to_value(output).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 workspace.browse_directory 结果失败: {error}"),
@@ -450,15 +274,15 @@ impl RuntimeProvider for WorkspaceBrowseDirectoryProvider {
 
 pub struct WorkspaceDiscoverByIdentityProvider {
     action_key: RuntimeActionKey,
-    transport: Arc<dyn BackendTransport>,
+    discovery: Arc<dyn WorkspaceDiscoverByIdentitySetupPort>,
 }
 
 impl WorkspaceDiscoverByIdentityProvider {
-    pub fn new(transport: Arc<dyn BackendTransport>) -> Self {
+    pub fn new(discovery: Arc<dyn WorkspaceDiscoverByIdentitySetupPort>) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(WORKSPACE_DISCOVER_BY_IDENTITY_ACTION)
                 .expect("builtin runtime action key should be valid"),
-            transport,
+            discovery,
         }
     }
 }
@@ -500,35 +324,11 @@ impl RuntimeProvider for WorkspaceDiscoverByIdentityProvider {
                         Some(request.trace.clone()),
                     )
                 })?;
-        let backend_id = input.backend_id.trim();
-        if backend_id.is_empty() {
-            return Err(RuntimeInvocationError::invalid_request(
-                "backend_id 不能为空",
-                Some(request.trace.clone()),
-            ));
-        }
-        if !self.transport.is_online(backend_id).await {
-            return Err(RuntimeInvocationError::conflict(
-                format!("目标 Backend 当前不在线: {backend_id}"),
-                Some(request.trace.clone()),
-            ));
-        }
-
-        let discovery_input = input
-            .workspaces
-            .into_iter()
-            .map(|workspace| WorkspaceIdentityDiscoveryRequest {
-                workspace_id: workspace.workspace_id,
-                identity_kind: workspace.identity_kind,
-                identity_payload: workspace.identity_payload,
-            })
-            .collect();
-        let result = self
-            .transport
-            .discover_workspace_by_identity(backend_id, discovery_input)
+        let output = self
+            .discovery
+            .discover_by_identity(input)
             .await
-            .map_err(|error| runtime_error_from_transport(error, &request))?;
-        let output = WorkspaceDiscoverByIdentityOutput::from(result);
+            .map_err(|error| runtime_error_from_setup(error, &request))?;
         let output = serde_json::to_value(output).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 workspace.discover_by_identity 结果失败: {error}"),
@@ -540,65 +340,22 @@ impl RuntimeProvider for WorkspaceDiscoverByIdentityProvider {
     }
 }
 
-impl From<WorkspaceIdentityDiscoveryInfo> for WorkspaceDiscoverByIdentityOutput {
-    fn from(value: WorkspaceIdentityDiscoveryInfo) -> Self {
-        Self {
-            candidates: value
-                .candidates
-                .into_iter()
-                .map(WorkspaceDiscoverByIdentityCandidateOutput::from)
-                .collect(),
-            skipped: value
-                .skipped
-                .into_iter()
-                .map(WorkspaceDiscoverByIdentitySkippedOutput::from)
-                .collect(),
-            warnings: value.warnings,
-        }
-    }
-}
-
-impl From<WorkspaceIdentityDiscoveryCandidate> for WorkspaceDiscoverByIdentityCandidateOutput {
-    fn from(value: WorkspaceIdentityDiscoveryCandidate) -> Self {
-        Self {
-            workspace_id: value.workspace_id,
-            root_ref: value.root_ref,
-            identity_kind: value.identity_kind,
-            identity_payload: value.identity_payload,
-            detected_facts: value.detected_facts,
-            confidence: value.confidence,
-            display_name: value.display_name,
-            client_name: value.client_name,
-            server_address: value.server_address,
-            stream: value.stream,
-            warnings: value.warnings,
-        }
-    }
-}
-
-impl From<WorkspaceIdentityDiscoverySkipped> for WorkspaceDiscoverByIdentitySkippedOutput {
-    fn from(value: WorkspaceIdentityDiscoverySkipped) -> Self {
-        Self {
-            workspace_id: value.workspace_id,
-            identity_kind: value.identity_kind,
-            reason: value.reason,
-            message: value.message,
-        }
-    }
-}
-
-fn runtime_error_from_transport(
-    error: TransportError,
+fn runtime_error_from_setup(
+    error: RuntimeGatewaySetupError,
     request: &RuntimeInvocationRequest,
 ) -> RuntimeInvocationError {
     match error {
-        TransportError::BackendOffline(message) => {
+        RuntimeGatewaySetupError::BadRequest(message) => {
+            RuntimeInvocationError::invalid_request(message, Some(request.trace.clone()))
+        }
+        RuntimeGatewaySetupError::BackendOffline(message) => {
             RuntimeInvocationError::conflict(message, Some(request.trace.clone()))
         }
-        TransportError::OperationFailed(message) => {
+        RuntimeGatewaySetupError::TransportFailed(message)
+        | RuntimeGatewaySetupError::ProviderFailed(message) => {
             RuntimeInvocationError::provider_failed(message, Some(request.trace.clone()))
         }
-        TransportError::Timeout => RuntimeInvocationError::timeout(
+        RuntimeGatewaySetupError::Timeout => RuntimeInvocationError::timeout(
             format!("{} 执行超时", request.action_key),
             Some(request.trace.clone()),
         ),
@@ -607,8 +364,7 @@ fn runtime_error_from_transport(
 
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::workspace::WorkspaceIdentityKind;
-    use agentdash_infrastructure::RmcpProbeTransport;
+    use agentdash_domain::workspace::{WorkspaceBinding, WorkspaceIdentityKind};
     use serde_json::json;
 
     use agentdash_domain::mcp_preset::{
@@ -618,8 +374,10 @@ mod tests {
 
     use super::*;
     use crate::runtime_gateway::{RuntimeActor, RuntimeContext, RuntimeGateway};
-    use agentdash_application_ports::backend_transport::{
-        DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, TransportError, WorkspaceProbeInfo,
+    use agentdash_application_ports::backend_transport::{GitRepoInfo, WorkspaceProbeInfo};
+    use agentdash_application_ports::runtime_gateway_setup::{
+        McpProbeTransportOutput, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryOutput,
+        WorkspaceDetectGitOutput, WorkspaceDetectOutput,
     };
 
     struct FakeBackendTransport {
@@ -627,39 +385,112 @@ mod tests {
         probe: WorkspaceProbeInfo,
     }
 
+    struct FakeMcpProbeSetup {
+        output: McpProbeTransportOutput,
+    }
+
     #[async_trait]
-    impl BackendTransport for FakeBackendTransport {
-        async fn is_online(&self, _backend_id: &str) -> bool {
-            self.online
+    impl McpProbeSetupPort for FakeMcpProbeSetup {
+        async fn probe_transport(
+            &self,
+            _input: McpProbeTransportInput,
+        ) -> Result<McpProbeTransportOutput, RuntimeGatewaySetupError> {
+            Ok(self.output.clone())
         }
+    }
 
-        async fn list_online_backend_ids(&self) -> Vec<String> {
-            if self.online {
-                vec!["backend-1".to_string()]
-            } else {
-                Vec::new()
-            }
-        }
+    fn fake_mcp_probe(output: McpProbeTransportOutput) -> Arc<dyn McpProbeSetupPort> {
+        Arc::new(FakeMcpProbeSetup { output })
+    }
 
+    #[async_trait]
+    impl WorkspaceDetectSetupPort for FakeBackendTransport {
         async fn detect_workspace(
             &self,
-            _backend_id: &str,
-            _root: &str,
-        ) -> Result<WorkspaceProbeInfo, TransportError> {
-            Ok(self.probe.clone())
-        }
+            input: WorkspaceDetectInput,
+        ) -> Result<WorkspaceDetectOutput, RuntimeGatewaySetupError> {
+            if input.root_ref.trim().is_empty() {
+                return Err(RuntimeGatewaySetupError::BadRequest(
+                    "root_ref 不能为空".to_string(),
+                ));
+            }
+            if !self.online {
+                return Err(RuntimeGatewaySetupError::BackendOffline(format!(
+                    "目标 Backend 当前不在线: {}",
+                    input.backend_id
+                )));
+            }
 
+            let identity_kind = if self.probe.git.is_some() {
+                WorkspaceIdentityKind::GitRepo
+            } else if self.probe.p4.is_some() {
+                WorkspaceIdentityKind::P4Workspace
+            } else {
+                WorkspaceIdentityKind::LocalDir
+            };
+            let confidence = if self.probe.git.is_some() || self.probe.p4.is_some() {
+                "high"
+            } else {
+                "medium"
+            };
+            Ok(WorkspaceDetectOutput {
+                identity_kind,
+                identity_payload: json!({}),
+                binding: WorkspaceBinding::new(
+                    uuid::Uuid::nil(),
+                    input.backend_id,
+                    input.root_ref,
+                    json!({}),
+                ),
+                confidence: confidence.to_string(),
+                warnings: self.probe.warnings.clone(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl WorkspaceDetectGitSetupPort for FakeBackendTransport {
+        async fn detect_git(
+            &self,
+            input: WorkspaceDetectGitInput,
+        ) -> Result<WorkspaceDetectGitOutput, RuntimeGatewaySetupError> {
+            if input.root_ref.trim().is_empty() {
+                return Err(RuntimeGatewaySetupError::BadRequest(
+                    "root_ref 不能为空".to_string(),
+                ));
+            }
+            if !self.online {
+                return Err(RuntimeGatewaySetupError::BackendOffline(format!(
+                    "目标 Backend 当前不在线: {}",
+                    input.backend_id
+                )));
+            }
+            let git = self.probe.git.clone().unwrap_or_default();
+            Ok(WorkspaceDetectGitOutput {
+                resolved_root_ref: input.root_ref,
+                is_git_repo: git.is_git_repo,
+                source_repo: git.source_repo,
+                branch: git.branch,
+                commit_hash: git.commit_hash,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl WorkspaceBrowseDirectorySetupPort for FakeBackendTransport {
         async fn browse_directory(
             &self,
-            backend_id: &str,
-            path: Option<&str>,
-        ) -> Result<DirectoryBrowseInfo, TransportError> {
+            input: WorkspaceBrowseDirectoryInput,
+        ) -> Result<WorkspaceBrowseDirectoryOutput, RuntimeGatewaySetupError> {
             if !self.online {
-                return Err(TransportError::BackendOffline(backend_id.to_string()));
+                return Err(RuntimeGatewaySetupError::BackendOffline(format!(
+                    "目标 Backend 当前不在线: {}",
+                    input.backend_id
+                )));
             }
-            Ok(DirectoryBrowseInfo {
-                current_path: path.unwrap_or("C:/").to_string(),
-                entries: vec![DirectoryEntryInfo {
+            Ok(WorkspaceBrowseDirectoryOutput {
+                current_path: input.path.unwrap_or_else(|| "C:/".to_string()),
+                entries: vec![WorkspaceBrowseDirectoryEntry {
                     name: "repo".to_string(),
                     path: "C:/repo".to_string(),
                     is_dir: true,
@@ -671,7 +502,10 @@ mod tests {
     #[tokio::test]
     async fn mcp_probe_provider_rejects_invalid_input_shape() {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(
-            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+            McpProbeTransportProvider::new(fake_mcp_probe(McpProbeTransportOutput::Ok {
+                latency_ms: 0,
+                tools: Vec::new(),
+            })),
         ));
         let request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
@@ -699,7 +533,9 @@ mod tests {
     #[tokio::test]
     async fn mcp_probe_provider_returns_probe_result_payload() {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(
-            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+            McpProbeTransportProvider::new(fake_mcp_probe(McpProbeTransportOutput::Error {
+                error: "relay unavailable".to_string(),
+            })),
         ));
         let input = serde_json::to_value(McpProbeTransportInput {
             transport: McpTransportConfig::Stdio {
@@ -740,7 +576,9 @@ mod tests {
     #[tokio::test]
     async fn mcp_probe_provider_returns_unsupported_for_required_runtime_binding() {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(
-            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+            McpProbeTransportProvider::new(fake_mcp_probe(McpProbeTransportOutput::Unsupported {
+                reason: "workspace.detected_facts.p4.client_name".to_string(),
+            })),
         ));
         let input = json!({
             "transport": {

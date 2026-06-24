@@ -17,9 +17,7 @@ use crate::lifecycle::surface::surface_projector::{
     AgentRunLifecycleSessionEvidenceFacts, AgentRunLifecycleSkillProjectionFacts,
     OrchestrationNodeEvidenceRef,
 };
-use crate::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress, WorkflowApplicationError,
-};
+use crate::lifecycle::{AgentRunLifecycleSurfaceProjector, WorkflowApplicationError};
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use crate::vfs::{
@@ -352,11 +350,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 AgentRunLifecycleSurfaceProjector::new(self.repos)
                     .project_workspace_read_surface(AgentRunLifecycleSessionEvidenceFacts {
                         base_vfs: frame.typed_vfs(),
-                        address: AgentRunRuntimeAddress {
-                            run_id: selection.run_id,
-                            agent_id: selection.agent_id,
-                            frame_id: selection.launch_frame_id,
-                        },
+                        address: selection.address.clone(),
                         message_stream: selection.message_stream.clone(),
                         project_id: run.project_id,
                         node_evidence: orchestration_node_evidence_from_anchor(&selection.anchor),
@@ -566,7 +560,7 @@ fn resource_surface_coordinate_model(
         },
         source_anchor: current_delivery.map(|selection| AgentRunResourceSurfaceSourceAnchorModel {
             runtime_session_id: selection.runtime_session_id.clone(),
-            launch_frame_id: selection.launch_frame_id.to_string(),
+            launch_frame_id: selection.anchor.launch_frame_id.to_string(),
             orchestration_id: selection.orchestration_id.map(|id| id.to_string()),
             node_path: selection.node_path.clone(),
             node_attempt: selection.node_attempt,

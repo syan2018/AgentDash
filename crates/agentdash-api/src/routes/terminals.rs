@@ -5,13 +5,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agentdash_application::agent_run::{
-    AgentRunTerminalLaunchTarget, RuntimeSurfaceQueryPurpose, terminal_launch_target_from_vfs,
-};
 use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_relay::*;
 
-use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_api;
+use crate::agent_run_runtime_surface::resolve_terminal_launch_target_for_api;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::sessions::ensure_session_permission;
@@ -54,7 +51,18 @@ pub async fn spawn_terminal(
     Path(session_id): Path<String>,
     Json(body): Json<SpawnTerminalBody>,
 ) -> Result<Response, ApiError> {
-    let target = resolve_terminal_launch_target(&state, &current_user, &session_id).await?;
+    let target = resolve_terminal_launch_target_for_api(&state, &current_user, &session_id).await?;
+    if !state
+        .services
+        .backend_registry
+        .is_online(&target.backend_id)
+        .await
+    {
+        return Err(ApiError::Conflict(format!(
+            "Session 默认 workspace 所属 Backend 当前不在线: {}",
+            target.backend_id
+        )));
+    }
 
     let terminal_id = RelayMessage::new_id("term");
     let payload = TerminalSpawnPayload {
@@ -248,42 +256,4 @@ async fn load_terminal_for_user(
     )
     .await?;
     Ok(term_state)
-}
-
-async fn resolve_terminal_launch_target(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    session_id: &str,
-) -> Result<AgentRunTerminalLaunchTarget, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        current_user,
-        session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    let runtime_surface = resolve_current_runtime_surface_with_backend_for_api(
-        state,
-        current_user,
-        session_id,
-        RuntimeSurfaceQueryPurpose::new("terminal_spawn"),
-    )
-    .await?;
-    let target = terminal_launch_target_from_vfs(
-        &runtime_surface.surface.vfs,
-        &runtime_surface.runtime_backend_anchor,
-    )
-    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    if !state
-        .services
-        .backend_registry
-        .is_online(&target.backend_id)
-        .await
-    {
-        return Err(ApiError::Conflict(format!(
-            "Session 默认 workspace 所属 Backend 当前不在线: {}",
-            target.backend_id
-        )));
-    }
-    Ok(target)
 }

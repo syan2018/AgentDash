@@ -76,7 +76,7 @@ agentdash-api / agentdash-local / agentdash-mcp
 - [x] `prd.md`、`design.md`、`implement.md` 反映“分支内全量重构主轴”。
 - [x] `work-items/*.md` 覆盖全部可并行工作项，并能直接作为 subagent 派发输入。
 - [x] `implement.jsonl`、`check.jsonl` 注入主轴文件、work item、research 与关键 spec。
-- [ ] Wave 1 ports-only 工作项完成并至少通过 `cargo check -p agentdash-application-ports`。
+- [x] Wave 1 ports-only 工作项完成并至少通过 `cargo check -p agentdash-application-ports`。
 - [ ] Wave 2 import cleanup / facade contraction 完成，static grep gates 显示核心双向引用已改为 port/facade。
 - [ ] RuntimeGateway 与 RuntimeSession crates 完成物理抽取，并通过对应 crate check。
 - [ ] AgentRun 与 Lifecycle crates 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。

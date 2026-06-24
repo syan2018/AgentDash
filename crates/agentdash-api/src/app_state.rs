@@ -11,7 +11,7 @@ use agentdash_application::agent_run::runtime_surface::{
 };
 use agentdash_application::agent_run::{
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application::auth::session_service::AuthSessionService;
@@ -22,7 +22,9 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{CurrentSurfaceRuntimeMcpAccess, RuntimeGateway};
+use agentdash_application::runtime_gateway::{
+    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
@@ -66,6 +68,7 @@ pub struct ServiceSet {
     pub session_hooks: SessionHookService,
     pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
+    pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub session_effects: SessionEffectsService,
@@ -111,6 +114,7 @@ pub struct ServiceSet {
     pub audit_bus: SharedContextAuditBus,
     /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
     pub runtime_gateway: Arc<RuntimeGateway>,
+    pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     /// Workflow function/local-effect executor port — orchestration scheduler 共享。
@@ -254,21 +258,23 @@ impl AppState {
                 frame_repo: repos.agent_frame_repo.clone(),
             },
         ));
+        let runtime_surface_query_port: Arc<dyn AgentRunRuntimeSurfaceQueryPort> =
+            runtime_surface_query.clone();
         let resource_surface_query =
             AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
                 anchor_repo: repos.execution_anchor_repo.clone(),
                 skill_asset_repo: repos.skill_asset_repo.clone(),
-                surface_query: runtime_surface_query.clone(),
+                surface_query: runtime_surface_query_port.clone(),
             });
         let presentation_read_model_query =
             AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
                 repos: repos.clone(),
                 session_core: session_core.clone(),
                 session_eventing: session_eventing.clone(),
-                surface_query: runtime_surface_query.clone(),
+                surface_query: runtime_surface_query_port.clone(),
             });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
-            runtime_surface_query,
+            runtime_surface_query.clone(),
             mcp_tool_discovery,
         ));
         let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
@@ -281,6 +287,10 @@ impl AppState {
         // RuntimeGateway 装配序晚于 session runtime tool composer；此处把 gateway
         // 回填进延迟句柄，供 workspace_module_invoke。
         runtime_gateway_handle.set(runtime_gateway.clone()).await;
+        let extension_runtime_channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+            repos.project_extension_installation_repo.clone(),
+            backend_registry.clone(),
+        ));
 
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();
         let state_change_repo_port: Arc<dyn StateChangeRepository> =
@@ -351,6 +361,7 @@ impl AppState {
                 session_hooks,
                 session_runtime_transition,
                 runtime_surface_update,
+                runtime_surface_query: runtime_surface_query_port,
                 presentation_read_model_query,
                 resource_surface_query,
                 session_effects,
@@ -375,6 +386,7 @@ impl AppState {
                 routine_executor: None,
                 audit_bus,
                 runtime_gateway,
+                extension_runtime_channel_invoker,
                 extension_package_artifact_storage,
                 function_runner,
             },

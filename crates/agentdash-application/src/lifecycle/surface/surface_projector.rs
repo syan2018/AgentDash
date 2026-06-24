@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
+use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::{
     canvas::CANVAS_SYSTEM_SKILL_NAME, companion::COMPANION_SYSTEM_SKILL_NAME,
@@ -68,6 +70,73 @@ impl OrchestrationNodeProjectionInput {
     }
 }
 
+impl From<agent_run_surface_port::AgentRunRuntimeAddress> for AgentRunRuntimeAddress {
+    fn from(value: agent_run_surface_port::AgentRunRuntimeAddress) -> Self {
+        Self {
+            run_id: value.run_id,
+            agent_id: value.agent_id,
+            frame_id: value.frame_id,
+        }
+    }
+}
+
+impl From<lifecycle_surface_port::MessageStreamTraceKind> for MessageStreamTraceKind {
+    fn from(value: lifecycle_surface_port::MessageStreamTraceKind) -> Self {
+        match value {
+            lifecycle_surface_port::MessageStreamTraceKind::ConnectorRuntimeSession => {
+                Self::ConnectorRuntimeSession
+            }
+            lifecycle_surface_port::MessageStreamTraceKind::RestoredTranscript => {
+                Self::RestoredTranscript
+            }
+        }
+    }
+}
+
+impl From<MessageStreamTraceKind> for lifecycle_surface_port::MessageStreamTraceKind {
+    fn from(value: MessageStreamTraceKind) -> Self {
+        match value {
+            MessageStreamTraceKind::ConnectorRuntimeSession => Self::ConnectorRuntimeSession,
+            MessageStreamTraceKind::RestoredTranscript => Self::RestoredTranscript,
+        }
+    }
+}
+
+impl From<lifecycle_surface_port::MessageStreamProjectionRef> for MessageStreamProjectionRef {
+    fn from(value: lifecycle_surface_port::MessageStreamProjectionRef) -> Self {
+        Self {
+            runtime_session_id: value.runtime_session_id,
+            trace_kind: value.trace_kind.into(),
+        }
+    }
+}
+
+impl From<lifecycle_surface_port::OrchestrationNodeEvidenceRef> for OrchestrationNodeEvidenceRef {
+    fn from(value: lifecycle_surface_port::OrchestrationNodeEvidenceRef) -> Self {
+        Self {
+            run_id: value.run_id,
+            orchestration_id: value.orchestration_id,
+            node_path: value.node_path,
+            attempt: value.attempt,
+        }
+    }
+}
+
+impl From<lifecycle_surface_port::OrchestrationNodeProjectionInput>
+    for OrchestrationNodeProjectionInput
+{
+    fn from(value: lifecycle_surface_port::OrchestrationNodeProjectionInput) -> Self {
+        Self {
+            run_id: value.run_id,
+            orchestration_id: value.orchestration_id,
+            node_path: value.node_path,
+            lifecycle_key: value.lifecycle_key,
+            attempt: value.attempt,
+            writable_port_keys: value.writable_port_keys,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
     CanvasSystem,
@@ -87,6 +156,30 @@ impl BuiltinLifecycleSkill {
     }
 }
 
+impl From<lifecycle_surface_port::BuiltinLifecycleSkill> for BuiltinLifecycleSkill {
+    fn from(value: lifecycle_surface_port::BuiltinLifecycleSkill) -> Self {
+        match value {
+            lifecycle_surface_port::BuiltinLifecycleSkill::CanvasSystem => Self::CanvasSystem,
+            lifecycle_surface_port::BuiltinLifecycleSkill::CompanionSystem => Self::CompanionSystem,
+            lifecycle_surface_port::BuiltinLifecycleSkill::WorkspaceModuleSystem => {
+                Self::WorkspaceModuleSystem
+            }
+            lifecycle_surface_port::BuiltinLifecycleSkill::RoutineMemory => Self::RoutineMemory,
+        }
+    }
+}
+
+impl From<BuiltinLifecycleSkill> for lifecycle_surface_port::BuiltinLifecycleSkill {
+    fn from(value: BuiltinLifecycleSkill) -> Self {
+        match value {
+            BuiltinLifecycleSkill::CanvasSystem => Self::CanvasSystem,
+            BuiltinLifecycleSkill::CompanionSystem => Self::CompanionSystem,
+            BuiltinLifecycleSkill::WorkspaceModuleSystem => Self::WorkspaceModuleSystem,
+            BuiltinLifecycleSkill::RoutineMemory => Self::RoutineMemory,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkillPolicy {
     PreserveProjected,
@@ -96,6 +189,30 @@ pub enum BuiltinLifecycleSkillPolicy {
 impl BuiltinLifecycleSkillPolicy {
     pub fn ensure(skills: impl IntoIterator<Item = BuiltinLifecycleSkill>) -> Self {
         Self::EnsureAndProject(skills.into_iter().collect())
+    }
+}
+
+impl From<lifecycle_surface_port::BuiltinLifecycleSkillPolicy> for BuiltinLifecycleSkillPolicy {
+    fn from(value: lifecycle_surface_port::BuiltinLifecycleSkillPolicy) -> Self {
+        match value {
+            lifecycle_surface_port::BuiltinLifecycleSkillPolicy::PreserveProjected => {
+                Self::PreserveProjected
+            }
+            lifecycle_surface_port::BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) => {
+                Self::EnsureAndProject(skills.into_iter().map(Into::into).collect())
+            }
+        }
+    }
+}
+
+impl From<BuiltinLifecycleSkillPolicy> for lifecycle_surface_port::BuiltinLifecycleSkillPolicy {
+    fn from(value: BuiltinLifecycleSkillPolicy) -> Self {
+        match value {
+            BuiltinLifecycleSkillPolicy::PreserveProjected => Self::PreserveProjected,
+            BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) => {
+                Self::EnsureAndProject(skills.into_iter().map(Into::into).collect())
+            }
+        }
     }
 }
 
@@ -132,6 +249,25 @@ pub enum AgentRunLifecycleSurfaceMode {
     WorkflowNodeExecutionSurface,
 }
 
+impl From<lifecycle_surface_port::AgentRunLifecycleSurfaceMode> for AgentRunLifecycleSurfaceMode {
+    fn from(value: lifecycle_surface_port::AgentRunLifecycleSurfaceMode) -> Self {
+        match value {
+            lifecycle_surface_port::AgentRunLifecycleSurfaceMode::WorkspaceReadSurface => {
+                Self::WorkspaceReadSurface
+            }
+            lifecycle_surface_port::AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface => {
+                Self::LaunchEvidenceSurface
+            }
+            lifecycle_surface_port::AgentRunLifecycleSurfaceMode::CompanionChildSurface => {
+                Self::CompanionChildSurface
+            }
+            lifecycle_surface_port::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface => {
+                Self::WorkflowNodeExecutionSurface
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunLifecycleSurfaceInput {
     pub base_vfs: Option<Vfs>,
@@ -143,6 +279,22 @@ pub struct AgentRunLifecycleSurfaceInput {
     pub builtin_skills: BuiltinLifecycleSkillPolicy,
     pub node_evidence: Option<OrchestrationNodeEvidenceRef>,
     pub node_projection: Option<OrchestrationNodeProjectionInput>,
+}
+
+impl From<lifecycle_surface_port::AgentRunLifecycleSurfaceInput> for AgentRunLifecycleSurfaceInput {
+    fn from(value: lifecycle_surface_port::AgentRunLifecycleSurfaceInput) -> Self {
+        Self {
+            base_vfs: value.base_vfs,
+            address: value.address.into(),
+            message_stream: value.message_stream.map(Into::into),
+            project_id: value.project_id,
+            mode: value.mode.into(),
+            explicit_skill_asset_keys: value.explicit_skill_asset_keys,
+            builtin_skills: value.builtin_skills.into(),
+            node_evidence: value.node_evidence.map(Into::into),
+            node_projection: value.node_projection.map(Into::into),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +325,17 @@ pub struct AgentRunLifecycleSurface {
     pub skill_asset_keys: Vec<String>,
 }
 
+impl From<AgentRunLifecycleSurface> for lifecycle_surface_port::AgentRunLifecycleSurface {
+    fn from(value: AgentRunLifecycleSurface) -> Self {
+        Self {
+            vfs: value.vfs,
+            lifecycle_mount: value.lifecycle_mount,
+            projections: value.projections.into(),
+            skill_asset_keys: value.skill_asset_keys,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunLifecycleProjectionSet {
     pub agent_run_identity: bool,
@@ -182,10 +345,33 @@ pub struct AgentRunLifecycleProjectionSet {
     pub skill_assets: Vec<String>,
 }
 
+impl From<AgentRunLifecycleProjectionSet>
+    for lifecycle_surface_port::AgentRunLifecycleProjectionSet
+{
+    fn from(value: AgentRunLifecycleProjectionSet) -> Self {
+        Self {
+            agent_run_identity: value.agent_run_identity,
+            message_stream: value.message_stream.map(Into::into),
+            node_evidence: value.node_evidence.map(Into::into),
+            orchestration_node: value.orchestration_node.map(Into::into),
+            skill_assets: value.skill_assets,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageStreamProjectionFacts {
     pub runtime_session_id: String,
     pub trace_kind: MessageStreamTraceKind,
+}
+
+impl From<MessageStreamProjectionFacts> for lifecycle_surface_port::MessageStreamProjectionFacts {
+    fn from(value: MessageStreamProjectionFacts) -> Self {
+        Self {
+            runtime_session_id: value.runtime_session_id,
+            trace_kind: value.trace_kind.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +382,19 @@ pub struct OrchestrationNodeEvidenceFacts {
     pub attempt: u32,
 }
 
+impl From<OrchestrationNodeEvidenceFacts>
+    for lifecycle_surface_port::OrchestrationNodeEvidenceFacts
+{
+    fn from(value: OrchestrationNodeEvidenceFacts) -> Self {
+        Self {
+            run_id: value.run_id,
+            orchestration_id: value.orchestration_id,
+            node_path: value.node_path,
+            attempt: value.attempt,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrchestrationNodeProjectionFacts {
     pub run_id: Uuid,
@@ -204,6 +403,21 @@ pub struct OrchestrationNodeProjectionFacts {
     pub lifecycle_key: String,
     pub attempt: u32,
     pub writable_port_keys: Vec<String>,
+}
+
+impl From<OrchestrationNodeProjectionFacts>
+    for lifecycle_surface_port::OrchestrationNodeProjectionFacts
+{
+    fn from(value: OrchestrationNodeProjectionFacts) -> Self {
+        Self {
+            run_id: value.run_id,
+            orchestration_id: value.orchestration_id,
+            node_path: value.node_path,
+            lifecycle_key: value.lifecycle_key,
+            attempt: value.attempt,
+            writable_port_keys: value.writable_port_keys,
+        }
+    }
 }
 
 pub struct AgentRunLifecycleSurfaceProjector {
@@ -307,6 +521,24 @@ impl AgentRunLifecycleSurfaceProjector {
         activation.lifecycle_vfs = surface.vfs.clone();
         activation.lifecycle_mount = surface.lifecycle_mount.clone();
         Ok(surface)
+    }
+}
+
+#[async_trait::async_trait]
+impl lifecycle_surface_port::LifecycleSurfaceProjectionPort for AgentRunLifecycleSurfaceProjector {
+    async fn project_lifecycle_surface(
+        &self,
+        input: lifecycle_surface_port::AgentRunLifecycleSurfaceInput,
+    ) -> Result<
+        lifecycle_surface_port::AgentRunLifecycleSurface,
+        lifecycle_surface_port::LifecycleSurfaceProjectionError,
+    > {
+        self.project(input.into())
+            .await
+            .map(Into::into)
+            .map_err(|message| {
+                lifecycle_surface_port::LifecycleSurfaceProjectionError::Projection { message }
+            })
     }
 }
 

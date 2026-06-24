@@ -23,8 +23,9 @@ pub(crate) use activity_activation::{
 };
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_service::{
-    LifecycleDispatchService, RuntimeSessionCreationRequest, RuntimeSessionCreator,
-    SessionPersistenceRuntimeSessionCreator, WorkflowAgentNodeFrameComposer,
+    LifecycleDispatchService, LifecycleLaunchFrameMaterializationRequest,
+    RuntimeSessionCreationRequest, RuntimeSessionCreator, SessionPersistenceRuntimeSessionCreator,
+    WorkflowAgentNodeFrameMaterializationContext, WorkflowAgentNodeFrameMaterializer,
     WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
 pub use error::WorkflowApplicationError;

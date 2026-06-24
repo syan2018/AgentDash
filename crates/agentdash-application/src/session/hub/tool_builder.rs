@@ -32,12 +32,12 @@ impl SessionRuntimeInner {
             .await
     }
 
-    /// 读取当前 active turn 的 capability 投影；若没有 active turn，则回退到 session_profile 缓存。
+    /// 读取当前 active turn 或 RuntimeSession live profile 的 capability 投影。
     ///
-    /// 两级缓存均为 AgentFrame revision 的投影。
+    /// 这里不再从 delivery anchor 反查 current AgentFrame；AgentRun current surface
+    /// query / effective capability port 才拥有业务 surface 读取语义。
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
-        let cached = self
-            .runtime_registry
+        self.runtime_registry
             .with_runtime(session_id, |runtime| {
                 let runtime = runtime?;
                 if let Some(turn) = runtime.turn_state.active_turn() {
@@ -48,28 +48,7 @@ impl SessionRuntimeInner {
                     .as_ref()
                     .map(|profile| profile.capability_state.clone())
             })
-            .await;
-        if cached.is_some() {
-            return cached;
-        }
-
-        let (Some(anchor_repo), Some(agent_repo), Some(frame_repo)) = (
-            self.execution_anchor_repo.as_ref(),
-            self.lifecycle_agent_repo.as_ref(),
-            self.agent_frame_repo.as_ref(),
-        ) else {
-            return None;
-        };
-        resolve_current_frame_from_delivery_trace_ref(
-            session_id,
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            frame_repo.as_ref(),
-        )
-        .await
-        .ok()
-        .flatten()
-        .map(|(_anchor, _agent, frame)| project_capability_state_from_frame(&frame))
+            .await
     }
 
     /// 将已持久化的 AgentFrame revision 采用到 active runtime。

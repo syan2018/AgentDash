@@ -3,6 +3,7 @@ pub(crate) mod construction;
 pub(crate) mod hook_runtime;
 pub(crate) mod launch_commit;
 pub(crate) mod launch_envelope_provider;
+pub(crate) mod lifecycle_materialization;
 pub(crate) mod runtime_launch;
 pub(crate) mod surface;
 pub(crate) mod surface_service;

@@ -15,8 +15,8 @@ use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 
 use super::agent_node_launcher::{
-    AgentNodeFrameComposer, AgentNodeLaunchOutcome, AgentNodeLauncher,
-    RepositoryAgentNodeFrameComposer,
+    AgentNodeFrameMaterializer, AgentNodeLaunchOutcome, AgentNodeLauncher,
+    RepositoryAgentNodeFrameMaterializer,
 };
 use super::function_node_runner::FunctionNodeRunner;
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
@@ -112,24 +112,24 @@ impl OrchestrationExecutorLauncher {
         repos: RepositorySet,
         platform_config: SharedPlatformConfig,
     ) -> Self {
-        let frame_composer = Arc::new(RepositoryAgentNodeFrameComposer::new(
+        let frame_materializer = Arc::new(RepositoryAgentNodeFrameMaterializer::new(
             repos.clone(),
             platform_config,
         ));
-        Self::from_executor_repositories(repos.into(), frame_composer)
+        Self::from_executor_repositories(repos.into(), frame_materializer)
     }
 
     #[cfg(test)]
     fn from_repositories(
         repos: OrchestrationExecutorRepositories,
-        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> Self {
-        Self::from_executor_repositories(repos, frame_composer)
+        Self::from_executor_repositories(repos, frame_materializer)
     }
 
     fn from_executor_repositories(
         repos: OrchestrationExecutorRepositories,
-        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> Self {
         let agent_node_launcher = AgentNodeLauncher::new(
             repos.agent_procedure_repo.clone(),
@@ -142,7 +142,7 @@ impl OrchestrationExecutorLauncher {
             repos.agent_lineage_repo.clone(),
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
-            frame_composer,
+            frame_materializer,
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
@@ -486,10 +486,11 @@ mod launcher_drain_tests {
     use chrono::Utc;
     use serde_json::json;
 
-    use crate::agent_run::AgentFrameBuilder;
+    use crate::agent_run::frame::lifecycle_materialization::materialize_launch_anchor_frame_with_vfs;
     use crate::lifecycle::{
-        LifecycleMountSurface, RuntimeSessionCreationRequest, RuntimeSessionCreator,
-        lifecycle_mount_overlay_for_surface,
+        LifecycleLaunchFrameMaterializationRequest, LifecycleMountSurface,
+        RuntimeSessionCreationRequest, RuntimeSessionCreator,
+        WorkflowAgentNodeFrameMaterializationContext, lifecycle_mount_overlay_for_surface,
     };
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
 
@@ -880,35 +881,43 @@ mod launcher_drain_tests {
         }
     }
 
-    struct TestLifecycleFrameComposer;
+    struct TestLifecycleFrameMaterializer {
+        frame_repo: Arc<InMemoryFrameRepo>,
+    }
 
     #[async_trait]
-    impl AgentNodeFrameComposer for TestLifecycleFrameComposer {
-        async fn compose_frame(
+    impl AgentNodeFrameMaterializer for TestLifecycleFrameMaterializer {
+        async fn materialize_frame(
             &self,
-            builder: AgentFrameBuilder,
-            run: &LifecycleRun,
+            context: WorkflowAgentNodeFrameMaterializationContext<'_>,
             coordinate: &RuntimeNodeCoordinate,
             plan_node: &PlanNode,
             _workflow_contract: Option<&AgentProcedureContract>,
             _workflow_label: Option<&str>,
-            _runtime_session_id: Option<&str>,
-        ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
+        ) -> Result<AgentFrame, WorkflowApplicationError> {
             let writable_port_keys = plan_node
                 .output_ports
                 .iter()
                 .map(|port| port.key.clone())
                 .collect::<Vec<_>>();
             let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
-                run_id: run.id,
+                run_id: context.run.id,
                 orchestration_id: coordinate.orchestration_id,
                 node_path: &coordinate.node_path,
                 lifecycle_key: "test_lifecycle",
                 attempt: coordinate.attempt,
                 writable_port_keys,
             });
-            let vfs = overlay;
-            Ok(builder.with_vfs_typed(&vfs))
+            materialize_launch_anchor_frame_with_vfs(
+                self.frame_repo.as_ref(),
+                LifecycleLaunchFrameMaterializationRequest {
+                    agent_id: context.agent_id,
+                    runtime_session_ref: Some(context.runtime_session_ref),
+                    frame_created_by_id: context.frame_created_by_id,
+                },
+                &overlay,
+            )
+            .await
         }
     }
 
@@ -921,36 +930,41 @@ mod launcher_drain_tests {
         workflow_label: Option<String>,
     }
 
-    #[derive(Default)]
-    struct CapturingLifecycleFrameComposer {
+    struct CapturingLifecycleFrameMaterializer {
+        frame_repo: Arc<InMemoryFrameRepo>,
         calls: Mutex<Vec<CapturedAgentNodeComposition>>,
     }
 
-    impl CapturingLifecycleFrameComposer {
+    impl CapturingLifecycleFrameMaterializer {
+        fn new(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+            Self {
+                frame_repo,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
         fn calls(&self) -> Vec<CapturedAgentNodeComposition> {
             self.calls.lock().unwrap().clone()
         }
     }
 
     #[async_trait]
-    impl AgentNodeFrameComposer for CapturingLifecycleFrameComposer {
-        async fn compose_frame(
+    impl AgentNodeFrameMaterializer for CapturingLifecycleFrameMaterializer {
+        async fn materialize_frame(
             &self,
-            builder: AgentFrameBuilder,
-            run: &LifecycleRun,
+            context: WorkflowAgentNodeFrameMaterializationContext<'_>,
             coordinate: &RuntimeNodeCoordinate,
             plan_node: &PlanNode,
             workflow_contract: Option<&AgentProcedureContract>,
             workflow_label: Option<&str>,
-            runtime_session_id: Option<&str>,
-        ) -> Result<AgentFrameBuilder, WorkflowApplicationError> {
+        ) -> Result<AgentFrame, WorkflowApplicationError> {
             self.calls
                 .lock()
                 .unwrap()
                 .push(CapturedAgentNodeComposition {
                     node_path: coordinate.node_path.clone(),
                     attempt: coordinate.attempt,
-                    runtime_session_id: runtime_session_id.map(str::to_string),
+                    runtime_session_id: Some(context.runtime_session_ref.to_string()),
                     contract_output_ports: workflow_contract
                         .map(|contract| {
                             contract
@@ -969,14 +983,23 @@ mod launcher_drain_tests {
                 .map(|port| port.key.clone())
                 .collect::<Vec<_>>();
             let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
-                run_id: run.id,
+                run_id: context.run.id,
                 orchestration_id: coordinate.orchestration_id,
                 node_path: &coordinate.node_path,
                 lifecycle_key: "test_lifecycle",
                 attempt: coordinate.attempt,
                 writable_port_keys,
             });
-            Ok(builder.with_vfs_typed(&overlay))
+            materialize_launch_anchor_frame_with_vfs(
+                self.frame_repo.as_ref(),
+                LifecycleLaunchFrameMaterializationRequest {
+                    agent_id: context.agent_id,
+                    runtime_session_ref: Some(context.runtime_session_ref),
+                    frame_created_by_id: context.frame_created_by_id,
+                },
+                &overlay,
+            )
+            .await
         }
     }
 
@@ -1210,25 +1233,30 @@ mod launcher_drain_tests {
         Arc<InMemoryFrameRepo>,
         Arc<InMemoryAnchorRepo>,
     ) {
-        launcher_with_procedure_frame_repo_and_composer(
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let frame_materializer = Arc::new(TestLifecycleFrameMaterializer {
+            frame_repo: frame_repo.clone(),
+        });
+        launcher_with_procedure_frame_repo_and_materializer(
             run_repo,
             gate_repo,
             procedure_repo,
-            Arc::new(TestLifecycleFrameComposer),
+            frame_repo,
+            frame_materializer,
         )
     }
 
-    fn launcher_with_procedure_frame_repo_and_composer(
+    fn launcher_with_procedure_frame_repo_and_materializer(
         run_repo: Arc<InMemoryRunRepo>,
         gate_repo: Arc<InMemoryGateRepo>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
-        frame_composer: Arc<dyn AgentNodeFrameComposer>,
+        frame_repo: Arc<InMemoryFrameRepo>,
+        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> (
         OrchestrationExecutorLauncher,
         Arc<InMemoryFrameRepo>,
         Arc<InMemoryAnchorRepo>,
     ) {
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
         let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
         let launcher = OrchestrationExecutorLauncher::from_repositories(
             OrchestrationExecutorRepositories {
@@ -1243,7 +1271,7 @@ mod launcher_drain_tests {
                 execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
             },
-            frame_composer,
+            frame_materializer,
         );
         (launcher, frame_repo, anchor_repo)
     }
@@ -1563,7 +1591,8 @@ mod launcher_drain_tests {
     }
 
     #[tokio::test]
-    async fn launcher_materializes_agent_call_contract_through_frame_composer_and_node_started() {
+    async fn launcher_materializes_agent_call_contract_through_frame_materializer_and_node_started()
+    {
         let procedure_key = "agent.contract.review";
         let node = plan_node(
             "agent",
@@ -1585,13 +1614,16 @@ mod launcher_drain_tests {
             ..AgentProcedureContract::default()
         };
         procedure_repo.insert(procedure_with_contract(project_id, procedure_key, contract));
-        let composer = Arc::new(CapturingLifecycleFrameComposer::default());
-        let (launcher, frame_repo, anchor_repo) = launcher_with_procedure_frame_repo_and_composer(
-            run_repo.clone(),
-            Arc::new(InMemoryGateRepo::default()),
-            procedure_repo,
-            composer.clone(),
-        );
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(frame_repo.clone()));
+        let (launcher, frame_repo, anchor_repo) =
+            launcher_with_procedure_frame_repo_and_materializer(
+                run_repo.clone(),
+                Arc::new(InMemoryGateRepo::default()),
+                procedure_repo,
+                frame_repo,
+                materializer.clone(),
+            );
 
         let result = launcher
             .drain_ready_nodes(run_id)
@@ -1600,7 +1632,7 @@ mod launcher_drain_tests {
 
         assert_eq!(result.launched_agent_nodes.len(), 1);
         let launched = &result.launched_agent_nodes[0];
-        let calls = composer.calls();
+        let calls = materializer.calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].node_path, "agent");
         assert_eq!(calls[0].attempt, 1);

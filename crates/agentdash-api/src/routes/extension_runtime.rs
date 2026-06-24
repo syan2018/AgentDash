@@ -27,10 +27,9 @@ use agentdash_application::extension_runtime::{
 };
 use agentdash_application::runtime_gateway::{
     ExtensionInvocationWorkspaceContext, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
-    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
-    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
-    attach_extension_invocation_workspace,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult, RuntimeActionKey,
+    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
+    RuntimeTrace, attach_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
@@ -225,11 +224,9 @@ pub async fn invoke_project_extension_runtime_channel(
             },
         )
         .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
-    let invoker = ExtensionRuntimeChannelInvoker::new(
-        state.repos.project_extension_installation_repo.clone(),
-        state.services.backend_registry.clone(),
-    );
-    let result = invoker
+    let result = state
+        .services
+        .extension_runtime_channel_invoker
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
             session_id: session_id.to_string(),

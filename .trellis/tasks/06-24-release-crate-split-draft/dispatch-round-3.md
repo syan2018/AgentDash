@@ -145,6 +145,16 @@ Run checkpoint checks after the implement workers complete, not during the first
 | `check-vfs-owner-adapters` | VFS generic/owner split | Remaining session/lifecycle/canvas owner dependencies and physical VFS extraction readiness |
 | `check-gateway-regression` | Gateway extracted crate regression | Confirm no new monolithic application dependency or old `agentdash_application::runtime_gateway` consumer import |
 
+## Checkpoint Checks Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `check-session-adoption-port` | `019efb2c-6503-7fa0-a8d8-a5cdb39becd7` | Halley |
+| `check-session-launch-commit-port` | `019efb2c-7988-7c22-b8f5-2c87f9e82263` | Schrodinger |
+| `check-control-dispatch-boundary` | `019efb2c-8e4e-7a70-aaec-c85c00635863` | Ohm |
+| `check-vfs-owner-adapters` | `019efb2c-a2b5-7173-8c80-ca966f6498a6` | Nash |
+| `check-gateway-regression` | `019efb2c-b710-72c1-bed9-ab856ea2e00a` | Pasteur |
+
 Check worker prompt bias:
 
 - Findings first, ordered by severity.

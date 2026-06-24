@@ -91,3 +91,99 @@ Evidence:
 - `cargo metadata --no-deps --format-version 1`
 - Static gates in `implement.md`
 - Worker handoffs from the current wave
+
+## Round 3 Check Prompts
+
+All Round 3 check agents start with:
+
+```text
+Active task: .trellis/tasks/06-24-release-crate-split-draft
+Branch: codex/release-crate-split-refactor
+Round: 3 checkpoint check
+Dispatch: .trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md
+Checkpoint baseline: .trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-2.md
+```
+
+Round 3 check agents verify worker output only after implement workers finish. They do not ask for old behavior to be preserved for compatibility, and they do not run large workspace tests before narrow gates pass.
+
+### check-session-adoption-port
+
+Focus:
+
+- Session/AgentRun live adoption direction after `session-adoption-port-impl`.
+- Production wiring should consume `RuntimeSurfaceAdoptionPort` where the dependency crosses Session/AgentRun.
+- Remaining `AgentRunActiveRuntimeSurfaceAdopter` paths must be classified as `delete`, `move`, `port`, or `keep` with reason.
+- RuntimeSession extraction readiness must be stated explicitly.
+
+Commands:
+
+```powershell
+cargo check -p agentdash-application
+rg -n "AgentRunActiveRuntimeSurfaceAdopter|ActiveRuntimeSurfaceAdopter" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap -g '*.rs'
+rg -n "RuntimeSurfaceAdoptionPort" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap crates/agentdash-application/src/agent_run -g '*.rs'
+```
+
+### check-session-launch-commit-port
+
+Focus:
+
+- Session launch dependency direction after `session-launch-commit-port-impl`.
+- Session launch should not import AgentRun implementation adapters for launch envelope or accepted launch commit.
+- Tests that only anchor the old adapter chain should be recommended for deletion.
+
+Commands:
+
+```powershell
+cargo check -p agentdash-application
+rg -n "FrameLaunchEnvelopeProvider|SharedFrameLaunchEnvelopeProvider|AgentRunAcceptedLaunchCommitAdapter|AgentRunAcceptedLaunchCommitInput" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap -g '*.rs'
+rg -n "frame_launch_envelope|accepted_launch|launch_commit" crates/agentdash-application-ports/src crates/agentdash-application/src/session -g '*.rs'
+```
+
+### check-control-dispatch-boundary
+
+Focus:
+
+- AgentRun must not construct `LifecycleDispatchService` directly.
+- AgentRun frame construction must not import Lifecycle helper implementation paths.
+- Remaining Lifecycle dispatch usage inside Lifecycle/workflow owner paths should be classified separately from AgentRun violations.
+
+Commands:
+
+```powershell
+cargo check -p agentdash-application
+rg -n "LifecycleDispatchService" crates/agentdash-application/src/agent_run crates/agentdash-application/src/workflow/orchestration -g '*.rs'
+rg -n "composer_lifecycle_node|resolve_current_frame_from_delivery_trace_ref|crate::lifecycle" crates/agentdash-application/src/agent_run/frame/construction -g '*.rs'
+```
+
+### check-vfs-owner-adapters
+
+Focus:
+
+- Generic VFS ownership after `vfs-owner-adapter-prep-impl`.
+- Session/lifecycle/canvas provider wiring should live in owner adapters or remain classified as blockers.
+- Physical VFS extraction readiness must be stated explicitly.
+
+Commands:
+
+```powershell
+cargo check -p agentdash-application
+rg -n "crate::session|crate::lifecycle|crate::canvas|provider_lifecycle|mount_canvas" crates/agentdash-application/src/vfs -g '*.rs'
+rg -n "ResolvedVfsSurfaceSource|build_surface_summary" crates/agentdash-api/src crates/agentdash-application/src/vfs -g '*.rs'
+```
+
+### check-gateway-regression
+
+Focus:
+
+- Gateway extracted crate must not regain a dependency on monolithic `agentdash-application`.
+- API/local/MCP must not reintroduce `agentdash_application::runtime_gateway` imports.
+- Temporary `agentdash-application` umbrella re-export is allowed only until visibility cleanup.
+
+Commands:
+
+```powershell
+cargo check -p agentdash-application-runtime-gateway
+cargo check -p agentdash-api -p agentdash-local -p agentdash-mcp
+rg -n "agentdash_application::runtime_gateway" crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-mcp/src -g '*.rs'
+rg -n "agentdash_application::|crate::(mcp_preset|workspace|agent_run|lifecycle|session|vfs|canvas)::" crates/agentdash-application-runtime-gateway/src -g '*.rs'
+```

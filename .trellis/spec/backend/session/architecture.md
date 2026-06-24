@@ -119,6 +119,7 @@ pub enum RuntimeSurfaceUpdateRequest {
 | Runtime update target cannot resolve current AgentFrame / delivery runtime anchor | Return a visible surface update error; do not synthesize a partial projection from local business facts. |
 | Permission grant state is persisted but active-runtime adoption fails | Return visible adoption diagnostics while preserving the durable grant fact. |
 | Canvas visibility request references a different canvas mount than the loaded Canvas domain object | Reject the request before frame write/adoption. |
+| Runtime surface projection after-state equals the current frame surface and the requested visibility refs already exist | Return a no-op projection result without writing or adopting a new AgentFrame revision, because frame revisions and runtime context frames represent observable model-visible changes. |
 | Capability key delta has no added/removed keys | Omit the capability key section so pure runtime surface updates are not labeled as capability-key changes. |
 
 ### 5. Good/Base/Bad Cases

@@ -1043,6 +1043,46 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                     part.extract_text().is_some() || part.extract_reasoning().is_some()
                 });
                 let message_entry_index = *entry_index;
+
+                // 终态承载助手正文 / reasoning：turn 收尾落 durable ItemCompleted，
+                // 使重放不再依赖逐条 text delta（delta 仍保留作 live UI + fallback）。
+                // 复用与 delta 相同的 item_id 与 message_entry_index，让前端能并入同一气泡。
+                if !text.is_empty() {
+                    let item_id = synth_item_id(turn_id, message_entry_index, "msg");
+                    let item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+                        id: item_id,
+                        text: text.clone(),
+                        phase: None,
+                        memory_citation: None,
+                    }
+                    .into();
+                    envelopes.push(wrap(
+                        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                            item,
+                            session_id.to_string(),
+                            turn_id.to_string(),
+                        )),
+                        message_entry_index,
+                    ));
+                }
+                if !reasoning_text.is_empty() {
+                    let item_id = synth_item_id(turn_id, message_entry_index, "reason");
+                    let item: AgentDashThreadItem = codex::ThreadItem::Reasoning {
+                        id: item_id,
+                        summary: vec![],
+                        content: vec![reasoning_text.clone()],
+                    }
+                    .into();
+                    envelopes.push(wrap(
+                        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                            item,
+                            session_id.to_string(),
+                            turn_id.to_string(),
+                        )),
+                        message_entry_index,
+                    ));
+                }
+
                 if has_streamable_content || error_message.is_some() || !tool_calls.is_empty() {
                     *entry_index += 1;
                 }

@@ -32,6 +32,27 @@ struct RestoredAssistantMessageState {
     content: Vec<ContentPart>,
     tool_calls: Vec<ToolCallInfo>,
     tool_call_ids: HashSet<String>,
+    /// 终态权威助手正文（来自 turn 收尾 ItemCompleted(AgentMessage)）。
+    /// 存在时覆盖 delta 累积文本。
+    final_text: Option<String>,
+    /// 终态权威 reasoning（来自 turn 收尾 ItemCompleted(Reasoning)）。
+    /// 存在时覆盖 delta 累积 reasoning。
+    final_reasoning: Option<String>,
+}
+
+impl RestoredAssistantMessageState {
+    fn new(event: &PersistedSessionEvent) -> Self {
+        RestoredAssistantMessageState {
+            order: event.event_seq,
+            turn_id: event.turn_id.clone(),
+            entry_index: event.entry_index,
+            content: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_ids: HashSet::new(),
+            final_text: None,
+            final_reasoning: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -118,32 +139,18 @@ fn build_raw_projected_transcript_from_iter<'a>(
             BackboneEvent::AgentMessageDelta(delta) => {
                 if !delta.delta.is_empty() {
                     let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages.entry(key).or_insert_with(|| {
-                        RestoredAssistantMessageState {
-                            order: event.event_seq,
-                            turn_id: event.turn_id.clone(),
-                            entry_index: event.entry_index,
-                            content: Vec::new(),
-                            tool_calls: Vec::new(),
-                            tool_call_ids: HashSet::new(),
-                        }
-                    });
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
                     state.content.push(ContentPart::text(&delta.delta));
                 }
             }
             BackboneEvent::ReasoningTextDelta(delta) => {
                 if !delta.delta.is_empty() {
                     let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages.entry(key).or_insert_with(|| {
-                        RestoredAssistantMessageState {
-                            order: event.event_seq,
-                            turn_id: event.turn_id.clone(),
-                            entry_index: event.entry_index,
-                            content: Vec::new(),
-                            tool_calls: Vec::new(),
-                            tool_call_ids: HashSet::new(),
-                        }
-                    });
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
                     state
                         .content
                         .push(ContentPart::reasoning(&delta.delta, None, None));
@@ -152,16 +159,9 @@ fn build_raw_projected_transcript_from_iter<'a>(
             BackboneEvent::ReasoningSummaryDelta(delta) => {
                 if !delta.delta.is_empty() {
                     let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages.entry(key).or_insert_with(|| {
-                        RestoredAssistantMessageState {
-                            order: event.event_seq,
-                            turn_id: event.turn_id.clone(),
-                            entry_index: event.entry_index,
-                            content: Vec::new(),
-                            tool_calls: Vec::new(),
-                            tool_call_ids: HashSet::new(),
-                        }
-                    });
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
                     state
                         .content
                         .push(ContentPart::reasoning(&delta.delta, None, None));
@@ -171,16 +171,9 @@ fn build_raw_projected_transcript_from_iter<'a>(
             | BackboneEvent::ItemUpdated(ItemUpdatedNotification { item, .. }) => {
                 if let Some(tc) = extract_tool_call_from_thread_item(item) {
                     let key = restored_assistant_key(event, None);
-                    let state = assistant_messages.entry(key).or_insert_with(|| {
-                        RestoredAssistantMessageState {
-                            order: event.event_seq,
-                            turn_id: event.turn_id.clone(),
-                            entry_index: event.entry_index,
-                            content: Vec::new(),
-                            tool_calls: Vec::new(),
-                            tool_call_ids: HashSet::new(),
-                        }
-                    });
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
                     state.order = state.order.min(event.event_seq);
                     upsert_restored_tool_call(state, &tc.id, Some(&tc.name), tc.raw_input.as_ref());
                     if tc.is_terminal {
@@ -199,16 +192,9 @@ fn build_raw_projected_transcript_from_iter<'a>(
             BackboneEvent::ItemCompleted(n) => {
                 if let Some(tc) = extract_tool_call_from_thread_item(&n.item) {
                     let key = restored_assistant_key(event, None);
-                    let state = assistant_messages.entry(key).or_insert_with(|| {
-                        RestoredAssistantMessageState {
-                            order: event.event_seq,
-                            turn_id: event.turn_id.clone(),
-                            entry_index: event.entry_index,
-                            content: Vec::new(),
-                            tool_calls: Vec::new(),
-                            tool_call_ids: HashSet::new(),
-                        }
-                    });
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
                     state.order = state.order.min(event.event_seq);
                     upsert_restored_tool_call(state, &tc.id, Some(&tc.name), tc.raw_input.as_ref());
                     if tc.is_terminal {
@@ -221,6 +207,26 @@ fn build_raw_projected_transcript_from_iter<'a>(
                             &tc.content_parts,
                             tc.is_error,
                         );
+                    }
+                } else if let Some(final_message) = extract_assistant_message_from_thread_item(
+                    &n.item,
+                ) {
+                    // 终态助手正文 / reasoning：作为权威来源覆盖 delta 累积。
+                    // item_id 与 delta 同源（turn_id:entry_index:msg|reason），
+                    // 通过 restored_assistant_key 命中同一 assistant 状态。
+                    let item_id = final_message.item_id.clone();
+                    let key = restored_assistant_key(event, Some(&item_id));
+                    let state = assistant_messages
+                        .entry(key)
+                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
+                    state.order = state.order.min(event.event_seq);
+                    match final_message.kind {
+                        FinalAssistantKind::Text(text) => {
+                            state.final_text = Some(text);
+                        }
+                        FinalAssistantKind::Reasoning(reasoning) => {
+                            state.final_reasoning = Some(reasoning);
+                        }
                     }
                 }
             }
@@ -242,13 +248,14 @@ fn build_raw_projected_transcript_from_iter<'a>(
         });
     }
     for state in assistant_messages.into_values() {
-        if state.content.is_empty() && state.tool_calls.is_empty() {
+        let content = resolve_assistant_content(&state);
+        if content.is_empty() && state.tool_calls.is_empty() {
             continue;
         }
         envelopes.push(RestoredMessageEnvelope::Assistant {
             order: state.order,
             message_ref: make_message_ref(state.turn_id.as_deref(), state.entry_index, state.order),
-            content: state.content,
+            content,
             tool_calls: state.tool_calls,
         });
     }
@@ -294,6 +301,74 @@ fn restored_assistant_key(event: &PersistedSessionEvent, message_id: Option<&str
         return format!("assistant:tool:{tool_call_id}");
     }
     format!("assistant:event:{}", event.event_seq)
+}
+
+/// 终态助手消息（来自 turn 收尾 ItemCompleted），承载权威正文 / reasoning。
+struct FinalAssistantMessage {
+    item_id: String,
+    kind: FinalAssistantKind,
+}
+
+enum FinalAssistantKind {
+    Text(String),
+    Reasoning(String),
+}
+
+/// 从 ThreadItem 中识别终态助手消息（AgentMessage / Reasoning），它们不是 tool call。
+/// 这是 Step 0 的权威来源：重放时优先于 delta 累积。
+fn extract_assistant_message_from_thread_item(
+    item: &AgentDashThreadItem,
+) -> Option<FinalAssistantMessage> {
+    let AgentDashThreadItem::Codex(item) = item else {
+        return None;
+    };
+    match item {
+        codex::ThreadItem::AgentMessage { id, text, .. } => Some(FinalAssistantMessage {
+            item_id: id.clone(),
+            kind: FinalAssistantKind::Text(text.clone()),
+        }),
+        codex::ThreadItem::Reasoning { id, content, .. } => Some(FinalAssistantMessage {
+            item_id: id.clone(),
+            kind: FinalAssistantKind::Reasoning(content.join("")),
+        }),
+        _ => None,
+    }
+}
+
+/// 组装助手最终 content：reasoning 在前、text 在后。
+/// 终态权威存在时用终态、忽略 delta 累积；否则回退到 delta 累积内容。
+fn resolve_assistant_content(state: &RestoredAssistantMessageState) -> Vec<ContentPart> {
+    let mut content = Vec::new();
+
+    // reasoning part：final 优先，否则取 delta 累积的 reasoning 部分。
+    match &state.final_reasoning {
+        Some(reasoning) if !reasoning.is_empty() => {
+            content.push(ContentPart::reasoning(reasoning, None, None));
+        }
+        _ => {
+            for part in &state.content {
+                if part.extract_reasoning().is_some() {
+                    content.push(part.clone());
+                }
+            }
+        }
+    }
+
+    // text part：final 优先，否则取 delta 累积的 text 部分。
+    match &state.final_text {
+        Some(text) if !text.is_empty() => {
+            content.push(ContentPart::text(text));
+        }
+        _ => {
+            for part in &state.content {
+                if part.extract_text().is_some() {
+                    content.push(part.clone());
+                }
+            }
+        }
+    }
+
+    content
 }
 
 fn upsert_restored_tool_call(
@@ -906,6 +981,196 @@ mod tests {
             }
             other => panic!("expected image part, got {other:?}"),
         }
+    }
+
+    fn agent_message_delta_event(
+        event_seq: u64,
+        turn_id: &str,
+        entry_index: u32,
+        delta: &str,
+    ) -> PersistedSessionEvent {
+        persisted_event(
+            event_seq,
+            "agent_message_delta",
+            turn_id,
+            entry_index,
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                thread_id: "session-1".to_string(),
+                turn_id: turn_id.to_string(),
+                item_id: format!("{turn_id}:{entry_index}:msg"),
+                delta: delta.to_string(),
+            }),
+            None,
+        )
+    }
+
+    fn reasoning_delta_event(
+        event_seq: u64,
+        turn_id: &str,
+        entry_index: u32,
+        delta: &str,
+    ) -> PersistedSessionEvent {
+        persisted_event(
+            event_seq,
+            "reasoning_text_delta",
+            turn_id,
+            entry_index,
+            BackboneEvent::ReasoningTextDelta(codex::ReasoningTextDeltaNotification {
+                thread_id: "session-1".to_string(),
+                turn_id: turn_id.to_string(),
+                item_id: format!("{turn_id}:{entry_index}:reason"),
+                delta: delta.to_string(),
+                content_index: 0,
+            }),
+            None,
+        )
+    }
+
+    fn final_agent_message_event(
+        event_seq: u64,
+        turn_id: &str,
+        entry_index: u32,
+        text: &str,
+    ) -> PersistedSessionEvent {
+        let item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+            id: format!("{turn_id}:{entry_index}:msg"),
+            text: text.to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+        .into();
+        persisted_event(
+            event_seq,
+            "item_completed",
+            turn_id,
+            entry_index,
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                "session-1".to_string(),
+                turn_id.to_string(),
+            )),
+            None,
+        )
+    }
+
+    fn final_reasoning_event(
+        event_seq: u64,
+        turn_id: &str,
+        entry_index: u32,
+        content: &str,
+    ) -> PersistedSessionEvent {
+        let item: AgentDashThreadItem = codex::ThreadItem::Reasoning {
+            id: format!("{turn_id}:{entry_index}:reason"),
+            summary: vec![],
+            content: vec![content.to_string()],
+        }
+        .into();
+        persisted_event(
+            event_seq,
+            "item_completed",
+            turn_id,
+            entry_index,
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                "session-1".to_string(),
+                turn_id.to_string(),
+            )),
+            None,
+        )
+    }
+
+    fn assistant_text(transcript: &ProjectedTranscript) -> String {
+        transcript
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.message {
+                AgentMessage::Assistant { content, .. } => Some(
+                    content
+                        .iter()
+                        .filter_map(ContentPart::extract_text)
+                        .collect::<Vec<_>>()
+                        .join(""),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn assistant_reasoning(transcript: &ProjectedTranscript) -> String {
+        transcript
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.message {
+                AgentMessage::Assistant { content, .. } => Some(
+                    content
+                        .iter()
+                        .filter_map(ContentPart::extract_reasoning)
+                        .collect::<Vec<_>>()
+                        .join(""),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn final_agent_message_overrides_delta_accumulation() {
+        let turn_id = "turn-final";
+        let events = vec![
+            agent_message_delta_event(1, turn_id, 0, "part"),
+            final_agent_message_event(2, turn_id, 0, "FULL FINAL"),
+        ];
+
+        let transcript = build_raw_projected_transcript_from_events(&events);
+
+        // 终态权威覆盖 delta 累积："part" 被忽略，正文为终态。
+        assert_eq!(assistant_text(&transcript), "FULL FINAL");
+    }
+
+    #[test]
+    fn final_agent_message_without_delta_restores_assistant_text() {
+        let turn_id = "turn-final-only";
+        let events = vec![final_agent_message_event(1, turn_id, 0, "ONLY FINAL")];
+
+        let transcript = build_raw_projected_transcript_from_events(&events);
+
+        assert_eq!(assistant_text(&transcript), "ONLY FINAL");
+    }
+
+    #[test]
+    fn final_reasoning_overrides_delta_accumulation() {
+        let turn_id = "turn-reason";
+        let events = vec![
+            reasoning_delta_event(1, turn_id, 0, "rpart"),
+            final_reasoning_event(2, turn_id, 0, "FULL REASONING"),
+        ];
+
+        let transcript = build_raw_projected_transcript_from_events(&events);
+
+        assert_eq!(assistant_reasoning(&transcript), "FULL REASONING");
+    }
+
+    #[test]
+    fn final_message_and_reasoning_coexist_in_same_assistant_entry() {
+        let turn_id = "turn-mixed";
+        let events = vec![
+            reasoning_delta_event(1, turn_id, 0, "rpart"),
+            agent_message_delta_event(2, turn_id, 0, "tpart"),
+            final_reasoning_event(3, turn_id, 0, "FINAL REASONING"),
+            final_agent_message_event(4, turn_id, 0, "FINAL TEXT"),
+        ];
+
+        let transcript = build_raw_projected_transcript_from_events(&events);
+
+        // 一条 assistant entry，reasoning 在前、text 在后，均取终态。
+        let assistant_entries = transcript
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.message, AgentMessage::Assistant { .. }))
+            .count();
+        assert_eq!(assistant_entries, 1);
+        assert_eq!(assistant_reasoning(&transcript), "FINAL REASONING");
+        assert_eq!(assistant_text(&transcript), "FINAL TEXT");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use agentdash_agent::{
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
+use agentdash_agent_types::AgentDashThreadItem;
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};
@@ -22,6 +23,16 @@ fn test_source() -> SourceInfo {
         connector_id: "pi-agent".to_string(),
         connector_type: "local_executor".to_string(),
         executor_id: None,
+    }
+}
+
+/// 提取终态 ItemCompleted 承载的助手正文（codex AgentMessage）。
+fn assistant_message_text(item: &AgentDashThreadItem) -> Option<String> {
+    match item {
+        AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
+            Some(text.clone())
+        }
+        _ => None,
     }
 }
 
@@ -1900,14 +1911,24 @@ fn assistant_message_end_with_error_message_emits_fallback_chunk() {
         &mut tool_call_states,
     );
 
-    assert_eq!(envelopes.len(), 1);
+    // 残余 delta 补发 + 终态 ItemCompleted(AgentMessage) 并存。
     assert_eq!(entry_index, 1);
-    match &envelopes[0].event {
-        BackboneEvent::AgentMessageDelta(delta) => {
-            assert_eq!(delta.delta, "Agent run aborted");
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
+    let delta = envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(delta) => Some(delta),
+            _ => None,
+        })
+        .expect("residual agent message delta");
+    assert_eq!(delta.delta, "Agent run aborted");
+    let final_text = envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => assistant_message_text(&n.item),
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_text, "Agent run aborted");
 }
 
 #[test]
@@ -1961,14 +1982,28 @@ fn message_end_does_not_repeat_full_snapshot_after_deltas() {
     );
 
     assert_eq!(delta_envelopes.len(), 1);
-    assert_eq!(end_envelopes.len(), 1);
-    match (&delta_envelopes[0].event, &end_envelopes[0].event) {
-        (BackboneEvent::AgentMessageDelta(delta), BackboneEvent::AgentMessageDelta(end)) => {
-            assert_eq!(delta.item_id, end.item_id);
-            assert_eq!(end.delta, "llo");
-        }
-        other => panic!("unexpected backbone events: {other:?}"),
-    }
+    // 残余 delta ("llo") + 终态 ItemCompleted("hello") 并存。
+    let delta = match &delta_envelopes[0].event {
+        BackboneEvent::AgentMessageDelta(delta) => delta,
+        other => panic!("unexpected backbone event: {other:?}"),
+    };
+    let end = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(end) => Some(end),
+            _ => None,
+        })
+        .expect("residual agent message delta on MessageEnd");
+    assert_eq!(delta.item_id, end.item_id);
+    assert_eq!(end.delta, "llo");
+    let final_text = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => assistant_message_text(&n.item),
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_text, "hello");
 }
 
 #[test]
@@ -2058,22 +2093,39 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
 
     assert_eq!(delta_envelopes.len(), 1);
     assert_eq!(tool_envelopes.len(), 1);
-    assert_eq!(end_envelopes.len(), 1);
 
     let delta_item_id = match &delta_envelopes[0].event {
         BackboneEvent::AgentMessageDelta(d) => d.item_id.clone(),
         other => panic!("unexpected event: {other:?}"),
     };
-    let end_delta = match &end_envelopes[0].event {
-        BackboneEvent::AgentMessageDelta(d) => d,
-        other => panic!("unexpected event: {other:?}"),
-    };
+    let end_delta = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(d) => Some(d),
+            _ => None,
+        })
+        .expect("residual agent message delta on MessageEnd");
 
     assert_eq!(
         delta_item_id, end_delta.item_id,
         "MessageEnd reconcile 必须命中 TextDelta 的 chunk_emit_state，否则前端会渲染成两条文本气泡"
     );
     assert_eq!(end_delta.delta, "llo");
+
+    // 终态 ItemCompleted(AgentMessage) 与残余 delta 共享 item_id，前端可并入同一气泡。
+    let final_item_id = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => match &n.item {
+                AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { id, .. }) => {
+                    Some(id.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_item_id, delta_item_id);
 
     let delta_entry_index = delta_envelopes[0].trace.entry_index;
     let tool_entry_index = tool_envelopes[0].trace.entry_index;

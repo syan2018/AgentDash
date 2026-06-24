@@ -200,6 +200,81 @@ export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneE
   return entry;
 }
 
+type AssistantDeltaKind =
+  | "agent_message_delta"
+  | "reasoning_text_delta"
+  | "reasoning_summary_delta";
+
+/** 为 hydrate 场景合成一个 delta 事件，使终态助手正文 / reasoning 仍渲染为助手/思考卡。 */
+function synthesizeAssistantDeltaEvent(
+  kind: AssistantDeltaKind,
+  event: SessionEventEnvelope,
+  itemId: string,
+  text: string,
+): BackboneEvent {
+  const base = {
+    threadId: event.notification.sessionId,
+    turnId: event.turn_id ?? "",
+    itemId,
+    delta: text,
+  };
+  if (kind === "reasoning_text_delta") {
+    return { type: kind, payload: { ...base, contentIndex: 0 } };
+  }
+  if (kind === "reasoning_summary_delta") {
+    return { type: kind, payload: { ...base, summaryIndex: 0 } };
+  }
+  return { type: kind, payload: base };
+}
+
+/**
+ * 终态助手正文 / reasoning（来自 turn 收尾 ItemCompleted(AgentMessage|Reasoning)）并入对应 delta 气泡。
+ * - live：命中已存在的 delta 条目，用终态文本 finalize（权威覆盖累积），isStreaming=false。
+ * - hydrate（Step 1 后只有终态、无 delta）：合成同 id 的 delta 条目渲染气泡。
+ * 不新建 `item:` 卡片，避免与流式气泡双渲染。
+ */
+function finalizeAssistantDelta(
+  entries: SessionDisplayEntry[],
+  event: SessionEventEnvelope,
+  kind: AssistantDeltaKind,
+  itemId: string,
+  text: string,
+): SessionDisplayEntry[] {
+  if (!text) {
+    return entries;
+  }
+  // delta 气泡的 entry id 与该 delta 的 itemId 同源（buildEntryId 优先用 getItemIdFromEvent）。
+  // 终态 item 的 id 与 delta 的 itemId 同为 synth_item_id(turn,entry,"msg"|"reason")，故 target 一致。
+  const targetId = `item:${itemId}`;
+
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const existing = entries[i];
+    if (existing && existing.id === targetId) {
+      const next = [...entries];
+      // 保留既有 delta event（渲染分发依赖 event.type），仅 finalize 文本与流式标记。
+      next[i] = { ...existing, eventSeq: event.event_seq, accumulatedText: text, isStreaming: false };
+      return next;
+    }
+  }
+
+  // hydrate：无 delta 气泡，合成同 id 的 delta 条目以渲染助手 / 思考卡。
+  const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
+  return [
+    ...entries,
+    {
+      id: targetId,
+      sessionId: event.notification.sessionId,
+      timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
+      eventSeq: event.event_seq,
+      event: syntheticEvent,
+      turnId: event.turn_id ?? undefined,
+      entryIndex: event.entry_index ?? undefined,
+      accumulatedText: text,
+      isStreaming: false,
+    },
+  ];
+}
+
 function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
   const bbEvent: BackboneEvent = event.notification.event;
 
@@ -259,6 +334,24 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   }
 
   if (bbEvent.type === "item_completed") {
+    const finalItem = bbEvent.payload.item;
+    // 终态助手正文 / reasoning 并入 delta 气泡，不走工具卡路径。
+    if (finalItem.type === "agentMessage") {
+      return finalizeAssistantDelta(prev, event, "agent_message_delta", finalItem.id, finalItem.text);
+    }
+    if (finalItem.type === "reasoning") {
+      let next = prev;
+      const contentText = finalItem.content.join("");
+      if (contentText) {
+        next = finalizeAssistantDelta(next, event, "reasoning_text_delta", finalItem.id, contentText);
+      }
+      const summaryText = finalItem.summary.join("");
+      if (summaryText) {
+        next = finalizeAssistantDelta(next, event, "reasoning_summary_delta", finalItem.id, summaryText);
+      }
+      return next;
+    }
+
     const entryId = buildEntryId(event, bbEvent);
     const finalCommandOutput = getCommandAggregatedOutput(bbEvent.payload.item);
     for (let i = prev.length - 1; i >= 0; i -= 1) {

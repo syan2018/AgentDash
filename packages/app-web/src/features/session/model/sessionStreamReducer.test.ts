@@ -114,6 +114,28 @@ function fileChangeItem(id: string, diff: string): Extract<ThreadItem, { type: "
   };
 }
 
+function agentMessageItem(id: string, text: string): Extract<ThreadItem, { type: "agentMessage" }> {
+  return { type: "agentMessage", id, text, phase: null, memoryCitation: null };
+}
+
+function reasoningItem(id: string, content: string[], summary: string[] = []): Extract<ThreadItem, { type: "reasoning" }> {
+  return { type: "reasoning", id, summary, content };
+}
+
+function reasoningDelta(event_seq: number, delta: string): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "reasoning_text_delta",
+    payload: { threadId: "thread-1", turnId: "turn-1", itemId: "item-1", delta, contentIndex: 0 },
+  });
+}
+
+function itemCompleted(event_seq: number, item: ThreadItem): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "item_completed",
+    payload: { item, threadId: "thread-1", turnId: "turn-1", completedAtMs: event_seq },
+  });
+}
+
 describe("sessionStreamReducer", () => {
   it("按 event_seq 排序、去重，并累积 agent message delta", () => {
     const state = reduceStreamState(createInitialStreamState([]), [
@@ -339,5 +361,39 @@ describe("sessionStreamReducer", () => {
     });
 
     expect(shouldFlushStreamEventImmediately(updatedEvent)).toBe(false);
+  });
+
+  it("终态 agentMessage 并入流式气泡为单条并以终态文本 finalize", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      agentDelta(1, "partial"),
+      itemCompleted(2, agentMessageItem("item-1", "FULL FINAL")),
+    ]);
+
+    // 单条 assistant 气泡，文本=终态权威，isStreaming=false，且仍渲染为 agent_message_delta。
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.accumulatedText).toBe("FULL FINAL");
+    expect(state.entries[0]?.isStreaming).toBe(false);
+    expect(state.entries[0]?.event.type).toBe("agent_message_delta");
+  });
+
+  it("hydrate 仅终态 agentMessage（无 delta）仍渲染助手气泡", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      itemCompleted(1, agentMessageItem("turn-1:0:msg", "ONLY FINAL")),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.accumulatedText).toBe("ONLY FINAL");
+    expect(state.entries[0]?.event.type).toBe("agent_message_delta");
+  });
+
+  it("终态 reasoning 并入 reasoning 气泡为单条", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      reasoningDelta(1, "rpart"),
+      itemCompleted(2, reasoningItem("item-1", ["FULL REASONING"])),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.accumulatedText).toBe("FULL REASONING");
+    expect(state.entries[0]?.event.type).toBe("reasoning_text_delta");
   });
 });

@@ -436,18 +436,35 @@ impl CanvasRepository for PostgresCanvasRepository {
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
+        let canvas_id = id.to_string();
+
+        sqlx::query("DELETE FROM canvas_bindings WHERE canvas_id = $1")
+            .bind(&canvas_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(super::db_err)?;
+
+        sqlx::query("DELETE FROM canvas_files WHERE canvas_id = $1")
+            .bind(&canvas_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(super::db_err)?;
+
         let result = sqlx::query("DELETE FROM canvases WHERE id = $1")
-            .bind(id.to_string())
-            .execute(&self.pool)
+            .bind(&canvas_id)
+            .execute(&mut *tx)
             .await
             .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
                 entity: "canvas",
-                id: id.to_string(),
+                id: canvas_id,
             });
         }
+
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -717,5 +734,51 @@ mod tests {
             .expect("应能查询发布 lineage")
             .expect("发布记录应存在");
         assert_eq!(published.id, shared.id);
+    }
+
+    #[tokio::test]
+    async fn delete_canvas_removes_files_and_bindings() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let mut canvas = Canvas::new_personal(
+            Uuid::new_v4(),
+            "alice".to_string(),
+            "cvs-delete".to_string(),
+            "Delete".to_string(),
+            String::new(),
+        );
+        canvas.files = vec![CanvasFile::new(
+            "src/main.tsx".to_string(),
+            "export default function App() { return null }".to_string(),
+        )];
+        canvas.bindings = vec![CanvasDataBinding::new(
+            "stats".to_string(),
+            "lifecycle://active/artifacts/stats".to_string(),
+        )];
+        CanvasRepository::create(&repo, &canvas)
+            .await
+            .expect("应能创建 canvas");
+
+        CanvasRepository::delete(&repo, canvas.id)
+            .await
+            .expect("应能删除 canvas");
+
+        let canvas_id = canvas.id.to_string();
+        let file_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM canvas_files WHERE canvas_id = $1")
+                .bind(&canvas_id)
+                .fetch_one(&repo.pool)
+                .await
+                .expect("应能查询 canvas_files");
+        let binding_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM canvas_bindings WHERE canvas_id = $1")
+                .bind(&canvas_id)
+                .fetch_one(&repo.pool)
+                .await
+                .expect("应能查询 canvas_bindings");
+
+        assert_eq!(file_count, 0);
+        assert_eq!(binding_count, 0);
     }
 }

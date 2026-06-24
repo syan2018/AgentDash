@@ -96,7 +96,13 @@ impl AgentRunRuntimeSurfaceUpdateService {
                 current_frame.id
             ));
         };
-        let mount_access = canvas_runtime_mount_access(canvas, surface.identity.as_ref());
+        let Some(mount_access) = canvas_runtime_mount_access(canvas, surface.identity.as_ref())
+        else {
+            return Err(format!(
+                "当前身份无权将 Canvas `{}` 暴露到运行时",
+                canvas.id
+            ));
+        };
         append_canvas_mount(&mut active_vfs, canvas, mount_access);
         if let Some(vfs_service) = self.vfs_service.as_deref() {
             let binding_files =

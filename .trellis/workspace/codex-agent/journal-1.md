@@ -1050,3 +1050,41 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: 会话事件仓储粒度收敛：delta ephemeral 化 + 终态承载 + suffix-only 读取
+
+**Date**: 2026-06-24
+**Task**: 会话事件仓储粒度收敛：delta ephemeral 化 + 终态承载 + suffix-only 读取
+**Branch**: `main`
+
+### Summary
+
+M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpdated 协议变体收敛 item_started 爆量；Step 0 turn 终态 ItemCompleted(AgentMessage/Reasoning) 承载助手正文使重放脱离 delta；Step 1a/1b delta/ItemUpdated 转 ephemeral 不入 durable 主日志，内存 per-turn buffer + ephemeral_seq 支持 reconnect 重放；修复 P1-a(session_items 投影终态消息)/P1-b(终态剪枝 ephemeral 防重复)/P2(ephemeral epoch 防后端重启跳帧)。全程分阶段提交，application 953/0、executor 94/0、前端 23/23 全绿。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `422f76dc0` | (see git log) |
+| `4dab0e48c` | (see git log) |
+| `55e43a113` | (see git log) |
+| `15b376d16` | (see git log) |
+| `b50ac3abc` | (see git log) |
+| `06701c219` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -18,6 +18,15 @@ Round 2 starts after commit `47004415` fixed the Wave 1/2 checkpoint:
 | `control-plane-port-wiring-impl` | `work-items/03-agentrun-surface-facade.md` + `work-items/05-agentrun-lifecycle-boundary.md` | AgentRun/Lifecycle projection/materialization port wiring, workflow orchestration materializer seams | RuntimeSession physical crate move, API VFS route cleanup |
 | `api-vfs-facade-impl` | `work-items/06-api-consumer-facade-cleanup.md` + `work-items/07-vfs-resource-surface-boundary.md` | API VFS surface route/helper cleanup and application VFS preview/resource facade wiring | Generic VFS physical crate extraction, RuntimeGateway/Session crate moves |
 
+## Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `runtime-gateway-crates-impl` | `019efad7-d8f0-73e2-8881-901a3615746e` | Franklin |
+| `session-port-wiring-impl` | `019efad7-ed62-74a3-9454-7b096193ff63` | Pascal |
+| `control-plane-port-wiring-impl` | `019efad8-01bc-7da0-bd80-a39d68cd481b` | Descartes |
+| `api-vfs-facade-impl` | `019efad8-1605-7bb1-bac2-1043db14f0b6` | Avicenna |
+
 ## Shared Bias
 
 - Start every worker prompt with `Active task: .trellis/tasks/06-24-release-crate-split-draft`.

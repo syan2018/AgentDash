@@ -204,6 +204,24 @@ impl SessionEventStore for MemorySessionPersistence {
             .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?
             .clone())
     }
+
+    async fn list_events_from(
+        &self,
+        session_id: &str,
+        from_seq: u64,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
+        let guard = self.inner.lock().await;
+        let mut events = guard
+            .events
+            .get(session_id)
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?
+            .clone()
+            .into_iter()
+            .filter(|event| event.event_seq >= from_seq)
+            .collect::<Vec<_>>();
+        events.sort_by_key(|event| event.event_seq);
+        Ok(events)
+    }
 }
 
 #[async_trait::async_trait]

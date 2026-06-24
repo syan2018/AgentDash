@@ -815,6 +815,12 @@ pub trait SessionEventStore: Send + Sync {
         &self,
         session_id: &str,
     ) -> SessionStoreResult<Vec<PersistedSessionEvent>>;
+    /// 读取 event_seq >= from_seq 的事件（升序）。from_seq=0 等价全量。
+    async fn list_events_from(
+        &self,
+        session_id: &str,
+        from_seq: u64,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>>;
 }
 
 #[async_trait]

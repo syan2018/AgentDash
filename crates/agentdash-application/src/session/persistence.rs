@@ -105,6 +105,16 @@ impl SessionEventStore for SessionPersistenceStoreAdapter {
     ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
         self.persistence.list_all_events(session_id).await
     }
+
+    async fn list_events_from(
+        &self,
+        session_id: &str,
+        from_seq: u64,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
+        self.persistence
+            .list_events_from(session_id, from_seq)
+            .await
+    }
 }
 
 #[async_trait]

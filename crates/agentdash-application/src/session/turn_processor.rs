@@ -596,6 +596,14 @@ mod tests {
         ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
             Ok(Vec::new())
         }
+
+        async fn list_events_from(
+            &self,
+            _session_id: &str,
+            _from_seq: u64,
+        ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
+            Ok(Vec::new())
+        }
     }
 
     struct NoopHookTrigger;

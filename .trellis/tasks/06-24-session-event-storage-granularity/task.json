@@ -3,7 +3,7 @@
   "name": "session-event-storage-granularity",
   "title": "会话事件仓储粒度收敛",
   "description": "收敛流式/进度态事件的 durable 持久化与全量重放读放大，含 item_started 爆量根因",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

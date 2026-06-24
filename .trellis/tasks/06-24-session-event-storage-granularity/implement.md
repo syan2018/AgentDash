@@ -2,6 +2,28 @@
 
 里程碑顺序固定：**M1 先行并可独立交付**，M2 在 M1 验证收益后再做。M2 内部 Step 0 → Step 1 顺序不可颠倒（先终态承载正文，再裁 delta）。
 
+## 执行编排与并行方案
+
+依据文件冲突 + 依赖，真正可干净并行的只有 **M1 ∥ Step 0.5**（文件集不相交）。Step 0 / 0.5 / Step 1 共享 `continuation.rs` / `stream_mapper.rs` / `eventing.rs`，且 Step 1 依赖 Step 0 + Step 0.5，必须串行收尾。
+
+```
+Wave 1 (并行):  Track A = M1        (隔离 worktree A)
+                Track B = Step 0.5  (worktree B / 主)
+Wave 2 (串行):  Track B = Step 0    (复用 B，避免抢 continuation/stream_mapper)
+Wave 3 (join):  Step 1              (B 上做，需 Step 0 + Step 0.5 均在)
+M1 绿后独立合回，不阻塞 B。
+```
+
+文件归属（互斥，保证 Wave 1 无冲突）：
+- **Track A / M1**：`spi/session_persistence.rs`、`postgres/session_repository.rs`、`test-support/session_memory_persistence.rs`、`session/persistence.rs`、`context_projector.rs`、`turn_processor.rs` 内的 store mock。
+- **Track B / Step 0.5**：`backbone/event.rs`、`backbone/item.rs`、`session_core.rs`、`continuation.rs`、`stream_mapper.rs`、`eventing.rs`、`codex_bridge.rs`、`provider_lifecycle.rs`、`session_items.rs`、generated TS、`sessionStreamReducer.ts`。
+
+分阶段提交（4 点，各自独立可回退）：
+1. `feat(session): suffix-only 投影读取`（M1 绿后）
+2. `refactor(protocol): 新增 ItemUpdated 变体`（Step 0.5 绿后，行为保持）
+3. `feat(session): turn 终态承载助手正文`（Step 0 绿后）
+4. `feat(session): delta/ItemUpdated 转 ephemeral`（Step 1 绿后，默认开关关）
+
 ## Milestone 1：suffix-only 读取（低风险，高 ROI）
 
 ### Checklist

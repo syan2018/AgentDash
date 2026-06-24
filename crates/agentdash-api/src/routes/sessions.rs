@@ -919,6 +919,15 @@ pub async fn session_stream_ndjson(
             yield Ok::<Bytes, Infallible>(line);
         }
 
+        // durable backlog + connected 之后、live loop 之前补发 ephemeral 快照（in-flight 进度态）。
+        // 这些事件 event_seq 承载 ephemeral_seq，不影响 durable `seq` 游标；前端按 ephemeral_seq 去重，
+        // 与后续 live ephemeral 广播的重叠由去重消解。
+        for event in subscription.ephemeral_backlog {
+            if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(event)) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
         let mut heartbeat_tick = tokio::time::interval(RUNTIME_TRACE_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut rx = subscription.rx;

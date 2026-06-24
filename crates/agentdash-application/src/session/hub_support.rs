@@ -191,6 +191,10 @@ impl SessionRuntime {
     }
 }
 
+/// Per-session ephemeral buffer 容量上限（条）。超出后 evict 最旧条目，防进程内存膨胀。
+/// 单个长 turn 的 delta 量级远小于此；turn 收尾会清空 buffer。
+pub(super) const EPHEMERAL_BUFFER_CAP: usize = 16384;
+
 pub(super) fn build_session_runtime(
     tx: broadcast::Sender<PersistedSessionEvent>,
 ) -> SessionRuntime {
@@ -201,6 +205,8 @@ pub(super) fn build_session_runtime(
         session_profile: None,
         hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
+        ephemeral_buffer: std::collections::VecDeque::new(),
+        ephemeral_seq: 0,
     }
 }
 
@@ -290,6 +296,13 @@ pub(super) struct SessionRuntime {
     pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
     pub last_activity_at: i64,
+    /// Per-turn in-flight ephemeral 事件缓冲（仅内存）。承载 delta / item_updated 等
+    /// 不入 durable 主日志的进度态事件，用于整页刷新 / 断线重连时补回"生成中"文本。
+    /// 每条事件复用 `event_seq` 字段承载单调 `ephemeral_seq`，前端据此去重。
+    /// turn 收尾（terminal）时由 `clear_ephemeral` 清空（终态正文已是 durable）。
+    pub ephemeral_buffer: std::collections::VecDeque<PersistedSessionEvent>,
+    /// Per-session 单调 ephemeral 序号；clear 时不重置，保证跨 turn 单调避免前端误去重。
+    pub ephemeral_seq: u64,
 }
 
 /// Per-turn 执行态。生命周期 = 一次 `start_prompt` → terminal。
@@ -388,6 +401,9 @@ impl TurnTiming {
 pub struct SessionEventSubscription {
     pub snapshot_seq: u64,
     pub backlog: Vec<PersistedSessionEvent>,
+    /// 订阅建立时刻的 ephemeral buffer 快照（in-flight 进度态事件）。
+    /// 在 durable backlog + `connected` 之后、live loop 之前补发，前端按 ephemeral_seq 去重。
+    pub ephemeral_backlog: Vec<PersistedSessionEvent>,
     pub rx: broadcast::Receiver<PersistedSessionEvent>,
 }
 

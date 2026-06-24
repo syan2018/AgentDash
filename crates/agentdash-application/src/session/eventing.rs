@@ -72,7 +72,10 @@ impl SessionEventingService {
         session_id: &str,
         after_seq: u64,
     ) -> io::Result<SessionEventSubscription> {
+        // 先 ensure_session（订阅 rx）再 snapshot_ephemeral：保证 rx 在快照之前已订阅，
+        // 快照与后续 live 广播的重叠由 ephemeral_seq 在前端去重消解，不会丢事件。
         let rx = self.ensure_session(session_id).await;
+        let ephemeral_backlog = self.runtime_registry.snapshot_ephemeral(session_id).await;
         let backlog = self
             .stores
             .events
@@ -81,6 +84,7 @@ impl SessionEventingService {
         Ok(SessionEventSubscription {
             snapshot_seq: backlog.snapshot_seq,
             backlog: backlog.events,
+            ephemeral_backlog,
             rx,
         })
     }
@@ -162,6 +166,7 @@ impl SessionEventingService {
             let now = chrono::Utc::now().timestamp_millis();
             let event = PersistedSessionEvent {
                 session_id: session_id.to_string(),
+                // 占位 0；push_ephemeral 会分配单调 ephemeral_seq 写入此字段。
                 event_seq: 0,
                 occurred_at_ms: now,
                 committed_at_ms: now,
@@ -173,6 +178,9 @@ impl SessionEventingService {
                 ephemeral: true,
                 notification: envelope,
             };
+            // 先 push（分配 ephemeral_seq + 入 buffer），再 broadcast 带 seq 的事件。
+            // 顺序保证：live 订阅者与 reconnect 快照看到的是同一个带 seq 的 envelope。
+            let event = self.runtime_registry.push_ephemeral(session_id, event).await;
             if broadcast {
                 self.broadcast_persisted_event(session_id, event.clone())
                     .await;
@@ -211,6 +219,11 @@ impl SessionEventingService {
             .await?;
         self.advance_model_projection_head(session_id, &persisted)
             .await?;
+        // turn 收尾（terminal）/ rewind 后清空 ephemeral buffer：该 turn 的终态正文 / reasoning
+        // 已 durable（Step 0），in-flight 进度态不再需要补发，避免跨 turn 累积。
+        if should_clear_ephemeral_on_durable(&persisted) {
+            self.runtime_registry.clear_ephemeral(session_id).await;
+        }
         if broadcast {
             self.broadcast_persisted_event(session_id, persisted.clone())
                 .await;
@@ -1387,6 +1400,18 @@ fn is_ephemeral_event(event: &BackboneEvent) -> bool {
     )
 }
 
+/// 持久化某条 durable 事件后，是否应清空 per-session ephemeral buffer。
+/// 命中：turn terminal（completed/failed/interrupted/lost）与 session_rewound。
+fn should_clear_ephemeral_on_durable(persisted: &PersistedSessionEvent) -> bool {
+    if parse_turn_terminal_event_from_envelope(&persisted.notification).is_some() {
+        return true;
+    }
+    matches!(
+        &persisted.notification.event,
+        BackboneEvent::Platform(PlatformEvent::SessionRewound(_))
+    )
+}
+
 fn ephemeral_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
     match &envelope.event {
         BackboneEvent::ItemUpdated(n) => n.item.tool_call_id().map(ToString::to_string),
@@ -2310,7 +2335,8 @@ mod tests {
             .expect("persist ephemeral delta");
 
         assert!(persisted.ephemeral, "delta should be classified ephemeral");
-        assert_eq!(persisted.event_seq, 0);
+        // event_seq 现承载单调 ephemeral_seq（首条为 1，不再是占位 0）。
+        assert_eq!(persisted.event_seq, 1);
         assert_eq!(persisted.session_update_type, "agent_message_delta");
 
         // 不进 durable session_events。
@@ -2322,11 +2348,88 @@ mod tests {
             backlog.backlog.is_empty(),
             "ephemeral delta must not be appended to durable log"
         );
+        // 进 ephemeral buffer，subscribe_after 快照可补发。
+        assert_eq!(backlog.ephemeral_backlog.len(), 1);
+        assert_eq!(backlog.ephemeral_backlog[0].event_seq, 1);
+        assert!(backlog.ephemeral_backlog[0].ephemeral);
 
         // 仍 live 广播，且带 ephemeral=true。
         let received = rx.try_recv().expect("broadcast ephemeral delta to subscriber");
         assert!(received.ephemeral);
+        assert_eq!(received.event_seq, 1);
         assert_eq!(received.session_update_type, "agent_message_delta");
+    }
+
+    #[tokio::test]
+    async fn ephemeral_seq_is_monotonic_and_cleared_on_turn_terminal() {
+        let session_id = "sess-ephemeral-clear";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+        let source = test_source_info();
+
+        let first = service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-eph", "hello "),
+            )
+            .await
+            .expect("persist delta 1");
+        let second = service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-eph", "world"),
+            )
+            .await
+            .expect("persist delta 2");
+        assert_eq!(first.event_seq, 1);
+        assert_eq!(second.event_seq, 2);
+
+        // 快照可补发两条累积 delta。
+        let before = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("snapshot before terminal");
+        assert_eq!(before.ephemeral_backlog.len(), 2);
+
+        // turn terminal（durable）落库后清空 ephemeral buffer。
+        service
+            .persist_notification(
+                session_id,
+                crate::session::hub_support::build_turn_terminal_envelope(
+                    session_id,
+                    &source,
+                    "turn-eph",
+                    TurnTerminalKind::Completed,
+                    None,
+                ),
+            )
+            .await
+            .expect("persist turn terminal");
+
+        let after = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("snapshot after terminal");
+        assert!(
+            after.ephemeral_backlog.is_empty(),
+            "ephemeral buffer must be cleared after turn terminal"
+        );
+
+        // 计数器不重置：清空后新 delta 的 seq 继续递增。
+        let third = service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-eph2", "next"),
+            )
+            .await
+            .expect("persist delta 3");
+        assert_eq!(third.event_seq, 3);
     }
 
     #[tokio::test]

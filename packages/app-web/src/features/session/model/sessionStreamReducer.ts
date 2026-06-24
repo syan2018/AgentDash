@@ -13,6 +13,14 @@ export interface SessionStreamState {
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
   lastAppliedSeq: number;
+  /**
+   * 最近应用的 ephemeral 事件的 ephemeral_seq（承载于 event.event_seq）。
+   * 用于整页刷新 / 断线重连时按 seq 去重 in-flight 进度态：
+   * - 整页刷新：新 state lastEphemeralSeq=0 → 回放服务端 buffer 全部累积 delta；
+   * - 断线重连复用 state：lastEphemeralSeq=k → 只应用 seq>k 的，不重复累加。
+   * ephemeral seq 与 durable event_seq 不同语义，互不干扰。
+   */
+  lastEphemeralSeq: number;
 }
 
 export function createInitialStreamState(initialEntries: SessionDisplayEntry[]): SessionStreamState {
@@ -22,6 +30,7 @@ export function createInitialStreamState(initialEntries: SessionDisplayEntry[]):
     rawEvents: [],
     tokenUsage: null,
     lastAppliedSeq,
+    lastEphemeralSeq: 0,
   };
 }
 
@@ -495,13 +504,21 @@ export function reduceStreamState(
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
   let lastAppliedSeq = prev.lastAppliedSeq;
+  let lastEphemeralSeq = prev.lastEphemeralSeq;
 
-  // ephemeral 事件 event_seq=0、live-only：仅作用于 entries，不进 rawEvents、不动 lastAppliedSeq、
-  // 不参与 event_seq 去重（否则会被 <= lastAppliedSeq 误跳）。durable 事件照常按 event_seq 排序去重。
-  for (const event of incomingEvents) {
-    if (event.ephemeral) {
-      entries = applyEventToEntries(entries, event);
+  // ephemeral 事件：live-only，仅作用于 entries，不进 rawEvents、不动 lastAppliedSeq。
+  // event_seq 字段承载 ephemeral_seq（独立于 durable 序列），按它升序应用 + 去重：
+  // seq<=lastEphemeralSeq 已应用 → skip（重连/重叠场景）；否则 apply 并推进 lastEphemeralSeq。
+  // 必须按 ephemeral_seq 升序应用，保证同一 turn 的累积 delta 顺序正确。
+  const ephemeralEvents = incomingEvents
+    .filter((event) => event.ephemeral)
+    .sort((a, b) => a.event_seq - b.event_seq);
+  for (const event of ephemeralEvents) {
+    if (event.event_seq <= lastEphemeralSeq) {
+      continue;
     }
+    entries = applyEventToEntries(entries, event);
+    lastEphemeralSeq = event.event_seq;
   }
 
   const normalized = incomingEvents
@@ -537,6 +554,7 @@ export function reduceStreamState(
     rawEvents,
     tokenUsage,
     lastAppliedSeq,
+    lastEphemeralSeq,
   };
 }
 

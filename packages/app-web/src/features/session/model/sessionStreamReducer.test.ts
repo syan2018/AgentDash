@@ -49,8 +49,9 @@ function agentDelta(event_seq: number, delta: string): SessionEventEnvelope {
   });
 }
 
-function ephemeralAgentDelta(delta: string): SessionEventEnvelope {
-  return { ...agentDelta(0, delta), ephemeral: true };
+// ephemeral 事件的 event_seq 字段承载单调 ephemeral_seq（后端 push_ephemeral 分配）。
+function ephemeralAgentDelta(ephemeralSeq: number, delta: string): SessionEventEnvelope {
+  return { ...agentDelta(ephemeralSeq, delta), ephemeral: true };
 }
 
 function retryError(event_seq: number): SessionEventEnvelope {
@@ -392,14 +393,15 @@ describe("sessionStreamReducer", () => {
 
   it("ephemeral delta 更新 entries 但不进 rawEvents、不动 lastAppliedSeq", () => {
     const state = reduceStreamState(createInitialStreamState([]), [
-      ephemeralAgentDelta("hello"),
-      ephemeralAgentDelta(" world"),
+      ephemeralAgentDelta(1, "hello"),
+      ephemeralAgentDelta(2, " world"),
     ]);
 
     expect(state.entries).toHaveLength(1);
     expect(state.entries[0]?.accumulatedText).toBe("hello world");
     expect(state.rawEvents).toHaveLength(0);
     expect(state.lastAppliedSeq).toBe(0);
+    expect(state.lastEphemeralSeq).toBe(2);
   });
 
   it("durable 事件后再来 ephemeral：dedup 不误杀且不污染 rawEvents", () => {
@@ -409,11 +411,53 @@ describe("sessionStreamReducer", () => {
     expect(afterDurable.lastAppliedSeq).toBe(5);
     expect(afterDurable.rawEvents).toHaveLength(1);
 
-    // ephemeral 的 event_seq=0 不应被 `<= lastAppliedSeq(5)` 跳过。
-    const afterEphemeral = reduceStreamState(afterDurable, [ephemeralAgentDelta(" live")]);
+    // ephemeral_seq 独立于 durable event_seq，不应被 `<= lastAppliedSeq(5)` 跳过。
+    const afterEphemeral = reduceStreamState(afterDurable, [ephemeralAgentDelta(1, " live")]);
     expect(afterEphemeral.entries[0]?.accumulatedText).toBe("durable live");
     expect(afterEphemeral.rawEvents).toHaveLength(1);
     expect(afterEphemeral.lastAppliedSeq).toBe(5);
+    expect(afterEphemeral.lastEphemeralSeq).toBe(1);
+  });
+
+  it("整页刷新：lastEphemeralSeq=0 回放服务端 buffer 全部累积 delta", () => {
+    // 模拟整页刷新后 NDJSON 补发的 ephemeral buffer 快照（seq 1..3）。
+    const state = reduceStreamState(createInitialStreamState([]), [
+      ephemeralAgentDelta(1, "AB"),
+      ephemeralAgentDelta(2, "CD"),
+      ephemeralAgentDelta(3, "EF"),
+    ]);
+    expect(state.entries[0]?.accumulatedText).toBe("ABCDEF");
+    expect(state.lastEphemeralSeq).toBe(3);
+    expect(state.rawEvents).toHaveLength(0);
+  });
+
+  it("断线重连：只应用 seq>lastEphemeralSeq，不重复累加", () => {
+    // 重连前已应用 seq 1..2。
+    const before = reduceStreamState(createInitialStreamState([]), [
+      ephemeralAgentDelta(1, "AB"),
+      ephemeralAgentDelta(2, "CD"),
+    ]);
+    expect(before.entries[0]?.accumulatedText).toBe("ABCD");
+    expect(before.lastEphemeralSeq).toBe(2);
+
+    // 重连后服务端全量补发 buffer（seq 1..3）；前端只应用 seq>2（即 seq 3）。
+    const after = reduceStreamState(before, [
+      ephemeralAgentDelta(1, "AB"),
+      ephemeralAgentDelta(2, "CD"),
+      ephemeralAgentDelta(3, "EF"),
+    ]);
+    expect(after.entries[0]?.accumulatedText).toBe("ABCDEF");
+    expect(after.lastEphemeralSeq).toBe(3);
+  });
+
+  it("ephemeral 乱序到达仍按 ephemeral_seq 升序应用", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      ephemeralAgentDelta(2, "CD"),
+      ephemeralAgentDelta(1, "AB"),
+      ephemeralAgentDelta(3, "EF"),
+    ]);
+    expect(state.entries[0]?.accumulatedText).toBe("ABCDEF");
+    expect(state.lastEphemeralSeq).toBe(3);
   });
 
   it("终态 reasoning 并入 reasoning 气泡为单条", () => {

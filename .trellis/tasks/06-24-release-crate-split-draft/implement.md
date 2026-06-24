@@ -189,6 +189,13 @@ Round 2 actual checkpoint:
 | `check-control-plane-port-wiring` | `019efafd-6277-7b53-9d58-d4633c50658c` | AgentFrameBuilder/current-frame resolver gates passed; AgentRun/Lifecycle extraction still blocked by remaining dispatch/helper couplings. |
 | `check-api-vfs-facade` | `019efafd-76c5-75a1-b79f-b43289097343` | API VFS facade cleanup passed; VFS physical extraction still blocked by owner-specific providers. |
 
+Round 3 planned dispatch:
+
+- Dispatch file: `dispatch-round-3.md`
+- Mode: port-wiring convergence only; no RuntimeSession, AgentRun, Lifecycle or VFS physical crate moves.
+- Implement lanes: session adoption port, session launch/commit port, control dispatch facade, frame construction helper port, VFS owner-adapter prep.
+- Check lanes: session adoption, session launch/commit, control dispatch boundary, VFS owner adapters, Gateway regression.
+
 Each worker prompt starts with:
 
 ```text

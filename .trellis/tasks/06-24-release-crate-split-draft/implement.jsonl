@@ -30,3 +30,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave 1/2 checkpoint validation, check-agent findings and next dispatch constraints."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-2.md","reason":"Round 2 worker lanes, ownership boundaries and checkpoint plan."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-2.md","reason":"Round 2 validation, check-agent verdicts and remaining extraction blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 port-wiring convergence lanes, prompt injection rules and checkpoint waves."}

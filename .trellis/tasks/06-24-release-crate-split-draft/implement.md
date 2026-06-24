@@ -207,6 +207,13 @@ Round 3 checkpoint result on 2026-06-25:
 - VFS physical extraction remains blocked by owner-specific providers and application-level `VfsSurfaceResolver`.
 - Full checkpoint details live in `checkpoint-wave-3.md`.
 
+Round 4 planned dispatch:
+
+- Dispatch file: `dispatch-round-4.md`
+- Mode: substrate convergence only; no RuntimeSession, AgentRun, Lifecycle or VFS physical crate moves.
+- Implement lanes: neutral launch envelope, mailbox/effective-capability ports, Gateway visibility cleanup, VFS owner adapter split.
+- Check lanes: RuntimeSession envelope, RuntimeSession live ports, Gateway visibility, VFS owner split, Round 4 readiness.
+
 Each worker prompt starts with:
 
 ```text

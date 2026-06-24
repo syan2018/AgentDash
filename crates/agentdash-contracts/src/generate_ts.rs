@@ -31,12 +31,13 @@ use agentdash_contracts::backend::{
     UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
-    CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasResponse,
-    CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeFileDto,
-    CanvasRuntimeSnapshotDto, CanvasSandboxConfigDto, CreateCanvasRequest, DeleteCanvasResponse,
+    CanvasAccessDto, CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasListScopeDto,
+    CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeFileDto,
+    CanvasRuntimeSnapshotDto, CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest,
+    CreateCanvasRequest, DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
     RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
     RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
-    RuntimeTraceDto, UpdateCanvasRequest,
+    RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
 };
 use agentdash_contracts::common_response::{
     DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
@@ -776,10 +777,17 @@ fn main() {
             export_all::<CanvasImportMapDto>(dir);
             export_all::<CanvasSandboxConfigDto>(dir);
             export_all::<CanvasDataBindingDto>(dir);
+            export_all::<CanvasScopeDto>(dir);
+            export_all::<CanvasListScopeDto>(dir);
+            export_all::<CanvasAccessDto>(dir);
+            export_all::<ListCanvasesQuery>(dir);
             export_all::<CanvasResponse>(dir);
             export_all::<CreateCanvasRequest>(dir);
             export_all::<UpdateCanvasRequest>(dir);
             export_all::<DeleteCanvasResponse>(dir);
+            export_all::<PublishCanvasToProjectRequest>(dir);
+            export_all::<CopyCanvasToPersonalRequest>(dir);
+            export_all::<UnpublishCanvasResponse>(dir);
             export_all::<CanvasRuntimeFileDto>(dir);
             export_all::<CanvasRuntimeBindingDto>(dir);
             export_all::<RuntimeActionKindDto>(dir);

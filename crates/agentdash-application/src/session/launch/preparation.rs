@@ -17,6 +17,9 @@ use crate::session::hub::{
 };
 use crate::session::hub_support::{SessionProfile, TurnExecution};
 use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
+use crate::session::memory_context_frame::{
+    MEMORY_CONTEXT_FRAME_KIND, MemoryContextFrameInput, build_memory_context_frame,
+};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptLaunchPath, ResolvedPromptPayload};
@@ -76,6 +79,7 @@ impl TurnPreparer {
         let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();
         let context_bundle = launch_plan.context_bundle.clone();
         let discovered_guidelines = launch_plan.discovered_guidelines.clone();
+        let discovered_memory = launch_plan.discovered_memory.clone();
         let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
         let capability_state = launch_plan.context.turn.capability_state.clone();
         let capability_keys = capability_state.capability_keys();
@@ -130,6 +134,13 @@ impl TurnPreparer {
             build_guidelines_context_frame(&GuidelinesFrameInput {
                 user_preferences: &user_preferences,
                 discovered_guidelines: &discovered_guidelines,
+            })
+        } else {
+            None
+        };
+        let memory_frame = if include_connector_startup_context {
+            build_memory_context_frame(&MemoryContextFrameInput {
+                inventory: &discovered_memory,
             })
         } else {
             None
@@ -265,6 +276,10 @@ impl TurnPreparer {
             turn_context_frames.push(frame);
         }
         if let Some(frame) = guidelines_frame {
+            accepted_context_frames_to_emit.push(frame.clone());
+            turn_context_frames.push(frame);
+        }
+        if let Some(frame) = memory_frame {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
@@ -428,6 +443,7 @@ fn enqueue_context_frames_for_transform_context(
         // 不再作为 turn-start notice 重复投递。
         if frame.kind == "identity"
             || frame.kind == SYSTEM_GUIDELINES_FRAME_KIND
+            || frame.kind == MEMORY_CONTEXT_FRAME_KIND
             || frame.kind == "pending_action"
         {
             continue;

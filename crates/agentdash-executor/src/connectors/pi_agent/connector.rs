@@ -1063,19 +1063,24 @@ impl AgentConnector for PiAgentConnector {
     }
 }
 
-/// identity 帧 / system_guidelines 帧的 `kind` 标识（与 application 层帧组装约定一致）。
+/// identity / system_guidelines / memory_context 帧的 `kind` 标识（与 application 层帧组装约定一致）。
 const IDENTITY_FRAME_KIND: &str = "identity";
 const SYSTEM_GUIDELINES_FRAME_KIND: &str = "system_guidelines";
+const MEMORY_CONTEXT_FRAME_KIND: &str = "memory_context";
 
-/// 由 identity 帧与 system_guidelines 帧按序组装最终 system prompt。
+/// 由系统通道 context frames 按序组装最终 system prompt。
 ///
-/// 两帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
+/// 这些帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
 /// `identity_context_frame` / `guidelines_context_frame`），因此这里只需按
-/// 「身份 → 项目指引」顺序拼接非空 `rendered_text`，不再需要原先
+/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`，不再需要原先
 /// effective_prompt / rendered_text 的 fallback 兜底。
 fn assemble_system_prompt(frames: &[ContextFrame]) -> Option<String> {
     let mut parts = Vec::new();
-    for kind in [IDENTITY_FRAME_KIND, SYSTEM_GUIDELINES_FRAME_KIND] {
+    for kind in [
+        IDENTITY_FRAME_KIND,
+        SYSTEM_GUIDELINES_FRAME_KIND,
+        MEMORY_CONTEXT_FRAME_KIND,
+    ] {
         if let Some(frame) = frames.iter().find(|frame| frame.kind == kind) {
             let rendered = frame.rendered_text.trim();
             if !rendered.is_empty() {

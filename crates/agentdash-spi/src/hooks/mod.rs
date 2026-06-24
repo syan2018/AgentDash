@@ -409,7 +409,7 @@ pub enum ContextFrameSection {
         #[serde(default)]
         items: Vec<String>,
     },
-    /// 项目级指引（来自 VFS 发现的 AGENTS.md / MEMORY.md 等）。
+    /// 项目级指引（来自 VFS 发现的 AGENTS.md 等）。
     ProjectGuidelines {
         title: String,
         summary: String,

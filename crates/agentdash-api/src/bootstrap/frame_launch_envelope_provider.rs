@@ -38,6 +38,7 @@ impl AppStateFrameLaunchEnvelopeProvider {
             connector: state.services.connector.clone(),
             extra_skill_dirs: state.services.extra_skill_dirs.clone(),
             skill_discovery_providers: state.services.skill_discovery_providers.clone(),
+            memory_discovery_providers: state.services.memory_discovery_providers.clone(),
         });
         Self { service }
     }

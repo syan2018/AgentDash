@@ -34,9 +34,9 @@ pub use agentdash_spi::{
     MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
     MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, MemorySourceFormat,
-    MemorySourceScope, MemorySourceTrustLevel, RoutineTriggerProvider, SkillContextExposure,
-    SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryError,
-    SkillDiscoveryOutput, SkillDiscoveryOwnerKind, SkillDiscoveryProvider,
+    MemorySourceScope, MemorySourceTrustLevel, MountCapability, RoutineTriggerProvider,
+    SkillContextExposure, SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic,
+    SkillDiscoveryError, SkillDiscoveryOutput, SkillDiscoveryOwnerKind, SkillDiscoveryProvider,
     SkillDiscoveryUserContext, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver,
     VfsDiscoveryProvider, is_controlled_vfs_memory_uri,
 };

@@ -1,6 +1,6 @@
 //! 通用 Mount 文件发现模块
 //!
-//! 基于 VFS 的 `VfsService` 扫描约定路径下的已知文件（如 AGENTS.md / MEMORY.md），
+//! 基于 VFS 的 `VfsService` 扫描约定路径下的已知文件（如 AGENTS.md），
 //! 返回文件内容供调用方按场景注入到 session context 中。
 //!
 //! 设计参考 `skill/loader.rs` 的 VFS scan 模式，但抽象为通用的"规则 + 扫描"机制，
@@ -8,8 +8,10 @@
 
 use std::collections::VecDeque;
 
+use agentdash_spi::{
+    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule,
+};
 use agentdash_spi::{Mount, MountCapability, Vfs};
-use agentdash_spi::{SkillDiscoveryVfsFile, SkillDiscoveryVfsRule};
 
 use crate::vfs::types::ResourceRef;
 use crate::vfs::{
@@ -26,7 +28,7 @@ const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
 ///
 /// 调用方通过组合多条规则，描述需要在 mount 中搜索哪些约定文件。
 pub struct MountFileDiscoveryRule {
-    /// 规则标识（如 `"agents_md"` / `"memory_md"`），用于结果归类。
+    /// 规则标识（如 `"agents_md"`），用于结果归类。
     pub key: &'static str,
     /// 目标文件名列表（如 `["AGENTS.md"]`）。
     pub file_names: &'static [&'static str],
@@ -71,24 +73,14 @@ pub struct MountFileDiscoveryResult {
 
 // ─── 内置规则常量 ──────────────────────────────────────────────
 
-pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[
-    MountFileDiscoveryRule {
-        key: "agents_md",
-        file_names: &["AGENTS.md"],
-        scan_root: true,
-        scan_children: true,
-        scan_prefixes: &[],
-        max_size_bytes: 64 * 1024,
-    },
-    MountFileDiscoveryRule {
-        key: "memory_md",
-        file_names: &["MEMORY.md"],
-        scan_root: true,
-        scan_children: true,
-        scan_prefixes: &[],
-        max_size_bytes: 64 * 1024,
-    },
-];
+pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscoveryRule {
+    key: "agents_md",
+    file_names: &["AGENTS.md"],
+    scan_root: true,
+    scan_children: true,
+    scan_prefixes: &[],
+    max_size_bytes: 64 * 1024,
+}];
 
 pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscoveryRule {
     key: "skill_md",
@@ -289,6 +281,121 @@ pub async fn discover_skill_vfs_files(
     (files, diagnostics)
 }
 
+pub async fn discover_memory_vfs_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    rules: &[MemoryDiscoveryVfsRule],
+) -> (
+    Vec<MemoryDiscoveryVfsFile>,
+    Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let mut files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for mount in &vfs.mounts {
+        if !should_scan_mount_for_discovery(mount) {
+            tracing::debug!(
+                mount_id = %mount.id,
+                provider = %mount.provider,
+                "跳过 memory VFS discovery mount"
+            );
+            continue;
+        }
+        if !mount.capabilities.contains(&MountCapability::Read) {
+            continue;
+        }
+
+        let has_list = mount.capabilities.contains(&MountCapability::List);
+        for rule in rules {
+            let rule_key = normalized_memory_rule_key(rule);
+
+            for exact_path in &rule.exact_paths {
+                let Ok(path) =
+                    normalize_rule_path(&rule_key, &mount.id, exact_path, false, &mut diagnostics)
+                else {
+                    continue;
+                };
+                try_read_memory_vfs_file(
+                    service,
+                    vfs,
+                    &mount.id,
+                    &path,
+                    &rule_key,
+                    rule.max_size_bytes,
+                    &mut files,
+                    &mut diagnostics,
+                )
+                .await;
+            }
+
+            if !has_list || rule.scan_prefixes.is_empty() || rule.file_names.is_empty() {
+                continue;
+            }
+
+            let max_files = rule.max_files.unwrap_or(usize::MAX);
+            let mut emitted_for_rule = 0usize;
+            for prefix in &rule.scan_prefixes {
+                if emitted_for_rule >= max_files {
+                    break;
+                }
+                let Ok(prefix) =
+                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut diagnostics)
+                else {
+                    continue;
+                };
+
+                let candidates = if rule.recursive {
+                    list_recursive_files(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &prefix,
+                        rule.max_depth.unwrap_or(8),
+                        max_files.saturating_sub(emitted_for_rule),
+                    )
+                    .await
+                } else {
+                    let children = list_children_at(service, vfs, &mount.id, &prefix).await;
+                    children
+                        .into_iter()
+                        .flat_map(|child_dir| {
+                            rule.file_names
+                                .iter()
+                                .map(move |file_name| format!("{child_dir}/{file_name}"))
+                        })
+                        .collect()
+                };
+
+                for candidate in candidates {
+                    if emitted_for_rule >= max_files {
+                        break;
+                    }
+                    if !matches_any_file_name(&candidate, &rule.file_names) {
+                        continue;
+                    }
+                    let before_len = files.len();
+                    try_read_memory_vfs_file(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &candidate,
+                        &rule_key,
+                        rule.max_size_bytes,
+                        &mut files,
+                        &mut diagnostics,
+                    )
+                    .await;
+                    if files.len() > before_len {
+                        emitted_for_rule += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    (files, diagnostics)
+}
+
 // ─── 内部辅助 ─────────────────────────────────────────────────
 
 fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
@@ -330,6 +437,15 @@ fn normalized_rule_key(rule: &SkillDiscoveryVfsRule) -> String {
     let key = rule.key.trim();
     if key.is_empty() {
         "skill_discovery".to_string()
+    } else {
+        key.to_string()
+    }
+}
+
+fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
+    let key = rule.key.trim();
+    if key.is_empty() {
+        "memory_discovery".to_string()
     } else {
         key.to_string()
     }
@@ -390,6 +506,45 @@ async fn try_read_skill_vfs_file(
         mount_id: mount_id.to_string(),
         path: read.path,
         content: read.content,
+    });
+}
+
+async fn try_read_memory_vfs_file(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    path: &str,
+    rule_key: &str,
+    max_size_bytes: u64,
+    files: &mut Vec<MemoryDiscoveryVfsFile>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let target = ResourceRef {
+        mount_id: mount_id.to_string(),
+        path: path.to_string(),
+    };
+    let read = match service.read_text(vfs, &target, None, None).await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let content_len = read.content.len() as u64;
+    if content_len > max_size_bytes {
+        diagnostics.push(MountFileDiscoveryDiagnostic {
+            rule_key: rule_key.to_string(),
+            mount_id: mount_id.to_string(),
+            path: path.to_string(),
+            message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
+        });
+        return;
+    }
+
+    files.push(MemoryDiscoveryVfsFile {
+        rule_key: rule_key.to_string(),
+        mount_id: mount_id.to_string(),
+        path: read.path,
+        content: read.content,
+        size_bytes: Some(content_len),
     });
 }
 
@@ -544,15 +699,18 @@ mod tests {
     }
 
     #[test]
-    fn builtin_guideline_rules_cover_agents_and_memory() {
-        assert_eq!(BUILTIN_GUIDELINE_RULES.len(), 2);
+    fn builtin_guideline_rules_cover_agents_only() {
+        assert_eq!(BUILTIN_GUIDELINE_RULES.len(), 1);
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].key, "agents_md");
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].file_names, &["AGENTS.md"]);
         assert!(BUILTIN_GUIDELINE_RULES[0].scan_root);
         assert!(BUILTIN_GUIDELINE_RULES[0].scan_children);
-
-        assert_eq!(BUILTIN_GUIDELINE_RULES[1].key, "memory_md");
-        assert_eq!(BUILTIN_GUIDELINE_RULES[1].file_names, &["MEMORY.md"]);
+        assert!(
+            !BUILTIN_GUIDELINE_RULES
+                .iter()
+                .flat_map(|rule| rule.file_names.iter())
+                .any(|file_name| *file_name == "MEMORY.md")
+        );
     }
 
     #[test]

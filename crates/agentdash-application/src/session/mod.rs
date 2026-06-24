@@ -30,6 +30,7 @@ pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
+mod memory_context_frame;
 #[cfg(test)]
 #[path = "../../test-support/session_memory_persistence.rs"]
 mod memory_persistence;

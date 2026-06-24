@@ -19,8 +19,8 @@ use agentdash_domain::backend::{
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
-    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServer,
-    SessionContextBundle, Vfs,
+    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
+    RuntimeMcpServer, SessionContextBundle, Vfs,
 };
 use uuid::Uuid;
 
@@ -80,6 +80,7 @@ pub struct FrameLaunchIntent {
     pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub discovered_memory: MemoryDiscoveryOutput,
 }
 
 // ─── FrameLaunchSurface: planner-facing launch surface，字段 non-optional ───

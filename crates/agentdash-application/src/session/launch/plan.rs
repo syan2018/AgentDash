@@ -8,8 +8,8 @@ use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
-    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
-    RuntimeMcpServer, SessionContextBundle,
+    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, MemoryDiscoveryOutput,
+    RestoredSessionState, RuntimeMcpServer, SessionContextBundle,
 };
 
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
@@ -113,6 +113,7 @@ pub struct LaunchPlan {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub discovered_memory: MemoryDiscoveryOutput,
     pub context_bundle: Option<SessionContextBundle>,
     pub continuation_context_frame: Option<ContextFrame>,
     pub launch_path: PromptLaunchPathPlan,
@@ -293,6 +294,7 @@ impl LaunchPlan {
             resolved_payload: input.resolved_payload,
             title_hint,
             discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
+            discovered_memory: input.launch_envelope.intent.discovered_memory.clone(),
             context_bundle,
             continuation_context_frame,
             launch_path,
@@ -481,6 +483,7 @@ mod tests {
                 identity: None,
                 terminal_hook_effect_binding: None,
                 discovered_guidelines: construction.projections.discovered_guidelines,
+                discovered_memory: Default::default(),
             },
             working_directory,
             context_bundle: construction.context.bundle,

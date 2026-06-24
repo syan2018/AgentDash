@@ -237,6 +237,7 @@ pub(super) async fn envelope_from_construction_with_commands(
             identity: None,
             terminal_hook_effect_binding: None,
             discovered_guidelines: construction.projections.discovered_guidelines,
+            discovered_memory: Default::default(),
         },
         working_directory,
         context_bundle: construction.context.bundle,

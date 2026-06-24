@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
+use agentdash_spi::{
+    AuthIdentity, CapabilityState, MemoryDiscoveryOutput, SessionContextBundle, Vfs,
+};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
@@ -114,6 +116,7 @@ pub(crate) struct FrameAssemblyBuilder {
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
+    pub(super) memory_inventory: MemoryDiscoveryOutput,
 
     // ── Prompt 层 ──
     pub(super) input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
@@ -226,6 +229,11 @@ impl FrameAssemblyBuilder {
         self
     }
 
+    pub(crate) fn with_memory_inventory(mut self, inventory: MemoryDiscoveryOutput) -> Self {
+        self.memory_inventory = inventory;
+        self
+    }
+
     /// 设置 canonical 用户输入。
     pub(crate) fn with_input(
         mut self,
@@ -308,6 +316,7 @@ impl FrameAssemblyBuilder {
             capability_state: Some(flow_caps),
             mcp_servers: slice.mcp_servers,
             context_bundle: sliced_bundle,
+            memory_inventory: MemoryDiscoveryOutput::default(),
             input: Some(input),
             executor_config: Some(executor_config),
             workspace_defaults: None,
@@ -415,6 +424,7 @@ pub(crate) fn project_frame_assembly_to_frame(
     let extras = FrameAssemblyLaunchExtras {
         frame_surface_draft: surface_draft,
         context_bundle: prepared.context_bundle,
+        memory_inventory: prepared.memory_inventory,
         input: prepared.input,
         executor_config: prepared.executor_config,
         environment_variables: prepared.env,
@@ -432,6 +442,7 @@ pub(crate) fn project_frame_assembly_to_frame(
 pub struct FrameAssemblyLaunchExtras {
     pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
+    pub memory_inventory: MemoryDiscoveryOutput,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
     pub environment_variables: HashMap<String, String>,

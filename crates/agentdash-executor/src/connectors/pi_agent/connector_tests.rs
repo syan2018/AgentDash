@@ -2928,9 +2928,9 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     assert_eq!(runtime.last_system_prompt.as_deref(), Some("SP_B"));
 }
 
-/// 系统提示词由 identity 帧 + system_guidelines 帧按序组装。
+/// 系统提示词由 identity 帧 + system_guidelines 帧 + memory_context 帧按序组装。
 #[test]
-fn assemble_system_prompt_combines_identity_and_guidelines() {
+fn assemble_system_prompt_combines_identity_guidelines_and_memory() {
     fn frame(kind: &str, rendered: &str) -> agentdash_spi::hooks::ContextFrame {
         agentdash_spi::hooks::ContextFrame {
             id: format!("{kind}-1"),
@@ -2952,14 +2952,20 @@ fn assemble_system_prompt_combines_identity_and_guidelines() {
         "system_guidelines",
         "## Project Guidelines\n\n### AGENTS.md\n\n使用中文交流",
     );
+    let memory = frame(
+        "memory_context",
+        "## Memory Context\n\nDefault source: `agent://`",
+    );
 
-    // 帧顺序不应影响结果：身份在前、指引在后。
-    let prompt = assemble_system_prompt(&[guidelines.clone(), identity.clone()])
+    // 帧顺序不应影响结果：身份、指引、memory context 按固定顺序拼接。
+    let prompt = assemble_system_prompt(&[memory.clone(), guidelines.clone(), identity.clone()])
         .expect("system prompt should exist");
     assert!(prompt.starts_with("## Identity"));
     assert!(prompt.contains("base"));
     assert!(prompt.contains("## Project Guidelines"));
     assert!(prompt.contains("使用中文交流"));
+    assert!(prompt.contains("## Memory Context"));
+    assert!(prompt.ends_with("Default source: `agent://`"));
 
     // 仅有身份帧时也成立。
     let identity_only = assemble_system_prompt(&[identity]).expect("identity only");

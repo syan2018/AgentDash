@@ -50,10 +50,6 @@ pub struct MemoryDiscoveryContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_binding_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detected_facts: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_type: Option<String>,
     #[serde(default)]
     pub owner_kind: MemoryDiscoveryOwnerKind,

@@ -6,16 +6,25 @@ use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
 use agentdash_spi::{
-    AuthIdentity, DiscoveredGuideline, DiscoveredSkill, RuntimeMcpServer, SkillContextExposure,
-    SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput,
-    SkillDiscoveryProvider, SkillDiscoveryUserContext, Vfs, skill_capability_key,
+    AuthIdentity, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
+    MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
+    MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
+    MemoryIndexStatus, RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster,
+    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
+    SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
 use crate::context::mount_file_discovery::{
     BUILTIN_GUIDELINE_RULES, DiscoveredMountFile, MountFileDiscoveryDiagnostic,
-    discover_mount_files, discover_skill_vfs_files,
+    discover_memory_vfs_files, discover_mount_files, discover_skill_vfs_files,
 };
 use crate::vfs::VfsService;
+use crate::vfs::mount::{
+    CONTEXT_CONTAINER_ID_METADATA_KEY, CONTEXT_OWNER_ID_METADATA_KEY,
+    CONTEXT_OWNER_KIND_METADATA_KEY, PROJECT_AGENT_MEMORY_MOUNT_ID, PROJECT_VFS_MOUNT_METADATA_KEY,
+    mount_owner_kind,
+};
+use crate::vfs::mount_purpose;
 
 use crate::session::baseline_capabilities::{
     INTEGRATION_STATIC_SKILL_PROVIDER_KEY, WORKSPACE_SKILL_PROVIDER_KEY,
@@ -33,10 +42,20 @@ pub struct RuntimeCapabilityProjectionInput<'a> {
     pub diagnostics_label: &'static str,
 }
 
+#[derive(Clone, Copy)]
+pub struct RuntimeMemoryProjectionInput<'a> {
+    pub vfs_service: Option<&'a VfsService>,
+    pub active_vfs: Option<&'a Vfs>,
+    pub identity: Option<&'a AuthIdentity>,
+    pub memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
+    pub diagnostics_label: &'static str,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeCapabilityProjection {
     pub session_capabilities: SessionBaselineCapabilities,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub discovered_memory: MemoryDiscoveryOutput,
 }
 
 pub async fn derive_runtime_capability_projection(
@@ -55,6 +74,7 @@ pub async fn derive_runtime_capability_projection(
     RuntimeCapabilityProjection {
         session_capabilities,
         discovered_guidelines,
+        discovered_memory: MemoryDiscoveryOutput::default(),
     }
 }
 
@@ -192,6 +212,238 @@ pub async fn derive_runtime_guidelines(
     }
 
     merge_discovered_guideline_files(guideline_result.files)
+}
+
+pub async fn derive_runtime_memory_inventory(
+    input: RuntimeMemoryProjectionInput<'_>,
+) -> MemoryDiscoveryOutput {
+    if input.memory_discovery_providers.is_empty() {
+        return MemoryDiscoveryOutput::default();
+    }
+
+    let context = memory_discovery_context_from_vfs_and_identity(input.active_vfs, input.identity);
+    let mounts = input
+        .active_vfs
+        .map(memory_discovery_mounts_from_vfs)
+        .unwrap_or_default();
+    let mut clusters = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for provider in input.memory_discovery_providers {
+        let rules = provider.vfs_discovery_rules();
+        let output = if rules.is_empty() {
+            provider.discover(context.clone()).await
+        } else {
+            match (input.vfs_service, input.active_vfs) {
+                (Some(vfs_service), Some(active_vfs)) => {
+                    let (files, scan_diagnostics) =
+                        discover_memory_vfs_files(vfs_service, active_vfs, &rules).await;
+                    let oversized_indexes =
+                        oversized_memory_index_paths(&scan_diagnostics, provider.provider_key());
+                    diagnostics.extend(memory_mount_diagnostics_to_discovery(
+                        provider.provider_key(),
+                        scan_diagnostics,
+                    ));
+                    provider
+                        .discover_from_vfs(context.clone(), mounts.clone(), files)
+                        .await
+                        .map(|output| mark_oversized_memory_indexes(output, &oversized_indexes))
+                }
+                _ => {
+                    diagnostics.push(MemoryDiscoveryDiagnostic {
+                        provider_key: provider.provider_key().to_string(),
+                        code: "vfs_context_missing".to_string(),
+                        message: "provider 声明了 VFS discovery rules，但当前 session 缺少 active VFS 或 VfsService，已跳过".to_string(),
+                        source_key: None,
+                        uri: None,
+                    });
+                    continue;
+                }
+            }
+        };
+
+        match output {
+            Ok(output) => {
+                let normalized = output.normalized(provider.provider_key());
+                diagnostics.extend(normalized.diagnostics);
+                clusters.extend(normalized.clusters);
+            }
+            Err(error) => {
+                diagnostics.push(MemoryDiscoveryDiagnostic {
+                    provider_key: provider.provider_key().to_string(),
+                    code: "provider_failed".to_string(),
+                    message: error.to_string(),
+                    source_key: None,
+                    uri: None,
+                });
+            }
+        }
+    }
+
+    log_memory_discovery_diagnostics(input.diagnostics_label, &diagnostics);
+
+    MemoryDiscoveryOutput {
+        clusters,
+        diagnostics,
+    }
+}
+
+fn memory_discovery_context_from_vfs_and_identity(
+    active_vfs: Option<&Vfs>,
+    identity: Option<&AuthIdentity>,
+) -> MemoryDiscoveryContext {
+    let agent_id = active_vfs
+        .and_then(|vfs| {
+            vfs.mounts
+                .iter()
+                .find(|mount| mount.id == PROJECT_AGENT_MEMORY_MOUNT_ID)
+        })
+        .and_then(|mount| {
+            mount
+                .metadata
+                .get(CONTEXT_OWNER_ID_METADATA_KEY)
+                .and_then(serde_json::Value::as_str)
+        })
+        .and_then(|value| uuid::Uuid::parse_str(value).ok());
+
+    MemoryDiscoveryContext {
+        project_id: active_vfs
+            .and_then(|vfs| vfs.source_project_id.as_deref())
+            .and_then(|value| uuid::Uuid::parse_str(value).ok()),
+        story_id: active_vfs
+            .and_then(|vfs| vfs.source_story_id.as_deref())
+            .and_then(|value| uuid::Uuid::parse_str(value).ok()),
+        agent_id,
+        owner_kind: if agent_id.is_some() {
+            MemoryDiscoveryOwnerKind::Agent
+        } else {
+            MemoryDiscoveryOwnerKind::Project
+        },
+        user: identity.map(memory_discovery_user_context_from_identity),
+        ..MemoryDiscoveryContext::default()
+    }
+}
+
+fn memory_discovery_user_context_from_identity(
+    identity: &AuthIdentity,
+) -> MemoryDiscoveryUserContext {
+    MemoryDiscoveryUserContext {
+        user_id: identity.user_id.clone(),
+        display_name: identity.display_name.clone(),
+        email: identity.email.clone(),
+        groups: identity
+            .groups
+            .iter()
+            .map(|group| group.group_id.clone())
+            .collect(),
+    }
+}
+
+fn memory_discovery_mounts_from_vfs(vfs: &Vfs) -> Vec<MemoryDiscoveryMount> {
+    vfs.mounts
+        .iter()
+        .map(|mount| {
+            let mut summary = MemoryDiscoveryMount::new(
+                mount.id.clone(),
+                mount.provider.clone(),
+                mount.display_name.clone(),
+                mount.capabilities.clone(),
+            );
+            summary.purpose = serde_json::to_value(mount_purpose(mount))
+                .ok()
+                .and_then(|value| value.as_str().map(ToString::to_string));
+            summary.owner_kind = serde_json::to_value(mount_owner_kind(mount))
+                .ok()
+                .and_then(|value| value.as_str().map(ToString::to_string));
+            summary.metadata_summary = sanitized_memory_mount_metadata_summary(mount);
+            summary
+        })
+        .collect()
+}
+
+fn sanitized_memory_mount_metadata_summary(
+    mount: &agentdash_spi::Mount,
+) -> Option<serde_json::Value> {
+    let metadata = mount.metadata.as_object()?;
+    let mut summary = serde_json::Map::new();
+    for key in [
+        "container_id",
+        CONTEXT_CONTAINER_ID_METADATA_KEY,
+        CONTEXT_OWNER_KIND_METADATA_KEY,
+        CONTEXT_OWNER_ID_METADATA_KEY,
+        PROJECT_VFS_MOUNT_METADATA_KEY,
+        "project_vfs_mount_id",
+        "scope",
+    ] {
+        if let Some(value) = metadata.get(key) {
+            summary.insert(key.to_string(), value.clone());
+        }
+    }
+    (!summary.is_empty()).then(|| serde_json::Value::Object(summary))
+}
+
+fn oversized_memory_index_paths(
+    diagnostics: &[MountFileDiscoveryDiagnostic],
+    provider_key: &str,
+) -> Vec<(String, String, String)> {
+    diagnostics
+        .iter()
+        .filter(|diag| diag.message.contains("文件过大"))
+        .map(|diag| {
+            (
+                diag.mount_id.clone(),
+                diag.path.clone(),
+                provider_key.to_string(),
+            )
+        })
+        .collect()
+}
+
+fn mark_oversized_memory_indexes(
+    mut output: MemoryDiscoveryOutput,
+    oversized_indexes: &[(String, String, String)],
+) -> MemoryDiscoveryOutput {
+    if oversized_indexes.is_empty() {
+        return output;
+    }
+
+    for cluster in &mut output.clusters {
+        for source in &mut cluster.sources {
+            let index_path = source
+                .index_uri
+                .strip_prefix(&format!("{}://", source.mount_id));
+            if oversized_indexes.iter().any(|(mount_id, path, _)| {
+                mount_id == &source.mount_id && Some(path.as_str()) == index_path
+            }) {
+                source.index_status = MemoryIndexStatus::TooLarge;
+                source.bounded_index_content = None;
+            }
+        }
+    }
+    output
+}
+
+fn memory_mount_diagnostics_to_discovery(
+    provider_key: &str,
+    diagnostics: Vec<MountFileDiscoveryDiagnostic>,
+) -> Vec<MemoryDiscoveryDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|diag| {
+            let code = if diag.message.contains("文件过大") {
+                "memory_index_too_large"
+            } else {
+                "vfs_file_diagnostic"
+            };
+            MemoryDiscoveryDiagnostic {
+                provider_key: provider_key.to_string(),
+                code: code.to_string(),
+                message: diag.message,
+                source_key: None,
+                uri: Some(format!("{}://{}", diag.mount_id, diag.path)),
+            }
+        })
+        .collect()
 }
 
 /// 把发现到的原始文件合并为确定性的指引列表。
@@ -558,6 +810,22 @@ fn log_discovery_diagnostics(
     }
 }
 
+fn log_memory_discovery_diagnostics(
+    diagnostics_label: &'static str,
+    diagnostics: &[MemoryDiscoveryDiagnostic],
+) {
+    for diag in diagnostics {
+        tracing::warn!(
+            label = diagnostics_label,
+            provider_key = %diag.provider_key,
+            code = %diag.code,
+            source_key = diag.source_key.as_deref().unwrap_or(""),
+            "memory discovery 诊断: {}",
+            diag.message
+        );
+    }
+}
+
 fn log_skill_diagnostics(
     diagnostics_label: &'static str,
     source: &'static str,
@@ -578,8 +846,14 @@ fn log_skill_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::{
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
+        MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, RuntimeFileEntry, SearchQuery,
+        SearchResult,
+    };
     use async_trait::async_trait;
-    use std::sync::Mutex;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     fn mount_file(mount_id: &str, path: &str, content: &str) -> DiscoveredMountFile {
         DiscoveredMountFile {
@@ -672,9 +946,170 @@ mod tests {
         }
     }
 
+    fn memory_vfs(files: HashMap<String, String>) -> (VfsService, Vfs) {
+        let provider = Arc::new(StaticMemoryMountProvider { files });
+        let mut registry = MountProviderRegistry::new();
+        registry.register(provider);
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![agentdash_domain::common::Mount {
+                id: "agent".to_string(),
+                provider: PROVIDER_INLINE_FS.to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "F:/raw/workspace/root".to_string(),
+                capabilities: vec![
+                    agentdash_domain::common::MountCapability::Read,
+                    agentdash_domain::common::MountCapability::Write,
+                    agentdash_domain::common::MountCapability::List,
+                    agentdash_domain::common::MountCapability::Search,
+                ],
+                default_write: false,
+                display_name: "Agent Memory".to_string(),
+                metadata: serde_json::json!({
+                    "container_id": "knowledge",
+                    CONTEXT_CONTAINER_ID_METADATA_KEY: "knowledge",
+                    CONTEXT_OWNER_KIND_METADATA_KEY: "project_agent",
+                    CONTEXT_OWNER_ID_METADATA_KEY: uuid::Uuid::new_v4().to_string(),
+                    "workspace_detected_facts": {
+                        "p4": {
+                            "workspace_root": "F:/raw/workspace/root"
+                        }
+                    },
+                }),
+            }],
+            default_mount_id: Some("agent".to_string()),
+            source_project_id: Some(uuid::Uuid::new_v4().to_string()),
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        (service, vfs)
+    }
+
     #[derive(Default)]
     struct CapturingSkillDiscoveryProvider {
         context: Mutex<Option<SkillDiscoveryContext>>,
+    }
+
+    struct StaticMemoryMountProvider {
+        files: HashMap<String, String>,
+    }
+
+    #[async_trait]
+    impl MountProvider for StaticMemoryMountProvider {
+        fn provider_id(&self) -> &str {
+            PROVIDER_INLINE_FS
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "write", "list", "search"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &agentdash_domain::common::Mount,
+            path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.files
+                .get(path)
+                .cloned()
+                .map(|content| ReadResult::new(path, content))
+                .ok_or_else(|| MountError::NotFound(path.to_string()))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &agentdash_domain::common::Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported("test memory provider".to_string()))
+        }
+
+        async fn list(
+            &self,
+            _mount: &agentdash_domain::common::Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: self
+                    .files
+                    .keys()
+                    .map(|path| RuntimeFileEntry::file(path.clone()))
+                    .collect(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &agentdash_domain::common::Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Err(MountError::NotSupported("test memory provider".to_string()))
+        }
+    }
+
+    struct ProjectionMemoryProvider {
+        max_size_bytes: u64,
+    }
+
+    #[async_trait]
+    impl MemoryDiscoveryProvider for ProjectionMemoryProvider {
+        fn provider_key(&self) -> &str {
+            "test.memory"
+        }
+
+        fn vfs_discovery_rules(&self) -> Vec<agentdash_spi::MemoryDiscoveryVfsRule> {
+            let mut rule = agentdash_spi::MemoryDiscoveryVfsRule::new("memory-index");
+            rule.exact_paths = vec!["MEMORY.md".to_string()];
+            rule.max_size_bytes = self.max_size_bytes;
+            vec![rule]
+        }
+
+        async fn discover_from_vfs(
+            &self,
+            _context: MemoryDiscoveryContext,
+            mounts: Vec<MemoryDiscoveryMount>,
+            files: Vec<agentdash_spi::MemoryDiscoveryVfsFile>,
+        ) -> Result<MemoryDiscoveryOutput, agentdash_spi::MemoryDiscoveryError> {
+            let Some(agent_mount) = mounts.into_iter().find(|mount| mount.mount_id == "agent")
+            else {
+                return Ok(MemoryDiscoveryOutput::default());
+            };
+            let index_file = files
+                .into_iter()
+                .find(|file| file.mount_id == "agent" && file.path == "MEMORY.md");
+            Ok(MemoryDiscoveryOutput {
+                clusters: vec![agentdash_spi::MemoryDiscoveryCluster {
+                    provider_key: "test.memory".to_string(),
+                    display_name: "Test Memory".to_string(),
+                    sources: vec![agentdash_spi::DiscoveredMemorySource {
+                        provider_key: "test.memory".to_string(),
+                        source_key: "agent".to_string(),
+                        display_name: agent_mount.display_name,
+                        source_uri: "agent://".to_string(),
+                        index_uri: "agent://MEMORY.md".to_string(),
+                        mount_id: "agent".to_string(),
+                        scope: agentdash_spi::MemorySourceScope::Agent,
+                        capabilities: agent_mount.capabilities,
+                        format: agentdash_spi::MemorySourceFormat::AgentDash,
+                        index_status: if index_file.is_some() {
+                            MemoryIndexStatus::Present
+                        } else {
+                            MemoryIndexStatus::Missing
+                        },
+                        trust_level: agentdash_spi::MemorySourceTrustLevel::FirstParty,
+                        summary: None,
+                        bounded_index_content: index_file.map(|file| file.content),
+                    }],
+                    ..Default::default()
+                }],
+                diagnostics: Vec::new(),
+            })
+        }
     }
 
     #[async_trait]
@@ -987,5 +1422,80 @@ mod tests {
             Some("/workspace/project")
         );
         assert!(context.user.is_none());
+    }
+
+    #[test]
+    fn memory_mount_summary_omits_raw_root_ref_and_detected_workspace_root() {
+        let (_service, vfs) = memory_vfs(HashMap::new());
+
+        let summaries = memory_discovery_mounts_from_vfs(&vfs);
+
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+        assert_eq!(summary.mount_id, "agent");
+        let encoded = serde_json::to_string(summary).expect("summary json");
+        assert!(!encoded.contains("F:/raw/workspace/root"));
+        assert!(!encoded.contains("root_ref"));
+        assert!(!encoded.contains("backend"));
+        assert_eq!(summary.purpose.as_deref(), Some("agent_knowledge"));
+        assert_eq!(summary.owner_kind.as_deref(), Some("project_agent"));
+    }
+
+    #[tokio::test]
+    async fn runtime_memory_projection_attaches_bounded_index_from_vfs() {
+        let (service, vfs) = memory_vfs(HashMap::from([(
+            "MEMORY.md".to_string(),
+            "- [Workflow notes](topics/workflow.md)".to_string(),
+        )]));
+        let provider = Arc::new(ProjectionMemoryProvider {
+            max_size_bytes: 1024,
+        });
+        let providers: Vec<Arc<dyn MemoryDiscoveryProvider>> = vec![provider];
+
+        let output = derive_runtime_memory_inventory(RuntimeMemoryProjectionInput {
+            vfs_service: Some(&service),
+            active_vfs: Some(&vfs),
+            identity: None,
+            memory_discovery_providers: &providers,
+            diagnostics_label: "test",
+        })
+        .await;
+
+        let source = &output.clusters[0].sources[0];
+        assert_eq!(source.index_status, MemoryIndexStatus::Present);
+        assert_eq!(
+            source.bounded_index_content.as_deref(),
+            Some("- [Workflow notes](topics/workflow.md)")
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_memory_projection_marks_oversized_index_without_body() {
+        let (service, vfs) = memory_vfs(HashMap::from([(
+            "MEMORY.md".to_string(),
+            "oversized index".to_string(),
+        )]));
+        let provider = Arc::new(ProjectionMemoryProvider { max_size_bytes: 4 });
+        let providers: Vec<Arc<dyn MemoryDiscoveryProvider>> = vec![provider];
+
+        let output = derive_runtime_memory_inventory(RuntimeMemoryProjectionInput {
+            vfs_service: Some(&service),
+            active_vfs: Some(&vfs),
+            identity: None,
+            memory_discovery_providers: &providers,
+            diagnostics_label: "test",
+        })
+        .await;
+
+        let source = &output.clusters[0].sources[0];
+        assert_eq!(source.index_status, MemoryIndexStatus::TooLarge);
+        assert!(source.bounded_index_content.is_none());
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == "memory_index_too_large"
+                    && diag.uri.as_deref() == Some("agent://MEMORY.md"))
+        );
     }
 }

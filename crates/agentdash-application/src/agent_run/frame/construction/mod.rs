@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{AgentConfig, AgentConnector, ConnectorError, SkillDiscoveryProvider};
+use agentdash_spi::{
+    AgentConfig, AgentConnector, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider,
+};
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
@@ -53,6 +55,7 @@ pub struct FrameConstructionService {
     pub(crate) connector: Arc<dyn AgentConnector>,
     pub(crate) extra_skill_dirs: Vec<PathBuf>,
     pub(crate) skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub(crate) memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
 }
 
 pub struct FrameConstructionDeps {
@@ -65,6 +68,7 @@ pub struct FrameConstructionDeps {
     pub connector: Arc<dyn AgentConnector>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
+    pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
 }
 
 pub(crate) use assembly::FrameAssemblyLaunchExtras;
@@ -88,6 +92,7 @@ impl FrameConstructionService {
             connector: deps.connector,
             extra_skill_dirs: deps.extra_skill_dirs,
             skill_discovery_providers: deps.skill_discovery_providers,
+            memory_discovery_providers: deps.memory_discovery_providers,
         }
     }
 
@@ -182,6 +187,7 @@ impl FrameConstructionService {
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
+        .with_memory_discovery(&self.memory_discovery_providers)
     }
 
     pub(crate) fn prompt_launch_path(
@@ -317,6 +323,7 @@ pub(crate) fn build_envelope_from_frame(
     let mut capability_state = surface_draft.capability_state.clone();
     let mut mcp_servers = surface_draft.mcp_servers.clone();
     let mut context_bundle = None;
+    let mut memory_inventory = agentdash_spi::MemoryDiscoveryOutput::default();
 
     if let Some(config) = command.user_input().executor_config.clone() {
         executor_config = Some(match executor_config {
@@ -346,6 +353,7 @@ pub(crate) fn build_envelope_from_frame(
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
+        memory_inventory = extras.memory_inventory;
         if let Some(cs) = surface_draft.capability_state.clone() {
             capability_state = Some(cs);
         }
@@ -406,6 +414,7 @@ pub(crate) fn build_envelope_from_frame(
             identity: command.identity(),
             terminal_hook_effect_binding: hook_binding,
             discovered_guidelines: Vec::new(),
+            discovered_memory: memory_inventory,
         },
         working_directory,
         context_bundle,

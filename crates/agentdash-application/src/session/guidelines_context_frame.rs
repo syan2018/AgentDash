@@ -1,7 +1,7 @@
 //! 系统级 guidelines 帧。
 //!
 //! 承载"基础身份之外的系统级指引"：用户偏好（来自 settings）与项目指引
-//! （来自 VFS 发现的 AGENTS.md / MEMORY.md 等）。与 identity 帧同走
+//! （来自 VFS 发现的 AGENTS.md 等）。与 identity 帧同走
 //! `connector_context` 系统通道、`system` 角色，由连接器拼进最终 system prompt。
 //!
 //! 单一真相源约束：`rendered_text` **直接由 `sections()` 派生**（见

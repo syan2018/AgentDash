@@ -12,13 +12,17 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityScopeCtx, SkillDiscoveryProvider};
+use agentdash_spi::{
+    AuthIdentity, CapabilityScopeCtx, MemoryDiscoveryOutput, MemoryDiscoveryProvider,
+    SkillDiscoveryProvider,
+};
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolCluster, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::agent_run::runtime_capability_projection::{
-    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
+    RuntimeCapabilityProjectionInput, RuntimeMemoryProjectionInput,
+    derive_runtime_memory_inventory, derive_runtime_skill_baseline,
 };
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
@@ -172,6 +176,7 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
     pub audit_bus: Option<SharedContextAuditBus>,
     pub extra_skill_dirs: &'a [PathBuf],
     pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
+    pub memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
 }
 
 impl<'a> OwnerBootstrapComposer<'a> {
@@ -191,6 +196,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             audit_bus: None,
             extra_skill_dirs: &[],
             skill_discovery_providers: &[],
+            memory_discovery_providers: &[],
         }
     }
 
@@ -206,6 +212,14 @@ impl<'a> OwnerBootstrapComposer<'a> {
     ) -> Self {
         self.extra_skill_dirs = extra_skill_dirs;
         self.skill_discovery_providers = skill_discovery_providers;
+        self
+    }
+
+    pub(crate) fn with_memory_discovery(
+        mut self,
+        memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
+    ) -> Self {
+        self.memory_discovery_providers = memory_discovery_providers;
         self
     }
 
@@ -266,6 +280,9 @@ impl<'a> OwnerBootstrapComposer<'a> {
             );
         let runtime_mcp_servers =
             normalize_owner_bootstrap_mcp_projection(&mut cap_output, &spec.request_mcp_servers);
+        let memory_inventory = self
+            .derive_memory_inventory(vfs.as_ref(), spec.identity, "owner_bootstrap")
+            .await;
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -314,6 +331,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(runtime_mcp_servers)
             .with_resolved_capabilities(cap_output)
+            .with_memory_inventory(memory_inventory)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -576,6 +594,22 @@ impl<'a> OwnerBootstrapComposer<'a> {
             return;
         };
         capability_state.skill.skills = caps.skills;
+    }
+
+    async fn derive_memory_inventory(
+        &self,
+        active_vfs: Option<&Vfs>,
+        identity: Option<&AuthIdentity>,
+        diagnostics_label: &'static str,
+    ) -> MemoryDiscoveryOutput {
+        derive_runtime_memory_inventory(RuntimeMemoryProjectionInput {
+            vfs_service: Some(self.vfs_service),
+            active_vfs,
+            identity,
+            memory_discovery_providers: self.memory_discovery_providers,
+            diagnostics_label,
+        })
+        .await
     }
 
     async fn build_owner_context_bundle(

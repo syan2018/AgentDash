@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-06-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1090 | Active |
+| `journal-1.md` | ~1131 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-06-24 | Canvas 个人与项目共用分发权限系统 | `06fe5f4b6`, `2d6c93a95`, `630c93a80`, `7d2c9b154`, `137e76aeb`, `de6c05b9c`, `4c005c86d`, `dc94c5982`, `296d8face` | `codex/canvas-personal-shared-distribution-permission` |
 | 30 | 2026-06-24 | 会话事件仓储粒度收敛：delta ephemeral 化 + 终态承载 + suffix-only 读取 | `422f76dc0`, `4dab0e48c`, `55e43a113`, `15b376d16`, `b50ac3abc`, `06701c219` | `main` |
 | 29 | 2026-06-23 | 完成Agent Provider重试与恢复 | `bc347b1d2`, `620149507` | `main` |
 | 28 | 2026-06-23 | PiAgent readable lifecycle ID 降噪 | `cf300d988` | `main` |

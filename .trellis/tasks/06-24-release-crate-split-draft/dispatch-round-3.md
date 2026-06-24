@@ -33,6 +33,16 @@ Round 3 is a port-wiring convergence round. Do not start RuntimeSession, AgentRu
 
 If two workers need the same file, the later worker reports the conflict in handoff and stops at the nearest compile boundary instead of broadening ownership.
 
+## Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `session-adoption-port-impl` | `019efb0d-bbd6-7260-873d-9ec7d6c8230c` | Godel |
+| `session-launch-commit-port-impl` | `019efb0d-d02c-7122-a725-fd77504fb7ab` | Noether |
+| `control-dispatch-facade-impl` | `019efb0d-e4d8-7c02-9522-65e73ce11a8e` | Locke |
+| `frame-construction-helper-port-impl` | `019efb0d-f927-7330-a339-3fbd39f01d69` | Volta |
+| `vfs-owner-adapter-prep-impl` | `019efb0e-0e11-7ad0-b394-b11030327031` | Linnaeus |
+
 ## Implement Prompt Injection
 
 Every implement worker prompt must start with:

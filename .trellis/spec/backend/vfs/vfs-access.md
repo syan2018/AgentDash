@@ -155,6 +155,51 @@ pub struct InlineStorageKey {
 
 `container_id` 只表示 inline storage container。展示或 lineage 需要独立命名，例如 `context_container_id`。
 
+## ProjectAgent Memory Runtime Mount
+
+ProjectAgent memory 是 ProjectAgent 归属的 inline VFS 文件系统。Agent-facing runtime mount id 固定为：
+
+```text
+mount_id = "agent"
+provider = "inline_fs"
+owner_kind = "project_agent"
+owner_id = project_agent.id
+container_id = "knowledge"
+```
+
+该 mount 通过普通 VFS 工具读写 `agent://...`，写权限完全由 mount `capabilities` 决定。相同 ProjectAgent 在同一 Project 内被不同用户启动时解析到同一个 inline storage key，因此能积累项目内跨用户经验；不同 ProjectAgent 使用不同 `owner_id`，不共享 memory 文件。
+
+Runtime contract：
+
+| 字段 | 值 / 来源 | 约束 |
+| --- | --- | --- |
+| `id` | `agent` | Agent-facing URI scheme 使用 `agent://` |
+| `provider` | `inline_fs` | 复用 inline storage provider |
+| `root_ref` | provider uri | 只在 mount 内部用于 provider dispatch |
+| `capabilities` | mount builder | `read/write/list/search` 等权限由 VFS 决定 |
+| `metadata.context_owner_kind` | `project_agent` | 用于解析 inline storage owner |
+| `metadata.context_owner_id` | `project_agent.id` | UUID string |
+| `metadata.context_container_id` | `knowledge` | storage container identity |
+
+`ProjectAgentKnowledge` surface ref 可以保持稳定，原因是前端/API 已经把它作为浏览该 ProjectAgent 文件面的入口；Agent runtime 和 memory discovery 面向模型暴露的是 `agent://` mount identity。
+
+Memory 文件布局由 memory-manager skill 约定，默认 index 是 `MEMORY.md`，topic 文件建议放在 `topics/*.md`。这些路径没有专用 API 语义，仍是普通 mount-relative path。
+
+Validation / errors：
+
+| 条件 | 用户语义 |
+| --- | --- |
+| `agent` mount 不存在 | memory discovery 不返回默认 source |
+| Agent 写入 `agent://...` 但 mount 缺少 `write` | VFS 工具按 mount capability 返回 forbidden/read-only 语义 |
+| path 是绝对路径或包含 `..` | VFS normalize 返回 BadRequest |
+
+Tests required：
+
+- mount builder test asserts ProjectAgent runtime mount id is `agent` and inline storage container is `knowledge`.
+- VFS grant test asserts project VFS grants do not constrain Agent memory mount capabilities.
+- memory discovery projection test asserts provider receives sanitized mount summary, not `root_ref` or `backend_id`.
+- memory context test asserts only bounded `agent://MEMORY.md` index may enter connector context.
+
 ## Inline Text And Binary
 
 InlineFile 是 typed content storage：

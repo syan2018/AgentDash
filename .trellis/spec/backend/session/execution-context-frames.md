@@ -96,8 +96,39 @@ ToolSchema PromptText 不进入 `ExecutionTurnFrame`。Turn preparation 在 appl
 | Relay | `mcp_servers`、`vfs`、`working_directory`、`environment_variables`、`executor_config`、`identity` | `context_frames`（渲染为系统上下文） |
 | vibe_kanban | `vfs`、`working_directory`、`environment_variables`、`executor_config` | `context_frames`（渲染为系统上下文） |
 
-动态 Project Context、Workspace、Skills、Hook Runtime 等内容通过 ContextFrame
+动态 Project Context、Workspace、Skills、Memory、Hook Runtime 等内容通过 ContextFrame
 进入，不作为 running turn 的 system prompt 重置。
+
+## Memory Context Frame
+
+`memory_context` 是 connector-facing system ContextFrame，来源是 `LaunchPlan.discovered_memory`。它向模型提供 runtime-discovered memory source inventory、默认 source/index、policy 文本和 bounded index 内容。
+
+Contract：
+
+| 字段 | 值 |
+| --- | --- |
+| `kind` | `memory_context` |
+| `source` | `RuntimeContextUpdate` |
+| `delivery_channel` | `connector_context` |
+| `message_role` | `system` |
+| section | `SystemNotice { title: "Memory Context", body: rendered_text }` |
+
+`rendered_text` 只包含 source inventory、diagnostics、默认 source/index 和 `index_status=present` 的 bounded index 内容。Topic 文件正文需要 Agent 按索引线索通过 VFS 工具读取，原因是 topic body 属于按需资源内容，不应在每轮启动时无界进入 stable system context。
+
+Frame order for PiAgent stable system prompt：
+
+```text
+identity -> system_guidelines -> memory_context
+```
+
+Validation / tests：
+
+| 条件 | 断言 |
+| --- | --- |
+| `MemoryDiscoveryOutput` 为空 | 不生成 `memory_context` frame |
+| source 有 bounded `agent://MEMORY.md` | rendered text 包含默认 source/index 与 index markdown |
+| source `index_status=too_large` | rendered text 只展示状态和 diagnostic，不包含正文 |
+| connector 收到无序 context frames | system prompt 仍按 identity、guidelines、memory_context 顺序拼接 |
 
 ## Tool Hot Update
 

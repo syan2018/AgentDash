@@ -106,11 +106,14 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 | Workspace module | Replace | preset `visible_workspace_module_refs` → base 投影 | AgentRun toolset expansion / runtime exposure revision | `CapabilityState.workspace_module`（`mode` 三态，经 `effective_capability_json`） | 否 | base-projection + AgentRun exposure projection |
 | Skill baseline | Replace | 权限=preset `skill_asset_keys`（声明式授予）；列表=lifecycle VFS files / local skill dirs 物化 | none | `SessionBaselineCapabilities.skills`（发现物化，供上下文展示和执行侧读取） | 否 | projection-only module |
 | Guidelines | — | VFS/project facts | none | `DiscoveredGuideline[]` | 否 | projection-only module |
+| Memory discovery | — | Host Integration providers + final VFS facts | none | `MemoryDiscoveryOutput`（source inventory + bounded index） | 否 | projection-only module |
 | Extension runtime | — | installed extension assets | future extension effects | command / flag / renderer projection | 否 | projection-only module |
 
 > **Workspace module 可见性**：声明式 allowlist 事实源是 ProjectAgent preset `visible_workspace_module_refs`，投影进 base `CapabilityState.workspace_module`（`mode=All` 未配/清空 / `mode=Allowlist` 受限），经 `effective_capability_json` 序列化还原。`workspace_module_create(kind="canvas")` materialize 新 `canvas:{canvas_mount_id}` 时通过 AgentRun exposure revision 追加 runtime visible module ref，使 create 后紧接着 describe/invoke/present 不被 allowlist 裁掉；这个 runtime exposure 属于 AgentRun 当前能力面，不回写 ProjectAgent preset。
 >
 > **Skill 权限 vs 发现**：skill 的"授予"是 `skill_asset_keys`（声明式 Replace，种进 lifecycle mount metadata）；`CapabilityState.skill.skills`（`SkillEntry`）是 `load_skills_from_vfs` 扫 mount 的**发现物化结果**，供上下文展示和执行侧读取。`frame_builder` 的 `inherit_skills_from` carry-forward 是发现缓存（热修订不重扫 VFS），与权限原语无关。
+
+> **Memory discovery 事实源**：memory 没有 capability declaration/effect，也不进入 `CapabilityState`。`MemoryDiscoveryOutput` 从 final VFS 与 Host Integration `MemoryDiscoveryProvider` 派生，并作为 launch plan 的 connector context 投影进入 `memory_context` frame。这样 Agent 能看到可用 memory source 和 bounded index，但读写仍必须通过原有 VFS mount capability 完成。
 
 > **Companion roster 事实源**：可派发 companion agent 列表归属 `CapabilityState.companion.agents`。CAP snapshot / delta ContextFrame 从该投影生成 `companion_agent_roster_delta` section，供模型上下文、前端 timeline 和调试视图消费。这样 companion 工具可用性（`tool.capabilities` 中的 `collaboration`）与可派发对象列表（`companion.agents`）在同一能力状态闭包下观察，runtime transition、context query 和前端展示使用同一份投影。
 

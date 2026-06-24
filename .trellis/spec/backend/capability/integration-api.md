@@ -55,6 +55,81 @@
 
 开源仓必须用 first-party integrations 验证集成合同的合理性，防止企业仓成为第一个消费者。First-party baseline 包括默认认证集成和默认连接器集成。
 
+## Memory Discovery Providers
+
+### 1. Scope / Trigger
+
+`AgentDashIntegration::memory_discovery_providers()` 是 native integration 向 session runtime 贡献 memory source inventory 的启动期入口。Memory 发现只消费已经进入本次 runtime VFS 的受控 mount 与 bounded index 文件，原因是 Agent 记忆应服从 VFS 能力边界，并通过 ContextFrame 注入为历史经验线索，而不是新增独立 Memory API、数据库实体或工具通道。
+
+### 2. Signatures
+
+```rust
+fn memory_discovery_providers(&self) -> Vec<Arc<dyn MemoryDiscoveryProvider>> {
+    vec![]
+}
+
+#[async_trait]
+pub trait MemoryDiscoveryProvider: Send + Sync {
+    fn provider_key(&self) -> &str;
+    fn vfs_discovery_rules(&self) -> Vec<MemoryDiscoveryVfsRule>;
+    async fn discover_from_vfs(
+        &self,
+        context: MemoryDiscoveryContext,
+        mounts: Vec<MemoryDiscoveryMount>,
+        files: Vec<MemoryDiscoveryVfsFile>,
+    ) -> Result<MemoryDiscoveryOutput, MemoryDiscoveryError>;
+}
+```
+
+Provider 返回 `MemoryDiscoveryOutput { clusters, diagnostics }`，其中 source 使用受控 VFS URI，例如 `agent://` 与 `agent://MEMORY.md`。`MemoryDiscoveryMount` 是 runtime mount summary，只包含 mount id、provider、display name、capabilities、purpose、owner kind 和脱敏 metadata summary。
+
+### 3. Contracts
+
+- `MemoryDiscoveryVfsRule` 只声明宿主可从当前 active VFS 读取的候选文件，字段包括 `exact_paths`、`file_names`、`scan_prefixes`、`recursive`、`max_depth`、`max_files`、`max_size_bytes`。
+- `MemoryDiscoveryVfsFile` 只携带 bounded text content、mount id、path、rule key 与 size；宿主按 rule 读取文件，不扩大 mount capability。
+- `DiscoveredMemorySource` 必须携带 `source_key`、`source_uri`、`index_uri`、`mount_id`、`scope`、`capabilities`、`format`、`index_status`、`trust_level`，可携带 `bounded_index_content`。
+- `source_uri` / `index_uri` 必须是受控 VFS URI；本机绝对路径、`file://`、drive path、反斜杠路径和 `..` path segment 不进入 discovery output。
+- first-party ProjectAgent provider 默认发现 runtime `agent://` source；`MEMORY.md` 缺失时仍返回 source，并以 `index_status=missing` 表达索引状态。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| provider key 为空或重复 | integration registration 失败 |
+| provider 声明 VFS rule 但 session 缺少 active VFS / VfsService | 生成 `vfs_context_missing` diagnostic，跳过该 provider |
+| index 文件超过 `max_size_bytes` | source 标记 `index_status=too_large`，不附带正文 |
+| source URI 或 index URI 不是受控 VFS URI | normalization 丢弃该 source 并生成 `invalid_memory_source_uri` diagnostic |
+| 同一 provider 返回重复 source key | 保留首个 source，生成 `duplicate_source_key` diagnostic |
+
+### 5. Good / Base / Bad Cases
+
+- Good：ProjectAgent runtime VFS 存在 `agent` mount，provider 返回 `source_uri=agent://`、`index_uri=agent://MEMORY.md`、capabilities 来自该 mount。
+- Base：`agent://MEMORY.md` 不存在时，provider 仍返回 source，Agent 可通过普通 VFS 文件工具创建索引和 topic 文件。
+- Bad：provider 返回 `C:\workspace\memory` 或 `file:///tmp/MEMORY.md` 作为 source URI，normalization 必须将其从 inventory 移除。
+
+### 6. Tests Required
+
+- SPI 测试覆盖 VFS URI validation、duplicate source normalization、rule default bound。
+- Integration registration 测试覆盖 memory provider 收集、空 key 和重复 key。
+- First-party provider 测试覆盖 `MEMORY.md` 缺失、bounded index 附加、topic body 不注入。
+- Runtime projection 测试覆盖 mount summary 不含 `root_ref` / `backend_id` / workspace root。
+
+### 7. Ownership Pair
+
+#### Provider-owned
+
+```rust
+provider.discover_from_vfs(context, mount_summaries, bounded_files).await
+```
+
+#### Platform-owned
+
+```text
+active VFS -> bounded file scan -> normalized MemoryDiscoveryOutput -> memory_context ContextFrame -> connector system context
+```
+
+这样分层的原因是不同 integration 可以贡献 memory inventory 识别逻辑，但读写行为、权限边界和 prompt 注入生命周期必须继续由平台的 VFS、ContextFrame 和 connector runtime 统一控制。
+
 ## Integration Embedded Shared Library Assets
 
 `AgentDashIntegration::library_asset_seeds()` 是 native integration 向 Shared Library 贡献内嵌资产的启动期入口。

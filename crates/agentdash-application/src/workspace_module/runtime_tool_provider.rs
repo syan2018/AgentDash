@@ -11,6 +11,7 @@ use agentdash_spi::{
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use crate::project::project_authorization_context_from_identity;
 use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::runtime_tools::provider::{
     SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, project_id_from_context,
@@ -161,6 +162,11 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
 
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
         let session_id = runtime_session_id_from_context(context);
+        let current_user = context
+            .session
+            .identity
+            .as_ref()
+            .map(project_authorization_context_from_identity);
         let mut tools: Vec<DynAgentTool> = Vec::new();
 
         if flow.is_capability_tool_enabled(
@@ -174,6 +180,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.canvas_repo.clone(),
                     project_id,
                 )
+                .with_current_user(current_user.clone())
                 .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
             ));
         }
@@ -189,6 +196,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.canvas_repo.clone(),
                     project_id,
                 )
+                .with_current_user(current_user.clone())
                 .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
             ));
         }
@@ -206,6 +214,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.session_services_handle.clone(),
                     Some(session_id.clone()),
                 )
+                .with_current_user(current_user.clone())
                 .with_turn_id(context.session.turn_id.clone()),
             ));
         }
@@ -215,8 +224,14 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             "workspace_module_invoke",
             Some(ToolCluster::WorkspaceModule),
         ) {
-            self.push_invoke_tool(context, project_id, &session_id, &mut tools)
-                .await;
+            self.push_invoke_tool(
+                context,
+                project_id,
+                &session_id,
+                current_user.clone(),
+                &mut tools,
+            )
+            .await;
         }
 
         if flow.is_capability_tool_enabled(
@@ -224,15 +239,18 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             "workspace_module_present",
             Some(ToolCluster::WorkspaceModule),
         ) {
-            tools.push(Arc::new(WorkspaceModulePresentTool::new(
-                self.installation_repo.clone(),
-                self.canvas_repo.clone(),
-                project_id,
-                shared_vfs,
-                self.session_services_handle.clone(),
-                session_id,
-                context.session.turn_id.clone(),
-            )));
+            tools.push(Arc::new(
+                WorkspaceModulePresentTool::new(
+                    self.installation_repo.clone(),
+                    self.canvas_repo.clone(),
+                    project_id,
+                    shared_vfs,
+                    self.session_services_handle.clone(),
+                    session_id,
+                    context.session.turn_id.clone(),
+                )
+                .with_current_user(current_user.clone()),
+            ));
         }
 
         Ok(tools)
@@ -245,6 +263,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         context: &ExecutionContext,
         project_id: uuid::Uuid,
         session_id: &str,
+        current_user: Option<crate::project::ProjectAuthorizationContext>,
         tools: &mut Vec<DynAgentTool>,
     ) {
         let (gateway, transport) = match self.invoke_runtime_deps().await {
@@ -299,6 +318,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                 gateway,
                 channel_invoker,
             )
+            .with_current_user(current_user)
             .with_runtime_visibility(self.session_services_handle.clone()),
         ));
     }

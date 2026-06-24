@@ -20,7 +20,7 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentation,
     WorkspaceModuleStatus, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
-use agentdash_domain::canvas::Canvas;
+use agentdash_domain::canvas::{Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasScope};
 use agentdash_domain::shared_library::{
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
 };
@@ -180,12 +180,18 @@ pub fn build_workspace_modules(
 ) -> Vec<WorkspaceModuleDescriptor> {
     let mut modules = Vec::new();
     modules.extend(build_extension_modules(ext));
-    modules.extend(canvases.iter().map(build_canvas_module));
+    modules.extend(canvases.iter().map(|canvas| {
+        let access = default_canvas_access_for_descriptor(canvas);
+        build_canvas_module(canvas, &access)
+    }));
     modules
 }
 
-pub fn build_canvas_workspace_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
-    build_canvas_module(canvas)
+pub fn build_canvas_workspace_module(
+    canvas: &Canvas,
+    access: &CanvasAccessProjection,
+) -> WorkspaceModuleDescriptor {
+    build_canvas_module(canvas, access)
 }
 
 #[derive(Debug, Error)]
@@ -384,8 +390,52 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
         .collect()
 }
 
-fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
-    let operations: Vec<WorkspaceModuleOperation> = vec![WorkspaceModuleOperation {
+fn build_canvas_module(
+    canvas: &Canvas,
+    access: &CanvasAccessProjection,
+) -> WorkspaceModuleDescriptor {
+    let mut operations: Vec<WorkspaceModuleOperation> = Vec::new();
+    if access.allows(CanvasAccessAction::EditSource) {
+        operations.push(canvas_bind_data_operation());
+    }
+
+    // entry/files → ui_entry(canvas)
+    let ui_entries = vec![WorkspaceModuleUiEntry {
+        view_key: "preview".to_string(),
+        renderer_kind: "canvas".to_string(),
+        presentation_uri: Some(canvas_presentation_uri(&canvas.mount_id)),
+        uri_scheme: Some("canvas".to_string()),
+        title: canvas.title.clone(),
+    }];
+
+    let operation_summary = operations
+        .iter()
+        .map(|operation| operation.operation_key.clone())
+        .collect::<Vec<_>>();
+    let permission_summary = canvas_permission_summary(access);
+
+    let summary = WorkspaceModuleSummary {
+        module_id: canvas_module_id(&canvas.mount_id),
+        kind: WorkspaceModuleKind::Canvas,
+        title: canvas.title.clone(),
+        description: canvas.description.clone(),
+        source: canvas.mount_id.clone(),
+        ui_summary: ui_summary(ui_entries.len()),
+        operation_summary,
+        status: WorkspaceModuleStatus::ready(),
+        permission_summary,
+    };
+
+    WorkspaceModuleDescriptor {
+        summary,
+        ui_entries,
+        operations,
+        runtime_backing: Some(format!("canvas_vfs:{}", canvas_vfs_mount_id(canvas))),
+    }
+}
+
+fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
+    WorkspaceModuleOperation {
         operation_key: "canvas.bind_data".to_string(),
         origin: "host_canvas".to_string(),
         description: "Declare or update a data binding for this Canvas instance.".to_string(),
@@ -418,43 +468,30 @@ fn build_canvas_module(canvas: &Canvas) -> WorkspaceModuleDescriptor {
             },
             "required": ["canvas_id", "canvas_mount_id", "vfs_mount_id", "bindings"]
         })),
-        permission_summary: Vec::new(),
+        permission_summary: vec!["canvas.source:edit".to_string()],
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::BindData,
         },
-    }];
+    }
+}
 
-    // entry/files → ui_entry(canvas)
-    let ui_entries = vec![WorkspaceModuleUiEntry {
-        view_key: "preview".to_string(),
-        renderer_kind: "canvas".to_string(),
-        presentation_uri: Some(canvas_presentation_uri(&canvas.mount_id)),
-        uri_scheme: Some("canvas".to_string()),
-        title: canvas.title.clone(),
-    }];
+fn canvas_permission_summary(access: &CanvasAccessProjection) -> Vec<String> {
+    if access.allows(CanvasAccessAction::EditSource) {
+        vec!["canvas.source:edit".to_string()]
+    } else {
+        vec!["canvas.source:read_only".to_string()]
+    }
+}
 
-    let operation_summary = operations
-        .iter()
-        .map(|operation| operation.operation_key.clone())
-        .collect::<Vec<_>>();
-
-    let summary = WorkspaceModuleSummary {
-        module_id: canvas_module_id(&canvas.mount_id),
-        kind: WorkspaceModuleKind::Canvas,
-        title: canvas.title.clone(),
-        description: canvas.description.clone(),
-        source: canvas.mount_id.clone(),
-        ui_summary: ui_summary(ui_entries.len()),
-        operation_summary,
-        status: WorkspaceModuleStatus::ready(),
-        permission_summary: Vec::new(),
-    };
-
-    WorkspaceModuleDescriptor {
-        summary,
-        ui_entries,
-        operations,
-        runtime_backing: Some(format!("canvas_vfs:{}", canvas_vfs_mount_id(canvas))),
+fn default_canvas_access_for_descriptor(canvas: &Canvas) -> CanvasAccessProjection {
+    let editable = canvas.scope == CanvasScope::Personal;
+    CanvasAccessProjection {
+        can_view: true,
+        can_edit_source: editable,
+        can_publish: editable,
+        can_manage_shared: false,
+        can_copy: true,
+        runtime_write_allowed: editable,
     }
 }
 
@@ -510,7 +547,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::canvas::build_canvas;
+    use crate::canvas::{build_canvas, build_personal_canvas};
     use crate::extension_runtime::extension_runtime_projection_from_installations;
 
     fn source() -> InstalledAssetSource {
@@ -593,13 +630,36 @@ mod tests {
         .expect("valid installation")
     }
 
+    fn editable_canvas_access() -> CanvasAccessProjection {
+        CanvasAccessProjection {
+            can_view: true,
+            can_edit_source: true,
+            can_publish: true,
+            can_manage_shared: false,
+            can_copy: true,
+            runtime_write_allowed: true,
+        }
+    }
+
+    fn read_only_canvas_access() -> CanvasAccessProjection {
+        CanvasAccessProjection {
+            can_view: true,
+            can_edit_source: false,
+            can_publish: false,
+            can_manage_shared: false,
+            can_copy: true,
+            runtime_write_allowed: false,
+        }
+    }
+
     #[test]
     fn aggregates_extension_and_canvas_modules() {
         let projection =
             extension_runtime_projection_from_installations(vec![installation("demo", true)])
                 .expect("projection");
-        let canvas = build_canvas(
+        let canvas = build_personal_canvas(
             Uuid::new_v4(),
+            "user-1".to_string(),
             Some("cvs-dashboard-a".to_string()),
             "Dashboard A".to_string(),
             "demo canvas".to_string(),
@@ -678,6 +738,73 @@ mod tests {
         assert_eq!(
             canvas_module.ui_entries[0].presentation_uri.as_deref(),
             Some("canvas://cvs-dashboard-a")
+        );
+    }
+
+    #[test]
+    fn personal_owner_canvas_descriptor_exposes_bind_data() {
+        let canvas = build_personal_canvas(
+            Uuid::new_v4(),
+            "user-1".to_string(),
+            Some("cvs-personal-dashboard".to_string()),
+            "Personal Dashboard".to_string(),
+            "editable canvas".to_string(),
+            Default::default(),
+        )
+        .expect("personal canvas");
+
+        let module = build_canvas_workspace_module(&canvas, &editable_canvas_access());
+
+        assert_eq!(module.summary.module_id, "canvas:cvs-personal-dashboard");
+        assert!(
+            module
+                .summary
+                .operation_summary
+                .iter()
+                .any(|operation| operation == "canvas.bind_data")
+        );
+        assert!(
+            module
+                .operations
+                .iter()
+                .any(|operation| operation.operation_key == "canvas.bind_data")
+        );
+        assert_eq!(
+            module.ui_entries[0].presentation_uri.as_deref(),
+            Some("canvas://cvs-personal-dashboard")
+        );
+    }
+
+    #[test]
+    fn project_shared_canvas_descriptor_omits_bind_data() {
+        let canvas = build_canvas(
+            Uuid::new_v4(),
+            Some("cvs-shared-dashboard".to_string()),
+            "Shared Dashboard".to_string(),
+            "read-only canvas".to_string(),
+            Default::default(),
+        )
+        .expect("project shared canvas");
+
+        let module = build_canvas_workspace_module(&canvas, &read_only_canvas_access());
+
+        assert_eq!(module.summary.module_id, "canvas:cvs-shared-dashboard");
+        assert!(
+            !module
+                .summary
+                .operation_summary
+                .iter()
+                .any(|operation| operation == "canvas.bind_data")
+        );
+        assert!(
+            !module
+                .operations
+                .iter()
+                .any(|operation| operation.operation_key == "canvas.bind_data")
+        );
+        assert_eq!(
+            module.ui_entries[0].presentation_uri.as_deref(),
+            Some("canvas://cvs-shared-dashboard")
         );
     }
 

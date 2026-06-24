@@ -1,9 +1,8 @@
 //! Workspace Module Agent 工具：`workspace_module_list` / `workspace_module_describe`。
 //!
 //! 二者由 session runtime tool composer 通过 workspace-module provider 装配，
-//! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + visible canvases，经聚合层
-//! `build_workspace_modules` 投影，再按 capability 的
-//! AgentRun effective capability view 过滤。
+//! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + Canvas 候选，
+//! 先按 AgentRun effective capability view 过滤，再按当前用户 Canvas access 重投影。
 
 use std::sync::Arc;
 
@@ -11,26 +10,32 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleOperation,
-    WorkspaceModuleOperationDispatch,
+    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch,
 };
-use agentdash_domain::canvas::{Canvas, CanvasRepository};
+use agentdash_domain::canvas::{
+    CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessAction, CanvasAccessProjection,
+    CanvasDataBinding, CanvasRepository, CanvasScope,
+};
+use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::agent_run::{AgentRunEffectiveCapabilityView, RuntimeSurfaceUpdateRequest};
+use crate::agent_run::{
+    AgentRunEffectiveCapabilityView, CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
+};
 use crate::canvas::runtime_surface::submit_canvas_runtime_surface_update;
 use crate::canvas::{
-    BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session, request_existing_canvas_visibility_for_runtime,
+    BindCanvasDataParams, CanvasMutationInput, StartCanvasParams, build_personal_canvas,
+    canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id, normalize_canvas_mount_id,
+    request_existing_canvas_visibility_for_runtime, upsert_canvas_binding,
 };
-use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::runtime_gateway::{
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
@@ -39,7 +44,7 @@ use crate::runtime_gateway::{
 };
 use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
-    ResolvedInvocationBackend, build_workspace_module_presentation, build_workspace_modules,
+    ResolvedInvocationBackend, build_canvas_workspace_module, build_workspace_module_presentation,
     resolve_workspace_module_visibility, validate_input_against_schema,
 };
 
@@ -47,6 +52,7 @@ use crate::workspace_module::{
 struct WorkspaceModuleVisibilitySource {
     session_services_handle: Option<SharedSessionToolServicesHandle>,
     session_id: Option<String>,
+    current_user: Option<ProjectAuthorizationContext>,
     #[cfg(test)]
     effective_view: Option<AgentRunEffectiveCapabilityView>,
 }
@@ -60,6 +66,15 @@ impl WorkspaceModuleVisibilitySource {
         self.session_services_handle = Some(session_services_handle);
         self.session_id = Some(session_id.into());
         self
+    }
+
+    fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.current_user = current_user;
+        self
+    }
+
+    fn current_user(&self) -> Option<&ProjectAuthorizationContext> {
+        self.current_user.as_ref()
     }
 
     #[cfg(test)]
@@ -115,7 +130,87 @@ async fn resolve_visible_modules_for_tool(
             diagnostic.message
         );
     }
-    Ok(projection.modules)
+    reproject_canvas_modules_for_access(
+        canvas_repo,
+        project_id,
+        projection.modules,
+        visibility_source.current_user(),
+    )
+    .await
+}
+
+async fn reproject_canvas_modules_for_access(
+    canvas_repo: &Arc<dyn CanvasRepository>,
+    project_id: Uuid,
+    modules: Vec<WorkspaceModuleDescriptor>,
+    current_user: Option<&ProjectAuthorizationContext>,
+) -> Result<Vec<WorkspaceModuleDescriptor>, AgentToolError> {
+    let Some(current_user) = current_user else {
+        return Ok(modules
+            .into_iter()
+            .filter(|module| module.summary.kind != WorkspaceModuleKind::Canvas)
+            .collect());
+    };
+
+    let mut visible = Vec::with_capacity(modules.len());
+    for module in modules {
+        if module.summary.kind != WorkspaceModuleKind::Canvas {
+            visible.push(module);
+            continue;
+        }
+
+        let canvas = load_canvas_by_project_mount_id_for_tool(
+            canvas_repo.as_ref(),
+            project_id,
+            &module.summary.source,
+        )
+        .await?;
+        let access = canvas_access_for_workspace_module(&canvas, current_user);
+        if access.can_view {
+            visible.push(build_canvas_workspace_module(&canvas, &access));
+        }
+    }
+    Ok(visible)
+}
+
+async fn load_canvas_by_project_mount_id_for_tool(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    raw_canvas_mount_id: &str,
+) -> Result<Canvas, AgentToolError> {
+    let canvas_mount_id = normalize_canvas_mount_id(raw_canvas_mount_id)
+        .map_err(|error| AgentToolError::InvalidArguments(error.to_string()))?;
+    let canvas = canvas_repo
+        .get_by_mount_id(project_id, &canvas_mount_id)
+        .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+    canvas
+        .ok_or_else(|| AgentToolError::ExecutionFailed(format!("Canvas 不存在: {canvas_mount_id}")))
+}
+
+fn canvas_access_for_workspace_module(
+    canvas: &Canvas,
+    current_user: &ProjectAuthorizationContext,
+) -> CanvasAccessProjection {
+    let is_owner = canvas.owner_user_id.as_deref() == Some(current_user.user_id.as_str());
+    match canvas.scope {
+        CanvasScope::Personal => CanvasAccessProjection {
+            can_view: is_owner || current_user.is_admin,
+            can_edit_source: is_owner,
+            can_publish: is_owner,
+            can_manage_shared: current_user.is_admin,
+            can_copy: is_owner || current_user.is_admin,
+            runtime_write_allowed: is_owner,
+        },
+        CanvasScope::Project => CanvasAccessProjection {
+            can_view: true,
+            can_edit_source: false,
+            can_publish: false,
+            can_manage_shared: false,
+            can_copy: true,
+            runtime_write_allowed: false,
+        },
+    }
 }
 
 #[derive(Clone)]
@@ -148,6 +243,11 @@ impl WorkspaceModuleListTool {
         self.visibility_source = self
             .visibility_source
             .with_runtime(session_services_handle, session_id);
+        self
+    }
+
+    pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.visibility_source = self.visibility_source.with_current_user(current_user);
         self
     }
 
@@ -269,6 +369,11 @@ impl WorkspaceModuleDescribeTool {
         self
     }
 
+    pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
+    }
+
     #[cfg(test)]
     fn with_effective_capability_view(mut self, view: AgentRunEffectiveCapabilityView) -> Self {
         self.visibility_source = self.visibility_source.with_effective_view(view);
@@ -362,6 +467,33 @@ pub struct WorkspaceModuleCreateParams {
     pub input: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct WorkspaceModuleCanvasToolResult {
+    action: String,
+    canvas_id: String,
+    canvas_mount_id: String,
+    vfs_mount_id: String,
+    module_id: String,
+    presentation_uri: String,
+    title: String,
+    entry_file: String,
+    skill_name: String,
+    skill_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct WorkspaceModuleCanvasBindingResult {
+    canvas_id: String,
+    canvas_mount_id: String,
+    vfs_mount_id: String,
+    bindings: Vec<CanvasDataBinding>,
+    alias: String,
+    source_uri: String,
+    content_type: String,
+}
+
 #[derive(Clone)]
 pub struct WorkspaceModuleCreateTool {
     canvas_repo: Arc<dyn CanvasRepository>,
@@ -369,6 +501,7 @@ pub struct WorkspaceModuleCreateTool {
     vfs: crate::vfs::tools::fs::SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     session_id: Option<String>,
+    current_user: Option<ProjectAuthorizationContext>,
 }
 
 impl WorkspaceModuleCreateTool {
@@ -385,10 +518,16 @@ impl WorkspaceModuleCreateTool {
             vfs,
             session_services_handle,
             session_id,
+            current_user: None,
         }
     }
 
     pub fn with_turn_id(self, _turn_id: impl Into<String>) -> Self {
+        self
+    }
+
+    pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.current_user = current_user;
         self
     }
 }
@@ -434,26 +573,23 @@ impl AgentTool for WorkspaceModuleCreateTool {
             serde_json::from_value(params.input).map_err(|error| {
                 AgentToolError::InvalidArguments(format!("invalid canvas create input: {error}"))
             })?;
-        let (canvas, canvas_result) = create_or_attach_canvas_for_session(
+        let current_user = self.current_user.as_ref().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "workspace_module_create(kind=\"canvas\") 需要当前 runtime identity".to_string(),
+            )
+        })?;
+        let (canvas, canvas_result) = create_or_attach_canvas_for_workspace_module(
             self.canvas_repo.as_ref(),
             self.project_id,
+            current_user,
             &self.vfs,
             &self.session_services_handle,
             self.session_id.as_deref(),
             canvas_params,
         )
         .await?;
-        let descriptor = build_workspace_modules(
-            &ExtensionRuntimeProjection::default(),
-            std::slice::from_ref(&canvas),
-        )
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "failed to build canvas workspace module descriptor".to_string(),
-            )
-        })?;
+        let access = canvas_access_for_workspace_module(&canvas, current_user);
+        let descriptor = build_canvas_workspace_module(&canvas, &access);
         let module_id = descriptor.summary.module_id.clone();
         let content = format!(
             "created workspace module\nmodule_id={module_id}\ncanvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nskill_path={}",
@@ -475,6 +611,186 @@ impl AgentTool for WorkspaceModuleCreateTool {
             details: Some(details),
         })
     }
+}
+
+async fn create_or_attach_canvas_for_workspace_module(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    current_user: &ProjectAuthorizationContext,
+    vfs: &crate::vfs::tools::fs::SharedRuntimeVfs,
+    session_services_handle: &SharedSessionToolServicesHandle,
+    current_session_id: Option<&str>,
+    params: StartCanvasParams,
+) -> Result<(Canvas, WorkspaceModuleCanvasToolResult), AgentToolError> {
+    let requested_canvas_mount_id = params
+        .canvas_mount_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(normalize_canvas_mount_id)
+        .transpose()
+        .map_err(|error| AgentToolError::InvalidArguments(error.to_string()))?;
+
+    let (canvas, action) = if let Some(canvas_mount_id) = requested_canvas_mount_id {
+        let existing_canvas = canvas_repo
+            .get_by_mount_id(project_id, &canvas_mount_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+        if let Some(canvas) = existing_canvas {
+            ensure_canvas_visible_to_current_user(&canvas, current_user)?;
+            (canvas, "attached".to_string())
+        } else {
+            let title = params
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    AgentToolError::InvalidArguments(
+                        "title is required when canvas_mount_id does not match an existing canvas"
+                            .to_string(),
+                    )
+                })?;
+
+            let canvas = build_personal_canvas(
+                project_id,
+                current_user.user_id.clone(),
+                Some(canvas_mount_id),
+                title.to_string(),
+                params.description.unwrap_or_default(),
+                CanvasMutationInput::default(),
+            )
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+            canvas_repo
+                .create(&canvas)
+                .await
+                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+            (canvas, "created".to_string())
+        }
+    } else {
+        let title = params
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AgentToolError::InvalidArguments(
+                    "title is required when creating a new canvas".to_string(),
+                )
+            })?;
+
+        let canvas = build_personal_canvas(
+            project_id,
+            current_user.user_id.clone(),
+            None,
+            title.to_string(),
+            params.description.unwrap_or_default(),
+            CanvasMutationInput::default(),
+        )
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        if canvas_repo
+            .get_by_mount_id(project_id, &canvas.mount_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+            .is_some()
+        {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "canvas_mount_id already exists: {}",
+                canvas.mount_id
+            )));
+        }
+        canvas_repo
+            .create(&canvas)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        (canvas, "created".to_string())
+    };
+
+    submit_canvas_runtime_surface_update(
+        Some(vfs),
+        session_services_handle,
+        current_session_id,
+        &canvas,
+        RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+            canvas_mount_id: canvas.mount_id.clone(),
+            reason: CanvasVisibilityReason::Created,
+        },
+    )
+    .await?;
+
+    let result = WorkspaceModuleCanvasToolResult {
+        action,
+        canvas_id: canvas.id.to_string(),
+        canvas_mount_id: canvas.mount_id.clone(),
+        vfs_mount_id: canvas_vfs_mount_id(&canvas),
+        module_id: canvas_module_id(&canvas.mount_id),
+        presentation_uri: canvas_presentation_uri(&canvas.mount_id),
+        title: canvas.title.clone(),
+        entry_file: canvas.entry_file.clone(),
+        skill_name: CANVAS_SYSTEM_SKILL_NAME.to_string(),
+        skill_path: format!("lifecycle://skills/{CANVAS_SYSTEM_SKILL_NAME}/SKILL.md"),
+    };
+    Ok((canvas, result))
+}
+
+fn ensure_canvas_visible_to_current_user(
+    canvas: &Canvas,
+    current_user: &ProjectAuthorizationContext,
+) -> Result<(), AgentToolError> {
+    let access = canvas_access_for_workspace_module(canvas, current_user);
+    if access.can_view {
+        Ok(())
+    } else {
+        Err(AgentToolError::ExecutionFailed(format!(
+            "当前用户无权查看 Canvas {}",
+            canvas.id
+        )))
+    }
+}
+
+async fn bind_canvas_data_for_loaded_canvas(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    mut canvas: Canvas,
+    params: BindCanvasDataParams,
+) -> Result<(Canvas, WorkspaceModuleCanvasBindingResult), AgentToolError> {
+    if canvas.project_id != project_id {
+        return Err(AgentToolError::ExecutionFailed(
+            "当前 session 无权操作其它 Project 的 Canvas".to_string(),
+        ));
+    }
+    let requested_mount_id = normalize_canvas_mount_id(&params.canvas_mount_id)
+        .map_err(|error| AgentToolError::InvalidArguments(error.to_string()))?;
+    if requested_mount_id != canvas.mount_id {
+        return Err(AgentToolError::InvalidArguments(format!(
+            "canvas.bind_data target `{requested_mount_id}` does not match Canvas `{}`",
+            canvas.mount_id
+        )));
+    }
+
+    let binding =
+        CanvasDataBinding::with_content_type(params.alias, params.source_uri, params.content_type);
+    let alias = binding.alias.clone();
+    let source_uri = binding.source_uri.clone();
+    let content_type = binding.content_type.clone();
+    upsert_canvas_binding(&mut canvas, binding)
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+    canvas_repo
+        .update(&canvas)
+        .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+
+    let result = WorkspaceModuleCanvasBindingResult {
+        canvas_id: canvas.id.to_string(),
+        canvas_mount_id: canvas.mount_id.clone(),
+        vfs_mount_id: canvas_vfs_mount_id(&canvas),
+        bindings: canvas.bindings.clone(),
+        alias,
+        source_uri,
+        content_type,
+    };
+    Ok((canvas, result))
 }
 
 /// 在已聚合（且 capability 过滤后）的 module 列表里定位 module + operation。
@@ -611,6 +927,7 @@ pub struct WorkspaceModuleInvokeTool {
     channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     visibility_source: WorkspaceModuleVisibilitySource,
     session_services_handle: Option<SharedSessionToolServicesHandle>,
+    current_user: Option<ProjectAuthorizationContext>,
 }
 
 impl WorkspaceModuleInvokeTool {
@@ -636,6 +953,7 @@ impl WorkspaceModuleInvokeTool {
             channel_invoker,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
             session_services_handle: None,
+            current_user: None,
         }
     }
 
@@ -647,6 +965,12 @@ impl WorkspaceModuleInvokeTool {
         self.visibility_source = self
             .visibility_source
             .with_runtime(session_services_handle, self.session_id.clone());
+        self
+    }
+
+    pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.current_user = current_user.clone();
+        self.visibility_source = self.visibility_source.with_current_user(current_user);
         self
     }
 
@@ -676,6 +1000,58 @@ impl WorkspaceModuleInvokeTool {
         };
         submit_canvas_runtime_surface_update(None, handle, Some(&self.session_id), canvas, request)
             .await
+    }
+
+    async fn load_canvas_for_source_edit(
+        &self,
+        canvas_mount_id: &str,
+    ) -> Result<Canvas, AgentToolResult> {
+        let Some(current_user) = self.current_user.as_ref() else {
+            return Err(structured_tool_error(
+                "runtime_identity_required",
+                "canvas.bind_data 需要当前 runtime identity".to_string(),
+                serde_json::json!({
+                    "canvas_mount_id": canvas_mount_id,
+                    "required_action": "edit_source",
+                }),
+            ));
+        };
+        let canvas = match load_canvas_by_project_mount_id_for_tool(
+            self.canvas_repo.as_ref(),
+            self.project_id,
+            canvas_mount_id,
+        )
+        .await
+        {
+            Ok(canvas) => canvas,
+            Err(error) => {
+                return Err(structured_tool_error(
+                    "canvas_not_found",
+                    error.to_string(),
+                    serde_json::json!({
+                        "canvas_mount_id": canvas_mount_id,
+                    }),
+                ));
+            }
+        };
+        let access = canvas_access_for_workspace_module(&canvas, current_user);
+        if access.allows(CanvasAccessAction::EditSource) {
+            Ok(canvas)
+        } else {
+            Err(structured_tool_error(
+                "canvas_source_read_only",
+                format!(
+                    "Canvas `{}` 当前不允许修改源内容；需要复制为个人 Canvas 后再执行 canvas.bind_data",
+                    canvas.mount_id
+                ),
+                serde_json::json!({
+                    "canvas_id": canvas.id,
+                    "canvas_mount_id": canvas.mount_id,
+                    "scope": canvas.scope,
+                    "required_action": "edit_source",
+                }),
+            ))
+        }
     }
 }
 
@@ -723,7 +1099,20 @@ impl AgentTool for WorkspaceModuleInvokeTool {
         // operation 归属 module + 未知 operation 拒绝（R2）。
         let (module, operation) = match locate_operation(&modules, module_id, operation_key) {
             Ok(found) => found,
-            Err(result) => return Ok(result),
+            Err(result) => {
+                if operation_key == "canvas.bind_data"
+                    && let Some(module) = modules.iter().find(|module| {
+                        module.summary.kind == WorkspaceModuleKind::Canvas
+                            && module.summary.module_id == module_id
+                    })
+                    && let Err(guard_result) = self
+                        .load_canvas_for_source_edit(&module.summary.source)
+                        .await
+                {
+                    return Ok(guard_result);
+                }
+                return Ok(result);
+            }
         };
 
         // input schema 校验（R2，describe 暴露的 schema 与此成对）。
@@ -844,6 +1233,13 @@ impl AgentTool for WorkspaceModuleInvokeTool {
             }
             WorkspaceModuleOperationDispatch::HostCanvas { canvas_action } => match canvas_action {
                 WorkspaceModuleCanvasHostAction::BindData => {
+                    let editable_canvas = match self
+                        .load_canvas_for_source_edit(&module.summary.source)
+                        .await
+                    {
+                        Ok(canvas) => canvas,
+                        Err(result) => return Ok(result),
+                    };
                     let mut input = params.input;
                     let Some(obj) = input.as_object_mut() else {
                         return Ok(structured_tool_error(
@@ -865,9 +1261,10 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                                 "invalid canvas.bind_data input: {error}"
                             ))
                         })?;
-                    let (canvas, result) = bind_canvas_data_for_project(
+                    let (canvas, result) = bind_canvas_data_for_loaded_canvas(
                         self.canvas_repo.as_ref(),
                         self.project_id,
+                        editable_canvas,
                         bind_params,
                     )
                     .await?;
@@ -963,6 +1360,11 @@ impl WorkspaceModulePresentTool {
             turn_id,
             visibility_source,
         }
+    }
+
+    pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
+        self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
     }
 }
 
@@ -1138,8 +1540,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_domain::DomainError;
-    use agentdash_domain::canvas::Canvas;
+    use agentdash_domain::canvas::{Canvas, CanvasScope};
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::project::ProjectAuthorizationContext;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionRuntimeActionDefinition,
         ExtensionRuntimeActionKind, ExtensionTemplatePayload, ProjectExtensionInstallation,
@@ -1173,7 +1576,7 @@ mod tests {
         AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
         AgentRunRuntimeSurfaceUpdateService, frame::builder::AgentFrameBuilder,
     };
-    use crate::canvas::build_canvas;
+    use crate::canvas::{build_canvas, build_personal_canvas};
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
     };
@@ -1223,6 +1626,12 @@ mod tests {
                     .to_string(),
             }],
         }
+    }
+
+    const TEST_USER_ID: &str = "user-1";
+
+    fn test_current_user() -> ProjectAuthorizationContext {
+        ProjectAuthorizationContext::new(TEST_USER_ID.to_string(), Vec::new(), false)
     }
 
     struct InMemoryLifecycleRunRepo {
@@ -1616,8 +2025,9 @@ mod tests {
             .unwrap()
             .push(installation(project_id, "demo"));
         let canvas_repo = Arc::new(FakeCanvasRepo::default());
-        let canvas = build_canvas(
+        let canvas = build_personal_canvas(
             project_id,
+            TEST_USER_ID.to_string(),
             Some("cvs-dashboard-a".to_string()),
             "Dashboard A".to_string(),
             "demo canvas".to_string(),
@@ -1663,6 +2073,7 @@ mod tests {
     async fn list_returns_extension_and_canvas_summaries() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_current_user(Some(test_current_user()))
             .with_effective_capability_view(test_effective_capability_view(
                 WorkspaceModuleDimension::all(),
                 Vec::new(),
@@ -1680,6 +2091,33 @@ mod tests {
         // 摘要不含完整 schema：summary 没有 operations 字段，只有 operation_summary
         assert!(modules[0].get("operations").is_none());
         assert!(modules[0].get("operation_summary").is_some());
+    }
+
+    #[tokio::test]
+    async fn list_without_current_user_omits_canvas_modules() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let tool = WorkspaceModuleListTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
+        let result = tool
+            .execute("t", serde_json::json!({}), CancellationToken::new(), None)
+            .await
+            .expect("list");
+        let details = result.details.expect("details");
+        let modules = details
+            .get("modules")
+            .and_then(serde_json::Value::as_array)
+            .expect("modules array");
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0]
+                .get("module_id")
+                .and_then(serde_json::Value::as_str),
+            Some("ext:demo")
+        );
     }
 
     #[tokio::test]
@@ -1802,7 +2240,8 @@ mod tests {
             shared_vfs.clone(),
             SharedSessionToolServicesHandle::default(),
             None,
-        );
+        )
+        .with_current_user(Some(test_current_user()));
 
         let result = tool
             .execute(
@@ -1945,6 +2384,7 @@ mod tests {
             handle.clone(),
             Some(session.id.clone()),
         )
+        .with_current_user(Some(test_current_user()))
         .with_turn_id(turn_id.clone());
 
         let result = create_tool
@@ -1980,6 +2420,13 @@ mod tests {
                 .is_none(),
             "workspace_module_create should register the Canvas without presenting it"
         );
+        let created_canvas = canvas_repo
+            .get_by_mount_id(project_id, "cvs-sales-board")
+            .await
+            .expect("load created canvas")
+            .expect("created canvas");
+        assert_eq!(created_canvas.scope, CanvasScope::Personal);
+        assert_eq!(created_canvas.owner_user_id.as_deref(), Some(TEST_USER_ID));
 
         let updated_frame = frame_repo
             .get_current(agent_id)
@@ -2052,6 +2499,7 @@ mod tests {
         );
 
         let describe_tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_current_user(Some(test_current_user()))
             .with_runtime_visibility(handle, session.id.clone());
         let describe = describe_tool
             .execute(
@@ -2188,7 +2636,8 @@ mod tests {
             handle,
             session.id.clone(),
             turn_id,
-        );
+        )
+        .with_current_user(Some(test_current_user()));
 
         present_tool
             .execute(
@@ -2387,6 +2836,7 @@ mod tests {
             gateway,
             channel_invoker,
         )
+        .with_current_user(Some(test_current_user()))
         .with_effective_capability_view(test_effective_capability_view(
             WorkspaceModuleDimension::all(),
             Vec::new(),
@@ -2676,6 +3126,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invoke_canvas_bind_data_rejects_forged_shared_canvas_operation() {
+        let project_id = Uuid::new_v4();
+        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let shared_canvas = build_canvas(
+            project_id,
+            Some("cvs-shared-dashboard".to_string()),
+            "Shared Dashboard".to_string(),
+            "project shared canvas".to_string(),
+            Default::default(),
+        )
+        .expect("shared canvas");
+        canvas_repo
+            .create(&shared_canvas)
+            .await
+            .expect("create shared canvas");
+        let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None);
+
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({
+                    "module_id": "canvas:cvs-shared-dashboard",
+                    "operation_key": "canvas.bind_data",
+                    "input": {
+                        "alias": "stats",
+                        "source_uri": "project://data/stats.csv"
+                    }
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("invoke forged canvas bind data");
+
+        assert!(result.is_error, "expected shared Canvas bind to fail");
+        assert_eq!(
+            result
+                .details
+                .as_ref()
+                .and_then(|details| details.get("error"))
+                .and_then(serde_json::Value::as_str),
+            Some("canvas_source_read_only")
+        );
+        let saved = canvas_repo
+            .get_by_mount_id(project_id, "cvs-shared-dashboard")
+            .await
+            .expect("load shared canvas")
+            .expect("shared canvas");
+        assert!(saved.bindings.is_empty());
+    }
+
+    #[tokio::test]
     async fn invoke_canvas_bind_data_runtime_update_preserves_external_integration_skill() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
 
@@ -2780,6 +3283,7 @@ mod tests {
             gateway,
             channel_invoker,
         )
+        .with_current_user(Some(test_current_user()))
         .with_runtime_visibility(handle);
 
         let result = tool

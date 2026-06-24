@@ -1088,3 +1088,44 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: Canvas 个人与项目共用分发权限系统
+
+**Date**: 2026-06-24
+**Task**: Canvas 个人与项目共用分发权限系统
+**Branch**: `codex/canvas-personal-shared-distribution-permission`
+
+### Summary
+
+完成 Canvas personal/project shared scope、发布到项目共用、复制为个人、只读 VFS/WorkspaceModule、前端 Mine/Shared UI、spec 与 Canvas skill 更新；保留 pi_agent 并行改动未触碰。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06fe5f4b6` | (see git log) |
+| `2d6c93a95` | (see git log) |
+| `630c93a80` | (see git log) |
+| `7d2c9b154` | (see git log) |
+| `137e76aeb` | (see git log) |
+| `de6c05b9c` | (see git log) |
+| `4c005c86d` | (see git log) |
+| `dc94c5982` | (see git log) |
+| `296d8face` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

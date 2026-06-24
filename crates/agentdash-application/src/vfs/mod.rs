@@ -46,8 +46,8 @@ pub use mount::{
     mount_purpose,
 };
 pub use mount_canvas::{
-    append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
-    refresh_canvas_mount_binding_files,
+    CanvasMountAccess, append_canvas_mount, append_canvas_mounts, build_canvas_mount,
+    build_canvas_mount_id, refresh_canvas_mount_binding_files,
 };
 pub use mount_inline::{
     build_context_container_mount, list_inline_entries, normalize_inline_files,

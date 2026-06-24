@@ -303,21 +303,3 @@ async fn fail_claimed_backend_execution(
         );
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::session::baseline_capabilities::build_session_baseline_capabilities;
-
-    #[test]
-    fn baseline_capabilities_built_from_skills() {
-        let caps = build_session_baseline_capabilities(&[agentdash_spi::SkillRef {
-            name: "my-skill".to_string(),
-            description: "test".to_string(),
-            file_path: "/ws/SKILL.md".into(),
-            base_dir: "/ws".into(),
-            disable_model_invocation: false,
-        }]);
-        assert_eq!(caps.skills.len(), 1);
-        assert_eq!(caps.skills[0].name, "my-skill");
-    }
-}

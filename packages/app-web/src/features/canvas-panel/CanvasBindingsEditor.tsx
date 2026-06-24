@@ -5,6 +5,7 @@ export interface CanvasBindingsEditorProps {
   value: CanvasDataBinding[];
   isSaving?: boolean;
   error?: string | null;
+  readOnly?: boolean;
   onSave: (bindings: CanvasDataBinding[]) => Promise<void> | void;
   onCancel?: (bindings: CanvasDataBinding[]) => void;
 }
@@ -65,6 +66,7 @@ export function CanvasBindingsEditor({
   value,
   isSaving = false,
   error = null,
+  readOnly = false,
   onSave,
   onCancel,
 }: CanvasBindingsEditorProps) {
@@ -81,13 +83,16 @@ export function CanvasBindingsEditor({
 
   const validation = useMemo(() => validateBindings(draftBindings), [draftBindings]);
 
-  const canSave = !isSaving && isDirty && !validation.hasError;
+  const canSave = !readOnly && !isSaving && isDirty && !validation.hasError;
 
   const handleBindingChange = (
     index: number,
     field: keyof CanvasDataBinding,
     nextValue: string,
   ) => {
+    if (readOnly) {
+      return;
+    }
     setDraftBindings((prev) =>
       prev.map((item, itemIndex) => {
         if (itemIndex !== index) {
@@ -103,11 +108,17 @@ export function CanvasBindingsEditor({
   };
 
   const handleAddBinding = () => {
+    if (readOnly) {
+      return;
+    }
     setDraftBindings((prev) => [...prev, createEmptyBinding()]);
     setIsDirty(true);
   };
 
   const handleRemoveBinding = (index: number) => {
+    if (readOnly) {
+      return;
+    }
     setDraftBindings((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
     setIsDirty(true);
   };
@@ -119,7 +130,7 @@ export function CanvasBindingsEditor({
   };
 
   const handleSave = async () => {
-    if (!canSave) {
+    if (readOnly || !canSave) {
       return;
     }
     const normalized = draftBindings.map(normalizeBinding);
@@ -140,7 +151,7 @@ export function CanvasBindingsEditor({
         <button
           type="button"
           onClick={handleAddBinding}
-          disabled={isSaving}
+          disabled={readOnly || isSaving}
           className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           新增绑定
@@ -164,7 +175,7 @@ export function CanvasBindingsEditor({
               <input
                 value={binding.alias}
                 onChange={(event) => handleBindingChange(index, "alias", event.target.value)}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="w-full rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors focus:border-foreground/40"
                 placeholder="例如：stats"
               />
@@ -174,7 +185,7 @@ export function CanvasBindingsEditor({
               <input
                 value={binding.source_uri}
                 onChange={(event) => handleBindingChange(index, "source_uri", event.target.value)}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="w-full rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors focus:border-foreground/40"
                 placeholder="例如：lifecycle://active/artifacts/1"
               />
@@ -184,7 +195,7 @@ export function CanvasBindingsEditor({
               <input
                 value={binding.content_type}
                 onChange={(event) => handleBindingChange(index, "content_type", event.target.value)}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="w-full rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors focus:border-foreground/40"
                 placeholder="留空按 source_uri 推断"
               />
@@ -197,7 +208,7 @@ export function CanvasBindingsEditor({
             <button
               type="button"
               onClick={() => handleRemoveBinding(index)}
-              disabled={isSaving}
+              disabled={readOnly || isSaving}
               className="rounded-[8px] border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               删除
@@ -216,7 +227,7 @@ export function CanvasBindingsEditor({
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isSaving || !isDirty}
+          disabled={readOnly || isSaving || !isDirty}
           className="rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           取消

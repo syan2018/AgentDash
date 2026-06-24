@@ -14,9 +14,13 @@ pub use identity::{
     normalize_canvas_mount_id, parse_canvas_module_id,
 };
 pub use management::{
-    CanvasMutationInput, CreateCanvasInput, apply_canvas_mutation, build_canvas,
-    create_project_canvas, delete_canvas_record, list_project_canvases, load_canvas_by_id,
-    load_canvas_by_project_mount_id, update_canvas_record, upsert_canvas_binding,
+    CanvasListScopeFilter, CanvasMutationInput, CanvasWithAccess, CopyCanvasInput,
+    CreateCanvasInput, CreatePersonalCanvasInput, PublishCanvasInput, UnpublishCanvasResult,
+    apply_canvas_mutation, build_canvas, build_personal_canvas, canvas_access_projection,
+    copy_canvas_to_personal, create_personal_canvas, create_project_canvas, delete_canvas_record,
+    list_canvases_for_user, list_project_canvases, load_canvas_by_id,
+    load_canvas_by_project_mount_id, load_canvas_with_access, publish_canvas_to_project,
+    unpublish_project_canvas, update_canvas_record, upsert_canvas_binding,
     validate_canvas_contract,
 };
 pub use promotion::{
@@ -31,7 +35,6 @@ pub use runtime::{
 };
 pub use runtime_resource::CanvasRuntimeResourceService;
 pub(crate) use tools::{
-    BindCanvasDataParams, StartCanvasParams, bind_canvas_data_for_project,
-    create_or_attach_canvas_for_session, request_existing_canvas_visibility_for_runtime,
+    BindCanvasDataParams, StartCanvasParams, request_existing_canvas_visibility_for_runtime,
 };
-pub use visibility::append_visible_canvas_mounts;
+pub use visibility::{append_visible_canvas_mounts, canvas_runtime_mount_access};

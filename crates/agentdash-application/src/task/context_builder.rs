@@ -18,8 +18,7 @@ use crate::runtime::Vfs as RuntimeVfs;
 use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::session::ExecutorResolution;
 use crate::session::bootstrap::{
-    BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
-    derive_session_context_snapshot,
+    BootstrapPlanInput, build_bootstrap_plan, derive_session_context_snapshot,
 };
 use crate::session::context::{
     SessionContextSnapshot, SessionStoryOverrides, extract_story_overrides,
@@ -150,6 +149,7 @@ pub async fn build_task_session_context(
             run.project_id,
             space,
             &visible_canvas_mount_ids,
+            None,
         )
         .await
         .is_err()
@@ -169,15 +169,13 @@ pub async fn build_task_session_context(
     let plan = build_bootstrap_plan(BootstrapPlanInput {
         project,
         story,
-        workspace,
+        workspace_attached: workspace.is_some(),
         resolved_config,
         vfs: runtime_vfs,
         mcp_servers: runtime_mcp_servers_to_summaries(&mcp_servers),
-        working_dir: None,
         executor_preset_name: None,
         executor_resolution,
-        owner_variant: BootstrapOwnerVariant::Task { story_overrides },
-        workflow,
+        story_overrides,
     });
 
     let snapshot = derive_session_context_snapshot(&plan);

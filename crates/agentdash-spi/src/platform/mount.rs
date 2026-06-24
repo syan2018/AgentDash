@@ -344,6 +344,7 @@ pub struct ExecResult {
 /// Providers that need infrastructure references (e.g. `BackendRegistry`,
 /// overlay) hold them via constructor injection. This struct carries
 /// cross-cutting per-request concerns like the authenticated user.
+#[derive(Default)]
 pub struct MountOperationContext {
     /// The authenticated identity of the user who initiated this operation.
     /// Injected by the framework from the HTTP session; providers consume
@@ -364,16 +365,6 @@ impl std::fmt::Debug for MountOperationContext {
                 &self.runtime_text_resolver.as_ref().map(|_| "<resolver>"),
             )
             .finish()
-    }
-}
-
-impl Default for MountOperationContext {
-    fn default() -> Self {
-        Self {
-            identity: None,
-            runtime_vfs: None,
-            runtime_text_resolver: None,
-        }
     }
 }
 

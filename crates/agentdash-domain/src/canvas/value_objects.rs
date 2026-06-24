@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::DomainError;
 use crate::embedded_skill::{EmbeddedSkillBundle, EmbeddedSkillFile, EmbeddedSkillFileKind};
 
 pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
@@ -27,6 +28,77 @@ pub const CANVAS_SYSTEM_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
     entry_path: "SKILL.md",
     files: CANVAS_SYSTEM_BUNDLE_FILES,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanvasScope {
+    Personal,
+    Project,
+}
+
+impl CanvasScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Personal => "personal",
+            Self::Project => "project",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        match raw.trim() {
+            "personal" => Ok(Self::Personal),
+            "project" => Ok(Self::Project),
+            value => Err(DomainError::InvalidConfig(format!(
+                "Canvas scope `{value}` 无效"
+            ))),
+        }
+    }
+}
+
+impl Default for CanvasScope {
+    fn default() -> Self {
+        Self::Personal
+    }
+}
+
+impl std::fmt::Display for CanvasScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasAccessAction {
+    View,
+    EditSource,
+    Publish,
+    ManageShared,
+    Copy,
+    RuntimeWrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CanvasAccessProjection {
+    pub can_view: bool,
+    pub can_edit_source: bool,
+    pub can_publish: bool,
+    pub can_manage_shared: bool,
+    pub can_copy: bool,
+    pub runtime_write_allowed: bool,
+}
+
+impl CanvasAccessProjection {
+    pub fn allows(&self, action: CanvasAccessAction) -> bool {
+        match action {
+            CanvasAccessAction::View => self.can_view,
+            CanvasAccessAction::EditSource => self.can_edit_source,
+            CanvasAccessAction::Publish => self.can_publish,
+            CanvasAccessAction::ManageShared => self.can_manage_shared,
+            CanvasAccessAction::Copy => self.can_copy,
+            CanvasAccessAction::RuntimeWrite => self.runtime_write_allowed,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanvasSandboxConfig {

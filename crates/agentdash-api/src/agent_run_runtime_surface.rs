@@ -20,16 +20,8 @@ use crate::rpc::ApiError;
 /// authenticated user and must preserve the existing Project View check.
 #[derive(Debug, Clone)]
 pub(crate) struct ApiCurrentRuntimeSurface {
-    pub runtime_session_id: String,
-    pub run_id: Uuid,
     pub project_id: Uuid,
-    pub agent_id: Uuid,
-    pub launch_evidence_frame_id: Uuid,
-    pub current_surface_frame_id: Uuid,
     pub vfs: Vfs,
-    pub orchestration_id: Option<Uuid>,
-    pub node_path: Option<String>,
-    pub node_attempt: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -250,16 +242,8 @@ fn resource_surface_query_error_to_api(error: AgentRunResourceSurfaceQueryError)
 impl From<AgentRunRuntimeSurface> for ApiCurrentRuntimeSurface {
     fn from(surface: AgentRunRuntimeSurface) -> Self {
         Self {
-            runtime_session_id: surface.runtime_session_id,
-            run_id: surface.run_id,
             project_id: surface.project_id,
-            agent_id: surface.agent_id,
-            launch_evidence_frame_id: surface.launch_evidence_frame_id,
-            current_surface_frame_id: surface.current_surface_frame_id,
             vfs: surface.vfs,
-            orchestration_id: surface.provenance.orchestration_id,
-            node_path: surface.provenance.node_path,
-            node_attempt: surface.provenance.node_attempt,
         }
     }
 }
@@ -279,16 +263,8 @@ mod tests {
 
     fn runtime_surface(project_id: Uuid) -> ApiCurrentRuntimeSurface {
         ApiCurrentRuntimeSurface {
-            runtime_session_id: "runtime-1".to_string(),
-            run_id: Uuid::new_v4(),
             project_id,
-            agent_id: Uuid::new_v4(),
-            launch_evidence_frame_id: Uuid::new_v4(),
-            current_surface_frame_id: Uuid::new_v4(),
             vfs: Vfs::default(),
-            orchestration_id: None,
-            node_path: None,
-            node_attempt: None,
         }
     }
 

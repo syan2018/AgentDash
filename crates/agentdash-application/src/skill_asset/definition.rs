@@ -1,3 +1,4 @@
+use agentdash_domain::agent::MEMORY_MANAGER_BUNDLE;
 use agentdash_domain::canvas::CANVAS_SYSTEM_BUNDLE;
 use agentdash_domain::companion::COMPANION_SYSTEM_BUNDLE;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
@@ -32,6 +33,11 @@ const BUILTIN_SKILL_TEMPLATES: &[BuiltinSkillAssetTemplate] = &[
         display_name: "Routine Memory",
         bundle: &ROUTINE_MEMORY_BUNDLE,
     },
+    BuiltinSkillAssetTemplate {
+        builtin_key: "memory-manager",
+        display_name: "Memory Manager",
+        bundle: &MEMORY_MANAGER_BUNDLE,
+    },
 ];
 
 pub fn list_builtin_skill_asset_templates() -> Vec<BuiltinSkillAssetTemplate> {
@@ -43,4 +49,34 @@ pub fn get_builtin_skill_asset_template(key: &str) -> Option<BuiltinSkillAssetTe
         .iter()
         .copied()
         .find(|template| template.builtin_key == key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skill_asset::parse_skill_metadata;
+
+    #[test]
+    fn memory_manager_template_is_registered() {
+        let template =
+            get_builtin_skill_asset_template("memory-manager").expect("memory-manager template");
+
+        assert_eq!(template.display_name, "Memory Manager");
+        assert_eq!(template.bundle.name, "memory-manager");
+        assert_eq!(template.bundle.entry_path, "SKILL.md");
+        let skill = template
+            .bundle
+            .files
+            .iter()
+            .find(|file| file.relative_path == "SKILL.md")
+            .expect("memory-manager SKILL.md");
+        let meta = parse_skill_metadata(skill.content).expect("valid skill frontmatter");
+        assert_eq!(meta.name, "memory-manager");
+        assert!(meta.description.contains("agent://"));
+        assert!(
+            list_builtin_skill_asset_templates()
+                .iter()
+                .any(|template| template.builtin_key == "memory-manager")
+        );
+    }
 }

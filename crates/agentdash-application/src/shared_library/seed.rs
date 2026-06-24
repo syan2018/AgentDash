@@ -53,6 +53,11 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
         key: "routine-memory",
         version: "1.0.1",
     },
+    BuiltinAssetVersion {
+        asset_type: LibraryAssetType::SkillTemplate,
+        key: "memory-manager",
+        version: "1.0.0",
+    },
 ];
 
 pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
@@ -272,5 +277,30 @@ mod tests {
                 .all(|file| !file.path.starts_with("skills/canvas-system/")),
             "SkillTemplate payload paths are SkillAsset-root relative; the skill_asset_fs provider adds skills/<key>/ during projection"
         );
+    }
+
+    #[test]
+    fn builtin_memory_manager_skill_template_uses_vfs_file_memory() {
+        let seed = builtin_library_seeds()
+            .expect("load seeds")
+            .into_iter()
+            .find(|seed| {
+                seed.asset_type == LibraryAssetType::SkillTemplate && seed.key == "memory-manager"
+            })
+            .expect("memory-manager skill template seed");
+        let payload = serde_json::from_value::<SkillTemplatePayload>(seed.payload)
+            .expect("skill template payload should be typed");
+        let skill = payload
+            .files
+            .iter()
+            .find(|file| file.path == "SKILL.md")
+            .expect("memory-manager SKILL.md");
+
+        assert_eq!(payload.files.len(), 1);
+        assert!(skill.content.contains("agent://MEMORY.md"));
+        assert!(skill.content.contains("topics/*.md"));
+        assert!(skill.content.contains("fs.apply_patch"));
+        assert!(!skill.content.contains("memory.read"));
+        assert!(!skill.content.contains("memory.write"));
     }
 }

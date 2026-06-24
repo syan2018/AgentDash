@@ -56,8 +56,8 @@ export function KnowledgeSection({
               project_id: projectId,
               project_agent_id: agentId,
             }}
-            visibleMountIds={["agent-knowledge"]}
-            initialMountId="agent-knowledge"
+            visibleMountIds={["agent"]}
+            initialMountId="agent"
           />
         </div>
       )}

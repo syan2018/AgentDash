@@ -95,7 +95,7 @@ pub(super) async fn compose(
                 owner: OwnerScope::Project {
                     project: &project,
                     workspace: workspace.as_ref(),
-                    agent_id: Some(project_agent.id),
+                    project_agent: Some(&project_agent),
                     agent_display_name: agent_context.display_name.clone(),
                     preset_name: agent_context.preset_name.clone(),
                 },

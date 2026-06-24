@@ -9,10 +9,13 @@ use agentdash_domain::{agent::ProjectAgent, project::Project, story::Story, work
 use crate::runtime::{Mount, MountCapability, Vfs};
 
 use super::mount::{
-    CONTEXT_CONTAINER_ID_METADATA_KEY, PROJECT_VFS_MOUNT_CONTAINER_ID,
-    PROJECT_VFS_MOUNT_METADATA_KEY, PROVIDER_INLINE_FS, SessionMountTarget, is_project_vfs_mount,
+    CONTEXT_CONTAINER_ID_METADATA_KEY, PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID,
+    PROJECT_AGENT_MEMORY_MOUNT_ID, PROJECT_VFS_MOUNT_CONTAINER_ID, PROJECT_VFS_MOUNT_METADATA_KEY,
+    PROVIDER_INLINE_FS, SessionMountTarget, is_project_vfs_mount,
 };
-use super::mount_inline::{annotate_context_mount_owner, build_context_container_mount};
+use super::mount_inline::{
+    annotate_context_mount_owner, build_context_container_mount, parse_inline_mount_owner,
+};
 use super::mount_workspace::workspace_mount;
 use super::path::validate_vfs;
 
@@ -97,8 +100,18 @@ pub fn append_agent_knowledge_mounts(vfs: &mut Vfs, agent: &ProjectAgent) -> Res
         return Ok(());
     }
     let mount = build_agent_knowledge_mount(agent)?;
-    if !vfs.mounts.iter().any(|m| m.id == mount.id) {
-        vfs.mounts.push(mount);
+    if let Some(existing) = vfs.mounts.iter().find(|m| m.id == mount.id) {
+        if is_agent_knowledge_mount_for(existing, agent) {
+            return Ok(());
+        }
+        return Err(format!(
+            "ProjectAgent Agent mount id `{}` 已被 provider `{}` 占用",
+            mount.id, existing.provider
+        ));
+    }
+    vfs.mounts.push(mount);
+    if vfs.default_mount_id.is_none() {
+        vfs.default_mount_id = Some(PROJECT_AGENT_MEMORY_MOUNT_ID.to_string());
     }
     Ok(())
 }
@@ -222,11 +235,11 @@ pub fn build_project_vfs_mount_mount(mount: &ProjectVfsMount) -> Result<Mount, S
 
 /// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
 ///
-/// 知识容器定义由系统自动派生：mount_id = "agent-knowledge"，
+/// 知识容器定义由系统自动派生：mount_id = "agent"，
 /// container_id = "knowledge"，按 ProjectAgent 隔离。
 fn build_agent_knowledge_mount(agent: &ProjectAgent) -> Result<Mount, String> {
     let container = ContextContainerDefinition {
-        mount_id: "agent-knowledge".to_string(),
+        mount_id: PROJECT_AGENT_MEMORY_MOUNT_ID.to_string(),
         display_name: "Agent 知识库".to_string(),
         provider: ContextContainerProvider::InlineFiles { files: vec![] },
         capabilities: vec![
@@ -238,12 +251,51 @@ fn build_agent_knowledge_mount(agent: &ProjectAgent) -> Result<Mount, String> {
         default_write: false,
     };
     let mut mount = build_context_container_mount(&container)?;
+    mount.root_ref = format!("context://inline/{PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID}");
+    set_mount_metadata_string(
+        &mut mount,
+        "container_id",
+        PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID,
+    );
+    set_mount_metadata_string(
+        &mut mount,
+        CONTEXT_CONTAINER_ID_METADATA_KEY,
+        PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID,
+    );
     annotate_context_mount_owner(
         &mut mount,
         InlineFileOwnerKind::ProjectAgent.as_str(),
         agent.id,
     );
     Ok(mount)
+}
+
+fn is_agent_knowledge_mount_for(mount: &Mount, agent: &ProjectAgent) -> bool {
+    if mount.id != PROJECT_AGENT_MEMORY_MOUNT_ID || mount.provider != PROVIDER_INLINE_FS {
+        return false;
+    }
+    parse_inline_mount_owner(mount).is_ok_and(|(owner_kind, owner_id, container_id)| {
+        owner_kind == InlineFileOwnerKind::ProjectAgent
+            && owner_id == agent.id
+            && container_id == PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID
+    })
+}
+
+fn set_mount_metadata_string(mount: &mut Mount, key: &str, value: &str) {
+    let mut metadata = match std::mem::take(&mut mount.metadata) {
+        serde_json::Value::Object(object) => object,
+        serde_json::Value::Null => serde_json::Map::new(),
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("raw_metadata".to_string(), other);
+            object
+        }
+    };
+    metadata.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+    mount.metadata = serde_json::Value::Object(metadata);
 }
 
 fn effective_context_containers_with_origin(
@@ -308,7 +360,8 @@ mod tests {
     use crate::vfs::mount::{
         CONTEXT_OWNER_ID_METADATA_KEY, CONTEXT_OWNER_KIND_METADATA_KEY, mount_owner_kind,
     };
-    use crate::vfs::surface::ResolvedMountOwnerKind;
+    use crate::vfs::mount_purpose;
+    use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
     use agentdash_domain::context_container::{
         ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
@@ -342,6 +395,131 @@ mod tests {
             "external_docs".to_string(),
             "knowledge".to_string(),
         )
+    }
+
+    fn project_agent(project_id: Uuid, knowledge_enabled: bool) -> ProjectAgent {
+        let mut agent = ProjectAgent::new(project_id, "agent".to_string(), "PI_AGENT");
+        agent.knowledge_enabled = knowledge_enabled;
+        agent
+    }
+
+    #[test]
+    fn project_agent_knowledge_vfs_uses_agent_mount_and_knowledge_storage_container() {
+        let project_id = Uuid::new_v4();
+        let agent = project_agent(project_id, true);
+
+        let vfs = build_project_agent_knowledge_vfs(&agent).expect("knowledge vfs");
+
+        assert_eq!(
+            vfs.default_mount_id.as_deref(),
+            Some(PROJECT_AGENT_MEMORY_MOUNT_ID)
+        );
+        let mount = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == PROJECT_AGENT_MEMORY_MOUNT_ID)
+            .expect("agent mount");
+        assert_eq!(mount.provider, PROVIDER_INLINE_FS);
+        assert_eq!(
+            mount.capabilities,
+            vec![
+                MountCapability::Read,
+                MountCapability::Write,
+                MountCapability::List,
+                MountCapability::Search,
+            ]
+        );
+        assert_eq!(
+            mount.metadata.get("container_id").and_then(|v| v.as_str()),
+            Some(PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID)
+        );
+        assert_eq!(
+            mount
+                .metadata
+                .get(CONTEXT_CONTAINER_ID_METADATA_KEY)
+                .and_then(|v| v.as_str()),
+            Some(PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID)
+        );
+        assert_eq!(
+            mount.root_ref,
+            format!("context://inline/{PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID}")
+        );
+
+        let (owner_kind, owner_id, container_id) =
+            parse_inline_mount_owner(mount).expect("inline owner");
+        assert_eq!(owner_kind, InlineFileOwnerKind::ProjectAgent);
+        assert_eq!(owner_id, agent.id);
+        assert_eq!(container_id, PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID);
+        assert_eq!(mount_purpose(mount), ResolvedMountPurpose::AgentKnowledge);
+    }
+
+    #[test]
+    fn disabled_project_agent_does_not_append_agent_mount() {
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let mut vfs = build_derived_vfs(
+            &project,
+            &[inline_mount(project.id, "docs")],
+            None,
+            None,
+            None,
+            SessionMountTarget::Project,
+        )
+        .expect("project vfs");
+        let agent = project_agent(project.id, false);
+
+        append_agent_knowledge_mounts(&mut vfs, &agent).expect("append disabled");
+
+        assert!(
+            !vfs.mounts
+                .iter()
+                .any(|mount| mount.id == PROJECT_AGENT_MEMORY_MOUNT_ID)
+        );
+    }
+
+    #[test]
+    fn project_agent_vfs_grants_do_not_constrain_agent_memory_mount() {
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let mut vfs = build_derived_vfs(
+            &project,
+            &[inline_mount(project.id, "docs")],
+            None,
+            None,
+            None,
+            SessionMountTarget::Project,
+        )
+        .expect("project vfs");
+        let agent = project_agent(project.id, true);
+        append_agent_knowledge_mounts(&mut vfs, &agent).expect("append agent mount");
+
+        apply_agent_vfs_access_grants(
+            &mut vfs,
+            Some(&[AgentVfsAccessGrant {
+                mount_id: "docs".to_string(),
+                capabilities: vec![MountCapability::Read],
+            }]),
+        );
+
+        let docs_mount = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "docs")
+            .expect("docs mount");
+        assert_eq!(docs_mount.capabilities, vec![MountCapability::Read]);
+
+        let agent_mount = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == PROJECT_AGENT_MEMORY_MOUNT_ID)
+            .expect("agent mount");
+        assert_eq!(
+            agent_mount.capabilities,
+            vec![
+                MountCapability::Read,
+                MountCapability::Write,
+                MountCapability::List,
+                MountCapability::Search,
+            ]
+        );
     }
 
     #[test]

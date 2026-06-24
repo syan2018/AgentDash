@@ -3,6 +3,8 @@ use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 
 pub const PROJECT_VFS_MOUNT_CONTAINER_ID: &str = "files";
+pub const PROJECT_AGENT_MEMORY_MOUNT_ID: &str = "agent";
+pub const PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID: &str = "knowledge";
 
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
@@ -88,7 +90,10 @@ pub fn mount_owner_id(mount: &Mount) -> String {
 }
 
 pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
-    if mount.id == "agent-knowledge" {
+    let owner_kind = mount_owner_kind(mount);
+    if mount.id == PROJECT_AGENT_MEMORY_MOUNT_ID
+        && owner_kind == ResolvedMountOwnerKind::ProjectAgent
+    {
         return ResolvedMountPurpose::AgentKnowledge;
     }
     match mount.provider.as_str() {
@@ -97,7 +102,7 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
         PROVIDER_ROUTINE_VFS => ResolvedMountPurpose::ExternalService,
         PROVIDER_CANVAS_FS => ResolvedMountPurpose::Canvas,
         PROVIDER_SKILL_ASSET_FS => ResolvedMountPurpose::ProjectContainer,
-        PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
+        PROVIDER_INLINE_FS => match owner_kind {
             ResolvedMountOwnerKind::Project => {
                 if is_project_vfs_mount(mount) {
                     ResolvedMountPurpose::VfsMount

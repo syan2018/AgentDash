@@ -51,7 +51,9 @@ use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
 use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
-use crate::vfs::{SessionMountTarget, VfsService, apply_agent_vfs_access_grants};
+use crate::vfs::{
+    SessionMountTarget, VfsService, append_agent_knowledge_mounts, apply_agent_vfs_access_grants,
+};
 use crate::workspace::BackendAvailability;
 use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
 
@@ -68,7 +70,7 @@ pub(crate) enum OwnerScope<'a> {
     Project {
         project: &'a Project,
         workspace: Option<&'a Workspace>,
-        agent_id: Option<Uuid>,
+        project_agent: Option<&'a ProjectAgent>,
         agent_display_name: String,
         preset_name: Option<String>,
     },
@@ -102,7 +104,14 @@ impl<'a> OwnerScope<'a> {
 
     fn agent_id(&self) -> Option<Uuid> {
         match self {
-            Self::Project { agent_id, .. } => *agent_id,
+            Self::Project { project_agent, .. } => project_agent.map(|agent| agent.id),
+            _ => None,
+        }
+    }
+
+    fn project_agent(&self) -> Option<&ProjectAgent> {
+        match self {
+            Self::Project { project_agent, .. } => *project_agent,
             _ => None,
         }
     }
@@ -328,6 +337,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .await
             .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))?;
 
+        let has_existing_vfs = spec.existing_vfs.is_some();
         let mut vfs = match spec.existing_vfs.clone() {
             Some(vfs) => Some(vfs),
             None => {
@@ -363,6 +373,9 @@ impl<'a> OwnerBootstrapComposer<'a> {
         if let Some(space) = vfs.as_mut()
             && matches!(spec.owner, OwnerScope::Project { .. })
         {
+            if !has_existing_vfs && let Some(project_agent) = spec.owner.project_agent() {
+                append_agent_knowledge_mounts(space, project_agent)?;
+            }
             apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
         }
 

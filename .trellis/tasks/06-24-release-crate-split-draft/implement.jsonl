@@ -28,3 +28,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/10-physical-crate-extraction-control-plane-vfs.md","reason":"AgentRun/Lifecycle/VFS physical extraction item."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-1.md","reason":"Round 1 worker ids, ownership and checkpoint plan."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave 1/2 checkpoint validation, check-agent findings and next dispatch constraints."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-2.md","reason":"Round 2 worker lanes, ownership boundaries and checkpoint plan."}

@@ -491,12 +491,22 @@ export function reduceStreamState(
     return prev;
   }
 
-  const normalized = [...incomingEvents].sort((a, b) => a.event_seq - b.event_seq);
-
   let entries = prev.entries;
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
   let lastAppliedSeq = prev.lastAppliedSeq;
+
+  // ephemeral 事件 event_seq=0、live-only：仅作用于 entries，不进 rawEvents、不动 lastAppliedSeq、
+  // 不参与 event_seq 去重（否则会被 <= lastAppliedSeq 误跳）。durable 事件照常按 event_seq 排序去重。
+  for (const event of incomingEvents) {
+    if (event.ephemeral) {
+      entries = applyEventToEntries(entries, event);
+    }
+  }
+
+  const normalized = incomingEvents
+    .filter((event) => !event.ephemeral)
+    .sort((a, b) => a.event_seq - b.event_seq);
 
   for (const event of normalized) {
     if (event.event_seq <= lastAppliedSeq) {

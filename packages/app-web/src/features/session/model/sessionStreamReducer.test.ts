@@ -49,6 +49,10 @@ function agentDelta(event_seq: number, delta: string): SessionEventEnvelope {
   });
 }
 
+function ephemeralAgentDelta(delta: string): SessionEventEnvelope {
+  return { ...agentDelta(0, delta), ephemeral: true };
+}
+
 function retryError(event_seq: number): SessionEventEnvelope {
   return streamEvent(event_seq, {
     type: "error",
@@ -384,6 +388,32 @@ describe("sessionStreamReducer", () => {
     expect(state.entries).toHaveLength(1);
     expect(state.entries[0]?.accumulatedText).toBe("ONLY FINAL");
     expect(state.entries[0]?.event.type).toBe("agent_message_delta");
+  });
+
+  it("ephemeral delta 更新 entries 但不进 rawEvents、不动 lastAppliedSeq", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      ephemeralAgentDelta("hello"),
+      ephemeralAgentDelta(" world"),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.accumulatedText).toBe("hello world");
+    expect(state.rawEvents).toHaveLength(0);
+    expect(state.lastAppliedSeq).toBe(0);
+  });
+
+  it("durable 事件后再来 ephemeral：dedup 不误杀且不污染 rawEvents", () => {
+    const afterDurable = reduceStreamState(createInitialStreamState([]), [
+      agentDelta(5, "durable"),
+    ]);
+    expect(afterDurable.lastAppliedSeq).toBe(5);
+    expect(afterDurable.rawEvents).toHaveLength(1);
+
+    // ephemeral 的 event_seq=0 不应被 `<= lastAppliedSeq(5)` 跳过。
+    const afterEphemeral = reduceStreamState(afterDurable, [ephemeralAgentDelta(" live")]);
+    expect(afterEphemeral.entries[0]?.accumulatedText).toBe("durable live");
+    expect(afterEphemeral.rawEvents).toHaveLength(1);
+    expect(afterEphemeral.lastAppliedSeq).toBe(5);
   });
 
   it("终态 reasoning 并入 reasoning 气泡为单条", () => {

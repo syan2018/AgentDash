@@ -158,6 +158,27 @@ impl SessionEventingService {
         broadcast: bool,
     ) -> io::Result<PersistedSessionEvent> {
         let envelope = bound_envelope_for_append(envelope)?;
+        if is_ephemeral_event(&envelope.event) {
+            let now = chrono::Utc::now().timestamp_millis();
+            let event = PersistedSessionEvent {
+                session_id: session_id.to_string(),
+                event_seq: 0,
+                occurred_at_ms: now,
+                committed_at_ms: now,
+                session_update_type: backbone_event_type_name_for_guard(&envelope.event)
+                    .to_string(),
+                turn_id: envelope.trace.turn_id.clone(),
+                entry_index: envelope.trace.entry_index,
+                tool_call_id: ephemeral_tool_call_id(&envelope),
+                ephemeral: true,
+                notification: envelope,
+            };
+            if broadcast {
+                self.broadcast_persisted_event(session_id, event.clone())
+                    .await;
+            }
+            return Ok(event);
+        }
         if let Some(result) = self
             .maybe_commit_compaction_projection(session_id, envelope.clone())
             .await?
@@ -1351,6 +1372,28 @@ fn backbone_event_type_name_for_guard(event: &BackboneEvent) -> &'static str {
     }
 }
 
+/// 进度态事件分类：仅这 7 类为 ephemeral（不入 durable session_events，仅 live 广播）。
+/// 其余一律 durable（白名单 durable、默认 durable）。
+fn is_ephemeral_event(event: &BackboneEvent) -> bool {
+    matches!(
+        event,
+        BackboneEvent::AgentMessageDelta(_)
+            | BackboneEvent::ReasoningTextDelta(_)
+            | BackboneEvent::ReasoningSummaryDelta(_)
+            | BackboneEvent::CommandOutputDelta(_)
+            | BackboneEvent::FileChangeDelta(_)
+            | BackboneEvent::McpToolCallProgress(_)
+            | BackboneEvent::ItemUpdated(_)
+    )
+}
+
+fn ephemeral_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
+    match &envelope.event {
+        BackboneEvent::ItemUpdated(n) => n.item.tool_call_id().map(ToString::to_string),
+        _ => None,
+    }
+}
+
 fn latest_event_seq(events: &[PersistedSessionEvent]) -> u64 {
     events
         .iter()
@@ -1534,6 +1577,33 @@ mod tests {
                 turn_id: turn_id.to_string(),
                 item_id: format!("{turn_id}:assistant:0"),
             }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id.to_string()),
+            entry_index: Some(1),
+        })
+    }
+
+    fn final_assistant_message_envelope(
+        session_id: &str,
+        turn_id: &str,
+        text: &str,
+    ) -> BackboneEnvelope {
+        let item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+            id: format!("{turn_id}:assistant:0"),
+            text: text.to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+        .into();
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                session_id.to_string(),
+                turn_id.to_string(),
+            )),
             session_id,
             test_source_info(),
         )
@@ -1869,7 +1939,7 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                assistant_delta_envelope(session_id, "turn-stable", "stable answer"),
+                final_assistant_message_envelope(session_id, "turn-stable", "stable answer"),
             )
             .await
             .expect("persist stable assistant");
@@ -1903,7 +1973,7 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                assistant_delta_envelope(session_id, "turn-failed", "partial failed answer"),
+                final_assistant_message_envelope(session_id, "turn-failed", "partial failed answer"),
             )
             .await
             .expect("persist failed assistant");
@@ -1991,7 +2061,7 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                assistant_delta_envelope(session_id, "turn-stable", "stable answer"),
+                final_assistant_message_envelope(session_id, "turn-stable", "stable answer"),
             )
             .await
             .expect("persist stable assistant");
@@ -2026,7 +2096,7 @@ mod tests {
             service
                 .persist_notification(
                     session_id,
-                    assistant_delta_envelope(
+                    final_assistant_message_envelope(
                         session_id,
                         failed_turn,
                         &format!("{failed_turn} partial answer"),
@@ -2215,6 +2285,86 @@ mod tests {
             serde_json::to_value(&persisted.notification).expect("serialize persisted"),
             original_json
         );
+    }
+
+    #[tokio::test]
+    async fn ephemeral_event_broadcasts_without_durable_append() {
+        let session_id = "sess-ephemeral-delta";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+
+        let mut rx = service.ensure_session(session_id).await;
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                assistant_delta_envelope(session_id, "turn-eph", "hello"),
+            )
+            .await
+            .expect("persist ephemeral delta");
+
+        assert!(persisted.ephemeral, "delta should be classified ephemeral");
+        assert_eq!(persisted.event_seq, 0);
+        assert_eq!(persisted.session_update_type, "agent_message_delta");
+
+        // 不进 durable session_events。
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert!(
+            backlog.backlog.is_empty(),
+            "ephemeral delta must not be appended to durable log"
+        );
+
+        // 仍 live 广播，且带 ephemeral=true。
+        let received = rx.try_recv().expect("broadcast ephemeral delta to subscriber");
+        assert!(received.ephemeral);
+        assert_eq!(received.session_update_type, "agent_message_delta");
+    }
+
+    #[tokio::test]
+    async fn durable_event_still_appends() {
+        let session_id = "sess-durable-still-appends";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                BackboneEnvelope::new(
+                    BackboneEvent::Platform(PlatformEvent::TerminalOutput {
+                        terminal_id: "term-1".to_string(),
+                        data: "hello\n".to_string(),
+                    }),
+                    session_id,
+                    test_source_info(),
+                ),
+            )
+            .await
+            .expect("persist durable event");
+
+        assert!(!persisted.ephemeral);
+        assert!(persisted.event_seq >= 1);
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert_eq!(backlog.backlog.len(), 1);
+        assert!(!backlog.backlog[0].ephemeral);
     }
 
     struct NoopConnector;

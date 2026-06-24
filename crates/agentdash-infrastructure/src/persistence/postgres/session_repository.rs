@@ -354,6 +354,7 @@ impl SessionEventStore for PostgresSessionRepository {
             turn_id: projection.turn_id.clone(),
             entry_index: projection.entry_index,
             tool_call_id: projection.tool_call_id.clone(),
+            ephemeral: false,
             notification: envelope.clone(),
         };
         let notification_json = json_string(&persisted.notification, "notification_json")?;
@@ -1076,6 +1077,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             turn_id: projection.turn_id.clone(),
             entry_index: projection.entry_index,
             tool_call_id: projection.tool_call_id.clone(),
+            ephemeral: false,
             notification: commit.completed_event.clone(),
         };
         let notification_json = json_string(&persisted.notification, "notification_json")?;

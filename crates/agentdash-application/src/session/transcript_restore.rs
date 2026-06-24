@@ -842,6 +842,7 @@ mod tests {
             turn_id: Some(turn_id.to_string()),
             entry_index: Some(entry_index),
             tool_call_id: tool_call_id.map(ToString::to_string),
+            ephemeral: false,
             notification: BackboneEnvelope::new(event, "session-1", test_source()).with_trace(
                 TraceInfo {
                     turn_id: Some(turn_id.to_string()),

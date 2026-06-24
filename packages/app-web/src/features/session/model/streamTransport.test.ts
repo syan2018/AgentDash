@@ -45,6 +45,26 @@ describe("parseSessionEventEnvelopePayload", () => {
     expect(result.error).toBeNull();
     expect(result.event?.event_seq).toBe(7);
     expect(result.event?.notification.event.type).toBe("agent_message_delta");
+    expect(result.event?.ephemeral).toBe(false);
+  });
+
+  it("ephemeral_event envelope 解析为带 ephemeral=true 标记", () => {
+    const result = parseSessionEventEnvelopePayload({
+      type: "ephemeral_event",
+      session_id: "s1",
+      event_seq: 0,
+      occurred_at_ms: 10,
+      committed_at_ms: 11,
+      session_update_type: "agent_message_delta",
+      turn_id: "turn-1",
+      entry_index: 0,
+      tool_call_id: undefined,
+      notification: envelope(),
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.event?.ephemeral).toBe(true);
+    expect(result.event?.event_seq).toBe(0);
   });
 
   it("缺少 event_seq 时返回错误且不读取旧 id fallback", () => {

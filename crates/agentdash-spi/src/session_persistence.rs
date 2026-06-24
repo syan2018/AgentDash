@@ -540,6 +540,10 @@ pub struct PersistedSessionEvent {
     pub entry_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 纯内存语义：标记该事件为 ephemeral（仅 live 广播，不入 durable session_events、
+    /// 不推进 projection head）。不序列化、不上 wire、不写 DB；反序列化默认 false。
+    #[serde(default, skip)]
+    pub ephemeral: bool,
     pub notification: BackboneEnvelope,
 }
 

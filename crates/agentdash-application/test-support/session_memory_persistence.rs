@@ -833,6 +833,7 @@ fn build_persisted_event(
         turn_id: envelope.trace.turn_id.clone(),
         entry_index: envelope.trace.entry_index,
         tool_call_id: None,
+        ephemeral: false,
         notification: envelope.clone(),
     }
 }

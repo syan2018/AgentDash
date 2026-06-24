@@ -286,7 +286,10 @@ export function partitionUserInputs(input: readonly UserInput[]): PartitionedUse
 
 // ==================== 前端扩展类型 ====================
 
-export type SessionEventEnvelope = SessionEventResponse;
+export type SessionEventEnvelope = SessionEventResponse & {
+  /** 进度态事件标记：仅 live 显示，不写入可重放 rawEvents backlog。 */
+  ephemeral?: boolean;
+};
 
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =

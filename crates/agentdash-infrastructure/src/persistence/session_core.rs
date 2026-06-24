@@ -86,6 +86,7 @@ where
         turn_id: row.get::<Option<String>, _>("turn_id"),
         entry_index,
         tool_call_id: row.get::<Option<String>, _>("tool_call_id"),
+        ephemeral: false,
         notification,
     })
 }

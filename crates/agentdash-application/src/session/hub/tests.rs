@@ -2766,12 +2766,16 @@ async fn continuation_context_frame_strips_owner_resource_blocks() {
     hub.inject_notification(
         &session.id,
         BackboneEnvelope::new(
-            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
-                delta: "已记录历史".to_string(),
-                thread_id: session.id.clone(),
-                turn_id: "t-1".to_string(),
-                item_id: "assistant-msg-1".to_string(),
-            }),
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                codex::ThreadItem::AgentMessage {
+                    id: "assistant-msg-1".to_string(),
+                    text: "已记录历史".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                session.id.clone(),
+                "t-1".to_string(),
+            )),
             session.id.clone(),
             source.clone(),
         )
@@ -2835,12 +2839,16 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
     hub.inject_notification(
         &session.id,
         BackboneEnvelope::new(
-            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
-                delta: "已记录历史".to_string(),
-                thread_id: session.id.clone(),
-                turn_id: "t-1".to_string(),
-                item_id: "assistant-msg-1".to_string(),
-            }),
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                codex::ThreadItem::AgentMessage {
+                    id: "assistant-msg-1".to_string(),
+                    text: "已记录历史".to_string(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                session.id.clone(),
+                "t-1".to_string(),
+            )),
             session.id.clone(),
             source.clone(),
         )

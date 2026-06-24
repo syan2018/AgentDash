@@ -9,7 +9,10 @@ const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
 
 export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
-type SessionNdjsonEventEnvelope = Extract<SessionNdjsonEnvelope, { type: "event" }>;
+type SessionNdjsonEventEnvelope = Extract<
+  SessionNdjsonEnvelope,
+  { type: "event" } | { type: "ephemeral_event" }
+>;
 
 export interface SessionStreamTransportOptions {
   sessionId: string;
@@ -63,7 +66,7 @@ function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
 }
 
 function isSessionNdjsonEventEnvelope(value: unknown): value is SessionNdjsonEventEnvelope {
-  return isRecord(value) && value.type === "event";
+  return isRecord(value) && (value.type === "event" || value.type === "ephemeral_event");
 }
 
 function readRequiredNumber(value: unknown): number | null {
@@ -132,6 +135,7 @@ export function parseSessionEventEnvelopePayload(
       entry_index: readOptionalNumber(payload.entry_index),
       tool_call_id: readOptionalString(payload.tool_call_id) ?? undefined,
       notification: payload.notification,
+      ephemeral: payload.type === "ephemeral_event",
     },
     error: null,
   };
@@ -251,14 +255,15 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       return;
     }
 
-    if (type === "event") {
+    if (type === "event" || type === "ephemeral_event") {
       const result = parseSessionEventEnvelopePayload(payload);
       if (result.error) {
         this.options.onError(result.error);
         return;
       }
       if (!result.event) return;
-      if (result.event.event_seq > this.sinceId) {
+      // ephemeral 事件 event_seq=0、live-only：不推进 resume 游标。
+      if (!result.event.ephemeral && result.event.event_seq > this.sinceId) {
         this.sinceId = result.event.event_seq;
       }
       this.options.onEvent(result.event);

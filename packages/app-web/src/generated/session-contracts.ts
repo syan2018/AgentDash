@@ -44,7 +44,7 @@ export type SessionMessageContextBreakdownResponse = { user_message_tokens: numb
 
 export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
 
-export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
+export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
 
 export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
 

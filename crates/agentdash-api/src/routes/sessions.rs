@@ -928,6 +928,16 @@ pub async fn session_stream_ndjson(
                 next = rx.recv() => {
                     match next {
                         Ok(event) => {
+                            if event.ephemeral {
+                                // ephemeral 事件 event_seq=0，不参与 snapshot_seq 去重、不推进游标；
+                                // 直接 emit 为 ephemeral envelope（live-only）。
+                                if let Some(line) =
+                                    to_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(event))
+                                {
+                                    yield Ok::<Bytes, Infallible>(line);
+                                }
+                                continue;
+                            }
                             if event.event_seq <= subscription.snapshot_seq {
                                 continue;
                             }

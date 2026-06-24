@@ -71,6 +71,10 @@ pub enum SessionNdjsonEnvelope {
         #[serde(flatten)]
         event: Box<SessionEventResponse>,
     },
+    EphemeralEvent {
+        #[serde(flatten)]
+        event: Box<SessionEventResponse>,
+    },
     Heartbeat {
         #[ts(type = "number")]
         timestamp: i64,
@@ -84,6 +88,12 @@ impl SessionNdjsonEnvelope {
 
     pub fn event(event: PersistedSessionEvent) -> Self {
         Self::Event {
+            event: Box::new(event.into()),
+        }
+    }
+
+    pub fn ephemeral_event(event: PersistedSessionEvent) -> Self {
+        Self::EphemeralEvent {
             event: Box::new(event.into()),
         }
     }

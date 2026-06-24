@@ -355,11 +355,11 @@ mod tests {
         UserInputSubmittedNotification, codex_app_server_protocol as codex,
     };
     use agentdash_agent_types::AgentMessage;
+    use agentdash_spi::session_persistence::SessionStoreResult;
     use agentdash_spi::{
         SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionStatus, SessionEventBacklog,
         SessionEventPage, SessionEventStore,
     };
-    use agentdash_spi::session_persistence::SessionStoreResult;
     use async_trait::async_trait;
 
     use super::super::memory_persistence::MemorySessionPersistence;
@@ -590,7 +590,10 @@ mod tests {
 
         // 旧数据：prefix 仍残留逐条 delta（会被 compaction materialize 取代）。
         persistence
-            .append_event(session_id, &user_input_envelope(session_id, "turn-1", "old q"))
+            .append_event(
+                session_id,
+                &user_input_envelope(session_id, "turn-1", "old q"),
+            )
             .await
             .expect("seed prefix user input");
         persistence
@@ -625,7 +628,10 @@ mod tests {
 
         // suffix：新 turn 的 user input + assistant（event_seq >= 4），不依赖旧 delta。
         persistence
-            .append_event(session_id, &user_input_envelope(session_id, "turn-2", "new q"))
+            .append_event(
+                session_id,
+                &user_input_envelope(session_id, "turn-2", "new q"),
+            )
             .await
             .expect("seed suffix user input");
         persistence
@@ -673,7 +679,11 @@ mod tests {
             .expect("build model context");
 
         // suffix 起点 = first_kept_event_seq = 3，绝不应回到全量读取。
-        assert_eq!(spy.list_all_calls(), 0, "active compaction 路径不应全量读取");
+        assert_eq!(
+            spy.list_all_calls(),
+            0,
+            "active compaction 路径不应全量读取"
+        );
         let from_seqs = spy.list_from_seqs();
         assert_eq!(from_seqs, vec![3], "应只读 suffix_start=3 起的区间");
 
@@ -688,7 +698,10 @@ mod tests {
             joined.contains("compacted prefix answer"),
             "应包含 materialize 的 prefix: {joined}"
         );
-        assert!(joined.contains("new q"), "应包含 suffix user input: {joined}");
+        assert!(
+            joined.contains("new q"),
+            "应包含 suffix user input: {joined}"
+        );
         assert!(
             joined.contains("new answer"),
             "应包含 suffix assistant: {joined}"
@@ -738,11 +751,9 @@ mod tests {
             .expect("checkpoint entries");
         let suffix_start =
             suffix_start_event_seq_from_compaction(&compaction, head.head_event_seq).unwrap();
-        let suffix = build_raw_projected_transcript_from_filtered_events(
-            all_events.iter().filter(|event| {
-                event.event_seq >= suffix_start && event.event_seq <= head.head_event_seq
-            }),
-        );
+        let suffix = build_raw_projected_transcript_from_filtered_events(all_events.iter().filter(
+            |event| event.event_seq >= suffix_start && event.event_seq <= head.head_event_seq,
+        ));
         entries.extend(suffix.entries);
         let expected: Vec<_> = entries
             .into_iter()

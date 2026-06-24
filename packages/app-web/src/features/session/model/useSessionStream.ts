@@ -19,6 +19,7 @@ import { createSessionStreamTransport, type SessionStreamTransport } from "./str
 import {
   createInitialStreamState,
   reduceStreamState,
+  resetEphemeralCursor,
   shouldFlushStreamEventImmediately,
   type SessionStreamState,
 } from "./sessionStreamReducer";
@@ -80,6 +81,8 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   const receivingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourceKeyRef = useRef<string | null>(null);
   const initialEntriesRef = useRef(normalizedInitialEntries);
+  // 最近一次 connected 帧携带的 ephemeral epoch；epoch 变化代表后端重启 → 重置游标。
+  const ephemeralEpochRef = useRef<number | null>(null);
 
   const callbackRefs = useRef({ onConnectionChange, onError });
   useEffect(() => {
@@ -180,6 +183,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 
     if (shouldResetState) {
       setStreamState(baseState);
+      ephemeralEpochRef.current = null;
     }
 
     setIsLoading(true);
@@ -219,6 +223,16 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
           onEvent: (event) => {
             if (!mountedRef.current) return;
             enqueueEventRef.current(event);
+          },
+          onEphemeralEpoch: (epoch) => {
+            if (!mountedRef.current) return;
+            const prevEpoch = ephemeralEpochRef.current;
+            ephemeralEpochRef.current = epoch;
+            // 首次 connected（prevEpoch=null）不需重置；同 epoch 重连保留 cursor；
+            // epoch 变化（后端重启）→ 把 lastEphemeralSeq 归零，重新应用新 epoch 的 ephemeral 流。
+            if (prevEpoch != null && prevEpoch !== epoch) {
+              setStreamState((prev) => resetEphemeralCursor(prev));
+            }
           },
           onLifecycleChange: (lifecycle) => {
             if (!mountedRef.current) return;

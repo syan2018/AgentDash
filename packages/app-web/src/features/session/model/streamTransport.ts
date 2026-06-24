@@ -21,6 +21,8 @@ export interface SessionStreamTransportOptions {
   onEvent: (event: SessionEventEnvelope) => void;
   onLifecycleChange: (lifecycle: SessionStreamLifecycle) => void;
   onError: (error: Error) => void;
+  /** connected 帧携带的进程级 ephemeral epoch；epoch 变化代表后端重启。 */
+  onEphemeralEpoch?: (epoch: number) => void;
 }
 
 export interface SessionStreamTransport {
@@ -251,6 +253,10 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       const lastEventId = readRequiredNumber(payload.last_event_id);
       if (lastEventId != null && lastEventId > this.sinceId) {
         this.sinceId = lastEventId;
+      }
+      const epoch = readRequiredNumber(payload.ephemeral_epoch);
+      if (epoch != null) {
+        this.options.onEphemeralEpoch?.(epoch);
       }
       return;
     }

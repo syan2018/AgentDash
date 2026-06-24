@@ -33,6 +33,21 @@ const SESSION_EVENT_APPEND_GUARD_MAX_BYTES: usize = 256 * 1024;
 const SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES: usize = 16 * 1024;
 const SESSION_EVENT_APPEND_GUARD_POLICY: &str = "drop_known_output_fields_v1";
 
+/// 进程级 ephemeral epoch：本进程启动时确定一次（启动毫秒）。
+/// 后端重启会得到新值，前端据此判定 `ephemeral_seq` 游标是否失效并重置。
+/// 仅运行时使用 SystemTime（不在任何 workflow 脚本中）。
+fn ephemeral_runtime_epoch() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static EPOCH: OnceLock<u64> = OnceLock::new();
+    *EPOCH.get_or_init(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    })
+}
+
 #[derive(Clone)]
 pub struct SessionEventingService {
     stores: SessionStoreSet,
@@ -58,6 +73,12 @@ impl SessionEventingService {
         session_id: &str,
     ) -> broadcast::Receiver<PersistedSessionEvent> {
         self.runtime_registry.subscribe(session_id).await
+    }
+
+    /// 进程级 ephemeral epoch（启动时确定一次）。NDJSON `Connected` 携带此值，
+    /// 前端据此判定后端是否重启以决定是否重置 `lastEphemeralSeq`。
+    pub fn ephemeral_epoch(&self) -> u64 {
+        ephemeral_runtime_epoch()
     }
 
     pub async fn subscribe_with_history(
@@ -180,7 +201,10 @@ impl SessionEventingService {
             };
             // 先 push（分配 ephemeral_seq + 入 buffer），再 broadcast 带 seq 的事件。
             // 顺序保证：live 订阅者与 reconnect 快照看到的是同一个带 seq 的 envelope。
-            let event = self.runtime_registry.push_ephemeral(session_id, event).await;
+            let event = self
+                .runtime_registry
+                .push_ephemeral(session_id, event)
+                .await;
             if broadcast {
                 self.broadcast_persisted_event(session_id, event.clone())
                     .await;
@@ -219,6 +243,14 @@ impl SessionEventingService {
             .await?;
         self.advance_model_projection_head(session_id, &persisted)
             .await?;
+        // 终态助手消息 / reasoning 落 durable 后，剪除 buffer 中同 item_id 的在途 delta：
+        // 避免 reconnect 时 durable backlog 已 SET 全文、ephemeral 快照又补发旧 delta 脏化（P1-b）。
+        // 与 turn-terminal 的 clear_ephemeral、P2 epoch 不冲突：这里只精剪该消息的 delta。
+        if let Some(item_id) = finalized_assistant_item_id(&persisted) {
+            self.runtime_registry
+                .prune_ephemeral_by_item_id(session_id, &item_id)
+                .await;
+        }
         // turn 收尾（terminal）/ rewind 后清空 ephemeral buffer：该 turn 的终态正文 / reasoning
         // 已 durable（Step 0），in-flight 进度态不再需要补发，避免跨 turn 累积。
         if should_clear_ephemeral_on_durable(&persisted) {
@@ -1466,6 +1498,20 @@ fn should_clear_ephemeral_on_durable(persisted: &PersistedSessionEvent) -> bool 
     )
 }
 
+/// 若 durable 事件是终态助手消息（ItemCompleted AgentMessage / Reasoning），返回其 item_id。
+/// 该 item_id 与对应 ephemeral text/reasoning delta 的 `item_id` 同源（同一气泡），
+/// 用于剪除 buffer 中已被终态覆盖的在途 delta（P1-b）。
+fn finalized_assistant_item_id(persisted: &PersistedSessionEvent) -> Option<String> {
+    let BackboneEvent::ItemCompleted(notification) = &persisted.notification.event else {
+        return None;
+    };
+    match &notification.item {
+        AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { id, .. }) => Some(id.clone()),
+        AgentDashThreadItem::Codex(codex::ThreadItem::Reasoning { id, .. }) => Some(id.clone()),
+        _ => None,
+    }
+}
+
 fn ephemeral_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
     match &envelope.event {
         BackboneEvent::ItemUpdated(n) => n.item.tool_call_id().map(ToString::to_string),
@@ -2451,7 +2497,9 @@ mod tests {
         assert!(backlog.ephemeral_backlog[0].ephemeral);
 
         // 仍 live 广播，且带 ephemeral=true。
-        let received = rx.try_recv().expect("broadcast ephemeral delta to subscriber");
+        let received = rx
+            .try_recv()
+            .expect("broadcast ephemeral delta to subscriber");
         assert!(received.ephemeral);
         assert_eq!(received.event_seq, 1);
         assert_eq!(received.session_update_type, "agent_message_delta");

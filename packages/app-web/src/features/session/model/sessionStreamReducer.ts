@@ -204,6 +204,11 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
+        // P1-b 防御：该气泡已被终态 finalize（isStreaming=false），跳过在途旧 delta，
+        // 防止后端剪枝前已在网络途中的 ephemeral delta append 脏化已 final 正文。
+        if (existing.isStreaming === false) {
+          return prev;
+        }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
         next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated, isStreaming: true };
@@ -218,6 +223,9 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
+        if (existing.isStreaming === false) {
+          return prev;
+        }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
         next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
@@ -232,6 +240,9 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
+        if (existing.isStreaming === false) {
+          return prev;
+        }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
         next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
@@ -440,6 +451,19 @@ export function reduceStreamState(
     lastAppliedSeq,
     lastEphemeralSeq,
   };
+}
+
+/**
+ * 重置 ephemeral 去重游标（后端进程重启 / epoch 变化时调用）。
+ * 后端重启后 ephemeral_seq 从 0 重来，旧 state 的高位 lastEphemeralSeq 会误跳过新 turn 的
+ * live delta；epoch 变化时把游标归零，使新 epoch 的 ephemeral 流从头应用。
+ * 仅动 lastEphemeralSeq，不触碰已累积的 entries / rawEvents / durable 游标。
+ */
+export function resetEphemeralCursor(prev: SessionStreamState): SessionStreamState {
+  if (prev.lastEphemeralSeq === 0) {
+    return prev;
+  }
+  return { ...prev, lastEphemeralSeq: 0 };
 }
 
 export function shouldFlushStreamEventImmediately(event: SessionEventEnvelope): boolean {

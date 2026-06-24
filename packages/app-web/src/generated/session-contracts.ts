@@ -44,7 +44,12 @@ export type SessionMessageContextBreakdownResponse = { user_message_tokens: numb
 
 export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
 
-export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
+export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number,
+/**
+ * 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——
+ * epoch 变化时重置 `lastEphemeralSeq`（旧 cursor 失效），同 epoch 重连则保留。
+ */
+ephemeral_epoch: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
 
 export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
 

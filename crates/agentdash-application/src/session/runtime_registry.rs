@@ -181,6 +181,27 @@ impl SessionRuntimeRegistry {
             .unwrap_or_default()
     }
 
+    /// 从 ephemeral buffer 移除指定 `item_id` 的助手文本/ reasoning delta。
+    /// 终态助手消息（ItemCompleted AgentMessage/Reasoning）落 durable 后调用：
+    /// 防止 reconnect 时 durable backlog 已 SET 全文、随后 ephemeral 快照又补发旧 delta，
+    /// 导致前端把旧 delta append 到已 final 的气泡上（脏化）。
+    /// 只移除该 item_id 的 text/reasoning delta，保留其余 ephemeral 条目。
+    pub async fn prune_ephemeral_by_item_id(&self, session_id: &str, item_id: &str) {
+        use agentdash_agent_protocol::BackboneEvent;
+        let mut runtimes = self.runtimes.lock().await;
+        if let Some(runtime) = runtimes.get_mut(session_id) {
+            runtime.ephemeral_buffer.retain(|event| {
+                let matches_item = match &event.notification.event {
+                    BackboneEvent::AgentMessageDelta(delta) => delta.item_id == item_id,
+                    BackboneEvent::ReasoningTextDelta(delta) => delta.item_id == item_id,
+                    BackboneEvent::ReasoningSummaryDelta(delta) => delta.item_id == item_id,
+                    _ => false,
+                };
+                !matches_item
+            });
+        }
+    }
+
     /// 清空 per-session ephemeral buffer（turn 收尾后调用）。
     /// 保留 `ephemeral_seq` 计数器单调，不重置，避免跨 turn 前端误去重。
     pub async fn clear_ephemeral(&self, session_id: &str) {
@@ -310,5 +331,75 @@ mod tests {
     async fn snapshot_ephemeral_empty_for_unknown_session() {
         let registry = registry();
         assert!(registry.snapshot_ephemeral("nope").await.is_empty());
+    }
+
+    fn delta_event_with_item(session_id: &str, item_id: &str, text: &str) -> PersistedSessionEvent {
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                delta: text.to_string(),
+                thread_id: session_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item_id: item_id.to_string(),
+            }),
+            session_id,
+            SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "local_executor".to_string(),
+                executor_id: None,
+            },
+        );
+        PersistedSessionEvent {
+            session_id: session_id.to_string(),
+            event_seq: 0,
+            occurred_at_ms: 0,
+            committed_at_ms: 0,
+            session_update_type: "agent_message_delta".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(1),
+            tool_call_id: None,
+            ephemeral: true,
+            notification: envelope,
+        }
+    }
+
+    #[tokio::test]
+    async fn prune_ephemeral_by_item_id_removes_only_matching_deltas() {
+        let registry = registry();
+        let session_id = "sess-prune";
+        let final_item = "turn-1:0:msg";
+        let other_item = "turn-1:1:msg";
+
+        registry
+            .push_ephemeral(
+                session_id,
+                delta_event_with_item(session_id, final_item, "a"),
+            )
+            .await;
+        registry
+            .push_ephemeral(
+                session_id,
+                delta_event_with_item(session_id, final_item, "b"),
+            )
+            .await;
+        registry
+            .push_ephemeral(
+                session_id,
+                delta_event_with_item(session_id, other_item, "c"),
+            )
+            .await;
+
+        registry
+            .prune_ephemeral_by_item_id(session_id, final_item)
+            .await;
+
+        let snapshot = registry.snapshot_ephemeral(session_id).await;
+        // 仅保留 other_item 的 delta；final_item 的两条被剪除。
+        assert_eq!(snapshot.len(), 1);
+        match &snapshot[0].notification.event {
+            BackboneEvent::AgentMessageDelta(delta) => {
+                assert_eq!(delta.item_id, other_item);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

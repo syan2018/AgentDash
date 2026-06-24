@@ -66,6 +66,10 @@ pub enum SessionNdjsonEnvelope {
     Connected {
         #[ts(type = "number")]
         last_event_id: u64,
+        /// 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——
+        /// epoch 变化时重置 `lastEphemeralSeq`（旧 cursor 失效），同 epoch 重连则保留。
+        #[ts(type = "number")]
+        ephemeral_epoch: u64,
     },
     Event {
         #[serde(flatten)]
@@ -82,8 +86,11 @@ pub enum SessionNdjsonEnvelope {
 }
 
 impl SessionNdjsonEnvelope {
-    pub fn connected(last_event_id: u64) -> Self {
-        Self::Connected { last_event_id }
+    pub fn connected(last_event_id: u64, ephemeral_epoch: u64) -> Self {
+        Self::Connected {
+            last_event_id,
+            ephemeral_epoch,
+        }
     }
 
     pub fn event(event: PersistedSessionEvent) -> Self {

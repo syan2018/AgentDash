@@ -906,6 +906,8 @@ pub async fn session_stream_ndjson(
         "Session trace stream 历史补发完成（NDJSON）"
     );
 
+    let ephemeral_epoch = state.services.session_eventing.ephemeral_epoch();
+
     let stream = async_stream::stream! {
         let mut seq = resume_from;
         for event in subscription.backlog {
@@ -915,7 +917,7 @@ pub async fn session_stream_ndjson(
             }
         }
 
-        if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::connected(seq)) {
+        if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::connected(seq, ephemeral_epoch)) {
             yield Ok::<Bytes, Infallible>(line);
         }
 

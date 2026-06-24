@@ -4,6 +4,7 @@ import type { SessionEventEnvelope } from "./types";
 import {
   createInitialStreamState,
   reduceStreamState,
+  resetEphemeralCursor,
   shouldFlushStreamEventImmediately,
 } from "./sessionStreamReducer";
 
@@ -391,6 +392,21 @@ describe("sessionStreamReducer", () => {
     expect(state.entries[0]?.event.type).toBe("agent_message_delta");
   });
 
+  it("P1-b：终态 finalize 后再来同 item_id 的 ephemeral delta 不脏化已 final 气泡", () => {
+    // durable 终态先 finalize（isStreaming=false），随后剪枝前在途的旧 ephemeral delta 到达。
+    const afterFinal = reduceStreamState(createInitialStreamState([]), [
+      itemCompleted(2, agentMessageItem("item-1", "FULL FINAL")),
+    ]);
+    expect(afterFinal.entries[0]?.accumulatedText).toBe("FULL FINAL");
+    expect(afterFinal.entries[0]?.isStreaming).toBe(false);
+
+    // ephemeral 旧 delta（同 item_id）应被跳过，accumulatedText 不变。
+    const afterStaleDelta = reduceStreamState(afterFinal, [ephemeralAgentDelta(1, "partial")]);
+    expect(afterStaleDelta.entries).toHaveLength(1);
+    expect(afterStaleDelta.entries[0]?.accumulatedText).toBe("FULL FINAL");
+    expect(afterStaleDelta.entries[0]?.isStreaming).toBe(false);
+  });
+
   it("ephemeral delta 更新 entries 但不进 rawEvents、不动 lastAppliedSeq", () => {
     const state = reduceStreamState(createInitialStreamState([]), [
       ephemeralAgentDelta(1, "hello"),
@@ -448,6 +464,22 @@ describe("sessionStreamReducer", () => {
     ]);
     expect(after.entries[0]?.accumulatedText).toBe("ABCDEF");
     expect(after.lastEphemeralSeq).toBe(3);
+  });
+
+  it("P2：resetEphemeralCursor 归零 lastEphemeralSeq（epoch 变化时）", () => {
+    const before = reduceStreamState(createInitialStreamState([]), [
+      ephemeralAgentDelta(1, "AB"),
+      ephemeralAgentDelta(2, "CD"),
+    ]);
+    expect(before.lastEphemeralSeq).toBe(2);
+
+    const reset = resetEphemeralCursor(before);
+    expect(reset.lastEphemeralSeq).toBe(0);
+    // 仅动游标，不触碰已累积 entries。
+    expect(reset.entries[0]?.accumulatedText).toBe("ABCD");
+
+    // lastEphemeralSeq 已为 0 时返回原引用（无效更新）。
+    expect(resetEphemeralCursor(reset)).toBe(reset);
   });
 
   it("ephemeral 乱序到达仍按 ephemeral_seq 升序应用", () => {

@@ -208,9 +208,9 @@ fn build_raw_projected_transcript_from_iter<'a>(
                             tc.is_error,
                         );
                     }
-                } else if let Some(final_message) = extract_assistant_message_from_thread_item(
-                    &n.item,
-                ) {
+                } else if let Some(final_message) =
+                    extract_assistant_message_from_thread_item(&n.item)
+                {
                     // 终态助手正文 / reasoning：作为权威来源覆盖 delta 累积。
                     // item_id 与 delta 同源（turn_id:entry_index:msg|reason），
                     // 通过 restored_assistant_key 命中同一 assistant 状态。
@@ -813,8 +813,8 @@ fn json_preview(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use agentdash_agent_protocol::{
-        BackboneEnvelope, ItemCompletedNotification, ItemUpdatedNotification, SourceInfo, TraceInfo,
-        backbone::thread_item,
+        BackboneEnvelope, ItemCompletedNotification, ItemUpdatedNotification, SourceInfo,
+        TraceInfo, backbone::thread_item,
     };
 
     fn test_source() -> SourceInfo {

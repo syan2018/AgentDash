@@ -300,7 +300,35 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
                 apply_thread_item_event(&mut builders, event, &notification.item);
             }
             BackboneEvent::ItemCompleted(notification) => {
-                apply_thread_item_event(&mut builders, event, &notification.item);
+                // Step 0：终态助手消息（AgentMessage / Reasoning）是权威正文来源，
+                // 不能被当成通用 thread_item（否则 delta-less 会话丢正文、被误标 thread_item）。
+                match &notification.item {
+                    AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage {
+                        id,
+                        text,
+                        ..
+                    }) => {
+                        let builder = builders.entry(id.clone()).or_insert_with(|| {
+                            SessionItemBuilder::new(id.clone(), "agent_message")
+                        });
+                        builder.apply_event(event);
+                        builder.role = Some("agent");
+                        // 终态权威：覆盖（而非 append）任何已累积的 delta。
+                        builder.text = text.clone();
+                    }
+                    AgentDashThreadItem::Codex(codex::ThreadItem::Reasoning {
+                        id,
+                        content,
+                        ..
+                    }) => {
+                        let builder = builders
+                            .entry(id.clone())
+                            .or_insert_with(|| SessionItemBuilder::new(id.clone(), "reasoning"));
+                        builder.apply_event(event);
+                        builder.text = content.join("");
+                    }
+                    _ => apply_thread_item_event(&mut builders, event, &notification.item),
+                }
             }
             BackboneEvent::CommandOutputDelta(delta) => {
                 let builder = builders
@@ -837,5 +865,145 @@ fn sanitize_path_part(value: &str, max_chars: usize) -> String {
         "item".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
+    use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, TraceInfo};
+
+    fn source_info() -> SourceInfo {
+        SourceInfo {
+            connector_id: "test".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: None,
+        }
+    }
+
+    fn item_completed_event(event_seq: u64, item: AgentDashThreadItem) -> PersistedSessionEvent {
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                "session-1".to_string(),
+                "turn-1".to_string(),
+            )),
+            "session-1",
+            source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(0),
+        });
+        PersistedSessionEvent {
+            session_id: "session-1".to_string(),
+            event_seq,
+            occurred_at_ms: event_seq as i64,
+            committed_at_ms: event_seq as i64,
+            session_update_type: "item_completed".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            entry_index: Some(0),
+            tool_call_id: None,
+            ephemeral: false,
+            notification: envelope,
+        }
+    }
+
+    /// P1-a：仅终态助手消息 / reasoning（无 delta，Step 1 后的稀疏会话）应投影为
+    /// agent_message / reasoning，承载终态正文，且不被误标成 thread_item/tool。
+    #[test]
+    fn final_assistant_items_project_message_and_reasoning_without_delta() {
+        let msg_item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+            id: "turn-1:0:msg".to_string(),
+            text: "FULL FINAL".to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+        .into();
+        let reason_item: AgentDashThreadItem = codex::ThreadItem::Reasoning {
+            id: "turn-1:0:reason".to_string(),
+            summary: vec![],
+            content: vec!["because ".to_string(), "reasons".to_string()],
+        }
+        .into();
+
+        let events = vec![
+            item_completed_event(1, msg_item),
+            item_completed_event(2, reason_item),
+        ];
+        let projections = session_item_projections(&events);
+
+        let message = projections
+            .iter()
+            .find(|p| p.summary.item_id == "turn-1:0:msg")
+            .expect("agent message projection");
+        match &message.content {
+            SessionItemContent::Message { role, text, .. } => {
+                assert_eq!(*role, "agent");
+                assert_eq!(text, "FULL FINAL");
+            }
+            other => panic!("expected agent message content, got {other:?}"),
+        }
+        assert_eq!(message.summary.item_kind, "agent_message");
+
+        let reasoning = projections
+            .iter()
+            .find(|p| p.summary.item_id == "turn-1:0:reason")
+            .expect("reasoning projection");
+        match &reasoning.content {
+            SessionItemContent::Reasoning { text } => {
+                assert_eq!(text, "because reasons");
+            }
+            other => panic!("expected reasoning content, got {other:?}"),
+        }
+        assert_eq!(reasoning.summary.item_kind, "reasoning");
+    }
+
+    /// 终态助手正文是权威：与既有 delta 累积共存时用 `=` 覆盖，不在 delta 之上 append。
+    #[test]
+    fn final_assistant_text_overrides_accumulated_delta() {
+        let delta_event = {
+            let envelope = BackboneEnvelope::new(
+                BackboneEvent::AgentMessageDelta(codex::AgentMessageDeltaNotification {
+                    delta: "partial".to_string(),
+                    thread_id: "session-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    item_id: "turn-1:0:msg".to_string(),
+                }),
+                "session-1",
+                source_info(),
+            );
+            PersistedSessionEvent {
+                session_id: "session-1".to_string(),
+                event_seq: 1,
+                occurred_at_ms: 1,
+                committed_at_ms: 1,
+                session_update_type: "agent_message_delta".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                entry_index: Some(0),
+                tool_call_id: None,
+                ephemeral: false,
+                notification: envelope,
+            }
+        };
+        let msg_item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+            id: "turn-1:0:msg".to_string(),
+            text: "FULL FINAL".to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+        .into();
+
+        let events = vec![delta_event, item_completed_event(2, msg_item)];
+        let projections = session_item_projections(&events);
+        let message = projections
+            .iter()
+            .find(|p| p.summary.item_id == "turn-1:0:msg")
+            .expect("agent message projection");
+        match &message.content {
+            SessionItemContent::Message { text, .. } => assert_eq!(text, "FULL FINAL"),
+            other => panic!("expected agent message content, got {other:?}"),
+        }
     }
 }

@@ -1,18 +1,6 @@
 /**
- * CanvasCategoryPanel — Assets 页 Canvas 类目实装（PR4）。
- *
- * 实现决策：
- * - Canvas 的 list + detail 已在 `ProjectCanvasManager` 内部以左右分栏实现。
- * - 不再抽出新的 list 组件，也不引入额外子路由——PRD 要求"最小改动 + URL 拓扑不分裂"。
- * - 本面板直接复用 `ProjectCanvasManager`，选中即进入编辑态（等同于"编辑"操作）。
- * 对齐 PRD：
- * - 列表项展示：title / description / files 计数 / bindings 计数 / 更新时间（ProjectCanvasManager 已实现）
- * - 行动作：选中 = 编辑（ProjectCanvasManager 选中展开 detail / 绑定编辑），删除按钮也已存在
- * - 复制：Canvas 后端暂未提供 duplicate API —— 留 TODO 给 PR5 / 后续任务接
- *
- * NOTE: 未来若需要独立编辑子路由（如 `/dashboard/assets/canvas/:id`），
- * 只需在 App.tsx 为 Canvas panel 新增嵌套子路由，并把 ProjectCanvasManager 拆成
- * list + detail 两个组件。当前无此需求。
+ * CanvasCategoryPanel — Assets 页 Canvas 类目入口。
+ * ProjectCanvasManager 负责个人 Canvas、项目共用 Canvas、运行时预览和源编辑组合。
  */
 
 import { useMemo } from "react";
@@ -40,7 +28,7 @@ export function CanvasCategoryPanel() {
       <header className="space-y-1">
         <h2 className="text-base font-semibold tracking-tight text-foreground">Canvas 资产</h2>
         <p className="text-xs text-muted-foreground">
-          {currentProject.name} · 项目级可视化 Canvas 模板，支持文件 / 数据绑定 / 运行时预览的在线编辑。
+          {currentProject.name} · 我的 Canvas 与项目共用 Canvas。
         </p>
       </header>
 

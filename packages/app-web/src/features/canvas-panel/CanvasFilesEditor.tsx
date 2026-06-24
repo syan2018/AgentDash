@@ -11,6 +11,7 @@ export interface CanvasFilesEditorProps {
   entryFile: string;
   isSaving?: boolean;
   error?: string | null;
+  readOnly?: boolean;
   onSave: (input: CanvasFilesEditorSaveInput) => Promise<void> | void;
   onCancel?: (input: CanvasFilesEditorSaveInput) => void;
 }
@@ -32,6 +33,7 @@ export function CanvasFilesEditor({
   entryFile,
   isSaving = false,
   error = null,
+  readOnly = false,
   onSave,
   onCancel,
 }: CanvasFilesEditorProps) {
@@ -70,9 +72,12 @@ export function CanvasFilesEditor({
     [draftEntryFile, draftFiles],
   );
 
-  const canSave = !isSaving && isDirty && !validation.generalError && validation.rowErrors.every((item) => item.length === 0);
+  const canSave = !readOnly && !isSaving && isDirty && !validation.generalError && validation.rowErrors.every((item) => item.length === 0);
 
   const handleFilePathChange = (currentPath: string, nextPath: string) => {
+    if (readOnly) {
+      return;
+    }
     setDraftFiles((prev) =>
       prev.map((file) => (file.path === currentPath ? { ...file, path: nextPath } : file)),
     );
@@ -86,6 +91,9 @@ export function CanvasFilesEditor({
   };
 
   const handleFileContentChange = (currentPath: string, nextContent: string) => {
+    if (readOnly) {
+      return;
+    }
     setDraftFiles((prev) =>
       prev.map((file) => (file.path === currentPath ? { ...file, content: nextContent } : file)),
     );
@@ -93,6 +101,9 @@ export function CanvasFilesEditor({
   };
 
   const handleAddFile = () => {
+    if (readOnly) {
+      return;
+    }
     const newFile = createEmptyFile(draftFiles);
     setDraftFiles((prev) => [...prev, newFile]);
     setSelectedFilePath(newFile.path);
@@ -103,6 +114,9 @@ export function CanvasFilesEditor({
   };
 
   const handleRemoveFile = (targetPath: string) => {
+    if (readOnly) {
+      return;
+    }
     setDraftFiles((prev) => {
       const nextFiles = prev.filter((file) => file.path !== targetPath);
       const fallbackPath = nextFiles[0]?.path ?? "";
@@ -130,7 +144,7 @@ export function CanvasFilesEditor({
   };
 
   const handleSave = async () => {
-    if (!canSave) {
+    if (readOnly || !canSave) {
       return;
     }
     const normalizedFiles = draftFiles.map(normalizeCanvasFile);
@@ -158,7 +172,7 @@ export function CanvasFilesEditor({
         <button
           type="button"
           onClick={handleAddFile}
-          disabled={isSaving}
+          disabled={readOnly || isSaving}
           className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           新增文件
@@ -202,7 +216,7 @@ export function CanvasFilesEditor({
               <input
                 value={selectedFile.path}
                 onChange={(event) => handleFilePathChange(selectedFile.path, event.target.value)}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="w-full rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors focus:border-foreground/40"
                 placeholder="例如：src/main.tsx"
               />
@@ -211,10 +225,13 @@ export function CanvasFilesEditor({
               <button
                 type="button"
                 onClick={() => {
+                  if (readOnly) {
+                    return;
+                  }
                   setDraftEntryFile(selectedFile.path);
                   setIsDirty(true);
                 }}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 设为入口
@@ -222,7 +239,7 @@ export function CanvasFilesEditor({
               <button
                 type="button"
                 onClick={() => handleRemoveFile(selectedFile.path)}
-                disabled={isSaving}
+                disabled={readOnly || isSaving}
                 className="rounded-[8px] border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 删除文件
@@ -239,7 +256,7 @@ export function CanvasFilesEditor({
             <textarea
               value={selectedFile.content}
               onChange={(event) => handleFileContentChange(selectedFile.path, event.target.value)}
-              disabled={isSaving}
+              disabled={readOnly || isSaving}
               spellCheck={false}
               className="min-h-[320px] w-full rounded-[8px] border border-border bg-slate-950 px-3 py-2 font-mono text-[12px] leading-6 text-slate-100 outline-none transition-colors focus:border-slate-400"
             />
@@ -263,7 +280,7 @@ export function CanvasFilesEditor({
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isSaving || !isDirty}
+          disabled={readOnly || isSaving || !isDirty}
           className="rounded-[8px] border border-border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           取消

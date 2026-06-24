@@ -2,16 +2,30 @@ import { api } from "../api/client";
 import type { ExtensionPackageInstallationResponse } from "../generated/extension-package-contracts";
 import type {
   Canvas,
+  CanvasListScope,
   CanvasRuntimeSnapshot,
+  CopyCanvasToPersonalInput,
   CreateCanvasInput,
   DeleteCanvasResult,
+  PublishCanvasToProjectInput,
   RuntimeInvocationResult,
+  UnpublishCanvasResult,
   UpdateCanvasInput,
 } from "../types";
 
-export async function fetchProjectCanvases(projectId: string): Promise<Canvas[]> {
+export async function fetchProjectCanvases(
+  projectId: string,
+  scope?: CanvasListScope,
+): Promise<Canvas[]> {
+  const params = new URLSearchParams();
+  if (scope) {
+    params.set("scope", scope);
+  }
+  const query = params.toString();
   return api.get<Canvas[]>(
-    `/projects/${encodeURIComponent(projectId)}/canvases`,
+    query
+      ? `/projects/${encodeURIComponent(projectId)}/canvases?${query}`
+      : `/projects/${encodeURIComponent(projectId)}/canvases`,
   );
 }
 
@@ -50,6 +64,33 @@ export async function updateCanvas(
 
 export async function deleteCanvas(canvasId: string): Promise<DeleteCanvasResult> {
   return api.delete<DeleteCanvasResult>(`/canvases/${encodeURIComponent(canvasId)}`);
+}
+
+export async function publishCanvasToProject(
+  canvasId: string,
+  input: PublishCanvasToProjectInput = {},
+): Promise<Canvas> {
+  return api.post<Canvas>(
+    `/canvases/${encodeURIComponent(canvasId)}/publish-to-project`,
+    input,
+  );
+}
+
+export async function copyCanvasToPersonal(
+  canvasId: string,
+  input: CopyCanvasToPersonalInput = {},
+): Promise<Canvas> {
+  return api.post<Canvas>(
+    `/canvases/${encodeURIComponent(canvasId)}/copy-to-personal`,
+    input,
+  );
+}
+
+export async function unpublishCanvas(canvasId: string): Promise<UnpublishCanvasResult> {
+  return api.post<UnpublishCanvasResult>(
+    `/canvases/${encodeURIComponent(canvasId)}/unpublish`,
+    {},
+  );
 }
 
 export async function fetchCanvasRuntimeSnapshot(

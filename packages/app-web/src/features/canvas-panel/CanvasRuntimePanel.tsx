@@ -7,6 +7,7 @@ import {
 } from "../../services/canvas";
 import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
+import { CanvasFilesEditor, type CanvasFilesEditorSaveInput } from "./CanvasFilesEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasRuntimePanelProps {
@@ -19,6 +20,8 @@ export interface CanvasRuntimePanelProps {
   /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
   onBrowseFiles?: (mountId: string) => void;
 }
+
+type CanvasDetailMode = "bindings" | "files";
 
 export function CanvasRuntimePanel({
   canvasId,
@@ -35,8 +38,11 @@ export function CanvasRuntimePanel({
   const [error, setError] = useState<string | null>(null);
   const [isSavingBindings, setIsSavingBindings] = useState(false);
   const [bindingsError, setBindingsError] = useState<string | null>(null);
+  const [isSavingFiles, setIsSavingFiles] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
 
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailMode, setDetailMode] = useState<CanvasDetailMode>("bindings");
 
   const loadCanvasData = useCallback(async () => {
     if (!canvasId && (!canvasMountId || !projectId)) {
@@ -44,11 +50,14 @@ export function CanvasRuntimePanel({
       setSnapshot(null);
       setError(null);
       setBindingsError(null);
+      setFilesError(null);
       return;
     }
 
     setIsLoading(true);
     setError(null);
+    setBindingsError(null);
+    setFilesError(null);
     try {
       const canvasRequest = canvasId
         ? fetchCanvas(canvasId)
@@ -65,6 +74,7 @@ export function CanvasRuntimePanel({
       setCanvas(null);
       setSnapshot(null);
       setBindingsError(null);
+      setFilesError(null);
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +85,15 @@ export function CanvasRuntimePanel({
   }, [loadCanvasData, refreshRevision]);
 
   const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
-    const targetCanvasId = canvas?.canvas_id ?? canvasId;
+    if (!canvas) {
+      return;
+    }
+    if (canvas.access.can_edit_source !== true) {
+      const accessError = new Error("当前 Canvas 源为只读，不能保存数据绑定。");
+      setBindingsError(accessError.message);
+      throw accessError;
+    }
+    const targetCanvasId = canvas.canvas_id;
     if (!targetCanvasId) {
       return;
     }
@@ -93,9 +111,43 @@ export function CanvasRuntimePanel({
     } finally {
       setIsSavingBindings(false);
     }
-  }, [canvas, canvasId, sessionId]);
+  }, [canvas, sessionId]);
+
+  const handleFilesSave = useCallback(async (input: CanvasFilesEditorSaveInput) => {
+    if (!canvas) {
+      return;
+    }
+    if (canvas.access.can_edit_source !== true) {
+      const accessError = new Error("当前 Canvas 源为只读，不能保存源文件。");
+      setFilesError(accessError.message);
+      throw accessError;
+    }
+
+    setIsSavingFiles(true);
+    setFilesError(null);
+    try {
+      const nextCanvas = await updateCanvas(canvas.canvas_id, {
+        entry_file: input.entryFile,
+        files: input.files,
+      });
+      setCanvas(nextCanvas);
+      const nextSnapshot = await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id, sessionId);
+      setSnapshot(nextSnapshot);
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : "保存源文件失败");
+      throw err;
+    } finally {
+      setIsSavingFiles(false);
+    }
+  }, [canvas, sessionId]);
+
+  const toggleDetailMode = useCallback((mode: CanvasDetailMode) => {
+    setDetailMode(mode);
+    setIsDetailOpen((current) => (current && detailMode === mode ? false : true));
+  }, [detailMode]);
 
   const vfsMountId = canvas?.vfs_mount_id ?? snapshot?.vfs_mount_id ?? null;
+  const canEditSource = canvas?.access.can_edit_source === true;
 
   if (!canvasId && !canvasMountId) {
     return null;
@@ -122,6 +174,11 @@ export function CanvasRuntimePanel({
               <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
                 {snapshot.entry || "无入口"}
               </span>
+              {canvas && !canEditSource && (
+                <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
+                  只读源
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -183,15 +240,27 @@ export function CanvasRuntimePanel({
               )}
               <button
                 type="button"
-                onClick={() => setIsDetailOpen((v) => !v)}
+                onClick={() => toggleDetailMode("bindings")}
                 className={[
                   "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
-                  isDetailOpen
+                  isDetailOpen && detailMode === "bindings"
                     ? "bg-foreground text-background"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 ].join(" ")}
               >
                 数据绑定
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleDetailMode("files")}
+                className={[
+                  "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
+                  isDetailOpen && detailMode === "files"
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                ].join(" ")}
+              >
+                源文件
               </button>
             </div>
             <button
@@ -219,27 +288,49 @@ export function CanvasRuntimePanel({
           {isDetailOpen && (
             <div className="max-h-[45vh] overflow-y-auto px-3 py-3">
               <div className="space-y-3">
-                <section className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
-                  <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
-                  {snapshot.bindings.length === 0 && (
-                    <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
-                  )}
-                  {snapshot.bindings.map((binding) => (
-                    <div key={`${binding.alias}:${binding.source_uri}`} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
-                      <p className="font-medium text-foreground">{binding.alias}</p>
-                      <p className="break-all text-muted-foreground">source: {binding.source_uri}</p>
-                      <p className="text-muted-foreground">path: {binding.data_path}</p>
-                      <p className="text-muted-foreground">resolved: {binding.resolved ? "yes" : "no"}</p>
-                    </div>
-                  ))}
-                </section>
+                {!canEditSource && (
+                  <div className="rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+                    当前 Canvas 源为只读，预览和读取保持可用。
+                  </div>
+                )}
 
-                <CanvasBindingsEditor
-                  value={canvas?.bindings ?? []}
-                  isSaving={isSavingBindings}
-                  error={bindingsError}
-                  onSave={handleBindingsSave}
-                />
+                {detailMode === "bindings" && (
+                  <>
+                    <section className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
+                      {snapshot.bindings.length === 0 && (
+                        <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
+                      )}
+                      {snapshot.bindings.map((binding) => (
+                        <div key={`${binding.alias}:${binding.source_uri}`} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
+                          <p className="font-medium text-foreground">{binding.alias}</p>
+                          <p className="break-all text-muted-foreground">source: {binding.source_uri}</p>
+                          <p className="text-muted-foreground">path: {binding.data_path}</p>
+                          <p className="text-muted-foreground">resolved: {binding.resolved ? "yes" : "no"}</p>
+                        </div>
+                      ))}
+                    </section>
+
+                    <CanvasBindingsEditor
+                      value={canvas?.bindings ?? []}
+                      isSaving={isSavingBindings}
+                      error={bindingsError}
+                      readOnly={!canEditSource}
+                      onSave={handleBindingsSave}
+                    />
+                  </>
+                )}
+
+                {detailMode === "files" && (
+                  <CanvasFilesEditor
+                    value={canvas?.files ?? []}
+                    entryFile={canvas?.entry_file ?? ""}
+                    isSaving={isSavingFiles}
+                    error={filesError}
+                    readOnly={!canEditSource}
+                    onSave={handleFilesSave}
+                  />
+                )}
               </div>
             </div>
           )}

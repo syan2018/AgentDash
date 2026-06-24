@@ -59,7 +59,6 @@ use super::super::{
     SessionToolResultCache,
 };
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::runtime_capability::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
@@ -75,6 +74,9 @@ use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
+};
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest, FrameLaunchModifier,
 };
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
@@ -3715,7 +3717,6 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 
 #[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
-    use crate::agent_run::frame::FrameLaunchEnvelopeProvider;
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
     struct StaticConstructionProvider {
@@ -3723,22 +3724,22 @@ async fn planner_invalid_config_leaves_current_frame_unchanged() {
     }
 
     #[async_trait::async_trait]
-    impl FrameLaunchEnvelopeProvider for StaticConstructionProvider {
-        async fn build_frame_launch_envelope(
+    impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for StaticConstructionProvider {
+        async fn build_launch_envelope(
             &self,
-            input: FrameLaunchEnvelopeProviderInput,
+            input: FrameLaunchEnvelopeRequest,
         ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             let prompt_text = input
                 .command
-                .user_input()
+                .user_input
                 .input
                 .as_ref()
                 .and_then(|blocks| blocks.first())
                 .and_then(agentdash_agent_protocol::user_input_text)
                 .unwrap_or("hello");
             let mut construction = simple_prompt_request(prompt_text);
-            construction.session_id = input.session_id.clone();
-            construction.session.session_id = input.session_id;
+            construction.session_id = input.runtime_session_id.clone();
+            construction.session.session_id = input.runtime_session_id;
             super::facade::envelope_from_construction(&self.hub, construction).await
         }
     }
@@ -3922,7 +3923,7 @@ async fn start_prompt_releases_claim_when_session_meta_is_missing() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Fail-lock: auto-resume 必须经过 FrameLaunchEnvelopeProvider
+// Fail-lock: auto-resume 必须经过 launch envelope port
 // ─────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -4070,7 +4071,6 @@ async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-    use crate::agent_run::frame::{FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -4080,15 +4080,15 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     }
 
     #[async_trait::async_trait]
-    impl FrameLaunchEnvelopeProvider for SpyConstructionProvider {
-        async fn build_frame_launch_envelope(
+    impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for SpyConstructionProvider {
+        async fn build_launch_envelope(
             &self,
-            input: FrameLaunchEnvelopeProviderInput,
+            input: FrameLaunchEnvelopeRequest,
         ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = input
                 .command
-                .user_input()
+                .user_input
                 .input
                 .as_ref()
                 .and_then(|blocks| blocks.first())
@@ -4098,7 +4098,12 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
             self.captured_mcp_len.store(
                 input
                     .command
-                    .local_relay_modifier()
+                    .modifiers
+                    .iter()
+                    .find_map(|modifier| match modifier {
+                        FrameLaunchModifier::LocalRelay(payload) => Some(payload),
+                        _ => None,
+                    })
                     .map(|payload| payload.mcp_servers.len())
                     .unwrap_or_default(),
                 Ordering::SeqCst,

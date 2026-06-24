@@ -6,13 +6,17 @@
 
 use std::sync::Arc;
 
+use agentdash_application_ports::frame_launch_envelope::{
+    AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
+    AcceptedLaunchHookRuntimeSync,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent,
     LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
-use agentdash_spi::{CapabilityState, ConnectorError};
+use agentdash_spi::CapabilityState;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -25,7 +29,7 @@ pub struct AgentRunAcceptedLaunchCommitAdapter {
     frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
-    hook_runtime_sync: Option<Arc<dyn AgentRunAcceptedLaunchHookRuntimeSync>>,
+    hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
 }
 
 #[derive(Clone)]
@@ -33,53 +37,7 @@ pub struct AgentRunAcceptedLaunchCommitDeps {
     pub frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
-    pub hook_runtime_sync: Option<Arc<dyn AgentRunAcceptedLaunchHookRuntimeSync>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgentRunAcceptedLaunchCommitInput {
-    pub runtime_session_id: String,
-    pub turn_id: String,
-    pub pending_frame: Option<AgentFrame>,
-    pub accepted_capability_state: CapabilityState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunAcceptedLaunchCommitOutcome {
-    pub frame_id: Option<Uuid>,
-    pub agent_id: Option<Uuid>,
-    pub wrote_frame_revision: bool,
-    pub bound_current_delivery: bool,
-    pub synced_hook_runtime_target: bool,
-    pub diagnostics: Vec<String>,
-}
-
-impl AgentRunAcceptedLaunchCommitOutcome {
-    fn empty() -> Self {
-        Self {
-            frame_id: None,
-            agent_id: None,
-            wrote_frame_revision: false,
-            bound_current_delivery: false,
-            synced_hook_runtime_target: false,
-            diagnostics: Vec::new(),
-        }
-    }
-
-    fn with_diagnostic(message: impl Into<String>) -> Self {
-        let mut outcome = Self::empty();
-        outcome.diagnostics.push(message.into());
-        outcome
-    }
-}
-
-#[async_trait]
-pub trait AgentRunAcceptedLaunchHookRuntimeSync: Send + Sync {
-    async fn sync_accepted_launch_hook_runtime(
-        &self,
-        target: AgentFrameRuntimeTarget,
-        turn_id: &str,
-    ) -> Result<(), ConnectorError>;
+    pub hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
 }
 
 impl AgentRunAcceptedLaunchCommitAdapter {
@@ -119,14 +77,14 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
     pub async fn commit_accepted_launch(
         &self,
-        input: AgentRunAcceptedLaunchCommitInput,
-    ) -> AgentRunAcceptedLaunchCommitOutcome {
+        input: AcceptedLaunchCommitInput,
+    ) -> AcceptedLaunchCommitOutcome {
         let (Some(frame_repo), Some(anchor_repo), Some(agent_repo)) = (
             self.frame_repo.as_ref(),
             self.anchor_repo.as_ref(),
             self.agent_repo.as_ref(),
         ) else {
-            return AgentRunAcceptedLaunchCommitOutcome::with_diagnostic(
+            return AcceptedLaunchCommitOutcome::with_diagnostic(
                 "AgentRun accepted launch commit repositories 未完整注入",
             );
         };
@@ -165,8 +123,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         turn_id: &str,
         mut pending_frame: AgentFrame,
         accepted_capability_state: &CapabilityState,
-    ) -> AgentRunAcceptedLaunchCommitOutcome {
-        let mut outcome = AgentRunAcceptedLaunchCommitOutcome::empty();
+    ) -> AcceptedLaunchCommitOutcome {
+        let mut outcome = AcceptedLaunchCommitOutcome::empty();
         let surfaces = capability_state_to_frame_surfaces(accepted_capability_state);
         pending_frame.effective_capability_json = surfaces.effective_capability_json;
         pending_frame.vfs_surface_json = surfaces.vfs_surface_json;
@@ -220,7 +178,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         runtime_session_id: &str,
         turn_id: &str,
         accepted_capability_state: &CapabilityState,
-    ) -> AgentRunAcceptedLaunchCommitOutcome {
+    ) -> AcceptedLaunchCommitOutcome {
         let (anchor, current_frame) = match resolve_current_agent_frame_for_runtime_session(
             runtime_session_id,
             anchor_repo,
@@ -230,11 +188,11 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         .await
         {
             Ok(Some((anchor, _agent, current_frame))) => (anchor, current_frame),
-            Ok(None) => return AgentRunAcceptedLaunchCommitOutcome::empty(),
+            Ok(None) => return AcceptedLaunchCommitOutcome::empty(),
             Err(error) => {
                 let diagnostic = format!("查找 session 关联的 AgentFrame 失败: {error}");
                 tracing::warn!(session_id = %runtime_session_id, "{diagnostic}");
-                return AgentRunAcceptedLaunchCommitOutcome::with_diagnostic(diagnostic);
+                return AcceptedLaunchCommitOutcome::with_diagnostic(diagnostic);
             }
         };
 
@@ -248,7 +206,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             builder = builder.with_execution_profile_raw(profile);
         }
 
-        let mut outcome = AgentRunAcceptedLaunchCommitOutcome::empty();
+        let mut outcome = AcceptedLaunchCommitOutcome::empty();
         match builder.build(frame_repo).await {
             Ok(frame) => {
                 tracing::debug!(
@@ -399,6 +357,41 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         )
         .await
     }
+}
+
+#[async_trait]
+impl AcceptedLaunchCommitPort for AgentRunAcceptedLaunchCommitAdapter {
+    async fn agent_needs_bootstrap(&self, runtime_session_id: &str) -> bool {
+        AgentRunAcceptedLaunchCommitAdapter::agent_needs_bootstrap(self, runtime_session_id).await
+    }
+
+    async fn mark_agent_bootstrapped(&self, runtime_session_id: &str) {
+        AgentRunAcceptedLaunchCommitAdapter::mark_agent_bootstrapped(self, runtime_session_id)
+            .await;
+    }
+
+    async fn commit_accepted_launch(
+        &self,
+        input: AcceptedLaunchCommitInput,
+    ) -> AcceptedLaunchCommitOutcome {
+        AgentRunAcceptedLaunchCommitAdapter::commit_accepted_launch(self, input).await
+    }
+}
+
+pub fn accepted_launch_commit_port(
+    frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
+) -> Arc<dyn AcceptedLaunchCommitPort> {
+    Arc::new(AgentRunAcceptedLaunchCommitAdapter::new(
+        AgentRunAcceptedLaunchCommitDeps {
+            frame_repo,
+            anchor_repo,
+            agent_repo,
+            hook_runtime_sync,
+        },
+    ))
 }
 
 async fn resolve_current_agent_frame_for_runtime_session(
@@ -642,7 +635,7 @@ mod tests {
         });
 
         let outcome = adapter
-            .commit_accepted_launch(AgentRunAcceptedLaunchCommitInput {
+            .commit_accepted_launch(AcceptedLaunchCommitInput {
                 runtime_session_id: "runtime-a".to_string(),
                 turn_id: "turn-a".to_string(),
                 pending_frame: Some(pending_frame.clone()),

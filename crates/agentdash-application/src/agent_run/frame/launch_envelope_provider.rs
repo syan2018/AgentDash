@@ -7,46 +7,15 @@
 //! API 层实现此 trait，在 AppState 初始化时通过 `SessionRuntimeInner::set_frame_launch_envelope_provider`
 //! 注入。SessionRuntimeInner 内部 follow-up 一律先经过 provider，与 HTTP 主通道对齐。
 
-use std::sync::Arc;
-
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::session::launch::LaunchCommand;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::RuntimeTraceLaunchState;
-use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
+pub use agentdash_application_ports::frame_launch_envelope::{
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
+};
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
-use uuid::Uuid;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutineLaunchSource {
-    pub routine_id: Uuid,
-    pub execution_id: Uuid,
-    pub trigger_source: String,
-    pub entity_key: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct CompanionLaunchWorkflowSource {
-    pub run: LifecycleRun,
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    pub attempt: u32,
-    pub lifecycle: WorkflowGraph,
-    pub activity: ActivityDefinition,
-    pub workflow: Option<AgentProcedure>,
-}
-
-#[derive(Clone)]
-pub struct CompanionLaunchSource {
-    pub parent_session_id: String,
-    pub selected_project_agent_id: Option<Uuid>,
-    pub selected_agent_key: Option<String>,
-    pub slice_mode: agentdash_spi::CompanionSliceMode,
-    pub companion_executor_config: agentdash_spi::AgentConfig,
-    pub dispatch_prompt: String,
-    pub workflow: Option<CompanionLaunchWorkflowSource>,
-}
 
 #[derive(Clone)]
 pub struct FrameLaunchEnvelopeProviderInput {
@@ -72,4 +41,4 @@ pub trait FrameLaunchEnvelopeProvider: Send + Sync {
 }
 
 /// 动态类型别名，便于在 launch runtime 内存储。
-pub type SharedFrameLaunchEnvelopeProvider = Arc<dyn FrameLaunchEnvelopeProvider>;
+pub type SharedFrameLaunchEnvelopeProvider = std::sync::Arc<dyn FrameLaunchEnvelopeProvider>;

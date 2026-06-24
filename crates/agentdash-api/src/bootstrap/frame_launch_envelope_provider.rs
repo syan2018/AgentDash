@@ -1,7 +1,7 @@
-//! `FrameLaunchEnvelopeProvider` 的 API 层薄委托。
+//! Session launch envelope port 的 API 层薄委托。
 //!
 //! 所有 compose 逻辑由 application 层的 `FrameConstructionService` 承接，此文件仅保留：
-//! 1. `AppStateFrameLaunchEnvelopeProvider` — 实现 trait 的薄委托层
+//! 1. `AppStateFrameLaunchEnvelopePort` — 实现 port 的薄委托层
 //! 2. test-only 的 API error encode/decode 辅助（供集成测试使用）
 
 use std::sync::Arc;
@@ -10,9 +10,11 @@ use async_trait::async_trait;
 
 use agentdash_application::agent_run::frame::{
     FrameConstructionDeps, FrameConstructionService, FrameLaunchEnvelope,
-    FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput,
 };
 use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
+};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -23,11 +25,11 @@ use crate::rpc::ApiError;
 ///
 /// 内部持有 `FrameConstructionService`（application 层），将所有 compose 路由
 /// 和 frame 持久化委托给该 service，自身不再包含任何业务分支。
-pub struct AppStateFrameLaunchEnvelopeProvider {
+pub struct AppStateFrameLaunchEnvelopePort {
     service: FrameConstructionService,
 }
 
-impl AppStateFrameLaunchEnvelopeProvider {
+impl AppStateFrameLaunchEnvelopePort {
     pub fn new(state: Arc<AppState>) -> Self {
         let service = FrameConstructionService::new(FrameConstructionDeps {
             repos: state.repos.clone(),
@@ -49,12 +51,14 @@ impl AppStateFrameLaunchEnvelopeProvider {
 }
 
 #[async_trait]
-impl FrameLaunchEnvelopeProvider for AppStateFrameLaunchEnvelopeProvider {
-    async fn build_frame_launch_envelope(
+impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for AppStateFrameLaunchEnvelopePort {
+    async fn build_launch_envelope(
         &self,
-        input: FrameLaunchEnvelopeProviderInput,
+        input: FrameLaunchEnvelopeRequest,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-        self.service.construct_launch_envelope(input).await
+        self.service
+            .construct_launch_envelope_from_request(input)
+            .await
     }
 }
 

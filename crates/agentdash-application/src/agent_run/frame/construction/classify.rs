@@ -58,7 +58,7 @@ pub(super) async fn route_and_compose(
             )));
         }
         (Some(ComposeRoute::LifecycleNode), None) => {
-            return super::composer_lifecycle_node::compose(svc, &frame, agent, run, &input).await;
+            return super::composer_workflow_node::compose(svc, &frame, agent, run, &input).await;
         }
         (Some(ComposeRoute::ExistingSurface), Some(_)) => {
             return Err(ConnectorError::InvalidConfig(format!(

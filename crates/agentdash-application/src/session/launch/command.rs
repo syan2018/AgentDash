@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
+use agentdash_application_ports::frame_launch_envelope::{
+    CompanionLaunchSource, FrameLaunchCommand, FrameLaunchLocalRelayPayload, FrameLaunchModifier,
+    FrameLaunchSource, FrameLaunchUserInput, RoutineLaunchSource,
+};
 use agentdash_spi::RuntimeMcpServer;
 
-use crate::agent_run::frame::launch_envelope_provider::{
-    CompanionLaunchSource, RoutineLaunchSource,
-};
 use crate::session::types::UserPromptInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
@@ -117,6 +118,47 @@ impl LaunchCommand {
         }
     }
 
+    pub(super) fn to_frame_launch_command(&self) -> FrameLaunchCommand {
+        let mut modifiers = Vec::new();
+        for modifier in &self.modifiers {
+            modifiers.push(match modifier {
+                LaunchModifier::Companion(companion) => {
+                    FrameLaunchModifier::Companion(Box::new(companion.as_ref().clone()))
+                }
+                LaunchModifier::Routine(routine) => FrameLaunchModifier::Routine(routine.clone()),
+                LaunchModifier::LocalRelay(payload) => {
+                    FrameLaunchModifier::LocalRelay(FrameLaunchLocalRelayPayload {
+                        mcp_servers: payload.mcp_servers.clone(),
+                        workspace_root: payload.workspace_root.clone(),
+                    })
+                }
+                LaunchModifier::HookAutoResume => FrameLaunchModifier::HookAutoResume,
+            });
+        }
+        FrameLaunchCommand {
+            user_input: FrameLaunchUserInput {
+                input: self.user_input.input.clone(),
+                environment_variables: self.user_input.env.clone(),
+                executor_config: self.user_input.executor_config.clone(),
+            },
+            source: match self.source {
+                LaunchSource::HttpPrompt => FrameLaunchSource::HttpPrompt,
+                LaunchSource::LifecycleAgentUserMessage => {
+                    FrameLaunchSource::LifecycleAgentUserMessage
+                }
+                LaunchSource::HookAutoResume => FrameLaunchSource::HookAutoResume,
+                LaunchSource::CompanionDispatch => FrameLaunchSource::CompanionDispatch,
+                LaunchSource::CompanionParentResume => FrameLaunchSource::CompanionParentResume,
+                LaunchSource::WorkflowOrchestrator => FrameLaunchSource::WorkflowOrchestrator,
+                LaunchSource::RoutineExecutor => FrameLaunchSource::RoutineExecutor,
+                LaunchSource::LocalRelayPrompt => FrameLaunchSource::LocalRelayPrompt,
+            },
+            follow_up_session_id: self.follow_up_session_id.clone(),
+            identity: self.identity.clone(),
+            modifiers,
+        }
+    }
+
     fn source_input(input: UserPromptInput, source: LaunchSource) -> Self {
         Self::new(input, source)
     }
@@ -218,10 +260,11 @@ mod tests {
     use agentdash_spi::{AgentConfig, CompanionSliceMode, McpTransportConfig};
     use uuid::Uuid;
 
-    use super::{LaunchCommand, LaunchModifier, LaunchSource};
-    use crate::agent_run::frame::launch_envelope_provider::{
+    use agentdash_application_ports::frame_launch_envelope::{
         CompanionLaunchSource, RoutineLaunchSource,
     };
+
+    use super::{LaunchCommand, LaunchModifier, LaunchSource};
     use crate::session::types::UserPromptInput;
 
     #[test]

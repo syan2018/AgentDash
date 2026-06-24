@@ -1,9 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
 use agentdash_agent_types::DynAgentTool;
-pub use agentdash_application_ports::runtime_surface_adoption::AgentRunActiveRuntimeSurfaceAdopter;
 use agentdash_application_ports::runtime_surface_adoption::{
-    AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError,
+    AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::workflow::AgentFrameRepository;
@@ -27,7 +26,7 @@ pub struct AgentRunRuntimeSurfaceUpdateService {
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     vfs_service: Option<Arc<VfsService>>,
-    active_adopter: Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>,
+    active_adopter: Arc<dyn RuntimeSurfaceAdoptionPort>,
     extra_skill_dirs: Vec<PathBuf>,
     skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
 }
@@ -37,7 +36,7 @@ pub struct AgentRunRuntimeSurfaceUpdateDeps {
     pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
     pub vfs_service: Option<Arc<VfsService>>,
-    pub active_adopter: Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>,
+    pub active_adopter: Arc<dyn RuntimeSurfaceAdoptionPort>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
 }
@@ -59,7 +58,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, String> {
         self.active_adopter
-            .adopt_persisted_frame_revision_into_active_runtime(target)
+            .adopt_runtime_surface(target)
             .await
             .map_err(|error| error.to_string())
     }
@@ -134,7 +133,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .map_err(|error| error.to_string())?;
 
         self.active_adopter
-            .adopt_persisted_frame_revision_into_active_runtime(AgentFrameRuntimeTarget {
+            .adopt_runtime_surface(AgentFrameRuntimeTarget {
                 frame_id: next_frame.id,
                 delivery_runtime_session_id: session_id.to_string(),
             })
@@ -225,14 +224,12 @@ fn agent_frame_runtime_surface_unchanged(
 }
 
 #[async_trait]
-impl AgentRunActiveRuntimeSurfaceAdopter for AgentRunRuntimeSurfaceUpdateService {
-    async fn adopt_persisted_frame_revision_into_active_runtime(
+impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
+    async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
-        self.active_adopter
-            .adopt_persisted_frame_revision_into_active_runtime(target)
-            .await
+        self.active_adopter.adopt_runtime_surface(target).await
     }
 }
 
@@ -285,8 +282,8 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl AgentRunActiveRuntimeSurfaceAdopter for RecordingAdopter {
-        async fn adopt_persisted_frame_revision_into_active_runtime(
+    impl RuntimeSurfaceAdoptionPort for RecordingAdopter {
+        async fn adopt_runtime_surface(
             &self,
             target: AgentFrameRuntimeTarget,
         ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {

@@ -1,4 +1,3 @@
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::launch::{
@@ -7,6 +6,9 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
+};
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -81,14 +83,17 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let accepted_launch_commit = self.deps.accepted_launch_commit_adapter();
+        let accepted_launch_commit = self.deps.current_accepted_launch_commit_port().await;
         let agent_needs_bootstrap_early = accepted_launch_commit.agent_needs_bootstrap(&sid).await;
         let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
         let launch_envelope = match provider
-            .build_frame_launch_envelope(FrameLaunchEnvelopeProviderInput {
-                session_id: sid.clone(),
-                command: command.clone(),
-                runtime_trace_state: runtime_trace_state.clone(),
+            .build_launch_envelope(FrameLaunchEnvelopeRequest {
+                runtime_session_id: sid.clone(),
+                command: command.to_frame_launch_command(),
+                runtime_trace_state: RuntimeTraceLaunchStateRef {
+                    executor_session_id: runtime_trace_state.executor_session_id.clone(),
+                    last_event_seq: runtime_trace_state.last_event_seq,
+                },
                 had_existing_runtime,
                 requested_runtime_commands: requested_runtime_commands.clone(),
                 agent_needs_bootstrap: agent_needs_bootstrap_early,
@@ -149,7 +154,7 @@ impl SessionLaunchOrchestrator {
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let accepted_launch_commit = deps.accepted_launch_commit_adapter();
+        let accepted_launch_commit = deps.current_accepted_launch_commit_port().await;
         let agent_needs_bootstrap = accepted_launch_commit
             .agent_needs_bootstrap(session_id)
             .await;
@@ -211,7 +216,7 @@ impl SessionLaunchOrchestrator {
             }
         };
         tracing::debug!(session_id, turn_id, "session launch connector accepted");
-        let committed = TurnCommitter::new(deps.commit())
+        let committed = TurnCommitter::new(deps.commit(accepted_launch_commit.clone()))
             .commit(accepted, &mut session_meta, now)
             .await?;
         tracing::debug!(session_id, turn_id, "session launch committed turn");

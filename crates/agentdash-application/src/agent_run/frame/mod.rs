@@ -13,8 +13,7 @@ pub use construction::{FrameConstructionDeps, FrameConstructionService};
 pub use hook_runtime::AgentFrameHookRuntime;
 pub use launch_commit::{
     AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
-    AgentRunAcceptedLaunchCommitInput, AgentRunAcceptedLaunchCommitOutcome,
-    AgentRunAcceptedLaunchHookRuntimeSync,
+    accepted_launch_commit_port,
 };
 pub use launch_envelope_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeProvider,

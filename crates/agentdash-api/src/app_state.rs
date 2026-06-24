@@ -422,7 +422,7 @@ impl AppState {
         // 再从 frame revision 投影 connector 所需的 runtime surface。
         {
             let provider = Arc::new(
-                crate::bootstrap::frame_launch_envelope_provider::AppStateFrameLaunchEnvelopeProvider::new(
+                crate::bootstrap::frame_launch_envelope_provider::AppStateFrameLaunchEnvelopePort::new(
                     state.clone(),
                 ),
             );

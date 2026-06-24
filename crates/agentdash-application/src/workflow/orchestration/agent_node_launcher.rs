@@ -21,7 +21,7 @@ use crate::lifecycle::projection::{
     activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
 };
 use crate::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, LifecycleDispatchService,
+    AgentRunLifecycleSurfaceProjector, LifecycleDispatchFacade,
     WorkflowAgentNodeFrameMaterializationContext, WorkflowAgentNodeFrameMaterializer,
     WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
 };
@@ -163,7 +163,7 @@ impl AgentNodeLauncher {
             workflow_contract,
             workflow_label: workflow_label.as_deref(),
         };
-        let dispatch_service = LifecycleDispatchService::new(
+        let lifecycle_dispatch = LifecycleDispatchFacade::new(
             self.lifecycle_run_repo.as_ref(),
             self.workflow_graph_repo.as_ref(),
             self.lifecycle_agent_repo.as_ref(),
@@ -171,11 +171,11 @@ impl AgentNodeLauncher {
             self.lifecycle_subject_association_repo.as_ref(),
             self.lifecycle_gate_repo.as_ref(),
             self.agent_lineage_repo.as_ref(),
-        )
-        .with_anchor_repo(self.execution_anchor_repo.as_ref())
-        .with_runtime_session_creator(self.runtime_session_creator.as_ref())
-        .with_frame_construction_port(self.frame_construction.as_ref());
-        let materialized = dispatch_service
+            self.execution_anchor_repo.as_ref(),
+            self.runtime_session_creator.as_ref(),
+            self.frame_construction.as_ref(),
+        );
+        let materialized = lifecycle_dispatch
             .materialize_workflow_agent_node(
                 WorkflowAgentNodeMaterializationRequest {
                     run_id: run.id,

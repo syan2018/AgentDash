@@ -37,7 +37,7 @@ use crate::agent_run::{
     },
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
-use crate::lifecycle::{LifecycleDispatchService, WorkflowApplicationError};
+use crate::lifecycle::{LifecycleDispatchFacade, WorkflowApplicationError};
 use crate::repository_set::RepositorySet;
 use crate::session::{SessionCoreService, SessionMeta};
 
@@ -212,6 +212,7 @@ impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
 pub struct ProjectAgentRunStartService<'a> {
     repos: ProjectAgentRunStartRepos<'a>,
     cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
+    lifecycle_dispatch: LifecycleDispatchFacade<'a>,
 }
 
 impl<'a> ProjectAgentRunStartService<'a> {
@@ -219,7 +220,23 @@ impl<'a> ProjectAgentRunStartService<'a> {
         repos: ProjectAgentRunStartRepos<'a>,
         cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
     ) -> Self {
-        Self { repos, cleanup }
+        let lifecycle_dispatch = LifecycleDispatchFacade::new(
+            repos.lifecycle_run_repo,
+            repos.workflow_graph_repo,
+            repos.lifecycle_agent_repo,
+            repos.agent_frame_repo,
+            repos.lifecycle_subject_association_repo,
+            repos.lifecycle_gate_repo,
+            repos.agent_lineage_repo,
+            repos.execution_anchor_repo,
+            repos.runtime_session_creator,
+            repos.agent_frame_construction,
+        );
+        Self {
+            repos,
+            cleanup,
+            lifecycle_dispatch,
+        }
     }
 
     pub async fn start_run(
@@ -347,25 +364,12 @@ impl<'a> ProjectAgentRunStartService<'a> {
             runtime_policy: RuntimePolicy::CreateRuntimeSession,
         };
 
-        let dispatch_service = LifecycleDispatchService::new(
-            self.repos.lifecycle_run_repo,
-            self.repos.workflow_graph_repo,
-            self.repos.lifecycle_agent_repo,
-            self.repos.agent_frame_repo,
-            self.repos.lifecycle_subject_association_repo,
-            self.repos.lifecycle_gate_repo,
-            self.repos.agent_lineage_repo,
-        )
-        .with_anchor_repo(self.repos.execution_anchor_repo)
-        .with_runtime_session_creator(self.repos.runtime_session_creator)
-        .with_frame_construction_port(self.repos.agent_frame_construction);
-
         tracing::info!(
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             "ProjectAgent run start launching lifecycle agent"
         );
-        let dispatch_result = match dispatch_service.launch_agent(&intent).await {
+        let dispatch_result = match self.lifecycle_dispatch.launch_agent(&intent).await {
             Ok(dispatch_result) => dispatch_result,
             Err(error) => {
                 mark_command_terminal_failed(

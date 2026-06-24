@@ -5,7 +5,7 @@ use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::agent_run::{
     AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
     AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
-    AgentRunRuntimeSurfaceUpdateService,
+    AgentRunRuntimeSurfaceUpdateService, accepted_launch_commit_port,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
@@ -24,6 +24,7 @@ use agentdash_application::session::{
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
+use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
@@ -189,6 +190,16 @@ pub(crate) async fn build_session_runtime(
     let session_launch = session_runtime_builder.launch_service();
     let session_hooks = session_runtime_builder.hook_service();
     let session_runtime_transition = session_runtime_builder.runtime_transition_service();
+    let accepted_launch_hook_sync: Arc<dyn AcceptedLaunchHookRuntimeSync> =
+        Arc::new(session_hooks.clone());
+    session_runtime_builder
+        .set_accepted_launch_commit_port(accepted_launch_commit_port(
+            Some(repos.agent_frame_repo.clone()),
+            Some(repos.execution_anchor_repo.clone()),
+            Some(repos.lifecycle_agent_repo.clone()),
+            Some(accepted_launch_hook_sync),
+        ))
+        .await;
     let mailbox_runtime_adapter = Arc::new(AgentRunMailboxRuntimeAdapter::new(
         AgentRunMailboxRuntimeBoundaryDeps {
             lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
@@ -219,7 +230,7 @@ pub(crate) async fn build_session_runtime(
             surface_query: runtime_surface_query,
             frame_repo: repos.agent_frame_repo.clone(),
             vfs_service: Some(vfs_service.clone()),
-            active_adopter: session_runtime_builder.active_runtime_surface_adopter(),
+            active_adopter: session_runtime_builder.runtime_surface_adoption_port(),
             extra_skill_dirs: extra_skill_dirs.clone(),
             skill_discovery_providers: skill_discovery_providers.clone(),
         });

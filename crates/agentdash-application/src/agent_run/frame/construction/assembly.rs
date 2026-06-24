@@ -15,13 +15,15 @@ use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 #[cfg(test)]
-use crate::lifecycle::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
-#[cfg(test)]
 #[allow(deprecated)]
 use crate::session::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
+#[cfg(test)]
+use agentdash_application_ports::lifecycle_surface_projection::{
+    LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
+};
 
 /// 把 `FrameAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -155,7 +157,7 @@ impl FrameAssemblyBuilder {
 
     /// 在已有 VFS 上追加 lifecycle mount（story step activation 场景）。
     #[cfg(test)]
-    pub(super) fn append_lifecycle_mount(mut self, surface: LifecycleMountSurface<'_>) -> Self {
+    pub(super) fn append_lifecycle_mount(mut self, surface: LifecycleMountSurface) -> Self {
         let overlay = lifecycle_mount_overlay_for_surface(&surface);
         self.vfs = Some(compose_vfs_with_overlay_and_directives(
             self.vfs.as_ref(),
@@ -328,7 +330,7 @@ impl FrameAssemblyBuilder {
     /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。
     pub(super) fn apply_lifecycle_activation(
         mut self,
-        activation: &crate::lifecycle::ActivityActivation,
+        activation: &agentdash_application_ports::lifecycle_surface_projection::ActivityActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
         let surface = crate::agent_run::frame::builder::build_lifecycle_activation_surface(

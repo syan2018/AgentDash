@@ -1,5 +1,8 @@
-//! Lifecycle node compose 路径 — activity activation + lifecycle mount。
+//! Workflow node compose path — activity activation plus lifecycle mount.
 
+use agentdash_application_ports::lifecycle_surface_projection::{
+    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
+};
 use agentdash_domain::workflow::{
     AgentFrame, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec, ExecutorSpec,
     LifecycleAgent, LifecycleRun,
@@ -9,9 +12,6 @@ use agentdash_spi::ConnectorError;
 use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::lifecycle::projection::{
-    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
-};
 
 use super::{
     FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,

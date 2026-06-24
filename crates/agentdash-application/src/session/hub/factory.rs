@@ -6,6 +6,9 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::frame_launch_envelope::{
+    AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
+};
 use tokio::sync::Mutex;
 
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
@@ -13,7 +16,7 @@ use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionRuntimeInner;
 use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -107,6 +110,7 @@ impl SessionRuntimeInner {
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             frame_launch_envelope_provider: Arc::new(tokio::sync::RwLock::new(None)),
+            accepted_launch_commit_port: Arc::new(tokio::sync::RwLock::new(None)),
             context_audit_bus: Arc::new(tokio::sync::RwLock::new(None)),
             base_system_prompt: String::new(),
             settings_repo: None,
@@ -261,9 +265,13 @@ impl SessionRuntimeInner {
     /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
     pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedFrameLaunchEnvelopeProvider,
+        provider: SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>,
     ) {
         *self.frame_launch_envelope_provider.write().await = Some(provider);
+    }
+
+    pub async fn set_accepted_launch_commit_port(&self, port: Arc<dyn AcceptedLaunchCommitPort>) {
+        *self.accepted_launch_commit_port.write().await = Some(port);
     }
 
     /// 注入 Context Audit 总线，使 Hub 创建的 runtime delegate 能发出 hook fragment 审计。
@@ -294,6 +302,9 @@ impl SessionRuntimeInner {
         }
         if self.frame_launch_envelope_provider.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 session_launch_envelope_provider".to_string());
+        }
+        if self.accepted_launch_commit_port.read().await.is_none() {
+            return Err("SessionRuntimeInner 缺少 accepted_launch_commit_port".to_string());
         }
         if self.context_audit_bus.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 context_audit_bus".to_string());

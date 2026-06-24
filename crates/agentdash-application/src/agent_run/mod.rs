@@ -46,16 +46,15 @@ pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
     AgentFrameWriteBoundary, AgentFrameWritePrimitive, AgentFrameWriteRole,
     AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
-    AgentRunAcceptedLaunchCommitInput, AgentRunAcceptedLaunchCommitOutcome,
-    AgentRunAcceptedLaunchHookRuntimeSync, AgentRunFrameConstructionAdapter,
-    AgentRunFrameSurfaceCommand, AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError,
-    AgentRunFrameSurfaceService, AgentRunRuntimeSurfaceUpdateAdapter,
-    AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
-    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameConstructionDeps, FrameConstructionReason, FrameConstructionService,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
+    AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
+    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
+    AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
+    AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
+    CanvasVisibilityReason, FrameConstructionCommand, FrameConstructionDeps,
+    FrameConstructionReason, FrameConstructionService, FrameContextBundleSummary,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, FrameSurfaceDraft,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    accepted_launch_commit_port, agent_frame_write_boundaries,
 };
 pub use mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
@@ -112,7 +111,6 @@ pub use runtime_surface::{
     terminal_launch_target_from_current_surface, terminal_launch_target_from_vfs,
 };
 pub use runtime_surface_update::{
-    AgentRunActiveRuntimeSurfaceAdopter, AgentRunRuntimeSurfaceUpdateDeps,
-    AgentRunRuntimeSurfaceUpdateService,
+    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
 };
 pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};

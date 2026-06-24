@@ -4,7 +4,7 @@ pub mod inline_persistence;
 pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
-pub mod mount_canvas;
+pub(crate) mod mount_canvas;
 pub mod mount_inline;
 pub(crate) mod mount_lifecycle;
 pub mod mount_project;
@@ -13,6 +13,7 @@ pub mod mount_skill_asset;
 pub mod mount_workspace;
 pub mod mutation_dispatcher;
 pub(crate) mod mutation_queue;
+pub(crate) mod owner_providers;
 pub mod path;
 pub mod provider;
 pub(crate) mod provider_canvas;
@@ -81,9 +82,7 @@ pub use provider::{
     MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch,
     SearchOutputMode, SearchQuery, SearchResult,
 };
-pub use provider_canvas::CanvasFsMountProvider;
 pub use provider_inline::InlineFsMountProvider;
-pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
 pub use search::TextSearchParams;

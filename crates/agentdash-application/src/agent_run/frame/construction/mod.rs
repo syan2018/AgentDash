@@ -4,17 +4,24 @@
 //! 各 composer 子模块负责具体路径的 bootstrap spec 组装，
 //! 本模块负责路径分类 (classify) 和最终 frame 持久化。
 
+mod activity_activation;
 mod assembly;
 mod classify;
 mod composer_companion;
-mod composer_lifecycle_node;
 mod composer_project_agent;
+mod composer_workflow_node;
 mod owner_bootstrap;
 mod request_assembler;
+mod subject_assignment;
+mod workflow_projection;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchCommand, FrameLaunchEnvelopeRequest, FrameLaunchModifier, FrameLaunchSource,
+    RuntimeTraceLaunchStateRef,
+};
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{
@@ -35,7 +42,9 @@ use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::runtime_commands::RuntimeCommandRecord;
-use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode, UserPromptInput};
+use crate::session::types::{
+    PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, UserPromptInput,
+};
 use crate::session::{LaunchCommand, TerminalHookEffectBinding};
 use crate::vfs::VfsService;
 use crate::workspace::resolution::BackendAvailability;
@@ -168,6 +177,14 @@ impl FrameConstructionService {
         classify::route_and_compose(self, frame, agent, run, input).await
     }
 
+    pub async fn construct_launch_envelope_from_request(
+        &self,
+        request: FrameLaunchEnvelopeRequest,
+    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+        self.construct_launch_envelope(frame_launch_provider_input_from_request(request)?)
+            .await
+    }
+
     // ─── 内部 helpers ───
 
     pub(crate) fn assembler(&self) -> FrameRequestAssembler<'_> {
@@ -240,6 +257,102 @@ impl FrameConstructionService {
         envelope.pending_frame = Some(frame);
         Ok(envelope)
     }
+}
+
+fn frame_launch_provider_input_from_request(
+    request: FrameLaunchEnvelopeRequest,
+) -> Result<FrameLaunchEnvelopeProviderInput, ConnectorError> {
+    Ok(FrameLaunchEnvelopeProviderInput {
+        session_id: request.runtime_session_id,
+        command: launch_command_from_frame_launch(request.command)?,
+        runtime_trace_state: runtime_trace_launch_state_from_ref(request.runtime_trace_state),
+        had_existing_runtime: request.had_existing_runtime,
+        requested_runtime_commands: request.requested_runtime_commands,
+        agent_needs_bootstrap: request.agent_needs_bootstrap,
+    })
+}
+
+fn runtime_trace_launch_state_from_ref(
+    input: RuntimeTraceLaunchStateRef,
+) -> RuntimeTraceLaunchState {
+    RuntimeTraceLaunchState {
+        executor_session_id: input.executor_session_id,
+        last_event_seq: input.last_event_seq,
+    }
+}
+
+fn launch_command_from_frame_launch(
+    command: FrameLaunchCommand,
+) -> Result<LaunchCommand, ConnectorError> {
+    let mut companion = None;
+    let mut routine = None;
+    let mut local_relay = None;
+    for modifier in command.modifiers {
+        match modifier {
+            FrameLaunchModifier::Companion(source) => {
+                companion = Some(*source);
+            }
+            FrameLaunchModifier::Routine(source) => {
+                routine = Some(source);
+            }
+            FrameLaunchModifier::LocalRelay(payload) => {
+                local_relay = Some(payload);
+            }
+            FrameLaunchModifier::HookAutoResume => {}
+        }
+    }
+    let user_input = UserPromptInput {
+        input: command.user_input.input,
+        env: command.user_input.environment_variables,
+        executor_config: command.user_input.executor_config,
+        backend_selection: None,
+    };
+    let launch = match command.source {
+        FrameLaunchSource::HttpPrompt => {
+            LaunchCommand::http_prompt_input(user_input, command.identity)
+        }
+        FrameLaunchSource::LifecycleAgentUserMessage => {
+            LaunchCommand::lifecycle_agent_user_message_input(user_input, command.identity)
+        }
+        FrameLaunchSource::HookAutoResume => LaunchCommand::hook_auto_resume_input(user_input),
+        FrameLaunchSource::CompanionDispatch => LaunchCommand::companion_dispatch_input(
+            user_input,
+            command.identity,
+            companion.ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "companion dispatch launch request 缺少 companion source".to_string(),
+                )
+            })?,
+        ),
+        FrameLaunchSource::CompanionParentResume => {
+            LaunchCommand::companion_parent_resume_input(user_input)
+        }
+        FrameLaunchSource::WorkflowOrchestrator => {
+            LaunchCommand::workflow_orchestrator_input(user_input)
+        }
+        FrameLaunchSource::RoutineExecutor => LaunchCommand::routine_executor_input(
+            user_input,
+            command.identity,
+            routine.ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "routine executor launch request 缺少 routine source".to_string(),
+                )
+            })?,
+        ),
+        FrameLaunchSource::LocalRelayPrompt => {
+            let payload = local_relay.ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "local relay launch request 缺少 local relay payload".to_string(),
+                )
+            })?;
+            LaunchCommand::local_relay_prompt_input(
+                user_input,
+                payload.mcp_servers,
+                payload.workspace_root,
+            )
+        }
+    };
+    Ok(launch.with_follow_up(command.follow_up_session_id))
 }
 
 // ─── Free-standing helpers ───

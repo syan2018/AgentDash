@@ -6,7 +6,7 @@ pub use agentdash_spi::platform::mount::{
     MountSearch, ProviderDescriptor, SearchMatch, SearchOutputMode, SearchQuery, SearchResult,
 };
 
-/// Registry holding all available `MountProvider` implementations.
+/// 持有所有可用的 `MountProvider` 实现。
 pub struct MountProviderRegistry {
     providers: HashMap<String, Arc<dyn MountProvider>>,
 }
@@ -66,9 +66,7 @@ impl Default for MountProviderRegistry {
     }
 }
 
-/// Builder for assembling a `MountProviderRegistry` with built-in providers
-/// in the application layer, allowing the API layer to only append
-/// infrastructure-specific providers (e.g. `RelayFsMountProvider`).
+/// 用于组装 `MountProviderRegistry`。
 pub struct MountProviderRegistryBuilder {
     registry: MountProviderRegistry,
 }
@@ -86,45 +84,7 @@ impl MountProviderRegistryBuilder {
         }
     }
 
-    /// Register the application-layer built-in providers (inline_fs, lifecycle_vfs, canvas_fs).
-    pub fn with_builtins(
-        mut self,
-        lifecycle_run_repo: Arc<dyn agentdash_domain::workflow::LifecycleRunRepository>,
-        canvas_repo: Arc<dyn agentdash_domain::canvas::CanvasRepository>,
-        inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>,
-        routine_execution_repo: Arc<dyn agentdash_domain::routine::RoutineExecutionRepository>,
-        skill_asset_repo: Arc<dyn agentdash_domain::skill_asset::SkillAssetRepository>,
-        session_persistence: Arc<dyn crate::session::SessionPersistence>,
-        tool_result_cache: Arc<crate::session::SessionToolResultCache>,
-    ) -> Self {
-        self.registry.register(Arc::new(
-            super::provider_inline::InlineFsMountProvider::new(inline_file_repo.clone()),
-        ));
-        self.registry.register(Arc::new(
-            super::provider_lifecycle::LifecycleMountProvider::new_with_tool_result_cache(
-                lifecycle_run_repo,
-                inline_file_repo.clone(),
-                skill_asset_repo.clone(),
-                session_persistence,
-                tool_result_cache,
-            ),
-        ));
-        self.registry.register(Arc::new(
-            super::provider_routine::RoutineMountProvider::new(
-                routine_execution_repo,
-                inline_file_repo.clone(),
-            ),
-        ));
-        self.registry.register(Arc::new(
-            super::provider_canvas::CanvasFsMountProvider::new(canvas_repo),
-        ));
-        self.registry.register(Arc::new(
-            super::provider_skill_asset::SkillAssetFsMountProvider::new(skill_asset_repo),
-        ));
-        self
-    }
-
-    /// Append an additional provider (typically API-layer specific).
+    /// 追加 provider，通常由 API/bootstrap 注入宿主侧实现。
     pub fn register(mut self, provider: Arc<dyn MountProvider>) -> Self {
         self.registry.register(provider);
         self

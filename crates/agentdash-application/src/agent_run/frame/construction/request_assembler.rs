@@ -35,6 +35,10 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use super::activity_activation::{
+    ActivityActivationInput, activate_activity_with_platform, load_scoped_port_output_map,
+    project_companion_system_skill_to_activation,
+};
 #[cfg(test)]
 use super::assembly::slice_companion_bundle;
 use super::assembly::{
@@ -50,16 +54,10 @@ use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
 };
-use crate::companion::{
-    skill_projection::project_companion_system_skill_to_activation, tools::CompanionSliceMode,
-};
+use crate::companion::tools::CompanionSliceMode;
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments,
-};
-use crate::lifecycle::{
-    ActivityActivationInput, RuntimeNodeArtifactScope, activate_activity_with_platform,
-    load_scoped_port_output_map,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -492,7 +490,7 @@ async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    let artifact_scope = RuntimeNodeArtifactScope {
+    let artifact_scope = ports_lifecycle_surface::RuntimeNodeArtifactScope {
         run_id: spec.run.id,
         orchestration_id: spec.orchestration_id,
         node_path: spec.node_path.to_string(),
@@ -641,7 +639,7 @@ fn activity_node_type(
 
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
-    activation: &crate::lifecycle::ActivityActivation,
+    activation: &ports_lifecycle_surface::ActivityActivation,
     ready_port_keys: &BTreeSet<String>,
 ) -> Contribution {
     let mut fragments = Vec::new();
@@ -874,7 +872,7 @@ async fn compose_companion_with_workflow(
 
     // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    let artifact_scope = RuntimeNodeArtifactScope {
+    let artifact_scope = ports_lifecycle_surface::RuntimeNodeArtifactScope {
         run_id: spec.run.id,
         orchestration_id: spec.orchestration_id,
         node_path: spec.node_path.to_string(),
@@ -1032,7 +1030,9 @@ async fn compose_companion_with_workflow(
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::lifecycle::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
+    use agentdash_application_ports::lifecycle_surface_projection::{
+        KickoffPromptFragment, LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
+    };
     use agentdash_domain::agent::ProjectAgent;
     use agentdash_domain::common::AgentPresetConfig;
     use agentdash_domain::workflow::{
@@ -1210,8 +1210,8 @@ mod tests {
         lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
             run_id,
             orchestration_id,
-            node_path,
-            lifecycle_key,
+            node_path: node_path.to_string(),
+            lifecycle_key: lifecycle_key.to_string(),
             attempt: 1,
             writable_port_keys,
         })
@@ -1221,7 +1221,7 @@ mod tests {
         .expect("lifecycle mount")
     }
 
-    fn test_activity_activation(run_id: Uuid) -> crate::lifecycle::ActivityActivation {
+    fn test_activity_activation(run_id: Uuid) -> ports_lifecycle_surface::ActivityActivation {
         let lifecycle_mount = test_lifecycle_mount(
             run_id,
             Uuid::new_v4(),
@@ -1229,11 +1229,11 @@ mod tests {
             "test-lifecycle",
             vec!["report".to_string()],
         );
-        crate::lifecycle::ActivityActivation {
+        ports_lifecycle_surface::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
             capability_keys: BTreeSet::new(),
-            kickoff_prompt: crate::lifecycle::KickoffPromptFragment {
+            kickoff_prompt: KickoffPromptFragment {
                 title_line: String::new(),
                 output_section: String::new(),
                 input_section: String::new(),
@@ -1256,8 +1256,8 @@ mod tests {
             .append_lifecycle_mount(LifecycleMountSurface {
                 run_id: Uuid::new_v4(),
                 orchestration_id: Uuid::new_v4(),
-                node_path: "test-node",
-                lifecycle_key: "test-lifecycle",
+                node_path: "test-node".to_string(),
+                lifecycle_key: "test-lifecycle".to_string(),
                 attempt: 1,
                 writable_port_keys: Vec::new(),
             })
@@ -1363,11 +1363,11 @@ mod tests {
             &lifecycle.key,
             vec!["summary".into()],
         );
-        let activation = crate::lifecycle::ActivityActivation {
+        let activation = ports_lifecycle_surface::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: vec![],
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
-            kickoff_prompt: crate::lifecycle::KickoffPromptFragment {
+            kickoff_prompt: KickoffPromptFragment {
                 title_line: "你正在执行 lifecycle `dev` 的 node `implement`。".to_string(),
                 output_section: "## 必须交付的产出\n- `summary`".to_string(),
                 input_section: "## 输入上下文\n- `design`".to_string(),

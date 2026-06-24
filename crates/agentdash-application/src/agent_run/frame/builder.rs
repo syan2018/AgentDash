@@ -10,9 +10,10 @@
 //!   `AgentRunFrameSurfaceService` 的 typed command/update boundary。
 //! - **不可变快照**：`build()` 产出新 revision，旧 revision 保持不变，
 //!   revision 序列天然提供 provenance。
-//! - **面向 dispatch**：`LifecycleDispatchService` 在创建 agent 后通过
-//!   builder 产出带 surface 的 initial frame，取代当前 `new_initial` 裸构造。
+//! - **面向 dispatch**：Lifecycle dispatch facade 在创建 agent 后通过
+//!   AgentRun frame materialization port 产出带 surface 的 initial frame。
 
+use agentdash_application_ports::lifecycle_surface_projection::ActivityActivation;
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
 use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
@@ -23,7 +24,6 @@ use crate::agent_run::runtime_capability::{
 };
 
 use super::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
-use crate::lifecycle::ActivityActivation;
 
 pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
     pub activation: &'a ActivityActivation,
@@ -285,6 +285,7 @@ impl AgentFrameBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_application_ports::lifecycle_surface_projection::KickoffPromptFragment;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::MountDirective;
     use agentdash_spi::{McpTransportConfig, SessionContextBundle, ToolCluster};
@@ -491,7 +492,7 @@ mod tests {
                 uses_relay: false,
             }],
             capability_keys: BTreeSet::from(["file_read".to_string()]),
-            kickoff_prompt: Default::default(),
+            kickoff_prompt: KickoffPromptFragment::default(),
             lifecycle_mount: mount("lifecycle", "lifecycle_vfs"),
             lifecycle_vfs: Vfs {
                 mounts: vec![mount("lifecycle", "lifecycle_vfs")],

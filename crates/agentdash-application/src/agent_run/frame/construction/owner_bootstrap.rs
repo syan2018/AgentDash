@@ -31,7 +31,6 @@ use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
     ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
     load_available_presets, tool_directives_from_active_workflow,
-    tool_directives_from_active_workflow_projection,
 };
 use crate::companion::skill_projection::{
     append_companion_system_skill_key, ensure_companion_system_skill_asset,
@@ -39,10 +38,6 @@ use crate::companion::skill_projection::{
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
-};
-use crate::lifecycle::{
-    ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
-    writable_port_keys_for_active_workflow,
 };
 use crate::mcp_preset::McpRuntimeBindingContext;
 use crate::platform_config::PlatformConfig;
@@ -140,7 +135,7 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     ///
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
     pub visible_workspace_module_refs: Option<Vec<String>>,
-    pub active_workflow: Option<ActiveWorkflowProjection>,
+    pub active_workflow: Option<ports_lifecycle_surface::ActiveWorkflowProjection>,
     pub launch_path: OwnerPromptLaunchPath,
     pub audit_session_key: Option<String>,
     pub caller_agent_id: Option<Uuid>,
@@ -346,7 +341,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
         &self,
         spec: &OwnerBootstrapSpec<'_>,
         project_id: Uuid,
-        active_workflow: Option<&ActiveWorkflowProjection>,
+        active_workflow: Option<&ports_lifecycle_surface::ActiveWorkflowProjection>,
     ) -> Result<Option<Vfs>, String> {
         let project_vfs_mounts = self
             .repos
@@ -442,9 +437,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
                                 node_path: workflow.node_path.clone(),
                                 lifecycle_key: workflow.lifecycle_key.clone(),
                                 attempt: workflow.active_attempt.attempt,
-                                writable_port_keys: writable_port_keys_for_active_workflow(
-                                    workflow,
-                                ),
+                                writable_port_keys:
+                                    ports_lifecycle_surface::writable_port_keys_for_active_workflow(
+                                        workflow,
+                                    ),
                             };
                         self.lifecycle_surface_projection
                             .project_lifecycle_surface(
@@ -482,10 +478,13 @@ impl<'a> OwnerBootstrapComposer<'a> {
                     };
                     Some(surface.vfs)
                 }
-                None => project_active_workflow_lifecycle_vfs(vfs, active_workflow),
+                None => ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(
+                    vfs,
+                    active_workflow,
+                ),
             }
         } else {
-            project_active_workflow_lifecycle_vfs(vfs, active_workflow)
+            ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
         if let Some(space) = vfs.as_mut() {
             append_visible_canvas_mounts(
@@ -518,11 +517,14 @@ impl<'a> OwnerBootstrapComposer<'a> {
         spec: &OwnerBootstrapSpec<'_>,
         project_id: Uuid,
         owner_ctx: CapabilityScopeCtx,
-        active_workflow: Option<&ActiveWorkflowProjection>,
+        active_workflow: Option<&ports_lifecycle_surface::ActiveWorkflowProjection>,
         vfs: Option<&Vfs>,
     ) -> Result<CapabilityState, String> {
         let workflow_tool: Option<ToolContribution> = if let Some(workflow) = active_workflow {
-            let directives = tool_directives_from_active_workflow_projection(workflow);
+            let directives = workflow
+                .active_contract()
+                .map(|contract| contract.capability_config.tool_directives.clone())
+                .unwrap_or_default();
             Some(ToolContribution {
                 directives,
                 has_active_workflow: true,

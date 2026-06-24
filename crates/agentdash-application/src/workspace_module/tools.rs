@@ -1590,7 +1590,8 @@ mod tests {
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
     };
-    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
+    use crate::vfs::provider_canvas::CanvasFsMountProvider;
+    use crate::vfs::{MountProviderRegistry, VfsService};
     use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {

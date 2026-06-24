@@ -1,8 +1,8 @@
+use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
 use agentdash_spi::ConnectorError;
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
-use crate::agent_run::AgentRunAcceptedLaunchCommitInput;
 use crate::session::hub_support::{
     TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
     build_user_input_submitted_envelope,
@@ -107,7 +107,7 @@ impl TurnCommitter {
         let outcome = self
             .deps
             .accepted_launch_commit
-            .commit_accepted_launch(AgentRunAcceptedLaunchCommitInput {
+            .commit_accepted_launch(AcceptedLaunchCommitInput {
                 runtime_session_id: session_id.to_string(),
                 turn_id: prepared.turn_id.clone(),
                 pending_frame: prepared.pending_frame.clone(),

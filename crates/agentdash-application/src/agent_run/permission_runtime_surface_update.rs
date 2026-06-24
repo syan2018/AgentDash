@@ -13,12 +13,13 @@ use crate::agent_run::runtime_capability::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
 use crate::agent_run::{
-    AgentFrameBuilder, AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter,
-    AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
-    AgentRunGrantProjection, AgentRunRuntimeSurfaceUpdateAdapter,
-    RejectingFrameConstructionAdapter, RuntimeSurfaceUpdateRequest,
+    AgentFrameBuilder, AgentFrameRuntimeTarget, AgentRunFrameSurfaceCommandOutcome,
+    AgentRunFrameSurfaceError, AgentRunFrameSurfaceService, AgentRunGrantProjection,
+    AgentRunRuntimeSurfaceUpdateAdapter, RejectingFrameConstructionAdapter,
+    RuntimeSurfaceUpdateRequest,
 };
 use crate::permission::PermissionGrantCompiler;
+use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
@@ -46,7 +47,7 @@ impl PermissionRuntimeSurfaceUpdateOutcome {
 
 pub struct AgentRunPermissionRuntimeSurfaceUpdateService {
     frame_repo: Arc<dyn AgentFrameRepository>,
-    active_adopter: Option<Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>>,
+    active_adopter: Option<Arc<dyn RuntimeSurfaceAdoptionPort>>,
 }
 
 impl AgentRunPermissionRuntimeSurfaceUpdateService {
@@ -59,7 +60,7 @@ impl AgentRunPermissionRuntimeSurfaceUpdateService {
 
     pub fn with_active_adopter(
         frame_repo: Arc<dyn AgentFrameRepository>,
-        active_adopter: Arc<dyn AgentRunActiveRuntimeSurfaceAdopter>,
+        active_adopter: Arc<dyn RuntimeSurfaceAdoptionPort>,
     ) -> Self {
         Self {
             frame_repo,
@@ -172,7 +173,7 @@ impl AgentRunPermissionRuntimeSurfaceUpdateService {
             return Ok(());
         };
         active_adopter
-            .adopt_persisted_frame_revision_into_active_runtime(target)
+            .adopt_runtime_surface(target)
             .await
             .map(|_| ())
             .map_err(|error| {

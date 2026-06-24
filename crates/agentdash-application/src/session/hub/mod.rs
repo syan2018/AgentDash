@@ -17,8 +17,11 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
+use agentdash_application_ports::frame_launch_envelope::{
+    AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
+};
 use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionExecutionAnchorRepository};
@@ -62,7 +65,9 @@ pub struct SessionRuntimeInner {
     /// Hub 内部的 auto-resume 等场景必须经它补齐 frame/MCP/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) frame_launch_envelope_provider:
-        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopeProvider>>>,
+        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>>>>,
+    pub(super) accepted_launch_commit_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn AcceptedLaunchCommitPort>>>>,
     /// Context Inspector 使用的审计总线。Hub 内部创建 runtime delegate 时需要把它
     /// 传给 hook 链路，记录每轮 HookInjection → ContextFragment 的动态片段。
     pub(super) context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,

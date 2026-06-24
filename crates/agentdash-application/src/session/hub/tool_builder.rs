@@ -6,8 +6,7 @@
 //!
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::runtime_surface_adoption::{
-    AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter, RuntimeSurfaceAdoptionError,
-    RuntimeSurfaceAdoptionPort,
+    AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
@@ -302,8 +301,8 @@ impl SessionRuntimeInner {
 }
 
 #[async_trait]
-impl AgentRunActiveRuntimeSurfaceAdopter for SessionRuntimeInner {
-    async fn adopt_persisted_frame_revision_into_active_runtime(
+impl RuntimeSurfaceAdoptionPort for SessionRuntimeInner {
+    async fn adopt_runtime_surface(
         &self,
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
@@ -312,18 +311,5 @@ impl AgentRunActiveRuntimeSurfaceAdopter for SessionRuntimeInner {
             .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
                 message: error.to_string(),
             })
-    }
-}
-
-#[async_trait]
-impl RuntimeSurfaceAdoptionPort for SessionRuntimeInner {
-    async fn adopt_runtime_surface(
-        &self,
-        target: AgentFrameRuntimeTarget,
-    ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {
-        <Self as AgentRunActiveRuntimeSurfaceAdopter>::adopt_persisted_frame_revision_into_active_runtime(
-            self, target,
-        )
-        .await
     }
 }

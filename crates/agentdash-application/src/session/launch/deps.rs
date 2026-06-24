@@ -1,20 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::frame_launch_envelope::{
+    AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
+    SharedFrameLaunchEnvelopePort,
+};
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, RuntimeSessionExecutionAnchorRepository,
-};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 
-use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
-use crate::agent_run::{
-    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
-    AgentRunMailboxRuntimeAdapter,
-};
+use crate::agent_run::AgentRunMailboxRuntimeAdapter;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
@@ -39,7 +37,9 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
     pub(super) frame_launch_envelope_provider:
-        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopeProvider>>>,
+        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>>>>,
+    accepted_launch_commit_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn AcceptedLaunchCommitPort>>>>,
     runtime_registry: SessionRuntimeRegistry,
     hook_effect_handler_registry:
         Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
@@ -50,9 +50,6 @@ pub(in crate::session) struct SessionLaunchDeps {
     mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
-    pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
-    pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
-    pub(super) lifecycle_agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     pub(super) agent_run_mailbox_runtime_adapter:
         Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
     eventing: SessionEventingService,
@@ -70,6 +67,7 @@ impl SessionLaunchDeps {
             turn_supervisor: inner.turn_supervisor.clone(),
             stores: inner.stores.clone(),
             frame_launch_envelope_provider: inner.frame_launch_envelope_provider.clone(),
+            accepted_launch_commit_port: inner.accepted_launch_commit_port.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
             context_audit_bus: inner.context_audit_bus.clone(),
             base_system_prompt: inner.base_system_prompt.clone(),
@@ -78,9 +76,6 @@ impl SessionLaunchDeps {
             mcp_tool_discovery: inner.mcp_tool_discovery.clone(),
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
-            agent_frame_repo: inner.agent_frame_repo.clone(),
-            execution_anchor_repo: inner.execution_anchor_repo.clone(),
-            lifecycle_agent_repo: inner.lifecycle_agent_repo.clone(),
             agent_run_mailbox_runtime_adapter: inner.agent_run_mailbox_runtime_adapter.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),
@@ -92,7 +87,7 @@ impl SessionLaunchDeps {
 
     pub(super) async fn current_frame_launch_envelope_provider(
         &self,
-    ) -> Option<SharedFrameLaunchEnvelopeProvider> {
+    ) -> Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>> {
         self.frame_launch_envelope_provider.read().await.clone()
     }
 
@@ -131,23 +126,27 @@ impl SessionLaunchDeps {
         }
     }
 
-    pub(super) fn commit(&self) -> TurnCommitDeps {
+    pub(super) fn commit(
+        &self,
+        accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
+    ) -> TurnCommitDeps {
         TurnCommitDeps {
             stores: self.stores.clone(),
             eventing: self.eventing.clone(),
             core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
-            accepted_launch_commit: self.accepted_launch_commit_adapter(),
+            accepted_launch_commit,
         }
     }
 
-    pub(super) fn accepted_launch_commit_adapter(&self) -> AgentRunAcceptedLaunchCommitAdapter {
-        AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
-            frame_repo: self.agent_frame_repo.clone(),
-            anchor_repo: self.execution_anchor_repo.clone(),
-            agent_repo: self.lifecycle_agent_repo.clone(),
-            hook_runtime_sync: Some(Arc::new(self.hooks.clone())),
-        })
+    pub(super) async fn current_accepted_launch_commit_port(
+        &self,
+    ) -> Arc<dyn AcceptedLaunchCommitPort> {
+        self.accepted_launch_commit_port
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| Arc::new(NoopAcceptedLaunchCommitPort))
     }
 
     pub(super) fn ingestion(&self) -> StreamIngestionDeps {
@@ -156,6 +155,24 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             effects: self.effects.clone(),
         }
+    }
+}
+
+struct NoopAcceptedLaunchCommitPort;
+
+#[async_trait::async_trait]
+impl AcceptedLaunchCommitPort for NoopAcceptedLaunchCommitPort {
+    async fn agent_needs_bootstrap(&self, _runtime_session_id: &str) -> bool {
+        false
+    }
+
+    async fn mark_agent_bootstrapped(&self, _runtime_session_id: &str) {}
+
+    async fn commit_accepted_launch(
+        &self,
+        _input: AcceptedLaunchCommitInput,
+    ) -> AcceptedLaunchCommitOutcome {
+        AcceptedLaunchCommitOutcome::empty()
     }
 }
 
@@ -226,7 +243,7 @@ pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionStoreSet,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) accepted_launch_commit: AgentRunAcceptedLaunchCommitAdapter,
+    pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
     core: SessionCoreService,
 }
 

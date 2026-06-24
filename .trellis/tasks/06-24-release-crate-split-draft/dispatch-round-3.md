@@ -83,6 +83,56 @@ rg -n "LifecycleDispatchService" crates/agentdash-application/src/agent_run crat
 rg -n "composer_lifecycle_node|resolve_current_frame_from_delivery_trace_ref|LifecycleLaunch" crates/agentdash-application/src/agent_run/frame/construction crates/agentdash-application/src/lifecycle -g '*.rs'
 ```
 
+## VFS Owner Adapter Classification
+
+`vfs-owner-adapter-prep-impl` 已把 `MountProviderRegistryBuilder` 的 owner provider 注册从 generic `vfs/provider.rs` 移到 `vfs/owner_providers.rs`，并停止通过 generic VFS public facade 暴露 concrete `CanvasFsMountProvider` / `LifecycleMountProvider`。
+
+剩余 owner-specific VFS 路径分类：
+
+| Path | Classification | Owner assignment |
+| --- | --- | --- |
+| `crates/agentdash-application/src/vfs/owner_providers.rs` | adapter | VFS/API composition root 后续决定是否迁到 owner adapter crate；当前仍需要 Session persistence、Lifecycle provider 和 Canvas provider 一次性注册。 |
+| `crates/agentdash-application/src/vfs/provider_lifecycle.rs` | move | Lifecycle owner；依赖 `LifecycleJourneyProjection`、execution log、Session persistence/tool result cache，不能在本轮不触碰 Lifecycle/RuntimeSession 的前提下安全移动。 |
+| `crates/agentdash-application/src/vfs/mount_lifecycle.rs` | move | Lifecycle owner；mount builder 已去掉纯编码 helper 的 lifecycle import，但业务语义仍是 lifecycle runtime / AgentRun session mount。 |
+| `crates/agentdash-application/src/vfs/provider_canvas.rs` | move | Canvas owner；依赖 Canvas repository 与 binding projection，不能归入 generic VFS core。 |
+| `crates/agentdash-application/src/vfs/mount_canvas.rs` | move | Canvas owner；模块已降为 crate-private，仍通过 VFS facade 暴露 mount builder 给 Canvas/AgentRun surface update。 |
+
+## Implementation Completed
+
+All five implement workers completed and were closed after handoff.
+
+| Worker | Result |
+| --- | --- |
+| `session-adoption-port-impl` | Production adoption wiring now consumes `RuntimeSurfaceAdoptionPort`; old `AgentRunActiveRuntimeSurfaceAdopter` paths are removed from Session/API bootstrap. |
+| `session-launch-commit-port-impl` | Session launch now consumes ports-level frame launch envelope and accepted launch commit contracts; old AgentRun commit adapter imports are removed from Session/API bootstrap. |
+| `control-dispatch-facade-impl` | AgentRun/workflow launcher paths call a Lifecycle-owned dispatch facade instead of constructing `LifecycleDispatchService` directly. |
+| `frame-construction-helper-port-impl` | AgentRun frame construction no longer imports Lifecycle helper implementation paths; stale `composer_lifecycle_node` was deleted. |
+| `vfs-owner-adapter-prep-impl` | Generic VFS registry builder no longer owns Session/Lifecycle/Canvas provider registration; owner providers remain classified blockers for physical VFS extraction. |
+
+Integration validation passed:
+
+- `cargo fmt`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-application-ports`
+- `cargo check -p agentdash-application-runtime-gateway -p agentdash-api -p agentdash-local -p agentdash-mcp`
+- `cargo test -p agentdash-application-ports --no-run`
+- `cargo test -p agentdash-application agent_run::frame::construction --no-run`
+- `python ./.trellis/scripts/task.py validate .trellis/tasks/06-24-release-crate-split-draft`
+- `git diff --check`
+
+Static gates passed with no matches:
+
+```powershell
+rg -n "AgentRunActiveRuntimeSurfaceAdopter|ActiveRuntimeSurfaceAdopter" crates/agentdash-application/src crates/agentdash-api/src -g '*.rs'
+rg -n "FrameLaunchEnvelopeProvider|AgentRunAcceptedLaunchCommitAdapter|AgentRunAcceptedLaunchCommitInput" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap -g '*.rs'
+rg -n "LifecycleDispatchService" crates/agentdash-application/src/agent_run crates/agentdash-application/src/workflow/orchestration -g '*.rs'
+rg -n "composer_lifecycle_node|resolve_current_frame_from_delivery_trace_ref|crate::lifecycle" crates/agentdash-application/src/agent_run/frame/construction -g '*.rs'
+rg -n "agentdash_application::runtime_gateway" crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-mcp/src -g '*.rs'
+rg -n "agentdash_application::|crate::(mcp_preset|workspace|agent_run|lifecycle|session|vfs|canvas)::" crates/agentdash-application-runtime-gateway/src -g '*.rs'
+```
+
+VFS owner adapter gate still has expected owner-specific matches in `vfs/owner_providers.rs`, `provider_lifecycle.rs`, `mount_lifecycle.rs`, `provider_canvas.rs` and `mount_canvas.rs`; this keeps VFS physical extraction classified as partial.
+
 ## Checkpoint Check Waves
 
 Run checkpoint checks after the implement workers complete, not during the first mechanical move pass.

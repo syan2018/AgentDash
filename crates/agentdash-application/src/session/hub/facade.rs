@@ -24,9 +24,11 @@ use super::SessionRuntimeInner;
 use crate::agent_run::frame::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
 };
-#[cfg(test)]
-use crate::agent_run::frame::{FrameLaunchEnvelopeProvider, FrameLaunchEnvelopeProviderInput};
 use agentdash_agent_protocol::BackboneEnvelope;
+#[cfg(test)]
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
+};
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::ContextFrame;
@@ -156,14 +158,14 @@ struct ConstructionLaunchEnvelopeProvider {
 #[cfg(test)]
 #[allow(deprecated)]
 #[async_trait::async_trait]
-impl FrameLaunchEnvelopeProvider for ConstructionLaunchEnvelopeProvider {
-    async fn build_frame_launch_envelope(
+impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for ConstructionLaunchEnvelopeProvider {
+    async fn build_launch_envelope(
         &self,
-        input: FrameLaunchEnvelopeProviderInput,
+        input: FrameLaunchEnvelopeRequest,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let mut construction = self.construction.clone();
-        construction.session_id = input.session_id.clone();
-        construction.session.session_id = input.session_id.clone();
+        construction.session_id = input.runtime_session_id.clone();
+        construction.session.session_id = input.runtime_session_id.clone();
         envelope_from_construction_with_commands(
             &self.hub,
             construction,

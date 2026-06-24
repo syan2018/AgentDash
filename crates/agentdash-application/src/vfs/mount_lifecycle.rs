@@ -37,7 +37,7 @@ pub(crate) fn build_agent_run_session_lifecycle_mount(
         backend_id: String::new(),
         root_ref: format!(
             "lifecycle://run/{run_id}/agent/{agent_id}/session/{}",
-            crate::lifecycle::execution_log::encode_node_path_segment(runtime_session_id)
+            encode_lifecycle_uri_segment(runtime_session_id)
         ),
         capabilities: vec![
             MountCapability::Read,
@@ -84,11 +84,27 @@ pub(crate) fn build_lifecycle_mount_with_node_scope(
         backend_id: String::new(),
         root_ref: format!(
             "lifecycle://run/{run_id}/orchestration/{orchestration_id}/node/{}",
-            crate::lifecycle::execution_log::encode_node_path_segment(node_path)
+            encode_lifecycle_uri_segment(node_path)
         ),
         capabilities,
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
         metadata,
     }
+}
+
+fn encode_lifecycle_uri_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        let is_safe = byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
+        if is_safe {
+            encoded.push(char::from(*byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0F) as usize]));
+        }
+    }
+    encoded
 }

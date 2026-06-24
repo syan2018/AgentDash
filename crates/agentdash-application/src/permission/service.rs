@@ -386,7 +386,7 @@ mod tests {
     use crate::agent_run::{AgentFrameBuilder, AgentRunGrantProjection};
     use agentdash_agent_types::DynAgentTool;
     use agentdash_application_ports::runtime_surface_adoption::{
-        AgentFrameRuntimeTarget, AgentRunActiveRuntimeSurfaceAdopter, RuntimeSurfaceAdoptionError,
+        AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
     };
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PermissionGrantStatusFilter, PolicyDecision,
@@ -609,8 +609,8 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl AgentRunActiveRuntimeSurfaceAdopter for TestSurfaceBoundary {
-        async fn adopt_persisted_frame_revision_into_active_runtime(
+    impl RuntimeSurfaceAdoptionPort for TestSurfaceBoundary {
+        async fn adopt_runtime_surface(
             &self,
             _target: AgentFrameRuntimeTarget,
         ) -> Result<Vec<DynAgentTool>, RuntimeSurfaceAdoptionError> {

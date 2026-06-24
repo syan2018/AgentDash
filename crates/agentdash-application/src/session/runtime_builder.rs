@@ -1,7 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::frame_launch_envelope::{
+    AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
+};
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
-use agentdash_application_ports::runtime_surface_adoption::AgentRunActiveRuntimeSurfaceAdopter;
+use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -19,7 +22,7 @@ use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
 use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::launch_envelope_provider::SharedFrameLaunchEnvelopeProvider;
+use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 
 pub struct SessionRuntimeBuilder {
@@ -141,7 +144,7 @@ impl SessionRuntimeBuilder {
         self.inner.runtime_transition_service()
     }
 
-    pub fn active_runtime_surface_adopter(&self) -> Arc<dyn AgentRunActiveRuntimeSurfaceAdopter> {
+    pub fn runtime_surface_adoption_port(&self) -> Arc<dyn RuntimeSurfaceAdoptionPort> {
         Arc::new(self.inner.clone())
     }
 
@@ -202,11 +205,15 @@ impl SessionRuntimeBuilder {
 
     pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedFrameLaunchEnvelopeProvider,
+        provider: SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>,
     ) {
         self.inner
             .set_frame_launch_envelope_provider(provider)
             .await;
+    }
+
+    pub async fn set_accepted_launch_commit_port(&self, port: Arc<dyn AcceptedLaunchCommitPort>) {
+        self.inner.set_accepted_launch_commit_port(port).await;
     }
 
     pub async fn set_context_audit_bus(&self, bus: SharedContextAuditBus) {

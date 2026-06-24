@@ -9,12 +9,9 @@ use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::project_agent_context::{
     build_project_agent_context, resolve_project_workspace,
 };
-use crate::lifecycle::projection::resolve_active_workflow_projection_from_message_stream_trace;
-use crate::lifecycle::{
-    SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
-    SubjectWorkspacePolicy,
-};
 
+use super::subject_assignment::{SubjectContextAssignment, SubjectContextAssignmentResolver};
+use super::workflow_projection::resolve_active_workflow_projection_from_message_stream_trace;
 use super::{
     FrameConstructionService, OwnerBootstrapSpec, OwnerScope, connector_internal,
     frame_builder_from_existing, merge_user_executor_config, owner_prompt_launch_path,
@@ -77,11 +74,7 @@ pub(super) async fn compose(
     let identity = input.command.identity();
     let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
         input.session_id.as_str(),
-        svc.repos.agent_procedure_repo.as_ref(),
-        svc.repos.agent_frame_repo.as_ref(),
-        svc.repos.lifecycle_agent_repo.as_ref(),
-        svc.repos.lifecycle_run_repo.as_ref(),
-        svc.repos.execution_anchor_repo.as_ref(),
+        &svc.repos,
     )
     .await
     .map_err(connector_internal)?;
@@ -166,11 +159,7 @@ async fn resolve_project_agent_subject_assignment(
         svc.availability.as_ref(),
         svc.vfs_service.as_ref(),
     )
-    .resolve(SubjectContextAssignmentRequest {
-        project_id,
-        subject_ref,
-        workspace_policy: SubjectWorkspacePolicy::SubjectDefault,
-    })
+    .resolve(project_id, subject_ref)
     .await
     .map_err(connector_internal)?;
     Ok(Some(assignment))

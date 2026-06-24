@@ -6,6 +6,7 @@
  */
 
 import { useMemo } from "react";
+import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
@@ -135,7 +136,14 @@ function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
   return item.status !== "inProgress";
 }
 
-function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
+interface AggregateEntriesOptions {
+  includeVerboseEvents?: boolean;
+}
+
+function classifyEntry(
+  entry: SessionDisplayEntry,
+  options: AggregateEntriesOptions = {},
+): EntryClassification {
   const event = entry.event;
   if (isToolBurstEvent(event)) {
     if (hasBoundedOutputEntry(entry)) return "active_tool";
@@ -178,7 +186,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   }
 
   if (event.type === "platform") {
-    const boundary = getPlatformEventPolicy(event).feedBoundary;
+    const boundary = getPlatformEventPolicy(event, options).feedBoundary;
     if (boundary === "hard") return "hard_boundary";
     if (boundary === "soft") return "hard_boundary";
     return "neutral";
@@ -271,7 +279,10 @@ function pushCtxSideGroup(
  * Reasoning 不参与聚合 —— 同 itemId 已在 useSessionStream 层累积成一条，
  * 不会出现"连续多条 thinking entry"的场景。
  */
-function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
+function aggregateEntries(
+  entries: SessionDisplayEntry[],
+  options: AggregateEntriesOptions = {},
+): SessionDisplayItem[] {
   const result: SessionDisplayItem[] = [];
   let activeToolGroup: AggregatedEntryGroup | null = null;
   let activeCtxGroup: AggregatedContextFrameGroup | null = null;
@@ -294,7 +305,7 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
   };
 
   for (const entry of entries) {
-    const cls = classifyEntry(entry);
+    const cls = classifyEntry(entry, options);
 
     switch (cls) {
       case "tool_like": {
@@ -740,6 +751,7 @@ export function segmentByTurn(
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
   const { sessionId, endpoint, enableAggregation = true, enabled } = options;
+  const { prefs } = useDebugPrefs();
 
   const {
     entries,
@@ -760,9 +772,9 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
 
   const displayItems = useMemo(() => {
     return enableAggregation
-      ? aggregateEntries(entries)
+      ? aggregateEntries(entries, { includeVerboseEvents: prefs.hookVerbose })
       : (entries as SessionDisplayItem[]);
-  }, [entries, enableAggregation]);
+  }, [entries, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
     () => segmentByTurn(displayItems, rawEvents),

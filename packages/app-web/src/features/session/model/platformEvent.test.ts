@@ -31,8 +31,10 @@ describe("platformEvent", () => {
     expect(extractPlatformEventType(event)).toBe("provider_attempt_status");
     expect(extractPlatformEventData(event)?.phase).toBe("retry_scheduled");
     expect(extractPlatformEventMessage(event)).toBe("Reconnecting... 2/3");
-    expect(getPlatformEventPolicy(event).isRenderableSystemEvent).toBe(true);
-    expect(getPlatformEventPolicy(event).feedBoundary).toBe("hard");
+    expect(getPlatformEventPolicy(event).isRenderableSystemEvent).toBe(false);
+    expect(getPlatformEventPolicy(event).feedBoundary).toBe("neutral");
+    expect(getPlatformEventPolicy(event, { includeVerboseEvents: true }).isRenderableSystemEvent).toBe(true);
+    expect(getPlatformEventPolicy(event, { includeVerboseEvents: true }).feedBoundary).toBe("hard");
   });
 
   it("识别一等 session rewound 事件", () => {

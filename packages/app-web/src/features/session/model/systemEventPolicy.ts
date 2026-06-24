@@ -4,6 +4,10 @@ import { extractPlatformEventData, extractPlatformEventType, isRecord } from "./
 export type PlatformFeedBoundary = "hard" | "soft" | "neutral";
 export type NotificationVisibility = "renderable" | "all";
 
+export interface PlatformEventPolicyOptions {
+  includeVerboseEvents?: boolean;
+}
+
 export interface PlatformEventPolicy {
   eventType: string | null;
   isTaskEvent: boolean;
@@ -35,12 +39,15 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "workspace_module_presented",
   "workspace_module_present_failed",
   "context_frame",
-  "provider_attempt_status",
-  "provider_retry",
-  "provider_status",
   "session_rewound",
   "session_rebuilt",
   "turn_discarded",
+]);
+
+const VERBOSE_SYSTEM_EVENT_TYPES = new Set<string>([
+  "provider_attempt_status",
+  "provider_retry",
+  "provider_status",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([
@@ -115,7 +122,10 @@ function isContextFrameEvent(event: BackboneEvent): boolean {
   );
 }
 
-export function getPlatformEventPolicy(event: BackboneEvent): PlatformEventPolicy {
+export function getPlatformEventPolicy(
+  event: BackboneEvent,
+  options: PlatformEventPolicyOptions = {},
+): PlatformEventPolicy {
   const eventType = extractPlatformEventType(event);
   const isTaskEvent = typeof eventType === "string" && eventType.startsWith("task_");
   let isRenderableSystemEvent = false;
@@ -126,6 +136,14 @@ export function getPlatformEventPolicy(event: BackboneEvent): PlatformEventPolic
     } else {
       isRenderableSystemEvent = true;
     }
+  }
+  if (
+    event.type === "platform" &&
+    eventType &&
+    options.includeVerboseEvents === true &&
+    VERBOSE_SYSTEM_EVENT_TYPES.has(eventType)
+  ) {
+    isRenderableSystemEvent = true;
   }
 
   const isRenderablePlatformEvent = isTaskEvent || isRenderableSystemEvent;
@@ -149,12 +167,18 @@ export function isTaskEventUpdate(event: BackboneEvent): boolean {
   return getPlatformEventPolicy(event).isTaskEvent;
 }
 
-export function isRenderableSystemEventUpdate(event: BackboneEvent): boolean {
-  return getPlatformEventPolicy(event).isRenderableSystemEvent;
+export function isRenderableSystemEventUpdate(
+  event: BackboneEvent,
+  options?: PlatformEventPolicyOptions,
+): boolean {
+  return getPlatformEventPolicy(event, options).isRenderableSystemEvent;
 }
 
-export function isRenderablePlatformEvent(event: BackboneEvent): boolean {
-  return getPlatformEventPolicy(event).isRenderablePlatformEvent;
+export function isRenderablePlatformEvent(
+  event: BackboneEvent,
+  options?: PlatformEventPolicyOptions,
+): boolean {
+  return getPlatformEventPolicy(event, options).isRenderablePlatformEvent;
 }
 
 export function shouldNotifyRenderableSystemEvent(event: BackboneEvent): boolean {

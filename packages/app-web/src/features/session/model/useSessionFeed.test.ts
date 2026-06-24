@@ -664,11 +664,14 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[1] as SessionDisplayEntry).id).toBe("c2");
   });
 
-  it("T23: provider retry status is a system boundary and exposes reconnecting turn activity", () => {
+  it("T23: provider retry status is only visible in verbose mode and exposes reconnecting turn activity", () => {
     const statusEntry = mkProviderStatusEntry("provider-status");
     const aggregated = aggregateEntries([statusEntry]);
-    expect(aggregated).toHaveLength(1);
-    expect((aggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
+    expect(aggregated).toHaveLength(0);
+
+    const verboseAggregated = aggregateEntries([statusEntry], { includeVerboseEvents: true });
+    expect(verboseAggregated).toHaveLength(1);
+    expect((verboseAggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
 
     const segments = segmentByTurn([], [
       rawTurnStarted(1),

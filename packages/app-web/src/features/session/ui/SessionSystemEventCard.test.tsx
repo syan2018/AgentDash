@@ -30,7 +30,7 @@ describe("SessionSystemEventCard", () => {
     );
 
     expect(html).toContain("CTX");
-    expect(html).toContain("CAPABILITY");
+    expect(html).toContain("TOOL SURFACE");
   });
 
   it("context_frame 事件没有 parsed frame 时不渲染", () => {

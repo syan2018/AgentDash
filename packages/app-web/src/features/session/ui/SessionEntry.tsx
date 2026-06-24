@@ -40,6 +40,7 @@ import { SessionTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
+import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface SessionEntryProps {
   item: SessionDisplayItem;
@@ -79,6 +80,7 @@ export function SingleEntry({
   sessionId?: string | null;
 }) {
   const { event, isPendingApproval, accumulatedText } = entry;
+  const { prefs } = useDebugPrefs();
 
   switch (event.type) {
     case "agent_message_delta": {
@@ -159,7 +161,7 @@ export function SingleEntry({
         return <SessionTaskEventCard event={event} />;
       }
 
-      if (isRenderableSystemEventUpdate(event)) {
+      if (isRenderableSystemEventUpdate(event, { includeVerboseEvents: prefs.hookVerbose })) {
         return (
           <SessionSystemEventCard
             event={event}

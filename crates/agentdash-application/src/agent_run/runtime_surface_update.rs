@@ -111,16 +111,6 @@ impl AgentRunRuntimeSurfaceUpdateService {
         .await;
 
         let workspace_module_ref = format!("canvas:{}", canvas.mount_id);
-        if canvas_surface_projection_is_noop(
-            &current_frame,
-            &before_state,
-            &after_state,
-            &canvas.mount_id,
-            &workspace_module_ref,
-        ) {
-            return Ok(active_vfs);
-        }
-
         let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
             .with_created_by("canvas_expose", Some(current_frame.id.to_string()))
@@ -130,6 +120,11 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .map_err(|error| error.to_string())?;
         next_frame.append_visible_canvas_mount(&canvas.mount_id);
         next_frame.append_visible_workspace_module_ref(&workspace_module_ref);
+
+        if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
+            return Ok(active_vfs);
+        }
+
         self.frame_repo
             .create(&next_frame)
             .await
@@ -211,22 +206,18 @@ impl AgentRunRuntimeSurfaceUpdateService {
     }
 }
 
-fn canvas_surface_projection_is_noop(
+fn agent_frame_runtime_surface_unchanged(
     current_frame: &agentdash_domain::workflow::AgentFrame,
-    before_state: &CapabilityState,
-    after_state: &CapabilityState,
-    canvas_mount_id: &str,
-    workspace_module_ref: &str,
+    next_frame: &agentdash_domain::workflow::AgentFrame,
 ) -> bool {
-    before_state == after_state
-        && current_frame
-            .visible_canvas_mount_ids()
-            .iter()
-            .any(|mount_id| mount_id == canvas_mount_id)
-        && current_frame
-            .visible_workspace_module_refs()
-            .iter()
-            .any(|module_ref| module_ref == workspace_module_ref)
+    current_frame.effective_capability_json == next_frame.effective_capability_json
+        && current_frame.context_slice_json == next_frame.context_slice_json
+        && current_frame.vfs_surface_json == next_frame.vfs_surface_json
+        && current_frame.mcp_surface_json == next_frame.mcp_surface_json
+        && current_frame.execution_profile_json == next_frame.execution_profile_json
+        && current_frame.visible_canvas_mount_ids_json == next_frame.visible_canvas_mount_ids_json
+        && current_frame.visible_workspace_module_refs_json
+            == next_frame.visible_workspace_module_refs_json
 }
 
 #[async_trait]
@@ -259,6 +250,7 @@ mod tests {
     };
     use crate::lifecycle::AgentRunRuntimeAddress;
     use crate::test_support::workflow_repositories::MemoryAgentFrameRepository;
+    use crate::vfs::MountProviderRegistry;
 
     struct FixedSurfaceQuery {
         surface: AgentRunRuntimeSurface,
@@ -339,7 +331,9 @@ mod tests {
                 ),
             }),
             frame_repo: frame_repo.clone(),
-            vfs_service: None,
+            vfs_service: Some(Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistry::default(),
+            )))),
             active_adopter: adopter.clone(),
             extra_skill_dirs: Vec::new(),
             skill_discovery_providers: Vec::new(),
@@ -364,6 +358,32 @@ mod tests {
             adopter.targets.lock().await.is_empty(),
             "unchanged Canvas exposure must not adopt active runtime"
         );
+    }
+
+    #[test]
+    fn runtime_surface_noop_compare_uses_frame_surface_not_revision_identity() {
+        let agent_id = Uuid::new_v4();
+        let mut current = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        current.effective_capability_json = Some(serde_json::json!({"tools": []}));
+        current.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
+        current.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-dashboard-a"]));
+        current.visible_workspace_module_refs_json =
+            Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
+
+        let mut candidate = AgentFrame::new_revision(agent_id, 2, "canvas_expose");
+        candidate.effective_capability_json = current.effective_capability_json.clone();
+        candidate.vfs_surface_json = current.vfs_surface_json.clone();
+        candidate.visible_canvas_mount_ids_json = current.visible_canvas_mount_ids_json.clone();
+        candidate.visible_workspace_module_refs_json =
+            current.visible_workspace_module_refs_json.clone();
+
+        assert!(
+            agent_frame_runtime_surface_unchanged(&current, &candidate),
+            "revision id, revision number and created_by are not model-visible surface changes"
+        );
+
+        candidate.append_visible_workspace_module_ref("canvas:cvs-other");
+        assert!(!agent_frame_runtime_surface_unchanged(&current, &candidate));
     }
 
     fn runtime_surface_for_frame(

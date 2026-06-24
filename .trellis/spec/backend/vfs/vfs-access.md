@@ -71,6 +71,47 @@ Contract:
 - Agent 编辑 Canvas 文件使用 `{canvas_mount_id}://...`；presentation URI 与 VFS authoring URI 分离，原因是 tab 展示身份和文件系统挂载身份服务于不同调用面。
 - 前端收到 `workspace_module_presented` 后刷新 session context，再按 `presentation_uri` 打开或继续使用 Canvas / VFS tab。
 
+### Canvas Runtime Access Projection
+
+Canvas runtime mount capabilities are derived from the Canvas effective access projection:
+
+```rust
+pub struct CanvasMountAccess {
+    pub runtime_write_allowed: bool,
+}
+
+build_canvas_mount(canvas, CanvasMountAccess { runtime_write_allowed })
+```
+
+| Canvas access | Runtime mount capabilities | WorkspaceModule operations |
+| --- | --- | --- |
+| Personal owner, `runtime_write_allowed=true` | `read`, `write`, `list`, `search` | `canvas.bind_data` exposed |
+| Project shared/read-only, `runtime_write_allowed=false` | `read`, `list`, `search` | `canvas.bind_data` omitted |
+| No runtime identity for Canvas reprojection | Canvas module omitted or Canvas mount read-only | no Canvas source mutation |
+
+Provider contract:
+
+- `canvas_fs.edit_capabilities(mount)` returns create/delete/rename only when the mount supports `write`.
+- `canvas_fs.write_text`, `delete_text` and `rename_text` reject mounts that do not support `write` before mutating Canvas files.
+- Generated binding files under `bindings/` remain provider-managed read-only files even when the Canvas mount itself is writable; binding changes go through `canvas.bind_data`.
+- Session visibility rebuild and live runtime exposure pass runtime identity into Canvas access calculation. When no identity exists, Canvas source mutation is not exposed because runtime write access cannot be proven.
+
+Validation / errors:
+
+| Condition | Required behavior |
+| --- | --- |
+| `canvas_fs` mount lacks `write` and Agent calls `fs.write` / delete / rename | capability resolution or provider returns read-only/not-supported user semantics |
+| Project shared Canvas is presented to a session | mount is present for preview/read with no `write` capability |
+| Personal owner Canvas is created through WorkspaceModule | mount is writable and `canvas.bind_data` is available |
+| Runtime visibility rebuild cannot resolve current user identity | Canvas source mutation is withheld |
+
+Tests required:
+
+- Mount builder test asserts writable vs read-only capability sets.
+- Provider test asserts read-only mount rejects write/delete/rename and leaves Canvas files unchanged.
+- Runtime surface update test asserts project shared Canvas exposure appends a mount without `write`.
+- WorkspaceModule test asserts shared Canvas descriptor omits `canvas.bind_data`.
+
 ## Surface Mutation
 
 Surface text mutation 与 inline binary upload 的统一入口是 application 层 mutation dispatcher。

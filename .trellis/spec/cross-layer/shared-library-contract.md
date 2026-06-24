@@ -269,6 +269,16 @@ Packaged Extension 安装以平台 artifact 为事实源。`ExtensionPackageArti
 
 Canvas 发布为插件时生成同款 packaged extension artifact。其 workspace tab 使用 `canvas_panel` renderer，`entry` 指向包内 Canvas runtime snapshot；安装、覆盖和 source-status 仍按 packaged extension installation 处理。
 
+Project shared Canvas publication is a Project-internal source distribution flow, not a Shared Library asset flow:
+
+| Flow | Command | Result | Editable source |
+| --- | --- | --- | --- |
+| Project shared Canvas | `POST /api/canvases/{id}/publish-to-project` | independent `scope="project"` Canvas source with `published_from_canvas_id` | read-only; copy to personal for edits |
+| Personal clone from shared Canvas | `POST /api/canvases/{id}/copy-to-personal` | new `scope="personal"` Canvas with `cloned_from_canvas_id` | editable by clone owner |
+| Canvas packaged extension | `POST /api/canvases/{id}/promote-extension` | `ExtensionPackageArtifact` + extension installation flow | package runtime artifact, not source template |
+
+This split keeps Project-internal sharing usable without introducing a Shared Library `canvas_template` asset type. A future `canvas_template` payload can reuse the Canvas authoring payload shape (`entry_file`, `sandbox_config`, `files`, `bindings`, title/description), but Shared Library install/source-status should be added as a separate asset contract.
+
 ## Publish Semantics
 
 Project Assets 发布行为：

@@ -40,6 +40,24 @@ mapper 不负责：
 
 前端把 `src/generated/*` 当作 wire DTO 事实源。Feature 可以定义 view model，但 view model 必须由 generated DTO 显式转换而来，原因是 UI 形态与 transport 形态有不同变化节奏。
 
+Canvas 资产 UI 消费 `generated/canvas-contracts.ts` 中的 `CanvasResponse`、`CanvasScopeDto`、`CanvasAccessDto`、`CanvasListScopeDto`、`PublishCanvasToProjectRequest`、`CopyCanvasToPersonalRequest` 和 `UnpublishCanvasResponse`。`services/canvas.ts` 只封装 endpoint 和 query/body 传递；Mine/Shared 分组、按钮可见性和 editor 只读状态全部读取 `canvas.scope` 与 `canvas.access`。
+
+Canvas access-driven UI contract:
+
+| `CanvasResponse.access` field | Frontend behavior |
+| --- | --- |
+| `can_edit_source` | 显示源文件/绑定保存入口，允许 `updateCanvas` |
+| `can_publish` | 显示“发布到项目共用”；“发布为插件”仍是独立 action |
+| `can_copy` | Shared 视图显示“复制为我的 Canvas” |
+| `can_manage_shared` | Shared 视图显示取消发布/删除共用源 |
+| `runtime_write_allowed=false` | runtime preview 保持可用，source editor 以只读状态展示或禁用 |
+
+Validation:
+
+- `handleBindingsSave`、source file save 等 mutation handler 在调用 `updateCanvas` 前检查 `canvas.access.can_edit_source`，原因是 UI disabled state 不是权限边界。
+- 复制 shared Canvas 成功后，UI 刷新列表、切到 Mine 并选中新 personal Canvas；后续编辑只作用于 clone。
+- 前端不从 `owner_user_id`、Project role 或当前用户缓存推导编辑权限；这些事实已经由后端合并为 `access`。
+
 Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
 新增或修改跨层 DTO 时同步运行：

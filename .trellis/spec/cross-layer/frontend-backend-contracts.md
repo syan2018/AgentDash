@@ -358,6 +358,129 @@ openWorkspaceTab(`canvas://${event.view_key}`);
 openWorkspaceTab(event.presentation_uri);
 ```
 
+## Scenario: Canvas Personal And Project Shared Distribution Contract
+
+### 1. Scope / Trigger
+
+- Trigger: Canvas wire contract now carries ownership, scope, lineage and effective access, and the Project asset UI consumes publish/copy/unpublish commands.
+- Scope: `agentdash-contracts::canvas`, `/api/projects/{project_id}/canvases`, `/api/canvases/{id}`, generated `packages/app-web/src/generated/canvas-contracts.ts`, frontend Canvas service/types/UI, VFS runtime mount access and WorkspaceModule descriptor access.
+
+### 2. Signatures
+
+Backend command/API signatures:
+
+```text
+GET  /api/projects/{project_id}/canvases?scope=all|mine|shared
+POST /api/projects/{project_id}/canvases
+GET  /api/projects/{project_id}/canvases/by-mount/{canvas_mount_id}
+GET  /api/canvases/{id}
+PUT  /api/canvases/{id}
+DELETE /api/canvases/{id}
+POST /api/canvases/{id}/publish-to-project
+POST /api/canvases/{id}/copy-to-personal
+POST /api/canvases/{id}/unpublish
+POST /api/canvases/{id}/promote-extension
+```
+
+Generated DTOs:
+
+```rust
+#[serde(rename_all = "snake_case")]
+pub enum CanvasScopeDto { Personal, Project }
+
+#[serde(rename_all = "snake_case")]
+pub enum CanvasListScopeDto { All, Mine, Shared }
+
+pub struct CanvasAccessDto {
+    pub can_view: bool,
+    pub can_edit_source: bool,
+    pub can_publish: bool,
+    pub can_manage_shared: bool,
+    pub can_copy: bool,
+    pub runtime_write_allowed: bool,
+}
+
+pub struct CanvasResponse {
+    pub canvas_id: String,
+    pub project_id: String,
+    pub owner_user_id: Option<String>,
+    pub scope: CanvasScopeDto,
+    pub access: CanvasAccessDto,
+    pub canvas_mount_id: String,
+    pub vfs_mount_id: String,
+    pub title: String,
+    pub description: String,
+    pub entry_file: String,
+    pub sandbox_config: CanvasSandboxConfigDto,
+    pub files: Vec<CanvasFileDto>,
+    pub bindings: Vec<CanvasDataBindingDto>,
+    pub published_from_canvas_id: Option<String>,
+    pub shared_canvas_id: Option<String>,
+    pub cloned_from_canvas_id: Option<String>,
+    pub published_at: Option<String>,
+    pub published_by_user_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+```
+
+### 3. Contracts
+
+- New Canvas creation through the Project Canvas API creates a `scope="personal"` Canvas owned by `AuthIdentity.user_id`.
+- `scope=mine` returns current user's personal Canvas; `scope=shared` returns project shared Canvas; `scope=all` returns both after effective access filtering.
+- A project shared Canvas is an independent deep-copy source record with `published_from_canvas_id`, `published_at` and `published_by_user_id`.
+- A copied Canvas is a new personal Canvas with its own `canvas_id`, own `canvas_mount_id`, copied authoring payload and `cloned_from_canvas_id`.
+- `PUT /api/canvases/{id}` requires `access.can_edit_source`; project shared source is not edited through the ordinary update route.
+- `DELETE /api/canvases/{id}` deletes personal Canvas only for editable owner access; project shared deletion uses management/unpublish semantics and clears the personal source `shared_canvas_id` when applicable.
+- `promote-extension` remains packaged extension publication. It is separate from `publish-to-project`, which creates or updates a project shared Canvas source.
+- Frontend service and UI consume generated DTOs directly. Canvas UI action availability is driven by `CanvasResponse.access`, not by frontend user-id inference.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing/invalid `scope` query | Default to `all` when missing; invalid value returns bad request |
+| Other user's personal Canvas requested by list/get/by-mount | Deny or omit through Canvas effective access |
+| Personal owner updates source | Allowed when `can_edit_source=true` |
+| Project shared member updates source | Forbidden because `can_edit_source=false` |
+| Project shared member copies source | Allowed when `can_copy=true`; result is personal editable clone |
+| Publisher/project manager unpublishes shared Canvas | Delete shared record and clear source `shared_canvas_id` |
+| Shared Canvas enters runtime VFS | Mount has read/list/search and no write capability |
+| Shared Canvas WorkspaceModule descriptor | Preview UI entry remains; `canvas.bind_data` is omitted |
+| Rust DTO or generated TS drift | `pnpm run contracts:check` fails |
+
+### 5. Good/Base/Bad Cases
+
+- Good: A user creates a personal Canvas, edits files, publishes it to project shared, and another member copies that shared Canvas into a new personal Canvas before editing.
+- Good: A project shared Canvas preview opens from `canvas://{canvas_mount_id}` while its VFS mount omits `write`.
+- Base: A personal Canvas that has never been published has `shared_canvas_id=null`, `cloned_from_canvas_id=null`, and owner access includes source edit.
+- Bad: A project shared Canvas response includes `access.runtime_write_allowed=true`, because runtime write capability would disagree with HTTP and WorkspaceModule permissions.
+- Canonical flow: route handler maps `CanvasWithAccess` into generated `CanvasResponse`; frontend reads `canvas.access` to render actions and source editor state.
+
+### 6. Tests Required
+
+- Contract check asserts Canvas scope/access/lineage DTO fields and publish/copy/unpublish request/response DTOs are generated.
+- API tests assert scope query parsing, response mapping, personal delete vs shared unpublish decision, and Canvas effective access for update/get/by-mount/runtime routes.
+- Application tests assert publish/copy/unpublish deep-copy lineage and access projection.
+- VFS tests assert writable personal Canvas includes `write`, read-only project shared Canvas omits `write`, and provider write/delete/rename reject read-only mounts.
+- WorkspaceModule tests assert personal owner descriptor exposes `canvas.bind_data`, shared descriptor omits it, and forged bind invoke returns `canvas_source_read_only`.
+- Frontend service tests assert scoped list query and publish/copy/unpublish endpoints.
+- Frontend typecheck asserts Canvas service/UI consume generated DTO aliases without hand-written wire unions.
+
+### 7. Non-canonical / Canonical
+
+#### Non-canonical
+
+```ts
+const editable = currentUser.id === canvas.owner_user_id || projectRole === "editor";
+```
+
+#### Canonical
+
+```ts
+const editable = canvas.access.can_edit_source === true;
+```
+
 ## Scenario: AgentRun Runtime Frame Resolution Contract
 
 ### 1. Scope / Trigger

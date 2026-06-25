@@ -103,7 +103,7 @@ const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
   continuation_context: "CONTINUATION",
   capability_state_snapshot: "CAPABILITY SNAPSHOT",
-  capability_state_delta: "RUNTIME SURFACE",
+  capability_state_delta: "CAPABILITY",
   assignment_context: "ASSIGNMENT",
   pending_action: "ACTION",
   auto_resume: "RESUME",
@@ -222,7 +222,7 @@ function runtimeSurfaceFrameLabel(frame: ContextFrame): string {
     if (sectionKinds.has("tool_schema_delta")) return "TOOL SURFACE";
     if (sectionKinds.has("companion_agent_roster_delta")) return "COMPANION UPDATE";
   }
-  return "RUNTIME SURFACE";
+  return "CAPABILITY";
 }
 
 export default ContextFrameStream;

@@ -8,7 +8,7 @@ describe("ContextFrameCard", () => {
     const markup = renderToStaticMarkup(<ContextFrameCard frame={readFrame(sampleNotice())} />);
 
     expect(markup).toContain("CTX");
-    expect(markup).toContain("RUNTIME SURFACE");
+    expect(markup).toContain("CAPABILITY");
     // 折叠态：phase node 出现在 summary 小字
     expect(markup).toContain("apply");
     // 折叠态：不渲染内层 section body

@@ -17,6 +17,7 @@ import { extractPlatformEventData } from "../features/session/model/platformEven
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
+import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -290,6 +291,9 @@ export function AgentRunWorkspacePage({
       ? (ownerProject?.name?.trim() || "")
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
+  const refreshAgentRunList = useCallback((reason: string) => {
+    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, reason);
+  }, [draftProjectIdValue, ownerProjectId]);
 
   useEffect(() => {
     if (!ownerProjectId) return;
@@ -357,7 +361,8 @@ export function AgentRunWorkspacePage({
   const handleMessageSent = useCallback(() => {
     if (!deliveryRuntimeSessionId) return;
     scheduleHookRuntimeRefresh("message_sent", true);
-  }, [deliveryRuntimeSessionId, scheduleHookRuntimeRefresh]);
+    refreshAgentRunList("message_sent");
+  }, [deliveryRuntimeSessionId, refreshAgentRunList, scheduleHookRuntimeRefresh]);
 
   const chatCommandState = useMemo<SessionChatCommandState>(
     () => isProjectAgentDraft
@@ -386,6 +391,7 @@ export function AgentRunWorkspacePage({
   );
   const conversationMailbox = mailboxSnapshotFromConversation(runtimeControl?.conversation?.mailbox);
   const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
+    refreshAgentRunListProjection(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
       replace: true,
       state: {
@@ -395,7 +401,7 @@ export function AgentRunWorkspacePage({
         },
       },
     });
-  }, [navigate]);
+  }, [draftProjectIdValue, navigate]);
 
   const {
     handleAgentRunCommand,
@@ -425,6 +431,44 @@ export function AgentRunWorkspacePage({
     onDraftStarted: handleDraftAgentRunStarted,
   });
 
+  const handleAgentRunCommandWithListRefresh: typeof handleAgentRunCommand = useCallback(async (...args) => {
+    await handleAgentRunCommand(...args);
+    refreshAgentRunList("command_submitted");
+  }, [handleAgentRunCommand, refreshAgentRunList]);
+
+  const handleCancelAgentRunWithListRefresh = useCallback(async () => {
+    await handleCancelAgentRun();
+    refreshAgentRunList("agent_run_cancelled");
+  }, [handleCancelAgentRun, refreshAgentRunList]);
+
+  const handlePromoteMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
+    await handlePromoteMailboxMessage(messageId);
+    refreshAgentRunList("mailbox_message_promoted");
+  }, [handlePromoteMailboxMessage, refreshAgentRunList]);
+
+  const handleDeleteMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
+    await handleDeleteMailboxMessage(messageId);
+    refreshAgentRunList("mailbox_message_deleted");
+  }, [handleDeleteMailboxMessage, refreshAgentRunList]);
+
+  const handleResumeMailboxWithListRefresh = useCallback(async () => {
+    await handleResumeMailbox();
+    refreshAgentRunList("mailbox_resumed");
+  }, [handleResumeMailbox, refreshAgentRunList]);
+
+  const handleRecallMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
+    await handleRecallMailboxMessage(messageId);
+    refreshAgentRunList("mailbox_message_recalled");
+  }, [handleRecallMailboxMessage, refreshAgentRunList]);
+
+  const handleMoveMailboxMessageWithListRefresh = useCallback(async (
+    messageId: string,
+    afterMessageId: string | null,
+  ) => {
+    await handleMoveMailboxMessage(messageId, afterMessageId);
+    refreshAgentRunList("mailbox_message_moved");
+  }, [handleMoveMailboxMessage, refreshAgentRunList]);
+
   const refreshStatusBarTasks = useCallback(() => {
     if (currentRunId && currentAgentId) {
       void useTaskPlanStore
@@ -437,9 +481,10 @@ export function AgentRunWorkspacePage({
   const handleTurnEnd = useCallback(() => {
     void refreshAgentRunWorkspaceState().catch(() => {});
     scheduleHookRuntimeRefresh("turn_end", true);
+    refreshAgentRunList("turn_end");
     // Agent 可能在本轮通过 task_write 改了 Task plan；刷新综合状态栏数据源。
     refreshStatusBarTasks();
-  }, [refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, refreshStatusBarTasks]);
+  }, [refreshAgentRunList, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, refreshStatusBarTasks]);
 
   const handleTaskPlanChanged = useCallback(() => {
     refreshStatusBarTasks();
@@ -468,10 +513,12 @@ export function AgentRunWorkspacePage({
       }
       case "session_meta_updated": {
         void refreshAgentRunWorkspaceState();
+        refreshAgentRunList("session_meta_updated");
         break;
       }
       case "mailbox_state_changed": {
         void refreshAgentRunWorkspaceState();
+        refreshAgentRunList("mailbox_state_changed");
         break;
       }
       case "workspace_module_presented": {
@@ -509,6 +556,7 @@ export function AgentRunWorkspacePage({
   }, [
     scheduleHookRuntimeRefresh,
     refreshAgentRunWorkspaceState,
+    refreshAgentRunList,
     refreshWorkspaceModuleCatalog,
     expandWorkspacePanel,
   ]);
@@ -782,17 +830,17 @@ export function AgentRunWorkspacePage({
                 agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
                 executorStateKey={executorStateKey}
                 commandState={chatCommandState}
-                onCommand={handleAgentRunCommand}
-                onCancelAction={handleCancelAgentRun}
+                onCommand={handleAgentRunCommandWithListRefresh}
+                onCancelAction={handleCancelAgentRunWithListRefresh}
                 onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
                 statusBarRunId={currentRunId}
                 statusBarAgentId={currentAgentId}
                 mailboxSnapshot={conversationMailbox}
-                onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessage(id); }}
-                onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessage(id); }}
-                onResumeMailbox={() => { void handleResumeMailbox(); }}
-                onRecallMailboxMessage={(id) => { void handleRecallMailboxMessage(id); }}
-                onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessage(id, after); }}
+                onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessageWithListRefresh(id); }}
+                onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessageWithListRefresh(id); }}
+                onResumeMailbox={() => { void handleResumeMailboxWithListRefresh(); }}
+                onRecallMailboxMessage={(id) => { void handleRecallMailboxMessageWithListRefresh(id); }}
+                onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessageWithListRefresh(id, after); }}
                 injectedInputValue={recalledInput}
                 onInjectedInputConsumed={clearRecalledInput}
                 inputPrefix={ownerBindingBar ?? draftBindingBar}

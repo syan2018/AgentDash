@@ -47,7 +47,7 @@ export interface UseSessionFeedResult {
 }
 
 function extractThreadItem(event: BackboneEvent): AgentDashThreadItem | null {
-  if (event.type === "item_started" || event.type === "item_completed") {
+  if (event.type === "item_started" || event.type === "item_updated" || event.type === "item_completed") {
     return event.payload.item;
   }
   return null;
@@ -112,7 +112,7 @@ function isWillRetryErrorEvent(event: BackboneEvent): boolean {
 
 type EntryClassification =
   | "tool_like"
-  | "active_tool"
+  | "tool_single"
   | "thinking"
   | "hard_boundary"
   | "neutral";
@@ -131,13 +131,6 @@ function isEffectivelyEmptyTextEntry(entry: SessionDisplayEntry): boolean {
   return text.trim().length === 0;
 }
 
-function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
-  const item = extractThreadItem(entry.event);
-  if (!item) return true;
-  if (!("status" in item)) return true;
-  return item.status !== "inProgress";
-}
-
 interface AggregateEntriesOptions {
   includeVerboseEvents?: boolean;
 }
@@ -148,8 +141,7 @@ function classifyEntry(
 ): EntryClassification {
   const event = entry.event;
   if (isToolBurstEvent(event)) {
-    if (hasBoundedOutputEntry(entry)) return "active_tool";
-    if (!isToolEntryTerminal(entry)) return "active_tool";
+    if (hasBoundedOutputEntry(entry)) return "tool_single";
     return "tool_like";
   }
 
@@ -291,6 +283,7 @@ interface TurnThinkingState {
   turnId: string;
   waitingSeq?: number;
   firstSeq: number;
+  insertionIndex?: number;
   hasAgentMessage: boolean;
   entries: SessionDisplayEntry[];
 }
@@ -313,6 +306,15 @@ function ensureTurnThinkingState(
   };
   map.set(turnId, created);
   return created;
+}
+
+function markThinkingInsertionIndex(
+  state: TurnThinkingState,
+  insertionIndex: number,
+): void {
+  if (state.insertionIndex == null || insertionIndex < state.insertionIndex) {
+    state.insertionIndex = insertionIndex;
+  }
 }
 
 function extractProviderWaitingSeqs(rawEvents: SessionEventEnvelope[]): Map<string, number> {
@@ -372,7 +374,9 @@ function mergeThinkingIntoDisplayItems(
 
     if ("event" in item && isThinkingEvent(item.event)) {
       if (turnId) {
-        ensureTurnThinkingState(thinkingStates, turnId, eventSeq).entries.push(item);
+        const state = ensureTurnThinkingState(thinkingStates, turnId, eventSeq);
+        markThinkingInsertionIndex(state, nonThinkingItems.length);
+        state.entries.push(item);
       }
       continue;
     }
@@ -382,9 +386,17 @@ function mergeThinkingIntoDisplayItems(
       const groupTurnId = group.turnId ?? group.entries[0]?.turnId;
       if (groupTurnId) {
         const state = ensureTurnThinkingState(thinkingStates, groupTurnId, group.eventSeq);
+        markThinkingInsertionIndex(state, nonThinkingItems.length);
         state.entries.push(...group.entries);
       }
       continue;
+    }
+
+    if (turnId) {
+      const existingState = thinkingStates.get(turnId);
+      if (existingState) {
+        markThinkingInsertionIndex(existingState, nonThinkingItems.length);
+      }
     }
 
     if ("event" in item && isAgentMessageEvent(item.event) && turnId) {
@@ -393,17 +405,31 @@ function mergeThinkingIntoDisplayItems(
     nonThinkingItems.push(item);
   }
 
-  const thinkingGroups = [...thinkingStates.values()]
-    .map(createThinkingGroup)
-    .filter((item): item is AggregatedThinkingGroup => item != null);
+  const thinkingGroups = new Map<number, AggregatedThinkingGroup[]>();
+  for (const state of thinkingStates.values()) {
+    const group = createThinkingGroup(state);
+    if (!group) continue;
+    const insertionIndex = state.insertionIndex ?? nonThinkingItems.length;
+    const groups = thinkingGroups.get(insertionIndex);
+    if (groups) {
+      groups.push(group);
+    } else {
+      thinkingGroups.set(insertionIndex, [group]);
+    }
+  }
 
-  return [...nonThinkingItems, ...thinkingGroups]
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => {
-      const seqDelta = displayItemSeq(a.item) - displayItemSeq(b.item);
-      return seqDelta !== 0 ? seqDelta : a.index - b.index;
-    })
-    .map(({ item }) => item);
+  const merged: SessionDisplayItem[] = [];
+  for (let index = 0; index <= nonThinkingItems.length; index += 1) {
+    const groups = thinkingGroups.get(index);
+    if (groups) {
+      merged.push(...groups);
+    }
+    const item = nonThinkingItems[index];
+    if (item) {
+      merged.push(item);
+    }
+  }
+  return merged;
 }
 
 function pushCtxSideGroup(
@@ -470,7 +496,7 @@ function aggregateEntries(
         break;
       }
 
-      case "active_tool": {
+      case "tool_single": {
         flushToolGroup();
         flushCtxGroup();
         result.push(entry);

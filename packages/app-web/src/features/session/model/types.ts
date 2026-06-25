@@ -291,6 +291,15 @@ export type SessionEventEnvelope = SessionEventResponse & {
   ephemeral?: boolean;
 };
 
+/** UI 时间线顺序来源：durable 与 ephemeral progress 使用不同坐标。 */
+export type TimelineOrder =
+  | { kind: "durable"; seq: number }
+  | { kind: "anchored_progress"; anchorId: string; progressSeq: number }
+  | { kind: "local_progress"; receivedOrdinal: number; progressSeq: number };
+
+/** 同一 item 的事实新鲜度，避免低权威事件回写高权威 UI 状态。 */
+export type SessionItemFreshness = "started" | "progress" | "completed";
+
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =
   | "tool_burst"
@@ -312,7 +321,14 @@ export interface SessionDisplayEntry {
   id: string;
   sessionId: string;
   timestamp: number;
+  /** durable event seq；对纯 ephemeral entry 仅作诊断值，不参与 durable 时间线排序。 */
   eventSeq: number;
+  /** UI 排序事实源，拆开 durable event_seq 与 ephemeral progress_seq。 */
+  timelineOrder?: TimelineOrder;
+  /** 最近应用到该 entry 的 ephemeral_seq，只用于 progress 去重/诊断。 */
+  progressSeq?: number;
+  /** 同 item lifecycle freshness：completed > progress > started。 */
+  itemFreshness?: SessionItemFreshness;
   event: BackboneEvent;
   turnId?: string;
   entryIndex?: number;

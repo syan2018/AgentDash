@@ -981,6 +981,16 @@ fn shell_model_to_contract(
     }
 }
 
+/// Root list entry 的 activity 展示时间必须与服务端 keyset 排序 / cursor 同源。
+fn root_list_shell_model_to_contract(
+    run: &LifecycleRun,
+    shell: app_workspace::AgentRunWorkspaceShellModel,
+) -> AgentRunWorkspaceShell {
+    let mut shell = shell_model_to_contract(shell);
+    shell.last_activity_at = run.last_activity_at.to_rfc3339();
+    shell
+}
+
 /// 内联子 Agent 节点：复用列表投影的 shell（含真实 delivery_status / last_activity_at）。
 fn list_child_from_projection(
     run: &LifecycleRun,
@@ -1023,7 +1033,7 @@ fn list_entry_from_projection(
         project_id: run.project_id.to_string(),
         project_agent_label: projection.project_agent_label.clone(),
         source: projection.agent.source.as_str().to_string(),
-        shell: shell_model_to_contract(projection.shell),
+        shell: root_list_shell_model_to_contract(run, projection.shell),
         run_status: lifecycle_run_status_to_contract(run.status),
         subagent_count,
         children,
@@ -2176,6 +2186,77 @@ mod tests {
         assert_eq!(entry.subagent_count, 3);
         assert!(entry.frame_ref.is_none());
         assert!(entry.children.is_empty());
+    }
+
+    #[test]
+    fn list_entry_from_projection_uses_run_activity_for_root_shell() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
+            .expect("run activity")
+            .with_timezone(&Utc);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let projection = app_workspace::AgentRunListProjection {
+            run: run.clone(),
+            agent,
+            shell: app_workspace::AgentRunWorkspaceShellModel {
+                display_title: "Root AgentRun".to_string(),
+                title_source: "source".to_string(),
+                workspace_status: "running".to_string(),
+                delivery_status: "idle".to_string(),
+                last_turn_id: None,
+                last_activity_at: "2026-06-12T00:00:00Z".to_string(),
+            },
+            project_agent_label: None,
+            delivery_runtime_session_id: None,
+            delivery_trace_meta: None,
+            subject_ref: None,
+            subject_label: None,
+        };
+
+        let entry = list_entry_from_projection(&run, projection, 0, Vec::new());
+        let (cursor_millis, cursor_run_id) =
+            decode_cursor(&encode_cursor(run.last_activity_at, run.id)).expect("cursor");
+        let shell_activity = DateTime::parse_from_rfc3339(&entry.shell.last_activity_at)
+            .expect("shell activity")
+            .with_timezone(&Utc);
+
+        assert_eq!(
+            entry.shell.last_activity_at,
+            run.last_activity_at.to_rfc3339()
+        );
+        assert_eq!(cursor_millis, shell_activity.timestamp_millis());
+        assert_eq!(cursor_run_id, run.id);
+    }
+
+    #[test]
+    fn list_child_from_projection_preserves_agent_scoped_activity() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
+            .expect("run activity")
+            .with_timezone(&Utc);
+        let child_activity = "2026-06-12T00:00:00Z";
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let projection = app_workspace::AgentRunListProjection {
+            run: run.clone(),
+            agent,
+            shell: app_workspace::AgentRunWorkspaceShellModel {
+                display_title: "Child AgentRun".to_string(),
+                title_source: "source".to_string(),
+                workspace_status: "running".to_string(),
+                delivery_status: "idle".to_string(),
+                last_turn_id: None,
+                last_activity_at: child_activity.to_string(),
+            },
+            project_agent_label: None,
+            delivery_runtime_session_id: None,
+            delivery_trace_meta: None,
+            subject_ref: None,
+            subject_label: None,
+        };
+
+        let child = list_child_from_projection(&run, projection, 0);
+
+        assert_eq!(child.shell.last_activity_at, child_activity);
     }
 
     #[test]

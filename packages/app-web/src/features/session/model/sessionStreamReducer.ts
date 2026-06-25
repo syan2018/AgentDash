@@ -2,6 +2,8 @@ import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/back
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
+  SessionItemFreshness,
+  TimelineOrder,
   TokenUsageInfo,
 } from "./types";
 import { extractTextFromUserInputs, extractTokenUsageFromEvent } from "./types";
@@ -57,6 +59,103 @@ function getItemIdFromEvent(event: BackboneEvent): string | undefined {
   }
 }
 
+function makeTimelineOrder(event: SessionEventEnvelope, bbEvent: BackboneEvent): TimelineOrder {
+  if (!event.ephemeral) {
+    return { kind: "durable", seq: event.event_seq };
+  }
+
+  const itemId = getItemIdFromEvent(bbEvent);
+  if (itemId) {
+    return {
+      kind: "anchored_progress",
+      anchorId: `item:${itemId}`,
+      progressSeq: event.event_seq,
+    };
+  }
+
+  return {
+    kind: "local_progress",
+    receivedOrdinal: event.event_seq,
+    progressSeq: event.event_seq,
+  };
+}
+
+const ITEM_FRESHNESS_RANK: Record<SessionItemFreshness, number> = {
+  started: 1,
+  progress: 2,
+  completed: 3,
+};
+
+function freshnessForEvent(event: BackboneEvent): SessionItemFreshness | undefined {
+  switch (event.type) {
+    case "item_started":
+      return "started";
+    case "item_updated":
+    case "command_output_delta":
+    case "file_change_delta":
+    case "mcp_tool_call_progress":
+    case "agent_message_delta":
+    case "reasoning_text_delta":
+    case "reasoning_summary_delta":
+      return "progress";
+    case "item_completed":
+      return "completed";
+    default:
+      return undefined;
+  }
+}
+
+function isFreshEnough(
+  existing: SessionDisplayEntry,
+  incomingFreshness: SessionItemFreshness,
+): boolean {
+  const existingFreshness = existing.itemFreshness;
+  if (!existingFreshness) {
+    return true;
+  }
+  return ITEM_FRESHNESS_RANK[incomingFreshness] >= ITEM_FRESHNESS_RANK[existingFreshness];
+}
+
+function mergeEntryMetadata(
+  existing: SessionDisplayEntry,
+  event: SessionEventEnvelope,
+  bbEvent: BackboneEvent,
+  incomingFreshness: SessionItemFreshness | undefined,
+): SessionDisplayEntry {
+  const timelineOrder = makeTimelineOrder(event, bbEvent);
+  const existingFreshness = existing.itemFreshness;
+  const nextFreshness =
+    incomingFreshness && (!existingFreshness || isFreshEnough(existing, incomingFreshness))
+      ? incomingFreshness
+      : existingFreshness;
+
+  return {
+    ...existing,
+    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? existing.timestamp,
+    eventSeq: event.ephemeral && existing.timelineOrder?.kind === "durable"
+      ? existing.eventSeq
+      : event.event_seq,
+    timelineOrder: event.ephemeral && existing.timelineOrder?.kind === "durable"
+      ? existing.timelineOrder
+      : timelineOrder,
+    progressSeq: event.ephemeral ? event.event_seq : existing.progressSeq,
+    itemFreshness: nextFreshness,
+  };
+}
+
+function withEntryMetadata(
+  entry: SessionDisplayEntry,
+  event: SessionEventEnvelope,
+  bbEvent: BackboneEvent,
+): SessionDisplayEntry {
+  return {
+    ...entry,
+    timelineOrder: makeTimelineOrder(event, bbEvent),
+    progressSeq: event.ephemeral ? event.event_seq : undefined,
+    itemFreshness: freshnessForEvent(bbEvent),
+  };
+}
+
 function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
   if (item.type !== "commandExecution" && item.type !== "shellExec") {
     return null;
@@ -101,6 +200,9 @@ export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneE
     sessionId: event.notification.sessionId,
     timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
     eventSeq: event.event_seq,
+    timelineOrder: makeTimelineOrder(event, bbEvent),
+    progressSeq: event.ephemeral ? event.event_seq : undefined,
+    itemFreshness: freshnessForEvent(bbEvent),
     event: bbEvent,
     turnId: event.turn_id ?? undefined,
     entryIndex: event.entry_index ?? undefined,
@@ -172,8 +274,9 @@ function finalizeAssistantDelta(
     const existing = entries[i];
     if (existing && existing.id === targetId) {
       const next = [...entries];
+      const merged = mergeEntryMetadata(existing, event, event.notification.event, "completed");
       // 保留既有 delta event（渲染分发依赖 event.type），仅 finalize 文本与流式标记。
-      next[i] = { ...existing, eventSeq: event.event_seq, accumulatedText: text, isStreaming: false };
+      next[i] = { ...merged, accumulatedText: text, isStreaming: false };
       return next;
     }
   }
@@ -182,7 +285,7 @@ function finalizeAssistantDelta(
   const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
   return [
     ...entries,
-    {
+    withEntryMetadata({
       id: targetId,
       sessionId: event.notification.sessionId,
       timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
@@ -192,7 +295,7 @@ function finalizeAssistantDelta(
       entryIndex: event.entry_index ?? undefined,
       accumulatedText: text,
       isStreaming: false,
-    },
+    }, event, event.notification.event),
   ];
 }
 
@@ -211,7 +314,12 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated, isStreaming: true };
+        next[i] = {
+          ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+          event: bbEvent,
+          accumulatedText: accumulated,
+          isStreaming: true,
+        };
         return next;
       }
     }
@@ -228,7 +336,11 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
+        next[i] = {
+          ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+          event: bbEvent,
+          accumulatedText: accumulated,
+        };
         return next;
       }
     }
@@ -245,7 +357,11 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: accumulated };
+        next[i] = {
+          ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+          event: bbEvent,
+          accumulatedText: accumulated,
+        };
         return next;
       }
     }
@@ -254,11 +370,15 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
 
   if (bbEvent.type === "item_started" || bbEvent.type === "item_updated") {
     const entryId = buildEntryId(event, bbEvent);
+    const incomingFreshness = freshnessForEvent(bbEvent);
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent };
+        const merged = mergeEntryMetadata(existing, event, bbEvent, incomingFreshness);
+        next[i] = incomingFreshness && isFreshEnough(existing, incomingFreshness)
+          ? { ...merged, event: bbEvent }
+          : merged;
         return next;
       }
     }
@@ -290,9 +410,9 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       const existing = prev[i];
       if (existing && existing.id === entryId) {
         const next = [...prev];
+        const merged = mergeEntryMetadata(existing, event, bbEvent, "completed");
         next[i] = {
-          ...existing,
-          eventSeq: event.event_seq,
+          ...merged,
           event: bbEvent,
           accumulatedText: finalCommandOutput ?? existing.accumulatedText,
           isStreaming: false,
@@ -318,12 +438,18 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === targetId) {
+        if (existing.itemFreshness === "completed") {
+          return prev;
+        }
         const deltaText = bbEvent.type === "mcp_tool_call_progress"
           ? bbEvent.payload.message
           : bbEvent.payload.delta;
         const accumulated = (existing.accumulatedText ?? "") + deltaText;
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, accumulatedText: accumulated };
+        next[i] = {
+          ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
+          accumulatedText: accumulated,
+        };
         return next;
       }
     }
@@ -357,7 +483,11 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       const existing = prev[i];
       if (existing && existing.id === entryId) {
         const next = [...prev];
-        next[i] = { ...existing, eventSeq: event.event_seq, event: bbEvent, accumulatedText: text };
+        next[i] = {
+          ...mergeEntryMetadata(existing, event, bbEvent, undefined),
+          event: bbEvent,
+          accumulatedText: text,
+        };
         return next;
       }
     }
@@ -397,6 +527,28 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   return [...prev, makeDisplayEntry(event, bbEvent)];
 }
 
+function orderIncomingEvents(incomingEvents: SessionEventEnvelope[]): SessionEventEnvelope[] {
+  const durableEvents = incomingEvents
+    .filter((event) => !event.ephemeral)
+    .sort((a, b) => a.event_seq - b.event_seq);
+  const ephemeralEvents = incomingEvents
+    .filter((event) => event.ephemeral)
+    .sort((a, b) => a.event_seq - b.event_seq);
+  let durableIndex = 0;
+  let ephemeralIndex = 0;
+
+  return incomingEvents.map((event) => {
+    if (event.ephemeral) {
+      const ordered = ephemeralEvents[ephemeralIndex];
+      ephemeralIndex += 1;
+      return ordered ?? event;
+    }
+    const ordered = durableEvents[durableIndex];
+    durableIndex += 1;
+    return ordered ?? event;
+  });
+}
+
 export function reduceStreamState(
   prev: SessionStreamState,
   incomingEvents: SessionEventEnvelope[],
@@ -411,26 +563,18 @@ export function reduceStreamState(
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
-  // ephemeral 事件：live-only，仅作用于 entries，不进 rawEvents、不动 lastAppliedSeq。
-  // event_seq 字段承载 ephemeral_seq（独立于 durable 序列），按它升序应用 + 去重：
-  // seq<=lastEphemeralSeq 已应用 → skip（重连/重叠场景）；否则 apply 并推进 lastEphemeralSeq。
-  // 必须按 ephemeral_seq 升序应用，保证同一 turn 的累积 delta 顺序正确。
-  const ephemeralEvents = incomingEvents
-    .filter((event) => event.ephemeral)
-    .sort((a, b) => a.event_seq - b.event_seq);
-  for (const event of ephemeralEvents) {
-    if (event.event_seq <= lastEphemeralSeq) {
+  // 同一 lane 内分别按各自 seq 去重/排序，但保留 incoming batch 的 durable/ephemeral lane 位置。
+  // 这样 ephemeral_seq 不会和 durable event_seq 共轴比较，也不会把整批 progress 先于 durable lifecycle 应用。
+  for (const event of orderIncomingEvents(incomingEvents)) {
+    if (event.ephemeral) {
+      if (event.event_seq <= lastEphemeralSeq) {
+        continue;
+      }
+      entries = applyEventToEntries(entries, event);
+      lastEphemeralSeq = event.event_seq;
       continue;
     }
-    entries = applyEventToEntries(entries, event);
-    lastEphemeralSeq = event.event_seq;
-  }
 
-  const normalized = incomingEvents
-    .filter((event) => !event.ephemeral)
-    .sort((a, b) => a.event_seq - b.event_seq);
-
-  for (const event of normalized) {
     if (event.event_seq <= lastAppliedSeq) {
       continue;
     }

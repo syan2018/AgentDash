@@ -4,7 +4,7 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
+ * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
  *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
@@ -104,6 +104,7 @@ export function SingleEntry({
     }
 
     case "item_started":
+    case "item_updated":
     case "item_completed": {
       const threadItem = event.payload.item;
       const card = renderToolCallCard(threadItem, {
@@ -207,18 +208,27 @@ function AggregatedToolGroupEntry({
 }) {
   const { entries } = group;
   const hasPendingApproval = entries.some((e) => e.isPendingApproval);
+  const hasRunningTool = entries.some((entry) => {
+    const item = extractThreadItem(entry);
+    return item ? getThreadItemStatus(item) === "inProgress" : false;
+  });
   // 默认展开；有后续 agent 消息后才折叠
-  const [expanded, setExpanded] = useState(!followedByMessage || hasPendingApproval);
+  const [expanded, setExpanded] = useState(!followedByMessage || hasPendingApproval || hasRunningTool);
   const [prevFollowed, setPrevFollowed] = useState(followedByMessage);
   const [prevPending, setPrevPending] = useState(hasPendingApproval);
+  const [prevRunning, setPrevRunning] = useState(hasRunningTool);
 
   if (hasPendingApproval !== prevPending) {
     setPrevPending(hasPendingApproval);
     if (hasPendingApproval) setExpanded(true);
   }
+  if (hasRunningTool !== prevRunning) {
+    setPrevRunning(hasRunningTool);
+    if (hasRunningTool) setExpanded(true);
+  }
   if (followedByMessage !== prevFollowed) {
     setPrevFollowed(followedByMessage);
-    if (followedByMessage && !hasPendingApproval) setExpanded(false);
+    if (followedByMessage && !hasPendingApproval && !hasRunningTool) setExpanded(false);
   }
   const summary = buildKindSummary(entries);
 
@@ -260,7 +270,7 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
 
 function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").AgentDashThreadItem | null {
   const evt = entry.event;
-  if (evt.type === "item_started" || evt.type === "item_completed") {
+  if (evt.type === "item_started" || evt.type === "item_updated" || evt.type === "item_completed") {
     return evt.payload.item;
   }
   return null;
@@ -269,6 +279,7 @@ function extractThreadItem(entry: SessionDisplayEntry): import("../../../generat
 function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   const counts = new Map<ThreadItemKind, number>();
   let pending = 0;
+  let running = 0;
   let failed = 0;
 
   for (const entry of entries) {
@@ -278,7 +289,9 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
       counts.set("other", (counts.get("other") ?? 0) + 1);
       continue;
     }
-    if (getThreadItemStatus(item) === "failed") failed += 1;
+    const status = getThreadItemStatus(item);
+    if (status === "inProgress") running += 1;
+    if (status === "failed") failed += 1;
     const meta = resolveKind(item);
     counts.set(meta.kind, (counts.get(meta.kind) ?? 0) + 1);
   }
@@ -291,6 +304,7 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
     const meta = KIND_REGISTRY[kind];
     parts.push(`${meta.summaryVerb} ${n} ${meta.summaryUnit}`);
   }
+  if (running > 0) parts.push(`${running} 运行中`);
   if (pending > 0) parts.push(`${pending} 待审批`);
   if (failed > 0) parts.push(`${failed} 失败`);
 

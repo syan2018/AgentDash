@@ -3,7 +3,7 @@
   "name": "session-event-stream-agentrun-list-source-of-truth",
   "title": "收束 Session 前端事件流与 AgentRun 列表事实源",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -5,12 +5,15 @@
  * 按 subject 分组聚合；列表 keyset 游标分页，「加载更多」按需续拉。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchProjectAgentRuns } from "../../services/lifecycle";
+import { useCallback, useMemo, useState } from "react";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
+import {
+  useAgentRunListProjection,
+  useAgentRunListProjectionStore,
+} from "./agent-run-list-projection-store";
 import {
   groupAgentRunsBySubject,
   groupKindLabel,
@@ -399,54 +402,21 @@ export function ActiveAgentRunList({
   selectedAgentId,
   onOpenAgentRun,
 }: ActiveAgentRunListProps) {
-  const [agentRuns, setAgentRuns] = useState<AgentRunWorkspaceListEntry[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isFetching, setIsFetching] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const projection = useAgentRunListProjection(projectId, PAGE_SIZE);
+  const loadMoreProjectAgentRuns = useAgentRunListProjectionStore((state) => state.loadMore);
+  const agentRuns = projection.entries;
+  const nextCursor = projection.next_cursor;
+  const isFetching = projection.status === "loading";
+  const isLoadingMore = projection.is_loading_more;
+  const error = projection.error;
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilterGroup>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      setIsFetching(true);
-      try {
-        const view = await fetchProjectAgentRuns(projectId, { limit: PAGE_SIZE });
-        if (!cancelled) {
-          setAgentRuns(view.agent_runs);
-          setNextCursor(view.next_cursor ?? null);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "AgentRun 列表加载失败");
-        }
-      } finally {
-        if (!cancelled) setIsFetching(false);
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
   const loadMore = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;
-    setIsLoadingMore(true);
-    try {
-      const view = await fetchProjectAgentRuns(projectId, { limit: PAGE_SIZE, cursor: nextCursor });
-      setAgentRuns((prev) => [...prev, ...view.agent_runs]);
-      setNextCursor(view.next_cursor ?? null);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载更多失败");
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [projectId, nextCursor, isLoadingMore]);
+    await loadMoreProjectAgentRuns(projectId, PAGE_SIZE);
+  }, [isLoadingMore, loadMoreProjectAgentRuns, nextCursor, projectId]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((prev) => {

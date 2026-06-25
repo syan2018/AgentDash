@@ -53,6 +53,31 @@ function mkCmdEntry(
   return asEntry(id, event, { isPendingApproval: opts?.isPendingApproval });
 }
 
+function mkCmdUpdatedEntry(
+  id: string,
+  command: string,
+  opts?: {
+    isPendingApproval?: boolean;
+    status?: "inProgress" | "completed" | "failed" | "declined";
+    output?: string | null;
+  },
+): SessionDisplayEntry {
+  const started = mkCmdEntry(id, command, opts);
+  if (started.event.type !== "item_started") {
+    throw new Error("expected command helper to create item_started");
+  }
+  const event: BackboneEvent = {
+    type: "item_updated",
+    payload: {
+      item: started.event.payload.item,
+      threadId: "t1",
+      turnId: "u1",
+      updatedAtMs: 1,
+    },
+  };
+  return { ...started, event };
+}
+
 function mkFileChangeEntry(id: string, path: string): SessionDisplayEntry {
   const item = {
     type: "fileChange",
@@ -641,16 +666,31 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
   });
 
-  it("T21: in-progress tools stay outside the burst until they reach a terminal state", () => {
+  it("T21: in-progress tools enter the burst immediately and keep their live state", () => {
     const activeFrame = aggregateEntries([
       mkCmdEntry("c1", "ls"),
       mkCmdEntry("c2", "pwd"),
-      mkCmdEntry("c3", "sleep 1", { status: "inProgress" }),
+      mkCmdEntry("c3", "sleep 1", {
+        status: "inProgress",
+        isPendingApproval: true,
+        output: "running output",
+      }),
     ]);
-    expect(activeFrame).toHaveLength(2);
+    expect(activeFrame).toHaveLength(1);
     expect(isToolGroup(activeFrame[0])).toBe(true);
-    expect((activeFrame[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
-    expect((activeFrame[1] as SessionDisplayEntry).id).toBe("c3");
+    const activeGroup = activeFrame[0] as AggregatedEntryGroup;
+    expect(activeGroup.entries.map((entry) => entry.id)).toEqual(["c1", "c2", "c3"]);
+    const runningEntry = activeGroup.entries[2]!;
+    expect(runningEntry.isPendingApproval).toBe(true);
+    if (runningEntry.event.type !== "item_started") {
+      throw new Error("expected running entry to be an item_started event");
+    }
+    const runningItem = runningEntry.event.payload.item;
+    if (runningItem.type !== "commandExecution") {
+      throw new Error("expected running entry to be a commandExecution item");
+    }
+    expect(runningItem.status).toBe("inProgress");
+    expect(runningItem.aggregatedOutput).toBe("running output");
 
     const completedFrame = aggregateEntries([
       mkCmdEntry("c1", "ls"),
@@ -666,20 +706,54 @@ describe("aggregateEntries — tool burst", () => {
     ]);
   });
 
+  it("T21b: item_updated tool entries also enter the burst after live progress wins freshness", () => {
+    const activeFrame = aggregateEntries([
+      mkCmdEntry("c1", "ls"),
+      mkCmdUpdatedEntry("c2", "sleep 1", {
+        status: "inProgress",
+        isPendingApproval: true,
+        output: "running from item_updated",
+      }),
+    ]);
+
+    expect(activeFrame).toHaveLength(1);
+    expect(isToolGroup(activeFrame[0])).toBe(true);
+    const activeGroup = activeFrame[0] as AggregatedEntryGroup;
+    expect(activeGroup.entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+    const runningEntry = activeGroup.entries[1]!;
+    expect(runningEntry.isPendingApproval).toBe(true);
+    expect(runningEntry.event.type).toBe("item_updated");
+    if (runningEntry.event.type !== "item_updated") {
+      throw new Error("expected running entry to be an item_updated event");
+    }
+    const runningItem = runningEntry.event.payload.item;
+    if (runningItem.type !== "commandExecution") {
+      throw new Error("expected running entry to be a commandExecution item");
+    }
+    expect(runningItem.status).toBe("inProgress");
+    expect(runningItem.aggregatedOutput).toBe("running from item_updated");
+  });
+
   it("T22: bounded output tools stay as single cards so truncation state remains visible", () => {
     const entries = [
+      mkCmdEntry("c0", "whoami"),
+      mkCmdEntry("c00", "hostname"),
       mkCmdEntry("c1", "large-output", {
         output: "[tool result truncated]\nlifecycle_path: lifecycle://session/tool-results/turn_001/tool_001/result.txt\npolicy: head_tail\n\npreview",
       }),
       mkCmdEntry("c2", "pwd"),
+      mkCmdEntry("c3", "date"),
     ];
 
     const result = aggregateEntries(entries);
 
-    expect(result).toHaveLength(2);
-    expect(isToolGroup(result[0])).toBe(false);
-    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
-    expect((result[1] as SessionDisplayEntry).id).toBe("c2");
+    expect(result).toHaveLength(3);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c0", "c00"]);
+    expect(isToolGroup(result[1])).toBe(false);
+    expect((result[1] as SessionDisplayEntry).id).toBe("c1");
+    expect(isToolGroup(result[2])).toBe(true);
+    expect((result[2] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c2", "c3"]);
   });
 
   it("T23: provider retry status is only visible in verbose mode and does not create turn activity", () => {
@@ -818,5 +892,22 @@ describe("aggregateEntries — tool burst", () => {
     ]);
 
     expect(display).toHaveLength(0);
+  });
+
+  it("T33: thinking merge keeps display order instead of sorting ephemeral and durable seq together", () => {
+    const tool = mkCmdEntry("c1", "ls");
+    tool.eventSeq = 100;
+    const reasoning = mkReasoningEntryWithText("r1", "分析中");
+    reasoning.eventSeq = 1;
+    const agent = mkMessageEntry("m1", "正式输出");
+    agent.eventSeq = 101;
+
+    const display = mergeThinkingIntoDisplayItems([tool, reasoning, agent], []);
+
+    expect(display).toHaveLength(3);
+    expect((display[0] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[1])).toBe(true);
+    expect(((display[1] as AggregatedThinkingGroup).entries[0] as SessionDisplayEntry).id).toBe("r1");
+    expect((display[2] as SessionDisplayEntry).id).toBe("m1");
   });
 });

@@ -89,7 +89,11 @@ function sessionRewound(event_seq: number, stableEventSeq: number): SessionEvent
   });
 }
 
-function commandItem(id: string, aggregatedOutput: string | null): Extract<ThreadItem, { type: "commandExecution" }> {
+function commandItem(
+  id: string,
+  aggregatedOutput: string | null,
+  status: Extract<ThreadItem, { type: "commandExecution" }>["status"] = "completed",
+): Extract<ThreadItem, { type: "commandExecution" }> {
   return {
     type: "commandExecution",
     id,
@@ -97,10 +101,10 @@ function commandItem(id: string, aggregatedOutput: string | null): Extract<Threa
     cwd: "/tmp",
     processId: null,
     source: "agent",
-    status: "completed",
+    status,
     commandActions: [],
     aggregatedOutput,
-    exitCode: 0,
+    exitCode: status === "completed" ? 0 : null,
     durationMs: 10,
   };
 }
@@ -140,6 +144,39 @@ function itemCompleted(event_seq: number, item: ThreadItem): SessionEventEnvelop
     type: "item_completed",
     payload: { item, threadId: "thread-1", turnId: "turn-1", completedAtMs: event_seq },
   });
+}
+
+function itemStarted(event_seq: number, item: ThreadItem): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "item_started",
+    payload: { item, threadId: "thread-1", turnId: "turn-1", startedAtMs: event_seq },
+  });
+}
+
+function itemUpdated(event_seq: number, item: ThreadItem): SessionEventEnvelope {
+  return streamEvent(event_seq, {
+    type: "item_updated",
+    payload: { item, threadId: "thread-1", turnId: "turn-1", updatedAtMs: event_seq },
+  });
+}
+
+function ephemeralItemUpdated(ephemeralSeq: number, item: ThreadItem): SessionEventEnvelope {
+  return { ...itemUpdated(ephemeralSeq, item), ephemeral: true };
+}
+
+function ephemeralCommandOutputDelta(ephemeralSeq: number, itemId: string, delta: string): SessionEventEnvelope {
+  return {
+    ...streamEvent(ephemeralSeq, {
+      type: "command_output_delta",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId,
+        delta,
+      },
+    }),
+    ephemeral: true,
+  };
 }
 
 describe("sessionStreamReducer", () => {
@@ -353,6 +390,103 @@ describe("sessionStreamReducer", () => {
       throw new Error("expected fileChange");
     }
     expect(item.changes[0]?.diff).toBe("+hello\n+world");
+  });
+
+  it("durable + ephemeral 混合批次按 lane 位置应用，同 item update 不被 started 回写", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      itemStarted(10, commandItem("cmd-1", null, "inProgress")),
+      ephemeralItemUpdated(1, commandItem("cmd-1", "newer live state", "inProgress")),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([10]);
+    expect(state.lastAppliedSeq).toBe(10);
+    expect(state.lastEphemeralSeq).toBe(1);
+    expect(state.entries[0]?.eventSeq).toBe(10);
+    expect(state.entries[0]?.progressSeq).toBe(1);
+    expect(state.entries[0]?.timelineOrder).toEqual({ kind: "durable", seq: 10 });
+    expect(state.entries[0]?.itemFreshness).toBe("progress");
+
+    const event = state.entries[0]?.event;
+    expect(event?.type).toBe("item_updated");
+    if (event?.type !== "item_updated") {
+      throw new Error("expected item_updated");
+    }
+    const item = event.payload.item;
+    if (item.type !== "commandExecution") {
+      throw new Error("expected commandExecution");
+    }
+    expect(item.aggregatedOutput).toBe("newer live state");
+  });
+
+  it("后到 durable item_started 只补 durable anchor，不覆盖同 item 更新态", () => {
+    const afterEphemeral = reduceStreamState(createInitialStreamState([]), [
+      ephemeralItemUpdated(1, commandItem("cmd-1", "newer live state", "inProgress")),
+    ]);
+    expect(afterEphemeral.entries[0]?.eventSeq).toBe(1);
+    expect(afterEphemeral.entries[0]?.timelineOrder).toEqual({
+      kind: "anchored_progress",
+      anchorId: "item:cmd-1",
+      progressSeq: 1,
+    });
+
+    const afterStarted = reduceStreamState(afterEphemeral, [
+      itemStarted(10, commandItem("cmd-1", null, "inProgress")),
+    ]);
+
+    expect(afterStarted.entries).toHaveLength(1);
+    expect(afterStarted.rawEvents.map((event) => event.event_seq)).toEqual([10]);
+    expect(afterStarted.entries[0]?.eventSeq).toBe(10);
+    expect(afterStarted.entries[0]?.progressSeq).toBe(1);
+    expect(afterStarted.entries[0]?.timelineOrder).toEqual({ kind: "durable", seq: 10 });
+    expect(afterStarted.entries[0]?.itemFreshness).toBe("progress");
+
+    const event = afterStarted.entries[0]?.event;
+    expect(event?.type).toBe("item_updated");
+    if (event?.type !== "item_updated") {
+      throw new Error("expected item_updated");
+    }
+    const item = event.payload.item;
+    if (item.type !== "commandExecution") {
+      throw new Error("expected commandExecution");
+    }
+    expect(item.aggregatedOutput).toBe("newer live state");
+  });
+
+  it("completed 终态高于后续 item_updated/progress，不被 ephemeral 污染", () => {
+    const afterCompleted = reduceStreamState(createInitialStreamState([]), [
+      itemStarted(1, commandItem("cmd-1", null, "inProgress")),
+      itemCompleted(2, commandItem("cmd-1", "final output", "completed")),
+    ]);
+
+    const afterEphemeral = reduceStreamState(afterCompleted, [
+      ephemeralItemUpdated(1, commandItem("cmd-1", "stale live state", "inProgress")),
+      ephemeralCommandOutputDelta(2, "cmd-1", "stale output"),
+    ]);
+
+    expect(afterEphemeral.entries).toHaveLength(1);
+    expect(afterEphemeral.rawEvents.map((event) => event.event_seq)).toEqual([1, 2]);
+    expect(afterEphemeral.entries[0]?.eventSeq).toBe(2);
+    expect(afterEphemeral.entries[0]?.progressSeq).toBe(1);
+    expect(afterEphemeral.entries[0]?.itemFreshness).toBe("completed");
+    expect(afterEphemeral.entries[0]?.accumulatedText).toBe("final output");
+
+    const event = afterEphemeral.entries[0]?.event;
+    expect(event?.type).toBe("item_completed");
+  });
+
+  it("ephemeral progress 更新 durable anchor 时不把 ephemeral_seq 写入 durable 时间线", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      itemStarted(20, commandItem("cmd-1", null, "inProgress")),
+      ephemeralCommandOutputDelta(1, "cmd-1", "live preview"),
+    ]);
+
+    expect(state.entries).toHaveLength(1);
+    expect(state.entries[0]?.eventSeq).toBe(20);
+    expect(state.entries[0]?.progressSeq).toBe(1);
+    expect(state.entries[0]?.timelineOrder).toEqual({ kind: "durable", seq: 20 });
+    expect(state.entries[0]?.accumulatedText).toBe("live preview");
+    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([20]);
   });
 
   it("item_updated 不属于立即 flush 的可重放谓词", () => {

@@ -5,12 +5,12 @@
  * 点击跳转到 `/agent-runs/:runId/:agentId`。
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import type { SessionExecutionStatusValue } from "../../services/session";
-import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import type { AgentRunWorkspaceListEntry } from "../../types";
+import { useAgentRunListProjection } from "../../features/agent/agent-run-list-projection-store";
 
 /** 基于 delivery 执行状态的视觉映射 */
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
@@ -35,12 +35,6 @@ function executionStatusTone(status: SessionExecutionStatusValue): StatusDotTone
   return EXECUTION_STATUS_TONE[status] ?? "muted";
 }
 
-function updatedAtTimestamp(value: string | number): number {
-  if (typeof value === "number") return value;
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
 function formatUpdatedAt(value: string | number): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -63,9 +57,6 @@ interface AgentRunShortcutEntry {
 
 /** 单行估算高度（px），用于自适应可见条数计算。需与下方 row className 的间距匹配。 */
 const ROW_HEIGHT = 40;
-
-/** 侧栏只拉首页若干条；超出的通过「查看全部」进入完整列表页。 */
-const SIDEBAR_FETCH_LIMIT = 20;
 
 interface LifecycleShortcutListProps {
   projectId: string | null;
@@ -100,44 +91,16 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const navigate = useNavigate();
   const location = useLocation();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
-  const [entries, setEntries] = useState<AgentRunWorkspaceListEntry[]>([]);
-  const [hasMoreOnServer, setHasMoreOnServer] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const projection = useAgentRunListProjection(projectId);
+  const entries = projection.entries;
+  const hasMoreOnServer = Boolean(projection.next_cursor);
+  const error = projection.error;
   const listRef = useRef<HTMLDivElement | null>(null);
   const [maxVisible, setMaxVisible] = useState(8);
 
-  useEffect(() => {
-    if (!projectId) {
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const view = await fetchProjectAgentRuns(projectId, { limit: SIDEBAR_FETCH_LIMIT });
-        if (!cancelled) {
-          setEntries(view.agent_runs);
-          setHasMoreOnServer(Boolean(view.next_cursor));
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "AgentRun 列表加载失败");
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => {
-      void load();
-    }, 30_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [projectId]);
-
   const agentRunEntries = useMemo(() => {
     if (!projectId) return [];
-    return entries
-      .map(shortcutEntryFromAgentRun)
-      .sort((a, b) => updatedAtTimestamp(b.updatedAt) - updatedAtTimestamp(a.updatedAt));
+    return entries.map(shortcutEntryFromAgentRun);
   }, [entries, projectId]);
 
   // 自适应高度：按容器实测高度计算可见条数，去掉常驻滚动条。

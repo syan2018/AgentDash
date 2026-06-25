@@ -43,12 +43,6 @@ pub enum FrameConstructionCommand {
         runtime_session_id: String,
         created_by_id: Option<String>,
     },
-    /// Compose launch-ready frame surface from owner, definition, workflow, or
-    /// existing-frame facts.
-    ComposeLaunchSurface {
-        runtime_session_id: String,
-        reason: FrameConstructionReason,
-    },
     /// Connector-accepted boundary that persists the pending launch frame or
     /// writes the accepted launch revision.
     CommitAcceptedLaunch {
@@ -61,25 +55,9 @@ impl FrameConstructionCommand {
     pub fn write_role(&self) -> AgentFrameWriteRole {
         match self {
             Self::CommitAcceptedLaunch { .. } => AgentFrameWriteRole::LaunchCommit,
-            Self::DispatchLaunchAnchor { .. } | Self::ComposeLaunchSurface { .. } => {
-                AgentFrameWriteRole::FrameConstruction
-            }
+            Self::DispatchLaunchAnchor { .. } => AgentFrameWriteRole::FrameConstruction,
         }
     }
-}
-
-/// Source classification for construction writes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FrameConstructionReason {
-    OwnerBootstrap,
-    ProjectAgent,
-    Companion,
-    ExistingSurface,
-    LifecycleAgentProcedure {
-        orchestration_id: Uuid,
-        node_path: String,
-        attempt: u32,
-    },
 }
 
 /// Runtime surface update requests. Callers provide stable changed-resource
@@ -568,13 +546,11 @@ mod tests {
         };
         assert_eq!(command.write_role(), AgentFrameWriteRole::LaunchCommit);
 
-        let command = FrameConstructionCommand::ComposeLaunchSurface {
+        let command = FrameConstructionCommand::DispatchLaunchAnchor {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
             runtime_session_id: "runtime-a".to_string(),
-            reason: FrameConstructionReason::LifecycleAgentProcedure {
-                orchestration_id: Uuid::new_v4(),
-                node_path: "review".to_string(),
-                attempt: 1,
-            },
+            created_by_id: None,
         };
         assert_eq!(command.write_role(), AgentFrameWriteRole::FrameConstruction);
     }

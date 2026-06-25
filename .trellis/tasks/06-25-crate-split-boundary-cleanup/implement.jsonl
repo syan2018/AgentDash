@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端 crate 分层、application ports 与 API bootstrap ownership 的实现约束。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "crate 依赖方向、application-ports 职责与禁止兼容壳原则。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Workflow AgentCall materialization、AgentFrame、RuntimeSessionExecutionAnchor 与 orchestration reducer 契约。"}
+{"file": ".trellis/spec/shared/index.md", "reason": "中文沟通、命名与分层错误处理的共享约束。"}
+{"file": "crates/agentdash-application-ports/src/agent_frame_materialization.rs", "reason": "删除 ComposeLaunchSurface 与 FrameConstructionReason，保留 dispatch launch anchor / launch commit 两类明确写入职责。"}
+{"file": "crates/agentdash-application-ports/src/workflow_agent_frame_materialization.rs", "reason": "新增 Workflow AgentCall 专用 frame materialization port，避免 lifecycle 再通过 FrameConstructionCommand 改写业务语义。"}
+{"file": "crates/agentdash-application-lifecycle/src/workflow/orchestration/agent_node_launcher.rs", "reason": "AgentCall launch 改为调用 WorkflowAgentNodeFrameMaterializationPort，不再保留 WorkflowNodeFrameConstructionPort wrapper。"}
+{"file": "crates/agentdash-application-agentrun/src/agent_run/frame/lifecycle_materialization.rs", "reason": "AgentRun 提供 workflow-node frame materialization adapter，负责写入 anchor frame 与 lifecycle surface seed。"}
+{"file": "crates/agentdash-application-ports/src/lifecycle_read_model.rs", "reason": "新增 shared lifecycle read-model DTO/port，让 AgentRun 消费 contract 而不复制投影规则。"}
+{"file": "crates/agentdash-application-lifecycle/src/lifecycle/run_view_builder.rs", "reason": "Lifecycle 保持 read-model projection 唯一实现，并提供 LifecycleReadModelQueryAdapter。"}
+{"file": "crates/agentdash-application-agentrun/src/agent_run/lifecycle_read_model_facade.rs", "reason": "AgentRun lifecycle read-model 仅保留 shared DTO/port facade，不再持有 projection implementation。"}
+{"file": "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs", "reason": "删除过期的 provider test module，让 lifecycle crate 的定向测试回到当前有效契约。"}

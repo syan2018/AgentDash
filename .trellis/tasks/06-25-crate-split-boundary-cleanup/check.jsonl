@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查后端分层与 composition root 边界是否保持清晰。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "检查新 port / adapter 是否符合 crate 依赖方向。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查 Workflow AgentCall materialization 与 runtime node evidence 是否符合契约。"}
+{"file": ".trellis/spec/shared/index.md", "reason": "检查命名、错误处理和文档语言要求。"}
+{"command": "rg -n \"ComposeLaunchSurface|FrameConstructionReason|WorkflowNodeFrameConstructionPort|AgentNodeFrameMaterializer|TestLifecycleFrameMaterializer\" crates", "result": "通过：已删除 stale command/reason、workflow wrapper 和旧测试替身命名；仅保留无关 workflow_label 字段。"}
+{"command": "cargo fmt --check", "result": "通过。"}
+{"command": "cargo check -p agentdash-application-ports --message-format short", "result": "通过。"}
+{"command": "cargo check -p agentdash-application-agentrun --message-format short", "result": "通过；剩余 warning 为既有 dead code。"}
+{"command": "cargo check -p agentdash-application-lifecycle --message-format short", "result": "通过；剩余 warning 为既有未读字段。"}
+{"command": "cargo check -p agentdash-application --message-format short", "result": "通过；剩余 warning 为既有 unused imports。"}
+{"command": "cargo check -p agentdash-api --message-format short", "result": "通过；剩余 warning 为既有 dead code/unused imports。"}
+{"command": "cargo test -p agentdash-application-lifecycle launcher_materializes_agent_call -- --nocapture", "result": "通过；验证 AgentCall contract materialization 和 NodeStarted 事件。"}
+{"command": "cargo test -p agentdash-application-lifecycle launcher_launches_snapshot_agent_without_procedure_repository_lookup -- --nocapture", "result": "通过；验证 snapshot AgentProcedure 不依赖 repository lookup。"}

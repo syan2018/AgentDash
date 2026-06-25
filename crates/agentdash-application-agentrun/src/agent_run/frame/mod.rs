@@ -22,7 +22,9 @@ pub use launch_envelope_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeConstructionInput,
     RoutineLaunchSource,
 };
-pub use lifecycle_materialization::AgentRunLaunchAnchorFrameConstructionAdapter;
+pub use lifecycle_materialization::{
+    AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
+};
 pub use runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace,
@@ -34,7 +36,6 @@ pub use surface_service::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
     AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
-    CanvasVisibilityReason, FrameConstructionCommand, FrameConstructionReason,
-    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
-    agent_frame_write_boundaries,
+    CanvasVisibilityReason, FrameConstructionCommand, RejectingFrameConstructionAdapter,
+    RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
 };

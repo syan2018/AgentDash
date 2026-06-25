@@ -1,4 +1,4 @@
-use crate::agent_run::lifecycle_read_model::{
+use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
 use crate::agent_run::runtime_session_boundary::SessionExecutionState;

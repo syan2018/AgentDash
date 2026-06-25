@@ -913,6 +913,7 @@ async fn load_agent_run_workspace_snapshot(
         agent_run_session_control(state.services.session_control.clone()),
         &vfs_runtime,
         &lifecycle_surface_projection,
+        state.services.lifecycle_read_model_query.as_ref(),
     );
     service
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {
@@ -942,6 +943,7 @@ async fn load_agent_run_list_projection(
         agent_run_session_control(state.services.session_control.clone()),
         &vfs_runtime,
         &lifecycle_surface_projection,
+        state.services.lifecycle_read_model_query.as_ref(),
     );
     service
         .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput { run, agent })

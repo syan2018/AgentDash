@@ -3,7 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
-use crate::agent_run::lifecycle_read_model::LifecycleSubjectAssociationView;
+use crate::agent_run::lifecycle_read_model_facade::LifecycleSubjectAssociationView;
 use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 use crate::agent_run::workspace::types::AgentRunResourceSurfaceCoordinateModel;
 use crate::error::WorkflowApplicationError;

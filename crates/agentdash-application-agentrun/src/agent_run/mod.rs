@@ -3,7 +3,7 @@ mod conversation_snapshot;
 mod delivery_runtime_selection;
 mod effective_capability;
 pub mod frame;
-pub(crate) mod lifecycle_read_model;
+pub(crate) mod lifecycle_read_model_facade;
 pub mod mailbox;
 mod mailbox_runtime_adapter;
 pub mod message_delivery;
@@ -54,12 +54,12 @@ pub use frame::{
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
     AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
-    FrameRuntimeSurface, FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
+    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, accepted_launch_commit_port, agent_frame_write_boundaries,
     hook_target_runtime_port,
 };
-pub use lifecycle_read_model::{
+pub use lifecycle_read_model_facade::{
     ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,
     AgentRunRefView as PresentationAgentRunRefView, AgentRunView as PresentationAgentRunView,
     ExecutorRunRefView as PresentationExecutorRunRefView,

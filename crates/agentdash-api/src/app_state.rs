@@ -28,7 +28,9 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAdapter;
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
+use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
 };
@@ -75,6 +77,7 @@ pub struct ServiceSet {
     pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
     pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    pub lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort>,
     pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub vfs_surface_resolver: VfsSurfaceResolver,
@@ -270,6 +273,9 @@ impl AppState {
         ));
         let runtime_surface_query_port: Arc<dyn AgentRunRuntimeSurfaceQueryPort> =
             runtime_surface_query.clone();
+        let lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort> = Arc::new(
+            LifecycleReadModelQueryAdapter::new(repos.to_lifecycle_repository_set()),
+        );
         let resource_surface_query =
             AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
                 anchor_repo: repos.execution_anchor_repo.clone(),
@@ -291,6 +297,7 @@ impl AppState {
                 session_core: agent_run_session_core(session_core.clone()),
                 session_eventing: agent_run_session_eventing(session_eventing.clone()),
                 surface_query: runtime_surface_query_port.clone(),
+                lifecycle_read_model: lifecycle_read_model_query.clone(),
             });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query.clone(),
@@ -383,6 +390,7 @@ impl AppState {
                 session_runtime_transition,
                 runtime_surface_update,
                 runtime_surface_query: runtime_surface_query_port,
+                lifecycle_read_model_query,
                 presentation_read_model_query,
                 resource_surface_query,
                 vfs_surface_resolver,

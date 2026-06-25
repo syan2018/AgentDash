@@ -4,6 +4,7 @@ use agentdash_application_agentrun::agent_run::ProjectAgentLifecycleLaunchPort;
 use agentdash_application_lifecycle::LifecycleDispatchFacade;
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
+use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
@@ -82,6 +83,7 @@ pub struct RepositorySet {
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
     pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
@@ -177,6 +179,7 @@ impl RepositorySet {
             agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
             runtime_session_creator: self.runtime_session_creator.clone(),
             agent_frame_construction: self.agent_frame_construction.clone(),
+            workflow_agent_frame_materialization: self.workflow_agent_frame_materialization.clone(),
             routine_repo: self.routine_repo.clone(),
             routine_execution_repo: self.routine_execution_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),

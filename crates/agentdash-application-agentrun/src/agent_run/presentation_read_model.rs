@@ -3,12 +3,13 @@ use std::{io, sync::Arc};
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, RuntimeSessionExecutionAnchor};
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::lifecycle_read_model::{
-    self as lifecycle_read_model, AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
+use crate::agent_run::lifecycle_read_model_facade::{
+    AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
 };
 use crate::agent_run::runtime_session_boundary::{
     ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState,
@@ -28,6 +29,7 @@ pub struct AgentRunPresentationReadModelQuery {
     session_core: SessionCoreService,
     session_eventing: SessionEventingService,
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    lifecycle_read_model: Arc<dyn LifecycleReadModelQueryPort>,
 }
 
 #[derive(Clone)]
@@ -36,6 +38,7 @@ pub struct AgentRunPresentationReadModelQueryDeps {
     pub session_core: SessionCoreService,
     pub session_eventing: SessionEventingService,
     pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    pub lifecycle_read_model: Arc<dyn LifecycleReadModelQueryPort>,
 }
 
 impl AgentRunPresentationReadModelQuery {
@@ -45,6 +48,7 @@ impl AgentRunPresentationReadModelQuery {
             session_core: deps.session_core,
             session_eventing: deps.session_eventing,
             surface_query: deps.surface_query,
+            lifecycle_read_model: deps.lifecycle_read_model,
         }
     }
 
@@ -190,7 +194,7 @@ impl AgentRunPresentationReadModelQuery {
             )) => None,
             Err(error) => return Err(error),
         };
-        let run_view = lifecycle_read_model::build_lifecycle_run_view(&self.repos, &run).await?;
+        let run_view = self.lifecycle_read_model.lifecycle_run_view(run.id).await?;
         let agent_view = run_view
             .agents
             .iter()

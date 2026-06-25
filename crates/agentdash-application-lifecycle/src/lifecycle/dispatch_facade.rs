@@ -4,6 +4,7 @@ use agentdash_application_ports::lifecycle_materialization::{
     LifecycleMaterializationError,
 };
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
+use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLaunchDispatchResult, AgentLineageRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
@@ -28,6 +29,7 @@ pub struct LifecycleDispatchFacade<'a> {
     anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
     frame_construction: &'a dyn AgentRunFrameConstructionPort,
+    workflow_agent_frame_materialization: Option<&'a dyn WorkflowAgentNodeFrameMaterializationPort>,
 }
 
 impl<'a> LifecycleDispatchFacade<'a> {
@@ -55,11 +57,20 @@ impl<'a> LifecycleDispatchFacade<'a> {
             anchor_repo,
             runtime_session_creator,
             frame_construction,
+            workflow_agent_frame_materialization: None,
         }
     }
 
+    pub fn with_workflow_agent_frame_materialization_port(
+        mut self,
+        port: &'a dyn WorkflowAgentNodeFrameMaterializationPort,
+    ) -> Self {
+        self.workflow_agent_frame_materialization = Some(port);
+        self
+    }
+
     fn service(&self) -> LifecycleDispatchService<'_> {
-        LifecycleDispatchService::new(
+        let service = LifecycleDispatchService::new(
             self.run_repo,
             self.workflow_graph_repo,
             self.agent_repo,
@@ -70,7 +81,12 @@ impl<'a> LifecycleDispatchFacade<'a> {
         )
         .with_anchor_repo(self.anchor_repo)
         .with_runtime_session_creator(self.runtime_session_creator)
-        .with_frame_construction_port(self.frame_construction)
+        .with_frame_construction_port(self.frame_construction);
+        if let Some(port) = self.workflow_agent_frame_materialization {
+            service.with_workflow_agent_frame_materialization_port(port)
+        } else {
+            service
+        }
     }
 
     pub async fn launch_agent(

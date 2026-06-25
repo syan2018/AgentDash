@@ -24,10 +24,6 @@ pub enum FrameConstructionCommand {
         runtime_session_id: String,
         created_by_id: Option<String>,
     },
-    ComposeLaunchSurface {
-        runtime_session_id: String,
-        reason: FrameConstructionReason,
-    },
     CommitAcceptedLaunch {
         runtime_session_id: String,
         turn_id: String,
@@ -38,24 +34,9 @@ impl FrameConstructionCommand {
     pub fn write_role(&self) -> AgentFrameWriteRole {
         match self {
             Self::CommitAcceptedLaunch { .. } => AgentFrameWriteRole::LaunchCommit,
-            Self::DispatchLaunchAnchor { .. } | Self::ComposeLaunchSurface { .. } => {
-                AgentFrameWriteRole::FrameConstruction
-            }
+            Self::DispatchLaunchAnchor { .. } => AgentFrameWriteRole::FrameConstruction,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FrameConstructionReason {
-    OwnerBootstrap,
-    ProjectAgent,
-    Companion,
-    ExistingSurface,
-    LifecycleAgentProcedure {
-        orchestration_id: Uuid,
-        node_path: String,
-        attempt: u32,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

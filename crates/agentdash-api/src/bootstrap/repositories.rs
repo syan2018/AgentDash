@@ -8,8 +8,12 @@ use agentdash_application::repository_set::{LifecycleProjectAgentLaunchAdapter, 
 use agentdash_application::shared_library::{
     IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
 };
-use agentdash_application_agentrun::agent_run::frame::AgentRunLaunchAnchorFrameConstructionAdapter;
-use agentdash_application_lifecycle::SessionPersistenceRuntimeSessionCreator;
+use agentdash_application_agentrun::agent_run::frame::{
+    AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
+};
+use agentdash_application_lifecycle::{
+    AgentRunLifecycleSurfaceProjector, SessionPersistenceRuntimeSessionCreator,
+};
 use agentdash_application_runtime_session::session::SessionPersistence;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
@@ -131,6 +135,14 @@ pub(crate) async fn build_repositories(
     let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
         agent_frame_repo.clone(),
     ));
+    let lifecycle_surface_projection = Arc::new(
+        AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
+    );
+    let workflow_agent_frame_materialization =
+        Arc::new(AgentRunWorkflowNodeFrameMaterializationAdapter::new(
+            agent_frame_repo.clone(),
+            lifecycle_surface_projection,
+        ));
     let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
         workflow_repo.clone(),
         workflow_repo.clone(),
@@ -185,6 +197,7 @@ pub(crate) async fn build_repositories(
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         agent_frame_construction,
+        workflow_agent_frame_materialization,
         project_agent_lifecycle_launch,
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),

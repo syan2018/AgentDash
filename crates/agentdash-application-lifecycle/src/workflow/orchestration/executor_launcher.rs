@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
-use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 #[cfg(test)]
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
+#[cfg(test)]
+use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
+use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository, ArtifactAliasPolicy,
     ExecutorRunRef, LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun,
@@ -90,7 +92,7 @@ struct OrchestrationExecutorRepositories {
     agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
-    agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
 }
 
 impl From<RepositorySet> for OrchestrationExecutorRepositories {
@@ -106,7 +108,7 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
             agent_lineage_repo: repos.agent_lineage_repo,
             execution_anchor_repo: repos.execution_anchor_repo,
             runtime_session_creator: repos.runtime_session_creator,
-            agent_frame_construction: repos.agent_frame_construction,
+            workflow_agent_frame_materialization: repos.workflow_agent_frame_materialization,
         }
     }
 }
@@ -136,7 +138,7 @@ impl OrchestrationExecutorLauncher {
             repos.agent_lineage_repo.clone(),
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
-            repos.agent_frame_construction.clone(),
+            repos.workflow_agent_frame_materialization.clone(),
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
@@ -870,39 +872,36 @@ mod launcher_drain_tests {
     }
 
     #[async_trait]
-    impl AgentRunFrameConstructionPort for InMemoryFrameRepo {
-        async fn execute_frame_construction_command(
+    impl WorkflowAgentNodeFrameMaterializationPort for InMemoryFrameRepo {
+        async fn materialize_workflow_agent_node_frame(
             &self,
-            command: agent_frame_materialization_port::FrameConstructionCommand,
+            input: workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput,
         ) -> Result<
             agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
             agent_frame_materialization_port::AgentRunFrameSurfaceError,
         > {
-            let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
-                agent_id,
-                runtime_session_id,
-                created_by_id,
-                ..
-            } = command
-            else {
-                return Err(
-                    agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
-                        message: "test frame repo only supports DispatchLaunchAnchor".to_string(),
-                    },
-                );
-            };
             let next_revision = self
                 .items
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|frame| frame.agent_id == agent_id)
+                .filter(|frame| frame.agent_id == input.agent_id)
                 .map(|frame| frame.revision)
                 .max()
                 .unwrap_or(0)
                 + 1;
-            let mut frame = AgentFrame::new_revision(agent_id, next_revision, "frame_construction");
-            frame.created_by_id = created_by_id;
+            let mut frame = AgentFrame::new_revision(
+                input.agent_id,
+                next_revision,
+                "workflow_agent_node_materialization",
+            );
+            frame.created_by_id = input.created_by_id;
+            frame.vfs_surface_json = Some(serde_json::json!({
+                "mounts": [{
+                    "id": "lifecycle",
+                    "provider": "lifecycle_vfs"
+                }]
+            }));
             self.create(&frame).await.map_err(|error| {
                 agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
                     message: error.to_string(),
@@ -914,7 +913,7 @@ mod launcher_drain_tests {
                 );
             outcome.frame_id = Some(frame.id);
             outcome.agent_id = Some(frame.agent_id);
-            outcome.runtime_session_id = Some(runtime_session_id);
+            outcome.runtime_session_id = Some(input.runtime_session_id);
             outcome.wrote_frame_revision = true;
             Ok(outcome)
         }
@@ -926,7 +925,6 @@ mod launcher_drain_tests {
         attempt: u32,
         runtime_session_id: Option<String>,
         contract_output_ports: Vec<String>,
-        workflow_label: Option<String>,
     }
 
     struct CapturingLifecycleFrameMaterializer {
@@ -944,6 +942,40 @@ mod launcher_drain_tests {
 
         fn calls(&self) -> Vec<CapturedAgentNodeComposition> {
             self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl WorkflowAgentNodeFrameMaterializationPort for CapturingLifecycleFrameMaterializer {
+        async fn materialize_workflow_agent_node_frame(
+            &self,
+            input: workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput,
+        ) -> Result<
+            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
+            agent_frame_materialization_port::AgentRunFrameSurfaceError,
+        > {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(CapturedAgentNodeComposition {
+                    node_path: input.node_path.clone(),
+                    attempt: input.attempt,
+                    runtime_session_id: Some(input.runtime_session_id.clone()),
+                    contract_output_ports: input
+                        .workflow_contract
+                        .as_ref()
+                        .map(|contract| {
+                            contract
+                                .output_ports
+                                .iter()
+                                .map(|port| port.key.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                });
+            self.frame_repo
+                .materialize_workflow_agent_node_frame(input)
+                .await
         }
     }
 
@@ -1185,9 +1217,7 @@ mod launcher_drain_tests {
         Arc<InMemoryAnchorRepo>,
     ) {
         let frame_repo = Arc::new(InMemoryFrameRepo::default());
-        let frame_materializer = Arc::new(TestLifecycleFrameMaterializer {
-            frame_repo: frame_repo.clone(),
-        });
+        let frame_materializer = frame_repo.clone();
         launcher_with_procedure_frame_repo_and_materializer(
             run_repo,
             gate_repo,
@@ -1202,15 +1232,15 @@ mod launcher_drain_tests {
         gate_repo: Arc<InMemoryGateRepo>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
         frame_repo: Arc<InMemoryFrameRepo>,
-        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
+        frame_materializer: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
     ) -> (
         OrchestrationExecutorLauncher,
         Arc<InMemoryFrameRepo>,
         Arc<InMemoryAnchorRepo>,
     ) {
         let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
-        let launcher = OrchestrationExecutorLauncher::from_repositories(
-            OrchestrationExecutorRepositories {
+        let launcher =
+            OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
                 lifecycle_run_repo: run_repo,
                 workflow_graph_repo: Arc::new(EmptyWorkflowGraphRepo),
                 agent_procedure_repo: procedure_repo,
@@ -1221,10 +1251,8 @@ mod launcher_drain_tests {
                 agent_lineage_repo: Arc::new(EmptyLineageRepo),
                 execution_anchor_repo: anchor_repo.clone(),
                 runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
-                agent_frame_construction: frame_repo.clone(),
-            },
-            frame_materializer,
-        );
+                workflow_agent_frame_materialization: frame_materializer,
+            });
         (launcher, frame_repo, anchor_repo)
     }
 
@@ -1595,10 +1623,6 @@ mod launcher_drain_tests {
         assert_eq!(
             calls[0].contract_output_ports,
             vec!["contract_result".to_string()]
-        );
-        assert_eq!(
-            calls[0].workflow_label.as_deref(),
-            Some("`agent.contract.review` (Agent Review)")
         );
 
         let latest = latest_run(&run_repo, run_id);

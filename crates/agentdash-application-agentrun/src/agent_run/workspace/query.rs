@@ -1,3 +1,4 @@
+use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
@@ -5,8 +6,8 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
-use crate::agent_run::lifecycle_read_model::{
-    LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
+use crate::agent_run::lifecycle_read_model_facade::{
+    LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
 use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
 use crate::agent_run::{
@@ -37,6 +38,7 @@ pub struct AgentRunWorkspaceQueryService<'a> {
     session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
     lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+    lifecycle_read_model: &'a dyn LifecycleReadModelQueryPort,
 }
 
 impl<'a> AgentRunWorkspaceQueryService<'a> {
@@ -46,6 +48,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
         vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
         lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
+        lifecycle_read_model: &'a dyn LifecycleReadModelQueryPort,
     ) -> Self {
         Self {
             repos,
@@ -53,6 +56,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             session_control,
             vfs_runtime,
             lifecycle_surface_projection,
+            lifecycle_read_model,
         }
     }
 
@@ -112,7 +116,9 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             }
             None => None,
         };
-        let run_view = build_lifecycle_run_view(self.repos, &run)
+        let run_view = self
+            .lifecycle_read_model
+            .lifecycle_run_view(run.id)
             .await
             .map_err(WorkflowApplicationError::from)?;
         let mut agent_view = run_view

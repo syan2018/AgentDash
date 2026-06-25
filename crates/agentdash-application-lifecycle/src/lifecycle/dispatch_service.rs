@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
+use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -12,15 +14,15 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
-    AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy, AgentRuntimeRefs,
-    AgentSource, DeliveryBindingStatus, ExecutionDispatchResult, ExecutionIntent, ExecutionSource,
-    ExecutorRunRef, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
-    LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
-    LifecycleRunStartIntent, LifecycleSubjectAssociation, OrchestrationBindingRefs,
-    OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy,
-    RuntimePolicy, RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult,
-    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph,
-    WorkflowGraphRef,
+    AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
+    AgentProcedureContract, AgentRuntimeRefs, AgentSource, DeliveryBindingStatus,
+    ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef, GatePolicy,
+    InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate,
+    LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
+    LifecycleSubjectAssociation, OrchestrationBindingRefs, OrchestrationInstance,
+    OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy, RuntimePolicy,
+    RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
+    SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
 };
 
 use super::WorkflowApplicationError;
@@ -107,6 +109,8 @@ pub struct LifecycleDispatchService<'a> {
         Option<&'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort>,
     frame_construction:
         Option<&'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort>,
+    workflow_agent_frame_materialization:
+        Option<&'a dyn workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort>,
     workflow_graph_planner: Option<&'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort>,
 }
 
@@ -151,6 +155,7 @@ pub struct WorkflowAgentNodeMaterializationRequest {
     pub orchestration_binding: OrchestrationBindingRefs,
     pub runtime_policy: RuntimePolicy,
     pub frame_created_by_id: Option<String>,
+    pub workflow_contract: Option<AgentProcedureContract>,
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +236,7 @@ impl<'a> LifecycleDispatchService<'a> {
             anchor_repo: None,
             runtime_session_creator: None,
             frame_construction: None,
+            workflow_agent_frame_materialization: None,
             workflow_graph_planner: None,
         }
     }
@@ -256,6 +262,14 @@ impl<'a> LifecycleDispatchService<'a> {
         port: &'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort,
     ) -> Self {
         self.frame_construction = Some(port);
+        self
+    }
+
+    pub fn with_workflow_agent_frame_materialization_port(
+        mut self,
+        port: &'a dyn workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort,
+    ) -> Self {
+        self.workflow_agent_frame_materialization = Some(port);
         self
     }
 
@@ -377,6 +391,22 @@ impl<'a> LifecycleDispatchService<'a> {
                 ))
             })?;
         ensure_orchestration_node_binding(&run, &request.orchestration_binding)?;
+        let orchestration = orchestration_for_binding(&run, &request.orchestration_binding)?;
+        let plan_node = orchestration
+            .plan_snapshot
+            .nodes
+            .iter()
+            .find(|node| node.node_path == request.orchestration_binding.node_path)
+            .ok_or_else(|| {
+                WorkflowApplicationError::Internal(format!(
+                    "orchestration {} 中不存在 node_path {}",
+                    request.orchestration_binding.orchestration_ref,
+                    request.orchestration_binding.node_path
+                ))
+            })?;
+        let lifecycle_identity =
+            lifecycle_surface_port::lifecycle_identity_from_orchestration(orchestration);
+        let activity = lifecycle_surface_port::activity_definition_from_plan_node(plan_node);
 
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
             .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
@@ -407,10 +437,15 @@ impl<'a> LifecycleDispatchService<'a> {
         };
 
         let frame_id = self
-            .construct_launch_anchor_frame_with_created_by(
+            .materialize_workflow_agent_node_frame(
+                &run,
                 &agent,
-                Some(runtime_session_ref),
+                runtime_session_ref,
                 request.frame_created_by_id.clone(),
+                request.orchestration_binding.clone(),
+                lifecycle_identity.key,
+                activity,
+                request.workflow_contract.clone(),
             )
             .await?;
 
@@ -873,6 +908,52 @@ impl<'a> LifecycleDispatchService<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn materialize_workflow_agent_node_frame(
+        &self,
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+        runtime_session_ref: Uuid,
+        created_by_id: Option<String>,
+        orchestration_binding: OrchestrationBindingRefs,
+        lifecycle_key: String,
+        activity: agentdash_domain::workflow::ActivityDefinition,
+        workflow_contract: Option<AgentProcedureContract>,
+    ) -> Result<Uuid, WorkflowApplicationError> {
+        let frame_materialization = self.workflow_agent_frame_materialization.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "Workflow AgentCall materialization 缺少 WorkflowAgentNodeFrameMaterializationPort"
+                    .to_string(),
+            )
+        })?;
+        let outcome = frame_materialization
+            .materialize_workflow_agent_node_frame(
+                workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput {
+                    run_id: run.id,
+                    project_id: run.project_id,
+                    agent_id: agent.id,
+                    runtime_session_id: runtime_session_ref.to_string(),
+                    created_by_id,
+                    orchestration_id: orchestration_binding.orchestration_ref,
+                    node_path: orchestration_binding.node_path,
+                    attempt: orchestration_binding.attempt,
+                    lifecycle_key,
+                    activity,
+                    workflow_contract,
+                    base_vfs: None,
+                    inherited_executor_config: None,
+                    ready_port_keys: Default::default(),
+                },
+            )
+            .await
+            .map_err(workflow_error_from_agent_frame_materialization_error)?;
+        outcome.frame_id.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "WorkflowAgentNodeFrameMaterializationPort 未返回 frame_id".to_string(),
+            )
+        })
+    }
+
     async fn resolve_or_create_runtime_session(
         &self,
         plan: &DispatchPlan,
@@ -1015,16 +1096,7 @@ fn ensure_orchestration_node_binding(
     run: &LifecycleRun,
     binding: &OrchestrationBindingRefs,
 ) -> Result<(), WorkflowApplicationError> {
-    let orchestration = run
-        .orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == binding.orchestration_ref)
-        .ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "LifecycleRun {} 中不存在 orchestration {}",
-                run.id, binding.orchestration_ref
-            ))
-        })?;
+    let orchestration = orchestration_for_binding(run, binding)?;
     let exists = orchestration
         .node_tree
         .iter()
@@ -1037,6 +1109,21 @@ fn ensure_orchestration_node_binding(
             binding.orchestration_ref, binding.node_path, binding.attempt
         )))
     }
+}
+
+fn orchestration_for_binding<'a>(
+    run: &'a LifecycleRun,
+    binding: &OrchestrationBindingRefs,
+) -> Result<&'a OrchestrationInstance, WorkflowApplicationError> {
+    run.orchestrations
+        .iter()
+        .find(|item| item.orchestration_id == binding.orchestration_ref)
+        .ok_or_else(|| {
+            WorkflowApplicationError::Internal(format!(
+                "LifecycleRun {} 中不存在 orchestration {}",
+                run.id, binding.orchestration_ref
+            ))
+        })
 }
 
 fn orchestration_role_for_dispatch(plan: &DispatchPlan) -> &str {

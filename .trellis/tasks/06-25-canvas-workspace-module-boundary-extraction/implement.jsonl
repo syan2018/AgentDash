@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端 crate 分层原则"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "workspace crate 布局与依赖方向"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 代码质量与测试约定"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Canvas module id / presentation URI 跨层契约"}
+{"file": ".trellis/tasks/06-25-canvas-interaction-diagnostics-module-boundary/design.md", "reason": "父任务要求先做 Canvas/Workspace Module 边界"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/design.md", "reason": "Canvas identity 与 VFS/runtime binding 收束方向"}

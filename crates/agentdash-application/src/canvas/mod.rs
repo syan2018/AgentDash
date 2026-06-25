@@ -11,8 +11,9 @@ mod visibility;
 
 pub use agentdash_domain::canvas::canvas_access_projection;
 pub use identity::{
-    CANVAS_MODULE_ID_PREFIX, CANVAS_MOUNT_ID_PREFIX, CANVAS_PRESENTATION_SCHEME,
-    CANVAS_PROVIDER_ROOT_SCHEME, canvas_module_id, canvas_presentation_uri,
+    CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_BIND_DATA_ORIGIN, CANVAS_MODULE_ID_PREFIX,
+    CANVAS_MOUNT_ID_PREFIX, CANVAS_PRESENTATION_SCHEME, CANVAS_PREVIEW_VIEW_KEY,
+    CANVAS_PROVIDER_ROOT_SCHEME, CANVAS_RENDERER_KIND, canvas_module_id, canvas_presentation_uri,
     canvas_provider_root_ref, canvas_vfs_mount_id, canvas_vfs_uri, derive_canvas_mount_id,
     normalize_canvas_mount_id, parse_canvas_module_id,
 };

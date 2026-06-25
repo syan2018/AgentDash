@@ -4,6 +4,7 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
+use agentdash_canvas::{canvas_module_id, canvas_provider_root_ref};
 use agentdash_domain::canvas::{
     Canvas, CanvasAccessProjection, CanvasScope, canvas_access_projection,
 };
@@ -25,7 +26,6 @@ use crate::agent_run::{
 use agentdash_application_vfs::VfsService;
 
 const PROVIDER_CANVAS_FS: &str = "canvas_fs";
-const CANVAS_PROVIDER_ROOT_SCHEME: &str = "canvas-root";
 
 #[derive(Clone)]
 pub struct AgentRunRuntimeSurfaceUpdateService {
@@ -116,7 +116,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         )
         .await;
 
-        let workspace_module_ref = format!("canvas:{}", canvas.mount_id);
+        let workspace_module_ref = canvas_module_id(&canvas.mount_id);
         let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
             .with_created_by("canvas_expose", Some(current_frame.id.to_string()))
@@ -310,7 +310,7 @@ fn build_canvas_mount(canvas: &Canvas, access: CanvasMountAccess) -> Mount {
         id: canvas.mount_id.clone(),
         provider: PROVIDER_CANVAS_FS.to_string(),
         backend_id: String::new(),
-        root_ref: format!("{CANVAS_PROVIDER_ROOT_SCHEME}://{}", canvas.id),
+        root_ref: canvas_provider_root_ref(canvas.id),
         capabilities,
         default_write: false,
         display_name: if canvas.title.trim().is_empty() {
@@ -434,7 +434,7 @@ mod tests {
         frame.execution_profile_json =
             Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
         frame.append_visible_canvas_mount(&canvas.mount_id);
-        frame.append_visible_workspace_module_ref(&format!("canvas:{}", canvas.mount_id));
+        frame.append_visible_workspace_module_ref(&canvas_module_id(&canvas.mount_id));
 
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
         frame_repo.create(&frame).await.expect("frame should save");

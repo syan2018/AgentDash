@@ -1,0 +1,18 @@
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "跨层事实源、事件流和 runtime projection 总入口"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "用户输入、PlatformEvent 与 Backbone session stream 事实边界"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust DTO、TypeScript generated contract 和 Canvas/WorkspacePanel 跨层契约"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Canvas tab、extension canvas_panel、workspace runtime surface 前端边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO/generated contract 消费和字段命名约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Canvas/AgentRun workspace 状态接入前端 store 的约束"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端 crate 分层、application/domain/API 边界入口"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "评估新增 Canvas/Workspace Module crate 的目录与依赖方向"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession、AgentFrame、runtime surface 与 AgentRun 边界"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Canvas submit-to-Agent 复用 AgentRun Mailbox 的核心契约"}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Canvas observation 如需 session stream/event 展示时的 NDJSON 约束"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "区分 Canvas runtime action invoke 与 Agent 输入提交"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Canvas VFS mount、resource surface 与 provider 边界"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Canvas asset/blob、surface_ref、mount path 访问契约"}
+{"file": ".trellis/tasks/06-23-agentframe-canvas-projection-convergence/design.md", "reason": "当前 AgentFrame 与 Canvas projection 收束方向"}
+{"file": ".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/design.md", "reason": "runtime surface update command boundary 与 Canvas visibility/binding 方向"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/design.md", "reason": "Canvas identity、runtime resource 和 contract boundary 方向"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/research/runtime-bridge-binding-unification.md", "reason": "Canvas runtime bridge、binding、asset 现状研究"}

@@ -1,0 +1,28 @@
+{
+  "id": "canvas-interaction-diagnostics-module-boundary",
+  "name": "canvas-interaction-diagnostics-module-boundary",
+  "title": "Canvas 交互诊断与模块边界预研",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-06-25",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-25-canvas-workspace-module-boundary-extraction"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

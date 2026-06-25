@@ -11,6 +11,7 @@ crates/
 ├── agentdash-api/               # Interface Layer — HTTP 路由、DTO、中间件
 ├── agentdash-application/       # Application Layer — 用例编排
 ├── agentdash-application-ports/ # Application Boundary Ports — API/local 实现、application 消费的纯端口
+├── agentdash-canvas/            # Canvas Boundary — identity、module ref、URI 与 key helper
 ├── agentdash-domain/            # Domain Layer — 实体、值对象、Repository 接口
 ├── agentdash-infrastructure/    # Infrastructure Layer — PostgreSQL/SQLite 持久化
 ├── agentdash-executor/          # Infrastructure Layer — 连接器、LLM Bridge
@@ -52,6 +53,7 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 | **Interface** | `agentdash-api` | HTTP 路由、DTO、中间件、错误映射 | application, domain |
 | **Application** | `agentdash-application` | 用例编排：session / context / task / VFS / story | domain, spi, executor |
 | **Application Ports** | `agentdash-application-ports` | application 边界 port、transport trait、轻量 DTO/error | domain, relay, agent-protocol |
+| **Canvas Boundary** | `agentdash-canvas` | Canvas identity、Workspace Module ref、presentation/VFS/provider root URI 与 operation/view key 常量，供多个 application crate 共享同一业务引用 | 轻量通用库 |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部业务库 |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | 持久化实现、连接器、WebSocket 中继 | domain |
 | **Agent Types** | `agentdash-agent-types` | 跨层共享类型（Message/Tool/Context/Delegate） | serde, async-trait |

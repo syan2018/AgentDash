@@ -38,8 +38,9 @@ use crate::agent_run::{
 };
 use crate::canvas::runtime_surface::submit_canvas_runtime_surface_update;
 use crate::canvas::{
-    BindCanvasDataParams, CanvasMutationInput, StartCanvasParams, build_personal_canvas,
-    canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id, normalize_canvas_mount_id,
+    BindCanvasDataParams, CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_RENDERER_KIND,
+    CanvasMutationInput, StartCanvasParams, build_personal_canvas, canvas_module_id,
+    canvas_presentation_uri, canvas_vfs_mount_id, normalize_canvas_mount_id,
     request_existing_canvas_visibility_for_runtime, upsert_canvas_binding,
 };
 use crate::runtime_tools::SharedSessionToolServicesHandle;
@@ -1105,7 +1106,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
         let (module, operation) = match locate_operation(&modules, module_id, operation_key) {
             Ok(found) => found,
             Err(result) => {
-                if operation_key == "canvas.bind_data"
+                if operation_key == CANVAS_BIND_DATA_OPERATION_KEY
                     && let Some(module) = modules.iter().find(|module| {
                         module.summary.kind == WorkspaceModuleKind::Canvas
                             && module.summary.module_id == module_id
@@ -1436,7 +1437,7 @@ impl AgentTool for WorkspaceModulePresentTool {
                 }
             };
 
-        if presentation.renderer_kind == "canvas" {
+        if presentation.renderer_kind == CANVAS_RENDERER_KIND {
             request_existing_canvas_visibility_for_runtime(
                 self.canvas_repo.as_ref(),
                 self.project_id,

@@ -27,7 +27,9 @@ use agentdash_domain::shared_library::{
 };
 
 use crate::canvas::{
-    CanvasWithAccess, canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id,
+    CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_BIND_DATA_ORIGIN, CANVAS_MODULE_ID_PREFIX,
+    CANVAS_PRESENTATION_SCHEME, CANVAS_PREVIEW_VIEW_KEY, CANVAS_RENDERER_KIND, CanvasWithAccess,
+    canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id,
 };
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use agentdash_domain::backend::RuntimeBackendAnchor;
@@ -170,7 +172,7 @@ fn json_value_type_name(value: &serde_json::Value) -> &'static str {
 
 /// module_id 前缀约定。
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
-pub const MODULE_ID_CANVAS_PREFIX: &str = "canvas:";
+pub const MODULE_ID_CANVAS_PREFIX: &str = CANVAS_MODULE_ID_PREFIX;
 pub const MODULE_ID_BUILTIN_PREFIX: &str = "builtin:";
 
 /// 聚合 enabled extension + visible canvas 为单一 module descriptor 列表。
@@ -418,10 +420,10 @@ fn build_canvas_module(
 
     // entry/files → ui_entry(canvas)
     let ui_entries = vec![WorkspaceModuleUiEntry {
-        view_key: "preview".to_string(),
-        renderer_kind: "canvas".to_string(),
+        view_key: CANVAS_PREVIEW_VIEW_KEY.to_string(),
+        renderer_kind: CANVAS_RENDERER_KIND.to_string(),
         presentation_uri: Some(canvas_presentation_uri(&canvas.mount_id)),
-        uri_scheme: Some("canvas".to_string()),
+        uri_scheme: Some(CANVAS_PRESENTATION_SCHEME.to_string()),
         title: canvas.title.clone(),
     }];
 
@@ -453,8 +455,8 @@ fn build_canvas_module(
 
 fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
     WorkspaceModuleOperation {
-        operation_key: "canvas.bind_data".to_string(),
-        origin: "host_canvas".to_string(),
+        operation_key: CANVAS_BIND_DATA_OPERATION_KEY.to_string(),
+        origin: CANVAS_BIND_DATA_ORIGIN.to_string(),
         description: "Declare or update a data binding for this Canvas instance.".to_string(),
         input_schema: Some(serde_json::json!({
             "type": "object",
@@ -519,7 +521,7 @@ fn runtime_action_origin(_kind: &ExtensionRuntimeActionKind) -> &'static str {
 fn tab_renderer_kind(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &'static str {
     match renderer {
         ExtensionWorkspaceTabRendererDeclaration::Webview { .. } => "webview",
-        ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { .. } => "canvas",
+        ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { .. } => CANVAS_RENDERER_KIND,
     }
 }
 

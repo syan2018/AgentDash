@@ -1323,3 +1323,43 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: 后端 application 大模块 crate 拆分
+
+**Date**: 2026-06-26
+**Task**: 后端 application 大模块 crate 拆分
+**Branch**: `codex/lifecycle-builtin-skill-discovery-fix`
+
+### Summary
+
+规划并实施 workflow/hooks/shared-library application crate 拆分，完成 ports contract、module move、integration wiring、check gates、spec 更新并创建 draft PR #74。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3d019d61` | (see git log) |
+| `4abb9a3d` | (see git log) |
+| `9aa2ba29` | (see git log) |
+| `6030fd94` | (see git log) |
+| `59213740` | (see git log) |
+| `29645aa6` | (see git log) |
+| `0b2db9b7` | (see git log) |
+| `0a3e2f8a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

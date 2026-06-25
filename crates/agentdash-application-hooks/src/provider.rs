@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::story::StoryRepository;
+use agentdash_application_ports::hook_workflow_projection::{
+    HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
+    HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
+};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentProcedureRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, RuntimeNodeStatus,
-    RuntimeSessionExecutionAnchorRepository, build_effective_contract,
-    build_effective_contract_from_contract,
+    RuntimeNodeStatus, build_effective_contract, build_effective_contract_from_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -20,65 +18,39 @@ use async_trait::async_trait;
 use agentdash_spi::ExecutionHookProvider;
 
 use super::active_workflow_contribution::build_active_workflow_step_fragments;
-use super::active_workflow_snapshot::ActiveWorkflowSnapshotBuilder;
-use super::owner_resolver::SessionOwnerResolver;
 use super::presets::builtin_preset_scripts;
 use super::rules::*;
 use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
 use super::{dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source};
-use crate::ApplicationError;
+use crate::HookApplicationError;
 
-/// Facade：组合 SessionOwnerResolver + ActiveWorkflowSnapshotBuilder + HookScriptEngine，
-/// 对外仍实现 ExecutionHookProvider trait。
+/// Facade：组合 workflow projection port + HookScriptEngine，
+/// 对外实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
-    pub(super) inline_file_repo: Arc<dyn InlineFileRepository>,
-    pub(super) owner_resolver: SessionOwnerResolver,
-    pub(super) workflow_builder: ActiveWorkflowSnapshotBuilder,
+    pub(super) workflow_projection: Arc<dyn HookWorkflowProjectionPort>,
     pub(super) script_engine: HookScriptEngine,
 }
 
-pub struct AppExecutionHookProviderRepos {
-    pub project_repo: Arc<dyn ProjectRepository>,
-    pub story_repo: Arc<dyn StoryRepository>,
-    pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-    pub inline_file_repo: Arc<dyn InlineFileRepository>,
+pub struct AppExecutionHookProviderDeps {
+    pub workflow_projection: Arc<dyn HookWorkflowProjectionPort>,
+    pub script_evaluator: Arc<dyn HookScriptEvaluator>,
 }
 
 impl AppExecutionHookProvider {
     /// 构造 Facade。
     ///
-    /// `script_evaluator_factory` 由 composition root 提供，接收内建 preset
-    /// 脚本（key → 源码）并返回具体脚本引擎实现（rhai 实现下沉 infrastructure）。
-    pub fn new<F>(repos: AppExecutionHookProviderRepos, script_evaluator_factory: F) -> Self
-    where
-        F: FnOnce(&[(&str, &str)]) -> Arc<dyn HookScriptEvaluator>,
-    {
-        let preset_scripts = builtin_preset_scripts();
-        let evaluator = script_evaluator_factory(&preset_scripts);
-        let lifecycle_run_repo = repos.lifecycle_run_repo.clone();
+    /// `script_evaluator` 由 composition root 提供，具体 Rhai 实现下沉 infrastructure。
+    pub fn new(deps: AppExecutionHookProviderDeps) -> Self {
         Self {
-            inline_file_repo: repos.inline_file_repo,
-            owner_resolver: SessionOwnerResolver::new(
-                repos.project_repo,
-                repos.story_repo,
-                lifecycle_run_repo,
-                repos.lifecycle_subject_association_repo,
-            ),
-            workflow_builder: ActiveWorkflowSnapshotBuilder::new(
-                repos.agent_procedure_repo,
-                repos.agent_frame_repo,
-                repos.lifecycle_agent_repo,
-                repos.lifecycle_run_repo,
-                repos.execution_anchor_repo,
-            ),
-            script_engine: HookScriptEngine::new(evaluator),
+            workflow_projection: deps.workflow_projection,
+            script_engine: HookScriptEngine::new(deps.script_evaluator),
         }
+    }
+
+    /// 返回内建 preset 脚本，供 composition root 初始化具体 evaluator。
+    pub fn builtin_preset_scripts() -> Vec<(&'static str, &'static str)> {
+        builtin_preset_scripts()
     }
 
     /// 验证 Rhai 脚本语法是否合法，不执行脚本。
@@ -87,7 +59,7 @@ impl AppExecutionHookProvider {
     }
 
     /// 运行时注册/更新一个自定义 preset。
-    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), ApplicationError> {
+    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), HookApplicationError> {
         self.script_engine.register_preset(key, script)
     }
 
@@ -100,11 +72,11 @@ impl AppExecutionHookProvider {
         &self,
         runtime_session_id: String,
         turn_id: Option<String>,
-        workflow: Option<crate::lifecycle::ActiveWorkflowProjection>,
+        projection: HookWorkflowProjection,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         let mut snapshot = AgentFrameHookSnapshot {
             runtime_adapter_session_id: runtime_session_id,
-            run_context: None,
+            run_context: projection.run_context,
             sources: Vec::new(),
             tags: Vec::new(),
             injections: Vec::new(),
@@ -124,7 +96,11 @@ impl AppExecutionHookProvider {
             "hook_builtin:supervised_tool_approval".to_string(),
         ]);
 
-        if let Some(workflow) = workflow {
+        if let Some(HookActiveWorkflowFacts {
+            projection: workflow,
+            fulfilled_output_ports,
+        }) = projection.active_workflow
+        {
             let wf_source = workflow_source(&workflow);
 
             snapshot.diagnostics.push(HookDiagnosticEntry {
@@ -135,12 +111,6 @@ impl AppExecutionHookProvider {
                 ),
             });
 
-            snapshot.run_context = Some(
-                self.owner_resolver
-                    .resolve_run_context(&workflow.run)
-                    .await
-                    .map_err(|err| HookError::Runtime(err.to_string()))?,
-            );
             snapshot
                 .tags
                 .push(format!("project:{}", workflow.run.project_id));
@@ -214,22 +184,10 @@ impl AppExecutionHookProvider {
                         }
                     },
                     fulfilled_port_keys: {
-                        let artifact_scope =
-                            crate::lifecycle::execution_log::RuntimeNodeArtifactScope {
-                                run_id: workflow.run.id,
-                                orchestration_id: workflow.orchestration_id,
-                                node_path: workflow.node_path.clone(),
-                                attempt: workflow.active_attempt.attempt,
-                            };
-                        let map = crate::lifecycle::load_scoped_port_output_map(
-                            self.inline_file_repo.as_ref(),
-                            &artifact_scope,
-                        )
-                        .await;
-                        if map.is_empty() {
+                        if fulfilled_output_ports.is_empty() {
                             None
                         } else {
-                            Some(map.into_keys().collect())
+                            Some(fulfilled_output_ports.into_keys().collect())
                         }
                     },
                     gate_collision_count: None,
@@ -266,14 +224,18 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
-        let workflow = self
-            .workflow_builder
-            .resolve_active_workflow_for_target(&query.target)
-            .await?;
+        let projection = self
+            .workflow_projection
+            .load_hook_workflow_projection(HookWorkflowProjectionQuery {
+                target: query.target,
+                provenance: query.provenance.clone(),
+            })
+            .await
+            .map_err(map_projection_error)?;
         self.build_snapshot_from_workflow(
             query.provenance.runtime_session_id.unwrap_or_default(),
             query.provenance.turn_id,
-            workflow,
+            projection,
         )
         .await
     }
@@ -311,8 +273,15 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         entries: Vec<PendingExecutionLogEntry>,
     ) -> Result<(), HookError> {
-        self.workflow_builder.append_execution_log(entries).await
+        self.workflow_projection
+            .append_execution_log(HookExecutionLogAppendCommand { entries })
+            .await
+            .map_err(map_projection_error)
     }
+}
+
+fn map_projection_error(error: HookWorkflowProjectionError) -> HookError {
+    HookError::Runtime(error.to_string())
 }
 
 impl AppExecutionHookProvider {
@@ -419,26 +388,17 @@ fn seed_snapshot_injections_for_trigger(
 mod tests {
     use std::sync::Arc;
 
-    use crate::agent_run::AgentFrameHookRuntime;
-    use crate::session::HookRuntimeDelegate;
-    use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
-        AgentFrameHookSnapshotQuery, HookResolution,
+        AgentFrameHookSnapshotQuery, HookControlTarget, HookResolution, RuntimeAdapterProvenance,
     };
-    use agentdash_spi::{
-        AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
-    };
-    use agentdash_spi::{ExecutionHookProvider, HookError, HookTraceTrigger, HookTrigger};
+    use agentdash_spi::{ExecutionHookProvider, HookError, HookTrigger};
     use async_trait::async_trait;
-    use tokio_util::sync::CancellationToken;
 
-    use agentdash_infrastructure::RhaiHookScriptEvaluator;
-
-    use super::super::presets::builtin_preset_scripts;
     use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
+    use super::super::test_script_evaluator::TestHookScriptEvaluator;
 
     #[test]
     fn session_start_includes_snapshot_injections() {
@@ -476,10 +436,9 @@ mod tests {
 
     impl RuleEngineTestProvider {
         fn new(snapshot: AgentFrameHookSnapshot) -> Self {
-            let scripts = builtin_preset_scripts();
             Self {
                 snapshot,
-                engine: HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&scripts))),
+                engine: HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[]))),
             }
         }
     }
@@ -523,69 +482,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_delegate_before_tool_rewrite_records_trace() {
+    async fn before_tool_rewrite_records_resolution() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new(
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
-            0,
-            snapshot.runtime_adapter_session_id.clone(),
-            Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
-            snapshot,
-        ));
-        let delegate = HookRuntimeDelegate::new_with_mount_root(
-            hook_runtime.clone(),
-            Some("/tmp/test-workspace".to_string()),
-        );
+        let provider = RuleEngineTestProvider::new(snapshot.clone());
 
-        let decision = delegate
-            .before_tool_call(
-                BeforeToolCallInput {
-                    assistant_message: AgentMessage::assistant("准备执行 shell"),
-                    tool_call: ToolCallInfo {
-                        id: "call-shell-1".to_string(),
-                        call_id: None,
-                        name: "shell_exec".to_string(),
-                        arguments: serde_json::json!({
-                            "cwd": "/tmp/test-workspace/crates/agentdash-agent",
-                            "command": "cargo test"
-                        }),
-                    },
-                    args: serde_json::json!({
+        let resolution = provider
+            .evaluate_frame_hook(AgentFrameHookEvaluationQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                    frame_id: uuid::Uuid::new_v4(),
+                },
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    snapshot.runtime_adapter_session_id.clone(),
+                    None,
+                    "provider_test",
+                ),
+                trigger: HookTrigger::BeforeTool,
+                tool_name: Some("shell_exec".to_string()),
+                tool_call_id: Some("call-shell-1".to_string()),
+                subagent_type: None,
+                snapshot: Some(snapshot),
+                payload: Some(serde_json::json!({
+                    "default_mount_root_ref": "/tmp/test-workspace",
+                    "args": {
                         "cwd": "/tmp/test-workspace/crates/agentdash-agent",
                         "command": "cargo test"
-                    }),
-                    context: AgentContext {
-                        system_prompt: "test".to_string(),
-                        messages: vec![],
-                        message_refs: vec![],
-                        tools: vec![],
-                    },
-                },
-                CancellationToken::new(),
-            )
+                    }
+                })),
+                token_stats: None,
+            })
             .await
-            .expect("before_tool_call 应返回 rewrite");
+            .expect("before_tool 应返回 rewrite resolution");
 
-        match decision {
-            ToolCallDecision::Rewrite { args, note } => {
-                assert!(note.is_none());
-                assert_eq!(
-                    args.get("cwd").and_then(serde_json::Value::as_str),
-                    Some("crates/agentdash-agent")
-                );
-            }
-            other => panic!("期望 Rewrite，实际得到 {other:?}"),
-        }
-
-        let runtime: agentdash_spi::hooks::AgentFrameRuntimeSnapshot =
-            hook_runtime.runtime_snapshot();
-        assert_eq!(runtime.trace.len(), 1);
-        assert_eq!(runtime.trace[0].trigger, HookTraceTrigger::BeforeTool);
-        assert_eq!(runtime.trace[0].decision, "rewrite");
+        assert_eq!(
+            resolution
+                .rewritten_tool_input
+                .as_ref()
+                .and_then(|value| value.get("cwd"))
+                .and_then(serde_json::Value::as_str),
+            Some("crates/agentdash-agent")
+        );
         assert!(
-            runtime.trace[0]
+            resolution
                 .matched_rule_keys
                 .contains(&"tool:shell_exec:rewrite_absolute_cwd".to_string())
         );

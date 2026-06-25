@@ -197,15 +197,15 @@ mod tests {
 
     use std::sync::Arc;
 
-    use agentdash_infrastructure::RhaiHookScriptEvaluator;
     use agentdash_spi::{AgentFrameHookSnapshot, HookInjection, HookTrigger};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
+    use super::super::test_script_evaluator::TestHookScriptEvaluator;
 
     fn test_script_engine() -> HookScriptEngine {
         let scripts = builtin_preset_scripts();
-        HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&scripts)))
+        HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&scripts)))
     }
 
     #[test]

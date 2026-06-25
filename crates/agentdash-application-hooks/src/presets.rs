@@ -30,7 +30,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "Session 终态自动推进",
             description: "当 session 进入终态时自动推进 lifecycle step",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/session_terminal_advance.rhai"),
+            script: include_str!("../scripts/hook-presets/session_terminal_advance.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -39,7 +39,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "手动推进通知",
             description: "通知 Agent 当前 step 使用手动推进策略，不会自动切换到下一步",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/manual_step_notice.rhai"),
+            script: include_str!("../scripts/hook-presets/manual_step_notice.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -48,7 +48,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "子 Agent 继承上下文",
             description: "派发子 Agent 时自动继承当前 session 的 workflow 注入和约束",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/subagent_inherit_context.rhai"),
+            script: include_str!("../scripts/hook-presets/subagent_inherit_context.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -57,7 +57,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "记录子 Agent 派发结果",
             description: "子 Agent 派发完成后记录诊断信息",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/subagent_record_result.rhai"),
+            script: include_str!("../scripts/hook-presets/subagent_record_result.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -66,7 +66,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "Companion 回流处理",
             description: "处理 Companion 回流结果，根据 adoption_mode 注入约束或 follow-up 要求",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/companion_result_channel.rhai"),
+            script: include_str!("../scripts/hook-presets/companion_result_channel.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -84,7 +84,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
                     }
                 }
             })),
-            script: include_str!("../../scripts/hook-presets/supervised_tool_gate.rhai"),
+            script: include_str!("../scripts/hook-presets/supervised_tool_gate.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -105,7 +105,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
                     }
                 }
             })),
-            script: include_str!("../../scripts/hook-presets/context_compaction_trigger.rhai"),
+            script: include_str!("../scripts/hook-presets/context_compaction_trigger.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -114,7 +114,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "Lifecycle Node 推进门禁",
             description: "Agent Node 必须调用 complete_lifecycle_node 后才允许结束 session（D2/D8）",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/stop_gate_lifecycle_advance.rhai"),
+            script: include_str!("../scripts/hook-presets/stop_gate_lifecycle_advance.rhai"),
             source: PresetSource::Builtin,
         },
         HookRulePreset {
@@ -123,7 +123,7 @@ static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
             label: "Port Output 交付门禁",
             description: "Agent Node 的 output port 必须全部写入后才允许推进（Existence 策略）",
             param_schema: None,
-            script: include_str!("../../scripts/hook-presets/port_output_gate.rhai"),
+            script: include_str!("../scripts/hook-presets/port_output_gate.rhai"),
             source: PresetSource::Builtin,
         },
     ]

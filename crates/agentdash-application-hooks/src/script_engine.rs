@@ -5,10 +5,11 @@ use agentdash_spi::{
     HookEffect, HookInjection, HookScriptEvaluator,
 };
 
+use crate::HookApplicationError;
+
 use super::snapshot_helpers::*;
 
 use super::rules::HookEvaluationContext;
-use crate::ApplicationError;
 
 // ── 脚本返回值（中间态，merge 进 HookResolution 前的结构） ──
 
@@ -54,10 +55,10 @@ impl HookScriptEngine {
     }
 
     /// 运行时注册/更新自定义 preset 脚本。
-    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), ApplicationError> {
+    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), HookApplicationError> {
         self.evaluator
             .register_preset(key, script)
-            .map_err(ApplicationError::InvalidConfig)
+            .map_err(HookApplicationError::InvalidConfig)
     }
 
     /// 移除一个 preset（仅 UserDefined 类型应调用此接口）。
@@ -71,12 +72,12 @@ impl HookScriptEngine {
         preset_key: &str,
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
-    ) -> Result<ScriptDecision, ApplicationError> {
+    ) -> Result<ScriptDecision, HookApplicationError> {
         let ctx_json = Self::build_ctx_value(ctx, params);
         let raw = self
             .evaluator
             .eval_preset(preset_key, &ctx_json)
-            .map_err(ApplicationError::Internal)?;
+            .map_err(HookApplicationError::Internal)?;
         Self::parse_decision(&raw)
     }
 
@@ -86,12 +87,12 @@ impl HookScriptEngine {
         script: &str,
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
-    ) -> Result<ScriptDecision, ApplicationError> {
+    ) -> Result<ScriptDecision, HookApplicationError> {
         let ctx_json = Self::build_ctx_value(ctx, params);
         let raw = self
             .evaluator
             .eval_script(script, &ctx_json)
-            .map_err(ApplicationError::InvalidConfig)?;
+            .map_err(HookApplicationError::InvalidConfig)?;
         Self::parse_decision(&raw)
     }
 
@@ -181,7 +182,7 @@ impl HookScriptEngine {
         })
     }
 
-    fn parse_decision(result: &serde_json::Value) -> Result<ScriptDecision, ApplicationError> {
+    fn parse_decision(result: &serde_json::Value) -> Result<ScriptDecision, HookApplicationError> {
         if result.is_null() {
             return Ok(empty_decision());
         }
@@ -321,8 +322,8 @@ fn empty_decision() -> ScriptDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hooks::rules::HookRuleEvaluationQuery;
-    use agentdash_infrastructure::RhaiHookScriptEvaluator;
+    use crate::rules::HookRuleEvaluationQuery;
+    use crate::test_script_evaluator::TestHookScriptEvaluator;
     use agentdash_spi::{
         AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
         RuntimeAdapterProvenance,
@@ -330,7 +331,7 @@ mod tests {
     use uuid::Uuid;
 
     fn test_engine() -> HookScriptEngine {
-        HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[])))
+        HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[])))
     }
 
     fn base_ctx() -> (AgentFrameHookSnapshot, HookRuleEvaluationQuery) {
@@ -495,7 +496,7 @@ mod tests {
 
     #[test]
     fn preset_registration_and_eval() {
-        let engine = HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[(
+        let engine = HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&[(
             "test_preset",
             r#"#{ block: "from preset" }"#,
         )])));

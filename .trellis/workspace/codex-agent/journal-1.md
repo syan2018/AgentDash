@@ -1257,3 +1257,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: Canvas interaction diagnostics workspace-module convergence
+
+**Date**: 2026-06-25
+**Task**: Canvas interaction diagnostics workspace-module convergence
+**Branch**: `main`
+
+### Summary
+
+收束 Canvas / Workspace Module crate 边界，实现 AgentRun-scoped render observation、interaction state 与 submit-to-Agent 通道，并完成 AgentRun bridge 命名与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e2bb4e85` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

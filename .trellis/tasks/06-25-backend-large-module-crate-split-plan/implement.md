@@ -104,24 +104,78 @@
 
 - 独立提交，格式：`refactor(application): 收束大模块拆分集成入口`
 
-### Dispatch 4: Check Owner
+### Dispatch 4: Crate-Specific Check Owners
 
 目标：
 
-- 逐项执行 Phase 4 禁止引用扫描。
-- 审查新增 public types / traits / DTO / error enums / helper functions。
-- 审查行为 diff，确认没有编译性业务修改。
-- 执行最终验证命令。
+- 按拆出的 crates 并行派发 check owner，避免单个 reviewer 覆盖面过大。
+- 每一路 check owner 独立输出 findings，并对自己负责的 crate 拥有阻断权。
+- 所有 check owner 通过后，final check owner 才执行最终 workspace 级验证。
+
+并行 check owners：
+
+- Workflow check owner：
+  - 检查 `agentdash-application-workflow` 的依赖方向。
+  - 检查 workflow public traits / DTO / errors / helpers 是否复制旧接口。
+  - 检查 lifecycle 到 workflow 的调用方向是否正确。
+  - 执行 workflow 禁止引用扫描和 workflow crate tests。
+- Hooks check owner：
+  - 检查 `agentdash-application-hooks` 的依赖方向。
+  - 检查 hook projection/effect port 是否复制 lifecycle projection 业务计算。
+  - 检查 hooks crate 是否引用 runtime-session/agentrun/infrastructure。
+  - 执行 hooks 禁止引用扫描和 hooks/runtime hook tests。
+- Shared Library check owner：
+  - 检查 `agentdash-application-shared-library` 的依赖方向。
+  - 检查 `SharedLibraryRepositorySet` 是否复制 repository traits。
+  - 检查 workflow seed provider、extension package、`skill_asset` 相邻边界是否保持原语义。
+  - 执行 shared-library 禁止引用扫描和 shared-library tests。
+- Integration/topology check owner：
+  - 检查 root `Cargo.toml`、workspace dependencies、API imports/bootstrap/routes。
+  - 检查 `agentdash-application` 和 `agentdash-application-lifecycle` 旧入口是否删除。
+  - 检查 API/MCP/local 是否还通过 `agentdash_application::<target>` 引用目标模块。
+  - 执行 workspace-level cargo check 和 contracts check。
 
 拥有文件：
 
-- 只允许修复 check 发现的路径/import/test 路径问题。
-- 不拥有业务逻辑文件的语义修改。
+- Check owner 默认只读。
+- 如需修复，只允许修复自己 check 范围内的路径/import/test 路径问题。
+- 任何语义修改都必须退回对应 implementation worker，不由 check owner 代改。
+
+阻断条件：
+
+- 任一路 check owner 发现禁止依赖关系。
+- 任一路 check owner 发现重复接口/DTO/trait/helper。
+- 任一路 check owner 发现编译性业务行为修改。
+- 任一路 check owner 未能完成自己负责的扫描和测试。
 
 提交：
 
-- 若 check 只确认通过，不提交。
-- 若 check 修复机械问题，独立提交，格式：`fix(application): 修正大模块拆分集成引用`
+- 每一路 check owner 若只确认通过，不提交。
+- 每一路 check owner 若修复机械问题，独立提交。
+- Workflow check 修复提交格式：`fix(workflow): 修正 Workflow crate 拆分引用`
+- Hooks check 修复提交格式：`fix(hooks): 修正 Hooks crate 拆分引用`
+- Shared Library check 修复提交格式：`fix(shared-library): 修正 Shared Library crate 拆分引用`
+- Integration check 修复提交格式：`fix(application): 修正大模块拆分集成引用`
+
+### Dispatch 5: PR Owner
+
+目标：
+
+- 确认所有阶段提交存在且顺序清晰。
+- 确认所有 crate-specific check owners 通过。
+- 整理 PR 描述：拆分范围、提交序列、验证命令、禁止行为检查结果。
+- PR 主题按“后端 application crate 拆分”组织；若当前分支已包含 skill crate 拆分提交，PR 描述中将其作为同主题已完成拆分项列出，而不是作为本任务的后续派发 lane。
+- 创建 PR。
+
+拥有文件：
+
+- 不修改业务代码。
+- 只允许补充 PR 描述或必要的 Trellis 收尾记录。
+
+提交：
+
+- 若只创建 PR，不提交。
+- 若补充 Trellis 收尾记录，独立提交，格式：`docs(architecture): 记录后端大模块拆分验收结果`
 
 ## Phase 0: Baseline
 

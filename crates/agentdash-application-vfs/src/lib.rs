@@ -52,6 +52,8 @@ pub use mount_project::{
 pub use mount_routine::build_routine_mount;
 pub use mount_skill_asset::{
     append_lifecycle_skill_asset_projection, build_project_skill_asset_management_mount,
+    lifecycle_mount_has_skill_asset_projection, list_lifecycle_skill_asset_projection,
+    read_lifecycle_skill_asset_projection, search_lifecycle_skill_asset_projection,
 };
 pub use mount_workspace::{build_workspace_vfs, selected_workspace_binding, workspace_mount};
 pub use mutation_dispatcher::{

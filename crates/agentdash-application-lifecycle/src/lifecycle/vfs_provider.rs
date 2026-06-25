@@ -23,6 +23,10 @@ use crate::lifecycle::surface::journey::{
 use crate::lifecycle::vfs_catalog::lifecycle_root_entries;
 use agentdash_application_vfs::mount::PROVIDER_LIFECYCLE_VFS;
 use agentdash_application_vfs::mount_inline::list_inline_entries;
+use agentdash_application_vfs::mount_skill_asset::{
+    lifecycle_mount_has_skill_asset_projection, list_lifecycle_skill_asset_projection,
+    read_lifecycle_skill_asset_projection, search_lifecycle_skill_asset_projection,
+};
 use agentdash_application_vfs::path::normalize_mount_relative_path;
 use agentdash_application_vfs::provider::{
     MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
@@ -152,7 +156,10 @@ impl LifecycleMountProvider {
     ) -> Result<Vec<RuntimeFileEntry>, MountError> {
         let session_id = parse_runtime_session_id_from_metadata(mount)?;
         let entries = match segs {
-            [] => agent_run_session_root_entries(false, mount),
+            [] => agent_run_session_root_entries(
+                lifecycle_mount_has_skill_asset_projection(mount),
+                mount,
+            ),
             ["session"] => {
                 if options.recursive {
                     list_session_recursive_entries(&self.journey, &session_id, "session").await?
@@ -621,10 +628,12 @@ impl MountProvider for LifecycleMountProvider {
         let segs = segments_from_path(&path_norm);
 
         if matches!(segs.as_slice(), ["skills", ..]) {
-            return Err(MountError::NotSupported(
-                "lifecycle_vfs skill asset projection is owned by VFS provider export wiring"
-                    .to_string(),
-            ));
+            return read_lifecycle_skill_asset_projection(
+                self.skill_asset_repo.as_ref(),
+                mount,
+                &path_norm,
+            )
+            .await;
         }
 
         if mount_is_agent_run_session_scope(mount) {
@@ -784,9 +793,12 @@ impl MountProvider for LifecycleMountProvider {
         let path_norm = normalize_mount_relative_path(&options.path, true)
             .map_err(MountError::OperationFailed)?;
         if path_norm == "skills" || path_norm.starts_with("skills/") {
-            return Ok(ListResult {
-                entries: Vec::new(),
-            });
+            return list_lifecycle_skill_asset_projection(
+                self.skill_asset_repo.as_ref(),
+                mount,
+                options,
+            )
+            .await;
         }
         let segs = segments_from_path(&path_norm);
         if mount_is_agent_run_session_scope(mount) {
@@ -803,7 +815,7 @@ impl MountProvider for LifecycleMountProvider {
             ));
         }
         let mut entries = match segs.as_slice() {
-            [] => lifecycle_root_entries(false),
+            [] => lifecycle_root_entries(lifecycle_mount_has_skill_asset_projection(mount)),
             ["artifacts"] => self
                 .journey
                 .list_scoped_port_outputs(&runtime_scope_from_mount(mount)?)
@@ -968,10 +980,12 @@ impl MountProvider for LifecycleMountProvider {
             .as_deref()
             .is_some_and(|path| path == "skills" || path.starts_with("skills/"))
         {
-            return Ok(SearchResult {
-                matches: Vec::new(),
-                truncated: false,
-            });
+            return search_lifecycle_skill_asset_projection(
+                self.skill_asset_repo.as_ref(),
+                mount,
+                query,
+            )
+            .await;
         }
         let listing = self
             .list(

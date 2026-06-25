@@ -1,12 +1,15 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::common::{Mount, MountCapability, Vfs};
+use agentdash_domain::skill_asset::SkillAssetRepository;
 use uuid::Uuid;
 
 use super::mount::{
     PROVIDER_LIFECYCLE_VFS, PROVIDER_SKILL_ASSET_FS, SKILL_ASSET_KEYS_METADATA_KEY,
     SKILL_ASSET_PROJECT_ID_METADATA_KEY,
 };
+use super::provider::{MountError, SearchQuery, SearchResult};
+use super::types::{ListOptions, ListResult, ReadResult};
 
 pub fn build_project_skill_asset_management_mount(
     project_id: Uuid,
@@ -143,6 +146,36 @@ pub fn refresh_lifecycle_skill_asset_projection(
     false
 }
 
+pub fn lifecycle_mount_has_skill_asset_projection(lifecycle_mount: &Mount) -> bool {
+    super::provider_skill_asset::parse_skill_asset_mount_metadata(lifecycle_mount)
+        .map(|(_, keys)| !keys.is_empty())
+        .unwrap_or(false)
+}
+
+pub async fn read_lifecycle_skill_asset_projection(
+    repo: &dyn SkillAssetRepository,
+    lifecycle_mount: &Mount,
+    path: &str,
+) -> Result<ReadResult, MountError> {
+    super::provider_skill_asset::read_projected_skill_file(repo, lifecycle_mount, path).await
+}
+
+pub async fn list_lifecycle_skill_asset_projection(
+    repo: &dyn SkillAssetRepository,
+    lifecycle_mount: &Mount,
+    options: &ListOptions,
+) -> Result<ListResult, MountError> {
+    super::provider_skill_asset::list_projected_skill_files(repo, lifecycle_mount, options).await
+}
+
+pub async fn search_lifecycle_skill_asset_projection(
+    repo: &dyn SkillAssetRepository,
+    lifecycle_mount: &Mount,
+    query: &SearchQuery,
+) -> Result<SearchResult, MountError> {
+    super::provider_skill_asset::search_projected_skill_files(repo, lifecycle_mount, query).await
+}
+
 fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     skill_asset_keys
@@ -162,6 +195,58 @@ fn normalized_skill_asset_keys(skill_asset_keys: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::DomainError;
+    use agentdash_domain::skill_asset::{
+        SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
+    };
+
+    struct StaticSkillRepo {
+        asset: SkillAsset,
+    }
+
+    #[async_trait::async_trait]
+    impl SkillAssetRepository for StaticSkillRepo {
+        async fn create(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            Ok((self.asset.id == id).then(|| self.asset.clone()))
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(
+                (self.asset.project_id == project_id && self.asset.key == key)
+                    .then(|| self.asset.clone()),
+            )
+        }
+
+        async fn get_by_project_and_builtin_key(
+            &self,
+            _project_id: Uuid,
+            _builtin_key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            Ok((self.asset.project_id == project_id)
+                .then(|| vec![self.asset.clone()])
+                .unwrap_or_default())
+        }
+
+        async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
 
     fn lifecycle_vfs(project_id: Uuid, keys: &[&str]) -> Vfs {
         Vfs {
@@ -283,6 +368,52 @@ mod tests {
                 .metadata
                 .get(SKILL_ASSET_KEYS_METADATA_KEY)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn lifecycle_skill_projection_detects_projected_keys() {
+        let project_id = Uuid::new_v4();
+        let vfs = lifecycle_vfs(project_id, &["writer"]);
+
+        assert!(lifecycle_mount_has_skill_asset_projection(&vfs.mounts[0]));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_skill_asset_projection_helper_reads_projected_skill() {
+        let project_id = Uuid::new_v4();
+        let mut asset = SkillAsset::new_user(project_id, "writer", "Writer", "写作辅助", false);
+        asset.files = vec![SkillAssetFile::new(
+            asset.id,
+            "SKILL.md",
+            "---\nname: writer\ndescription: 写作辅助\n---\n# Writer\n",
+            SkillAssetFileKind::Skill,
+        )];
+        let vfs = lifecycle_vfs(project_id, &["writer"]);
+        let repo = StaticSkillRepo { asset };
+
+        let read =
+            read_lifecycle_skill_asset_projection(&repo, &vfs.mounts[0], "skills/writer/SKILL.md")
+                .await
+                .expect("read lifecycle skill projection");
+        assert!(read.content.contains("# Writer"));
+
+        let listed = list_lifecycle_skill_asset_projection(
+            &repo,
+            &vfs.mounts[0],
+            &ListOptions {
+                path: "skills".to_string(),
+                pattern: Some("**/*".to_string()),
+                recursive: true,
+            },
+        )
+        .await
+        .expect("list lifecycle skill projection");
+        assert!(
+            listed
+                .entries
+                .iter()
+                .any(|entry| entry.path == "skills/writer/SKILL.md")
         );
     }
 }

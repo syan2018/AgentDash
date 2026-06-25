@@ -947,7 +947,6 @@ mod launcher_drain_tests {
         }
     }
 
-    #[async_trait]
     #[derive(Default)]
     struct InMemoryGateRepo {
         items: Mutex<Vec<LifecycleGate>>,

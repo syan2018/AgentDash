@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
+use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::{
     canvas::CANVAS_SYSTEM_SKILL_NAME, companion::COMPANION_SYSTEM_SKILL_NAME,
@@ -12,12 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
+use crate::RepositorySet;
 use crate::lifecycle::ActivityActivation;
 use crate::lifecycle::build_lifecycle_mount_with_node_scope;
-use crate::repository_set::RepositorySet;
-use crate::skill_asset::SkillAssetService;
-use crate::vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 
 use super::mount::install_agent_run_lifecycle_mount;
 
@@ -497,12 +495,7 @@ impl AgentRunLifecycleSurfaceProjector {
         skill_asset_keys.extend(input.explicit_skill_asset_keys.iter().cloned());
 
         if let BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) = &input.builtin_skills {
-            let service = SkillAssetService::new(self.skill_asset_repo.as_ref());
             for skill in skills {
-                service
-                    .bootstrap_builtins(input.project_id, Some(skill.key()))
-                    .await
-                    .map_err(|error| error.to_string())?;
                 skill_asset_keys.push(skill.key().to_string());
             }
         }
@@ -601,7 +594,7 @@ fn project_surface_with_effective_skill_keys(
                 source_story_id: None,
                 links: Vec::new(),
             };
-            vfs = compose_vfs_with_overlay_and_directives(Some(&vfs), &overlay, &[]);
+            vfs = compose_vfs_with_overlay(&vfs, &overlay);
         }
         _ => {
             let Some(message_stream) = input.message_stream.as_ref() else {
@@ -647,6 +640,25 @@ fn project_surface_with_effective_skill_keys(
         projections: projection_set(&input, &skill_asset_keys),
         skill_asset_keys,
     })
+}
+
+fn compose_vfs_with_overlay(base: &Vfs, overlay: &Vfs) -> Vfs {
+    let mut merged = base.clone();
+    for mount in &overlay.mounts {
+        if let Some(existing) = merged
+            .mounts
+            .iter_mut()
+            .find(|candidate| candidate.id == mount.id)
+        {
+            *existing = mount.clone();
+        } else {
+            merged.mounts.push(mount.clone());
+        }
+    }
+    if overlay.default_mount_id.is_some() {
+        merged.default_mount_id = overlay.default_mount_id.clone();
+    }
+    merged
 }
 
 fn projected_skill_keys_for_project(vfs: Option<&Vfs>, project_id: Uuid) -> Vec<String> {
@@ -780,7 +792,7 @@ fn projection_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::append_lifecycle_skill_asset_projection;
+    use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
     use agentdash_domain::common::{Mount, MountCapability};
 
     fn lifecycle_node_vfs(project_id: Uuid) -> Vfs {

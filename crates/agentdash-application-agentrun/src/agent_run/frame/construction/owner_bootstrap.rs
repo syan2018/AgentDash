@@ -26,6 +26,7 @@ use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, RuntimeMemoryProjectionInput,
     derive_runtime_memory_inventory, derive_runtime_skill_baseline,
 };
+use crate::agent_run_repository_set::RepositorySet;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
@@ -42,7 +43,6 @@ use crate::context::{
 use crate::mcp_preset::McpRuntimeBindingContext;
 use crate::platform_config::PlatformConfig;
 use crate::project::context_builder::{ProjectContextBuildInput, contribute_project_context};
-use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
 use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};

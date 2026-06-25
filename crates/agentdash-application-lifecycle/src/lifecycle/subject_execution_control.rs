@@ -1,17 +1,62 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationBindingRefs,
-    RuntimeControlRefs, RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
+use chrono::{DateTime, Utc};
 
 use super::WorkflowApplicationError;
-use crate::agent_run::{
-    DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService,
-};
 use crate::workflow::orchestration::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
+
+#[derive(Debug, Clone)]
+struct DeliveryRuntimeSelection {
+    run_id: Uuid,
+    agent_id: Uuid,
+    current_frame_id: Uuid,
+    runtime_session_id: String,
+    status: DeliveryBindingStatus,
+    observed_at: DateTime<Utc>,
+    anchor: RuntimeSessionExecutionAnchor,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DeliveryRuntimeSelectionError {
+    #[error("LifecycleRun {run_id} 不存在")]
+    RunNotFound { run_id: Uuid },
+    #[error("LifecycleAgent {agent_id} 不存在")]
+    AgentNotFound { agent_id: Uuid },
+    #[error("LifecycleAgent {agent_id} 属于 run {actual_run_id}，不匹配请求 run {run_id}")]
+    AgentRunMismatch {
+        run_id: Uuid,
+        agent_id: Uuid,
+        actual_run_id: Uuid,
+    },
+    #[error("LifecycleAgent {agent_id} 缺少 current delivery binding")]
+    CurrentDeliveryMissing { run_id: Uuid, agent_id: Uuid },
+    #[error("RuntimeSessionExecutionAnchor {runtime_session_id} 不存在")]
+    AnchorMissing { runtime_session_id: String },
+    #[error(
+        "RuntimeSessionExecutionAnchor {runtime_session_id} 指向 run {actual_run_id}/agent {actual_agent_id}/launch frame {actual_launch_frame_id}，不匹配期望 run {expected_run_id}/agent {expected_agent_id}/launch frame {expected_launch_frame_id}"
+    )]
+    AnchorMismatch {
+        runtime_session_id: String,
+        expected_run_id: Uuid,
+        expected_agent_id: Uuid,
+        expected_launch_frame_id: Uuid,
+        actual_run_id: Uuid,
+        actual_agent_id: Uuid,
+        actual_launch_frame_id: Uuid,
+    },
+    #[error("LifecycleAgent {agent_id} 缺少当前 AgentFrame revision")]
+    CurrentFrameMissing { agent_id: Uuid },
+    #[error("AgentFrame {frame_id} 不存在")]
+    CurrentFrameNotFound { frame_id: Uuid },
+    #[error(transparent)]
+    Repository(#[from] agentdash_domain::DomainError),
+}
 
 #[derive(Debug, Clone)]
 pub struct CancelSubjectExecutionCommand {
@@ -114,16 +159,16 @@ impl<'a> SubjectExecutionControlService<'a> {
         })?;
 
         let agent = self.resolve_associated_agent(&association).await?;
-        let selection =
-            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-                lifecycle_runs: self.lifecycle_run_repo,
-                lifecycle_agents: self.lifecycle_agent_repo,
-                agent_frames: self.agent_frame_repo,
-                execution_anchors: self.execution_anchor_repo,
-            })
-            .select_current_delivery(association.anchor_run_id, agent.id)
-            .await
-            .map_err(workflow_error_from_selection_error)?;
+        let selection = select_current_delivery(
+            self.lifecycle_run_repo,
+            self.lifecycle_agent_repo,
+            self.agent_frame_repo,
+            self.execution_anchor_repo,
+            association.anchor_run_id,
+            agent.id,
+        )
+        .await
+        .map_err(workflow_error_from_selection_error)?;
 
         Ok(SubjectExecutionCancelTarget {
             association,
@@ -243,15 +288,90 @@ fn runtime_refs_for_target(target: &SubjectExecutionCancelTarget) -> RuntimeCont
     )
 }
 
+async fn select_current_delivery(
+    lifecycle_run_repo: &dyn LifecycleRunRepository,
+    lifecycle_agent_repo: &dyn LifecycleAgentRepository,
+    agent_frame_repo: &dyn AgentFrameRepository,
+    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    run_id: Uuid,
+    agent_id: Uuid,
+) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
+    lifecycle_run_repo
+        .get_by_id(run_id)
+        .await?
+        .ok_or(DeliveryRuntimeSelectionError::RunNotFound { run_id })?;
+    let agent = lifecycle_agent_repo
+        .get(agent_id)
+        .await?
+        .ok_or(DeliveryRuntimeSelectionError::AgentNotFound { agent_id })?;
+    if agent.run_id != run_id {
+        return Err(DeliveryRuntimeSelectionError::AgentRunMismatch {
+            run_id,
+            agent_id,
+            actual_run_id: agent.run_id,
+        });
+    }
+    let binding = agent
+        .current_delivery
+        .clone()
+        .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
+    let anchor = execution_anchor_repo
+        .find_by_session(&binding.runtime_session_id)
+        .await?
+        .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
+            runtime_session_id: binding.runtime_session_id.clone(),
+        })?;
+    validate_anchor_matches(&anchor, run_id, agent_id, binding.launch_frame_id)?;
+    let current_frame = agent_frame_repo
+        .get_current(agent.id)
+        .await?
+        .ok_or(DeliveryRuntimeSelectionError::CurrentFrameMissing { agent_id })?;
+    if current_frame.agent_id != agent_id {
+        return Err(DeliveryRuntimeSelectionError::CurrentFrameNotFound {
+            frame_id: current_frame.id,
+        });
+    }
+    Ok(DeliveryRuntimeSelection {
+        run_id: anchor.run_id,
+        agent_id: anchor.agent_id,
+        current_frame_id: current_frame.id,
+        runtime_session_id: anchor.runtime_session_id.clone(),
+        status: binding.status,
+        observed_at: binding.observed_at,
+        anchor,
+    })
+}
+
+fn validate_anchor_matches(
+    anchor: &RuntimeSessionExecutionAnchor,
+    expected_run_id: Uuid,
+    expected_agent_id: Uuid,
+    expected_launch_frame_id: Uuid,
+) -> Result<(), DeliveryRuntimeSelectionError> {
+    if anchor.run_id == expected_run_id
+        && anchor.agent_id == expected_agent_id
+        && anchor.launch_frame_id == expected_launch_frame_id
+    {
+        return Ok(());
+    }
+    Err(DeliveryRuntimeSelectionError::AnchorMismatch {
+        runtime_session_id: anchor.runtime_session_id.clone(),
+        expected_run_id,
+        expected_agent_id,
+        expected_launch_frame_id,
+        actual_run_id: anchor.run_id,
+        actual_agent_id: anchor.agent_id,
+        actual_launch_frame_id: anchor.launch_frame_id,
+    })
+}
+
 fn workflow_error_from_selection_error(
     error: DeliveryRuntimeSelectionError,
 ) -> WorkflowApplicationError {
     match error {
         DeliveryRuntimeSelectionError::RunNotFound { .. }
         | DeliveryRuntimeSelectionError::AgentNotFound { .. }
-        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
+        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. } => {
             WorkflowApplicationError::NotFound(error.to_string())
         }
         DeliveryRuntimeSelectionError::Repository(source) => WorkflowApplicationError::from(source),

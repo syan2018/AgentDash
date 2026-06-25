@@ -19,17 +19,20 @@ use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, Sh
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::platform_config::SharedPlatformConfig;
-use crate::repository_set::RepositorySet;
+use crate::{RepositorySet, SharedPlatformConfig};
 
 use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::lifecycle::session_terminal_summary;
-use crate::session::SessionTerminalCallback;
 use crate::workflow::orchestration::{
     OrchestrationExecutorLauncher, OrchestrationRuntimeError, OrchestrationRuntimeEvent,
     apply_orchestration_event_to_run,
 };
+
+#[async_trait::async_trait]
+pub trait SessionTerminalCallback: Send + Sync + 'static {
+    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str);
+}
 
 #[derive(Debug)]
 pub struct OrchestrationResult {

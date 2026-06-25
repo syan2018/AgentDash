@@ -253,7 +253,6 @@ pub async fn resolve_activity_runtime_association_from_message_stream_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
     use crate::lifecycle::build_lifecycle_mount_with_node_scope;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
@@ -626,7 +625,13 @@ mod tests {
         .expect("runtime session should resolve to current frame");
 
         assert_eq!(frame.id, current_frame.id);
-        let vfs = frame.typed_vfs().expect("current frame should expose VFS");
+        let vfs: Vfs = serde_json::from_value(
+            frame
+                .vfs_surface_json
+                .clone()
+                .expect("current frame should expose VFS"),
+        )
+        .expect("current frame should expose typed VFS");
         assert!(
             vfs.mounts
                 .iter()

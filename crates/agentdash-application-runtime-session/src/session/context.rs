@@ -169,10 +169,9 @@ pub fn extract_story_overrides(story: &Story) -> SessionStoryOverrides {
 // ─── Bootstrap helpers ───────────────────────────────
 
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::{Mount, MountCapability};
 
 use agentdash_spi::Vfs;
-
-use crate::vfs::build_workspace_vfs;
 
 /// 将 workspace 相关的默认 VFS 注入到测试 fixture 的可变字段中。
 /// 仅在字段为 None 时填充，不覆盖已有值。
@@ -182,4 +181,55 @@ pub fn apply_workspace_defaults(vfs: &mut Option<Vfs>, workspace: Option<&Worksp
     {
         *vfs = Some(space);
     }
+}
+
+fn build_workspace_vfs(workspace: &Workspace) -> Result<Vfs, String> {
+    let binding = if let Some(default_binding_id) = workspace.default_binding_id {
+        workspace
+            .bindings
+            .iter()
+            .find(|binding| binding.id == default_binding_id)
+    } else if workspace.bindings.len() == 1 {
+        workspace.bindings.first()
+    } else {
+        None
+    }
+    .ok_or_else(|| "Workspace 当前没有可用 binding".to_string())?;
+    let backend_id = binding.backend_id.trim();
+    if backend_id.is_empty() {
+        return Err("Workspace binding.backend_id 不能为空".to_string());
+    }
+    if binding.root_ref.trim().is_empty() {
+        return Err("Workspace binding.root_ref 不能为空".to_string());
+    }
+
+    Ok(Vfs {
+        mounts: vec![Mount {
+            id: "main".to_string(),
+            provider: "relay_fs".to_string(),
+            backend_id: backend_id.to_string(),
+            root_ref: binding.root_ref.clone(),
+            capabilities: workspace.mount_capabilities.to_vec(),
+            default_write: workspace
+                .mount_capabilities
+                .iter()
+                .any(|capability| matches!(capability, MountCapability::Write)),
+            display_name: if workspace.name.trim().is_empty() {
+                "主工作空间".to_string()
+            } else {
+                workspace.name.clone()
+            },
+            metadata: serde_json::json!({
+                "workspace_id": workspace.id,
+                "workspace_identity_kind": workspace.identity_kind,
+                "workspace_identity_payload": workspace.identity_payload,
+                "workspace_binding_id": binding.id,
+                "workspace_detected_facts": binding.detected_facts.clone(),
+            }),
+        }],
+        default_mount_id: Some("main".to_string()),
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    })
 }

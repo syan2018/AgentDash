@@ -1,7 +1,7 @@
-﻿use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
-use crate::lifecycle::run_view_builder::{
+use crate::agent_run::lifecycle_read_model::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
+use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
 use crate::session::SessionExecutionState;
 use crate::session::SessionMeta;
 use agentdash_application_vfs::ResolvedVfsSurface;

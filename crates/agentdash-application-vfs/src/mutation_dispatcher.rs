@@ -5,7 +5,7 @@ use agentdash_spi::platform::auth::AuthIdentity;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::runtime::{Mount, MountCapability, Vfs};
+use agentdash_domain::common::{Mount, MountCapability, Vfs};
 
 use super::inline_persistence::{DbInlineContentPersister, InlineContentOverlay};
 use super::mount::PROVIDER_INLINE_FS;

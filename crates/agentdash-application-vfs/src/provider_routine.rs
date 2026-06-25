@@ -16,7 +16,8 @@ use super::provider::{
     SearchQuery, SearchResult,
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::{Mount, RuntimeFileEntry};
+use agentdash_domain::common::Mount;
+use agentdash_spi::platform::mount::RuntimeFileEntry;
 
 const MEMORY_CONTAINER_ID: &str = "memory";
 const MEMORY_FILES: &[&str] = &[

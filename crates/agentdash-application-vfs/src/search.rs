@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::inline_persistence::InlineContentOverlay;
-use crate::runtime::Mount;
 use crate::types::runtime_entry_is_binary;
 use crate::{ListOptions, MountError, MountOperationContext, MountProviderRegistry, SearchMatch};
+use agentdash_domain::common::Mount;
 
 /// 与 CC GrepTool 一致的 VCS 黑名单（design.md A3：硬编码不可配置）。
 const VCS_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];

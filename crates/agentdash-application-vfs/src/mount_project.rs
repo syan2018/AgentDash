@@ -6,7 +6,7 @@ use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
 use agentdash_domain::{agent::ProjectAgent, project::Project, story::Story, workspace::Workspace};
 
-use crate::runtime::{Mount, MountCapability, Vfs};
+use agentdash_domain::common::{Mount, MountCapability, Vfs};
 
 use super::mount::{
     CONTEXT_CONTAINER_ID_METADATA_KEY, PROJECT_AGENT_KNOWLEDGE_CONTAINER_ID,

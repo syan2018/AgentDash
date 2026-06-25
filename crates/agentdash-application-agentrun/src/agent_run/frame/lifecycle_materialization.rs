@@ -11,9 +11,9 @@ use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::agent_run::frame::construction::{
     LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,
 };
-use crate::lifecycle::WorkflowApplicationError;
+use crate::agent_run_repository_set::RepositorySet;
+use crate::error::WorkflowApplicationError;
 use crate::platform_config::PlatformConfig;
-use crate::repository_set::RepositorySet;
 
 #[derive(Clone)]
 pub struct AgentRunLaunchAnchorFrameConstructionAdapter {

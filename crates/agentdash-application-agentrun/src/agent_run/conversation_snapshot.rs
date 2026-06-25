@@ -1,11 +1,11 @@
-﻿use uuid::Uuid;
+use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
+use crate::agent_run::lifecycle_read_model::LifecycleSubjectAssociationView;
 use crate::agent_run::workspace::types::AgentRunResourceSurfaceCoordinateModel;
-use crate::lifecycle::WorkflowApplicationError;
-use crate::lifecycle::run_view_builder::LifecycleSubjectAssociationView;
+use crate::error::WorkflowApplicationError;
 use crate::session::SessionExecutionState;
 use agentdash_application_vfs::ResolvedVfsSurface;
 

@@ -1,6 +1,6 @@
 use agentdash_domain::workspace::{Workspace, WorkspaceBinding};
 
-use crate::runtime::{Mount, Vfs};
+use agentdash_domain::common::{Mount, Vfs};
 
 use super::mount::PROVIDER_RELAY_FS;
 use super::path::validate_vfs;

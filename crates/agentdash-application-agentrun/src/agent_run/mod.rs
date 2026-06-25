@@ -3,6 +3,7 @@ mod conversation_snapshot;
 mod delivery_runtime_selection;
 mod effective_capability;
 pub mod frame;
+pub(crate) mod lifecycle_read_model;
 pub mod mailbox;
 mod mailbox_runtime_adapter;
 pub mod message_delivery;

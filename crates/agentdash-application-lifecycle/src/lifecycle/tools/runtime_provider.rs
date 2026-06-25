@@ -5,13 +5,14 @@ use agentdash_spi::platform::tool_capability::CAP_WORKFLOW;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
-use crate::lifecycle::tools::advance_node::CompleteLifecycleNodeTool;
-use crate::platform_config::SharedPlatformConfig;
-use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
+use crate::lifecycle::tools::advance_node::{
+    CompleteLifecycleNodeTool, SharedSessionToolServicesHandle,
+};
+use crate::{RepositorySet, SharedPlatformConfig};
 
 #[derive(Clone)]
 pub struct WorkflowRuntimeToolProvider {
-    repos: crate::repository_set::RepositorySet,
+    repos: RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
     platform_config: SharedPlatformConfig,
     function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
@@ -19,7 +20,7 @@ pub struct WorkflowRuntimeToolProvider {
 
 impl WorkflowRuntimeToolProvider {
     pub fn new(
-        repos: crate::repository_set::RepositorySet,
+        repos: RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         platform_config: SharedPlatformConfig,
         function_runner: Arc<dyn agentdash_spi::FunctionRunner>,

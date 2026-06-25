@@ -17,13 +17,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::lifecycle::WorkflowApplicationError;
-use crate::platform_config::SharedPlatformConfig;
-use crate::repository_set::RepositorySet;
+use crate::{RepositorySet, SharedPlatformConfig};
 
-use super::agent_node_launcher::{
-    AgentNodeFrameMaterializer, AgentNodeLaunchOutcome, AgentNodeLauncher,
-    RepositoryAgentNodeFrameMaterializer,
-};
+use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
 use super::function_node_runner::FunctionNodeRunner;
 use super::human_gate_launcher::{HumanGateLauncher, HumanGateOpenOutcome};
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -118,27 +114,17 @@ impl From<RepositorySet> for OrchestrationExecutorRepositories {
 impl OrchestrationExecutorLauncher {
     pub fn new_with_platform_config(
         repos: RepositorySet,
-        platform_config: SharedPlatformConfig,
+        _platform_config: SharedPlatformConfig,
     ) -> Self {
-        let frame_materializer = Arc::new(RepositoryAgentNodeFrameMaterializer::new(
-            repos.clone(),
-            platform_config,
-        ));
-        Self::from_executor_repositories(repos.into(), frame_materializer)
+        Self::from_executor_repositories(repos.into())
     }
 
     #[cfg(test)]
-    fn from_repositories(
-        repos: OrchestrationExecutorRepositories,
-        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
-    ) -> Self {
-        Self::from_executor_repositories(repos, frame_materializer)
+    fn from_repositories(repos: OrchestrationExecutorRepositories) -> Self {
+        Self::from_executor_repositories(repos)
     }
 
-    fn from_executor_repositories(
-        repos: OrchestrationExecutorRepositories,
-        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
-    ) -> Self {
+    fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
         let agent_node_launcher = AgentNodeLauncher::new(
             repos.agent_procedure_repo.clone(),
             repos.lifecycle_run_repo.clone(),
@@ -151,7 +137,6 @@ impl OrchestrationExecutorLauncher {
             repos.execution_anchor_repo.clone(),
             repos.runtime_session_creator.clone(),
             repos.agent_frame_construction.clone(),
-            frame_materializer,
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
@@ -495,11 +480,6 @@ mod launcher_drain_tests {
     use chrono::Utc;
     use serde_json::json;
 
-    use crate::agent_run::frame::lifecycle_materialization::construct_launch_anchor_frame_with_vfs;
-    use crate::lifecycle::{
-        LifecycleMountSurface, WorkflowAgentNodeFrameMaterializationContext,
-        lifecycle_mount_overlay_for_surface,
-    };
     use crate::workflow::orchestration::runtime::activate_root_orchestration;
 
     use super::*;
@@ -940,44 +920,6 @@ mod launcher_drain_tests {
         }
     }
 
-    struct TestLifecycleFrameMaterializer {
-        frame_repo: Arc<InMemoryFrameRepo>,
-    }
-
-    #[async_trait]
-    impl AgentNodeFrameMaterializer for TestLifecycleFrameMaterializer {
-        async fn materialize_frame(
-            &self,
-            context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-            coordinate: &RuntimeNodeCoordinate,
-            plan_node: &PlanNode,
-            _workflow_contract: Option<&AgentProcedureContract>,
-            _workflow_label: Option<&str>,
-        ) -> Result<AgentFrame, WorkflowApplicationError> {
-            let writable_port_keys = plan_node
-                .output_ports
-                .iter()
-                .map(|port| port.key.clone())
-                .collect::<Vec<_>>();
-            let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
-                run_id: context.run.id,
-                orchestration_id: coordinate.orchestration_id,
-                node_path: &coordinate.node_path,
-                lifecycle_key: "test_lifecycle",
-                attempt: coordinate.attempt,
-                writable_port_keys,
-            });
-            construct_launch_anchor_frame_with_vfs(
-                self.frame_repo.as_ref(),
-                context.agent_id,
-                Some(context.runtime_session_ref),
-                context.frame_created_by_id,
-                &overlay,
-            )
-            .await
-        }
-    }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CapturedAgentNodeComposition {
         node_path: String,
@@ -1006,58 +948,6 @@ mod launcher_drain_tests {
     }
 
     #[async_trait]
-    impl AgentNodeFrameMaterializer for CapturingLifecycleFrameMaterializer {
-        async fn materialize_frame(
-            &self,
-            context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-            coordinate: &RuntimeNodeCoordinate,
-            plan_node: &PlanNode,
-            workflow_contract: Option<&AgentProcedureContract>,
-            workflow_label: Option<&str>,
-        ) -> Result<AgentFrame, WorkflowApplicationError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(CapturedAgentNodeComposition {
-                    node_path: coordinate.node_path.clone(),
-                    attempt: coordinate.attempt,
-                    runtime_session_id: Some(context.runtime_session_ref.to_string()),
-                    contract_output_ports: workflow_contract
-                        .map(|contract| {
-                            contract
-                                .output_ports
-                                .iter()
-                                .map(|port| port.key.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    workflow_label: workflow_label.map(str::to_string),
-                });
-
-            let writable_port_keys = plan_node
-                .output_ports
-                .iter()
-                .map(|port| port.key.clone())
-                .collect::<Vec<_>>();
-            let overlay = lifecycle_mount_overlay_for_surface(&LifecycleMountSurface {
-                run_id: context.run.id,
-                orchestration_id: coordinate.orchestration_id,
-                node_path: &coordinate.node_path,
-                lifecycle_key: "test_lifecycle",
-                attempt: coordinate.attempt,
-                writable_port_keys,
-            });
-            construct_launch_anchor_frame_with_vfs(
-                self.frame_repo.as_ref(),
-                context.agent_id,
-                Some(context.runtime_session_ref),
-                context.frame_created_by_id,
-                &overlay,
-            )
-            .await
-        }
-    }
-
     #[derive(Default)]
     struct InMemoryGateRepo {
         items: Mutex<Vec<LifecycleGate>>,

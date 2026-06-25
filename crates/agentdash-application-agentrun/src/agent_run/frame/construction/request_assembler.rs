@@ -1,4 +1,4 @@
-﻿//! Runtime launch assembly helpers.
+//! Runtime launch assembly helpers.
 //!
 //! ## 设计
 //!
@@ -50,6 +50,7 @@ use crate::agent_run::project_agent_context::{
 use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
 };
+use crate::agent_run_repository_set::RepositorySet;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
@@ -60,7 +61,6 @@ use crate::context::{
     build_session_context_bundle, emit_bundle_fragments,
 };
 use crate::platform_config::PlatformConfig;
-use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
 use agentdash_application_vfs::{VfsService, apply_agent_vfs_access_grants};
 

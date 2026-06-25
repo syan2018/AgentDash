@@ -4,7 +4,7 @@ use agentdash_agent_protocol::UserInputBlock;
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
 
-use crate::lifecycle::WorkflowApplicationError;
+use crate::error::WorkflowApplicationError;
 use crate::session::{LaunchCommand, SessionLaunchService, UserPromptInput};
 
 #[derive(Debug, Clone)]

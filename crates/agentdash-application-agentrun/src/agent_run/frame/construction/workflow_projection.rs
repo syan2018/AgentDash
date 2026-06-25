@@ -3,7 +3,7 @@ use agentdash_domain::workflow::{
     AgentProcedureRepository, ExecutorSpec, LifecycleRun, RuntimeNodeState, RuntimeNodeStatus,
 };
 
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
 
 pub(super) async fn resolve_active_workflow_projection_from_message_stream_trace(
     session_id: &str,

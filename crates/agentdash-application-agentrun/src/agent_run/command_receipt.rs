@@ -7,7 +7,7 @@ use agentdash_domain::workflow::{
     AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
 };
 
-use crate::lifecycle::WorkflowApplicationError;
+use crate::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunCommandReceiptView {

@@ -7,7 +7,7 @@ use agentdash_domain::workflow::WorkflowContextBinding;
 
 use super::path::parse_mount_uri;
 use super::service::VfsService;
-use crate::runtime::Vfs;
+use agentdash_domain::common::Vfs;
 
 /// 单个 binding 的解析结果
 #[derive(Debug, Clone)]

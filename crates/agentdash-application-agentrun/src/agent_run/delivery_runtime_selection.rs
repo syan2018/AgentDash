@@ -6,8 +6,8 @@ use agentdash_domain::workflow::{
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::ApplicationError;
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
+use crate::error::ApplicationError;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
     MessageStreamProjectionRef, MessageStreamTraceKind,

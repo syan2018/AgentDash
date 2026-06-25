@@ -59,7 +59,6 @@ use super::super::{
     SessionToolResultCache,
 };
 use super::{PendingRuntimeContextTransitionInput, SessionRuntimeInner};
-use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::runtime_capability::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
@@ -75,6 +74,7 @@ use crate::vfs::{
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
 };
+use agentdash_application_ports::frame_launch_envelope::FrameSurfaceDraft;
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest, FrameLaunchModifier,
 };

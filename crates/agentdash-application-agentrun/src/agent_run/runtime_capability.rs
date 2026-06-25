@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::{AgentFrame, MountDirective, ToolCapabilityDirective};
-use agentdash_spi::RuntimeMcpServer;
+use agentdash_spi::{CapabilityState, RuntimeMcpServer};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use uuid::Uuid;
@@ -14,16 +14,16 @@ pub use agentdash_spi::{
 
 pub use agentdash_spi::AccumulationPolicy;
 
-use crate::session::types::{
+use agentdash_spi::session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
     CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
     CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
-    CapabilityState, DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
-    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
-    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
-    EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition, RuntimeCapabilityEffectRecord,
-    RuntimeCapabilityTransition, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
-    SetToolAccessEffect,
+    CapabilityDimensionKey, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+    DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
+    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SetCompanionAgentRosterEffect,
+    SetMcpServerSetEffect, SetToolAccessEffect,
 };
 
 // ── AgentFrame ↔ CapabilityState 投影 ─────────────────────────────
@@ -1271,9 +1271,7 @@ mod tests {
         let transition = RuntimeCapabilityTransition {
             declarations: Vec::new(),
             effects: vec![RuntimeCapabilityEffectRecord {
-                dimension: crate::session::types::CapabilityDimensionKey::new(
-                    CAPABILITY_DIMENSION_TOOL,
-                ),
+                dimension: CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
                 effect_type: EFFECT_TYPE_SET_TOOL_ACCESS.to_string(),
                 payload: serde_json::json!({
                     "capabilities": "not-a-set",

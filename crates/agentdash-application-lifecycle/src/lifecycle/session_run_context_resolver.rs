@@ -7,7 +7,7 @@ use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::SubjectRunContext;
 use uuid::Uuid;
 
-use crate::ApplicationError;
+use crate::lifecycle::WorkflowApplicationError;
 
 pub struct SubjectRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
@@ -38,12 +38,12 @@ impl<'a> SubjectRunContextResolver<'a> {
     pub async fn resolve_from_message_stream_trace(
         &self,
         session_id: &str,
-    ) -> Result<Option<SubjectRunContext>, ApplicationError> {
+    ) -> Result<Option<SubjectRunContext>, WorkflowApplicationError> {
         let Some(anchor) = self
             .execution_anchor_repo
             .find_by_session(session_id)
             .await
-            .map_err(ApplicationError::from)?
+            .map_err(WorkflowApplicationError::from)?
         else {
             return Ok(None);
         };
@@ -51,7 +51,7 @@ impl<'a> SubjectRunContextResolver<'a> {
             .lifecycle_agent_repo
             .get(anchor.agent_id)
             .await
-            .map_err(ApplicationError::from)?
+            .map_err(WorkflowApplicationError::from)?
         else {
             return Ok(None);
         };
@@ -62,7 +62,7 @@ impl<'a> SubjectRunContextResolver<'a> {
             .lifecycle_run_repo
             .get_by_id(anchor.run_id)
             .await
-            .map_err(ApplicationError::from)?
+            .map_err(WorkflowApplicationError::from)?
         else {
             return Ok(None);
         };
@@ -70,13 +70,13 @@ impl<'a> SubjectRunContextResolver<'a> {
             .lifecycle_subject_association_repo
             .list_by_anchor(run.id, Some(agent.id))
             .await
-            .map_err(ApplicationError::from)?;
+            .map_err(WorkflowApplicationError::from)?;
         if associations.is_empty() {
             associations = self
                 .lifecycle_subject_association_repo
                 .list_by_anchor(run.id, None)
                 .await
-                .map_err(ApplicationError::from)?;
+                .map_err(WorkflowApplicationError::from)?;
         }
         build_subject_run_context(
             run.project_id,
@@ -91,12 +91,12 @@ impl<'a> SubjectRunContextResolver<'a> {
     pub async fn resolve_for_run(
         &self,
         run: &LifecycleRun,
-    ) -> Result<SubjectRunContext, ApplicationError> {
+    ) -> Result<SubjectRunContext, WorkflowApplicationError> {
         let associations = self
             .lifecycle_subject_association_repo
             .list_by_anchor(run.id, None)
             .await
-            .map_err(ApplicationError::from)?;
+            .map_err(WorkflowApplicationError::from)?;
         build_subject_run_context(
             run.project_id,
             &associations,
@@ -112,7 +112,7 @@ pub async fn build_subject_run_context(
     associations: &[LifecycleSubjectAssociation],
     lifecycle_run_repo: &dyn LifecycleRunRepository,
     story_repo: &dyn StoryRepository,
-) -> Result<SubjectRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, WorkflowApplicationError> {
     if let Some(assoc) = select_association(associations, "task") {
         return task_context(
             project_id,
@@ -165,20 +165,20 @@ async fn task_context(
     associations: &[LifecycleSubjectAssociation],
     lifecycle_run_repo: &dyn LifecycleRunRepository,
     story_repo: &dyn StoryRepository,
-) -> Result<SubjectRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, WorkflowApplicationError> {
     let task_id = task_assoc.subject_id;
     let run = lifecycle_run_repo
         .get_by_id(task_assoc.anchor_run_id)
         .await
-        .map_err(ApplicationError::from)?
+        .map_err(WorkflowApplicationError::from)?
         .ok_or_else(|| {
-            ApplicationError::NotFound(format!(
+            WorkflowApplicationError::NotFound(format!(
                 "Task {task_id} owning LifecycleRun {} 不存在",
                 task_assoc.anchor_run_id
             ))
         })?;
     if run.project_id != project_id {
-        return Err(ApplicationError::Conflict(format!(
+        return Err(WorkflowApplicationError::Conflict(format!(
             "Task {task_id} owning LifecycleRun 不属于当前 Project {project_id}"
         )));
     }
@@ -196,7 +196,7 @@ async fn task_context(
         story_repo
             .get_by_id(story_id)
             .await
-            .map_err(ApplicationError::from)?
+            .map_err(WorkflowApplicationError::from)?
             .map(|story| story.title)
     } else {
         None
@@ -216,11 +216,11 @@ async fn story_context(
     project_id: Uuid,
     story_id: Uuid,
     story_repo: &dyn StoryRepository,
-) -> Result<SubjectRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, WorkflowApplicationError> {
     let story = story_repo
         .get_by_id(story_id)
         .await
-        .map_err(ApplicationError::from)?;
+        .map_err(WorkflowApplicationError::from)?;
     Ok(SubjectRunContext {
         project_id,
         story_id: Some(story_id),

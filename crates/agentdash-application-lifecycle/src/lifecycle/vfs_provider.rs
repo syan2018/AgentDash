@@ -13,6 +13,7 @@ use serde::Serialize;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::lifecycle::SessionToolResultCache;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
@@ -20,18 +21,13 @@ use crate::lifecycle::surface::journey::{
     tool_result_metadata_for_projection,
 };
 use crate::lifecycle::vfs_catalog::lifecycle_root_entries;
-use crate::session::SessionToolResultCache;
-use crate::vfs::mount::PROVIDER_LIFECYCLE_VFS;
-use crate::vfs::mount_inline::list_inline_entries;
-use crate::vfs::path::normalize_mount_relative_path;
-use crate::vfs::provider::{
+use agentdash_application_vfs::mount::PROVIDER_LIFECYCLE_VFS;
+use agentdash_application_vfs::mount_inline::list_inline_entries;
+use agentdash_application_vfs::path::normalize_mount_relative_path;
+use agentdash_application_vfs::provider::{
     MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
 };
-use crate::vfs::provider_skill_asset::{
-    list_projected_skill_files, parse_skill_asset_mount_metadata, read_projected_skill_file,
-    search_projected_skill_files,
-};
-use crate::vfs::types::{ListOptions, ListResult, ReadResult};
+use agentdash_application_vfs::types::{ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
 use agentdash_spi::SessionPersistence;
 use agentdash_spi::platform::mount::RuntimeFileEntry;
@@ -157,7 +153,7 @@ impl LifecycleMountProvider {
     ) -> Result<Vec<RuntimeFileEntry>, MountError> {
         let session_id = parse_runtime_session_id_from_metadata(mount)?;
         let entries = match segs {
-            [] => agent_run_session_root_entries(lifecycle_mount_has_skills(mount), mount),
+            [] => agent_run_session_root_entries(false, mount),
             ["session"] => {
                 if options.recursive {
                     list_session_recursive_entries(&self.journey, &session_id, "session").await?
@@ -496,12 +492,6 @@ fn segments_from_path(path: &str) -> Vec<&str> {
     }
 }
 
-fn lifecycle_mount_has_skills(mount: &Mount) -> bool {
-    parse_skill_asset_mount_metadata(mount)
-        .map(|(_, keys)| !keys.is_empty())
-        .unwrap_or(false)
-}
-
 fn flatten_nodes<'a>(nodes: &'a [RuntimeNodeState], out: &mut Vec<&'a RuntimeNodeState>) {
     for node in nodes {
         out.push(node);
@@ -632,8 +622,10 @@ impl MountProvider for LifecycleMountProvider {
         let segs = segments_from_path(&path_norm);
 
         if matches!(segs.as_slice(), ["skills", ..]) {
-            return read_projected_skill_file(self.skill_asset_repo.as_ref(), mount, &path_norm)
-                .await;
+            return Err(MountError::NotSupported(
+                "lifecycle_vfs skill asset projection is owned by VFS provider export wiring"
+                    .to_string(),
+            ));
         }
 
         if mount_is_agent_run_session_scope(mount) {
@@ -793,8 +785,9 @@ impl MountProvider for LifecycleMountProvider {
         let path_norm = normalize_mount_relative_path(&options.path, true)
             .map_err(MountError::OperationFailed)?;
         if path_norm == "skills" || path_norm.starts_with("skills/") {
-            return list_projected_skill_files(self.skill_asset_repo.as_ref(), mount, options)
-                .await;
+            return Ok(ListResult {
+                entries: Vec::new(),
+            });
         }
         let segs = segments_from_path(&path_norm);
         if mount_is_agent_run_session_scope(mount) {
@@ -811,7 +804,7 @@ impl MountProvider for LifecycleMountProvider {
             ));
         }
         let mut entries = match segs.as_slice() {
-            [] => lifecycle_root_entries(lifecycle_mount_has_skills(mount)),
+            [] => lifecycle_root_entries(false),
             ["artifacts"] => self
                 .journey
                 .list_scoped_port_outputs(&runtime_scope_from_mount(mount)?)
@@ -976,8 +969,10 @@ impl MountProvider for LifecycleMountProvider {
             .as_deref()
             .is_some_and(|path| path == "skills" || path.starts_with("skills/"))
         {
-            return search_projected_skill_files(self.skill_asset_repo.as_ref(), mount, query)
-                .await;
+            return Ok(SearchResult {
+                matches: Vec::new(),
+                truncated: false,
+            });
         }
         let listing = self
             .list(
@@ -1395,8 +1390,7 @@ mod tests {
     use crate::lifecycle::{
         build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
     };
-    use crate::session::MemorySessionPersistence;
-    use crate::session::{
+    use agentdash_spi::{
         ExecutionStatus, SessionEventStore, SessionMeta, SessionMetaStore, TitleSource,
     };
 

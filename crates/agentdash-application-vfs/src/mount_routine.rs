@@ -1,4 +1,4 @@
-use crate::runtime::{Mount, MountCapability};
+use agentdash_domain::common::{Mount, MountCapability};
 use uuid::Uuid;
 
 use super::mount::PROVIDER_ROUTINE_VFS;

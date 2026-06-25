@@ -19,7 +19,7 @@ use agentdash_domain::workflow::{
     SubjectRef,
 };
 
-use crate::repository_set::RepositorySet;
+use crate::RepositorySet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubjectRefView {

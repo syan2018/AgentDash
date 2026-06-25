@@ -6,10 +6,10 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
 
 use crate::agent_run::resolve_project_workspace;
+use crate::agent_run_repository_set::RepositorySet;
 use crate::context::{
     Contribution, contribute_workspace_static_sources, resolve_workspace_declared_sources,
 };
-use crate::repository_set::RepositorySet;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::workspace::BackendAvailability;
 use agentdash_application_vfs::VfsService;

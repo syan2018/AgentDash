@@ -6,9 +6,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::FunctionRunner;
 use uuid::Uuid;
 
-use crate::platform_config::SharedPlatformConfig;
-use crate::repository_set::RepositorySet;
 use crate::workflow::{OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher};
+use crate::{RepositorySet, SharedPlatformConfig};
 
 use super::{LifecycleDispatchService, WorkflowApplicationError};
 

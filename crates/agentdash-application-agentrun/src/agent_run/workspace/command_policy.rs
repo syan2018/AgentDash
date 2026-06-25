@@ -10,8 +10,8 @@ use crate::agent_run::{
     ConversationModelConfigStatusModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionService, conversation_command_id_for,
 };
-use crate::lifecycle::WorkflowApplicationError;
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
+use crate::error::WorkflowApplicationError;
 use crate::session::{SessionCoreService, SessionExecutionState};
 
 use super::projection::is_terminal_agent_status;

@@ -4,13 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use agentdash_domain::common::StoredFileContent;
-use agentdash_domain::skill_asset::SkillAssetRepository;
-use async_trait::async_trait;
-use uuid::Uuid;
-
-use crate::skill_asset::{
-    SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, parse_skill_metadata,
+use agentdash_domain::skill_asset::{
+    SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
 };
+use async_trait::async_trait;
+use serde::Deserialize;
+use uuid::Uuid;
 
 use super::mount::{
     PROVIDER_SKILL_ASSET_FS, SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY,
@@ -23,7 +22,11 @@ use super::provider::{
 use super::types::{
     BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
 };
-use crate::runtime::{Mount, RuntimeFileEntry};
+use agentdash_domain::common::Mount;
+use agentdash_spi::platform::mount::RuntimeFileEntry;
+
+const MAX_SKILL_KEY_LENGTH: usize = 64;
+const MAX_SKILL_DESCRIPTION_LENGTH: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedSkillAssetFile {
@@ -41,16 +44,6 @@ fn map_mount_err(error: String) -> MountError {
 
 fn map_domain_err(error: agentdash_domain::DomainError) -> MountError {
     MountError::OperationFailed(error.to_string())
-}
-
-fn map_app_err(error: crate::skill_asset::SkillAssetApplicationError) -> MountError {
-    use crate::skill_asset::SkillAssetApplicationError as Error;
-    match error {
-        Error::NotFound(message) => MountError::NotFound(message),
-        Error::BadRequest(message) | Error::Conflict(message) | Error::Internal(message) => {
-            MountError::OperationFailed(message)
-        }
-    }
 }
 
 fn parse_projected_skill_path(path: &str) -> Result<(String, String), MountError> {
@@ -295,6 +288,177 @@ fn projected_path_matches_pattern(path: &str, pattern: Option<&str>) -> bool {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ParsedSkillMetadata {
+    name: String,
+    description: String,
+    disable_model_invocation: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct SkillFrontmatter {
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "disable-model-invocation", default)]
+    disable_model_invocation: bool,
+}
+
+fn parse_skill_metadata(content: &str) -> Result<ParsedSkillMetadata, MountError> {
+    let frontmatter = parse_skill_file_frontmatter(content).ok_or_else(|| {
+        MountError::OperationFailed("SKILL.md 必须包含 YAML frontmatter".to_string())
+    })?;
+    let name = frontmatter
+        .name
+        .as_deref()
+        .map(validate_skill_key)
+        .transpose()?
+        .ok_or_else(|| MountError::OperationFailed("SKILL.md 缺少 name".to_string()))?;
+    let description = frontmatter
+        .description
+        .as_deref()
+        .ok_or_else(|| MountError::OperationFailed("SKILL.md 缺少 description".to_string()))?
+        .trim()
+        .to_string();
+    validate_description(&description)?;
+    Ok(ParsedSkillMetadata {
+        name,
+        description,
+        disable_model_invocation: frontmatter.disable_model_invocation,
+    })
+}
+
+fn parse_skill_file_frontmatter(content: &str) -> Option<SkillFrontmatter> {
+    let content = content.trim_start_matches('\u{feff}');
+    if !content.starts_with("---") {
+        return None;
+    }
+    let after_open = &content[3..];
+    let close_pos = after_open.find("\n---")?;
+    serde_yaml::from_str(&after_open[..close_pos]).ok()
+}
+
+fn validate_skill_key(key: &str) -> Result<String, MountError> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(MountError::OperationFailed(
+            "skill key 不能为空".to_string(),
+        ));
+    }
+    if key.len() > MAX_SKILL_KEY_LENGTH {
+        return Err(MountError::OperationFailed(format!(
+            "skill key 不能超过 {MAX_SKILL_KEY_LENGTH} 字符"
+        )));
+    }
+    if !key
+        .chars()
+        .all(|ch| matches!(ch, 'a'..='z' | '0'..='9' | '-'))
+    {
+        return Err(MountError::OperationFailed(
+            "skill key 只能包含小写字母、数字和连字符".to_string(),
+        ));
+    }
+    Ok(key.to_string())
+}
+
+fn validate_description(description: &str) -> Result<(), MountError> {
+    let value = description.trim();
+    if value.is_empty() {
+        return Err(MountError::OperationFailed(
+            "description 不能为空".to_string(),
+        ));
+    }
+    if value.len() > MAX_SKILL_DESCRIPTION_LENGTH {
+        return Err(MountError::OperationFailed(format!(
+            "description 不能超过 {MAX_SKILL_DESCRIPTION_LENGTH} 字符"
+        )));
+    }
+    Ok(())
+}
+
+async fn ensure_skill_key_available(
+    repo: &dyn SkillAssetRepository,
+    project_id: Uuid,
+    key: &str,
+    current_asset_id: Uuid,
+) -> Result<(), MountError> {
+    let existing = repo
+        .get_by_project_and_key(project_id, key)
+        .await
+        .map_err(map_domain_err)?;
+    if existing.is_some_and(|asset| asset.id != current_asset_id) {
+        return Err(MountError::OperationFailed(format!(
+            "Project SkillAsset key 已存在: {key}"
+        )));
+    }
+    Ok(())
+}
+
+fn set_skill_file(
+    files: &mut Vec<SkillAssetFile>,
+    skill_asset_id: Uuid,
+    relative_path: String,
+    content: StoredFileContent,
+) {
+    if let Some(existing) = files.iter_mut().find(|file| file.path == relative_path) {
+        existing.content = content;
+        existing.kind = SkillAssetFileKind::from_path(&existing.path);
+        existing.size_bytes = existing.content.size_bytes();
+        existing.touch();
+        return;
+    }
+    files.push(SkillAssetFile::new_with_content(
+        skill_asset_id,
+        relative_path,
+        content,
+        SkillAssetFileKind::Reference,
+    ));
+    if let Some(created) = files.last_mut() {
+        created.kind = SkillAssetFileKind::from_path(&created.path);
+    }
+}
+
+fn remove_skill_file(files: &mut Vec<SkillAssetFile>, relative_path: &str) -> bool {
+    let before = files.len();
+    files.retain(|file| file.path != relative_path);
+    files.len() != before
+}
+
+fn rename_skill_file(
+    files: &mut [SkillAssetFile],
+    from_relative_path: &str,
+    to_relative_path: String,
+) -> bool {
+    let Some(file) = files
+        .iter_mut()
+        .find(|file| file.path == from_relative_path)
+    else {
+        return false;
+    };
+    file.path = to_relative_path;
+    file.kind = SkillAssetFileKind::from_path(&file.path);
+    file.touch();
+    true
+}
+
+async fn persist_skill_asset(
+    repo: &dyn SkillAssetRepository,
+    mut asset: SkillAsset,
+    metadata: Option<ParsedSkillMetadata>,
+    files: Vec<SkillAssetFile>,
+) -> Result<(), MountError> {
+    if let Some(metadata) = metadata {
+        if metadata.name != asset.key {
+            ensure_skill_key_available(repo, asset.project_id, &metadata.name, asset.id).await?;
+            asset.key = metadata.name;
+        }
+        asset.description = metadata.description;
+        asset.disable_model_invocation = metadata.disable_model_invocation;
+    }
+    asset.files = files;
+    asset.touch();
+    repo.update(&asset).await.map_err(map_domain_err)
+}
+
 fn skill_file_attributes(
     file: &ProjectedSkillAssetFile,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -429,50 +593,25 @@ impl MountProvider for SkillAssetFsMountProvider {
     ) -> Result<(), MountError> {
         let (project_id, _keys) = parse_skill_asset_mount_metadata(mount)?;
         let (key, relative_path) = parse_projected_skill_path(path)?;
-        let service = SkillAssetService::new(self.skill_asset_repo.as_ref());
         let asset = self
             .skill_asset_repo
             .get_by_project_and_key(project_id, &key)
             .await
             .map_err(map_domain_err)?
             .ok_or_else(|| MountError::NotFound(format!("SkillAsset 不存在: {key}")))?;
-        let mut files = asset
-            .files
-            .iter()
-            .map(|file| SkillAssetFileInput {
-                path: file.path.clone(),
-                content: file.content.clone(),
-            })
-            .collect::<Vec<_>>();
-        if let Some(existing) = files.iter_mut().find(|file| file.path == relative_path) {
-            existing.content = StoredFileContent::text(content);
-        } else {
-            files.push(SkillAssetFileInput {
-                path: relative_path.clone(),
-                content: StoredFileContent::text(content),
-            });
-        }
+        let mut files = asset.files.clone();
+        set_skill_file(
+            &mut files,
+            asset.id,
+            relative_path.clone(),
+            StoredFileContent::text(content),
+        );
         let metadata = if relative_path == "SKILL.md" {
-            Some(parse_skill_metadata(content).map_err(map_app_err)?)
+            Some(parse_skill_metadata(content)?)
         } else {
             None
         };
-        service
-            .update(
-                asset.id,
-                UpdateSkillAssetInput {
-                    key: metadata.as_ref().map(|meta| meta.name.clone()),
-                    description: metadata.as_ref().map(|meta| meta.description.clone()),
-                    disable_model_invocation: metadata
-                        .as_ref()
-                        .map(|meta| meta.disable_model_invocation),
-                    files: Some(files),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(map_app_err)?;
-        Ok(())
+        persist_skill_asset(self.skill_asset_repo.as_ref(), asset, metadata, files).await
     }
 
     async fn delete_text(
@@ -488,38 +627,19 @@ impl MountProvider for SkillAssetFsMountProvider {
                 "不能通过文件 primitive 删除 Skill 主文档".to_string(),
             ));
         }
-        let service = SkillAssetService::new(self.skill_asset_repo.as_ref());
         let asset = self
             .skill_asset_repo
             .get_by_project_and_key(project_id, &key)
             .await
             .map_err(map_domain_err)?
             .ok_or_else(|| MountError::NotFound(format!("SkillAsset 不存在: {key}")))?;
-        if !asset.files.iter().any(|file| file.path == relative_path) {
+        let mut files = asset.files.clone();
+        if !remove_skill_file(&mut files, &relative_path) {
             return Err(MountError::NotFound(format!(
                 "SkillAsset 文件不存在: skills/{key}/{relative_path}"
             )));
         }
-        let files = asset
-            .files
-            .iter()
-            .filter(|file| file.path != relative_path)
-            .map(|file| SkillAssetFileInput {
-                path: file.path.clone(),
-                content: file.content.clone(),
-            })
-            .collect::<Vec<_>>();
-        service
-            .update(
-                asset.id,
-                UpdateSkillAssetInput {
-                    files: Some(files),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(map_app_err)?;
-        Ok(())
+        persist_skill_asset(self.skill_asset_repo.as_ref(), asset, None, files).await
     }
 
     async fn rename_text(
@@ -542,7 +662,6 @@ impl MountProvider for SkillAssetFsMountProvider {
                 "不能通过文件 primitive 重命名 Skill 主文档".to_string(),
             ));
         }
-        let service = SkillAssetService::new(self.skill_asset_repo.as_ref());
         let asset = self
             .skill_asset_repo
             .get_by_project_and_key(project_id, &from_key)
@@ -554,41 +673,13 @@ impl MountProvider for SkillAssetFsMountProvider {
                 "目标文件已存在: skills/{to_key}/{to_relative_path}"
             )));
         }
-        let mut found = false;
-        let files = asset
-            .files
-            .iter()
-            .map(|file| {
-                if file.path == from_relative_path {
-                    found = true;
-                    SkillAssetFileInput {
-                        path: to_relative_path.clone(),
-                        content: file.content.clone(),
-                    }
-                } else {
-                    SkillAssetFileInput {
-                        path: file.path.clone(),
-                        content: file.content.clone(),
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-        if !found {
+        let mut files = asset.files.clone();
+        if !rename_skill_file(&mut files, &from_relative_path, to_relative_path.clone()) {
             return Err(MountError::NotFound(format!(
                 "SkillAsset 文件不存在: skills/{from_key}/{from_relative_path}"
             )));
         }
-        service
-            .update(
-                asset.id,
-                UpdateSkillAssetInput {
-                    files: Some(files),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(map_app_err)?;
-        Ok(())
+        persist_skill_asset(self.skill_asset_repo.as_ref(), asset, None, files).await
     }
 
     async fn list(

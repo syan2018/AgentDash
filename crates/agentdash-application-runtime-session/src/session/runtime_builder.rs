@@ -47,7 +47,10 @@ impl SessionRuntimeBuilder {
         }
     }
 
-    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::VfsService>) -> Self {
+    pub fn with_vfs_service<T>(mut self, service: Arc<T>) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
         self.inner = self.inner.with_vfs_service(service);
         self
     }

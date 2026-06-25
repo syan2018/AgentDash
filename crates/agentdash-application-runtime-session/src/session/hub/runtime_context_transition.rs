@@ -1,4 +1,4 @@
-﻿//! Workflow runtime context transition 的统一应用入口。
+//! Workflow runtime context transition 的统一应用入口。
 //!
 //! 这里刻意放在 Hub 层：transition 应用需要同时触碰 live connector、SessionRuntime、
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
@@ -20,15 +20,14 @@ use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 #[cfg(test)]
 use crate::agent_run::runtime_capability::RuntimeContextTransition;
-use crate::agent_run::runtime_capability::{
-    CapabilityStateDelta, apply_runtime_capability_transition, compute_capability_state_delta,
-};
 use crate::hooks::hook_injection_to_fragment;
+use crate::session::runtime_capability::apply_runtime_capability_transition;
 #[cfg(test)]
 use crate::session::{
     AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeDeliveryCommand,
 };
 use crate::session::{CapabilityState, PendingCapabilityStateTransition};
+use agentdash_spi::{CapabilityStateDelta, compute_capability_state_delta};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {

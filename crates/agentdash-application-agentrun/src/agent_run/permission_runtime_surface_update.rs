@@ -8,7 +8,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::ApplicationError;
 use crate::agent_run::runtime_capability::{
     ToolCapabilityDimensionModule, project_capability_state_from_frame,
 };
@@ -18,6 +17,7 @@ use crate::agent_run::{
     AgentRunRuntimeSurfaceUpdateAdapter, RejectingFrameConstructionAdapter,
     RuntimeSurfaceUpdateRequest,
 };
+use crate::error::ApplicationError;
 use crate::permission::PermissionGrantCompiler;
 use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_domain::permission::PermissionGrant;

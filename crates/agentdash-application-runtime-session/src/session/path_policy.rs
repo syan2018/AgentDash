@@ -1,26 +1,21 @@
 use std::path::{Path, PathBuf};
 
-use crate::vfs::RootRef;
-
 /// 将 default mount root 解析为 session 执行工作目录。
 ///
 /// Session connector 的 working directory 必须是本机路径。`lifecycle://`、
 /// `skill-assets://`、`canvas://` 等虚拟 root 需要先经过物化，不能隐式转成
 /// `PathBuf` 后交给 connector。
 pub fn resolve_session_working_directory(mount_root_ref: &str) -> Result<PathBuf, String> {
-    match RootRef::parse(mount_root_ref)? {
-        RootRef::LocalPath(path) => {
-            let trimmed = path.trim();
-            if trimmed.is_empty() {
-                Err("session working_dir 的 root_ref 不能为空".to_string())
-            } else {
-                Ok(PathBuf::from(trimmed))
-            }
-        }
-        RootRef::ProviderUri { scheme, .. } => Err(format!(
-            "session working_dir 不能直接使用虚拟 mount root `{scheme}://`"
-        )),
+    let trimmed = mount_root_ref.trim();
+    if trimmed.is_empty() {
+        return Err("session working_dir 的 root_ref 不能为空".to_string());
     }
+    if let Some((scheme, _)) = trimmed.split_once("://") {
+        return Err(format!(
+            "session working_dir 不能直接使用虚拟 mount root `{scheme}://`"
+        ));
+    }
+    Ok(PathBuf::from(trimmed))
 }
 
 /// 将执行级工作目录投影为相对 mount root 的 working_dir。

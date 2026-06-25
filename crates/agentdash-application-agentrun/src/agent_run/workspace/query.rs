@@ -1,21 +1,21 @@
-﻿use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
+use crate::agent_run::lifecycle_read_model::{
+    LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
+};
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     ConversationModelConfigInput, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
-use crate::lifecycle::WorkflowApplicationError;
-use crate::lifecycle::run_view_builder::{
-    LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
-};
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
+use crate::error::WorkflowApplicationError;
 use crate::session::{SessionCoreService, SessionExecutionState};
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,

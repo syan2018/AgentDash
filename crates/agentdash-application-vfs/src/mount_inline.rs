@@ -4,7 +4,8 @@ use agentdash_domain::context_container::{ContextContainerDefinition, ContextCon
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use uuid::Uuid;
 
-use crate::runtime::{Mount, MountCapability, RuntimeFileEntry};
+use agentdash_domain::common::{Mount, MountCapability};
+use agentdash_spi::platform::mount::RuntimeFileEntry;
 
 use super::mount::{
     CONTEXT_CONTAINER_ID_METADATA_KEY, CONTEXT_OWNER_ID_METADATA_KEY,

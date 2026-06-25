@@ -9,7 +9,7 @@ use agentdash_spi::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::session::{lifecycle_path_for_tool_result, readable_aliases_from_item_id};
+use crate::lifecycle::{lifecycle_path_for_tool_result, readable_aliases_from_item_id};
 
 use super::{JourneyResult, LifecycleJourneyError, to_json_pretty};
 

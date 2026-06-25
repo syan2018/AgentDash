@@ -12,7 +12,7 @@ pub mod run_command_service;
 pub mod run_view_builder;
 mod session_association;
 mod session_run_context_resolver;
-mod subject_context_assignment;
+mod session_tool_result_cache;
 mod subject_execution_control;
 pub mod surface;
 pub mod tools;
@@ -25,7 +25,6 @@ pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_facade::LifecycleDispatchFacade;
 pub use dispatch_service::{
     LifecycleDispatchService, SessionPersistenceRuntimeSessionCreator,
-    WorkflowAgentNodeFrameMaterializationContext, WorkflowAgentNodeFrameMaterializer,
     WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
 pub use error::WorkflowApplicationError;
@@ -55,15 +54,15 @@ pub use session_association::{
     resolve_current_frame_from_delivery_trace_ref,
 };
 pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
-pub use subject_context_assignment::{
-    SubjectContextAssignment, SubjectContextAssignmentRequest, SubjectContextAssignmentResolver,
-    SubjectWorkspacePolicy,
+pub use session_tool_result_cache::{
+    SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,
+    SessionToolResultCacheStatusKind, lifecycle_path_for_tool_result,
+    readable_aliases_from_item_id,
 };
 pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,
 };
-pub(crate) use surface::mount::project_active_workflow_lifecycle_vfs;
 #[cfg(test)]
 pub(crate) use surface::mount::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
 pub use surface::surface_projector::{
@@ -76,4 +75,3 @@ pub use surface::surface_projector::{
 pub(crate) use vfs_mount::{
     build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
-pub(crate) use vfs_provider::LifecycleMountProvider;

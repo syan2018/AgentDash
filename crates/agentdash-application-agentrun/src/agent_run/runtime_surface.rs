@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
@@ -1020,7 +1020,6 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::backend::RuntimeBackendAnchorSource;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_domain::workflow::{
         AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
@@ -1243,44 +1242,48 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestSkillAssetRepo;
+    struct TestLifecycleSurfaceProjection;
 
     #[async_trait::async_trait]
-    impl SkillAssetRepository for TestSkillAssetRepo {
-        async fn create(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get(&self, _id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(None)
-        }
-
-        async fn get_by_project_and_key(
+    impl ports_lifecycle_surface::LifecycleSurfaceProjectionPort for TestLifecycleSurfaceProjection {
+        async fn project_lifecycle_surface(
             &self,
-            _project_id: Uuid,
-            _key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(None)
-        }
-
-        async fn get_by_project_and_builtin_key(
-            &self,
-            _project_id: Uuid,
-            _builtin_key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
+            input: ports_lifecycle_surface::AgentRunLifecycleSurfaceInput,
+        ) -> Result<
+            ports_lifecycle_surface::AgentRunLifecycleSurface,
+            ports_lifecycle_surface::LifecycleSurfaceProjectionError,
+        > {
+            let lifecycle_mount = Mount {
+                id: ports_lifecycle_surface::LIFECYCLE_MOUNT_ID.to_string(),
+                provider: ports_lifecycle_surface::PROVIDER_LIFECYCLE_VFS.to_string(),
+                backend_id: "lifecycle".to_string(),
+                root_ref: format!("lifecycle://run/{}", input.address.run_id),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Lifecycle".to_string(),
+                metadata: serde_json::json!({
+                    "launch_frame_id": input.address.frame_id.to_string(),
+                }),
+            };
+            let mut vfs = input.base_vfs.unwrap_or_default();
+            vfs.mounts.push(lifecycle_mount.clone());
+            Ok(ports_lifecycle_surface::AgentRunLifecycleSurface {
+                vfs,
+                lifecycle_mount,
+                projections: ports_lifecycle_surface::AgentRunLifecycleProjectionSet {
+                    agent_run_identity: true,
+                    message_stream: input.message_stream.map(|message_stream| {
+                        ports_lifecycle_surface::MessageStreamProjectionFacts {
+                            runtime_session_id: message_stream.runtime_session_id,
+                            trace_kind: message_stream.trace_kind,
+                        }
+                    }),
+                    node_evidence: None,
+                    orchestration_node: None,
+                    skill_assets: Vec::new(),
+                },
+                skill_asset_keys: Vec::new(),
+            })
         }
     }
 
@@ -1643,11 +1646,7 @@ mod tests {
                 AgentRunResourceSurfaceQueryDeps {
                     anchor_repo: fixture.anchor_repo.clone(),
                     surface_query,
-                    lifecycle_surface_projection: Arc::new(
-                        crate::lifecycle::AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
-                            Arc::new(TestSkillAssetRepo),
-                        ),
-                    ),
+                    lifecycle_surface_projection: Arc::new(TestLifecycleSurfaceProjection),
                 },
             ));
 

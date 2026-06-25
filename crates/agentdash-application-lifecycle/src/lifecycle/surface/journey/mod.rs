@@ -16,7 +16,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
-use crate::session::{
+use crate::lifecycle::{
     SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,
     SessionToolResultCacheStatusKind,
 };

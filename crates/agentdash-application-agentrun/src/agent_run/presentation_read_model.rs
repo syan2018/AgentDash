@@ -7,15 +7,15 @@ use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, RuntimeSessionExecutionAnchor};
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::lifecycle_read_model::{
+    self as lifecycle_read_model, AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
+};
 use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, RuntimeSurfaceQueryPurpose,
 };
-use crate::lifecycle::run_view_builder::{
-    self, AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
-};
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
 use crate::session::{
     ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState, SessionMeta,
 };
@@ -188,7 +188,7 @@ impl AgentRunPresentationReadModelQuery {
             )) => None,
             Err(error) => return Err(error),
         };
-        let run_view = run_view_builder::build_lifecycle_run_view(&self.repos, &run).await?;
+        let run_view = lifecycle_read_model::build_lifecycle_run_view(&self.repos, &run).await?;
         let agent_view = run_view
             .agents
             .iter()

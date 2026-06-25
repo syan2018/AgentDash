@@ -151,6 +151,13 @@ Round 5A checkpoint result on 2026-06-25:
   - `lifecycle-repair`: old `crate::session`, `crate::agent_run`, `crate::vfs`, workflow compiler, repository and owner-provider imports.
 - Full checkpoint details live in `checkpoint-wave-5a.md`.
 
+Round 5B pass 1 checkpoint result on 2026-06-25:
+
+- `agentdash-application-vfs` and `agentdash-application-runtime-session` pass their target crate checks.
+- `agentdash-application-lifecycle` has one narrow owner blocker: workflow compiler / graph resolver ownership in `dispatch_service.rs`.
+- `agentdash-application-agentrun` is through the first forbidden-edge cleanup but still has session-facing, capability/context and application composition blockers.
+- Full checkpoint details live in `checkpoint-wave-5b-pass1.md`.
+
 ## Subagent Dispatch Plan
 
 Use one Trellis channel for the active task. Spawn at most six live implement workers at a time. Check agents run at wave checkpoints and do not ask implement agents to preserve old behavior for compatibility.

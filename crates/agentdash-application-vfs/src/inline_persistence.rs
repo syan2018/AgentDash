@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::mount_inline::parse_inline_mount_owner;
-use crate::runtime::Mount;
+use agentdash_domain::common::Mount;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use async_trait::async_trait;
 use tokio::sync::broadcast;

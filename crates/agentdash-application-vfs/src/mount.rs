@@ -1,5 +1,5 @@
-use crate::runtime::Mount;
 use crate::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
+use agentdash_domain::common::Mount;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 
 pub const PROJECT_VFS_MOUNT_CONTAINER_ID: &str = "files";

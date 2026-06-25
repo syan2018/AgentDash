@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::runtime::Mount;
 use crate::search::{TextSearchParams, format_search_matches, grep_inline};
 use crate::types::runtime_text_file_attributes;
 use crate::*;
+use agentdash_domain::common::Mount;
 use agentdash_spi::{MountCapability, Vfs};
 use async_trait::async_trait;
 

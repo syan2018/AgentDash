@@ -3,6 +3,7 @@
 //! 这里负责把 AgentRun / active workflow 的领域身份投影成可挂载的 VFS mount；
 //! `vfs` 模块只保留 provider / mount 的通用访问能力，不反向理解 lifecycle 领域对象。
 
+use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
 use agentdash_spi::Vfs;
 
 use uuid::Uuid;
@@ -13,8 +14,8 @@ use crate::lifecycle::projection::ActiveWorkflowProjection;
 use crate::lifecycle::{
     build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
-use crate::vfs::append_lifecycle_skill_asset_projection;
-use crate::vfs::mount::{SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY};
+const SKILL_ASSET_PROJECT_ID_METADATA_KEY: &str = "skill_asset_project_id";
+const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
 
 fn empty_vfs() -> Vfs {
     Vfs {
@@ -180,7 +181,6 @@ pub(crate) fn project_active_workflow_lifecycle_vfs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vfs::append_lifecycle_skill_asset_projection;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, BashExecExecutorSpec, DefinitionSource,

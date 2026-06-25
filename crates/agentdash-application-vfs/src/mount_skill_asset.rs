@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::runtime::{Mount, MountCapability, Vfs};
+use agentdash_domain::common::{Mount, MountCapability, Vfs};
 use uuid::Uuid;
 
 use super::mount::{

@@ -38,9 +38,9 @@ use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::merge_executor_config_fields;
 use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
+use crate::agent_run_repository_set::RepositorySet;
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
-use crate::repository_set::RepositorySet;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
     PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, UserPromptInput,

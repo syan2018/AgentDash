@@ -5,7 +5,7 @@ use agentdash_domain::{
     workspace::Workspace,
 };
 
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
 
 pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
 

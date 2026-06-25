@@ -132,6 +132,19 @@ Current status on 2026-06-25:
 - Target implementation crate checks are red by source/path ownership, not manifest cycles or forbidden Cargo dependencies.
 - Round 5B should start with source repair owners: `vfs-repair`, `runtime-session-repair`, `agentrun-repair`, `lifecycle-repair`, `application-facade-repair`, plus `api-contract-check`.
 
+## Round 5B Pass 1 Checkpoint
+
+Checkpoint file:
+
+- `checkpoint-wave-5b-pass1.md`
+
+Current status on 2026-06-25:
+
+- `agentdash-application-vfs` and `agentdash-application-runtime-session` are green at crate level.
+- Lifecycle source repair narrowed remaining work to workflow compiler ownership.
+- AgentRun source repair removed first-layer forbidden implementation imports but exposed the larger frame-construction composition split.
+- Next wave should prioritize `lifecycle-workflow-compiler-port`, `agentrun-session-port-repair`, `agentrun-frame-composition-repair`, `agentrun-capability-context-repair`, and `stale-test-repair`.
+
 ## Initial Static Gates
 
 ```powershell

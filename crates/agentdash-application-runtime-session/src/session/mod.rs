@@ -41,6 +41,7 @@ pub(crate) mod plan;
 pub(crate) mod post_turn_handler;
 mod prompt_vfs;
 pub(crate) mod runtime_builder;
+pub(crate) mod runtime_capability;
 pub(crate) mod runtime_commands;
 pub(crate) mod runtime_control;
 mod runtime_registry;

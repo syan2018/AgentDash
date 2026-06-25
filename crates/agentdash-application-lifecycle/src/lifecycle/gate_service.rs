@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::LifecycleGate;
 
-use crate::repository_set::RepositorySet;
+use crate::RepositorySet;
 
 pub struct LifecycleGateService {
     repos: RepositorySet,

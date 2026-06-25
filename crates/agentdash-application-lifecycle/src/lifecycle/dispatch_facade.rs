@@ -13,9 +13,8 @@ use agentdash_domain::workflow::{
 use async_trait::async_trait;
 
 use super::{
-    LifecycleDispatchService, WorkflowAgentNodeFrameMaterializer,
-    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
-    WorkflowApplicationError,
+    LifecycleDispatchService, WorkflowAgentNodeMaterializationRequest,
+    WorkflowAgentNodeMaterializationResult, WorkflowApplicationError,
 };
 
 pub struct LifecycleDispatchFacade<'a> {
@@ -84,10 +83,9 @@ impl<'a> LifecycleDispatchFacade<'a> {
     pub async fn materialize_workflow_agent_node(
         &self,
         request: WorkflowAgentNodeMaterializationRequest,
-        frame_materializer: &dyn WorkflowAgentNodeFrameMaterializer,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
         self.service()
-            .materialize_workflow_agent_node(request, frame_materializer)
+            .materialize_workflow_agent_node(request)
             .await
     }
 }

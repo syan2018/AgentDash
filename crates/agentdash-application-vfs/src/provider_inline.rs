@@ -15,10 +15,11 @@ use super::provider::{
 use super::types::{
     BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
 };
-use crate::runtime::Mount;
+use agentdash_domain::common::Mount;
 use agentdash_domain::inline_file::{
     InlineFile, InlineFileContent, InlineFileContentKind, InlineFileRepository,
 };
+use agentdash_spi::platform::mount::RuntimeFileEntry;
 
 fn map_mount_err(e: String) -> MountError {
     MountError::OperationFailed(e)
@@ -299,7 +300,7 @@ impl MountProvider for InlineFsMountProvider {
         mount: &Mount,
         path: &str,
         _ctx: &MountOperationContext,
-    ) -> Result<crate::runtime::RuntimeFileEntry, MountError> {
+    ) -> Result<RuntimeFileEntry, MountError> {
         let path = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         let (owner_kind, owner_id, container_id) =
             parse_inline_mount_owner(mount).map_err(map_mount_err)?;
@@ -309,7 +310,7 @@ impl MountProvider for InlineFsMountProvider {
             .await
             .map_err(map_domain_err)?
             .ok_or_else(|| MountError::NotFound(format!("文件不存在: {path}")))?;
-        Ok(crate::runtime::RuntimeFileEntry::file(path)
+        Ok(RuntimeFileEntry::file(path)
             .with_size(file.size_bytes)
             .with_attributes(inline_file_attributes(&file)))
     }
@@ -331,7 +332,7 @@ fn list_inline_file_entries(
     base_path: &str,
     pattern: Option<&str>,
     recursive: bool,
-) -> Vec<crate::runtime::RuntimeFileEntry> {
+) -> Vec<RuntimeFileEntry> {
     let mut text_files = BTreeMap::new();
     for file in files {
         text_files.insert(file.path.clone(), String::new());

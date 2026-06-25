@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 
 use super::types::ResourceRef;
-use crate::runtime::{Mount, MountCapability, Vfs};
+use agentdash_domain::common::{Mount, MountCapability, Vfs};
 
 const URI_SEPARATOR: &str = "://";
 

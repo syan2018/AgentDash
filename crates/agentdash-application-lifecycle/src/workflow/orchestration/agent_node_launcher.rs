@@ -1,32 +1,21 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
-use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunFrameSurfaceError, FrameConstructionCommand, FrameConstructionReason,
+};
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureContract, AgentProcedureExecutionSpec,
-    AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef, ExecutorSpec,
-    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    AgentFrameRepository, AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy,
+    ExecutorRunRef, ExecutorSpec, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
     LifecycleSubjectAssociationRepository, OrchestrationBindingRefs, OrchestrationInstance,
-    PlanNode, RuntimePolicy, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
+    RuntimePolicy, RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy,
     WorkflowGraphRepository,
 };
-use async_trait::async_trait;
 
-use crate::agent_run::frame::construction::LifecycleNodeSpec;
-use crate::agent_run::frame::lifecycle_materialization::{
-    AgentRunWorkflowNodeFrameMaterializationRequest, materialize_workflow_agent_node_frame,
-};
-use crate::lifecycle::projection::{
-    activity_definition_from_plan_node, lifecycle_identity_from_orchestration,
-};
 use crate::lifecycle::{
-    AgentRunLifecycleSurfaceProjector, LifecycleDispatchFacade,
-    WorkflowAgentNodeFrameMaterializationContext, WorkflowAgentNodeFrameMaterializer,
-    WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
+    LifecycleDispatchFacade, WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
 };
-use crate::platform_config::SharedPlatformConfig;
-use crate::repository_set::RepositorySet;
 
 use super::executor_launcher::LaunchedAgentNode;
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -45,7 +34,6 @@ pub(super) struct AgentNodeLauncher {
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-    frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
 }
 
 impl AgentNodeLauncher {
@@ -61,7 +49,6 @@ impl AgentNodeLauncher {
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
         frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-        frame_materializer: Arc<dyn AgentNodeFrameMaterializer>,
     ) -> Self {
         Self {
             agent_procedure_repo,
@@ -75,7 +62,6 @@ impl AgentNodeLauncher {
             execution_anchor_repo,
             runtime_session_creator,
             frame_construction,
-            frame_materializer,
         }
     }
 
@@ -120,10 +106,10 @@ impl AgentNodeLauncher {
                 None
             };
         let snapshot_contract = procedure.snapshot_contract();
-        let workflow_contract = snapshot_contract
+        let _workflow_contract = snapshot_contract
             .or_else(|| loaded_workflow.as_ref().map(|workflow| &workflow.contract));
         let snapshot_label = snapshot_workflow_label(&procedure);
-        let workflow_label = loaded_workflow
+        let _workflow_label = loaded_workflow
             .as_ref()
             .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
             .or(snapshot_label);
@@ -156,12 +142,11 @@ impl AgentNodeLauncher {
             coordinate.node_path.clone(),
             coordinate.attempt,
         );
-        let frame_materializer = AgentNodeMaterializationFrameMaterializer {
-            inner: self.frame_materializer.clone(),
-            coordinate: coordinate.clone(),
-            plan_node,
-            workflow_contract,
-            workflow_label: workflow_label.as_deref(),
+        let frame_construction = WorkflowNodeFrameConstructionPort {
+            inner: self.frame_construction.as_ref(),
+            orchestration_id: coordinate.orchestration_id,
+            node_path: coordinate.node_path.clone(),
+            attempt: coordinate.attempt,
         };
         let lifecycle_dispatch = LifecycleDispatchFacade::new(
             self.lifecycle_run_repo.as_ref(),
@@ -173,21 +158,18 @@ impl AgentNodeLauncher {
             self.agent_lineage_repo.as_ref(),
             self.execution_anchor_repo.as_ref(),
             self.runtime_session_creator.as_ref(),
-            self.frame_construction.as_ref(),
+            &frame_construction,
         );
         let materialized = lifecycle_dispatch
-            .materialize_workflow_agent_node(
-                WorkflowAgentNodeMaterializationRequest {
-                    run_id: run.id,
-                    orchestration_binding,
-                    runtime_policy,
-                    frame_created_by_id: Some(format!(
-                        "{}:{}#{}",
-                        coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
-                    )),
-                },
-                &frame_materializer,
-            )
+            .materialize_workflow_agent_node(WorkflowAgentNodeMaterializationRequest {
+                run_id: run.id,
+                orchestration_binding,
+                runtime_policy,
+                frame_created_by_id: Some(format!(
+                    "{}:{}#{}",
+                    coordinate.orchestration_id, coordinate.node_path, coordinate.attempt
+                )),
+            })
             .await?;
         let session_id = materialized.delivery_runtime_ref.to_string();
 
@@ -209,96 +191,38 @@ impl AgentNodeLauncher {
     }
 }
 
-struct AgentNodeMaterializationFrameMaterializer<'a> {
-    inner: Arc<dyn AgentNodeFrameMaterializer>,
-    coordinate: RuntimeNodeCoordinate,
-    plan_node: &'a PlanNode,
-    workflow_contract: Option<&'a AgentProcedureContract>,
-    workflow_label: Option<&'a str>,
+struct WorkflowNodeFrameConstructionPort<'a> {
+    inner: &'a dyn AgentRunFrameConstructionPort,
+    orchestration_id: uuid::Uuid,
+    node_path: String,
+    attempt: u32,
 }
 
-#[async_trait]
-impl WorkflowAgentNodeFrameMaterializer for AgentNodeMaterializationFrameMaterializer<'_> {
-    async fn materialize_workflow_agent_node_frame(
+#[async_trait::async_trait]
+impl AgentRunFrameConstructionPort for WorkflowNodeFrameConstructionPort<'_> {
+    async fn execute_frame_construction_command(
         &self,
-        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-    ) -> Result<AgentFrame, WorkflowApplicationError> {
+        command: FrameConstructionCommand,
+    ) -> Result<
+        agentdash_application_ports::agent_frame_materialization::AgentRunFrameSurfaceCommandOutcome,
+        AgentRunFrameSurfaceError,
+    >{
+        let FrameConstructionCommand::DispatchLaunchAnchor {
+            runtime_session_id, ..
+        } = command.clone()
+        else {
+            return self.inner.execute_frame_construction_command(command).await;
+        };
         self.inner
-            .materialize_frame(
-                context,
-                &self.coordinate,
-                self.plan_node,
-                self.workflow_contract,
-                self.workflow_label,
-            )
+            .execute_frame_construction_command(FrameConstructionCommand::ComposeLaunchSurface {
+                runtime_session_id,
+                reason: FrameConstructionReason::LifecycleAgentProcedure {
+                    orchestration_id: self.orchestration_id,
+                    node_path: self.node_path.clone(),
+                    attempt: self.attempt,
+                },
+            })
             .await
-    }
-}
-
-#[async_trait]
-pub(super) trait AgentNodeFrameMaterializer: Send + Sync {
-    async fn materialize_frame(
-        &self,
-        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-        coordinate: &RuntimeNodeCoordinate,
-        plan_node: &PlanNode,
-        workflow_contract: Option<&AgentProcedureContract>,
-        workflow_label: Option<&str>,
-    ) -> Result<AgentFrame, WorkflowApplicationError>;
-}
-
-pub(super) struct RepositoryAgentNodeFrameMaterializer {
-    repos: RepositorySet,
-    platform_config: SharedPlatformConfig,
-    lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
-}
-
-impl RepositoryAgentNodeFrameMaterializer {
-    pub(super) fn new(repos: RepositorySet, platform_config: SharedPlatformConfig) -> Self {
-        let lifecycle_surface_projection = Arc::new(AgentRunLifecycleSurfaceProjector::new(&repos));
-        Self {
-            repos,
-            platform_config,
-            lifecycle_surface_projection,
-        }
-    }
-}
-
-#[async_trait]
-impl AgentNodeFrameMaterializer for RepositoryAgentNodeFrameMaterializer {
-    async fn materialize_frame(
-        &self,
-        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-        coordinate: &RuntimeNodeCoordinate,
-        plan_node: &PlanNode,
-        workflow_contract: Option<&AgentProcedureContract>,
-        workflow_label: Option<&str>,
-    ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let orchestration = orchestration_for_coordinate(context.run, coordinate)?;
-        let lifecycle_identity = lifecycle_identity_from_orchestration(orchestration);
-        let activity = activity_definition_from_plan_node(plan_node);
-        materialize_workflow_agent_node_frame(AgentRunWorkflowNodeFrameMaterializationRequest {
-            frame_repo: self.repos.agent_frame_repo.as_ref(),
-            repos: &self.repos,
-            platform_config: self.platform_config.as_ref(),
-            lifecycle_surface_projection: self.lifecycle_surface_projection.as_ref(),
-            agent_id: context.agent_id,
-            runtime_session_ref: context.runtime_session_ref,
-            frame_created_by_id: context.frame_created_by_id,
-            spec: LifecycleNodeSpec {
-                run: context.run,
-                orchestration_id: coordinate.orchestration_id,
-                node_path: &coordinate.node_path,
-                attempt: coordinate.attempt,
-                lifecycle_key: &lifecycle_identity.key,
-                activity: &activity,
-                workflow_contract,
-                base_vfs: None,
-                workflow_label,
-                inherited_executor_config: None,
-            },
-        })
-        .await
     }
 }
 

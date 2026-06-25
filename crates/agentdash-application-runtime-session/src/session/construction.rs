@@ -61,8 +61,8 @@ impl ResolvedSessionOwner {
         }
     }
 }
-use crate::agent_run::frame::surface::FrameSurfaceDraft;
-use crate::vfs::ResolvedVfsSurface;
+use agentdash_application_ports::frame_launch_envelope::FrameSurfaceDraft;
+use agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurface;
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。
 #[derive(Debug, Clone)]

@@ -37,8 +37,8 @@ use crate::agent_run::{
     },
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
-use crate::lifecycle::{LifecycleDispatchFacade, WorkflowApplicationError};
-use crate::repository_set::RepositorySet;
+use crate::agent_run_repository_set::RepositorySet;
+use crate::error::WorkflowApplicationError;
 use crate::session::{SessionCoreService, SessionMeta};
 
 pub struct ProjectAgentRunStartCommand {

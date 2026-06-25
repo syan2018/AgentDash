@@ -330,7 +330,6 @@ mod tests {
     use agentdash_spi::Vfs;
 
     use super::*;
-    use crate::agent_run::FrameSurfaceDraft;
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
@@ -341,7 +340,7 @@ mod tests {
     };
     use agentdash_application_ports::frame_launch_envelope::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-        LaunchResolutionTrace,
+        FrameSurfaceDraft, LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 

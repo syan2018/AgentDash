@@ -30,7 +30,7 @@ use crate::agent_run::{
         claim_agent_run_command_receipt, digest_command_request, mark_command_terminal_failed,
     },
 };
-use crate::lifecycle::WorkflowApplicationError;
+use crate::error::WorkflowApplicationError;
 use crate::session::{
     LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
     SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,

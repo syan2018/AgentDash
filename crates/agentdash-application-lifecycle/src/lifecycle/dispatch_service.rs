@@ -6,20 +6,20 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrame, AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
-    AgentRuntimeRefs, AgentSource, DeliveryBindingStatus, ExecutionDispatchResult, ExecutionIntent,
-    ExecutionSource, ExecutorRunRef, GatePolicy, InteractionDispatchIntent,
-    InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate, LifecycleRun,
-    LifecycleRunStartDispatchResult, LifecycleRunStartIntent, LifecycleSubjectAssociation,
-    OrchestrationBindingRefs, OrchestrationInstance, OrchestrationPlanSnapshot,
-    OrchestrationSourceRef, RunPolicy, RuntimePolicy, RuntimeSessionExecutionAnchor,
-    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef,
-    ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
-};
-use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
     LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+};
+use agentdash_domain::workflow::{
+    AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy, AgentRuntimeRefs,
+    AgentSource, DeliveryBindingStatus, ExecutionDispatchResult, ExecutionIntent, ExecutionSource,
+    ExecutorRunRef, GatePolicy, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunStartDispatchResult,
+    LifecycleRunStartIntent, LifecycleSubjectAssociation, OrchestrationBindingRefs,
+    OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy,
+    RuntimePolicy, RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult,
+    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph,
+    WorkflowGraphRef,
 };
 
 use super::WorkflowApplicationError;
@@ -158,21 +158,6 @@ pub struct WorkflowAgentNodeMaterializationRequest {
 pub struct WorkflowAgentNodeMaterializationResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub delivery_runtime_ref: Uuid,
-}
-
-pub struct WorkflowAgentNodeFrameMaterializationContext<'a> {
-    pub agent_id: Uuid,
-    pub run: &'a LifecycleRun,
-    pub runtime_session_ref: Uuid,
-    pub frame_created_by_id: Option<String>,
-}
-
-#[async_trait]
-pub trait WorkflowAgentNodeFrameMaterializer: Send + Sync {
-    async fn materialize_workflow_agent_node_frame(
-        &self,
-        context: WorkflowAgentNodeFrameMaterializationContext<'_>,
-    ) -> Result<AgentFrame, WorkflowApplicationError>;
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {
@@ -372,7 +357,6 @@ impl<'a> LifecycleDispatchService<'a> {
     pub async fn materialize_workflow_agent_node(
         &self,
         request: WorkflowAgentNodeMaterializationRequest,
-        frame_materializer: &dyn WorkflowAgentNodeFrameMaterializer,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
         let run = self
             .run_repo
@@ -414,13 +398,12 @@ impl<'a> LifecycleDispatchService<'a> {
             RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => id,
         };
 
-        let frame = frame_materializer
-            .materialize_workflow_agent_node_frame(WorkflowAgentNodeFrameMaterializationContext {
-                agent_id: agent.id,
-                run: &run,
-                runtime_session_ref,
-                frame_created_by_id: request.frame_created_by_id.clone(),
-            })
+        let frame_id = self
+            .construct_launch_anchor_frame_with_created_by(
+                &agent,
+                Some(runtime_session_ref),
+                request.frame_created_by_id.clone(),
+            )
             .await?;
 
         let mut agent = agent;
@@ -433,7 +416,7 @@ impl<'a> LifecycleDispatchService<'a> {
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             runtime_session_ref.to_string(),
             run.id,
-            frame.id,
+            frame_id,
             agent.id,
             request.orchestration_binding.orchestration_ref,
             request.orchestration_binding.node_path.clone(),
@@ -451,7 +434,7 @@ impl<'a> LifecycleDispatchService<'a> {
             runtime_refs: AgentRuntimeRefs::new(
                 run.id,
                 agent.id,
-                frame.id,
+                frame_id,
                 Some(request.orchestration_binding),
             ),
             delivery_runtime_ref: runtime_session_ref,
@@ -821,6 +804,20 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<Uuid, WorkflowApplicationError> {
+        self.construct_launch_anchor_frame_with_created_by(
+            agent,
+            runtime_session_ref,
+            runtime_session_ref.map(|value| value.to_string()),
+        )
+        .await
+    }
+
+    async fn construct_launch_anchor_frame_with_created_by(
+        &self,
+        agent: &LifecycleAgent,
+        runtime_session_ref: Option<Uuid>,
+        created_by_id: Option<String>,
+    ) -> Result<Uuid, WorkflowApplicationError> {
         let frame_construction = self.frame_construction.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "Lifecycle dispatch 缺少 AgentRunFrameConstructionPort".to_string(),
@@ -837,7 +834,7 @@ impl<'a> LifecycleDispatchService<'a> {
                     run_id: agent.run_id,
                     agent_id: agent.id,
                     runtime_session_id: runtime_session_ref.to_string(),
-                    created_by_id: Some(runtime_session_ref.to_string()),
+                    created_by_id,
                 },
             )
             .await

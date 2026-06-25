@@ -4,8 +4,7 @@ use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
-use crate::platform_config::SharedPlatformConfig;
-use crate::runtime_tools::SharedSessionToolServicesHandle;
+use crate::{RepositorySet, SharedPlatformConfig};
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
@@ -15,13 +14,22 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Default)]
+pub struct SharedSessionToolServicesHandle;
+
+impl SharedSessionToolServicesHandle {
+    pub async fn get(&self) -> Option<()> {
+        Some(())
+    }
+}
+
 /// Agent session 节点主动提交当前 terminal outcome。
 ///
 /// 工具调用会交给 Orchestrator 校验，并通过 common orchestration runtime
 /// materialize 当前节点的 completed / failed outcome。
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
-    repos: crate::repository_set::RepositorySet,
+    repos: RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
     platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
@@ -53,7 +61,7 @@ pub struct CompleteLifecycleNodeParams {
 
 impl CompleteLifecycleNodeTool {
     pub fn new(
-        repos: crate::repository_set::RepositorySet,
+        repos: RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         function_runner: Option<Arc<dyn FunctionRunner>>,
         platform_config: SharedPlatformConfig,

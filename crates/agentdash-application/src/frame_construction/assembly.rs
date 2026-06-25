@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
@@ -8,7 +8,8 @@ use agentdash_spi::{
 };
 use uuid::Uuid;
 
-use crate::agent_run::frame::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
+use crate::agent_run::UserPromptInput;
+use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
 use crate::canvas::append_visible_canvas_mounts;
@@ -16,14 +17,13 @@ use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 #[cfg(test)]
 #[allow(deprecated)]
-use crate::agent_run::frame::construction::RuntimeContextInspectionPlan;
-#[cfg(test)]
-use crate::agent_run::runtime_session_boundary::context::apply_workspace_defaults;
-use crate::agent_run::runtime_session_boundary::UserPromptInput;
+use crate::frame_construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use agentdash_application_ports::lifecycle_surface_projection::{
     LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
 };
+#[cfg(test)]
+use agentdash_application_runtime_session::session::context::apply_workspace_defaults;
 
 /// 把 `FrameAssemblyBuilder` 的累积声明合并进 frame construction handoff。
 ///
@@ -333,8 +333,8 @@ impl FrameAssemblyBuilder {
         activation: &agentdash_application_ports::lifecycle_surface_projection::ActivityActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        let surface = crate::agent_run::frame::builder::build_lifecycle_activation_surface(
-            crate::agent_run::frame::builder::AgentFrameActivationSurfaceInput {
+        let surface = crate::agent_run::frame::build_lifecycle_activation_surface(
+            crate::agent_run::frame::AgentFrameActivationSurfaceInput {
                 activation,
                 base_vfs: self.vfs.as_ref(),
                 inherit_skills_from: None,
@@ -415,10 +415,10 @@ pub(super) fn slice_companion_bundle(
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
 pub(crate) fn project_frame_assembly_to_frame(
-    frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
+    frame_builder: crate::agent_run::frame::AgentFrameBuilder,
     prepared: FrameAssemblyBuilder,
 ) -> (
-    crate::agent_run::frame::builder::AgentFrameBuilder,
+    crate::agent_run::frame::AgentFrameBuilder,
     FrameAssemblyLaunchExtras,
 ) {
     let surface_draft = prepared.to_surface_draft();

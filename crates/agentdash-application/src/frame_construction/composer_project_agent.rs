@@ -3,12 +3,10 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::project_agent_context::{
-    build_project_agent_context, resolve_project_workspace,
-};
+use crate::agent_run::frame::AgentFrameSurfaceExt;
+use crate::agent_run::frame::FrameLaunchEnvelope;
+use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
+use crate::agent_run::{build_project_agent_context, resolve_project_workspace};
 
 use super::subject_assignment::{SubjectContextAssignment, SubjectContextAssignmentResolver};
 use super::workflow_projection::resolve_active_workflow_projection_from_message_stream_trace;
@@ -46,10 +44,11 @@ pub(super) async fn compose(
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
         })?;
-    let agent_context = build_project_agent_context(&svc.repos, &project_agent)
+    let agent_run_repos = svc.repos.to_agent_run_repository_set();
+    let agent_context = build_project_agent_context(&agent_run_repos, &project_agent)
         .await
         .map_err(connector_internal)?;
-    let workspace = resolve_project_workspace(&svc.repos, &project)
+    let workspace = resolve_project_workspace(&agent_run_repos, &project)
         .await
         .map_err(connector_internal)?;
     let mut subject_assignment =

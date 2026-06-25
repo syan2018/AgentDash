@@ -14,6 +14,9 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::runtime_session_agent_run_bridge::{
+    agent_run_session_core, agent_run_session_eventing,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::runtime_surface::{
@@ -271,7 +274,7 @@ impl AppState {
                 anchor_repo: repos.execution_anchor_repo.clone(),
                 surface_query: runtime_surface_query_port.clone(),
                 lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
-                    &repos,
+                    &repos.to_lifecycle_repository_set(),
                 )),
             });
         let resource_surface_query_port: Arc<dyn AgentRunResourceSurfaceQueryPort> =
@@ -283,9 +286,9 @@ impl AppState {
         });
         let presentation_read_model_query =
             AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
-                repos: repos.clone(),
-                session_core: session_core.clone(),
-                session_eventing: session_eventing.clone(),
+                repos: repos.to_agent_run_repository_set(),
+                session_core: agent_run_session_core(session_core.clone()),
+                session_eventing: agent_run_session_eventing(session_eventing.clone()),
                 surface_query: runtime_surface_query_port.clone(),
             });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(

@@ -18,7 +18,7 @@ pub mod surface;
 pub mod tools;
 pub(crate) mod vfs_catalog;
 pub(crate) mod vfs_mount;
-mod vfs_provider;
+pub mod vfs_provider;
 
 pub(crate) use activity_activation::ActivityActivation;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
@@ -63,6 +63,7 @@ pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,
 };
+pub use surface::mount::project_active_workflow_lifecycle_vfs;
 #[cfg(test)]
 pub(crate) use surface::mount::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
 pub use surface::surface_projector::{
@@ -75,3 +76,4 @@ pub use surface::surface_projector::{
 pub(crate) use vfs_mount::{
     build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
+pub use vfs_provider::LifecycleMountProvider;

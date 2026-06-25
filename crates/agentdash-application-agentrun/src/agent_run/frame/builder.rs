@@ -25,7 +25,7 @@ use crate::agent_run::runtime_capability::{
 
 use super::surface::{FrameContextBundleSummary, FrameSurfaceDraft};
 
-pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
+pub struct AgentFrameActivationSurfaceInput<'a> {
     pub activation: &'a ActivityActivation,
     pub base_vfs: Option<&'a Vfs>,
     /// 热更新路径需要从已有 CapabilityState 继承 skill 层（当 activation 自身未产出
@@ -34,14 +34,14 @@ pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentFrameActivationSurface {
+pub struct AgentFrameActivationSurface {
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
     pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 impl AgentFrameActivationSurface {
-    pub(crate) fn to_surface_draft(&self) -> FrameSurfaceDraft {
+    pub fn to_surface_draft(&self) -> FrameSurfaceDraft {
         FrameSurfaceDraft {
             capability_state: Some(self.capability_state.clone()),
             vfs: Some(self.vfs.clone()),
@@ -52,7 +52,7 @@ impl AgentFrameActivationSurface {
     }
 }
 
-pub(crate) fn build_lifecycle_activation_surface(
+pub fn build_lifecycle_activation_surface(
     input: AgentFrameActivationSurfaceInput<'_>,
 ) -> AgentFrameActivationSurface {
     let vfs = compose_vfs_with_overlay_and_directives(
@@ -233,7 +233,7 @@ impl AgentFrameBuilder {
 
     /// 构建新 revision 但不写入仓储。Frame construction 用它把完整
     /// runtime surface 传给 connector，等 connector accepted 后再提交。
-    pub(crate) async fn build_uncommitted(
+    pub async fn build_uncommitted(
         &self,
         repo: &dyn AgentFrameRepository,
     ) -> Result<AgentFrame, DomainError> {

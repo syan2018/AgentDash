@@ -59,6 +59,22 @@ pub use frame::{
     RuntimeSurfaceUpdateRequest, accepted_launch_commit_port, agent_frame_write_boundaries,
     hook_target_runtime_port,
 };
+pub use lifecycle_read_model::{
+    ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,
+    AgentRunRefView as PresentationAgentRunRefView, AgentRunView as PresentationAgentRunView,
+    ExecutorRunRefView as PresentationExecutorRunRefView,
+    LifecycleExecutionEntryView as PresentationLifecycleExecutionEntryView,
+    LifecycleExecutionEventKindView as PresentationLifecycleExecutionEventKindView,
+    LifecycleRunRefView as PresentationLifecycleRunRefView,
+    LifecycleRunStatusView as PresentationLifecycleRunStatusView,
+    LifecycleRunTopologyView as PresentationLifecycleRunTopologyView,
+    LifecycleRunView as PresentationLifecycleRunView,
+    LifecycleSubjectAssociationView as PresentationLifecycleSubjectAssociationView,
+    OrchestrationInstanceView as PresentationOrchestrationInstanceView,
+    RuntimeNodeView as PresentationRuntimeNodeView,
+    RuntimeSessionRefView as PresentationRuntimeSessionRefView,
+    SubjectRefView as PresentationSubjectRefView,
+};
 pub use mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
     AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
@@ -86,9 +102,9 @@ pub use project_agent_context::{
     resolve_project_workspace,
 };
 pub use project_agent_start::{
-    ProjectAgentRunInitialMailboxCommand, ProjectAgentRunInitialMailboxCommandPort,
-    ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService,
+    ProjectAgentLifecycleLaunchPort, ProjectAgentRunInitialMailboxCommand,
+    ProjectAgentRunInitialMailboxCommandPort, ProjectAgentRunStartCommand,
+    ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 pub use runtime_capability::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
@@ -107,11 +123,12 @@ pub use runtime_capability_projection::{
     merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
 };
 pub use runtime_session_boundary::{
-    LaunchCommand, RuntimeCommandRecord, RuntimeSessionControlPort, RuntimeSessionCorePort,
-    RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeTraceLaunchState,
-    SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
-    SessionLaunchService, SessionMeta, SessionRepositoryRehydrateMode, SessionTurnSteerCommand,
-    TerminalHookEffectBinding, TitleSource, UserPromptInput,
+    LaunchCommand, LaunchSource, PromptLaunchPath, RuntimeCommandRecord, RuntimeSessionControlPort,
+    RuntimeSessionCorePort, RuntimeSessionEventingPort, RuntimeSessionLaunchPort,
+    RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
+    SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
+    SessionRepositoryRehydrateMode, SessionTurnSteerCommand, TerminalHookEffectBinding,
+    TitleSource, UserPromptInput, resolve_prompt_launch_path,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,

@@ -136,7 +136,7 @@ impl SessionEventingService {
         Ok(())
     }
 
-    pub(crate) async fn persist_notification(
+    pub async fn persist_notification(
         &self,
         session_id: &str,
         envelope: BackboneEnvelope,
@@ -376,7 +376,7 @@ impl SessionEventingService {
         self.persist_notification(session_id, envelope).await
     }
 
-    pub(crate) async fn emit_user_input_submitted(
+    pub async fn emit_user_input_submitted(
         &self,
         session_id: &str,
         turn_id: &str,

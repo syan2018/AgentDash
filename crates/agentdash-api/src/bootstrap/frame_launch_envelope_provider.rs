@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application_agentrun::agent_run::frame::{
-    FrameConstructionDeps, FrameConstructionService,
-};
+use agentdash_application::frame_construction::{FrameConstructionDeps, FrameConstructionService};
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
@@ -39,7 +37,7 @@ impl AppStateFrameLaunchEnvelopePort {
             audit_bus: state.services.audit_bus.clone(),
             companion_facts: Arc::new(state.services.session_runtime_transition.clone()),
             lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
-                &state.repos,
+                &state.repos.to_lifecycle_repository_set(),
             )),
             connector: state.services.connector.clone(),
             extra_skill_dirs: state.services.extra_skill_dirs.clone(),

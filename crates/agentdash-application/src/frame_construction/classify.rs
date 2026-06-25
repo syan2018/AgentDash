@@ -5,8 +5,8 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
+use crate::agent_run::frame::FrameLaunchEnvelope;
+use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 
 use super::{
     FrameConstructionService, build_envelope_from_frame, connector_internal, frame_surface_ready,

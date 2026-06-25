@@ -5,6 +5,10 @@ use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::runtime_session_agent_run_bridge::{
+    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+    agent_run_session_launch,
+};
 use agentdash_application::runtime_tools::{
     CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
     SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, TaskRuntimeToolProvider,
@@ -38,6 +42,14 @@ use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 use anyhow::Result;
 use async_trait::async_trait;
+
+fn lifecycle_platform_config(
+    platform_config: &SharedPlatformConfig,
+) -> agentdash_application_lifecycle::SharedPlatformConfig {
+    Arc::new(agentdash_application_lifecycle::PlatformConfig {
+        mcp_base_url: platform_config.mcp_base_url.clone(),
+    })
+}
 
 use crate::relay::registry::BackendRegistry;
 
@@ -230,10 +242,10 @@ pub(crate) async fn build_session_runtime(
         execution_anchor_repo: repos.execution_anchor_repo.clone(),
         command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
         mailbox_repo: repos.agent_run_mailbox_repo.clone(),
-        session_core: session_core.clone(),
-        session_control: session_control.clone(),
-        session_eventing: session_eventing.clone(),
-        session_launch: Arc::new(session_launch.clone()),
+        session_core: agent_run_session_core(session_core.clone()),
+        session_control: agent_run_session_control(session_control.clone()),
+        session_eventing: agent_run_session_eventing(session_eventing.clone()),
+        session_launch: Arc::new(agent_run_session_launch(session_launch.clone())),
     });
     session_runtime_builder
         .set_mailbox_runtime_port(runtime_mailbox_port)
@@ -252,21 +264,26 @@ pub(crate) async fn build_session_runtime(
 
     let orchestrator = Arc::new(
         agentdash_application_lifecycle::LifecycleOrchestrator::new_with_platform_config(
-            repos.clone(),
-            platform_config.clone(),
+            repos.to_lifecycle_repository_set(),
+            lifecycle_platform_config(&platform_config),
         )
         .with_function_runner(function_runner),
     );
     let mailbox_terminal_callback = Arc::new(AgentRunMailboxTerminalCallback::new(
         repos.clone(),
-        session_core.clone(),
-        session_control.clone(),
-        session_eventing.clone(),
-        session_launch.clone(),
+        agent_run_session_core(session_core.clone()),
+        agent_run_session_control(session_control.clone()),
+        agent_run_session_eventing(session_eventing.clone()),
+        agent_run_session_launch(session_launch.clone()),
     ));
     session_runtime_builder
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
-            callbacks: vec![orchestrator, mailbox_terminal_callback],
+            callbacks: vec![
+                Arc::new(LifecycleTerminalCallbackAdapter {
+                    inner: orchestrator,
+                }),
+                mailbox_terminal_callback,
+            ],
         }))
         .await;
     session_runtime_builder
@@ -334,9 +351,10 @@ fn build_session_runtime_tool_composer(
         .with_materialization_service(deps.vfs_materialization_service)
         .with_shell_output_registry(deps.shell_output_registry);
     let workflow_provider = WorkflowRuntimeToolProvider::new(
-        deps.repos.clone(),
-        deps.session_services_handle.clone(),
-        deps.platform_config,
+        deps.repos.to_lifecycle_repository_set(),
+        agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle::default(
+        ),
+        lifecycle_platform_config(&deps.platform_config),
         deps.function_runner,
     );
     let collaboration_provider = CollaborationRuntimeToolProvider::new(
@@ -363,6 +381,22 @@ fn build_session_runtime_tool_composer(
 
 struct CompositeSessionTerminalCallback {
     callbacks: Vec<Arc<dyn SessionTerminalCallback>>,
+}
+
+struct LifecycleTerminalCallbackAdapter {
+    inner: Arc<agentdash_application_lifecycle::LifecycleOrchestrator>,
+}
+
+#[async_trait]
+impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
+    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+        agentdash_application_lifecycle::lifecycle::orchestrator::SessionTerminalCallback::on_session_terminal(
+            self.inner.as_ref(),
+            session_id,
+            terminal_state,
+        )
+            .await;
+    }
 }
 
 #[async_trait]

@@ -7,7 +7,10 @@ pub(crate) mod runtime_launch;
 pub(crate) mod surface;
 pub(crate) mod surface_service;
 
-pub use builder::AgentFrameBuilder;
+pub use builder::{
+    AgentFrameActivationSurface, AgentFrameActivationSurfaceInput, AgentFrameBuilder,
+    build_lifecycle_activation_surface,
+};
 pub use hook_runtime::{
     AgentFrameHookRuntime, AgentRunHookTargetRuntimeAdapter, hook_target_runtime_port,
 };
@@ -16,10 +19,14 @@ pub use launch_commit::{
     accepted_launch_commit_port,
 };
 pub use launch_envelope_provider::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeConstructionInput,
+    RoutineLaunchSource,
 };
 pub use lifecycle_materialization::AgentRunLaunchAnchorFrameConstructionAdapter;
-pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
+pub use runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    LaunchResolutionTrace,
+};
 pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
 pub use surface_service::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameWriteBoundary, AgentFrameWritePrimitive,

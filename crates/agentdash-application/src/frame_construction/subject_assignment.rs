@@ -6,10 +6,10 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScopeCtx, ContextFragment, MergeStrategy};
 
 use crate::agent_run::resolve_project_workspace;
-use crate::agent_run_repository_set::RepositorySet;
 use crate::context::{
     Contribution, contribute_workspace_static_sources, resolve_workspace_declared_sources,
 };
+use crate::repository_set::RepositorySet;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::workspace::BackendAvailability;
 use agentdash_application_vfs::VfsService;
@@ -70,7 +70,8 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Project {project_id} 不存在"))?;
-        let workspace = resolve_project_workspace(self.repos, &project).await?;
+        let agent_run_repos = self.repos.to_agent_run_repository_set();
+        let workspace = resolve_project_workspace(&agent_run_repos, &project).await?;
 
         Ok(SubjectContextAssignment {
             workspace,
@@ -114,7 +115,8 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
                     .ok_or_else(|| format!("Story 默认 Workspace {workspace_id} 不存在"))?,
             )
         } else {
-            resolve_project_workspace(self.repos, &project).await?
+            let agent_run_repos = self.repos.to_agent_run_repository_set();
+            resolve_project_workspace(&agent_run_repos, &project).await?
         };
         let resolved_sources = resolve_workspace_declared_sources(
             self.availability,
@@ -185,10 +187,12 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
                         .ok_or_else(|| format!("Story 默认 Workspace {workspace_id} 不存在"))?,
                 )
             } else {
-                resolve_project_workspace(self.repos, &project).await?
+                let agent_run_repos = self.repos.to_agent_run_repository_set();
+                resolve_project_workspace(&agent_run_repos, &project).await?
             }
         } else {
-            resolve_project_workspace(self.repos, &project).await?
+            let agent_run_repos = self.repos.to_agent_run_repository_set();
+            resolve_project_workspace(&agent_run_repos, &project).await?
         };
         let mut declared_sources = story
             .as_ref()

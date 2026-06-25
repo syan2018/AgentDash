@@ -1,7 +1,7 @@
 mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub(crate) mod baseline_capabilities;
-pub(crate) mod bootstrap;
+pub mod bootstrap;
 mod branching;
 mod compaction_checkpoint;
 mod compaction_context_frame;
@@ -34,10 +34,10 @@ mod memory_context_frame;
 #[cfg(test)]
 #[path = "../../test-support/session_memory_persistence.rs"]
 mod memory_persistence;
-pub(crate) mod path_policy;
+pub mod path_policy;
 mod pending_action_context_frame;
 pub mod persistence;
-pub(crate) mod plan;
+pub mod plan;
 pub(crate) mod post_turn_handler;
 mod prompt_vfs;
 pub(crate) mod runtime_builder;
@@ -58,6 +58,7 @@ pub(crate) mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
+pub use crate::runtime::McpServerSummary;
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
     SessionProjectionRollbackRequest, SessionProjectionRollbackResult,

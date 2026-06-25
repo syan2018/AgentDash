@@ -13,15 +13,13 @@ use axum::{
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
-use crate::routes::lifecycle_contracts::{
-    agent_run_to_contract, lifecycle_run_view_to_contract, subject_association_to_contract,
-};
 use crate::routes::lifecycle_views::{
     agent_frame_runtime_to_view, presentation_read_model_error_to_api,
     session_runtime_control_status_to_contract,
 };
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_agent::MessageRef;
+use agentdash_application_agentrun::agent_run as agentrun_read;
 use agentdash_application_runtime_session::session::{
     SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
@@ -38,6 +36,7 @@ use agentdash_contracts::session::{
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
     SessionToolContextContributionResponse,
 };
+use agentdash_contracts::workflow as workflow_contract;
 use agentdash_contracts::workflow::{
     RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlPlaneView,
     SessionRuntimeControlView, SessionShellDto,
@@ -180,15 +179,235 @@ pub async fn get_session_runtime_control(
             reason: view.control_plane.reason,
         },
         anchor: view.anchor.as_ref().map(anchor_dto),
-        run: view.run.map(lifecycle_run_view_to_contract),
-        agent: view.agent.map(agent_run_to_contract),
+        run: view.run.map(presentation_lifecycle_run_to_contract),
+        agent: view.agent.map(presentation_agent_run_to_contract),
         frame_runtime: view.frame_runtime.map(agent_frame_runtime_to_view),
         subject_associations: view
             .subject_associations
             .into_iter()
-            .map(subject_association_to_contract)
+            .map(presentation_subject_association_to_contract)
             .collect(),
     }))
+}
+
+fn presentation_lifecycle_run_to_contract(
+    view: agentrun_read::PresentationLifecycleRunView,
+) -> workflow_contract::LifecycleRunView {
+    workflow_contract::LifecycleRunView {
+        run_ref: workflow_contract::LifecycleRunRefDto {
+            run_id: view.run_ref.run_id,
+        },
+        project_id: view.project_id,
+        topology: match view.topology {
+            agentrun_read::PresentationLifecycleRunTopologyView::Plain => {
+                workflow_contract::LifecycleRunTopology::Plain
+            }
+            agentrun_read::PresentationLifecycleRunTopologyView::WorkflowGraph => {
+                workflow_contract::LifecycleRunTopology::WorkflowGraph
+            }
+        },
+        status: presentation_lifecycle_status_to_contract(view.status),
+        orchestrations: view
+            .orchestrations
+            .into_iter()
+            .map(presentation_orchestration_to_contract)
+            .collect(),
+        active_runtime_node_refs: view
+            .active_runtime_node_refs
+            .into_iter()
+            .map(|item| workflow_contract::ActiveRuntimeNodeRefDto {
+                run_id: item.run_id,
+                orchestration_id: item.orchestration_id,
+                node_path: item.node_path,
+                attempt: item.attempt,
+                status: item.status,
+            })
+            .collect(),
+        agents: view
+            .agents
+            .into_iter()
+            .map(presentation_agent_run_to_contract)
+            .collect(),
+        subject_associations: view
+            .subject_associations
+            .into_iter()
+            .map(presentation_subject_association_to_contract)
+            .collect(),
+        runtime_trace_refs: view
+            .runtime_trace_refs
+            .into_iter()
+            .map(presentation_runtime_ref_to_contract)
+            .collect(),
+        execution_log: view
+            .execution_log
+            .into_iter()
+            .map(presentation_execution_entry_to_contract)
+            .collect(),
+        created_at: view.created_at,
+        updated_at: view.updated_at,
+        last_activity_at: view.last_activity_at,
+    }
+}
+
+fn presentation_lifecycle_status_to_contract(
+    status: agentrun_read::PresentationLifecycleRunStatusView,
+) -> workflow_contract::LifecycleRunStatus {
+    match status {
+        agentrun_read::PresentationLifecycleRunStatusView::Draft => {
+            workflow_contract::LifecycleRunStatus::Draft
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Ready => {
+            workflow_contract::LifecycleRunStatus::Ready
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Running => {
+            workflow_contract::LifecycleRunStatus::Running
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Blocked => {
+            workflow_contract::LifecycleRunStatus::Blocked
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Completed => {
+            workflow_contract::LifecycleRunStatus::Completed
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Failed => {
+            workflow_contract::LifecycleRunStatus::Failed
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Cancelled => {
+            workflow_contract::LifecycleRunStatus::Cancelled
+        }
+    }
+}
+
+fn presentation_subject_ref_to_contract(
+    subject: agentrun_read::PresentationSubjectRefView,
+) -> workflow_contract::SubjectRefDto {
+    workflow_contract::SubjectRefDto {
+        kind: subject.kind,
+        id: subject.id,
+    }
+}
+
+fn presentation_runtime_ref_to_contract(
+    runtime_ref: agentrun_read::PresentationRuntimeSessionRefView,
+) -> workflow_contract::RuntimeSessionRefDto {
+    workflow_contract::RuntimeSessionRefDto {
+        runtime_session_id: runtime_ref.runtime_session_id,
+    }
+}
+
+fn presentation_subject_association_to_contract(
+    association: agentrun_read::PresentationLifecycleSubjectAssociationView,
+) -> workflow_contract::LifecycleSubjectAssociationDto {
+    workflow_contract::LifecycleSubjectAssociationDto {
+        id: association.id,
+        anchor_run_id: association.anchor_run_id,
+        anchor_agent_id: association.anchor_agent_id,
+        subject_ref: presentation_subject_ref_to_contract(association.subject_ref),
+        role: association.role,
+        metadata: association.metadata,
+        created_at: association.created_at,
+    }
+}
+
+fn presentation_agent_run_to_contract(
+    agent: agentrun_read::PresentationAgentRunView,
+) -> workflow_contract::AgentRunView {
+    workflow_contract::AgentRunView {
+        agent_ref: workflow_contract::AgentRunRefDto {
+            run_id: agent.agent_ref.run_id,
+            agent_id: agent.agent_ref.agent_id,
+        },
+        project_id: agent.project_id,
+        source: agent.source,
+        project_agent_id: agent.project_agent_id,
+        status: agent.status,
+        delivery_runtime_ref: agent
+            .delivery_runtime_ref
+            .map(presentation_runtime_ref_to_contract),
+        last_delivery_status: agent.last_delivery_status,
+        created_at: agent.created_at,
+        updated_at: agent.updated_at,
+    }
+}
+
+fn presentation_orchestration_to_contract(
+    orchestration: agentrun_read::PresentationOrchestrationInstanceView,
+) -> workflow_contract::OrchestrationInstanceView {
+    workflow_contract::OrchestrationInstanceView {
+        orchestration_id: orchestration.orchestration_id,
+        role: orchestration.role,
+        status: orchestration.status,
+        plan_digest: orchestration.plan_digest,
+        source_ref: orchestration.source_ref,
+        ready_node_ids: orchestration.ready_node_ids,
+        nodes: orchestration
+            .nodes
+            .into_iter()
+            .map(presentation_runtime_node_to_contract)
+            .collect(),
+        created_at: orchestration.created_at,
+        updated_at: orchestration.updated_at,
+    }
+}
+
+fn presentation_runtime_node_to_contract(
+    node: agentrun_read::PresentationRuntimeNodeView,
+) -> workflow_contract::RuntimeNodeView {
+    workflow_contract::RuntimeNodeView {
+        node_id: node.node_id,
+        node_path: node.node_path,
+        kind: node.kind,
+        status: node.status,
+        attempt: node.attempt,
+        executor_run_ref: node.executor_run_ref.map(|run_ref| match run_ref {
+            agentrun_read::PresentationExecutorRunRefView::RuntimeSession { session_id } => {
+                workflow_contract::ExecutorRunRef::RuntimeSession { session_id }
+            }
+            agentrun_read::PresentationExecutorRunRefView::FunctionRun { run_id } => {
+                workflow_contract::ExecutorRunRef::FunctionRun { run_id }
+            }
+            agentrun_read::PresentationExecutorRunRefView::HumanDecision { decision_id } => {
+                workflow_contract::ExecutorRunRef::HumanDecision { decision_id }
+            }
+        }),
+        started_at: node.started_at,
+        completed_at: node.completed_at,
+        children: node
+            .children
+            .into_iter()
+            .map(presentation_runtime_node_to_contract)
+            .collect(),
+    }
+}
+
+fn presentation_execution_entry_to_contract(
+    entry: agentrun_read::PresentationLifecycleExecutionEntryView,
+) -> workflow_contract::LifecycleExecutionEntry {
+    workflow_contract::LifecycleExecutionEntry {
+        timestamp: entry.timestamp,
+        activity_key: entry.activity_key,
+        event_kind: match entry.event_kind {
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ActivityActivated => {
+                workflow_contract::LifecycleExecutionEventKind::ActivityActivated
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ActivityCompleted => {
+                workflow_contract::LifecycleExecutionEventKind::ActivityCompleted
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ConstraintBlocked => {
+                workflow_contract::LifecycleExecutionEventKind::ConstraintBlocked
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::CompletionEvaluated => {
+                workflow_contract::LifecycleExecutionEventKind::CompletionEvaluated
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ArtifactAppended => {
+                workflow_contract::LifecycleExecutionEventKind::ArtifactAppended
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ContextInjected => {
+                workflow_contract::LifecycleExecutionEventKind::ContextInjected
+            }
+        },
+        summary: entry.summary,
+        detail: entry.detail,
+    }
 }
 
 fn map_session_event(

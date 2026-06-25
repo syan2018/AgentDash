@@ -164,7 +164,7 @@ fn lifecycle_skill_projection(vfs: &Vfs) -> Option<(Uuid, Vec<String>)> {
         .filter(|(_, keys)| !keys.is_empty())
 }
 
-pub(crate) fn project_active_workflow_lifecycle_vfs(
+pub fn project_active_workflow_lifecycle_vfs(
     vfs: Option<Vfs>,
     workflow: Option<&ActiveWorkflowProjection>,
 ) -> Option<Vfs> {

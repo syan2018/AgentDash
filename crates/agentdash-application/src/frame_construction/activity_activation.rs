@@ -11,7 +11,6 @@ use agentdash_domain::workflow::{
 use agentdash_spi::{CapabilityScopeCtx, Vfs};
 use uuid::Uuid;
 
-use crate::agent_run_repository_set::RepositorySet;
 use crate::capability::{
     AuthorityState, AvailableMcpPresets, CapabilityResolver, CapabilityResolverInput,
     CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
@@ -22,6 +21,7 @@ use crate::companion::skill_projection::{
     ensure_companion_system_skill_asset,
 };
 use crate::platform_config::PlatformConfig;
+use crate::repository_set::RepositorySet;
 
 pub(super) struct ActivityActivationInput<'a> {
     pub owner_ctx: CapabilityScopeCtx,

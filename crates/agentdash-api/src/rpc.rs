@@ -198,6 +198,31 @@ impl From<agentdash_application_lifecycle::WorkflowApplicationError> for ApiErro
     }
 }
 
+impl From<agentdash_application_agentrun::WorkflowApplicationError> for ApiError {
+    fn from(err: agentdash_application_agentrun::WorkflowApplicationError) -> Self {
+        match err {
+            agentdash_application_agentrun::WorkflowApplicationError::BadRequest(message) => {
+                ApiError::BadRequest(message)
+            }
+            agentdash_application_agentrun::WorkflowApplicationError::ModelRequired(message) => {
+                ApiError::BadRequestWithCode {
+                    message,
+                    error_code: "model_required".to_string(),
+                }
+            }
+            agentdash_application_agentrun::WorkflowApplicationError::NotFound(message) => {
+                ApiError::NotFound(message)
+            }
+            agentdash_application_agentrun::WorkflowApplicationError::Conflict(message) => {
+                ApiError::Conflict(message)
+            }
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(message) => {
+                ApiError::Internal(message)
+            }
+        }
+    }
+}
+
 impl From<agentdash_application::mcp_preset::McpPresetApplicationError> for ApiError {
     fn from(err: agentdash_application::mcp_preset::McpPresetApplicationError) -> Self {
         use agentdash_application::mcp_preset::McpPresetApplicationError as E;

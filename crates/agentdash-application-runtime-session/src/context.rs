@@ -61,14 +61,34 @@ fn build_continuation_transcript_fragment(markdown: String) -> ContextFragment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditTrigger {
+    SessionBootstrap,
+    ComposerRebuild,
     HookInjection { trigger: String },
+    SessionPlan,
+    Capability,
+    BundleFilter { scope: FragmentScope },
 }
 
 impl AuditTrigger {
     pub fn as_tag(&self) -> String {
         match self {
+            AuditTrigger::SessionBootstrap => "session_bootstrap".to_string(),
+            AuditTrigger::ComposerRebuild => "composer_rebuild".to_string(),
             AuditTrigger::HookInjection { trigger } => format!("hook:{trigger}"),
+            AuditTrigger::SessionPlan => "session_plan".to_string(),
+            AuditTrigger::Capability => "capability".to_string(),
+            AuditTrigger::BundleFilter { scope } => format!("filter:{}", scope_tag(*scope)),
         }
+    }
+}
+
+fn scope_tag(scope: FragmentScope) -> &'static str {
+    match scope {
+        FragmentScope::RuntimeAgent => "runtime_agent",
+        FragmentScope::TitleGen => "title_gen",
+        FragmentScope::Summarizer => "summarizer",
+        FragmentScope::BridgeReplay => "bridge_replay",
+        FragmentScope::Audit => "audit",
     }
 }
 
@@ -201,3 +221,35 @@ pub fn emit_fragment(
 }
 
 pub type SharedContextAuditBus = Arc<dyn ContextAuditBus>;
+
+pub fn emit_bundle_fragments(
+    bus: &dyn ContextAuditBus,
+    bundle: &SessionContextBundle,
+    session_key: &str,
+    trigger: AuditTrigger,
+) {
+    let at_ms = now_millis_u64();
+    for fragment in bundle.iter_fragments() {
+        let content_hash = hash_content(&fragment.content);
+        bus.emit(ContextAuditEvent {
+            event_id: Uuid::new_v4(),
+            bundle_id: bundle.bundle_id,
+            session_id: session_key.to_string(),
+            bundle_session_uuid: bundle.session_id,
+            at_ms,
+            trigger: trigger.clone(),
+            fragment: fragment.clone(),
+            content_hash,
+        });
+    }
+}
+
+pub struct NoopContextAuditBus;
+
+impl ContextAuditBus for NoopContextAuditBus {
+    fn emit(&self, _event: ContextAuditEvent) {}
+
+    fn query(&self, _session_id: &str, _filter: &AuditFilter) -> Vec<ContextAuditEvent> {
+        Vec::new()
+    }
+}

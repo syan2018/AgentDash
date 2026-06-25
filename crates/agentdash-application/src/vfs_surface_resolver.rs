@@ -14,7 +14,6 @@ use agentdash_spi::Vfs;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::agent_run::resolve_project_workspace;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::task::plan::find_task_plan_item_for_subject;
@@ -256,7 +255,8 @@ impl VfsSurfaceResolver {
         story: Option<&Story>,
         target: SessionMountTarget,
     ) -> Result<Vfs, ApplicationError> {
-        let workspace = resolve_project_workspace(&self.repos, project)
+        let agent_run_repos = self.repos.to_agent_run_repository_set();
+        let workspace = crate::agent_run::resolve_project_workspace(&agent_run_repos, project)
             .await
             .map_err(ApplicationError::Internal)?;
         let project_vfs_mounts = self.load_project_vfs_mounts(project.id).await?;

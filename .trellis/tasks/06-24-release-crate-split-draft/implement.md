@@ -167,6 +167,16 @@ Round 5B pass 2 checkpoint result on 2026-06-25:
 - Remaining work has moved to `agentdash-application` composition/facade and API/local/MCP integration.
 - Full checkpoint details live in `checkpoint-wave-5b-pass2.md`.
 
+Round 5C checkpoint result on 2026-06-25:
+
+- `agentdash-application` owns frame construction composition and explicit RuntimeSession/AgentRun bridge wiring.
+- API bootstrap routes extracted crate dependencies through repository-set adapters, lifecycle platform config projection and terminal callback adapter.
+- API route/read-model consumers use extracted crate DTOs or application facade handles instead of old moved-module paths.
+- `agentdash_application::session|agent_run|lifecycle|vfs` import gate for API/local/MCP is clean.
+- `cargo fmt --check`, `cargo metadata`, target implementation crate checks, API/local/MCP checks and `cargo check --workspace` passed.
+- Workspace check still reports non-blocking dead-code/unused-import warnings in extracted implementation crates; cleanup is follow-up work after the split stabilizes.
+- Full checkpoint details live in `checkpoint-wave-5c.md`.
+
 ## Subagent Dispatch Plan
 
 Use one Trellis channel for the active task. Spawn at most six live implement workers at a time. Check agents run at wave checkpoints and do not ask implement agents to preserve old behavior for compatibility.

@@ -1,4 +1,3 @@
-pub mod audit;
 mod builder;
 mod builtins;
 pub mod mount_file_discovery;
@@ -9,7 +8,7 @@ pub mod vfs_discovery;
 mod workflow_bindings;
 pub mod workspace_sources;
 
-pub use audit::{
+pub use agentdash_application_runtime_session::context::{
     AuditFilter, AuditTrigger, ContextAuditBus, ContextAuditEvent, InMemoryContextAuditBus,
     NoopContextAuditBus, SharedContextAuditBus, emit_bundle_fragments, emit_fragment,
 };

@@ -12,7 +12,7 @@ pub use agentdash_application_ports::frame_launch_envelope::{
 };
 
 #[derive(Clone)]
-pub(crate) struct FrameLaunchEnvelopeConstructionInput {
+pub struct FrameLaunchEnvelopeConstructionInput {
     pub session_id: String,
     pub command: LaunchCommand,
     pub runtime_trace_state: RuntimeTraceLaunchState,

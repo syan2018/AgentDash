@@ -9,9 +9,9 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
+use crate::agent_run::frame::AgentFrameSurfaceExt;
+use crate::agent_run::frame::FrameLaunchEnvelope;
+use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 
 use super::{
     FrameConstructionService, LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit,

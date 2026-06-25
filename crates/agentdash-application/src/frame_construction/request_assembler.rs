@@ -1,4 +1,4 @@
-﻿//! Runtime launch assembly helpers.
+//! Runtime launch assembly helpers.
 //!
 //! ## 设计
 //!
@@ -44,13 +44,10 @@ use super::assembly::slice_companion_bundle;
 use super::assembly::{
     FrameAssemblyBuilder, FrameAssemblyLaunchExtras, project_frame_assembly_to_frame,
 };
-use crate::agent_run::project_agent_context::{
-    ResolvedProjectAgentContext, build_project_agent_context,
-};
 use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
 };
-use crate::agent_run_repository_set::RepositorySet;
+use crate::agent_run::{ResolvedProjectAgentContext, build_project_agent_context};
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
@@ -61,6 +58,7 @@ use crate::context::{
     build_session_context_bundle, emit_bundle_fragments,
 };
 use crate::platform_config::PlatformConfig;
+use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
 use agentdash_application_vfs::{VfsService, apply_agent_vfs_access_grants};
 
@@ -104,7 +102,9 @@ pub trait CompanionParentFactsProvider: Send + Sync {
 }
 
 #[async_trait]
-impl CompanionParentFactsProvider for crate::agent_run::runtime_session_boundary::SessionRuntimeTransitionService {
+impl CompanionParentFactsProvider
+    for agentdash_application_runtime_session::session::SessionRuntimeTransitionService
+{
     async fn latest_companion_parent_capability_state(
         &self,
         parent_session_id: &str,
@@ -160,11 +160,11 @@ impl<'a> FrameRequestAssembler<'a> {
     /// companion 的 frame builder 路径。
     pub async fn compose_companion_to_frame(
         &self,
-        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
+        frame_builder: crate::agent_run::frame::AgentFrameBuilder,
         spec: CompanionParentSpec<'_>,
     ) -> Result<
         (
-            crate::agent_run::frame::builder::AgentFrameBuilder,
+            crate::agent_run::frame::AgentFrameBuilder,
             FrameAssemblyLaunchExtras,
         ),
         String,
@@ -213,11 +213,11 @@ impl<'a> FrameRequestAssembler<'a> {
     /// companion + workflow 的 frame builder 路径。
     pub async fn compose_companion_with_workflow_to_frame(
         &self,
-        frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
+        frame_builder: crate::agent_run::frame::AgentFrameBuilder,
         spec: CompanionParentWorkflowSpec<'_>,
     ) -> Result<
         (
-            crate::agent_run::frame::builder::AgentFrameBuilder,
+            crate::agent_run::frame::AgentFrameBuilder,
             FrameAssemblyLaunchExtras,
         ),
         String,
@@ -327,7 +327,8 @@ impl<'a> FrameRequestAssembler<'a> {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("selected companion ProjectAgent {project_agent_id} 不存在"))?;
-        let context = build_project_agent_context(self.repos, &agent).await?;
+        let agent_run_repos = self.repos.to_agent_run_repository_set();
+        let context = build_project_agent_context(&agent_run_repos, &agent).await?;
         validate_selected_agent_key_snapshot(&context, selected_agent_key_snapshot)?;
         Ok(Some(context))
     }
@@ -452,7 +453,7 @@ impl<'a> FrameRequestAssembler<'a> {
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
 pub async fn compose_lifecycle_node_to_frame_with_audit(
-    frame_builder: crate::agent_run::frame::builder::AgentFrameBuilder,
+    frame_builder: crate::agent_run::frame::AgentFrameBuilder,
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     lifecycle_surface_projection: &dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
@@ -461,7 +462,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     audit_session_key: Option<&str>,
 ) -> Result<
     (
-        crate::agent_run::frame::builder::AgentFrameBuilder,
+        crate::agent_run::frame::AgentFrameBuilder,
         FrameAssemblyLaunchExtras,
     ),
     String,
@@ -583,10 +584,10 @@ async fn compose_lifecycle_node_with_audit(
         .iter()
         .map(crate::runtime_bridge::runtime_mcp_server_to_summary)
         .collect();
-    let lifecycle_plan = crate::agent_run::frame::construction::plan::build_session_plan_fragments(
-        crate::agent_run::frame::construction::plan::SessionPlanInput {
+    let lifecycle_plan = crate::frame_construction::plan::build_session_plan_fragments(
+        crate::frame_construction::plan::SessionPlanInput {
             scope: CapabilityScope::Project,
-            phase: crate::agent_run::frame::construction::plan::SessionPlanPhase::ProjectAgent,
+            phase: crate::frame_construction::plan::SessionPlanPhase::ProjectAgent,
             vfs: Some(&activation.lifecycle_vfs),
             mcp_servers: &lifecycle_mcp_runtime,
             session_composition: None,
@@ -1436,9 +1437,9 @@ mod tests {
 
     mod apply_frame_assembly_tests {
         use super::super::*;
-        use crate::agent_run::frame::construction::assembly::apply_frame_assembly;
-        use crate::agent_run::runtime_session_boundary::UserPromptInput;
-        use crate::agent_run::frame::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
+        use crate::agent_run::UserPromptInput;
+        use crate::frame_construction::assembly::apply_frame_assembly;
+        use crate::frame_construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
 
@@ -1672,7 +1673,7 @@ mod tests {
         #[test]
         fn builder_with_user_input_unpacks_fields() {
             // 验证 with_user_input 一次性吸收 prompt 输入字段。
-            use crate::agent_run::runtime_session_boundary::UserPromptInput;
+            use crate::agent_run::UserPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 

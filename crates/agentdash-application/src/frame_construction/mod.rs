@@ -1,4 +1,4 @@
-﻿//! FrameConstructionService — 将 compose 路由 + 持久化统一为
+//! FrameConstructionService — 将 compose 路由 + 持久化统一为
 //! 一次 `construct_launch_envelope` 调用，直接产出 `FrameLaunchEnvelope`。
 //!
 //! 各 composer 子模块负责具体路径的 bootstrap spec 组装，
@@ -15,6 +15,10 @@ mod request_assembler;
 mod subject_assignment;
 mod workflow_projection;
 
+pub mod plan {
+    pub use agentdash_application_runtime_session::session::plan::*;
+}
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,26 +32,24 @@ use agentdash_spi::{
     AgentConfig, AgentConnector, ConnectorError, MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 
-use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
-use crate::agent_run::frame::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-    LaunchResolutionTrace,
+use crate::repository_set::RepositorySet;
+use agentdash_application_vfs::VfsService;
+
+use crate::agent_run::RuntimeCommandRecord;
+use crate::agent_run::frame::{
+    AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchEnvelope,
+    FrameLaunchEnvelopeConstructionInput, FrameLaunchIntent, FrameLaunchSurface,
+    FrameRuntimeSurface, FrameSurfaceDraft, LaunchResolutionTrace,
 };
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::frame::surface::FrameSurfaceDraft;
 use crate::agent_run::merge_executor_config_fields;
 use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
-use crate::agent_run_repository_set::RepositorySet;
-use crate::context::SharedContextAuditBus;
-use crate::platform_config::PlatformConfig;
-use crate::agent_run::runtime_session_boundary::RuntimeCommandRecord;
-use crate::agent_run::runtime_session_boundary::{
+use crate::agent_run::{LaunchCommand, TerminalHookEffectBinding};
+use crate::agent_run::{
     PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, UserPromptInput,
 };
-use crate::agent_run::runtime_session_boundary::{LaunchCommand, TerminalHookEffectBinding};
+use crate::context::SharedContextAuditBus;
+use crate::platform_config::PlatformConfig;
 use crate::workspace::resolution::BackendAvailability;
-use agentdash_application_vfs::VfsService;
 
 // ─── FrameConstructionService ───
 
@@ -223,7 +225,7 @@ impl FrameConstructionService {
                     .supports_repository_restore(config.executor.as_str())
             })
             .unwrap_or(false);
-        crate::agent_run::runtime_session_boundary::resolve_prompt_launch_path(
+        crate::agent_run::resolve_prompt_launch_path(
             &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,

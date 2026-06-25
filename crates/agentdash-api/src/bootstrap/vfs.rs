@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::vfs_owner_providers::MountProviderRegistryBuilderOwnerExt;
 use agentdash_application_runtime_session::session::{SessionPersistence, SessionToolResultCache};
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
@@ -27,7 +28,7 @@ pub(crate) fn build_vfs_kernel(
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-        .with_builtins(
+        .with_application_builtins(
             repos.lifecycle_run_repo.clone(),
             repos.canvas_repo.clone(),
             repos.inline_file_repo.clone(),

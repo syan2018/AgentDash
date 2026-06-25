@@ -12,9 +12,8 @@ use crate::session::{SessionPersistence, SessionToolResultCache};
 use crate::vfs::provider::MountProviderRegistryBuilder;
 use crate::vfs::{InlineFsMountProvider, RoutineMountProvider, SkillAssetFsMountProvider};
 
-impl MountProviderRegistryBuilder {
-    /// 在 generic VFS registry core 之外注册 application owner-backed providers。
-    pub fn with_builtins(
+pub trait MountProviderRegistryBuilderOwnerExt {
+    fn with_application_builtins(
         self,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
@@ -23,19 +22,29 @@ impl MountProviderRegistryBuilder {
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_persistence: Arc<dyn SessionPersistence>,
         tool_result_cache: Arc<SessionToolResultCache>,
+    ) -> Self;
+}
+
+impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
+    fn with_application_builtins(
+        self,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        canvas_repo: Arc<dyn CanvasRepository>,
+        inline_file_repo: Arc<dyn InlineFileRepository>,
+        routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
+        skill_asset_repo: Arc<dyn SkillAssetRepository>,
+        session_persistence: Arc<dyn SessionPersistence>,
+        _tool_result_cache: Arc<SessionToolResultCache>,
     ) -> Self {
         self.register(Arc::new(InlineFsMountProvider::new(
             inline_file_repo.clone(),
         )))
-        .register(Arc::new(
-            LifecycleMountProvider::new_with_tool_result_cache(
-                lifecycle_run_repo,
-                inline_file_repo.clone(),
-                skill_asset_repo.clone(),
-                session_persistence,
-                tool_result_cache,
-            ),
-        ))
+        .register(Arc::new(LifecycleMountProvider::new(
+            lifecycle_run_repo,
+            inline_file_repo.clone(),
+            skill_asset_repo.clone(),
+            session_persistence,
+        )))
         .register(Arc::new(RoutineMountProvider::new(
             routine_execution_repo,
             inline_file_repo.clone(),

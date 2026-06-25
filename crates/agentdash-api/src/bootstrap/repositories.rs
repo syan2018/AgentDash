@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::repository_set::{LifecycleProjectAgentLaunchAdapter, RepositorySet};
 use agentdash_application::shared_library::{
     IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
 };
@@ -128,6 +128,18 @@ pub(crate) async fn build_repositories(
     let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
         agent_frame_repo.clone(),
     ));
+    let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
+        workflow_repo.clone(),
+        workflow_repo.clone(),
+        lifecycle_agent_repo.clone(),
+        agent_frame_repo.clone(),
+        lifecycle_subject_association_repo.clone(),
+        lifecycle_gate_repo.clone(),
+        agent_lineage_repo.clone(),
+        execution_anchor_repo.clone(),
+        runtime_session_creator.clone(),
+        agent_frame_construction.clone(),
+    ));
 
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
@@ -169,6 +181,7 @@ pub(crate) async fn build_repositories(
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         agent_frame_construction,
+        project_agent_lifecycle_launch,
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),

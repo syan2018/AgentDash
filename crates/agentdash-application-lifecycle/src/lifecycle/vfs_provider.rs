@@ -39,7 +39,6 @@ pub struct LifecycleMountProvider {
 }
 
 impl LifecycleMountProvider {
-    #[cfg(test)]
     pub fn new(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,

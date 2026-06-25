@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::definition::BuiltinWorkflowBundle;
-use crate::lifecycle::WorkflowApplicationError;
+use crate::WorkflowApplicationError;
 
 pub struct WorkflowCatalogService<'a, D: ?Sized> {
     definition_repo: &'a D,
@@ -475,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_bundle_accepts_builtin_workflow_admin() {
-        use crate::workflow::definition::{
+        use crate::definition::{
             BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY, build_builtin_workflow_bundle,
         };
 
@@ -516,9 +516,7 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_bundle_accepts_trellis_dag_task() {
-        use crate::workflow::definition::{
-            TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
-        };
+        use crate::definition::{TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle};
 
         let project_id = Uuid::new_v4();
         let bundle = build_builtin_workflow_bundle(project_id, TRELLIS_DAG_TASK_TEMPLATE_KEY)

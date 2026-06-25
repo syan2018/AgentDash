@@ -1,25 +1,15 @@
 use std::sync::Arc;
 
-#[cfg(test)]
-use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
-#[cfg(test)]
-use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
-use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
-#[cfg(test)]
-use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
-use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
+use agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository, ArtifactAliasPolicy,
-    ExecutorRunRef, LifecycleAgentRepository, LifecycleGateRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, PlanNode, PlanNodeKind,
-    RuntimeNodeError, RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository,
+    LifecycleRun, LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
 };
 use agentdash_spi::FunctionRunner;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::lifecycle::WorkflowApplicationError;
-use crate::{RepositorySet, SharedPlatformConfig};
+use crate::{WorkflowApplicationError, WorkflowRepositorySet};
 
 use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
 use super::function_node_runner::FunctionNodeRunner;
@@ -83,41 +73,24 @@ pub struct OrchestrationExecutorLauncher {
 #[derive(Clone)]
 struct OrchestrationExecutorRepositories {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
-    agent_lineage_repo: Arc<dyn AgentLineageRepository>,
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
-    workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
+    workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
 }
 
-impl From<RepositorySet> for OrchestrationExecutorRepositories {
-    fn from(repos: RepositorySet) -> Self {
+impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
+    fn from(repos: WorkflowRepositorySet) -> Self {
         Self {
             lifecycle_run_repo: repos.lifecycle_run_repo,
-            workflow_graph_repo: repos.workflow_graph_repo,
             agent_procedure_repo: repos.agent_procedure_repo,
-            lifecycle_agent_repo: repos.lifecycle_agent_repo,
-            agent_frame_repo: repos.agent_frame_repo,
-            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo,
             lifecycle_gate_repo: repos.lifecycle_gate_repo,
-            agent_lineage_repo: repos.agent_lineage_repo,
-            execution_anchor_repo: repos.execution_anchor_repo,
-            runtime_session_creator: repos.runtime_session_creator,
-            workflow_agent_frame_materialization: repos.workflow_agent_frame_materialization,
+            workflow_agent_node_materialization: repos.workflow_agent_node_materialization,
         }
     }
 }
 
 impl OrchestrationExecutorLauncher {
-    pub fn new_with_platform_config(
-        repos: RepositorySet,
-        _platform_config: SharedPlatformConfig,
-    ) -> Self {
+    pub fn new(repos: WorkflowRepositorySet) -> Self {
         Self::from_executor_repositories(repos.into())
     }
 
@@ -129,16 +102,7 @@ impl OrchestrationExecutorLauncher {
     fn from_executor_repositories(repos: OrchestrationExecutorRepositories) -> Self {
         let agent_node_launcher = AgentNodeLauncher::new(
             repos.agent_procedure_repo.clone(),
-            repos.lifecycle_run_repo.clone(),
-            repos.workflow_graph_repo.clone(),
-            repos.lifecycle_agent_repo.clone(),
-            repos.agent_frame_repo.clone(),
-            repos.lifecycle_subject_association_repo.clone(),
-            repos.lifecycle_gate_repo.clone(),
-            repos.agent_lineage_repo.clone(),
-            repos.execution_anchor_repo.clone(),
-            repos.runtime_session_creator.clone(),
-            repos.workflow_agent_frame_materialization.clone(),
+            repos.workflow_agent_node_materialization.clone(),
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {
@@ -466,23 +430,24 @@ mod launcher_drain_tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrame,
-        AgentFrameRepository, AgentLineage, AgentProcedure, AgentProcedureContract,
-        AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy,
-        ApiRequestExecutorSpec, BashExecExecutorSpec, DefinitionSource, ExecutorSpec,
-        FunctionActivityExecutorSpec, GateStrategy, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-        LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
-        OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
-        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef,
-        WorkflowGraph, WorkflowInjectionSpec,
+        AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
+        AgentProcedureContract, AgentProcedureExecutionSpec, AgentProcedureRepository,
+        AgentReusePolicy, AgentRuntimeRefs, ApiRequestExecutorSpec, BashExecExecutorSpec,
+        DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleAgent,
+        LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
+        LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationLimits,
+        OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, RuntimeNodeState,
+        RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+        RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef, WorkflowGraph, WorkflowGraphRepository,
+        WorkflowInjectionSpec,
     };
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
 
-    use crate::workflow::orchestration::runtime::activate_root_orchestration;
+    use crate::orchestration::runtime::activate_root_orchestration;
 
     use super::*;
 
@@ -871,54 +836,6 @@ mod launcher_drain_tests {
         }
     }
 
-    #[async_trait]
-    impl WorkflowAgentNodeFrameMaterializationPort for InMemoryFrameRepo {
-        async fn materialize_workflow_agent_node_frame(
-            &self,
-            input: workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput,
-        ) -> Result<
-            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
-            agent_frame_materialization_port::AgentRunFrameSurfaceError,
-        > {
-            let next_revision = self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|frame| frame.agent_id == input.agent_id)
-                .map(|frame| frame.revision)
-                .max()
-                .unwrap_or(0)
-                + 1;
-            let mut frame = AgentFrame::new_revision(
-                input.agent_id,
-                next_revision,
-                "workflow_agent_node_materialization",
-            );
-            frame.created_by_id = input.created_by_id;
-            frame.vfs_surface_json = Some(serde_json::json!({
-                "mounts": [{
-                    "id": "lifecycle",
-                    "provider": "lifecycle_vfs"
-                }]
-            }));
-            self.create(&frame).await.map_err(|error| {
-                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
-                    message: error.to_string(),
-                }
-            })?;
-            let mut outcome =
-                agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
-                    agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
-                );
-            outcome.frame_id = Some(frame.id);
-            outcome.agent_id = Some(frame.agent_id);
-            outcome.runtime_session_id = Some(input.runtime_session_id);
-            outcome.wrote_frame_revision = true;
-            Ok(outcome)
-        }
-    }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CapturedAgentNodeComposition {
         node_path: String,
@@ -929,13 +846,15 @@ mod launcher_drain_tests {
 
     struct CapturingLifecycleFrameMaterializer {
         frame_repo: Arc<InMemoryFrameRepo>,
+        anchor_repo: Arc<InMemoryAnchorRepo>,
         calls: Mutex<Vec<CapturedAgentNodeComposition>>,
     }
 
     impl CapturingLifecycleFrameMaterializer {
-        fn new(frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+        fn new(frame_repo: Arc<InMemoryFrameRepo>, anchor_repo: Arc<InMemoryAnchorRepo>) -> Self {
             Self {
                 frame_repo,
+                anchor_repo,
                 calls: Mutex::new(Vec::new()),
             }
         }
@@ -946,21 +865,23 @@ mod launcher_drain_tests {
     }
 
     #[async_trait]
-    impl WorkflowAgentNodeFrameMaterializationPort for CapturingLifecycleFrameMaterializer {
-        async fn materialize_workflow_agent_node_frame(
+    impl WorkflowAgentNodeMaterializationPort for CapturingLifecycleFrameMaterializer {
+        async fn materialize_workflow_agent_node(
             &self,
-            input: workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput,
+            input: agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationRequest,
         ) -> Result<
-            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
-            agent_frame_materialization_port::AgentRunFrameSurfaceError,
-        > {
+            agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationResult,
+            agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError,
+        >{
+            let agent_id = Uuid::new_v4();
+            let runtime_session_id = Uuid::new_v4();
             self.calls
                 .lock()
                 .unwrap()
                 .push(CapturedAgentNodeComposition {
-                    node_path: input.node_path.clone(),
-                    attempt: input.attempt,
-                    runtime_session_id: Some(input.runtime_session_id.clone()),
+                    node_path: input.orchestration_binding.node_path.clone(),
+                    attempt: input.orchestration_binding.attempt,
+                    runtime_session_id: Some(runtime_session_id.to_string()),
                     contract_output_ports: input
                         .workflow_contract
                         .as_ref()
@@ -973,9 +894,47 @@ mod launcher_drain_tests {
                         })
                         .unwrap_or_default(),
                 });
-            self.frame_repo
-                .materialize_workflow_agent_node_frame(input)
-                .await
+            let mut frame =
+                AgentFrame::new_revision(agent_id, 1, "workflow_agent_node_materialization");
+            frame.created_by_id = input.frame_created_by_id;
+            frame.vfs_surface_json = Some(serde_json::json!({
+                "mounts": [{
+                    "id": "lifecycle",
+                    "provider": "lifecycle_vfs"
+                }]
+            }));
+            self.frame_repo.create(&frame).await.map_err(|error| {
+                agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
+                    operation: "create_agent_frame",
+                    message: error.to_string(),
+                }
+            })?;
+            let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+                runtime_session_id.to_string(),
+                input.run_id,
+                frame.id,
+                agent_id,
+                input.orchestration_binding.orchestration_ref,
+                input.orchestration_binding.node_path.clone(),
+                input.orchestration_binding.attempt,
+            );
+            self.anchor_repo.upsert(&anchor).await.map_err(|error| {
+                agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
+                    operation: "upsert_runtime_session_execution_anchor",
+                    message: error.to_string(),
+                }
+            })?;
+            Ok(
+                agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationResult {
+                    runtime_refs: AgentRuntimeRefs::new(
+                        input.run_id,
+                        agent_id,
+                        frame.id,
+                        Some(input.orchestration_binding),
+                    ),
+                    delivery_runtime_ref: runtime_session_id,
+                },
+            )
         }
     }
 
@@ -1137,26 +1096,6 @@ mod launcher_drain_tests {
         }
     }
 
-    #[derive(Default)]
-    struct EmptyRuntimeSessionCreator;
-
-    #[async_trait]
-    impl RuntimeSessionCreationPort for EmptyRuntimeSessionCreator {
-        async fn create_runtime_session(
-            &self,
-            _request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
-        ) -> Result<
-            runtime_session_delivery_port::RuntimeSessionCreationResult,
-            runtime_session_delivery_port::RuntimeSessionDeliveryError,
-        > {
-            Ok(
-                runtime_session_delivery_port::RuntimeSessionCreationResult {
-                    runtime_session_id: Uuid::new_v4(),
-                },
-            )
-        }
-    }
-
     struct TestFunctionRunner {
         api_outcome: ApiRequestOutcome,
         contexts: Mutex<Vec<Value>>,
@@ -1217,12 +1156,17 @@ mod launcher_drain_tests {
         Arc<InMemoryAnchorRepo>,
     ) {
         let frame_repo = Arc::new(InMemoryFrameRepo::default());
-        let frame_materializer = frame_repo.clone();
+        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
+        let frame_materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
+            frame_repo.clone(),
+            anchor_repo.clone(),
+        ));
         launcher_with_procedure_frame_repo_and_materializer(
             run_repo,
             gate_repo,
             procedure_repo,
             frame_repo,
+            anchor_repo,
             frame_materializer,
         )
     }
@@ -1232,26 +1176,19 @@ mod launcher_drain_tests {
         gate_repo: Arc<InMemoryGateRepo>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
         frame_repo: Arc<InMemoryFrameRepo>,
-        frame_materializer: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
+        anchor_repo: Arc<InMemoryAnchorRepo>,
+        frame_materializer: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     ) -> (
         OrchestrationExecutorLauncher,
         Arc<InMemoryFrameRepo>,
         Arc<InMemoryAnchorRepo>,
     ) {
-        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
         let launcher =
             OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
                 lifecycle_run_repo: run_repo,
-                workflow_graph_repo: Arc::new(EmptyWorkflowGraphRepo),
                 agent_procedure_repo: procedure_repo,
-                lifecycle_agent_repo: Arc::new(EmptyAgentRepo),
-                agent_frame_repo: frame_repo.clone(),
-                lifecycle_subject_association_repo: Arc::new(EmptyAssociationRepo),
                 lifecycle_gate_repo: gate_repo,
-                agent_lineage_repo: Arc::new(EmptyLineageRepo),
-                execution_anchor_repo: anchor_repo.clone(),
-                runtime_session_creator: Arc::new(EmptyRuntimeSessionCreator),
-                workflow_agent_frame_materialization: frame_materializer,
+                workflow_agent_node_materialization: frame_materializer,
             });
         (launcher, frame_repo, anchor_repo)
     }
@@ -1595,13 +1532,18 @@ mod launcher_drain_tests {
         };
         procedure_repo.insert(procedure_with_contract(project_id, procedure_key, contract));
         let frame_repo = Arc::new(InMemoryFrameRepo::default());
-        let materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(frame_repo.clone()));
+        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
+        let materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
+            frame_repo.clone(),
+            anchor_repo.clone(),
+        ));
         let (launcher, frame_repo, anchor_repo) =
             launcher_with_procedure_frame_repo_and_materializer(
                 run_repo.clone(),
                 Arc::new(InMemoryGateRepo::default()),
                 procedure_repo,
                 frame_repo,
+                anchor_repo,
                 materializer.clone(),
             );
 

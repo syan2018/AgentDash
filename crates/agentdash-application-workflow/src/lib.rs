@@ -1,8 +1,10 @@
 mod catalog;
 mod definition;
+mod error;
 mod graph_planner;
 pub mod graph_resolver;
 pub mod orchestration;
+mod repository_set;
 pub mod script;
 
 pub use agentdash_domain::workflow::{
@@ -14,6 +16,7 @@ pub use definition::{
     BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
     get_builtin_workflow_template, list_builtin_workflow_templates,
 };
+pub use error::WorkflowApplicationError;
 pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use orchestration::{
@@ -29,6 +32,7 @@ pub use orchestration::{
     WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileOutput,
     WorkflowGraphCompileSourceMetadata, WorkflowGraphCompiler, compile_workflow_graph,
 };
+pub use repository_set::WorkflowRepositorySet;
 pub use script::{
     WorkflowScriptAgent, WorkflowScriptBuilderDiagnostic, WorkflowScriptBuilderDocument,
     WorkflowScriptBuilderParseOutput, WorkflowScriptCompileDiagnostic, WorkflowScriptCompileInput,

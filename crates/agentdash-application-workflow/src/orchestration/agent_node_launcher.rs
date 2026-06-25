@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
-use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
+use agentdash_application_ports::lifecycle_materialization::{
+    WorkflowAgentNodeMaterializationPort, WorkflowAgentNodeMaterializationRequest,
+};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy,
-    ExecutorRunRef, ExecutorSpec, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, OrchestrationBindingRefs, RuntimePolicy,
-    RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, WorkflowGraphRepository,
+    AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef,
+    ExecutorSpec, LifecycleRun, OrchestrationBindingRefs, RuntimePolicy, RuntimeSessionPolicy,
 };
 
-use crate::lifecycle::{
-    LifecycleDispatchService, WorkflowAgentNodeMaterializationRequest, WorkflowApplicationError,
-};
+use crate::WorkflowApplicationError;
 
 use super::executor_launcher::LaunchedAgentNode;
 use super::ready_node::{ReadyNodeView, RuntimeNodeCoordinate};
@@ -20,44 +17,17 @@ use super::runtime::OrchestrationRuntimeEvent;
 #[derive(Clone)]
 pub(super) struct AgentNodeLauncher {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-    lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
-    agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
-    workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
+    workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
 }
 
 impl AgentNodeLauncher {
     pub(super) fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-        agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-        lifecycle_gate_repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
-        agent_lineage_repo: Arc<dyn agentdash_domain::workflow::AgentLineageRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
-        workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
+        workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     ) -> Self {
         Self {
             agent_procedure_repo,
-            lifecycle_run_repo,
-            workflow_graph_repo,
-            lifecycle_agent_repo,
-            agent_frame_repo,
-            lifecycle_subject_association_repo,
-            lifecycle_gate_repo,
-            agent_lineage_repo,
-            execution_anchor_repo,
-            runtime_session_creator,
-            workflow_agent_frame_materialization,
+            workflow_agent_node_materialization,
         }
     }
 
@@ -135,21 +105,8 @@ impl AgentNodeLauncher {
             coordinate.node_path.clone(),
             coordinate.attempt,
         );
-        let lifecycle_dispatch = LifecycleDispatchService::new(
-            self.lifecycle_run_repo.as_ref(),
-            self.workflow_graph_repo.as_ref(),
-            self.lifecycle_agent_repo.as_ref(),
-            self.agent_frame_repo.as_ref(),
-            self.lifecycle_subject_association_repo.as_ref(),
-            self.lifecycle_gate_repo.as_ref(),
-            self.agent_lineage_repo.as_ref(),
-        )
-        .with_anchor_repo(self.execution_anchor_repo.as_ref())
-        .with_runtime_session_creator(self.runtime_session_creator.as_ref())
-        .with_workflow_agent_frame_materialization_port(
-            self.workflow_agent_frame_materialization.as_ref(),
-        );
-        let materialized = lifecycle_dispatch
+        let materialized = self
+            .workflow_agent_node_materialization
             .materialize_workflow_agent_node(WorkflowAgentNodeMaterializationRequest {
                 run_id: run.id,
                 orchestration_binding,

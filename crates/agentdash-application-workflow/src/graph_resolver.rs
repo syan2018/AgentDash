@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{WorkflowGraph, WorkflowGraphRef, WorkflowGraphRepository};
 
-use crate::lifecycle::WorkflowApplicationError;
+use crate::WorkflowApplicationError;
 
 pub struct ResolvedWorkflowGraph {
     pub graph: WorkflowGraph,

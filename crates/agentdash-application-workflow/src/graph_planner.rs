@@ -5,7 +5,7 @@ use agentdash_application_ports::workflow_graph_planning::{
 use agentdash_domain::workflow::WorkflowGraphRepository;
 use async_trait::async_trait;
 
-use crate::lifecycle::WorkflowApplicationError;
+use crate::WorkflowApplicationError;
 
 use super::{
     WorkflowGraphCompileDiagnostic, WorkflowGraphCompileInput, WorkflowGraphCompiler,

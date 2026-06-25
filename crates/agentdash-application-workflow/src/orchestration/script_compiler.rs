@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::runtime::RootInputBinding;
-use crate::workflow::script::{
+use crate::script::{
     WorkflowScriptAgent, WorkflowScriptBuilderDocument, WorkflowScriptEffect,
     WorkflowScriptFunction, WorkflowScriptHumanGate, WorkflowScriptLocalEffect,
     WorkflowScriptPhase, WorkflowScriptPipeline, WorkflowScriptRequest, WorkflowScriptStatement,
@@ -136,11 +136,11 @@ impl ScriptCompiler {
     }
 }
 
-impl crate::workflow::script::WorkflowScriptCompiler for ScriptCompiler {
+impl crate::script::WorkflowScriptCompiler for ScriptCompiler {
     fn compile_workflow_script(
         &self,
-        input: crate::workflow::script::WorkflowScriptCompileInput<'_>,
-    ) -> crate::workflow::script::WorkflowScriptCompileOutput {
+        input: crate::script::WorkflowScriptCompileInput<'_>,
+    ) -> crate::script::WorkflowScriptCompileOutput {
         let output = Self::compile(ScriptCompileInput {
             document: input.builder_document,
             source_ref: input.source_ref.clone(),
@@ -151,7 +151,7 @@ impl crate::workflow::script::WorkflowScriptCompiler for ScriptCompiler {
             target_schema_version: WORKFLOW_SCRIPT_COMPILER_SCHEMA_VERSION,
         });
         let has_blocking_diagnostics = output.has_blocking_diagnostics();
-        crate::workflow::script::WorkflowScriptCompileOutput {
+        crate::script::WorkflowScriptCompileOutput {
             plan_snapshot: if has_blocking_diagnostics {
                 None
             } else {
@@ -161,7 +161,7 @@ impl crate::workflow::script::WorkflowScriptCompiler for ScriptCompiler {
                 .diagnostics
                 .into_iter()
                 .map(
-                    |diagnostic| crate::workflow::script::WorkflowScriptCompileDiagnostic {
+                    |diagnostic| crate::script::WorkflowScriptCompileDiagnostic {
                         code: diagnostic.code,
                         severity: diagnostic.severity,
                         message: diagnostic.message,
@@ -1637,7 +1637,7 @@ mod tests {
     #[test]
     fn script_compiler_maps_parallel_fanout_join_then_summary_stage() {
         let document = doc(vec![
-            WorkflowScriptStatement::Parallel(crate::workflow::script::WorkflowScriptParallel {
+            WorkflowScriptStatement::Parallel(crate::script::WorkflowScriptParallel {
                 branches: vec![
                     agent("alpha", &["alpha_notes"]),
                     agent("beta", &["beta_notes"]),
@@ -1855,7 +1855,7 @@ mod tests {
                 form_schema: "workflow.approval".to_string(),
                 decision_port: String::new(),
             }),
-            WorkflowScriptStatement::Parallel(crate::workflow::script::WorkflowScriptParallel {
+            WorkflowScriptStatement::Parallel(crate::script::WorkflowScriptParallel {
                 branches: Vec::new(),
             }),
             WorkflowScriptStatement::Pipeline(WorkflowScriptPipeline { stages: Vec::new() }),

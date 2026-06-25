@@ -4,8 +4,10 @@ use agentdash_agent_protocol::UserInputBlock;
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
 
+use crate::agent_run::runtime_session_boundary::{
+    LaunchCommand, SessionLaunchService, UserPromptInput,
+};
 use crate::error::WorkflowApplicationError;
-use crate::session::{LaunchCommand, SessionLaunchService, UserPromptInput};
 
 #[derive(Debug, Clone)]
 pub struct AgentRunMessageDelivery {

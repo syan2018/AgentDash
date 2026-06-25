@@ -158,6 +158,15 @@ Round 5B pass 1 checkpoint result on 2026-06-25:
 - `agentdash-application-agentrun` is through the first forbidden-edge cleanup but still has session-facing, capability/context and application composition blockers.
 - Full checkpoint details live in `checkpoint-wave-5b-pass1.md`.
 
+Round 5B pass 2 checkpoint result on 2026-06-25:
+
+- `agentdash-application-vfs`, `agentdash-application-runtime-session`, `agentdash-application-agentrun` and `agentdash-application-lifecycle` pass independent target crate checks.
+- Static forbidden-edge gates for ports/VFS/RuntimeSession/AgentRun/Lifecycle are clean.
+- Lifecycle workflow compiler ownership is expressed through `WorkflowGraphPlanningPort`.
+- AgentRun no longer absorbs application composition-heavy frame construction modules into its compiled crate.
+- Remaining work has moved to `agentdash-application` composition/facade and API/local/MCP integration.
+- Full checkpoint details live in `checkpoint-wave-5b-pass2.md`.
+
 ## Subagent Dispatch Plan
 
 Use one Trellis channel for the active task. Spawn at most six live implement workers at a time. Check agents run at wave checkpoints and do not ask implement agents to preserve old behavior for compatibility.

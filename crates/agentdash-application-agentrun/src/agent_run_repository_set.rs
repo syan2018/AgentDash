@@ -34,6 +34,8 @@ use agentdash_domain::workflow::{
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
+use crate::agent_run::project_agent_start::ProjectAgentLifecycleLaunchPort;
+
 #[derive(Clone)]
 pub struct AgentRunRepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
@@ -72,6 +74,7 @@ pub struct AgentRunRepositorySet {
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,

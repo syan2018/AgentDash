@@ -26,10 +26,10 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::error::WorkflowApplicationError;
-use crate::session::{
+use crate::agent_run::runtime_session_boundary::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
 };
+use crate::error::WorkflowApplicationError;
 use uuid::Uuid;
 
 use super::mailbox::{AgentRunMailboxScheduleTrigger, AgentRunMailboxService};

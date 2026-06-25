@@ -1,4 +1,4 @@
-//! Owner bootstrap frame composer.
+﻿//! Owner bootstrap frame composer.
 //!
 //! Project/Story/Routine owner surface composition belongs to frame construction because it
 //! produces the `FrameSurfaceDraft` written into `AgentFrame` and handed to runtime launch.
@@ -748,7 +748,7 @@ fn build_owner_session_plan_contribution(
     mcp_servers: &[McpServerSummary],
     effective_agent_type: &str,
 ) -> Contribution {
-    use crate::session::plan::{
+    use crate::agent_run::frame::construction::plan::{
         SessionPlanInput, SessionPlanPhase, build_session_plan_fragments,
         resolve_story_session_composition,
     };

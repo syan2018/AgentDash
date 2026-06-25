@@ -11,21 +11,13 @@ use agentdash_spi::hooks::{
     SetDelta, SharedHookRuntime,
 };
 use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
-#[cfg(test)]
-use uuid::Uuid;
 
 use super::super::assignment_context_frame::build_runtime_assignment_context_frame;
 use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
-#[cfg(test)]
-use crate::agent_run::runtime_capability::RuntimeContextTransition;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::runtime_capability::apply_runtime_capability_transition;
-#[cfg(test)]
-use crate::session::{
-    AgentFrameTransitionRecord, RuntimeCapabilityTransition, RuntimeDeliveryCommand,
-};
 use crate::session::{CapabilityState, PendingCapabilityStateTransition};
 use agentdash_spi::{CapabilityStateDelta, compute_capability_state_delta};
 
@@ -45,24 +37,6 @@ pub(crate) struct LiveRuntimeContextTransitionInput {
 pub(crate) struct RuntimeContextTransitionOutcome {
     pub capability_delta: Option<SetDelta>,
     pub emitted_capability_change: bool,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub(crate) struct PendingRuntimeContextTransitionInput {
-    pub target_frame_id: Uuid,
-    pub delivery_runtime_session_id: String,
-    pub turn_id: Option<String>,
-    pub frame_transition_id: String,
-    pub phase_node: String,
-    pub run_id: Uuid,
-    pub lifecycle_key: String,
-    pub before_state: Option<CapabilityState>,
-    pub after_state: CapabilityState,
-    pub transition: RuntimeCapabilityTransition,
-    pub capability_keys: BTreeSet<String>,
-    pub source_turn_id: Option<String>,
-    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -172,90 +146,6 @@ impl SessionRuntimeInner {
             },
             emitted_capability_change: true,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn enqueue_pending_runtime_context_transition(
-        &self,
-        input: PendingRuntimeContextTransitionInput,
-    ) -> Result<(), String> {
-        let state_changed = input.before_state.as_ref() != Some(&input.after_state);
-        let transition = RuntimeContextTransition {
-            phase_node: &input.phase_node,
-            run_id: Some(input.run_id),
-            lifecycle_key: Some(&input.lifecycle_key),
-            apply_mode: "pending_next_turn",
-            before_state: input.before_state.as_ref(),
-            after_state: &input.after_state,
-            capability_keys: &input.capability_keys,
-            steering_delivery: serde_json::json!({
-                "status": "deferred_until_next_turn"
-            }),
-            state_changed_override: Some(state_changed),
-            steering_capability_delta: None,
-        };
-        let Some(pending_transition) = transition.to_pending_capability_state_transition(
-            input.frame_transition_id,
-            input.transition,
-            input.source_turn_id,
-            input.created_at,
-        ) else {
-            return Err(format!(
-                "PhaseNode `{}` pending transition 缺少 run/lifecycle 元数据",
-                input.phase_node
-            ));
-        };
-
-        let frame_transition =
-            AgentFrameTransitionRecord::from_pending(input.target_frame_id, pending_transition);
-        let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
-        self.enqueue_runtime_delivery_command(
-            &input.delivery_runtime_session_id,
-            delivery,
-            frame_transition,
-        )
-        .await
-        .map_err(|error| {
-            format!(
-                "PhaseNode `{}` 能力状态 pending transition delivery 写入失败: {error}",
-                input.phase_node
-            )
-        })?;
-
-        let state_delta = compute_capability_state_delta(
-            input.before_state.as_ref(),
-            &input.after_state,
-            &input.capability_keys,
-        );
-        let capability_delta = SetDelta {
-            added: state_delta.tool_capabilities.added.clone(),
-            removed: state_delta.tool_capabilities.removed.clone(),
-        };
-        let notice = build_context_frame(RuntimeContextUpdateFrameInput {
-            phase_node: &input.phase_node,
-            apply_mode: Some("pending_next_turn"),
-            delivery_status: "deferred_until_next_turn",
-            capability_delta: &capability_delta,
-            effective_capabilities: &input.capability_keys,
-            state_delta: Some(&state_delta),
-            tool_schemas: &[],
-            skill_entries: &input.after_state.skill.skills,
-            companion_agents: &input.after_state.companion.agents,
-        });
-        self.emit_context_frame(
-            &input.delivery_runtime_session_id,
-            input.turn_id.as_deref(),
-            &notice,
-        )
-        .await
-        .map_err(|error| {
-            format!(
-                "PhaseNode `{}` pending 事件持久化失败: {error}",
-                input.phase_node
-            )
-        })?;
-
-        Ok(())
     }
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(

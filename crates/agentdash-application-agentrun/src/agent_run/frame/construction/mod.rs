@@ -1,4 +1,4 @@
-//! FrameConstructionService — 将 compose 路由 + 持久化统一为
+﻿//! FrameConstructionService — 将 compose 路由 + 持久化统一为
 //! 一次 `construct_launch_envelope` 调用，直接产出 `FrameLaunchEnvelope`。
 //!
 //! 各 composer 子模块负责具体路径的 bootstrap spec 组装，
@@ -41,11 +41,11 @@ use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
 use crate::agent_run_repository_set::RepositorySet;
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
-use crate::session::runtime_commands::RuntimeCommandRecord;
-use crate::session::types::{
+use crate::agent_run::runtime_session_boundary::RuntimeCommandRecord;
+use crate::agent_run::runtime_session_boundary::{
     PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, UserPromptInput,
 };
-use crate::session::{LaunchCommand, TerminalHookEffectBinding};
+use crate::agent_run::runtime_session_boundary::{LaunchCommand, TerminalHookEffectBinding};
 use crate::workspace::resolution::BackendAvailability;
 use agentdash_application_vfs::VfsService;
 
@@ -223,7 +223,7 @@ impl FrameConstructionService {
                     .supports_repository_restore(config.executor.as_str())
             })
             .unwrap_or(false);
-        crate::session::types::resolve_prompt_launch_path(
+        crate::agent_run::runtime_session_boundary::resolve_prompt_launch_path(
             &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,

@@ -22,6 +22,10 @@ use agentdash_domain::workflow::{
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};
 
+use crate::agent_run::runtime_session_boundary::{
+    LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
+    SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,
+};
 use crate::agent_run::{
     AgentRunCommandReceiptView, AgentRunMessageDelivery, AgentRunMessageDeliveryPort,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
@@ -31,10 +35,6 @@ use crate::agent_run::{
     },
 };
 use crate::error::WorkflowApplicationError;
-use crate::session::{
-    LaunchCommand, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand, UserPromptInput,
-};
 
 const CLAIM_LEASE_SECONDS: i64 = 300;
 const AGENT_LOOP_DRAIN_LIMIT: i64 = 100;

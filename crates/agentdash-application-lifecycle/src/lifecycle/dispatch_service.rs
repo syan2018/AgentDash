@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
+use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -23,12 +24,9 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
-use crate::workflow::WorkflowGraphCompileDiagnostic;
-use crate::workflow::graph_resolver::WorkflowGraphResolver;
 use crate::workflow::orchestration::{
-    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION,
-    WorkflowGraphCompileInput, WorkflowGraphCompileMode, WorkflowGraphCompileSourceMetadata,
-    WorkflowGraphCompiler, activate_orchestration, apply_orchestration_event_to_run,
+    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
+    apply_orchestration_event_to_run,
 };
 use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
@@ -98,7 +96,7 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
 /// 和 connector launch（T4 的工作）。
 pub struct LifecycleDispatchService<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
-    workflow_graph_repo: &'a dyn WorkflowGraphRepository,
+    _workflow_graph_repo: &'a dyn WorkflowGraphRepository,
     agent_repo: &'a dyn LifecycleAgentRepository,
     _frame_repo: &'a dyn AgentFrameRepository,
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
@@ -109,6 +107,7 @@ pub struct LifecycleDispatchService<'a> {
         Option<&'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort>,
     frame_construction:
         Option<&'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort>,
+    workflow_graph_planner: Option<&'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort>,
 }
 
 #[derive(Debug, Clone)]
@@ -223,7 +222,7 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Self {
         Self {
             run_repo,
-            workflow_graph_repo,
+            _workflow_graph_repo: workflow_graph_repo,
             agent_repo,
             _frame_repo: frame_repo,
             association_repo,
@@ -232,6 +231,7 @@ impl<'a> LifecycleDispatchService<'a> {
             anchor_repo: None,
             runtime_session_creator: None,
             frame_construction: None,
+            workflow_graph_planner: None,
         }
     }
 
@@ -256,6 +256,14 @@ impl<'a> LifecycleDispatchService<'a> {
         port: &'a dyn agent_frame_materialization_port::AgentRunFrameConstructionPort,
     ) -> Self {
         self.frame_construction = Some(port);
+        self
+    }
+
+    pub fn with_workflow_graph_planner(
+        mut self,
+        planner: &'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort,
+    ) -> Self {
+        self.workflow_graph_planner = Some(planner);
         self
     }
 
@@ -334,11 +342,11 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         intent: &LifecycleRunStartIntent,
     ) -> Result<LifecycleRunStartDispatchResult, WorkflowApplicationError> {
-        let workflow_graph = WorkflowGraphResolver::new(self.workflow_graph_repo)
-            .resolve(intent.project_id, &intent.workflow_graph_ref)
-            .await?
-            .graph;
-        let plan_snapshot = compile_static_graph_orchestration_plan(&workflow_graph)?;
+        let planned_graph = self
+            .plan_workflow_graph(intent.project_id, &intent.workflow_graph_ref)
+            .await?;
+        let workflow_graph = planned_graph.graph;
+        let plan_snapshot = planned_graph.plan_snapshot;
         let mut run = create_lifecycle_run(intent.project_id);
         let orchestration_binding = ensure_workflow_graph_orchestration(
             &mut run,
@@ -453,11 +461,11 @@ impl<'a> LifecycleDispatchService<'a> {
             .workflow_graph_ref
             .as_ref()
             .expect("checked workflow graph ref");
-        let workflow_graph = WorkflowGraphResolver::new(self.workflow_graph_repo)
-            .resolve(plan.project_id, workflow_graph_ref)
-            .await?
-            .graph;
-        let plan_snapshot = compile_static_graph_orchestration_plan(&workflow_graph)?;
+        let planned_graph = self
+            .plan_workflow_graph(plan.project_id, workflow_graph_ref)
+            .await?;
+        let workflow_graph = planned_graph.graph;
+        let plan_snapshot = planned_graph.plan_snapshot;
         let mut run = self.resolve_or_create_run(&plan, &workflow_graph).await?;
         let orchestration_binding = ensure_workflow_graph_orchestration(
             &mut run,
@@ -560,6 +568,25 @@ impl<'a> LifecycleDispatchService<'a> {
             gate_ref,
             subject_execution_ref,
         })
+    }
+
+    async fn plan_workflow_graph(
+        &self,
+        project_id: Uuid,
+        workflow_graph_ref: &WorkflowGraphRef,
+    ) -> Result<workflow_graph_planning_port::PlannedWorkflowGraph, WorkflowApplicationError> {
+        let planner = self.workflow_graph_planner.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "LifecycleDispatchService 缺少 WorkflowGraphPlanningPort".to_string(),
+            )
+        })?;
+        planner
+            .plan_workflow_graph(workflow_graph_planning_port::WorkflowGraphPlanningRequest {
+                project_id,
+                workflow_graph_ref: workflow_graph_ref.clone(),
+            })
+            .await
+            .map_err(workflow_error_from_workflow_graph_planning_error)
     }
 
     async fn dispatch_plain(
@@ -909,28 +936,9 @@ fn create_lifecycle_run(project_id: Uuid) -> LifecycleRun {
     LifecycleRun::new_control(project_id)
 }
 
-fn compile_static_graph_orchestration_plan(
-    workflow_graph: &WorkflowGraph,
-) -> Result<OrchestrationPlanSnapshot, WorkflowApplicationError> {
-    let output = WorkflowGraphCompiler::compile(WorkflowGraphCompileInput {
-        graph: workflow_graph,
-        source_metadata: WorkflowGraphCompileSourceMetadata::from_graph(workflow_graph),
-        compile_mode: WorkflowGraphCompileMode::Strict,
-        target_schema_version: WORKFLOW_GRAPH_COMPILER_SCHEMA_VERSION,
-    });
-
-    if output.has_blocking_diagnostics() {
-        return Err(WorkflowApplicationError::BadRequest(
-            blocking_compile_diagnostics_message(workflow_graph, &output.diagnostics),
-        ));
-    }
-
-    Ok(output.plan_snapshot)
-}
-
-fn blocking_compile_diagnostics_message(
-    workflow_graph: &WorkflowGraph,
-    diagnostics: &[WorkflowGraphCompileDiagnostic],
+fn blocking_planning_diagnostics_message(
+    workflow_graph_id: Uuid,
+    diagnostics: &[workflow_graph_planning_port::WorkflowGraphPlanningDiagnostic],
 ) -> String {
     let details = diagnostics
         .iter()
@@ -945,7 +953,7 @@ fn blocking_compile_diagnostics_message(
         .join("; ");
     format!(
         "WorkflowGraph {} 无法编译为 OrchestrationPlanSnapshot: {}",
-        workflow_graph.id, details
+        workflow_graph_id, details
     )
 }
 
@@ -1100,6 +1108,29 @@ fn workflow_error_from_agent_frame_materialization_error(
         } => WorkflowApplicationError::Internal(message),
         agent_frame_materialization_port::AgentRunFrameSurfaceError::RoleMismatch { .. } => {
             WorkflowApplicationError::Internal(error.to_string())
+        }
+    }
+}
+
+fn workflow_error_from_workflow_graph_planning_error(
+    error: workflow_graph_planning_port::WorkflowGraphPlanningError,
+) -> WorkflowApplicationError {
+    match error {
+        workflow_graph_planning_port::WorkflowGraphPlanningError::BadRequest { message } => {
+            WorkflowApplicationError::BadRequest(message)
+        }
+        workflow_graph_planning_port::WorkflowGraphPlanningError::NotFound { message } => {
+            WorkflowApplicationError::NotFound(message)
+        }
+        workflow_graph_planning_port::WorkflowGraphPlanningError::BlockingDiagnostics {
+            workflow_graph_id,
+            diagnostics,
+        } => WorkflowApplicationError::BadRequest(blocking_planning_diagnostics_message(
+            workflow_graph_id,
+            &diagnostics,
+        )),
+        workflow_graph_planning_port::WorkflowGraphPlanningError::Internal { message } => {
+            WorkflowApplicationError::Internal(message)
         }
     }
 }

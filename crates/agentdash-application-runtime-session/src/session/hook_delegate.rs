@@ -930,8 +930,13 @@ fn map_runtime_error(error: agentdash_spi::hooks::HookError) -> AgentRuntimeErro
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::Mutex;
+    use std::{
+        collections::BTreeSet,
+        sync::{
+            Arc, Mutex, RwLock,
+            atomic::{AtomicU32, AtomicU64, Ordering},
+        },
+    };
 
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeProviderRequestInput, CompactionFailureInput,
@@ -941,16 +946,17 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::HookRuntimeDelegate;
-    use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::session::hook_injection_sink::{RuntimeHookInjectionSink, RuntimeInjectionSource};
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
-        AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,
-        HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
-        HookError, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
-        HookResolution, HookRuntimeAccess, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-        NoopExecutionHookProvider, RuntimeEventSource, SessionSnapshotMetadata,
+        AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot, ContextTokenStats,
+        ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus, HookControlTarget,
+        HookDiagnosticEntry, HookError, HookInjection, HookPendingAction,
+        HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+        HookRuntimeAccess, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry,
+        HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+        RuntimeEventSource, SessionSnapshotMetadata, SetDelta,
     };
 
     #[derive(Clone)]
@@ -974,6 +980,325 @@ mod tests {
     #[derive(Default)]
     struct RecordingInjectionSink {
         records: Mutex<Vec<(String, RuntimeInjectionSource, Vec<HookInjection>)>>,
+    }
+
+    struct TestHookRuntime {
+        runtime_session_id: String,
+        control_target: HookControlTarget,
+        provider: Arc<dyn ExecutionHookProvider>,
+        snapshot: RwLock<AgentFrameHookSnapshot>,
+        diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
+        trace: RwLock<Vec<HookTraceEntry>>,
+        pending_actions: RwLock<Vec<HookPendingAction>>,
+        turn_start_notices: RwLock<Vec<HookTurnStartNotice>>,
+        token_stats: RwLock<ContextTokenStats>,
+        compaction_failure_count: AtomicU32,
+        capabilities: RwLock<BTreeSet<String>>,
+        revision: AtomicU64,
+        trace_sequence: AtomicU64,
+    }
+
+    impl std::fmt::Debug for TestHookRuntime {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("TestHookRuntime")
+                .field("runtime_session_id", &self.runtime_session_id)
+                .field("control_target", &self.control_target)
+                .field("revision", &self.revision())
+                .finish()
+        }
+    }
+
+    impl TestHookRuntime {
+        fn new_test_runtime(
+            runtime_session_id: String,
+            provider: Arc<dyn ExecutionHookProvider>,
+            snapshot: AgentFrameHookSnapshot,
+        ) -> Self {
+            Self {
+                runtime_session_id,
+                control_target: HookControlTarget {
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                    frame_id: uuid::Uuid::new_v4(),
+                },
+                provider,
+                diagnostics: RwLock::new(snapshot.diagnostics.clone()),
+                snapshot: RwLock::new(snapshot),
+                trace: RwLock::new(Vec::new()),
+                pending_actions: RwLock::new(Vec::new()),
+                turn_start_notices: RwLock::new(Vec::new()),
+                token_stats: RwLock::new(ContextTokenStats::default()),
+                compaction_failure_count: AtomicU32::new(0),
+                capabilities: RwLock::new(BTreeSet::new()),
+                revision: AtomicU64::new(1),
+                trace_sequence: AtomicU64::new(0),
+            }
+        }
+
+        fn append_diagnostics_inner<I>(&self, entries: I)
+        where
+            I: IntoIterator<Item = HookDiagnosticEntry>,
+        {
+            let mut guard = self
+                .diagnostics
+                .write()
+                .expect("hook diagnostics write lock poisoned");
+            for entry in entries {
+                if guard.iter().any(|existing| {
+                    existing.code == entry.code && existing.message == entry.message
+                }) {
+                    continue;
+                }
+                guard.push(entry);
+            }
+        }
+    }
+
+    #[async_trait]
+    impl HookRuntimeAccess for TestHookRuntime {
+        fn session_id(&self) -> &str {
+            &self.runtime_session_id
+        }
+
+        fn control_target(&self) -> HookControlTarget {
+            self.control_target.clone()
+        }
+
+        fn snapshot(&self) -> AgentFrameHookSnapshot {
+            self.snapshot
+                .read()
+                .expect("hook snapshot read lock poisoned")
+                .clone()
+        }
+
+        fn diagnostics(&self) -> Vec<HookDiagnosticEntry> {
+            self.diagnostics
+                .read()
+                .expect("hook diagnostics read lock poisoned")
+                .clone()
+        }
+
+        fn revision(&self) -> u64 {
+            self.revision.load(Ordering::SeqCst)
+        }
+
+        fn trace(&self) -> Vec<HookTraceEntry> {
+            self.trace
+                .read()
+                .expect("hook trace read lock poisoned")
+                .clone()
+        }
+
+        fn pending_actions(&self) -> Vec<HookPendingAction> {
+            self.pending_actions
+                .read()
+                .expect("hook pending actions read lock poisoned")
+                .clone()
+        }
+
+        fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot {
+            AgentFrameRuntimeSnapshot {
+                runtime_adapter_session_id: self.runtime_session_id.clone(),
+                revision: self.revision(),
+                snapshot: self.snapshot(),
+                diagnostics: self.diagnostics(),
+                trace: self.trace(),
+                pending_actions: self.pending_actions(),
+            }
+        }
+
+        async fn refresh_from_provenance(
+            &self,
+            query: HookRuntimeRefreshQuery,
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            let snapshot = self
+                .provider
+                .refresh_frame_snapshot(AgentFrameHookRefreshQuery {
+                    target: self.control_target(),
+                    provenance: query.provenance,
+                    reason: query.reason,
+                })
+                .await?;
+            self.replace_snapshot(snapshot.clone());
+            Ok(snapshot)
+        }
+
+        async fn evaluate_from_provenance(
+            &self,
+            query: HookRuntimeEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            let mut resolution = self
+                .provider
+                .evaluate_frame_hook(AgentFrameHookEvaluationQuery {
+                    target: self.control_target(),
+                    provenance: query.provenance,
+                    trigger: query.trigger,
+                    tool_name: query.tool_name,
+                    tool_call_id: query.tool_call_id,
+                    subagent_type: query.subagent_type,
+                    snapshot: query.snapshot,
+                    payload: query.payload,
+                    token_stats: Some(self.token_stats()),
+                })
+                .await?;
+            self.append_diagnostics_inner(resolution.diagnostics.clone());
+            resolution.pending_execution_log.clear();
+            Ok(resolution)
+        }
+
+        fn replace_snapshot(&self, snapshot: AgentFrameHookSnapshot) {
+            *self
+                .snapshot
+                .write()
+                .expect("hook snapshot write lock poisoned") = snapshot.clone();
+            self.append_diagnostics_inner(snapshot.diagnostics);
+            self.revision.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn append_diagnostics_vec(&self, entries: Vec<HookDiagnosticEntry>) {
+            self.append_diagnostics_inner(entries);
+        }
+
+        fn append_trace(&self, trace: HookTraceEntry) {
+            self.trace
+                .write()
+                .expect("hook trace write lock poisoned")
+                .push(trace);
+        }
+
+        fn next_trace_sequence(&self) -> u64 {
+            self.trace_sequence.fetch_add(1, Ordering::SeqCst) + 1
+        }
+
+        fn enqueue_pending_action(&self, action: HookPendingAction) {
+            self.pending_actions
+                .write()
+                .expect("hook pending actions write lock poisoned")
+                .push(HookPendingAction {
+                    status: HookPendingActionStatus::Pending,
+                    last_injected_at_ms: None,
+                    resolved_at_ms: None,
+                    resolution_kind: None,
+                    resolution_note: None,
+                    resolution_turn_id: None,
+                    ..action
+                });
+        }
+
+        fn collect_pending_actions_for_injection(&self) -> Vec<HookPendingAction> {
+            let mut guard = self
+                .pending_actions
+                .write()
+                .expect("hook pending actions write lock poisoned");
+            let actions = guard
+                .iter_mut()
+                .filter(|action| action.status == HookPendingActionStatus::Pending)
+                .map(|action| {
+                    action.last_injected_at_ms = Some(chrono::Utc::now().timestamp_millis());
+                    action.clone()
+                })
+                .collect();
+            actions
+        }
+
+        fn enqueue_turn_start_notice(&self, notice: HookTurnStartNotice) {
+            self.turn_start_notices
+                .write()
+                .expect("hook turn-start notices write lock poisoned")
+                .push(notice);
+        }
+
+        fn collect_turn_start_notices_for_injection(&self) -> Vec<HookTurnStartNotice> {
+            let mut guard = self
+                .turn_start_notices
+                .write()
+                .expect("hook turn-start notices write lock poisoned");
+            let notices = guard.clone();
+            guard.clear();
+            notices
+        }
+
+        fn unresolved_pending_actions(&self) -> Vec<HookPendingAction> {
+            self.pending_actions
+                .read()
+                .expect("hook pending actions read lock poisoned")
+                .iter()
+                .filter(|action| action.is_unresolved())
+                .cloned()
+                .collect()
+        }
+
+        fn unresolved_blocking_actions(&self) -> Vec<HookPendingAction> {
+            self.unresolved_pending_actions()
+                .into_iter()
+                .filter(HookPendingAction::is_blocking)
+                .collect()
+        }
+
+        fn resolve_pending_action(
+            &self,
+            action_id: &str,
+            resolution_kind: HookPendingActionResolutionKind,
+            note: Option<String>,
+            turn_id: Option<String>,
+        ) -> Option<HookPendingAction> {
+            let mut guard = self
+                .pending_actions
+                .write()
+                .expect("hook pending actions write lock poisoned");
+            let action = guard.iter_mut().find(|action| action.id == action_id)?;
+            action.status = HookPendingActionStatus::Resolved;
+            action.resolution_kind = Some(resolution_kind);
+            action.resolution_note = note;
+            action.resolution_turn_id = turn_id;
+            Some(action.clone())
+        }
+
+        fn update_token_stats(&self, stats: ContextTokenStats) {
+            *self
+                .token_stats
+                .write()
+                .expect("token stats write lock poisoned") = stats;
+        }
+
+        fn token_stats(&self) -> ContextTokenStats {
+            self.token_stats
+                .read()
+                .expect("token stats read lock poisoned")
+                .clone()
+        }
+
+        fn record_compaction_failure(&self, _error: &str) -> u32 {
+            self.compaction_failure_count.fetch_add(1, Ordering::SeqCst) + 1
+        }
+
+        fn reset_compaction_failures(&self) {
+            self.compaction_failure_count.store(0, Ordering::SeqCst);
+        }
+
+        fn compaction_failure_count(&self) -> u32 {
+            self.compaction_failure_count.load(Ordering::SeqCst)
+        }
+
+        fn current_capabilities(&self) -> BTreeSet<String> {
+            self.capabilities
+                .read()
+                .expect("capabilities read lock poisoned")
+                .clone()
+        }
+
+        fn update_capabilities(&self, new_caps: BTreeSet<String>) -> Option<SetDelta> {
+            let mut guard = self
+                .capabilities
+                .write()
+                .expect("capabilities write lock poisoned");
+            let delta = SetDelta::compute(&guard, &new_caps);
+            if delta.is_empty() {
+                return None;
+            }
+            *guard = new_caps;
+            Some(delta)
+        }
     }
 
     #[async_trait]
@@ -1230,7 +1555,7 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_is_blocked_until_blocking_review_action_is_resolved() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionSatisfiedProvider),
             AgentFrameHookSnapshot {
@@ -1319,7 +1644,7 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_can_continue_without_fake_steering_when_only_stop_gate_blocks() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionBlockedProvider),
             AgentFrameHookSnapshot {
@@ -1381,7 +1706,7 @@ mod tests {
             })
             .await
             .expect("snapshot should load");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             snapshot,
@@ -1466,7 +1791,7 @@ mod tests {
             })
             .await
             .expect("snapshot should load");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             snapshot,
@@ -1521,7 +1846,7 @@ mod tests {
             })
             .await
             .expect("snapshot should load");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             snapshot,
@@ -1595,7 +1920,7 @@ mod tests {
             })
             .await
             .expect("snapshot should load");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             snapshot,
@@ -1682,7 +2007,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_deduplicates_static_companion_injection_trace() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             AgentFrameHookSnapshot {
@@ -1730,7 +2055,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_consumes_turn_start_notices_once() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             AgentFrameHookSnapshot {
@@ -1801,7 +2126,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_injects_project_mcp_tool_schema_prompt_text() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             AgentFrameHookSnapshot {
@@ -1866,7 +2191,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             AgentFrameHookSnapshot {
@@ -1905,7 +2230,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_does_not_emit_inline_hook_steering_or_trace_injections() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             AgentFrameHookSnapshot {
@@ -1951,7 +2276,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_routes_hook_injections_through_runtime_sink() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             AgentFrameHookSnapshot {
@@ -2002,7 +2327,7 @@ mod tests {
             runtime_adapter_session_id: "sess-hook".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
-        let runtime = AgentFrameHookRuntime::new_test_runtime(
+        let runtime = TestHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             snapshot.clone(),

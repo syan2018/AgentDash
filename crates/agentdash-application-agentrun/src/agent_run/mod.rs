@@ -10,9 +10,10 @@ pub mod message_delivery;
 mod permission_runtime_surface_update;
 mod presentation_read_model;
 mod project_agent_context;
-mod project_agent_start;
+pub(crate) mod project_agent_start;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
+mod runtime_session_boundary;
 pub mod runtime_surface;
 mod runtime_surface_update;
 mod runtime_target;
@@ -53,9 +54,8 @@ pub use frame::{
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
     AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameConstructionDeps, FrameConstructionReason, FrameConstructionService,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    FrameConstructionReason, FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent,
+    FrameRuntimeSurface, FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, accepted_launch_commit_port, agent_frame_write_boundaries,
     hook_target_runtime_port,
 };
@@ -105,6 +105,13 @@ pub use runtime_capability_projection::{
     RuntimeCapabilityProjection, RuntimeCapabilityProjectionInput,
     derive_runtime_capability_projection, derive_runtime_guidelines, derive_runtime_skill_baseline,
     merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
+};
+pub use runtime_session_boundary::{
+    LaunchCommand, RuntimeCommandRecord, RuntimeSessionControlPort, RuntimeSessionCorePort,
+    RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeTraceLaunchState,
+    SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionLaunchService, SessionMeta, SessionRepositoryRehydrateMode, SessionTurnSteerCommand,
+    TerminalHookEffectBinding, TitleSource, UserPromptInput,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,

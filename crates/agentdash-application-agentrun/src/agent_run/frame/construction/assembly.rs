@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
@@ -16,10 +16,10 @@ use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 #[cfg(test)]
 #[allow(deprecated)]
-use crate::session::construction::RuntimeContextInspectionPlan;
+use crate::agent_run::frame::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
-use crate::session::context::apply_workspace_defaults;
-use crate::session::types::UserPromptInput;
+use crate::agent_run::runtime_session_boundary::context::apply_workspace_defaults;
+use crate::agent_run::runtime_session_boundary::UserPromptInput;
 #[cfg(test)]
 use agentdash_application_ports::lifecycle_surface_projection::{
     LifecycleMountSurface, lifecycle_mount_overlay_for_surface,

@@ -18,12 +18,12 @@ use agentdash_spi::session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
     CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
     CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
-    CapabilityDimensionKey, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
-    DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SetCompanionAgentRosterEffect,
-    SetMcpServerSetEffect, SetToolAccessEffect,
+    DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
+    SetToolAccessEffect,
 };
 
 // ── AgentFrame ↔ CapabilityState 投影 ─────────────────────────────

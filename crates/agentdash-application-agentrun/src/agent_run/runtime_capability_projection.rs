@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+﻿use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillCapabilityEntry, SkillEntry, SkillProviderCluster,
 };
 use agentdash_spi::{
-    AuthIdentity, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
+    AuthIdentity, CapabilityState, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
     MemoryIndexStatus, RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster,
@@ -14,23 +14,34 @@ use agentdash_spi::{
     SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
-use crate::context::mount_file_discovery::{
-    BUILTIN_GUIDELINE_RULES, DiscoveredMountFile, MountFileDiscoveryDiagnostic,
-    discover_memory_vfs_files, discover_mount_files, discover_skill_vfs_files,
-};
-use agentdash_application_vfs::VfsService;
-use agentdash_application_vfs::mount::{
-    CONTEXT_CONTAINER_ID_METADATA_KEY, CONTEXT_OWNER_ID_METADATA_KEY,
-    CONTEXT_OWNER_KIND_METADATA_KEY, PROJECT_AGENT_MEMORY_MOUNT_ID, PROJECT_VFS_MOUNT_METADATA_KEY,
-    mount_owner_kind,
-};
-use agentdash_application_vfs::mount_purpose;
+use agentdash_application_vfs::mount::mount_owner_kind;
+use agentdash_application_vfs::{VfsService, mount_purpose};
 
-use crate::session::baseline_capabilities::{
+use crate::agent_run::runtime_session_boundary::{
     INTEGRATION_STATIC_SKILL_PROVIDER_KEY, WORKSPACE_SKILL_PROVIDER_KEY,
-    build_session_baseline_capabilities_from_clusters, skills_to_provider_clusters,
+    build_session_baseline_capabilities_from_clusters,
 };
-use crate::session::types::CapabilityState;
+
+const PROJECT_AGENT_MEMORY_MOUNT_ID: &str = "agent";
+const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
+const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
+const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
+const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
+
+#[derive(Debug, Clone)]
+struct DiscoveredMountFile {
+    mount_id: String,
+    path: String,
+    content: String,
+}
+
+#[derive(Debug, Clone)]
+struct MountFileDiscoveryDiagnostic {
+    rule_key: String,
+    mount_id: String,
+    path: String,
+    message: String,
+}
 
 #[derive(Clone, Copy)]
 pub struct RuntimeCapabilityProjectionInput<'a> {
@@ -84,44 +95,20 @@ pub async fn derive_runtime_skill_baseline(
     let mut clusters = Vec::new();
     let mut diagnostics = Vec::new();
 
-    if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
-        let result = crate::skill::load_skills_from_vfs(vfs_service, active_vfs).await;
-        log_skill_diagnostics(input.diagnostics_label, "vfs", &result.diagnostics);
-        diagnostics.extend(loader_diagnostics_to_discovery(
-            WORKSPACE_SKILL_PROVIDER_KEY,
-            result.diagnostics,
-        ));
-        clusters.extend(skills_to_provider_clusters(
-            WORKSPACE_SKILL_PROVIDER_KEY,
-            "Workspace Skills",
-            Some("Skills discovered from the active workspace.".to_string()),
-            Some("当前 workspace 中声明的 skills。".to_string()),
-            None,
-            &result.skills,
-        ));
+    if input.vfs_service.is_some() && input.active_vfs.is_some() {
+        tracing::debug!(
+            label = input.diagnostics_label,
+            provider_key = WORKSPACE_SKILL_PROVIDER_KEY,
+            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; built-in VFS skill scan lives outside the AgentRun crate"
+        );
     }
 
     if !input.extra_skill_dirs.is_empty() {
-        let existing_names = HashMap::new();
-        let result =
-            crate::skill::load_skills_from_local_dirs(input.extra_skill_dirs, &existing_names);
-        log_skill_diagnostics(
-            input.diagnostics_label,
-            "integration-static",
-            &result.diagnostics,
+        tracing::debug!(
+            label = input.diagnostics_label,
+            provider_key = INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
+            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; static local skill dir scan lives outside the AgentRun crate"
         );
-        diagnostics.extend(loader_diagnostics_to_discovery(
-            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
-            result.diagnostics,
-        ));
-        clusters.extend(skills_to_provider_clusters(
-            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
-            "Integration Skills",
-            Some("Static skill directories contributed by Host Integrations.".to_string()),
-            Some("Host Integration 提供的静态 skill 目录。".to_string()),
-            None,
-            &result.skills,
-        ));
     }
 
     let discovery_context =
@@ -130,29 +117,14 @@ pub async fn derive_runtime_skill_baseline(
         let rules = provider.vfs_discovery_rules();
         let vfs_first = !rules.is_empty();
         let output = if vfs_first {
-            match (input.vfs_service, input.active_vfs) {
-                (Some(vfs_service), Some(active_vfs)) => {
-                    let (files, scan_diagnostics) =
-                        discover_skill_vfs_files(vfs_service, active_vfs, &rules).await;
-                    diagnostics.extend(mount_diagnostics_to_discovery(
-                        provider.provider_key(),
-                        scan_diagnostics,
-                    ));
-                    provider
-                        .discover_from_vfs(discovery_context.clone(), files)
-                        .await
-                }
-                _ => {
-                    diagnostics.push(SkillDiscoveryDiagnostic {
-                        provider_key: provider.provider_key().to_string(),
-                        code: "vfs_context_missing".to_string(),
-                        message: "provider 声明了 VFS discovery rules，但当前 session 缺少 active VFS 或 VfsService，已跳过".to_string(),
-                        local_name: None,
-                        file_path: None,
-                    });
-                    continue;
-                }
-            }
+            diagnostics.push(SkillDiscoveryDiagnostic {
+                provider_key: provider.provider_key().to_string(),
+                code: "vfs_scanner_unavailable".to_string(),
+                message: "provider 声明了 VFS discovery rules；AgentRun crate 只消费外部注入的 discovery output，文件扫描由 composition owner 提供".to_string(),
+                local_name: None,
+                file_path: None,
+            });
+            continue;
         } else {
             provider.discover(discovery_context.clone()).await
         };
@@ -198,20 +170,12 @@ pub async fn derive_runtime_guidelines(
     active_vfs: &Vfs,
     diagnostics_label: &'static str,
 ) -> Vec<DiscoveredGuideline> {
-    let guideline_result =
-        discover_mount_files(vfs_service, active_vfs, BUILTIN_GUIDELINE_RULES).await;
-    for diag in &guideline_result.diagnostics {
-        tracing::warn!(
-            label = diagnostics_label,
-            rule_key = %diag.rule_key,
-            mount_id = %diag.mount_id,
-            path = %diag.path,
-            "guideline 发现诊断: {}",
-            diag.message
-        );
-    }
-
-    merge_discovered_guideline_files(guideline_result.files)
+    let _ = (vfs_service, active_vfs);
+    tracing::debug!(
+        label = diagnostics_label,
+        "AgentRun crate does not run built-in guideline file discovery; guideline providers must be injected by the composition owner"
+    );
+    Vec::new()
 }
 
 pub async fn derive_runtime_memory_inventory(
@@ -222,7 +186,7 @@ pub async fn derive_runtime_memory_inventory(
     }
 
     let context = memory_discovery_context_from_vfs_and_identity(input.active_vfs, input.identity);
-    let mounts = input
+    let _mounts = input
         .active_vfs
         .map(memory_discovery_mounts_from_vfs)
         .unwrap_or_default();
@@ -234,32 +198,14 @@ pub async fn derive_runtime_memory_inventory(
         let output = if rules.is_empty() {
             provider.discover(context.clone()).await
         } else {
-            match (input.vfs_service, input.active_vfs) {
-                (Some(vfs_service), Some(active_vfs)) => {
-                    let (files, scan_diagnostics) =
-                        discover_memory_vfs_files(vfs_service, active_vfs, &rules).await;
-                    let oversized_indexes =
-                        oversized_memory_index_paths(&scan_diagnostics, provider.provider_key());
-                    diagnostics.extend(memory_mount_diagnostics_to_discovery(
-                        provider.provider_key(),
-                        scan_diagnostics,
-                    ));
-                    provider
-                        .discover_from_vfs(context.clone(), mounts.clone(), files)
-                        .await
-                        .map(|output| mark_oversized_memory_indexes(output, &oversized_indexes))
-                }
-                _ => {
-                    diagnostics.push(MemoryDiscoveryDiagnostic {
-                        provider_key: provider.provider_key().to_string(),
-                        code: "vfs_context_missing".to_string(),
-                        message: "provider 声明了 VFS discovery rules，但当前 session 缺少 active VFS 或 VfsService，已跳过".to_string(),
-                        source_key: None,
-                        uri: None,
-                    });
-                    continue;
-                }
-            }
+            diagnostics.push(MemoryDiscoveryDiagnostic {
+                provider_key: provider.provider_key().to_string(),
+                code: "vfs_scanner_unavailable".to_string(),
+                message: "provider 声明了 VFS discovery rules；AgentRun crate 只消费外部注入的 discovery output，文件扫描由 composition owner 提供".to_string(),
+                source_key: None,
+                uri: None,
+            });
+            continue;
         };
 
         match output {
@@ -762,22 +708,6 @@ fn normalize_provider_clusters(
     (clusters, diagnostics)
 }
 
-fn loader_diagnostics_to_discovery(
-    provider_key: &str,
-    diagnostics: Vec<crate::skill::SkillDiagnostic>,
-) -> Vec<SkillDiscoveryDiagnostic> {
-    diagnostics
-        .into_iter()
-        .map(|diag| SkillDiscoveryDiagnostic {
-            provider_key: provider_key.to_string(),
-            code: "skill_file_diagnostic".to_string(),
-            message: diag.message,
-            local_name: Some(diag.name),
-            file_path: Some(diag.file_path.to_string_lossy().to_string()),
-        })
-        .collect()
-}
-
 fn mount_diagnostics_to_discovery(
     provider_key: &str,
     diagnostics: Vec<MountFileDiscoveryDiagnostic>,
@@ -821,23 +751,6 @@ fn log_memory_discovery_diagnostics(
             code = %diag.code,
             source_key = diag.source_key.as_deref().unwrap_or(""),
             "memory discovery 诊断: {}",
-            diag.message
-        );
-    }
-}
-
-fn log_skill_diagnostics(
-    diagnostics_label: &'static str,
-    source: &'static str,
-    diagnostics: &[crate::skill::SkillDiagnostic],
-) {
-    for diag in diagnostics {
-        tracing::warn!(
-            label = diagnostics_label,
-            source,
-            skill_name = %diag.name,
-            path = %diag.file_path.display(),
-            "skill 诊断: {}",
             diag.message
         );
     }

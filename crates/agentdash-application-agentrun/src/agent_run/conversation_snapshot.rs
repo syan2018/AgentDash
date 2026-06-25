@@ -4,9 +4,9 @@ use agentdash_domain::agent::ProjectAgent;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
 use crate::agent_run::lifecycle_read_model::LifecycleSubjectAssociationView;
+use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 use crate::agent_run::workspace::types::AgentRunResourceSurfaceCoordinateModel;
 use crate::error::WorkflowApplicationError;
-use crate::session::SessionExecutionState;
 use agentdash_application_vfs::ResolvedVfsSurface;
 
 #[derive(Debug, Clone)]

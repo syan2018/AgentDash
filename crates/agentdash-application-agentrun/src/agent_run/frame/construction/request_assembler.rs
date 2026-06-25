@@ -1,4 +1,4 @@
-//! Runtime launch assembly helpers.
+﻿//! Runtime launch assembly helpers.
 //!
 //! ## 设计
 //!
@@ -104,7 +104,7 @@ pub trait CompanionParentFactsProvider: Send + Sync {
 }
 
 #[async_trait]
-impl CompanionParentFactsProvider for crate::session::SessionRuntimeTransitionService {
+impl CompanionParentFactsProvider for crate::agent_run::runtime_session_boundary::SessionRuntimeTransitionService {
     async fn latest_companion_parent_capability_state(
         &self,
         parent_session_id: &str,
@@ -583,10 +583,10 @@ async fn compose_lifecycle_node_with_audit(
         .iter()
         .map(crate::runtime_bridge::runtime_mcp_server_to_summary)
         .collect();
-    let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
-        crate::session::plan::SessionPlanInput {
+    let lifecycle_plan = crate::agent_run::frame::construction::plan::build_session_plan_fragments(
+        crate::agent_run::frame::construction::plan::SessionPlanInput {
             scope: CapabilityScope::Project,
-            phase: crate::session::plan::SessionPlanPhase::ProjectAgent,
+            phase: crate::agent_run::frame::construction::plan::SessionPlanPhase::ProjectAgent,
             vfs: Some(&activation.lifecycle_vfs),
             mcp_servers: &lifecycle_mcp_runtime,
             session_composition: None,
@@ -1437,8 +1437,8 @@ mod tests {
     mod apply_frame_assembly_tests {
         use super::super::*;
         use crate::agent_run::frame::construction::assembly::apply_frame_assembly;
-        use crate::session::UserPromptInput;
-        use crate::session::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
+        use crate::agent_run::runtime_session_boundary::UserPromptInput;
+        use crate::agent_run::frame::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
 
@@ -1672,7 +1672,7 @@ mod tests {
         #[test]
         fn builder_with_user_input_unpacks_fields() {
             // 验证 with_user_input 一次性吸收 prompt 输入字段。
-            use crate::session::UserPromptInput;
+            use crate::agent_run::runtime_session_boundary::UserPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 

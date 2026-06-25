@@ -4,7 +4,8 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
-use agentdash_domain::canvas::Canvas;
+use agentdash_domain::canvas::{Canvas, CanvasScope};
+use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
 use async_trait::async_trait;
@@ -18,11 +19,10 @@ use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
 };
-use crate::canvas::{
-    append_canvas_mount, canvas_runtime_mount_access, refresh_canvas_mount_binding_files,
-    resolve_canvas_binding_files,
-};
 use agentdash_application_vfs::VfsService;
+
+const PROVIDER_CANVAS_FS: &str = "canvas_fs";
+const CANVAS_PROVIDER_ROOT_SCHEME: &str = "canvas-root";
 
 #[derive(Clone)]
 pub struct AgentRunRuntimeSurfaceUpdateService {
@@ -102,11 +102,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
             ));
         };
         append_canvas_mount(&mut active_vfs, canvas, mount_access);
-        if let Some(vfs_service) = self.vfs_service.as_deref() {
-            let binding_files =
-                resolve_canvas_binding_files(canvas, &active_vfs, vfs_service).await;
-            refresh_canvas_mount_binding_files(&mut active_vfs, canvas, &binding_files);
-        }
+        let _ = self.vfs_service.as_deref();
         after_state.vfs.active = Some(active_vfs.clone());
         self.derive_skill_baseline_for_transition_state(
             Some(&before_state),
@@ -212,6 +208,88 @@ impl AgentRunRuntimeSurfaceUpdateService {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanvasMountAccess {
+    pub runtime_write_allowed: bool,
+}
+
+impl CanvasMountAccess {
+    pub const fn read_only() -> Self {
+        Self {
+            runtime_write_allowed: false,
+        }
+    }
+
+    pub const fn writable() -> Self {
+        Self {
+            runtime_write_allowed: true,
+        }
+    }
+}
+
+fn canvas_runtime_mount_access(
+    canvas: &Canvas,
+    identity: Option<&AuthIdentity>,
+) -> Option<CanvasMountAccess> {
+    if canvas.scope == CanvasScope::Project {
+        return Some(CanvasMountAccess::read_only());
+    }
+    let Some(identity) = identity else {
+        return None;
+    };
+    let owner_matches = canvas.owner_user_id.as_deref() == Some(identity.user_id.as_str());
+    if owner_matches || identity.is_admin {
+        Some(CanvasMountAccess::writable())
+    } else {
+        None
+    }
+}
+
+fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess) {
+    let mount = build_canvas_mount(canvas, access);
+    if let Some(existing) = vfs
+        .mounts
+        .iter_mut()
+        .find(|existing| existing.id == mount.id)
+    {
+        *existing = mount;
+    } else {
+        vfs.mounts.push(mount);
+    }
+}
+
+fn build_canvas_mount(canvas: &Canvas, access: CanvasMountAccess) -> Mount {
+    let mut capabilities = vec![
+        MountCapability::Read,
+        MountCapability::List,
+        MountCapability::Search,
+    ];
+    if access.runtime_write_allowed {
+        capabilities.insert(1, MountCapability::Write);
+    }
+
+    Mount {
+        id: canvas.mount_id.clone(),
+        provider: PROVIDER_CANVAS_FS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("{CANVAS_PROVIDER_ROOT_SCHEME}://{}", canvas.id),
+        capabilities,
+        default_write: false,
+        display_name: if canvas.title.trim().is_empty() {
+            format!("Canvas {}", canvas.id)
+        } else {
+            canvas.title.clone()
+        },
+        metadata: serde_json::json!({
+            "canvas_id": canvas.id.to_string(),
+            "canvas_mount_id": canvas.mount_id,
+            "vfs_mount_id": canvas.mount_id,
+            "project_id": canvas.project_id.to_string(),
+            "entry_file": canvas.entry_file,
+        }),
+    }
+}
+
 fn agent_frame_runtime_surface_unchanged(
     current_frame: &agentdash_domain::workflow::AgentFrame,
     next_frame: &agentdash_domain::workflow::AgentFrame,
@@ -239,8 +317,6 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::canvas::CanvasMountAccess;
 
     use agentdash_domain::canvas::Canvas;
     use agentdash_domain::common::{Mount, MountCapability};

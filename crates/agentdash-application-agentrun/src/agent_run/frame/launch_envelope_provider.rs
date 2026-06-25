@@ -1,12 +1,12 @@
-//! AgentRun frame launch construction 输入契约。
+﻿//! AgentRun frame launch construction 输入契约。
 //!
 //! Session 的主通道（用户 HTTP prompt）和 auto-resume 通道都必须通过同一份
 //! frame construction 逻辑才能拿到 context / MCP server 绑定 / flow capabilities /
 //! context bundle 等运行时字段，否则会出现"通道漂移"。
 
-use crate::session::launch::LaunchCommand;
-use crate::session::runtime_commands::RuntimeCommandRecord;
-use crate::session::types::RuntimeTraceLaunchState;
+use crate::agent_run::runtime_session_boundary::LaunchCommand;
+use crate::agent_run::runtime_session_boundary::RuntimeCommandRecord;
+use crate::agent_run::runtime_session_boundary::RuntimeTraceLaunchState;
 pub use agentdash_application_ports::frame_launch_envelope::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
 };

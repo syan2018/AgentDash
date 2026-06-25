@@ -13,3 +13,4 @@ pub mod runtime_session_live;
 pub mod runtime_surface_adoption;
 pub mod vfs_materialization;
 pub mod vfs_surface_runtime;
+pub mod workflow_graph_planning;

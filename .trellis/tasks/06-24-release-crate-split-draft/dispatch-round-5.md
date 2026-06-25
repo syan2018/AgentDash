@@ -145,6 +145,19 @@ Current status on 2026-06-25:
 - AgentRun source repair removed first-layer forbidden implementation imports but exposed the larger frame-construction composition split.
 - Next wave should prioritize `lifecycle-workflow-compiler-port`, `agentrun-session-port-repair`, `agentrun-frame-composition-repair`, `agentrun-capability-context-repair`, and `stale-test-repair`.
 
+## Round 5B Pass 2 Checkpoint
+
+Checkpoint file:
+
+- `checkpoint-wave-5b-pass2.md`
+
+Current status on 2026-06-25:
+
+- Target implementation crates are green at crate level.
+- Forbidden physical edges are clean in static gates.
+- Round 5B target crate repair is complete.
+- Round 5B pass 3 should focus on application composition/facade and API/local/MCP integration, not target crate ownership.
+
 ## Initial Static Gates
 
 ```powershell

@@ -2,6 +2,7 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
 use crate::agent_run::{
     AgentFrameSurfaceExt, AgentRunCommandPreconditionModel, ConversationCommandAvailability,
     ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
@@ -12,7 +13,6 @@ use crate::agent_run::{
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
-use crate::session::{SessionCoreService, SessionExecutionState};
 
 use super::projection::is_terminal_agent_status;
 use super::query::mailbox_message_visible;
@@ -20,14 +20,14 @@ use super::query::mailbox_message_visible;
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {
     repos: &'a RepositorySet,
     session_core: SessionCoreService,
-    session_control: crate::session::SessionControlService,
+    session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
 }
 
 impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
     pub fn new(
         repos: &'a RepositorySet,
         session_core: SessionCoreService,
-        session_control: crate::session::SessionControlService,
+        session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     ) -> Self {
         Self {
             repos,

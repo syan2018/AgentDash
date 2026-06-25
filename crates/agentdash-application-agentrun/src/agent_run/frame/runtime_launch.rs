@@ -1,4 +1,4 @@
-//! FrameLaunchEnvelope — Session 启动的唯一类型体系。
+﻿//! FrameLaunchEnvelope — Session 启动的唯一类型体系。
 //!
 //! ```text
 //! FrameRuntimeSurface  ← 只来自 AgentFrame 持久化 surface
@@ -26,7 +26,7 @@ use agentdash_spi::{
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
-use crate::session::post_turn_handler::TerminalHookEffectBinding;
+use crate::agent_run::runtime_session_boundary::TerminalHookEffectBinding;
 
 // ─── FrameRuntimeSurface: 只来自 AgentFrame 持久化 surface ───
 

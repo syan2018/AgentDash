@@ -11,13 +11,13 @@ use agentdash_contracts::workflow::{
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
-use agentdash_domain::workflow::AgentRunCommandReceipt;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
     LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
+use agentdash_domain::workflow::{AgentLaunchDispatchResult, AgentRunCommandReceipt};
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy,
     RuntimePolicy, SubjectRef, WorkflowGraphRef,
@@ -26,6 +26,7 @@ use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
 use async_trait::async_trait;
 
+use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionMeta};
 use crate::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult,
     AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
@@ -39,7 +40,6 @@ use crate::agent_run::{
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
-use crate::session::{SessionCoreService, SessionMeta};
 
 pub struct ProjectAgentRunStartCommand {
     pub project_id: Uuid,
@@ -108,6 +108,7 @@ pub struct ProjectAgentRunStartRepos<'a> {
     pub mailbox_repo: &'a dyn AgentRunMailboxRepository,
     pub runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
     pub agent_frame_construction: &'a dyn AgentRunFrameConstructionPort,
+    pub project_agent_lifecycle_launch: &'a dyn ProjectAgentLifecycleLaunchPort,
 }
 
 impl<'a> ProjectAgentRunStartRepos<'a> {
@@ -126,15 +127,16 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
             runtime_session_creator: repos.runtime_session_creator.as_ref(),
             agent_frame_construction: repos.agent_frame_construction.as_ref(),
+            project_agent_lifecycle_launch: repos.project_agent_lifecycle_launch.as_ref(),
         }
     }
 
     pub fn mailbox_service(
         &self,
-        session_core: crate::session::SessionCoreService,
-        session_control: crate::session::SessionControlService,
-        session_eventing: crate::session::SessionEventingService,
-        session_launch: crate::session::SessionLaunchService,
+        session_core: crate::agent_run::runtime_session_boundary::SessionCoreService,
+        session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
+        session_eventing: crate::agent_run::runtime_session_boundary::SessionEventingService,
+        session_launch: crate::agent_run::runtime_session_boundary::SessionLaunchService,
     ) -> AgentRunMailboxService<'a> {
         AgentRunMailboxService::new(
             self.lifecycle_run_repo,
@@ -199,6 +201,14 @@ pub trait ProjectAgentRunInitialMailboxCommandPort: Send + Sync {
 }
 
 #[async_trait]
+pub trait ProjectAgentLifecycleLaunchPort: Send + Sync {
+    async fn launch_project_agent(
+        &self,
+        intent: &AgentLaunchIntent,
+    ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError>;
+}
+
+#[async_trait]
 impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
     async fn accept_initial_mailbox_message(
         &self,
@@ -212,7 +222,7 @@ impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
 pub struct ProjectAgentRunStartService<'a> {
     repos: ProjectAgentRunStartRepos<'a>,
     cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
-    lifecycle_dispatch: LifecycleDispatchFacade<'a>,
+    lifecycle_launch: &'a dyn ProjectAgentLifecycleLaunchPort,
 }
 
 impl<'a> ProjectAgentRunStartService<'a> {
@@ -220,22 +230,11 @@ impl<'a> ProjectAgentRunStartService<'a> {
         repos: ProjectAgentRunStartRepos<'a>,
         cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
     ) -> Self {
-        let lifecycle_dispatch = LifecycleDispatchFacade::new(
-            repos.lifecycle_run_repo,
-            repos.workflow_graph_repo,
-            repos.lifecycle_agent_repo,
-            repos.agent_frame_repo,
-            repos.lifecycle_subject_association_repo,
-            repos.lifecycle_gate_repo,
-            repos.agent_lineage_repo,
-            repos.execution_anchor_repo,
-            repos.runtime_session_creator,
-            repos.agent_frame_construction,
-        );
+        let lifecycle_launch = repos.project_agent_lifecycle_launch;
         Self {
             repos,
             cleanup,
-            lifecycle_dispatch,
+            lifecycle_launch,
         }
     }
 
@@ -369,7 +368,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             project_agent_id = %command.project_agent_id,
             "ProjectAgent run start launching lifecycle agent"
         );
-        let dispatch_result = match self.lifecycle_dispatch.launch_agent(&intent).await {
+        let dispatch_result = match self.lifecycle_launch.launch_project_agent(&intent).await {
             Ok(dispatch_result) => dispatch_result,
             Err(error) => {
                 mark_command_terminal_failed(
@@ -857,7 +856,7 @@ fn validate_project_agent_subject_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{ExecutionStatus, TitleSource};
+    use crate::agent_run::runtime_session_boundary::{ExecutionStatus, TitleSource};
     use crate::test_support::MemoryAgentRunCommandReceiptRepository;
     use agentdash_domain::DomainError;
     use agentdash_domain::agent_run_mailbox::{

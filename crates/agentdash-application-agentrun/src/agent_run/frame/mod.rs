@@ -1,5 +1,4 @@
 pub(crate) mod builder;
-pub(crate) mod construction;
 pub(crate) mod hook_runtime;
 pub(crate) mod launch_commit;
 pub(crate) mod launch_envelope_provider;
@@ -9,7 +8,6 @@ pub(crate) mod surface;
 pub(crate) mod surface_service;
 
 pub use builder::AgentFrameBuilder;
-pub use construction::{FrameConstructionDeps, FrameConstructionService};
 pub use hook_runtime::{
     AgentFrameHookRuntime, AgentRunHookTargetRuntimeAdapter, hook_target_runtime_port,
 };

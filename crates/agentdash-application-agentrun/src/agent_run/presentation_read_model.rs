@@ -10,15 +10,17 @@ use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::lifecycle_read_model::{
     self as lifecycle_read_model, AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
 };
+use crate::agent_run::runtime_session_boundary::{
+    ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionMeta, SessionStoreError,
+};
 use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, RuntimeSurfaceQueryPurpose,
 };
 use crate::agent_run_repository_set::RepositorySet;
-use crate::session::{
-    ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState, SessionMeta,
-};
+use crate::error::WorkflowApplicationError;
 
 #[derive(Clone)]
 pub struct AgentRunPresentationReadModelQuery {
@@ -412,9 +414,11 @@ pub enum AgentRunPresentationReadModelError {
     #[error("{0}")]
     RuntimeSurface(#[from] AgentRunRuntimeSurfaceQueryError),
     #[error("{0}")]
+    Application(#[from] WorkflowApplicationError),
+    #[error("{0}")]
     Domain(#[from] DomainError),
     #[error("{0}")]
-    SessionStore(#[from] crate::session::persistence::SessionStoreError),
+    SessionStore(#[from] SessionStoreError),
     #[error("{0}")]
     Io(#[from] io::Error),
 }

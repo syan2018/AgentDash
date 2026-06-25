@@ -83,10 +83,10 @@ agentdash-api / agentdash-local / agentdash-mcp
 - [x] Round 4 checkpoint 固定 RuntimeSession neutral envelope、live ports、Gateway visibility 与 VFS owner split。
 - [x] 创建 `physical-dependency-contract.md` 作为后续 crates-first 拆分权威依赖合同。
 - [x] Round 5A 创建并移动 RuntimeSession / AgentRun / Lifecycle / VFS target crates，允许红灯但 blockers 必须归属到 crate owner / forbidden edge。
-- [ ] Round 5B 按 compiler errors 和 forbidden edges 并发修复 target crates。
-- [ ] RuntimeSession crate 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
-- [ ] AgentRun 与 Lifecycle crates 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
-- [ ] VFS core extraction 完成，owner-specific provider 保持在 owner/application adapter 空间。
+- [x] Round 5B 按 compiler errors 和 forbidden edges 并发修复 target crates。
+- [x] RuntimeSession crate 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
+- [x] AgentRun 与 Lifecycle crates 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
+- [x] VFS core extraction 完成，owner-specific provider 保持在 owner/application adapter 空间。
 - [ ] 最终集成记录完整 validation 状态、未绿测试和下一步修复点。
 
 ## Notes

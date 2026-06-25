@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::agent_run::lifecycle_read_model::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView, build_lifecycle_run_view,
 };
+use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     ConversationModelConfigInput, ConversationModelConfigResolver,
@@ -16,7 +17,6 @@ use crate::agent_run::{
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
-use crate::session::{SessionCoreService, SessionExecutionState};
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
@@ -34,7 +34,7 @@ use super::types::{
 pub struct AgentRunWorkspaceQueryService<'a> {
     repos: &'a RepositorySet,
     session_core: SessionCoreService,
-    session_control: crate::session::SessionControlService,
+    session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
     lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
 }
@@ -43,7 +43,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
     pub fn new(
         repos: &'a RepositorySet,
         session_core: SessionCoreService,
-        session_control: crate::session::SessionControlService,
+        session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
         vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
         lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     ) -> Self {
@@ -477,7 +477,7 @@ fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
 }
 
 fn shell_model(
-    meta: Option<&crate::session::SessionMeta>,
+    meta: Option<&crate::agent_run::runtime_session_boundary::SessionMeta>,
     project_agent: Option<&ProjectAgent>,
     agent: &LifecycleAgent,
     delivery_status: &str,

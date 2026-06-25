@@ -1,4 +1,4 @@
-use crate::session::SessionExecutionState;
+﻿use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 
 use super::types::{
     AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,

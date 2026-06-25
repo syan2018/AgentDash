@@ -18,13 +18,18 @@ use crate::agent_run::{
     RuntimeSurfaceUpdateRequest,
 };
 use crate::error::ApplicationError;
-use crate::permission::PermissionGrantCompiler;
 use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_domain::permission::PermissionGrant;
-use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, ToolCapabilityDirective, ToolCapabilityPath,
+};
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
+use agentdash_spi::session_persistence::{
+    CAPABILITY_DIMENSION_TOOL, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+};
 use agentdash_spi::{
-    CapabilityState, RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
+    CapabilityArtifactSource, CapabilityDeclarationRecord, CapabilityDimensionKey, CapabilityState,
+    RuntimeCapabilityTransition, SetToolAccessEffect, ToolCapability,
 };
 use tokio::sync::Mutex;
 
@@ -111,9 +116,9 @@ impl AgentRunPermissionRuntimeSurfaceUpdateService {
         }
 
         let mut transition = if approve {
-            PermissionGrantCompiler::compile(grant)
+            compile_permission_grant_transition(grant, true)
         } else {
-            PermissionGrantCompiler::compile_revoke(grant)
+            compile_permission_grant_transition(grant, false)
         };
         let (_, surface_paths) = AgentRunGrantProjection::partition_paths(&grant.requested_paths);
         if surface_paths.is_empty() {
@@ -205,6 +210,32 @@ impl AgentRunPermissionRuntimeSurfaceUpdateService {
             .build(self.frame_repo.as_ref())
             .await
             .map_err(ApplicationError::from)
+    }
+}
+
+fn compile_permission_grant_transition(
+    grant: &PermissionGrant,
+    add: bool,
+) -> RuntimeCapabilityTransition {
+    let declarations = grant
+        .requested_paths
+        .iter()
+        .map(|path| CapabilityDeclarationRecord {
+            dimension: CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
+            declaration_type: DECLARATION_TYPE_CAPABILITY_DIRECTIVE.to_string(),
+            source: CapabilityArtifactSource::permission_grant(),
+            payload: serde_json::to_value(if add {
+                ToolCapabilityDirective::Add(path.clone())
+            } else {
+                ToolCapabilityDirective::Remove(path.clone())
+            })
+            .unwrap_or_default(),
+        })
+        .collect();
+
+    RuntimeCapabilityTransition {
+        declarations,
+        effects: Vec::new(),
     }
 }
 

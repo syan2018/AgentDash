@@ -1,9 +1,9 @@
 use crate::agent_run::lifecycle_read_model::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
+use crate::agent_run::runtime_session_boundary::SessionExecutionState;
+use crate::agent_run::runtime_session_boundary::SessionMeta;
 use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
-use crate::session::SessionExecutionState;
-use crate::session::SessionMeta;
 use agentdash_application_vfs::ResolvedVfsSurface;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};

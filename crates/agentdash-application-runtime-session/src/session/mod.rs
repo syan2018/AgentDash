@@ -1,6 +1,5 @@
 mod assignment_context_frame;
 mod auto_resume_context_frame;
-pub(crate) mod baseline_capabilities;
 pub mod bootstrap;
 mod branching;
 mod compaction_checkpoint;

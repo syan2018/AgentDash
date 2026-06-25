@@ -11,10 +11,11 @@ use agentdash_application::runtime_session_agent_run_bridge::{
 };
 use agentdash_application::runtime_tools::{
     CollaborationRuntimeToolProvider, SessionRuntimeToolComposer, SessionToolServices,
-    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, TaskRuntimeToolProvider,
-    VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
+    SharedSessionToolServicesHandle, TaskRuntimeToolProvider, VfsRuntimeToolProvider,
+    WorkflowRuntimeToolProvider,
 };
 use agentdash_application_agentrun::agent_run::{
+    AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
     AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
@@ -22,7 +23,10 @@ use agentdash_application_agentrun::agent_run::{
     accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
     runtime_session_effective_capability_port,
 };
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort;
+use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityView as PortsAgentRunEffectiveCapabilityView,
+    AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
+};
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
@@ -33,13 +37,20 @@ use agentdash_application_runtime_session::session::{
 };
 use agentdash_application_vfs::VfsMaterializationService;
 use agentdash_application_vfs::VfsService;
+use agentdash_domain::canvas::Canvas;
+use agentdash_domain::common::Vfs;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
+use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_workspace_module::workspace_module::{
+    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
+    WorkspaceModuleAgentRunBridge, WorkspaceModuleRuntimeToolProvider,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -52,6 +63,70 @@ fn lifecycle_platform_config(
 }
 
 use crate::relay::registry::BackendRegistry;
+
+#[derive(Clone)]
+struct ApplicationWorkspaceModuleAgentRunBridge {
+    inner: SharedSessionToolServicesHandle,
+}
+
+#[async_trait]
+impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge {
+    async fn effective_capability_view_for_agent_run_delivery(
+        &self,
+        delivery_runtime_session_id: &str,
+    ) -> Result<PortsAgentRunEffectiveCapabilityView, String> {
+        let services = self
+            .inner
+            .get()
+            .await
+            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
+        services
+            .runtime_surface_update
+            .effective_capability_view_for_delivery_runtime(delivery_runtime_session_id)
+            .await
+            .map(convert_effective_capability_view)
+    }
+
+    async fn expose_canvas_mount_to_agent_run(
+        &self,
+        delivery_runtime_session_id: &str,
+        canvas: &Canvas,
+        current_user: Option<&ProjectAuthorizationContext>,
+    ) -> Result<Vfs, String> {
+        let services = self
+            .inner
+            .get()
+            .await
+            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
+        services
+            .runtime_surface_update
+            .expose_canvas_mount(delivery_runtime_session_id, canvas, current_user)
+            .await
+    }
+
+    async fn inject_agent_run_notification(
+        &self,
+        delivery_runtime_session_id: &str,
+        notification: agentdash_agent_protocol::BackboneEnvelope,
+    ) -> Result<(), String> {
+        let services = self
+            .inner
+            .get()
+            .await
+            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
+        services
+            .eventing
+            .inject_notification(delivery_runtime_session_id, notification)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn convert_effective_capability_view(
+    view: ApplicationAgentRunEffectiveCapabilityView,
+) -> PortsAgentRunEffectiveCapabilityView {
+    view.into()
+}
 
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
@@ -86,7 +161,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
-    pub runtime_gateway_handle: SharedRuntimeGatewayHandle,
+    pub workspace_module_runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
@@ -145,7 +220,10 @@ pub(crate) async fn build_session_runtime(
 
     let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
     let session_services_handle = SharedSessionToolServicesHandle::default();
-    let runtime_gateway_handle = SharedRuntimeGatewayHandle::default();
+    let workspace_module_agent_run_bridge_handle =
+        SharedWorkspaceModuleAgentRunBridgeHandle::default();
+    let workspace_module_runtime_gateway_handle =
+        SharedWorkspaceModuleRuntimeGatewayHandle::default();
     let runtime_tool_provider =
         build_session_runtime_tool_composer(SessionRuntimeToolComposerDeps {
             repos: repos.clone(),
@@ -153,7 +231,10 @@ pub(crate) async fn build_session_runtime(
             vfs_materialization_service,
             shell_output_registry,
             session_services_handle: session_services_handle.clone(),
-            runtime_gateway_handle: runtime_gateway_handle.clone(),
+            workspace_module_agent_run_bridge_handle: workspace_module_agent_run_bridge_handle
+                .clone(),
+            workspace_module_runtime_gateway_handle: workspace_module_runtime_gateway_handle
+                .clone(),
             backend_registry: backend_registry.clone(),
             function_runner: function_runner.clone(),
             platform_config: platform_config.clone(),
@@ -301,6 +382,11 @@ pub(crate) async fn build_session_runtime(
             runtime_surface_update: runtime_surface_update.clone(),
         })
         .await;
+    workspace_module_agent_run_bridge_handle
+        .set(Arc::new(ApplicationWorkspaceModuleAgentRunBridge {
+            inner: session_services_handle.clone(),
+        }))
+        .await;
 
     Ok(SessionBootstrapOutput {
         session_runtime_builder,
@@ -317,7 +403,7 @@ pub(crate) async fn build_session_runtime(
         session_title,
         connector,
         hook_provider,
-        runtime_gateway_handle,
+        workspace_module_runtime_gateway_handle,
         extra_skill_dirs,
         skill_discovery_providers,
         memory_discovery_providers,
@@ -330,7 +416,8 @@ struct SessionRuntimeToolComposerDeps {
     vfs_materialization_service: Arc<VfsMaterializationService>,
     shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     session_services_handle: SharedSessionToolServicesHandle,
-    runtime_gateway_handle: SharedRuntimeGatewayHandle,
+    workspace_module_agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
+    workspace_module_runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     backend_registry: Arc<BackendRegistry>,
     function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     platform_config: SharedPlatformConfig,
@@ -365,8 +452,10 @@ fn build_session_runtime_tool_composer(
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
         deps.repos.project_extension_installation_repo.clone(),
         deps.repos.canvas_repo.clone(),
-        deps.session_services_handle,
-        deps.runtime_gateway_handle,
+        deps.repos.canvas_runtime_state_repo.clone(),
+        deps.repos.execution_anchor_repo.clone(),
+        deps.workspace_module_agent_run_bridge_handle,
+        deps.workspace_module_runtime_gateway_handle,
     )
     .with_extension_channel_transport(deps.backend_registry);
 

@@ -1,8 +1,9 @@
 use uuid::Uuid;
 
+use crate::DomainError;
+
 use super::entity::Canvas;
 use super::value_objects::CanvasScope;
-use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
 pub trait CanvasRepository: Send + Sync {

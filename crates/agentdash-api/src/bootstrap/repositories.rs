@@ -16,10 +16,11 @@ use agentdash_infrastructure::{
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
     PostgresAgentRunMailboxRepository, PostgresAuthSessionRepository,
     PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
-    PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
-    PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
+    PostgresInlineFileRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
@@ -47,6 +48,8 @@ pub(crate) async fn build_repositories(
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
 
     let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
+    let canvas_runtime_state_repo =
+        Arc::new(PostgresCanvasRuntimeStateRepository::new(pool.clone()));
 
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
 
@@ -147,6 +150,7 @@ pub(crate) async fn build_repositories(
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
         canvas_repo: canvas_repo.clone(),
+        canvas_runtime_state_repo: canvas_runtime_state_repo.clone(),
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),

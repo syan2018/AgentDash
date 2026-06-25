@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::error::ApplicationError;
-use crate::repository_set::RepositorySet;
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
     Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasDataBinding, CanvasFile,
@@ -16,6 +15,11 @@ use agentdash_domain::project::{
 };
 
 use super::{derive_canvas_mount_id, normalize_canvas_mount_id};
+
+pub trait CanvasRepositorySet: Send + Sync {
+    fn project_repo(&self) -> &dyn ProjectRepository;
+    fn canvas_repo(&self) -> &dyn CanvasRepository;
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct CanvasMutationInput {
@@ -80,23 +84,23 @@ pub struct UnpublishCanvasResult {
 }
 
 pub async fn list_project_canvases(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     project_id: Uuid,
 ) -> Result<Vec<Canvas>, ApplicationError> {
     repos
-        .canvas_repo
+        .canvas_repo()
         .list_by_project(project_id)
         .await
         .map_err(ApplicationError::from)
 }
 
 pub async fn create_personal_canvas(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     input: CreatePersonalCanvasInput,
 ) -> Result<CanvasWithAccess, ApplicationError> {
     let (_project_access_project, project_access) = require_project_access(
-        repos.project_repo.as_ref(),
+        repos.project_repo(),
         current_user,
         input.project_id,
         ProjectPermission::Edit,
@@ -121,7 +125,7 @@ pub async fn create_personal_canvas(
     .map_err(ApplicationError::from)?;
 
     repos
-        .canvas_repo
+        .canvas_repo()
         .create(&canvas)
         .await
         .map_err(ApplicationError::from)?;
@@ -133,7 +137,7 @@ pub async fn create_personal_canvas(
 }
 
 pub async fn create_project_canvas(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     input: CreateCanvasInput,
 ) -> Result<Canvas, ApplicationError> {
     let title = input.title.trim();
@@ -152,7 +156,7 @@ pub async fn create_project_canvas(
     )
     .map_err(ApplicationError::from)?;
     repos
-        .canvas_repo
+        .canvas_repo()
         .create(&canvas)
         .await
         .map_err(ApplicationError::from)?;
@@ -160,13 +164,13 @@ pub async fn create_project_canvas(
 }
 
 pub async fn list_canvases_for_user(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     project_id: Uuid,
     filter: CanvasListScopeFilter,
 ) -> Result<Vec<CanvasWithAccess>, ApplicationError> {
     let (_project, project_access) = require_project_access(
-        repos.project_repo.as_ref(),
+        repos.project_repo(),
         current_user,
         project_id,
         ProjectPermission::View,
@@ -176,13 +180,13 @@ pub async fn list_canvases_for_user(
     let mut canvases = match filter {
         CanvasListScopeFilter::All => {
             let mut canvases = repos
-                .canvas_repo
+                .canvas_repo()
                 .list_personal_by_owner(project_id, &current_user.user_id)
                 .await
                 .map_err(ApplicationError::from)?;
             canvases.extend(
                 repos
-                    .canvas_repo
+                    .canvas_repo()
                     .list_project_shared(project_id)
                     .await
                     .map_err(ApplicationError::from)?,
@@ -190,12 +194,12 @@ pub async fn list_canvases_for_user(
             canvases
         }
         CanvasListScopeFilter::Mine => repos
-            .canvas_repo
+            .canvas_repo()
             .list_personal_by_owner(project_id, &current_user.user_id)
             .await
             .map_err(ApplicationError::from)?,
         CanvasListScopeFilter::Shared => repos
-            .canvas_repo
+            .canvas_repo()
             .list_project_shared(project_id)
             .await
             .map_err(ApplicationError::from)?,
@@ -215,11 +219,11 @@ pub async fn list_canvases_for_user(
 }
 
 pub async fn load_canvas_by_id(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     canvas_id: Uuid,
 ) -> Result<Canvas, ApplicationError> {
     let canvas = repos
-        .canvas_repo
+        .canvas_repo()
         .get_by_id(canvas_id)
         .await
         .map_err(ApplicationError::from)?;
@@ -228,14 +232,14 @@ pub async fn load_canvas_by_id(
 }
 
 pub async fn load_canvas_with_access(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     canvas_id: Uuid,
     required_action: CanvasAccessAction,
 ) -> Result<CanvasWithAccess, ApplicationError> {
     let canvas = load_canvas_by_id(repos, canvas_id).await?;
     let (_project, project_access) = require_project_access(
-        repos.project_repo.as_ref(),
+        repos.project_repo(),
         current_user,
         canvas.project_id,
         ProjectPermission::View,
@@ -247,14 +251,14 @@ pub async fn load_canvas_with_access(
 }
 
 pub async fn load_canvas_by_project_mount_id(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     project_id: Uuid,
     raw_canvas_mount_id: &str,
 ) -> Result<Canvas, ApplicationError> {
     let canvas_mount_id = normalize_canvas_mount_id(raw_canvas_mount_id)
         .map_err(|error| ApplicationError::BadRequest(error.to_string()))?;
     let canvas = repos
-        .canvas_repo
+        .canvas_repo()
         .get_by_mount_id(project_id, &canvas_mount_id)
         .await
         .map_err(ApplicationError::from)?;
@@ -264,7 +268,7 @@ pub async fn load_canvas_by_project_mount_id(
 }
 
 pub async fn publish_canvas_to_project(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     source_canvas_id: Uuid,
     input: PublishCanvasInput,
@@ -286,7 +290,7 @@ pub async fn publish_canvas_to_project(
     }
 
     let (_project, project_access) = require_project_access(
-        repos.project_repo.as_ref(),
+        repos.project_repo(),
         current_user,
         source.project_id,
         ProjectPermission::Edit,
@@ -294,7 +298,7 @@ pub async fn publish_canvas_to_project(
     .await?;
 
     let mut shared = if let Some(existing) = repos
-        .canvas_repo
+        .canvas_repo()
         .find_published_from(source.id)
         .await
         .map_err(ApplicationError::from)?
@@ -305,12 +309,8 @@ pub async fn publish_canvas_to_project(
             .mount_id
             .clone()
             .unwrap_or_else(|| format!("{}-shared", source.mount_id));
-        let mount_id = unique_canvas_mount_id(
-            repos.canvas_repo.as_ref(),
-            source.project_id,
-            &base_mount_id,
-        )
-        .await?;
+        let mount_id =
+            unique_canvas_mount_id(repos.canvas_repo(), source.project_id, &base_mount_id).await?;
         Canvas::new_project_shared(
             source.project_id,
             mount_id,
@@ -340,25 +340,25 @@ pub async fn publish_canvas_to_project(
 
     if source.shared_canvas_id == Some(shared.id) {
         repos
-            .canvas_repo
+            .canvas_repo()
             .update(&shared)
             .await
             .map_err(ApplicationError::from)?;
     } else if repos
-        .canvas_repo
+        .canvas_repo()
         .get_by_id(shared.id)
         .await
         .map_err(ApplicationError::from)?
         .is_some()
     {
         repos
-            .canvas_repo
+            .canvas_repo()
             .update(&shared)
             .await
             .map_err(ApplicationError::from)?;
     } else {
         repos
-            .canvas_repo
+            .canvas_repo()
             .create(&shared)
             .await
             .map_err(ApplicationError::from)?;
@@ -367,7 +367,7 @@ pub async fn publish_canvas_to_project(
     source.shared_canvas_id = Some(shared.id);
     source.touch();
     repos
-        .canvas_repo
+        .canvas_repo()
         .update(&source)
         .await
         .map_err(ApplicationError::from)?;
@@ -379,7 +379,7 @@ pub async fn publish_canvas_to_project(
 }
 
 pub async fn copy_canvas_to_personal(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     source_canvas_id: Uuid,
     input: CopyCanvasInput,
@@ -393,7 +393,7 @@ pub async fn copy_canvas_to_personal(
     .await?;
 
     let (_project, project_access) = require_project_access(
-        repos.project_repo.as_ref(),
+        repos.project_repo(),
         current_user,
         source.project_id,
         ProjectPermission::View,
@@ -404,12 +404,8 @@ pub async fn copy_canvas_to_personal(
         .mount_id
         .clone()
         .unwrap_or_else(|| format!("{}-copy", source.mount_id));
-    let mount_id = unique_canvas_mount_id(
-        repos.canvas_repo.as_ref(),
-        source.project_id,
-        &base_mount_id,
-    )
-    .await?;
+    let mount_id =
+        unique_canvas_mount_id(repos.canvas_repo(), source.project_id, &base_mount_id).await?;
     let mut copy = Canvas::new_personal(
         source.project_id,
         current_user.user_id.clone(),
@@ -424,7 +420,7 @@ pub async fn copy_canvas_to_personal(
     validate_canvas_contract(&copy).map_err(ApplicationError::from)?;
 
     repos
-        .canvas_repo
+        .canvas_repo()
         .create(&copy)
         .await
         .map_err(ApplicationError::from)?;
@@ -436,7 +432,7 @@ pub async fn copy_canvas_to_personal(
 }
 
 pub async fn unpublish_project_canvas(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     current_user: &ProjectAuthorizationContext,
     shared_canvas_id: Uuid,
 ) -> Result<UnpublishCanvasResult, ApplicationError> {
@@ -456,7 +452,7 @@ pub async fn unpublish_project_canvas(
 
     if let Some(source_id) = shared.published_from_canvas_id {
         if let Some(mut source) = repos
-            .canvas_repo
+            .canvas_repo()
             .get_by_id(source_id)
             .await
             .map_err(ApplicationError::from)?
@@ -465,7 +461,7 @@ pub async fn unpublish_project_canvas(
                 source.shared_canvas_id = None;
                 source.touch();
                 repos
-                    .canvas_repo
+                    .canvas_repo()
                     .update(&source)
                     .await
                     .map_err(ApplicationError::from)?;
@@ -474,7 +470,7 @@ pub async fn unpublish_project_canvas(
     }
 
     repos
-        .canvas_repo
+        .canvas_repo()
         .delete(shared.id)
         .await
         .map_err(ApplicationError::from)?;
@@ -486,13 +482,13 @@ pub async fn unpublish_project_canvas(
 }
 
 pub async fn update_canvas_record(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     mut canvas: Canvas,
     input: CanvasMutationInput,
 ) -> Result<Canvas, ApplicationError> {
     apply_canvas_mutation(&mut canvas, input).map_err(ApplicationError::from)?;
     repos
-        .canvas_repo
+        .canvas_repo()
         .update(&canvas)
         .await
         .map_err(ApplicationError::from)?;
@@ -500,11 +496,11 @@ pub async fn update_canvas_record(
 }
 
 pub async fn delete_canvas_record(
-    repos: &RepositorySet,
+    repos: &dyn CanvasRepositorySet,
     canvas: &Canvas,
 ) -> Result<(), ApplicationError> {
     repos
-        .canvas_repo
+        .canvas_repo()
         .delete(canvas.id)
         .await
         .map_err(ApplicationError::from)
@@ -519,7 +515,7 @@ pub fn build_personal_canvas(
     input: CanvasMutationInput,
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
-        Some(value) => normalize_canvas_mount_id(&value)?,
+        Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
         None => derive_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new_personal(project_id, owner_user_id, mount_id, title, description);
@@ -537,7 +533,7 @@ pub fn build_canvas(
     input: CanvasMutationInput,
 ) -> Result<Canvas, DomainError> {
     let mount_id = match mount_id {
-        Some(value) => normalize_canvas_mount_id(&value)?,
+        Some(value) => normalize_canvas_mount_id_for_domain(&value)?,
         None => derive_canvas_mount_id(&title),
     };
     let mut canvas = Canvas::new(project_id, mount_id, title, description);
@@ -691,7 +687,7 @@ pub fn upsert_canvas_binding(
 }
 
 fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
-    canvas.mount_id = normalize_canvas_mount_id(&canvas.mount_id)?;
+    canvas.mount_id = normalize_canvas_mount_id_for_domain(&canvas.mount_id)?;
     canvas.owner_user_id = normalize_optional_text(canvas.owner_user_id.take());
     canvas.published_by_user_id = normalize_optional_text(canvas.published_by_user_id.take());
     canvas.title = canvas.title.trim().to_string();
@@ -709,6 +705,10 @@ fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
     }
 
     Ok(())
+}
+
+fn normalize_canvas_mount_id_for_domain(raw: &str) -> Result<String, DomainError> {
+    normalize_canvas_mount_id(raw).map_err(|error| DomainError::InvalidConfig(error.to_string()))
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {

@@ -19,9 +19,19 @@ function isConcreteCanvasUri(uri: string): boolean {
 }
 
 function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
-  const { projectId, sessionId } = useWorkspaceData();
+  const {
+    projectId,
+    agentRunCanvasBridgeBase,
+    refreshAgentRunWorkspace,
+  } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
   const canvasMountId = parsed?.canvasMountId || null;
+  const agentRunBridge = agentRunCanvasBridgeBase && canvasMountId
+    ? {
+        ...agentRunCanvasBridgeBase,
+        canvas_mount_id: canvasMountId,
+      }
+    : null;
 
   const handleBrowseFiles = useCallback((mountId: string) => {
     const uri = `${mountId}://`;
@@ -47,7 +57,9 @@ function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
       canvasId={null}
       canvasMountId={canvasMountId}
       projectId={projectId}
-      sessionId={sessionId}
+      agentRunBridge={agentRunBridge}
+      showBridgeUnavailable={agentRunCanvasBridgeBase === null}
+      onAgentRunWorkspaceRefresh={refreshAgentRunWorkspace}
       refreshRevision={refreshRevision}
       onClose={() => {}}
       onBrowseFiles={handleBrowseFiles}

@@ -11,7 +11,7 @@ use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
     ProjectBackendAccessRepository, RuntimeHealthRepository,
 };
-use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
@@ -47,6 +47,7 @@ use async_trait::async_trait;
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub canvas_repo: Arc<dyn CanvasRepository>,
+    pub canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
@@ -95,6 +96,7 @@ impl RepositorySet {
         agentdash_application_agentrun::AgentRunRepositorySet {
             project_repo: self.project_repo.clone(),
             canvas_repo: self.canvas_repo.clone(),
+            canvas_runtime_state_repo: self.canvas_runtime_state_repo.clone(),
             workspace_repo: self.workspace_repo.clone(),
             story_repo: self.story_repo.clone(),
             state_change_repo: self.state_change_repo.clone(),
@@ -180,6 +182,16 @@ impl RepositorySet {
             inline_file_repo: self.inline_file_repo.clone(),
             permission_grant_repo: self.permission_grant_repo.clone(),
         }
+    }
+}
+
+impl agentdash_workspace_module::canvas::CanvasRepositorySet for RepositorySet {
+    fn project_repo(&self) -> &dyn ProjectRepository {
+        self.project_repo.as_ref()
+    }
+
+    fn canvas_repo(&self) -> &dyn CanvasRepository {
+        self.canvas_repo.as_ref()
     }
 }
 

@@ -1,13 +1,13 @@
-# Design: Canvas 交互诊断与模块边界预研
+# Design: Canvas 交互诊断与模块边界实现
 
 ## Architecture Summary
 
-本任务规划四条边界：
+本任务实现四条边界：
 
 1. Canvas render observation：前端 iframe/父页面采集当前真实渲染状态，后端保存 AgentRun↔Canvas 引用上的 latest observation，Agent 通过 workspace module/tool 查询。
 2. Canvas interaction state：Canvas source 通过显式 SDK 在 AgentRun↔Canvas 引用上上报用户表单、选区、过滤器等 Agent 可见状态；状态默认作为可查询事实，只有提交时才进入模型输入。
 3. Canvas submit-to-Agent：Canvas 内用户动作构造 canonical `UserInputBlock`，后端解析 AgentRun↔Canvas 引用并复用 AgentRun Mailbox 投递。
-4. Canvas / Workspace Module crate boundary：评估将 Canvas 与 Workspace Module 从当前 application/domain/api 分散路径中收束为独立 crate 或 crate family。
+4. Canvas / Workspace Module crate boundary：将 Workspace Module 业务从 application 收束到 `agentdash-workspace-module`，Canvas 作为其子模块；Canvas 领域实体和 repository/runtime state trait 保留在 `agentdash-domain::canvas`。
 
 ## Current Code Anchors
 
@@ -36,7 +36,7 @@ type CanvasRuntimeObservation = {
   agent_run_canvas_ref: string;
   canvas_id: string;
   canvas_mount_id: string;
-  runtime_session_id?: string;
+  delivery_trace_ref?: string;
   frame_id: string;
   generation: number;
   captured_at: string;
@@ -68,8 +68,8 @@ type CanvasRuntimeObservation = {
 Canvas iframe runtime
   -> canvas-render-observation postMessage
   -> CanvasRuntimePreview validates frame_id/generation
-  -> frontend service uploads latest observation
-  -> backend resolves AgentRun Canvas reference and stores latest observation by run_id + agent_id + canvas_mount_id
+  -> frontend service uploads latest observation through AgentRun-scoped Canvas route
+  -> backend resolves AgentRun Canvas reference and current delivery trace, then stores latest observation by run_id + agent_id + canvas_mount_id
   -> Agent tool canvas.inspect_render_state returns observation
 ```
 
@@ -114,7 +114,7 @@ type CanvasInteractionSnapshot = {
   agent_run_canvas_ref: string;
   canvas_id: string;
   canvas_mount_id: string;
-  runtime_session_id?: string;
+  delivery_trace_ref?: string;
   frame_id: string;
   updated_at: string;
   state: Record<string, unknown>;
@@ -154,12 +154,8 @@ window.agentdash.agent.submit({
 ### Recommended Backend Route
 
 ```text
-POST /canvases/{canvas_id}/agent-input-submit
+POST /agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/agent-input-submit
 {
-  "run_id": "...",
-  "agent_id": "...",
-  "canvas_mount_id": "...",
-  "runtime_session_id": "...",
   "client_command_id": "...",
   "input": [
     { "type": "text", "text": "...", "text_elements": [] }
@@ -174,10 +170,10 @@ POST /canvases/{canvas_id}/agent-input-submit
 
 ```text
 Canvas submit route
-  -> load Canvas with project edit/use permission
+  -> resolve AgentRun + Agent + current Canvas reference from path
+  -> load Canvas through the AgentRun project and mount id
   -> validate Canvas is visible through the target AgentRun Canvas reference
-  -> resolve current AgentRun delivery target
-  -> optionally validate runtime_session_id matches current delivery runtime when provided
+  -> resolve current AgentRun delivery target and trace ref on the backend
   -> apply AgentRun command policy for Canvas-origin submit
   -> AgentRunMailboxService.accept_user_message(
        source = CanvasAction,
@@ -227,7 +223,7 @@ Fields:
 
 ```text
 id, run_id, agent_id, canvas_id, canvas_mount_id, agent_run_canvas_ref,
-runtime_session_id, frame_id,
+delivery_trace_ref, frame_id,
 payload_json, artifact_ref, created_at, updated_at
 ```
 
@@ -235,7 +231,7 @@ Reasons:
 
 - Agent tools and submit payloads can reference stable ids.
 - Restart and scheduler delays preserve the facts used by Agent.
-- Future cleanup can follow session/runtime retention.
+- Future cleanup can follow AgentRun workspace retention.
 - The ownership follows the AgentRun-visible Canvas reference rather than the RuntimeSession substrate.
 
 ## Canvas / Workspace Module Crate Boundary Evaluation
@@ -254,49 +250,56 @@ Workspace Module concepts appear in Canvas presentation, extension runtime panel
 
 ### Recommended Target
 
-Use a small crate family rather than one oversized crate:
+Use `agentdash-workspace-module` as the business crate for Workspace Module concepts and Canvas as its submodule:
 
 | Crate | Responsibility |
 | --- | --- |
-| `agentdash-canvas` | Canvas domain entity, value objects, runtime snapshot/resource service contracts, Canvas-specific operation keys. |
-| `agentdash-workspace-module` | Workspace module identity, presentation URI, module descriptors, operation invocation contracts. |
-| `agentdash-canvas-application` or application submodule | Use cases that require repositories, RuntimeGateway, VFS service, AgentRun surface update, extension packaging. |
-
-Alternative: start with `agentdash-canvas` only, then extract `agentdash-workspace-module` after module API stabilizes.
+| `agentdash-domain::canvas` | Canvas entity, value objects, repository traits, runtime observation / interaction snapshot contracts, and embedded Canvas skill bundle. |
+| `agentdash-workspace-module` | Workspace module identity, presentation URI, module descriptors, operation invocation contracts, runtime tool provider, and Canvas submodule business services. |
+| `agentdash-workspace-module::canvas` | Canvas mount/module/presentation identity helpers, management/runtime/VFS/visibility business logic, operation keys, runtime resource helpers, and repository-set use case boundary over domain traits. |
+| `agentdash-application` submodules | Thin facades/adapters and cross-aggregate use cases that require AgentRun delivery selection, extension package artifact storage, or API/application composition. |
 
 ### Dependency Direction
 
-Recommended direction:
+Dependency direction:
 
 ```text
-agentdash-domain / agentdash-spi
-  -> agentdash-canvas
-  -> agentdash-application
-  -> agentdash-api
+agentdash-domain
+  <- agentdash-workspace-module
+  <- agentdash-application
+  <- agentdash-api
+
+agentdash-infrastructure -> agentdash-domain
 ```
 
-Workspace module contracts should be usable by Canvas and extension runtime without depending on API route implementations.
+Workspace module contracts should be usable by Canvas and extension runtime without depending on API route implementations. Infrastructure implements `agentdash-domain::canvas` traits and must not depend on `agentdash-workspace-module`.
+
+Workspace Module runtime tools call an AgentRun-facing bridge, not a session-facing bridge. The bridge resolves current AgentRun delivery runtime surface, exposes Canvas mounts, and injects AgentRun notifications. Runtime session ids may appear inside the API/application adapter as delivery trace coordinates, but they are not Canvas-facing contract fields and should not name the workspace-module business abstraction.
 
 ### Split Boundaries
 
-Good candidates for `agentdash-canvas`:
+Move into `agentdash-workspace-module::canvas`:
 
 - Canvas identity helpers: `canvas_mount_id`, `canvas_vfs_mount_id`, module id, presentation URI.
-- Canvas value objects and validation.
-- Runtime snapshot model and binding/resource descriptor types.
+- Canvas management, mutation validation, runtime snapshot/resource helpers, VFS mount/provider helpers and visibility rules that operate over domain Canvas types.
 - Browser bridge action key constants and operation keys.
-- Canvas embedded skill bundle path metadata if it remains Canvas-owned.
 
-Keep in application layer:
+Keep in `agentdash-domain::canvas`:
+
+- Canvas entity and value objects.
+- Canvas repository traits and runtime state repository trait.
+- Runtime observation / interaction snapshot contract structs.
+- Canvas embedded skill bundle metadata.
+
+Keep in application/API/infrastructure layers:
 
 - Repository implementations.
-- RuntimeGateway invocation.
-- AgentRun runtime surface update and adoption.
+- AgentRun delivery selection and runtime surface update/adoption.
 - VFS service reads/writes.
 - Extension package artifact storage.
 - HTTP authorization and route mapping.
 
-Workspace Module candidate extraction:
+Workspace Module top-level extraction:
 
 - `workspace_module_presented` event payload model.
 - Module id and presentation URI helpers.
@@ -305,22 +308,16 @@ Workspace Module candidate extraction:
 
 ### Migration Strategy
 
-1. Extract pure identity/value/helper code first.
-2. Move runtime snapshot/resource types after contracts are stable.
-3. Move workspace module descriptor/operation contracts after Canvas bridge API design is accepted.
-4. Keep application services in `agentdash-application` until runtime surface update and VFS dependencies are cleaner.
-5. Regenerate contracts and run drift checks after DTO moves.
+1. Create `agentdash-workspace-module` and move Workspace Module / Canvas business services out of `agentdash-application`.
+2. Keep Canvas entity/value/repository/runtime state contracts in `agentdash-domain::canvas`.
+3. Move Workspace Module identity/descriptor/operation contracts and runtime tool provider into the workspace-module crate.
+4. Connect workspace-module runtime tools to application through `WorkspaceModuleAgentRunBridge`, not a session bridge.
+5. Keep HTTP authorization, API route mapping, Postgres adapters, concrete RuntimeGateway/service wiring, AgentRun delivery selection, and extension package artifact storage in the application/API/infrastructure layers.
+6. Regenerate contracts and run drift checks after DTO moves.
 
-## Proposed Task Split
+## Implementation Scope
 
-Parent task: this planning task owns the overall requirements and architecture decision.
-
-Recommended children:
-
-1. Canvas runtime observation and interaction state MVP.
-2. Canvas submit-to-Agent mailbox bridge.
-3. Canvas / Workspace Module crate boundary extraction design and first pure-helper extraction.
-4. Integration review: extension canvas panel, runtime surface, VFS asset/binding and AgentRun workspace behavior.
+本任务直接实现 Canvas runtime observation、interaction state、submit-to-Agent 与 Workspace Module 业务 crate 边界收束。Canvas 作为 `agentdash-workspace-module::canvas` 子模块承载业务服务；Canvas 领域实体和 repository/runtime state trait 留在 `agentdash-domain::canvas`，保证 infrastructure 不反向依赖 workspace-module。
 
 ## Risks
 
@@ -328,13 +325,13 @@ Recommended children:
 - Pixel screenshot capture can fail or become tainted when Canvas loads external images or canvas elements.
 - AgentRun Mailbox source enum and generated contracts will change; all consumer rows and tests must be updated together.
 - Crate extraction may collide with active runtime surface and Canvas VFS convergence tasks; sequencing must avoid moving files while another task edits behavior in the same modules.
-- Extension `canvas_panel` currently reuses packaged snapshots and may need live session hydration before new bridge features work there.
+- Extension `canvas_panel` currently reuses packaged snapshots and may need live AgentRun bridge hydration before new bridge features work there.
 
 ## Validation Strategy
 
 - Frontend unit tests for preview bridge envelopes and SDK shape.
 - Backend contract tests for Canvas submit DTOs and mailbox source generation.
-- Backend application tests for session-to-AgentRun resolution and mailbox acceptance.
-- API tests for Canvas project/session mismatch, missing interaction snapshot, duplicate client command id and steer/queue delivery intent.
+- Backend application tests for AgentRun-to-Canvas reference resolution and mailbox acceptance.
+- API tests for Canvas project/run mismatch, missing interaction snapshot, duplicate client command id and steer/queue delivery intent.
 - Frontend integration tests for Canvas button submit outcome and latest observation upload.
 - Crate boundary checks through `cargo check`, contract generation, and targeted dependency graph inspection.

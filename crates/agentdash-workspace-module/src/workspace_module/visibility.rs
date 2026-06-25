@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_contracts::workspace_module::WorkspaceModuleDescriptor;
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::WorkspaceModuleDimension;
 use uuid::Uuid;
 
-use crate::agent_run::AgentRunEffectiveCapabilityView;
 use crate::extension_runtime::extension_runtime_projection_from_installations;
 use crate::workspace_module::build_workspace_modules;
 
@@ -99,9 +99,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agent_run::AgentFrameRuntimeTarget;
-    use crate::agent_run::AgentRunEffectiveCapabilityService;
     use crate::canvas::build_canvas;
+    use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
+    use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 
     #[derive(Default)]
     struct FakeInstallationRepo {
@@ -328,14 +328,18 @@ mod tests {
     ) -> AgentRunEffectiveCapabilityView {
         let mut state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
         state.workspace_module = workspace_module;
-        AgentRunEffectiveCapabilityService::effective_view_from_state(
-            AgentFrameRuntimeTarget {
+        AgentRunEffectiveCapabilityView {
+            target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
                 delivery_runtime_session_id: "session-a".to_string(),
             },
-            state,
-            runtime_refs,
-        )
+            visible_capabilities: state.tool.capabilities.clone(),
+            vfs_surface: state.vfs.active.clone().unwrap_or_default(),
+            mcp_surface: Vec::new(),
+            capability_state: state,
+            visible_workspace_module_refs: runtime_refs,
+            grant_projection: AgentRunGrantProjection::default(),
+        }
     }
 
     #[tokio::test]

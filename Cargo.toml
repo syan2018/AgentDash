@@ -8,7 +8,7 @@ members = [
     "crates/agentdash-application-vfs",
     "crates/agentdash-application-agentrun",
     "crates/agentdash-application-lifecycle",
-    "crates/agentdash-canvas",
+    "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
     "crates/agentdash-spi",
@@ -81,7 +81,7 @@ agentdash-application-runtime-session = { path = "crates/agentdash-application-r
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
 agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
-agentdash-canvas = { path = "crates/agentdash-canvas" }
+agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }

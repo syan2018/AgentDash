@@ -247,6 +247,9 @@ fn mailbox_source_view(
         agentdash_domain::agent_run_mailbox::MailboxMessageSource::LocalRelayPrompt => {
             MailboxMessageSource::LocalRelayPrompt
         }
+        agentdash_domain::agent_run_mailbox::MailboxMessageSource::CanvasAction => {
+            MailboxMessageSource::CanvasAction
+        }
     }
 }
 

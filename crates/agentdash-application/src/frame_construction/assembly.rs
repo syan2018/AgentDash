@@ -16,82 +16,9 @@ use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 #[cfg(test)]
-#[allow(deprecated)]
-use crate::frame_construction::RuntimeContextInspectionPlan;
-#[cfg(test)]
 use agentdash_application_ports::lifecycle_surface_projection::{
     LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
 };
-#[cfg(test)]
-use agentdash_application_runtime_session::session::context::apply_workspace_defaults;
-
-/// 把 `FrameAssemblyBuilder` 的累积声明合并进 frame construction handoff。
-///
-/// ## 合并语义（2026-04-30 对称化后）
-///
-/// | 字段 | 策略 |
-/// |---|---|
-/// | `prompt_blocks` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `executor_config` | `Option`：prepared 非空覆盖；否则保留 base |
-/// | `context_bundle` | 整体替换为 prepared 值 |
-/// | `vfs` | prepared 非空覆盖；否则 `apply_workspace_defaults` 按需从 workspace 回填 |
-/// | `frame_surface_draft` | 整体替换为 prepared 生成的 launch surface draft |
-/// | `env` | prepared 非空（`!is_empty()`）时整体替换；否则保留 base 的 env |
-///
-/// **注**：MCP / capability / VFS 都收束在 `FrameSurfaceDraft` 内，原因是
-/// AgentFrame revision、launch envelope 与测试构造需要消费同一份 typed handoff。
-#[cfg(test)]
-#[allow(deprecated)]
-pub(crate) fn apply_frame_assembly(
-    mut plan: RuntimeContextInspectionPlan,
-    prepared: FrameAssemblyBuilder,
-) -> RuntimeContextInspectionPlan {
-    if let Some(blocks) = prepared.input {
-        plan.prompt.input = Some(blocks);
-    }
-    if let Some(cfg) = prepared.executor_config {
-        plan.execution_profile.executor_config = Some(cfg);
-    }
-    plan.context.bundle = prepared.context_bundle;
-    plan.context.bundle_id = plan.context.bundle.as_ref().map(|bundle| bundle.bundle_id);
-    plan.context.bootstrap_fragment_count = plan
-        .context
-        .bundle
-        .as_ref()
-        .map(|bundle| bundle.bootstrap_fragments.len())
-        .unwrap_or_default();
-
-    apply_workspace_defaults(&mut plan.surface.vfs, prepared.workspace_defaults.as_ref());
-    // vfs 覆盖规则：prepared 非空则覆盖，否则保留（含 workspace_defaults 回填结果）。
-    // prepared VFS 代表 compose 后的最终 workspace/canvas/lifecycle mount 组合，
-    // 因此优先于 source 输入中的 VFS。
-    let active_vfs = prepared.vfs.or_else(|| plan.surface.vfs.clone());
-    let mut capability_state = prepared.capability_state;
-    if let Some(state) = capability_state.as_mut() {
-        state.vfs.active = active_vfs.clone();
-        state.tool.mcp_servers = prepared.mcp_servers.clone();
-    }
-    plan.projections.frame_surface_draft = Some(FrameSurfaceDraft {
-        capability_state,
-        vfs: active_vfs.clone(),
-        mcp_servers: prepared.mcp_servers,
-        context_bundle_summary: plan
-            .context
-            .bundle
-            .as_ref()
-            .map(FrameContextBundleSummary::from_bundle),
-        execution_profile: plan.execution_profile.executor_config.clone(),
-    });
-    if let Some(vfs) = active_vfs {
-        plan.set_active_vfs(vfs);
-    } else {
-        plan.sync_vfs_projection_from_capability();
-    }
-    if !prepared.env.is_empty() {
-        plan.prompt.environment_variables = prepared.env;
-    }
-    plan
-}
 
 /// 声明式 session 装配 builder。
 ///

@@ -18,11 +18,12 @@ use crate::auth::{
 use crate::rpc::ApiError;
 use agentdash_application::canvas::{CanvasListScopeFilter, list_canvases_for_user};
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_application::workspace_module::{
-    build_workspace_module_presentation, build_workspace_modules_with_canvas_access,
-};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
+};
+use agentdash_workspace_module::workspace_module::{
+    WorkspaceModulePresentationError, build_workspace_module_presentation,
+    build_workspace_modules_with_canvas_access,
 };
 
 #[derive(Debug, Deserialize)]
@@ -116,12 +117,12 @@ pub async fn present_workspace_module(
         .ok_or_else(|| ApiError::NotFound(format!("workspace module not found: {module_id}")))?;
     let presentation = build_workspace_module_presentation(module, view_key, request.payload, None)
         .map_err(|error| match error {
-            agentdash_application::workspace_module::WorkspaceModulePresentationError::ViewNotFound {
-                ..
-            } => ApiError::NotFound(error.to_string()),
-            agentdash_application::workspace_module::WorkspaceModulePresentationError::MissingPresentationUri {
-                ..
-            } => ApiError::BadRequest(error.to_string()),
+            WorkspaceModulePresentationError::ViewNotFound { .. } => {
+                ApiError::NotFound(error.to_string())
+            }
+            WorkspaceModulePresentationError::MissingPresentationUri { .. } => {
+                ApiError::BadRequest(error.to_string())
+            }
         })?;
 
     if let Some(runtime_session_id) = request

@@ -3,12 +3,11 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::canvas::{Canvas, CanvasRepository, CanvasScope};
-use agentdash_domain::project::ProjectAuthorization;
+use agentdash_domain::canvas::{Canvas, CanvasRepository, CanvasScope, canvas_access_projection};
+use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_spi::{AuthIdentity, Vfs};
 
-use crate::canvas::{CanvasMountAccess, append_canvas_mount, canvas_access_projection};
-use crate::project::project_authorization_context_from_identity;
+use crate::canvas::{CanvasMountAccess, append_canvas_mount};
 
 pub fn canvas_runtime_mount_access(
     canvas: &Canvas,
@@ -21,7 +20,15 @@ pub fn canvas_runtime_mount_access(
     let Some(identity) = identity else {
         return None;
     };
-    let current_user = project_authorization_context_from_identity(identity);
+    let current_user = ProjectAuthorizationContext {
+        user_id: identity.user_id.clone(),
+        group_ids: identity
+            .groups
+            .iter()
+            .map(|group| group.group_id.clone())
+            .collect(),
+        is_admin: identity.is_admin,
+    };
     let project_access = ProjectAuthorization {
         role: None,
         via_admin_bypass: identity.is_admin,

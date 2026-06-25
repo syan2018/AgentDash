@@ -162,6 +162,7 @@ dependencies = [
  "agentdash-mcp",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-workspace-module",
  "anyhow",
  "async-stream",
  "async-trait",
@@ -205,12 +206,12 @@ dependencies = [
  "agentdash-application-runtime-gateway",
  "agentdash-application-runtime-session",
  "agentdash-application-vfs",
- "agentdash-canvas",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-infrastructure",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-workspace-module",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -249,10 +250,10 @@ dependencies = [
  "agentdash-agent-types",
  "agentdash-application-ports",
  "agentdash-application-vfs",
- "agentdash-canvas",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-workspace-module",
  "async-trait",
  "chrono",
  "serde",
@@ -275,6 +276,7 @@ dependencies = [
  "agentdash-application-vfs",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-workspace-module",
  "async-trait",
  "chrono",
  "globset",
@@ -377,13 +379,6 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "agentdash-canvas"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -609,6 +604,30 @@ dependencies = [
  "serde",
  "serde_json",
  "strsim 0.11.1",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-workspace-module"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-application-ports",
+ "agentdash-application-runtime-gateway",
+ "agentdash-application-vfs",
+ "agentdash-contracts",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "regex",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

@@ -45,6 +45,7 @@ pub enum MailboxMessageSource {
     WorkflowOrchestrator,
     RoutineExecutor,
     LocalRelayPrompt,
+    CanvasAction,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

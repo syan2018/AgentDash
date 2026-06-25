@@ -4,19 +4,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository};
-
-use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
-use crate::runtime::{Mount, MountCapability};
-use crate::vfs::mount::PROVIDER_CANVAS_FS;
-use crate::vfs::mount_inline::list_inline_entries;
-use crate::vfs::parse_mount_uri;
-use crate::vfs::path::normalize_mount_relative_path;
-use crate::vfs::provider::{
+use agentdash_application_vfs::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
+use agentdash_application_vfs::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,
     SearchQuery, SearchResult,
 };
-use crate::vfs::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
+use agentdash_application_vfs::{
+    PROVIDER_CANVAS_FS, list_inline_entries, normalize_mount_relative_path, parse_mount_uri,
+};
+use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository};
+use agentdash_domain::common::{Mount, MountCapability};
+
+use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
 
 pub struct CanvasFsMountProvider {
     canvas_repo: Arc<dyn CanvasRepository>,

@@ -116,6 +116,7 @@ export function revokeAllRuntimeAssetUrls(
 export function buildPreviewDocument(
   snapshot: CanvasRuntimeSnapshot,
   frameId: string,
+  generation = 1,
 ): BuiltPreviewDocument {
   const fileMap = new Map(snapshot.files.map((file) => [normalizePath(file.path), file]));
   const objectUrls = new Set<string>();
@@ -168,18 +169,129 @@ export function buildPreviewDocument(
   const safeCss = sanitizeCssForStyleTag(cssContent);
   const bootScript = `
     const frameId = ${JSON.stringify(frameId)};
+    const frameGeneration = ${JSON.stringify(generation)};
     const send = (kind, message) => {
-      window.parent.postMessage({ kind, frame_id: frameId, message }, "*");
+      window.parent.postMessage({ kind, frame_id: frameId, generation: frameGeneration, message }, "*");
     };
     const runtimeInvokeTimeoutMs = 60000;
     const assetUrlTimeoutMs = 60000;
     const extensionChannelTimeoutMs = 60000;
+    const agentSubmitTimeoutMs = 60000;
     const pendingRuntimeInvocations = new Map();
     const pendingAssetUrls = new Map();
     const pendingExtensionChannels = new Map();
+    const pendingAgentSubmits = new Map();
     let runtimeInvokeSeq = 0;
     let assetUrlSeq = 0;
     let extensionChannelSeq = 0;
+    let agentSubmitSeq = 0;
+    const diagnostics = [];
+    const interactionState = {};
+    const recentInteractionEvents = [];
+    const maxDiagnostics = 40;
+    const maxRecentEvents = 20;
+    const toJsonSafe = (value, seen = new WeakSet()) => {
+      if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+      if (typeof value === "number") return Number.isFinite(value) ? value : null;
+      if (typeof value !== "object") return String(value);
+      if (seen.has(value)) return "[Circular]";
+      seen.add(value);
+      if (Array.isArray(value)) {
+        const result = value.map((item) => toJsonSafe(item, seen));
+        seen.delete(value);
+        return result;
+      }
+      const result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = toJsonSafe(item, seen);
+      }
+      seen.delete(value);
+      return result;
+    };
+    const pushDiagnostic = (level, source, message) => {
+      diagnostics.push({
+        level,
+        source,
+        message: String(message || "").slice(0, 1200),
+      });
+      if (diagnostics.length > maxDiagnostics) {
+        diagnostics.splice(0, diagnostics.length - maxDiagnostics);
+      }
+    };
+    const describeElement = (element) => {
+      if (!element || !element.tagName) return undefined;
+      const parts = [String(element.tagName).toLowerCase()];
+      if (element.id) parts.push("#" + element.id);
+      if (element.getAttribute) {
+        const label = element.getAttribute("aria-label") || element.getAttribute("name") || element.getAttribute("role");
+        if (label) parts.push("[" + String(label).slice(0, 80) + "]");
+      }
+      return parts.join("");
+    };
+    const captureObservation = (status, message) => {
+      const root = document.getElementById("root");
+      const bodyText = (document.body && document.body.innerText ? document.body.innerText : "").replace(/\\s+/g, " ").trim();
+      window.parent.postMessage({
+        kind: "canvas-render-observation",
+        frame_id: frameId,
+        generation: frameGeneration,
+        status,
+        message: typeof message === "string" && message.length > 0 ? message : undefined,
+        viewport: {
+          width: window.innerWidth || 0,
+          height: window.innerHeight || 0,
+          device_pixel_ratio: window.devicePixelRatio || 1,
+        },
+        document: {
+          root_empty: isRootEmpty(root),
+          body_text_preview: bodyText.slice(0, 1000),
+          element_count: document.body ? document.body.querySelectorAll("*").length : 0,
+          focused_element: describeElement(document.activeElement),
+        },
+        diagnostics: diagnostics.slice(),
+      }, "*");
+    };
+    const publishInteractionSnapshot = () => {
+      window.parent.postMessage({
+        kind: "canvas-interaction-snapshot",
+        frame_id: frameId,
+        generation: frameGeneration,
+        state: toJsonSafe(interactionState),
+        recent_events: recentInteractionEvents.slice(),
+      }, "*");
+    };
+    const pushInteractionEvent = (kind, payload) => {
+      recentInteractionEvents.push({
+        kind,
+        payload: toJsonSafe(payload),
+        occurred_at: new Date().toISOString(),
+      });
+      if (recentInteractionEvents.length > maxRecentEvents) {
+        recentInteractionEvents.splice(0, recentInteractionEvents.length - maxRecentEvents);
+      }
+    };
+    const originalConsole = {
+      log: console.log.bind(console),
+      info: console.info.bind(console),
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+    };
+    console.log = (...args) => {
+      pushDiagnostic("info", "console", args.map((item) => String(item)).join(" "));
+      originalConsole.log(...args);
+    };
+    console.info = (...args) => {
+      pushDiagnostic("info", "console", args.map((item) => String(item)).join(" "));
+      originalConsole.info(...args);
+    };
+    console.warn = (...args) => {
+      pushDiagnostic("warn", "console", args.map((item) => String(item)).join(" "));
+      originalConsole.warn(...args);
+    };
+    console.error = (...args) => {
+      pushDiagnostic("error", "console", args.map((item) => String(item)).join(" "));
+      originalConsole.error(...args);
+    };
     window.agentdash = Object.freeze({
       invoke(actionKey, input = {}) {
         if (typeof actionKey !== "string" || actionKey.trim().length === 0) {
@@ -196,6 +308,7 @@ export function buildPreviewDocument(
           window.parent.postMessage({
             kind: "canvas-runtime-invoke",
             frame_id: frameId,
+            generation: frameGeneration,
             request_id: requestId,
             action_key: actionKey,
             input,
@@ -218,6 +331,7 @@ export function buildPreviewDocument(
             window.parent.postMessage({
               kind: "canvas-asset-url-request",
               frame_id: frameId,
+              generation: frameGeneration,
               request_id: requestId,
               uri,
             }, "*");
@@ -230,8 +344,72 @@ export function buildPreviewDocument(
           window.parent.postMessage({
             kind: "canvas-asset-revoke",
             frame_id: frameId,
+            generation: frameGeneration,
             url,
           }, "*");
+        },
+      }),
+      interaction: Object.freeze({
+        setState(key, value, options = {}) {
+          if (typeof key !== "string" || key.trim().length === 0) {
+            return Promise.reject(new Error("agentdash.interaction.setState 需要非空 key"));
+          }
+          interactionState[key] = toJsonSafe(value);
+          pushInteractionEvent("state_set", {
+            key,
+            value,
+            options,
+          });
+          publishInteractionSnapshot();
+          return Promise.resolve({ ok: true });
+        },
+        clearState(key) {
+          if (typeof key !== "string" || key.trim().length === 0) {
+            return Promise.reject(new Error("agentdash.interaction.clearState 需要非空 key"));
+          }
+          delete interactionState[key];
+          pushInteractionEvent("state_cleared", { key });
+          publishInteractionSnapshot();
+          return Promise.resolve({ ok: true });
+        },
+        emit(event) {
+          const normalized = event && typeof event === "object" ? event : { kind: String(event || "event") };
+          const kind = typeof normalized.kind === "string" && normalized.kind.trim().length > 0
+            ? normalized.kind
+            : "event";
+          pushInteractionEvent(kind, normalized.payload ?? normalized);
+          publishInteractionSnapshot();
+          return Promise.resolve({ ok: true });
+        },
+        getState() {
+          return toJsonSafe(interactionState);
+        },
+      }),
+      agent: Object.freeze({
+        submit(request = {}) {
+          const normalized = request && typeof request === "object" ? request : {};
+          const requestId = normalized.client_command_id && typeof normalized.client_command_id === "string"
+            ? normalized.client_command_id
+            : "canvas-agent-submit-" + (++agentSubmitSeq);
+          return new Promise((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              pendingAgentSubmits.delete(requestId);
+              reject(new Error("Canvas Agent submit 超时"));
+            }, agentSubmitTimeoutMs);
+            pendingAgentSubmits.set(requestId, { resolve, reject, timeout });
+            window.parent.postMessage({
+              kind: "canvas-agent-submit",
+              frame_id: frameId,
+              generation: frameGeneration,
+              request_id: requestId,
+              text: typeof normalized.text === "string" ? normalized.text : undefined,
+              input: Array.isArray(normalized.input) ? normalized.input : undefined,
+              include_interaction_state: normalized.include_interaction_state === true,
+              include_render_observation: normalized.include_render_observation === true,
+              delivery_intent: normalized.delivery_intent === "steer" ? "steer" : normalized.delivery_intent === "queue" ? "queue" : undefined,
+              client_command_id: typeof normalized.client_command_id === "string" ? normalized.client_command_id : requestId,
+            }, "*");
+          });
         },
       }),
       extensions: Object.freeze({
@@ -253,6 +431,7 @@ export function buildPreviewDocument(
             window.parent.postMessage({
               kind: "canvas-extension-channel-invoke",
               frame_id: frameId,
+              generation: frameGeneration,
               request_id: requestId,
               channel_key: channelKey,
               method,
@@ -273,8 +452,10 @@ export function buildPreviewDocument(
           payload.kind !== "canvas-runtime-result"
           && payload.kind !== "canvas-asset-url-result"
           && payload.kind !== "canvas-extension-channel-result"
+          && payload.kind !== "canvas-agent-submit-result"
         )
         || payload.frame_id !== frameId
+        || payload.generation !== frameGeneration
         || typeof payload.request_id !== "string"
       ) {
         return;
@@ -325,6 +506,22 @@ export function buildPreviewDocument(
         } else {
           pending.reject(new Error(payload.error || "Canvas extension channel 调用失败"));
         }
+        return;
+      }
+
+      if (payload.kind === "canvas-agent-submit-result") {
+        const pending = pendingAgentSubmits.get(payload.request_id);
+        if (!pending) {
+          return;
+        }
+        pendingAgentSubmits.delete(payload.request_id);
+        window.clearTimeout(pending.timeout);
+
+        if (payload.ok) {
+          pending.resolve(payload.result);
+        } else {
+          pending.reject(new Error(payload.error || "Canvas 请求提交给 Agent 失败"));
+        }
       }
     });
     const isRootEmpty = (root) => {
@@ -334,11 +531,16 @@ export function buildPreviewDocument(
     };
 
     window.addEventListener("error", (event) => {
-      send("canvas-preview-error", event.message || "Canvas 运行时发生未捕获异常");
+      const message = event.message || "Canvas 运行时发生未捕获异常";
+      pushDiagnostic("error", "runtime", message);
+      captureObservation("error", message);
+      send("canvas-preview-error", message);
     });
 
     window.addEventListener("unhandledrejection", (event) => {
       const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? "unknown");
+      pushDiagnostic("error", "runtime", reason);
+      captureObservation("error", reason);
       send("canvas-preview-error", reason);
     });
 
@@ -358,6 +560,7 @@ export function buildPreviewDocument(
       return message;
     };
 
+    captureObservation("building");
     import(${JSON.stringify(entryUrl)})
       .then(async (entryModule) => {
         const root = document.getElementById("root");
@@ -377,14 +580,20 @@ export function buildPreviewDocument(
               "canvas-preview-error",
               "检测到默认导出 React 组件，但运行时无法完成 React 挂载。请检查 react/react-dom 依赖可用性。\\n" + message,
             );
+            pushDiagnostic("error", "runtime", message);
+            captureObservation("error", message);
             return;
           }
         }
+        captureObservation("ready");
         send("canvas-preview-ready");
       })
       .catch((error) => {
         const message = error instanceof Error ? error.stack || error.message : String(error ?? "unknown");
-        send("canvas-preview-error", explainDependencyFailure(message));
+        const explained = explainDependencyFailure(message);
+        pushDiagnostic("error", "runtime", explained);
+        captureObservation("error", explained);
+        send("canvas-preview-error", explained);
       });
   `;
 

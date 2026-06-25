@@ -2,14 +2,27 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { UserInput } from "./backbone-protocol";
 
 export type CanvasAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, runtime_write_allowed: boolean, };
+
+export type CanvasAgentInputSubmitRequest = { input: Array<UserInput>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
+
+export type CanvasAgentRunRuntimeBridgeSnapshotDto = { enabled: boolean, actions: Array<RuntimeActionDescriptorDto>, disabled_reason?: string, };
+
+export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasAgentRunRuntimeBridgeSnapshotDto, };
 
 export type CanvasDataBindingDto = { alias: string, source_uri: string, content_type: string, };
 
 export type CanvasFileDto = { path: string, content: string, };
 
 export type CanvasImportMapDto = { imports: { [key in string]?: string }, };
+
+export type CanvasInteractionEventDto = { kind: string, payload: JsonValue, occurred_at: string, };
+
+export type CanvasInteractionSnapshot = { snapshot_id: string, run_id: string, agent_id: string, agent_run_canvas_ref: string, canvas_id: string, canvas_mount_id: string, delivery_trace_ref?: string, current_agent_frame_id?: string, frame_id: string, updated_at: string, state: JsonValue, recent_events: Array<CanvasInteractionEventDto>, };
+
+export type CanvasInteractionSnapshotUpsertRequest = { frame_id: string, updated_at?: string, state: JsonValue, recent_events: Array<CanvasInteractionEventDto>, };
 
 export type CanvasListScopeDto = "all" | "mine" | "shared";
 
@@ -19,9 +32,23 @@ export type CanvasRuntimeBindingDto = { alias: string, source_uri: string, data_
 
 export type CanvasRuntimeBridgeSnapshotDto = { enabled: boolean, surface?: RuntimeSurfaceDto, disabled_reason?: string, };
 
+export type CanvasRuntimeDiagnosticDto = { level: string, source: string, message: string, };
+
+export type CanvasRuntimeDocumentStateDto = { root_empty: boolean, body_text_preview: string, element_count: number, focused_element?: string, };
+
 export type CanvasRuntimeFileDto = { path: string, content: string, file_type: string, };
 
+export type CanvasRuntimeInvokeRequest = { action_key: string, input: JsonValue, };
+
+export type CanvasRuntimeObservation = { observation_id: string, run_id: string, agent_id: string, agent_run_canvas_ref: string, canvas_id: string, canvas_mount_id: string, delivery_trace_ref?: string, current_agent_frame_id?: string, frame_id: string, generation: number, captured_at: string, status: CanvasRuntimeObservationStatusDto, message?: string, viewport: CanvasRuntimeViewportDto, document: CanvasRuntimeDocumentStateDto, diagnostics: Array<CanvasRuntimeDiagnosticDto>, screenshot_ref?: string, };
+
+export type CanvasRuntimeObservationStatusDto = "building" | "ready" | "error";
+
+export type CanvasRuntimeObservationUpsertRequest = { frame_id: string, generation: number, captured_at?: string, status: CanvasRuntimeObservationStatusDto, message?: string, viewport: CanvasRuntimeViewportDto, document: CanvasRuntimeDocumentStateDto, diagnostics: Array<CanvasRuntimeDiagnosticDto>, screenshot_ref?: string, };
+
 export type CanvasRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, session_id?: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
+
+export type CanvasRuntimeViewportDto = { width: number, height: number, device_pixel_ratio: number, };
 
 export type CanvasSandboxConfigDto = { libraries: Array<string>, import_map: CanvasImportMapDto, };
 

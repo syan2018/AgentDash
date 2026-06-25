@@ -18,7 +18,7 @@ use agentdash_spi::{
     AuthIdentity, CapabilityScopeCtx, MemoryDiscoveryOutput, MemoryDiscoveryProvider,
     SkillDiscoveryProvider,
 };
-use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, ToolCluster, Vfs};
+use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
@@ -47,7 +47,6 @@ use crate::runtime::McpServerSummary;
 use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::workspace::BackendAvailability;
-use crate::workspace_module::skill_projection::project_workspace_module_system_skill_to_vfs;
 use agentdash_application_vfs::{
     SessionMountTarget, VfsService, append_agent_knowledge_mounts, apply_agent_vfs_access_grants,
 };
@@ -238,7 +237,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .unwrap_or_else(|| spec.owner.owner_ctx());
         let subject_context_contributions = std::mem::take(&mut spec.subject_context_contributions);
         let active_workflow = spec.active_workflow.clone();
-        let mut vfs = self
+        let vfs = self
             .prepare_owner_bootstrap_vfs(&spec, project_id, active_workflow.as_ref())
             .await?;
         let mut cap_output = self
@@ -250,25 +249,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 vfs.as_ref(),
             )
             .await?;
-        if cap_output
-            .tool
-            .enabled_clusters
-            .contains(&ToolCluster::WorkspaceModule)
-        {
-            let projected =
-                project_workspace_module_system_skill_to_vfs(self.repos, project_id, &mut vfs)
-                    .await
-                    .map_err(|error| error.to_string())?;
-            if projected {
-                self.apply_skill_baseline(
-                    &mut cap_output,
-                    vfs.as_ref(),
-                    spec.identity,
-                    "owner_bootstrap",
-                )
-                .await;
-            }
-        }
         cap_output.workspace_module =
             crate::agent_run::runtime_capability::project_workspace_module_dimension(
                 spec.visible_workspace_module_refs.as_deref(),
@@ -427,6 +407,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                             vec![
                                 ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
                                 ports_lifecycle_surface::BuiltinLifecycleSkill::CanvasSystem,
+                                ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
                             ],
                         );
                     let surface = if let Some(workflow) = active_workflow {

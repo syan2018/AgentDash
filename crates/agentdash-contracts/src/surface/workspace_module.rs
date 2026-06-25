@@ -95,6 +95,8 @@ pub struct WorkspaceModuleUiEntry {
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleCanvasHostAction {
     BindData,
+    InspectRenderState,
+    GetInteractionState,
 }
 
 /// operation 的来源专属派发分量。

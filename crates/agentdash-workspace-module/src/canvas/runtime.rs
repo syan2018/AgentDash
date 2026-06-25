@@ -3,10 +3,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use agentdash_application_runtime_gateway::RuntimeSurface;
+use agentdash_application_vfs::VfsService;
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasImportMap};
 use agentdash_spi::Vfs;
-
-use crate::vfs::VfsService;
 
 use super::{CanvasRuntimeResourceService, canvas_vfs_mount_id};
 
@@ -125,7 +124,7 @@ pub fn build_runtime_snapshot(
     CanvasRuntimeSnapshot {
         canvas_id: canvas.id,
         canvas_mount_id: canvas.mount_id.clone(),
-        vfs_mount_id: canvas_vfs_mount_id(canvas),
+        vfs_mount_id: canvas_vfs_mount_id(&canvas.mount_id),
         session_id,
         resource_surface_ref: None,
         entry: canvas.entry_file.clone(),
@@ -205,11 +204,11 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::vfs::MountProviderRegistry;
     use agentdash_application_runtime_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
         RuntimeSurface,
     };
+    use agentdash_application_vfs::{MountProviderRegistry, VfsService};
 
     #[test]
     fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {

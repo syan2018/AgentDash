@@ -55,6 +55,7 @@ pub enum MailboxMessageSource {
     WorkflowOrchestrator,
     RoutineExecutor,
     LocalRelayPrompt,
+    CanvasAction,
 }
 
 impl MailboxMessageSource {
@@ -69,6 +70,7 @@ impl MailboxMessageSource {
             Self::WorkflowOrchestrator => "workflow_orchestrator",
             Self::RoutineExecutor => "routine_executor",
             Self::LocalRelayPrompt => "local_relay_prompt",
+            Self::CanvasAction => "canvas_action",
         }
     }
 }
@@ -87,6 +89,7 @@ impl TryFrom<&str> for MailboxMessageSource {
             "workflow_orchestrator" => Ok(Self::WorkflowOrchestrator),
             "routine_executor" => Ok(Self::RoutineExecutor),
             "local_relay_prompt" => Ok(Self::LocalRelayPrompt),
+            "canvas_action" => Ok(Self::CanvasAction),
             other => Err(DomainError::InvalidConfig(format!(
                 "agent_run_mailbox_messages.source 无效: {other}"
             ))),

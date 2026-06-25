@@ -9,7 +9,7 @@ use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
     ProjectBackendAccessRepository, RuntimeHealthRepository,
 };
-use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
@@ -40,6 +40,7 @@ use crate::agent_run::project_agent_start::ProjectAgentLifecycleLaunchPort;
 pub struct AgentRunRepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub canvas_repo: Arc<dyn CanvasRepository>,
+    pub canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,

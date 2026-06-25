@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
+use agentdash_domain::canvas::CANVAS_SYSTEM_SKILL_NAME;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::{
-    canvas::CANVAS_SYSTEM_SKILL_NAME, companion::COMPANION_SYSTEM_SKILL_NAME,
-    routine::ROUTINE_MEMORY_SKILL_NAME, workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
+    companion::COMPANION_SYSTEM_SKILL_NAME, routine::ROUTINE_MEMORY_SKILL_NAME,
+    workspace_module::WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
 };
 use agentdash_spi::Vfs;
 use serde::{Deserialize, Serialize};

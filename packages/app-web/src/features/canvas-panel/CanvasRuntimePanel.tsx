@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchCanvas,
+  fetchAgentRunCanvasRuntimeSnapshot,
   fetchCanvasByMountId,
   fetchCanvasRuntimeSnapshot,
   updateCanvas,
+  type AgentRunCanvasBridgeIdentity,
 } from "../../services/canvas";
 import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
@@ -14,7 +16,9 @@ export interface CanvasRuntimePanelProps {
   canvasId: string | null;
   canvasMountId?: string | null;
   projectId?: string | null;
-  sessionId: string | null;
+  agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
+  showBridgeUnavailable?: boolean;
+  onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
   refreshRevision?: number;
   onClose: () => void;
   /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
@@ -27,7 +31,9 @@ export function CanvasRuntimePanel({
   canvasId,
   canvasMountId,
   projectId,
-  sessionId,
+  agentRunBridge = null,
+  showBridgeUnavailable = false,
+  onAgentRunWorkspaceRefresh = null,
   refreshRevision = 0,
   onClose,
   onBrowseFiles,
@@ -65,7 +71,9 @@ export function CanvasRuntimePanel({
       const snapshotCanvasId = canvasId ?? (await canvasRequest).canvas_id;
       const [nextCanvas, nextSnapshot] = await Promise.all([
         canvasRequest,
-        fetchCanvasRuntimeSnapshot(snapshotCanvasId, sessionId),
+        agentRunBridge
+          ? fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
+          : fetchCanvasRuntimeSnapshot(snapshotCanvasId),
       ]);
       setCanvas(nextCanvas);
       setSnapshot(nextSnapshot);
@@ -78,7 +86,7 @@ export function CanvasRuntimePanel({
     } finally {
       setIsLoading(false);
     }
-  }, [canvasId, canvasMountId, projectId, sessionId]);
+  }, [agentRunBridge, canvasId, canvasMountId, projectId]);
 
   useEffect(() => {
     void loadCanvasData();
@@ -103,7 +111,9 @@ export function CanvasRuntimePanel({
     try {
       const nextCanvas = await updateCanvas(targetCanvasId, { bindings });
       setCanvas(nextCanvas);
-      const nextSnapshot = await fetchCanvasRuntimeSnapshot(targetCanvasId, sessionId);
+      const nextSnapshot = agentRunBridge
+        ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
+        : await fetchCanvasRuntimeSnapshot(targetCanvasId);
       setSnapshot(nextSnapshot);
     } catch (err) {
       setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
@@ -111,7 +121,7 @@ export function CanvasRuntimePanel({
     } finally {
       setIsSavingBindings(false);
     }
-  }, [canvas, sessionId]);
+  }, [agentRunBridge, canvas]);
 
   const handleFilesSave = useCallback(async (input: CanvasFilesEditorSaveInput) => {
     if (!canvas) {
@@ -131,7 +141,9 @@ export function CanvasRuntimePanel({
         files: input.files,
       });
       setCanvas(nextCanvas);
-      const nextSnapshot = await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id, sessionId);
+      const nextSnapshot = agentRunBridge
+        ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
+        : await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id);
       setSnapshot(nextSnapshot);
     } catch (err) {
       setFilesError(err instanceof Error ? err.message : "保存源文件失败");
@@ -139,7 +151,7 @@ export function CanvasRuntimePanel({
     } finally {
       setIsSavingFiles(false);
     }
-  }, [canvas, sessionId]);
+  }, [agentRunBridge, canvas]);
 
   const toggleDetailMode = useCallback((mode: CanvasDetailMode) => {
     setDetailMode(mode);
@@ -214,7 +226,12 @@ export function CanvasRuntimePanel({
         )}
 
         {!isLoading && !error && snapshot && (
-          <CanvasRuntimePreview snapshot={snapshot} />
+          <CanvasRuntimePreview
+            snapshot={snapshot}
+            agentRunBridge={agentRunBridge}
+            showBridgeUnavailable={showBridgeUnavailable}
+            onAgentRunWorkspaceRefresh={onAgentRunWorkspaceRefresh}
+          />
         )}
 
         {!isLoading && !error && !snapshot && (

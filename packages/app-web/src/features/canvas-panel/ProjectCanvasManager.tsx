@@ -600,7 +600,6 @@ export function ProjectCanvasManager({
             <div className="min-h-0 flex-1">
               <CanvasRuntimePanel
                 canvasId={selectedCanvas.canvas_id}
-                sessionId={null}
                 onClose={() => setSelectedCanvasIds((current) => withSelectedCanvasId(current, activeView, null))}
               />
             </div>

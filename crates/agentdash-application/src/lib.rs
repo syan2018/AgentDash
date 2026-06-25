@@ -45,7 +45,6 @@ pub mod vfs_owner_providers;
 pub mod vfs_surface_resolver;
 pub mod workflow;
 pub mod workspace;
-pub mod workspace_module;
 
 #[cfg(test)]
 pub(crate) mod test_support;

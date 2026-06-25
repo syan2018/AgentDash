@@ -4,7 +4,6 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
-use agentdash_canvas::{canvas_module_id, canvas_provider_root_ref};
 use agentdash_domain::canvas::{
     Canvas, CanvasAccessProjection, CanvasScope, canvas_access_projection,
 };
@@ -12,6 +11,7 @@ use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
+use agentdash_workspace_module::canvas::{canvas_module_id, canvas_provider_root_ref};
 use async_trait::async_trait;
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;

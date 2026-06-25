@@ -50,7 +50,7 @@ export type MailboxDrainMode = "one" | "all";
 
 export type MailboxMessageOrigin = "user" | "system" | "hook" | "companion" | "workflow";
 
-export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn" | "hook_before_stop" | "hook_auto_resume" | "companion_parent_resume" | "workflow_orchestrator" | "routine_executor" | "local_relay_prompt";
+export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn" | "hook_before_stop" | "hook_auto_resume" | "companion_parent_resume" | "workflow_orchestrator" | "routine_executor" | "local_relay_prompt" | "canvas_action";
 
 export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
 

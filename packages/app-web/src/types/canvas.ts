@@ -1,6 +1,7 @@
 // ─── Canvas ──────────────────────────────────────────
 import type {
   CanvasAccessDto,
+  CanvasAgentRunRuntimeSnapshotDto,
   CanvasDataBindingDto,
   CanvasFileDto,
   CanvasImportMapDto,
@@ -73,6 +74,6 @@ export type RuntimeSurface = RuntimeSurfaceDto;
 
 export type CanvasRuntimeBridgeSnapshot = CanvasRuntimeBridgeSnapshotDto;
 
-export type CanvasRuntimeSnapshot = CanvasRuntimeSnapshotDto;
+export type CanvasRuntimeSnapshot = CanvasRuntimeSnapshotDto | CanvasAgentRunRuntimeSnapshotDto;
 
 export type RuntimeInvocationResult = RuntimeInvocationResultDto;

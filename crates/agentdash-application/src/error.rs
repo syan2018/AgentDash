@@ -51,6 +51,31 @@ impl From<ConnectorError> for ApplicationError {
     }
 }
 
+impl From<agentdash_workspace_module::error::ApplicationError> for ApplicationError {
+    fn from(error: agentdash_workspace_module::error::ApplicationError) -> Self {
+        match error {
+            agentdash_workspace_module::error::ApplicationError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Forbidden(message) => {
+                Self::Forbidden(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::InvalidConfig(message) => {
+                Self::InvalidConfig(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
 impl From<agentdash_application_agentrun::ApplicationError> for ApplicationError {
     fn from(error: agentdash_application_agentrun::ApplicationError) -> Self {
         match error {

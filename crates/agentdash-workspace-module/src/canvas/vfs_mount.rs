@@ -1,11 +1,12 @@
 use agentdash_domain::canvas::{Canvas, CanvasAccessProjection};
+use agentdash_domain::common::{Mount, MountCapability, Vfs};
+
+use agentdash_application_vfs::PROVIDER_CANVAS_FS;
 
 use crate::canvas::{CanvasResolvedBindingFile, canvas_provider_root_ref, canvas_vfs_mount_id};
-use crate::runtime::{Mount, MountCapability, Vfs};
-use crate::vfs::mount::PROVIDER_CANVAS_FS;
 
 pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
-    canvas_vfs_mount_id(canvas)
+    canvas_vfs_mount_id(&canvas.mount_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +67,7 @@ pub fn build_canvas_mount(canvas: &Canvas, access: impl Into<CanvasMountAccess>)
         id: build_canvas_mount_id(canvas),
         provider: PROVIDER_CANVAS_FS.to_string(),
         backend_id: String::new(),
-        root_ref: canvas_provider_root_ref(canvas),
+        root_ref: canvas_provider_root_ref(canvas.id),
         capabilities,
         default_write: false,
         display_name: if canvas.title.trim().is_empty() {
@@ -77,7 +78,7 @@ pub fn build_canvas_mount(canvas: &Canvas, access: impl Into<CanvasMountAccess>)
         metadata: serde_json::json!({
             "canvas_id": canvas.id.to_string(),
             "canvas_mount_id": canvas.mount_id,
-            "vfs_mount_id": canvas_vfs_mount_id(canvas),
+            "vfs_mount_id": canvas_vfs_mount_id(&canvas.mount_id),
             "project_id": canvas.project_id.to_string(),
             "entry_file": canvas.entry_file,
         }),

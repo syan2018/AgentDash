@@ -10,6 +10,8 @@ pub const CANVAS_PROVIDER_ROOT_SCHEME: &str = "canvas-root";
 pub const CANVAS_PREVIEW_VIEW_KEY: &str = "preview";
 pub const CANVAS_RENDERER_KIND: &str = "canvas";
 pub const CANVAS_BIND_DATA_OPERATION_KEY: &str = "canvas.bind_data";
+pub const CANVAS_INSPECT_RENDER_STATE_OPERATION_KEY: &str = "canvas.inspect_render_state";
+pub const CANVAS_GET_INTERACTION_STATE_OPERATION_KEY: &str = "canvas.get_interaction_state";
 pub const CANVAS_BIND_DATA_ORIGIN: &str = "host_canvas";
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

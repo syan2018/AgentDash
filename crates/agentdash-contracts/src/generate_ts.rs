@@ -31,10 +31,15 @@ use agentdash_contracts::backend::{
     UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
-    CanvasAccessDto, CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto, CanvasListScopeDto,
-    CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeFileDto,
-    CanvasRuntimeSnapshotDto, CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest,
-    CreateCanvasRequest, DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
+    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
+    CanvasAgentRunRuntimeSnapshotDto, CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto,
+    CanvasInteractionEventDto, CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest,
+    CanvasListScopeDto, CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
+    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
+    CanvasRuntimeInvokeRequest, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
+    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
+    CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
+    DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
     RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
     RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
     RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
@@ -807,6 +812,19 @@ fn main() {
             export_all::<RuntimeSurfaceDto>(dir);
             export_all::<CanvasRuntimeBridgeSnapshotDto>(dir);
             export_all::<CanvasRuntimeSnapshotDto>(dir);
+            export_all::<CanvasAgentRunRuntimeBridgeSnapshotDto>(dir);
+            export_all::<CanvasAgentRunRuntimeSnapshotDto>(dir);
+            export_all::<CanvasRuntimeInvokeRequest>(dir);
+            export_all::<CanvasRuntimeObservationStatusDto>(dir);
+            export_all::<CanvasRuntimeViewportDto>(dir);
+            export_all::<CanvasRuntimeDocumentStateDto>(dir);
+            export_all::<CanvasRuntimeDiagnosticDto>(dir);
+            export_all::<CanvasRuntimeObservationUpsertRequest>(dir);
+            export_all::<CanvasRuntimeObservation>(dir);
+            export_all::<CanvasInteractionEventDto>(dir);
+            export_all::<CanvasInteractionSnapshotUpsertRequest>(dir);
+            export_all::<CanvasInteractionSnapshot>(dir);
+            export_all::<CanvasAgentInputSubmitRequest>(dir);
             export_all::<RuntimeTraceDto>(dir);
             export_all::<RuntimeInvocationOutputDto>(dir);
             export_all::<RuntimeInvocationResultDto>(dir);

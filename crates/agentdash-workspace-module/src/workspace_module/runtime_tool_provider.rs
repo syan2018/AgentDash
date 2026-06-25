@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
-use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
+use agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository;
 use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, ConnectorError, ContentPart, DynAgentTool,
@@ -12,22 +13,24 @@ use agentdash_spi::{
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::project::project_authorization_context_from_identity;
-use crate::runtime_tools::provider::{
-    SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, project_id_from_context,
-    runtime_session_id_from_context, shared_runtime_vfs_from_context,
+use crate::workspace_module::runtime_bridge::{
+    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
 };
 use crate::workspace_module::{
     WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
-    WorkspaceModuleListTool, WorkspaceModulePresentTool, resolve_invocation_backend,
+    WorkspaceModuleListTool, WorkspaceModulePresentTool, delivery_runtime_session_id_from_context,
+    project_authorization_context_from_identity, project_id_from_context,
+    resolve_invocation_backend, shared_runtime_vfs_from_context,
 };
 
 #[derive(Clone)]
 pub struct WorkspaceModuleRuntimeToolProvider {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
-    session_services_handle: SharedSessionToolServicesHandle,
-    runtime_gateway_handle: SharedRuntimeGatewayHandle,
+    canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
+    runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
 }
 
@@ -35,13 +38,17 @@ impl WorkspaceModuleRuntimeToolProvider {
     pub fn new(
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
-        session_services_handle: SharedSessionToolServicesHandle,
-        runtime_gateway_handle: SharedRuntimeGatewayHandle,
+        canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
+        runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     ) -> Self {
         Self {
             installation_repo,
             canvas_repo,
-            session_services_handle,
+            canvas_runtime_state_repo,
+            execution_anchor_repo,
+            agent_run_bridge_handle,
             runtime_gateway_handle,
             extension_channel_transport: None,
         }
@@ -161,7 +168,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
         };
 
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
-        let session_id = runtime_session_id_from_context(context);
+        let delivery_runtime_session_id = delivery_runtime_session_id_from_context(context);
         let current_user = context
             .session
             .identity
@@ -181,7 +188,10 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     project_id,
                 )
                 .with_current_user(current_user.clone())
-                .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
+                .with_agent_run_visibility(
+                    self.agent_run_bridge_handle.clone(),
+                    delivery_runtime_session_id.clone(),
+                ),
             ));
         }
 
@@ -197,7 +207,10 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     project_id,
                 )
                 .with_current_user(current_user.clone())
-                .with_runtime_visibility(self.session_services_handle.clone(), session_id.clone()),
+                .with_agent_run_visibility(
+                    self.agent_run_bridge_handle.clone(),
+                    delivery_runtime_session_id.clone(),
+                ),
             ));
         }
 
@@ -211,8 +224,8 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.canvas_repo.clone(),
                     project_id,
                     shared_vfs.clone(),
-                    self.session_services_handle.clone(),
-                    Some(session_id.clone()),
+                    self.agent_run_bridge_handle.clone(),
+                    Some(delivery_runtime_session_id.clone()),
                 )
                 .with_current_user(current_user.clone())
                 .with_turn_id(context.session.turn_id.clone()),
@@ -227,7 +240,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             self.push_invoke_tool(
                 context,
                 project_id,
-                &session_id,
+                &delivery_runtime_session_id,
                 current_user.clone(),
                 &mut tools,
             )
@@ -245,8 +258,8 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.canvas_repo.clone(),
                     project_id,
                     shared_vfs,
-                    self.session_services_handle.clone(),
-                    session_id,
+                    self.agent_run_bridge_handle.clone(),
+                    delivery_runtime_session_id,
                     context.session.turn_id.clone(),
                 )
                 .with_current_user(current_user.clone()),
@@ -262,8 +275,8 @@ impl WorkspaceModuleRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
         project_id: uuid::Uuid,
-        session_id: &str,
-        current_user: Option<crate::project::ProjectAuthorizationContext>,
+        delivery_runtime_session_id: &str,
+        current_user: Option<agentdash_domain::project::ProjectAuthorizationContext>,
         tools: &mut Vec<DynAgentTool>,
     ) {
         let (gateway, transport) = match self.invoke_runtime_deps().await {
@@ -284,14 +297,14 @@ impl WorkspaceModuleRuntimeToolProvider {
             }
         };
 
-        let backend_anchor = match context
-            .session
-            .require_runtime_backend_anchor("workspace_module_invoke", Some(session_id))
-        {
+        let backend_anchor = match context.session.require_runtime_backend_anchor(
+            "workspace_module_invoke",
+            Some(delivery_runtime_session_id),
+        ) {
             Ok(anchor) => anchor,
             Err(error) => {
                 tracing::warn!(
-                    session_id = %session_id,
+                    delivery_runtime_session_id = %delivery_runtime_session_id,
                     error = %error,
                     "workspace_module_invoke 装配为诊断工具：缺少 runtime backend anchor"
                 );
@@ -311,15 +324,17 @@ impl WorkspaceModuleRuntimeToolProvider {
             WorkspaceModuleInvokeTool::new(
                 self.installation_repo.clone(),
                 self.canvas_repo.clone(),
+                self.canvas_runtime_state_repo.clone(),
+                self.execution_anchor_repo.clone(),
                 project_id,
-                session_id.to_string(),
+                delivery_runtime_session_id.to_string(),
                 None,
                 backend,
                 gateway,
                 channel_invoker,
             )
             .with_current_user(current_user)
-            .with_runtime_visibility(self.session_services_handle.clone()),
+            .with_agent_run_visibility(self.agent_run_bridge_handle.clone()),
         ));
     }
 

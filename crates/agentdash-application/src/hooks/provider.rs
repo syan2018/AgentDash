@@ -419,7 +419,7 @@ fn seed_snapshot_injections_for_trigger(
 mod tests {
     use std::sync::Arc;
 
-    use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
+    use crate::agent_run::AgentFrameHookRuntime;
     use crate::session::HookRuntimeDelegate;
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
@@ -525,7 +525,11 @@ mod tests {
     #[tokio::test]
     async fn runtime_delegate_before_tool_rewrite_records_trace() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            0,
             snapshot.runtime_adapter_session_id.clone(),
             Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,

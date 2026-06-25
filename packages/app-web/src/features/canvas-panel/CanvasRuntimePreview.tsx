@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { invokeCanvasRuntimeAction } from "../../services/canvas";
+import type { UserInput } from "../../generated/backbone-protocol";
+import type { JsonValue } from "../../generated/common-contracts";
+import {
+  invokeCanvasRuntimeAction,
+  submitCanvasAgentInput,
+  uploadCanvasInteractionSnapshot,
+  uploadCanvasRenderObservation,
+  type AgentRunCanvasBridgeIdentity,
+  type CanvasRuntimeDiagnosticEntry,
+  type SubmitCanvasAgentInput,
+} from "../../services/canvas";
 import { readSurfaceFileBlob } from "../../services/vfs";
-import type { CanvasRuntimeSnapshot } from "../../types";
+import type { CanvasRuntimeSnapshot, RuntimeActionDescriptor } from "../../types";
 import {
   buildPreviewDocument,
   createRuntimeAssetUrlCache,
@@ -14,6 +24,9 @@ import {
 
 export interface CanvasRuntimePreviewProps {
   snapshot: CanvasRuntimeSnapshot | null;
+  agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
+  showBridgeUnavailable?: boolean;
+  onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
   extensionChannelBridge?: (request: CanvasExtensionChannelRequest) => Promise<unknown>;
 }
 
@@ -22,12 +35,14 @@ type PreviewStatus = "idle" | "building" | "ready" | "error";
 interface PreviewEnvelope {
   kind: "canvas-preview-ready" | "canvas-preview-error";
   frame_id: string;
+  generation: number;
   message?: string;
 }
 
 interface RuntimeInvokeEnvelope {
   kind: "canvas-runtime-invoke";
   frame_id: string;
+  generation: number;
   request_id: string;
   action_key: string;
   input?: unknown;
@@ -36,6 +51,7 @@ interface RuntimeInvokeEnvelope {
 interface RuntimeResultEnvelope {
   kind: "canvas-runtime-result";
   frame_id: string;
+  generation: number;
   request_id: string;
   ok: boolean;
   result?: unknown;
@@ -45,6 +61,7 @@ interface RuntimeResultEnvelope {
 interface AssetUrlRequestEnvelope {
   kind: "canvas-asset-url-request";
   frame_id: string;
+  generation: number;
   request_id: string;
   uri: string;
 }
@@ -52,6 +69,7 @@ interface AssetUrlRequestEnvelope {
 interface AssetUrlResultEnvelope {
   kind: "canvas-asset-url-result";
   frame_id: string;
+  generation: number;
   request_id: string;
   ok: boolean;
   url?: string;
@@ -61,6 +79,7 @@ interface AssetUrlResultEnvelope {
 interface AssetRevokeEnvelope {
   kind: "canvas-asset-revoke";
   frame_id: string;
+  generation: number;
   url: string;
 }
 
@@ -74,12 +93,63 @@ export interface CanvasExtensionChannelRequest {
 interface ExtensionChannelInvokeEnvelope extends CanvasExtensionChannelRequest {
   kind: "canvas-extension-channel-invoke";
   frame_id: string;
+  generation: number;
   request_id: string;
 }
 
 interface ExtensionChannelResultEnvelope {
   kind: "canvas-extension-channel-result";
   frame_id: string;
+  generation: number;
+  request_id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+interface RenderObservationEnvelope {
+  kind: "canvas-render-observation";
+  frame_id: string;
+  generation: number;
+  status: "building" | "ready" | "error";
+  message?: string;
+  viewport: {
+    width: number;
+    height: number;
+    device_pixel_ratio: number;
+  };
+  document: {
+    root_empty: boolean;
+    body_text_preview: string;
+    element_count: number;
+    focused_element?: string;
+  };
+  diagnostics: CanvasRuntimeDiagnosticEntry[];
+}
+
+interface InteractionSnapshotEnvelope {
+  kind: "canvas-interaction-snapshot";
+  frame_id: string;
+  generation: number;
+  state: { [key: string]: JsonValue };
+  recent_events: Array<{
+    kind: string;
+    payload: JsonValue;
+    occurred_at: string;
+  }>;
+}
+
+interface AgentSubmitEnvelope extends SubmitCanvasAgentInput {
+  kind: "canvas-agent-submit";
+  frame_id: string;
+  generation: number;
+  request_id: string;
+}
+
+interface AgentSubmitResultEnvelope {
+  kind: "canvas-agent-submit-result";
+  frame_id: string;
+  generation: number;
   request_id: string;
   ok: boolean;
   result?: unknown;
@@ -88,6 +158,7 @@ interface ExtensionChannelResultEnvelope {
 
 interface PreviewGeneration {
   frameId: string;
+  generation: number;
   assetCache: RuntimeAssetUrlCache;
 }
 
@@ -98,12 +169,20 @@ interface PreviewGeneration {
  */
 const BLOB_REVOKE_DELAY_MS = 8_000;
 
-export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: CanvasRuntimePreviewProps) {
+export function CanvasRuntimePreview({
+  snapshot,
+  agentRunBridge = null,
+  showBridgeUnavailable = false,
+  onAgentRunWorkspaceRefresh = null,
+  extensionChannelBridge,
+}: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   // 使用 React useId 生成渲染期稳定的 frame id，避免 Math.random 在 render 中被纯度规则拒绝。
   const frameIdBase = `canvas-preview-${useId()}`;
   const generationSeqRef = useRef(0);
   const activeGenerationRef = useRef<PreviewGeneration | null>(null);
+  const latestObservationIdRef = useRef<string | null>(null);
+  const latestInteractionSnapshotIdRef = useRef<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
 
@@ -115,6 +194,8 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
     if (!snapshot) {
       const capturedGeneration = activeGenerationRef.current;
       activeGenerationRef.current = null;
+      latestObservationIdRef.current = null;
+      latestInteractionSnapshotIdRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveSrcDoc(null);
       setBuildError(null);
@@ -126,14 +207,18 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       return;
     }
 
+    const generationNumber = ++generationSeqRef.current;
     const generation: PreviewGeneration = {
-      frameId: `${frameIdBase}-${++generationSeqRef.current}`,
+      frameId: `${frameIdBase}-${generationNumber}`,
+      generation: generationNumber,
       assetCache: createRuntimeAssetUrlCache(),
     };
     let built: BuiltPreviewDocument | null = null;
     try {
-      built = buildPreviewDocument(snapshot, generation.frameId);
+      built = buildPreviewDocument(snapshot, generation.frameId, generation.generation);
       activeGenerationRef.current = generation;
+      latestObservationIdRef.current = null;
+      latestInteractionSnapshotIdRef.current = null;
       setActiveSrcDoc(built.srcDoc);
       setBuildError(null);
       setRuntimeStatus("building");
@@ -180,29 +265,48 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
 
+  const sendAgentSubmitResult = useCallback((payload: AgentSubmitResultEnvelope, target?: MessageEventSource | null) => {
+    const destination = target && "postMessage" in target ? target : iframeRef.current?.contentWindow;
+    destination?.postMessage(payload, { targetOrigin: "*" });
+  }, []);
+
   const handleRuntimeInvoke = useCallback(async (payload: RuntimeInvokeEnvelope) => {
     const generation = activeGenerationRef.current;
-    if (!generation || payload.frame_id !== generation.frameId) {
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
       return;
     }
 
-    if (!snapshot?.session_id) {
+    if (!agentRunBridge) {
       sendRuntimeResult({
         kind: "canvas-runtime-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
-        error: "Canvas runtime bridge 需要绑定 Session 后才能调用",
+        error: "Canvas runtime bridge 需要绑定 AgentRun Canvas reference 后才能调用",
       });
       return;
     }
 
-    const visibleActions = snapshot.runtime_bridge.surface?.actions ?? [];
+    if (!snapshot) {
+      sendRuntimeResult({
+        kind: "canvas-runtime-result",
+        frame_id: generation.frameId,
+        generation: generation.generation,
+        request_id: payload.request_id,
+        ok: false,
+        error: "Canvas runtime snapshot 不可用",
+      });
+      return;
+    }
+
+    const visibleActions = runtimeActionsForSnapshot(snapshot);
     const actionVisible = visibleActions.some((action) => action.action_key === payload.action_key);
     if (!snapshot.runtime_bridge.enabled || !actionVisible) {
       sendRuntimeResult({
         kind: "canvas-runtime-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
         error: `Canvas runtime action 不可见: ${payload.action_key}`,
@@ -211,10 +315,9 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
     }
 
     try {
-      const result = await invokeCanvasRuntimeAction(snapshot.canvas_id, {
-        session_id: snapshot.session_id,
+      const result = await invokeCanvasRuntimeAction(agentRunBridge, {
         action_key: payload.action_key,
-        input: payload.input ?? {},
+        input: toJsonValue(payload.input ?? {}),
       });
       if (activeGenerationRef.current !== generation) {
         return;
@@ -222,6 +325,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendRuntimeResult({
         kind: "canvas-runtime-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: true,
         result,
@@ -233,27 +337,29 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendRuntimeResult({
         kind: "canvas-runtime-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
         error: error instanceof Error ? error.message : "Canvas runtime action 调用失败",
       });
     }
-  }, [sendRuntimeResult, snapshot]);
+  }, [agentRunBridge, sendRuntimeResult, snapshot]);
 
   const handleAssetUrlRequest = useCallback(async (payload: AssetUrlRequestEnvelope) => {
     const generation = activeGenerationRef.current;
-    if (!generation || payload.frame_id !== generation.frameId) {
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
       return;
     }
 
     const surfaceRef = snapshot?.resource_surface_ref?.trim();
-    if (!snapshot?.session_id || !surfaceRef) {
+    if (!surfaceRef) {
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
-        error: "Canvas 图片资源需要绑定 Session",
+        error: "Canvas 图片资源需要绑定 runtime resource surface",
       });
       return;
     }
@@ -272,6 +378,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: true,
         url,
@@ -283,6 +390,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
         error: error instanceof Error ? error.message : "图片资源读取失败",
@@ -292,7 +400,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
 
   const handleExtensionChannelInvoke = useCallback(async (payload: ExtensionChannelInvokeEnvelope) => {
     const generation = activeGenerationRef.current;
-    if (!generation || payload.frame_id !== generation.frameId) {
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
       return;
     }
 
@@ -300,6 +408,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendExtensionChannelResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
         error: "当前 Canvas runtime 未绑定 Extension channel bridge",
@@ -320,6 +429,7 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendExtensionChannelResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: true,
         result,
@@ -331,12 +441,133 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       sendExtensionChannelResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
+        generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
         error: error instanceof Error ? error.message : "Canvas extension channel 调用失败",
       });
     }
   }, [extensionChannelBridge, sendExtensionChannelResult]);
+
+  const handleRenderObservation = useCallback(async (payload: RenderObservationEnvelope) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
+      return;
+    }
+    if (!agentRunBridge) {
+      return;
+    }
+
+    try {
+      const observation = await uploadCanvasRenderObservation(agentRunBridge, {
+        frame_id: payload.frame_id,
+        generation: payload.generation,
+        status: payload.status,
+        message: payload.message,
+        viewport: payload.viewport,
+        document: payload.document,
+        diagnostics: payload.diagnostics,
+      });
+      if (activeGenerationRef.current === generation) {
+        latestObservationIdRef.current = observation.observation_id;
+      }
+    } catch {
+      // Observation upload is diagnostic-only; keep preview rendering responsive.
+    }
+  }, [agentRunBridge]);
+
+  const handleInteractionSnapshot = useCallback(async (payload: InteractionSnapshotEnvelope) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
+      return;
+    }
+    if (!agentRunBridge) {
+      return;
+    }
+
+    try {
+      const snapshot = await uploadCanvasInteractionSnapshot(agentRunBridge, {
+        frame_id: payload.frame_id,
+        state: payload.state,
+        recent_events: payload.recent_events,
+      });
+      if (activeGenerationRef.current === generation) {
+        latestInteractionSnapshotIdRef.current = snapshot.snapshot_id;
+      }
+    } catch {
+      // Interaction sync failure is surfaced by submit if it matters for user intent.
+    }
+  }, [agentRunBridge]);
+
+  const handleAgentSubmit = useCallback(async (
+    payload: AgentSubmitEnvelope,
+    source: MessageEventSource | null,
+  ) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
+      sendAgentSubmitResult({
+        kind: "canvas-agent-submit-result",
+        frame_id: payload.frame_id,
+        generation: payload.generation,
+        request_id: payload.request_id,
+        ok: false,
+        error: "Canvas Agent bridge generation 已过期，请刷新后重试。",
+      }, source);
+      return;
+    }
+
+    if (!agentRunBridge) {
+      sendAgentSubmitResult({
+        kind: "canvas-agent-submit-result",
+        frame_id: generation.frameId,
+        generation: generation.generation,
+        request_id: payload.request_id,
+        ok: false,
+        error: "当前 Canvas 没有 live AgentRun bridge，无法提交给 Agent。",
+      }, source);
+      return;
+    }
+
+    try {
+      const input = normalizeAgentSubmitInput(payload);
+      if (input.include_interaction_state) {
+        input.interaction_snapshot_id = latestInteractionSnapshotIdRef.current ?? undefined;
+      }
+      if (input.include_render_observation) {
+        input.render_observation_id = latestObservationIdRef.current ?? undefined;
+      }
+      const result = await submitCanvasAgentInput(agentRunBridge, input);
+      if (activeGenerationRef.current !== generation) {
+        sendAgentSubmitResult({
+          kind: "canvas-agent-submit-result",
+          frame_id: payload.frame_id,
+          generation: payload.generation,
+          request_id: payload.request_id,
+          ok: false,
+          error: "Canvas Agent bridge generation 已过期，请刷新后重试。",
+        }, source);
+        return;
+      }
+      sendAgentSubmitResult({
+        kind: "canvas-agent-submit-result",
+        frame_id: generation.frameId,
+        generation: generation.generation,
+        request_id: payload.request_id,
+        ok: true,
+        result,
+      }, source);
+      await onAgentRunWorkspaceRefresh?.();
+    } catch (error) {
+      sendAgentSubmitResult({
+        kind: "canvas-agent-submit-result",
+        frame_id: generation.frameId,
+        generation: generation.generation,
+        request_id: payload.request_id,
+        ok: false,
+        error: error instanceof Error ? error.message : "Canvas 请求提交给 Agent 失败",
+      }, source);
+    }
+  }, [agentRunBridge, onAgentRunWorkspaceRefresh, sendAgentSubmitResult]);
 
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
@@ -360,12 +591,35 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       return;
     }
 
-    if (isAssetRevokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
+    if (
+      isAssetRevokeEnvelope(payload)
+      && payload.frame_id === generation?.frameId
+      && payload.generation === generation.generation
+    ) {
       revokeRuntimeAssetUrlInCache(generation.assetCache, payload.url);
       return;
     }
 
-    if (!isPreviewEnvelope(payload) || payload.frame_id !== generation?.frameId) {
+    if (isRenderObservationEnvelope(payload) && payload.frame_id === generation?.frameId) {
+      void handleRenderObservation(payload);
+      return;
+    }
+
+    if (isInteractionSnapshotEnvelope(payload) && payload.frame_id === generation?.frameId) {
+      void handleInteractionSnapshot(payload);
+      return;
+    }
+
+    if (isAgentSubmitEnvelope(payload)) {
+      void handleAgentSubmit(payload, event.source);
+      return;
+    }
+
+    if (
+      !isPreviewEnvelope(payload)
+      || payload.frame_id !== generation?.frameId
+      || payload.generation !== generation.generation
+    ) {
       return;
     }
 
@@ -376,7 +630,14 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, [handleAssetUrlRequest, handleExtensionChannelInvoke, handleRuntimeInvoke]);
+  }, [
+    handleAgentSubmit,
+    handleAssetUrlRequest,
+    handleExtensionChannelInvoke,
+    handleInteractionSnapshot,
+    handleRenderObservation,
+    handleRuntimeInvoke,
+  ]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);
@@ -426,6 +687,11 @@ export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: Canva
           {statusLabel(runtimeStatus)}
         </span>
       </div>
+      {showBridgeUnavailable && !agentRunBridge && (
+        <div className="shrink-0 border-b border-border bg-secondary/30 px-3 py-1.5 text-[11px] text-muted-foreground">
+          Canvas AgentRun bridge 不可用，interaction 与 submit 已禁用；普通预览仍可渲染。
+        </div>
+      )}
 
       {/* iframe 自适应填满剩余高度 */}
       <div className="min-h-0 flex-1">
@@ -450,6 +716,7 @@ function isPreviewEnvelope(value: unknown): value is PreviewEnvelope {
   return (
     (record.kind === "canvas-preview-ready" || record.kind === "canvas-preview-error")
     && typeof record.frame_id === "string"
+    && typeof record.generation === "number"
     && (record.message == null || typeof record.message === "string")
   );
 }
@@ -463,6 +730,7 @@ function isRuntimeInvokeEnvelope(value: unknown): value is RuntimeInvokeEnvelope
   return (
     record.kind === "canvas-runtime-invoke"
     && typeof record.frame_id === "string"
+    && typeof record.generation === "number"
     && typeof record.request_id === "string"
     && typeof record.action_key === "string"
   );
@@ -477,6 +745,7 @@ function isAssetUrlRequestEnvelope(value: unknown): value is AssetUrlRequestEnve
   return (
     record.kind === "canvas-asset-url-request"
     && typeof record.frame_id === "string"
+    && typeof record.generation === "number"
     && typeof record.request_id === "string"
     && typeof record.uri === "string"
   );
@@ -491,6 +760,7 @@ function isAssetRevokeEnvelope(value: unknown): value is AssetRevokeEnvelope {
   return (
     record.kind === "canvas-asset-revoke"
     && typeof record.frame_id === "string"
+    && typeof record.generation === "number"
     && typeof record.url === "string"
   );
 }
@@ -504,10 +774,163 @@ function isExtensionChannelInvokeEnvelope(value: unknown): value is ExtensionCha
   return (
     record.kind === "canvas-extension-channel-invoke"
     && typeof record.frame_id === "string"
+    && typeof record.generation === "number"
     && typeof record.request_id === "string"
     && typeof record.channel_key === "string"
     && typeof record.method === "string"
   );
+}
+
+function isRenderObservationEnvelope(value: unknown): value is RenderObservationEnvelope {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "canvas-render-observation"
+    && typeof value.frame_id === "string"
+    && typeof value.generation === "number"
+    && (value.status === "building" || value.status === "ready" || value.status === "error")
+    && (value.message == null || typeof value.message === "string")
+    && isViewportObservation(value.viewport)
+    && isDocumentObservation(value.document)
+    && Array.isArray(value.diagnostics)
+    && value.diagnostics.every(isDiagnosticEntry)
+  );
+}
+
+function isInteractionSnapshotEnvelope(value: unknown): value is InteractionSnapshotEnvelope {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "canvas-interaction-snapshot"
+    && typeof value.frame_id === "string"
+    && typeof value.generation === "number"
+    && isJsonObject(value.state)
+    && Array.isArray(value.recent_events)
+    && value.recent_events.every(isInteractionEvent)
+  );
+}
+
+function isAgentSubmitEnvelope(value: unknown): value is AgentSubmitEnvelope {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "canvas-agent-submit"
+    && typeof value.frame_id === "string"
+    && typeof value.generation === "number"
+    && typeof value.request_id === "string"
+    && (value.text == null || typeof value.text === "string")
+    && (value.input == null || isUserInputArray(value.input))
+    && (value.include_interaction_state == null || typeof value.include_interaction_state === "boolean")
+    && (value.include_render_observation == null || typeof value.include_render_observation === "boolean")
+    && (
+      value.delivery_intent == null
+      || value.delivery_intent === "queue"
+      || value.delivery_intent === "steer"
+    )
+    && (value.client_command_id == null || typeof value.client_command_id === "string")
+  );
+}
+
+function isViewportObservation(value: unknown): value is RenderObservationEnvelope["viewport"] {
+  return (
+    isRecord(value)
+    && typeof value.width === "number"
+    && typeof value.height === "number"
+    && typeof value.device_pixel_ratio === "number"
+  );
+}
+
+function isDocumentObservation(value: unknown): value is RenderObservationEnvelope["document"] {
+  return (
+    isRecord(value)
+    && typeof value.root_empty === "boolean"
+    && typeof value.body_text_preview === "string"
+    && typeof value.element_count === "number"
+    && (value.focused_element == null || typeof value.focused_element === "string")
+  );
+}
+
+function isDiagnosticEntry(value: unknown): value is CanvasRuntimeDiagnosticEntry {
+  return (
+    isRecord(value)
+    && (value.level === "info" || value.level === "warn" || value.level === "error")
+    && (value.source === "runtime" || value.source === "console" || value.source === "bridge")
+    && typeof value.message === "string"
+  );
+}
+
+function isInteractionEvent(value: unknown): value is InteractionSnapshotEnvelope["recent_events"][number] {
+  return (
+    isRecord(value)
+    && typeof value.kind === "string"
+    && isJsonValue(value.payload)
+    && typeof value.occurred_at === "string"
+  );
+}
+
+function isUserInputArray(value: unknown): value is UserInput[] {
+  return Array.isArray(value) && value.every(isUserInput);
+}
+
+function isUserInput(value: unknown): value is UserInput {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  switch (value.type) {
+    case "text":
+      return typeof value.text === "string" && Array.isArray(value.text_elements);
+    case "image":
+      return typeof value.url === "string";
+    case "localImage":
+      return typeof value.path === "string";
+    case "skill":
+    case "mention":
+      return typeof value.name === "string" && typeof value.path === "string";
+    default:
+      return false;
+  }
+}
+
+function normalizeAgentSubmitInput(payload: AgentSubmitEnvelope): SubmitCanvasAgentInput {
+  return {
+    text: payload.text,
+    input: payload.input,
+    include_interaction_state: payload.include_interaction_state,
+    include_render_observation: payload.include_render_observation,
+    delivery_intent: payload.delivery_intent,
+    client_command_id: payload.client_command_id,
+  };
+}
+
+function runtimeActionsForSnapshot(snapshot: CanvasRuntimeSnapshot): RuntimeActionDescriptor[] {
+  if ("actions" in snapshot.runtime_bridge) {
+    return snapshot.runtime_bridge.actions;
+  }
+  return snapshot.runtime_bridge.surface?.actions ?? [];
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map(toJsonValue);
+  if (!isRecord(value)) return null;
+  const result: { [key: string]: JsonValue } = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = toJsonValue(item);
+  }
+  return result;
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isJsonObject(value);
+}
+
+function isJsonObject(value: unknown): value is { [key: string]: JsonValue } {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function statusLabel(status: PreviewStatus): string {

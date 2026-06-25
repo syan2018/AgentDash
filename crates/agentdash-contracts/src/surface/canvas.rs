@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+use agentdash_agent_protocol::codex_app_server_protocol as codex;
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct CanvasFileDto {
@@ -230,6 +232,192 @@ pub struct CanvasRuntimeSnapshotDto {
     pub import_map: CanvasImportMapDto,
     pub libraries: Vec<String>,
     pub runtime_bridge: CanvasRuntimeBridgeSnapshotDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasAgentRunRuntimeBridgeSnapshotDto {
+    pub enabled: bool,
+    #[serde(default)]
+    pub actions: Vec<RuntimeActionDescriptorDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub disabled_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasAgentRunRuntimeSnapshotDto {
+    pub canvas_id: String,
+    pub canvas_mount_id: String,
+    pub vfs_mount_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_surface_ref: Option<String>,
+    pub entry: String,
+    pub files: Vec<CanvasRuntimeFileDto>,
+    pub bindings: Vec<CanvasRuntimeBindingDto>,
+    pub import_map: CanvasImportMapDto,
+    pub libraries: Vec<String>,
+    pub runtime_bridge: CanvasAgentRunRuntimeBridgeSnapshotDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeInvokeRequest {
+    pub action_key: String,
+    #[serde(default)]
+    #[ts(type = "JsonValue")]
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CanvasRuntimeObservationStatusDto {
+    Building,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeViewportDto {
+    pub width: i32,
+    pub height: i32,
+    pub device_pixel_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeDocumentStateDto {
+    pub root_empty: bool,
+    pub body_text_preview: String,
+    pub element_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub focused_element: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeDiagnosticDto {
+    pub level: String,
+    pub source: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeObservationUpsertRequest {
+    pub frame_id: String,
+    pub generation: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub captured_at: Option<String>,
+    pub status: CanvasRuntimeObservationStatusDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+    pub viewport: CanvasRuntimeViewportDto,
+    pub document: CanvasRuntimeDocumentStateDto,
+    #[serde(default)]
+    pub diagnostics: Vec<CanvasRuntimeDiagnosticDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub screenshot_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeObservation {
+    pub observation_id: String,
+    pub run_id: String,
+    pub agent_id: String,
+    pub agent_run_canvas_ref: String,
+    pub canvas_id: String,
+    pub canvas_mount_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_trace_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_agent_frame_id: Option<String>,
+    pub frame_id: String,
+    pub generation: i32,
+    pub captured_at: String,
+    pub status: CanvasRuntimeObservationStatusDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+    pub viewport: CanvasRuntimeViewportDto,
+    pub document: CanvasRuntimeDocumentStateDto,
+    #[serde(default)]
+    pub diagnostics: Vec<CanvasRuntimeDiagnosticDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub screenshot_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasInteractionEventDto {
+    pub kind: String,
+    #[ts(type = "JsonValue")]
+    pub payload: Value,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasInteractionSnapshotUpsertRequest {
+    pub frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    #[ts(type = "JsonValue")]
+    pub state: Value,
+    #[serde(default)]
+    pub recent_events: Vec<CanvasInteractionEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasInteractionSnapshot {
+    pub snapshot_id: String,
+    pub run_id: String,
+    pub agent_id: String,
+    pub agent_run_canvas_ref: String,
+    pub canvas_id: String,
+    pub canvas_mount_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_trace_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_agent_frame_id: Option<String>,
+    pub frame_id: String,
+    pub updated_at: String,
+    #[ts(type = "JsonValue")]
+    pub state: Value,
+    #[serde(default)]
+    pub recent_events: Vec<CanvasInteractionEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasAgentInputSubmitRequest {
+    pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_intent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub interaction_snapshot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub render_observation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

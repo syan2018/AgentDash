@@ -92,14 +92,19 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
   }
 
   if (snapshotState.status === "ready") {
-    const snapshot = {
-      ...snapshotState.snapshot,
-      session_id: workspaceData.sessionId ?? snapshotState.snapshot.session_id,
-    };
+    const bridge = workspaceData.agentRunCanvasBridgeBase
+      ? {
+          ...workspaceData.agentRunCanvasBridgeBase,
+          canvas_mount_id: snapshotState.snapshot.canvas_mount_id,
+        }
+      : null;
     return (
       <div className="flex h-full min-h-0 bg-background">
         <CanvasRuntimePreview
-          snapshot={snapshot}
+          snapshot={snapshotState.snapshot}
+          agentRunBridge={bridge}
+          showBridgeUnavailable
+          onAgentRunWorkspaceRefresh={workspaceData.refreshAgentRunWorkspace}
           extensionChannelBridge={(request) =>
             invokeExtensionChannelFromCanvas({
               workspaceData,

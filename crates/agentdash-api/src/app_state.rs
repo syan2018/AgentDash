@@ -254,7 +254,8 @@ impl AppState {
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
-        let runtime_gateway_handle = session_bootstrap.runtime_gateway_handle;
+        let workspace_module_runtime_gateway_handle =
+            session_bootstrap.workspace_module_runtime_gateway_handle;
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
         let memory_discovery_providers = session_bootstrap.memory_discovery_providers;
@@ -304,7 +305,9 @@ impl AppState {
         );
         // RuntimeGateway 装配序晚于 session runtime tool composer；此处把 gateway
         // 回填进延迟句柄，供 workspace_module_invoke。
-        runtime_gateway_handle.set(runtime_gateway.clone()).await;
+        workspace_module_runtime_gateway_handle
+            .set(runtime_gateway.clone())
+            .await;
         let extension_runtime_channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),

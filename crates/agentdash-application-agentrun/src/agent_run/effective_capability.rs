@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionEffectiveCapabilityPort, RuntimeSessionLivePortError,
 };
@@ -40,6 +41,14 @@ pub enum AgentRunGrantEffectClass {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentRunGrantProjection {
     admitted_tools: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl From<AgentRunGrantProjection> for ports_agent_run_surface::AgentRunGrantProjection {
+    fn from(value: AgentRunGrantProjection) -> Self {
+        Self {
+            admitted_tools: value.admitted_tools,
+        }
+    }
 }
 
 impl AgentRunGrantProjection {
@@ -153,6 +162,22 @@ pub struct AgentRunEffectiveCapabilityView {
     pub mcp_surface: Vec<RuntimeMcpServer>,
     pub visible_workspace_module_refs: Vec<String>,
     pub grant_projection: AgentRunGrantProjection,
+}
+
+impl From<AgentRunEffectiveCapabilityView>
+    for ports_agent_run_surface::AgentRunEffectiveCapabilityView
+{
+    fn from(value: AgentRunEffectiveCapabilityView) -> Self {
+        Self {
+            target: value.target,
+            capability_state: value.capability_state,
+            visible_capabilities: value.visible_capabilities,
+            vfs_surface: value.vfs_surface,
+            mcp_surface: value.mcp_surface,
+            visible_workspace_module_refs: value.visible_workspace_module_refs,
+            grant_projection: value.grant_projection.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

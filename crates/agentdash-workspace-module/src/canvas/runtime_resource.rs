@@ -1,7 +1,7 @@
 use agentdash_domain::canvas::Canvas;
 use agentdash_spi::Vfs;
 
-use crate::vfs::{VfsService, parse_mount_uri};
+use agentdash_application_vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
 
 use super::{
     CanvasResolvedBindingFile, CanvasRuntimeSnapshot, build_runtime_snapshot,
@@ -29,7 +29,7 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         };
         if let Some(session_id) = snapshot.session_id.as_deref() {
             snapshot.resource_surface_ref = Some(
-                crate::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
+                ResolvedVfsSurfaceSource::SessionRuntime {
                     session_id: session_id.to_string(),
                 }
                 .surface_ref(),

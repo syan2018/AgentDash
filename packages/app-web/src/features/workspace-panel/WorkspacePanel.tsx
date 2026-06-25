@@ -196,7 +196,24 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       [tabs, activeTabId],
     );
 
-    const workspaceData: WorkspaceData = useMemo(() => runtimeData, [runtimeData]);
+    const workspaceData: WorkspaceData = useMemo(() => {
+      const agentRef = runtimeData.lifecycleAgent?.agent_ref ?? null;
+      return {
+        ...runtimeData,
+        agentRunCanvasBridgeBase: agentRef && runtimeData.projectId
+          ? {
+              run_id: agentRef.run_id,
+              agent_id: agentRef.agent_id,
+              project_id: runtimeData.projectId,
+            }
+          : null,
+        refreshAgentRunWorkspace: onWorkspaceModuleOpened
+          ? async () => {
+              onWorkspaceModuleOpened();
+            }
+          : null,
+      };
+    }, [onWorkspaceModuleOpened, runtimeData]);
 
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {

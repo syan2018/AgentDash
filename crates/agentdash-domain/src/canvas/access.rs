@@ -1,5 +1,6 @@
-use crate::canvas::{Canvas, CanvasAccessProjection, CanvasScope};
 use crate::project::{ProjectAuthorization, ProjectAuthorizationContext};
+
+use super::{Canvas, CanvasAccessProjection, CanvasScope};
 
 pub fn canvas_access_projection(
     canvas: &Canvas,

@@ -62,8 +62,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const built = buildPreviewDocument(snapshot(), "frame-1");
 
     expect(built.srcDoc).toContain("assets: Object.freeze");
+    expect(built.srcDoc).toContain("interaction: Object.freeze");
+    expect(built.srcDoc).toContain("agent: Object.freeze");
     expect(built.srcDoc).toContain("canvas-asset-url-request");
     expect(built.srcDoc).toContain("canvas-asset-url-result");
+    expect(built.srcDoc).toContain("canvas-render-observation");
+    expect(built.srcDoc).toContain("canvas-interaction-snapshot");
+    expect(built.srcDoc).toContain("canvas-agent-submit");
+    expect(built.srcDoc).toContain("generation: frameGeneration");
 
     built.dispose();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:canvas-module");

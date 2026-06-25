@@ -451,6 +451,7 @@ fn build_session_runtime_tool_composer(
     let task_provider = TaskRuntimeToolProvider::new(deps.repos.clone());
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
         deps.repos.project_extension_installation_repo.clone(),
+        deps.repos.project_repo.clone(),
         deps.repos.canvas_repo.clone(),
         deps.repos.canvas_runtime_state_repo.clone(),
         deps.repos.execution_anchor_repo.clone(),

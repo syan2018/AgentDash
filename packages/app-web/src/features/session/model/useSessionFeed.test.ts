@@ -626,21 +626,21 @@ describe("aggregateEntries — tool burst", () => {
   });
 
   it("T18: real-world scenario — capability CTX splits tool bursts", () => {
-    // 模拟用户截图: mounts_list → ctx × 3 → Read → workspace_module_create
+    // 模拟用户截图: mounts_list → ctx × 3 → Read → workspace_module_operate
     const entries = [
       mkCmdEntry("mounts_list", "mounts"),
       mkContextFrameEntry("ctx1"),
       mkContextFrameEntry("ctx2"),
       mkContextFrameEntry("ctx3"),
       mkCmdEntry("read", "Read"),
-      mkCmdEntry("workspace_module_create", "workspace_module"),
+      mkCmdEntry("workspace_module_operate", "workspace_module"),
     ];
     const result = aggregateEntries(entries);
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual([
       "read",
-      "workspace_module_create",
+      "workspace_module_operate",
     ]);
     expect((result[0] as SessionDisplayEntry).id).toBe("mounts_list");
     expect(result.filter(isContextFrameGroup)).toHaveLength(1);

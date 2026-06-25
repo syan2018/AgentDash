@@ -1,6 +1,6 @@
 ---
 name: workspace-module-system
-description: AgentDashboard workspace module operating guide. Use when a session has workspace_module tools, when creating or attaching Canvas modules, when invoking or presenting workspace modules, or when deciding whether to use workspace_module_create, workspace_module_list, workspace_module_describe, workspace_module_invoke, or workspace_module_present.
+description: AgentDashboard workspace module operating guide. Use when a session has workspace_module tools, when creating, attaching, or copying Canvas modules, when invoking or presenting workspace modules, or when deciding whether to use workspace_module_operate, workspace_module_list, workspace_module_describe, workspace_module_invoke, or workspace_module_present.
 ---
 
 # Workspace Module System
@@ -9,7 +9,7 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 
 ## Core Flow
 
-1. Use `workspace_module_create` only when a new module instance must be materialized, such as `kind="canvas"`.
+1. Use `workspace_module_operate` only when a module instance must be materialized or platform-level ownership/visibility behavior must run.
 2. Use `workspace_module_list` to find existing modules visible to the current session.
 3. Use `workspace_module_describe(module_id)` before invoking operations or presenting UI.
 4. Use `workspace_module_invoke(module_id, operation_key, input)` only for operations returned by describe.
@@ -23,7 +23,9 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 
 ## Canvas Modules
 
-- Create or attach a Canvas with `workspace_module_create(kind="canvas", input={ canvas_mount_id?, title?, description? })`.
+- Create a personal Canvas with `workspace_module_operate(operation="canvas.create_personal", input={ canvas_mount_id?, title, description? })`.
+- Attach an existing Canvas with `workspace_module_operate(operation="canvas.attach_existing", input={ canvas_mount_id })`.
+- Copy a read-only shared Canvas before editing with `workspace_module_operate(operation="canvas.copy_to_personal", input={ source_canvas_mount_id, canvas_mount_id?, title?, description? })`.
 - The created or attached module is `canvas:{canvas_mount_id}`.
 - The current session can edit Canvas files after create or present through `{canvas_mount_id}://...`.
 - The Canvas presentation URI is `canvas://{canvas_mount_id}`; `{canvas_mount_id}://...` is the authoring VFS URI.
@@ -40,4 +42,4 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 
 ## Visibility
 
-The visible module set is session-scoped. A module that is not returned by `workspace_module_list` or `workspace_module_describe` is not callable from the current session unless `workspace_module_create` materializes and grants it during this session.
+The visible module set is session-scoped. A module that is not returned by `workspace_module_list` or `workspace_module_describe` is not callable from the current session unless `workspace_module_operate` materializes and grants it during this session.

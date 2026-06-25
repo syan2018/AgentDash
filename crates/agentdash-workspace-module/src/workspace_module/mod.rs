@@ -34,8 +34,8 @@ pub use runtime_bridge::{
 };
 pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 pub use tools::{
-    WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
-    WorkspaceModuleListTool, WorkspaceModulePresentTool,
+    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
+    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
 };
 pub use visibility::{
     WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityProjection,

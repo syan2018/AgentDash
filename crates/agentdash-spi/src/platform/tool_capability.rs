@@ -79,7 +79,7 @@ pub const CAP_FILE_WRITE: &str = "file_write";
 /// 命令执行：shell_exec
 pub const CAP_SHELL_EXECUTE: &str = "shell_execute";
 /// Workspace module：workspace_module_list, workspace_module_describe,
-/// workspace_module_create, workspace_module_invoke, workspace_module_present
+/// workspace_module_operate, workspace_module_invoke, workspace_module_present
 pub const CAP_WORKSPACE_MODULE: &str = "workspace_module";
 pub const CAP_WORKFLOW: &str = "workflow";
 pub const CAP_COLLABORATION: &str = "collaboration";
@@ -123,7 +123,7 @@ pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
     "workspace_module_describe",
-    "workspace_module_create",
+    "workspace_module_operate",
     "workspace_module_invoke",
     "workspace_module_present",
 ];
@@ -361,9 +361,9 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             CAP_WORKSPACE_MODULE,
         ),
         ToolDescriptor::platform(
-            "workspace_module_create",
-            "Create Workspace Module",
-            "创建或接入 workspace module 实例；Canvas 使用 kind=canvas 创建后返回 canvas:{canvas_mount_id}",
+            "workspace_module_operate",
+            "Operate Workspace Module",
+            "执行 workspace module 平台操作；Canvas 使用 operation=canvas.create_personal/attach_existing/copy_to_personal 后返回 canvas:{canvas_mount_id}",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

@@ -230,7 +230,7 @@ pub enum ToolCluster {
     /// Task 清单读写：task_read, task_write
     Task,
     /// Workspace module：workspace_module_list, workspace_module_describe,
-    /// workspace_module_create, workspace_module_invoke, workspace_module_present
+    /// workspace_module_operate, workspace_module_invoke, workspace_module_present
     WorkspaceModule,
 }
 

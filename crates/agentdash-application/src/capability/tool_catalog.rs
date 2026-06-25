@@ -305,7 +305,7 @@ mod tests {
         let names: Vec<&str> = result.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"workspace_module_list"));
         assert!(names.contains(&"workspace_module_describe"));
-        assert!(names.contains(&"workspace_module_create"));
+        assert!(names.contains(&"workspace_module_operate"));
         assert!(names.contains(&"workspace_module_invoke"));
         assert!(names.contains(&"workspace_module_present"));
     }

@@ -307,7 +307,7 @@ import type {
 
 ### 2. Signatures
 
-- `workspace_module_create(kind="canvas", input={ canvas_mount_id?: string, title?: string, description?: string }) -> WorkspaceModuleDescriptor`
+- `workspace_module_operate(operation="canvas.create_personal" | "canvas.attach_existing" | "canvas.copy_to_personal", input={...}) -> WorkspaceModuleDescriptor`
 - `workspace_module_describe(module_id: string) -> WorkspaceModuleDescriptor`
 - `workspace_module_invoke(module_id: string, operation_key: string, input: unknown) -> operation result`
 - `workspace_module_present(module_id: string, view_key: string) -> workspace_module_presented event`

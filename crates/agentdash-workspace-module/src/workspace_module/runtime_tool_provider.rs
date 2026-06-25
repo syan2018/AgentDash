@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
+use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository;
 use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
@@ -17,15 +18,16 @@ use crate::workspace_module::runtime_bridge::{
     SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
 };
 use crate::workspace_module::{
-    WorkspaceModuleCreateTool, WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool,
-    WorkspaceModuleListTool, WorkspaceModulePresentTool, delivery_runtime_session_id_from_context,
-    project_authorization_context_from_identity, project_id_from_context,
-    resolve_invocation_backend, shared_runtime_vfs_from_context,
+    WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
+    WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
+    delivery_runtime_session_id_from_context, project_authorization_context_from_identity,
+    project_id_from_context, resolve_invocation_backend, shared_runtime_vfs_from_context,
 };
 
 #[derive(Clone)]
 pub struct WorkspaceModuleRuntimeToolProvider {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
+    project_repo: Arc<dyn ProjectRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -37,6 +39,7 @@ pub struct WorkspaceModuleRuntimeToolProvider {
 impl WorkspaceModuleRuntimeToolProvider {
     pub fn new(
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
+        project_repo: Arc<dyn ProjectRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -45,6 +48,7 @@ impl WorkspaceModuleRuntimeToolProvider {
     ) -> Self {
         Self {
             installation_repo,
+            project_repo,
             canvas_repo,
             canvas_runtime_state_repo,
             execution_anchor_repo,
@@ -216,11 +220,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
 
         if flow.is_capability_tool_enabled(
             CAP_WORKSPACE_MODULE,
-            "workspace_module_create",
+            "workspace_module_operate",
             Some(ToolCluster::WorkspaceModule),
         ) {
             tools.push(Arc::new(
-                WorkspaceModuleCreateTool::new(
+                WorkspaceModuleOperateTool::new(
+                    self.project_repo.clone(),
                     self.canvas_repo.clone(),
                     project_id,
                     shared_vfs.clone(),

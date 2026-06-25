@@ -271,7 +271,7 @@ fn conditional_flow_tools(scope: Option<CapabilityScope>) -> Vec<String> {
 fn push_workspace_module_tools(tools: &mut Vec<String>) {
     tools.push("workspace_module_list".to_string());
     tools.push("workspace_module_describe".to_string());
-    tools.push("workspace_module_create".to_string());
+    tools.push("workspace_module_operate".to_string());
     tools.push("workspace_module_invoke".to_string());
     tools.push("workspace_module_present".to_string());
 }

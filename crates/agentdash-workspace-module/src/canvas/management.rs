@@ -400,12 +400,12 @@ pub async fn copy_canvas_to_personal(
     )
     .await?;
 
-    let base_mount_id = input
-        .mount_id
-        .clone()
-        .unwrap_or_else(|| format!("{}-copy", source.mount_id));
-    let mount_id =
-        unique_canvas_mount_id(repos.canvas_repo(), source.project_id, &base_mount_id).await?;
+    let mount_id = if let Some(base_mount_id) = input.mount_id.clone() {
+        unique_canvas_mount_id(repos.canvas_repo(), source.project_id, &base_mount_id).await?
+    } else {
+        unique_copy_canvas_mount_id(repos.canvas_repo(), source.project_id, &source.mount_id)
+            .await?
+    };
     let mut copy = Canvas::new_personal(
         source.project_id,
         current_user.user_id.clone(),
@@ -815,6 +815,37 @@ async fn unique_canvas_mount_id(
     Err(ApplicationError::Conflict(format!(
         "无法为 Canvas mount `{base_mount_id}` 生成唯一标识"
     )))
+}
+
+async fn unique_copy_canvas_mount_id(
+    canvas_repo: &dyn CanvasRepository,
+    project_id: Uuid,
+    source_mount_id: &str,
+) -> Result<String, ApplicationError> {
+    let source_mount_id = normalize_canvas_mount_id(source_mount_id)
+        .map_err(|error| ApplicationError::BadRequest(error.to_string()))?;
+    for _ in 0..100 {
+        let candidate = format!("{source_mount_id}-copy-{}", random_copy_suffix());
+        if canvas_repo
+            .get_by_mount_id(project_id, &candidate)
+            .await
+            .map_err(ApplicationError::from)?
+            .is_none()
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(ApplicationError::Conflict(format!(
+        "无法为 Canvas mount `{source_mount_id}` 生成复制标识"
+    )))
+}
+
+fn random_copy_suffix() -> String {
+    const CHARS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let bytes = *Uuid::new_v4().as_bytes();
+    (0..4)
+        .map(|index| CHARS[usize::from(bytes[index]) % CHARS.len()] as char)
+        .collect()
 }
 
 fn normalize_path(path: &str) -> Result<String, DomainError> {

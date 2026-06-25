@@ -866,8 +866,8 @@ mod tests {
         NewAgentRunMailboxMessage,
     };
     use agentdash_domain::workflow::{
-        AgentFrame, AgentLineage, LifecycleAgent, LifecycleGate, LifecycleRun,
-        LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
+        AgentFrame, AgentLineage, AgentRuntimeRefs, AgentSource, LifecycleAgent, LifecycleGate,
+        LifecycleRun, LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -1746,6 +1746,100 @@ mod tests {
         }
     }
 
+    struct TestProjectAgentLifecycleLaunch<'a> {
+        lifecycle_run_repo: &'a RunRepo,
+        lifecycle_agent_repo: &'a AgentRepo,
+        execution_anchor_repo: &'a AnchorRepo,
+        runtime_session_creator: &'a RuntimeCreator,
+        agent_frame_construction: &'a FrameRepo,
+    }
+
+    impl<'a> TestProjectAgentLifecycleLaunch<'a> {
+        fn new(
+            lifecycle_run_repo: &'a RunRepo,
+            lifecycle_agent_repo: &'a AgentRepo,
+            execution_anchor_repo: &'a AnchorRepo,
+            runtime_session_creator: &'a RuntimeCreator,
+            agent_frame_construction: &'a FrameRepo,
+        ) -> Self {
+            Self {
+                lifecycle_run_repo,
+                lifecycle_agent_repo,
+                execution_anchor_repo,
+                runtime_session_creator,
+                agent_frame_construction,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProjectAgentLifecycleLaunchPort for TestProjectAgentLifecycleLaunch<'_> {
+        async fn launch_project_agent(
+            &self,
+            intent: &AgentLaunchIntent,
+        ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+            let run = LifecycleRun::new_plain(intent.project_id);
+            self.lifecycle_run_repo.create(&run).await?;
+
+            let agent =
+                LifecycleAgent::new_root(run.id, intent.project_id, AgentSource::ProjectAgent);
+            self.lifecycle_agent_repo.create(&agent).await?;
+
+            let runtime_session = self
+                .runtime_session_creator
+                .create_runtime_session(
+                    runtime_session_delivery_port::RuntimeSessionCreationRequest {
+                        project_id: intent.project_id,
+                        run_id: run.id,
+                        agent_id: agent.id,
+                        source: intent.source.clone(),
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    WorkflowApplicationError::Internal(format!(
+                        "测试 ProjectAgent lifecycle launch 创建 RuntimeSession 失败: {error}"
+                    ))
+                })?;
+            let runtime_session_id = runtime_session.runtime_session_id.to_string();
+
+            let frame = self
+                .agent_frame_construction
+                .execute_frame_construction_command(
+                    agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+                        run_id: run.id,
+                        agent_id: agent.id,
+                        runtime_session_id: runtime_session_id.clone(),
+                        created_by_id: Some("test_project_agent_lifecycle_launch".to_string()),
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    WorkflowApplicationError::Internal(format!(
+                        "测试 ProjectAgent lifecycle launch 创建 AgentFrame 失败: {error}"
+                    ))
+                })?;
+            let frame_id = frame.frame_id.ok_or_else(|| {
+                WorkflowApplicationError::Internal(
+                    "测试 ProjectAgent lifecycle launch 未返回 AgentFrame id".to_string(),
+                )
+            })?;
+
+            let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                runtime_session_id,
+                run.id,
+                frame_id,
+                agent.id,
+            );
+            self.execution_anchor_repo.upsert(&anchor).await?;
+
+            Ok(AgentLaunchDispatchResult {
+                runtime_refs: AgentRuntimeRefs::new(run.id, agent.id, frame_id, None),
+                delivery_runtime_ref: Some(runtime_session.runtime_session_id),
+            })
+        }
+    }
+
     struct InitialMailboxPort<'a> {
         mailbox_repo: &'a MailboxRepo,
         behavior: InitialMailboxBehavior,
@@ -1988,6 +2082,7 @@ mod tests {
                     mailbox_repo: &self.mailbox_repo,
                     runtime_session_creator: &self.runtime_creator,
                     agent_frame_construction: &self.frame_repo,
+                    project_agent_lifecycle_launch: self,
                 },
                 &self.runtime_creator,
             )
@@ -2015,6 +2110,24 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl ProjectAgentLifecycleLaunchPort for StartHarness {
+        async fn launch_project_agent(
+            &self,
+            intent: &AgentLaunchIntent,
+        ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+            TestProjectAgentLifecycleLaunch::new(
+                &self.run_repo,
+                &self.agent_repo,
+                &self.anchor_repo,
+                &self.runtime_creator,
+                &self.frame_repo,
+            )
+            .launch_project_agent(intent)
+            .await
+        }
+    }
+
     #[tokio::test]
     async fn duplicate_start_command_reuses_accepted_run_without_materializing_again() {
         let project_id = Uuid::new_v4();
@@ -2033,6 +2146,13 @@ mod tests {
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
+        let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
+            &run_repo,
+            &agent_repo,
+            &anchor_repo,
+            &runtime_creator,
+            &frame_repo,
+        );
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
@@ -2048,6 +2168,7 @@ mod tests {
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
                 agent_frame_construction: &frame_repo,
+                project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
         );
@@ -2197,6 +2318,13 @@ mod tests {
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
+        let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
+            &run_repo,
+            &agent_repo,
+            &anchor_repo,
+            &runtime_creator,
+            &frame_repo,
+        );
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
@@ -2212,6 +2340,7 @@ mod tests {
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
                 agent_frame_construction: &frame_repo,
+                project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
         );
@@ -2264,6 +2393,13 @@ mod tests {
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
+        let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
+            &run_repo,
+            &agent_repo,
+            &anchor_repo,
+            &runtime_creator,
+            &frame_repo,
+        );
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
@@ -2279,6 +2415,7 @@ mod tests {
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
                 agent_frame_construction: &frame_repo,
+                project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
         );
@@ -2345,6 +2482,13 @@ mod tests {
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
+        let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
+            &run_repo,
+            &agent_repo,
+            &anchor_repo,
+            &runtime_creator,
+            &frame_repo,
+        );
         let service = ProjectAgentRunStartService::new(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
@@ -2360,6 +2504,7 @@ mod tests {
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
                 agent_frame_construction: &frame_repo,
+                project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
         );

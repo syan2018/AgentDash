@@ -867,7 +867,7 @@ fn link_key(link: &MountLink) -> String {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::CapabilityState;
+    use agentdash_spi::{CapabilityDimensionKey, CapabilityState};
 
     // ── AgentFrame 投影 round-trip 测试 ──────────────────────────────
 

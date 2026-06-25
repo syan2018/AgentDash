@@ -660,8 +660,10 @@ mod tests {
     #[test]
     fn business_modules_and_api_routes_do_not_direct_adopt_runtime_surface() {
         for path in [
-            "crates/agentdash-application/src/workspace_module/tools.rs",
-            "crates/agentdash-application/src/canvas/tools.rs",
+            "crates/agentdash-workspace-module/src/workspace_module/tools.rs",
+            "crates/agentdash-workspace-module/src/canvas/management.rs",
+            "crates/agentdash-workspace-module/src/canvas/visibility.rs",
+            "crates/agentdash-application/src/canvas/promotion.rs",
             "crates/agentdash-application/src/permission/service.rs",
             "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {
@@ -676,8 +678,10 @@ mod tests {
     #[test]
     fn business_modules_and_api_routes_do_not_direct_expose_canvas_mount_revision() {
         for path in [
-            "crates/agentdash-application/src/workspace_module/tools.rs",
-            "crates/agentdash-application/src/canvas/tools.rs",
+            "crates/agentdash-workspace-module/src/workspace_module/tools.rs",
+            "crates/agentdash-workspace-module/src/canvas/management.rs",
+            "crates/agentdash-workspace-module/src/canvas/visibility.rs",
+            "crates/agentdash-application/src/canvas/promotion.rs",
             "crates/agentdash-application/src/permission/service.rs",
             "crates/agentdash-api/src/routes/permission_grants.rs",
         ] {

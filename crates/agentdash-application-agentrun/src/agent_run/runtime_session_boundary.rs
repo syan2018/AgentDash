@@ -572,37 +572,6 @@ impl SessionLaunchService {
     }
 }
 
-pub fn execution_state_from_meta(meta: Option<&SessionMeta>) -> SessionExecutionState {
-    let Some(meta) = meta else {
-        return SessionExecutionState::Idle;
-    };
-    match meta.last_delivery_status {
-        ExecutionStatus::Idle => SessionExecutionState::Idle,
-        ExecutionStatus::Running => SessionExecutionState::Running {
-            turn_id: meta.last_turn_id.clone(),
-        },
-        ExecutionStatus::Completed => SessionExecutionState::Completed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
-        },
-        ExecutionStatus::Failed => SessionExecutionState::Failed {
-            turn_id: meta.last_turn_id.clone().unwrap_or_default(),
-            message: meta.last_terminal_message.clone(),
-        },
-        ExecutionStatus::Interrupted => SessionExecutionState::Interrupted {
-            turn_id: meta.last_turn_id.clone(),
-            message: meta.last_terminal_message.clone(),
-        },
-        ExecutionStatus::Lost => SessionExecutionState::Lost {
-            turn_id: meta.last_turn_id.clone(),
-            message: meta.last_terminal_message.clone(),
-        },
-    }
-}
-
-pub fn title_source_is_user(source: TitleSource) -> bool {
-    matches!(source, TitleSource::User)
-}
-
 pub const WORKSPACE_SKILL_PROVIDER_KEY: &str = "workspace";
 pub const INTEGRATION_STATIC_SKILL_PROVIDER_KEY: &str = "integration-static";
 

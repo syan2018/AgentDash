@@ -33,8 +33,6 @@ pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
-#[cfg(test)]
-pub(crate) use projection::activity_projection;
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
     resolve_active_workflow_projection_from_message_stream_trace,
@@ -60,8 +58,6 @@ pub use subject_execution_control::{
     SubjectExecutionControlService,
 };
 pub use surface::mount::project_active_workflow_lifecycle_vfs;
-#[cfg(test)]
-pub(crate) use surface::mount::{LifecycleMountSurface, lifecycle_mount_overlay_for_surface};
 pub use surface::surface_projector::{
     AgentRunLifecycleProjectionSet, AgentRunLifecycleSurface, AgentRunLifecycleSurfaceInput,
     AgentRunLifecycleSurfaceMode, AgentRunLifecycleSurfaceProjector, AgentRunRuntimeAddress,

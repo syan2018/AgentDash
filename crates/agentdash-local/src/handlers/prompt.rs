@@ -6,7 +6,7 @@ use std::sync::Arc;
 use agentdash_relay::*;
 use tokio::sync::{Mutex, mpsc};
 
-use agentdash_application::session::{
+use agentdash_application_runtime_session::session::{
     LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
 };
 use agentdash_spi::AgentConnector;

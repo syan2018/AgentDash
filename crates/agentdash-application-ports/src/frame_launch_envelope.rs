@@ -1,0 +1,260 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use agentdash_agent_protocol::UserInputBlock;
+use agentdash_domain::backend::RuntimeBackendAnchor;
+use agentdash_domain::workflow::{
+    ActivityDefinition, AgentFrame, AgentProcedure, LifecycleRun, WorkflowGraph,
+};
+use agentdash_spi::hooks::ContextFrame;
+use agentdash_spi::session_persistence::RuntimeCommandRecord;
+use agentdash_spi::{
+    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
+    RuntimeMcpServer, SessionContextBundle, Vfs,
+};
+use async_trait::async_trait;
+use serde_json::Value;
+use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub struct FrameRuntimeSurface {
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    pub frame_revision: i32,
+    pub capability_surface: Value,
+    pub context_slice: Value,
+    pub vfs_surface: Value,
+    pub mcp_surface: Value,
+    pub runtime_session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchIntent {
+    pub input: Option<Vec<UserInputBlock>>,
+    pub environment_variables: HashMap<String, String>,
+    pub identity: Option<AuthIdentity>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub discovered_memory: MemoryDiscoveryOutput,
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameLaunchSurface {
+    pub capability_state: CapabilityState,
+    pub vfs: Vfs,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub execution_profile: AgentConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaunchResolutionTrace {
+    pub vfs_source: Option<String>,
+    pub mcp_source: Option<String>,
+    pub capability_source: Option<String>,
+    pub pending_overlay_applied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHookEffectBinding {
+    pub handler: Value,
+    pub supported_effect_kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameLaunchEnvelope {
+    pub surface: FrameRuntimeSurface,
+    pub launch_surface: FrameLaunchSurface,
+    pub pending_frame: Option<AgentFrame>,
+    pub intent: FrameLaunchIntent,
+    pub working_directory: PathBuf,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub base_capability_state: Option<CapabilityState>,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
+    pub resolution_trace: LaunchResolutionTrace,
+}
+
+impl FrameLaunchEnvelope {
+    pub fn launch_capability_state(&self) -> &CapabilityState {
+        &self.launch_surface.capability_state
+    }
+
+    pub fn launch_vfs(&self) -> &Vfs {
+        &self.launch_surface.vfs
+    }
+
+    pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServer] {
+        &self.launch_surface.mcp_servers
+    }
+
+    pub fn launch_executor_config(&self) -> &AgentConfig {
+        &self.launch_surface.execution_profile
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutineLaunchSource {
+    pub routine_id: Uuid,
+    pub execution_id: Uuid,
+    pub trigger_source: String,
+    pub entity_key: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct CompanionLaunchWorkflowSource {
+    pub run: LifecycleRun,
+    pub orchestration_id: Uuid,
+    pub node_path: String,
+    pub attempt: u32,
+    pub lifecycle: WorkflowGraph,
+    pub activity: ActivityDefinition,
+    pub workflow: Option<AgentProcedure>,
+}
+
+#[derive(Clone)]
+pub struct CompanionLaunchSource {
+    pub parent_session_id: String,
+    pub selected_project_agent_id: Option<Uuid>,
+    pub selected_agent_key: Option<String>,
+    pub slice_mode: agentdash_spi::CompanionSliceMode,
+    pub companion_executor_config: AgentConfig,
+    pub dispatch_prompt: String,
+    pub workflow: Option<CompanionLaunchWorkflowSource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameLaunchSource {
+    HttpPrompt,
+    LifecycleAgentUserMessage,
+    HookAutoResume,
+    CompanionDispatch,
+    CompanionParentResume,
+    WorkflowOrchestrator,
+    RoutineExecutor,
+    LocalRelayPrompt,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchUserInput {
+    pub input: Option<Vec<UserInputBlock>>,
+    pub environment_variables: HashMap<String, String>,
+    pub executor_config: Option<AgentConfig>,
+}
+
+#[derive(Clone)]
+pub struct FrameLaunchLocalRelayPayload {
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub workspace_root: PathBuf,
+}
+
+#[derive(Clone)]
+pub enum FrameLaunchModifier {
+    Companion(Box<CompanionLaunchSource>),
+    Routine(RoutineLaunchSource),
+    LocalRelay(FrameLaunchLocalRelayPayload),
+    HookAutoResume,
+}
+
+#[derive(Clone)]
+pub struct FrameLaunchCommand {
+    pub user_input: FrameLaunchUserInput,
+    pub source: FrameLaunchSource,
+    pub follow_up_session_id: Option<String>,
+    pub identity: Option<AuthIdentity>,
+    pub modifiers: Vec<FrameLaunchModifier>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeTraceLaunchStateRef {
+    pub executor_session_id: Option<String>,
+    pub last_event_seq: u64,
+}
+
+#[derive(Clone)]
+pub struct FrameLaunchEnvelopeRequest {
+    pub runtime_session_id: String,
+    pub command: FrameLaunchCommand,
+    pub runtime_trace_state: RuntimeTraceLaunchStateRef,
+    pub had_existing_runtime: bool,
+    pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
+    pub agent_needs_bootstrap: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FrameLaunchEnvelopeError {
+    #[error("frame launch envelope source was not found: {message}")]
+    MissingSource { message: String },
+    #[error("frame launch envelope is incomplete: field={field}")]
+    MissingField { field: &'static str },
+    #[error("frame launch envelope projection failed: {message}")]
+    Projection { message: String },
+}
+
+#[async_trait]
+pub trait FrameLaunchEnvelopePort: Send + Sync {
+    async fn build_launch_envelope(
+        &self,
+        input: FrameLaunchEnvelopeRequest,
+    ) -> Result<FrameLaunchEnvelope, agentdash_spi::ConnectorError>;
+}
+
+pub type SharedFrameLaunchEnvelopePort = Arc<dyn FrameLaunchEnvelopePort>;
+
+#[derive(Debug, Clone)]
+pub struct AcceptedLaunchCommitInput {
+    pub runtime_session_id: String,
+    pub turn_id: String,
+    pub pending_frame: Option<AgentFrame>,
+    pub accepted_capability_state: CapabilityState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedLaunchCommitOutcome {
+    pub frame_id: Option<Uuid>,
+    pub agent_id: Option<Uuid>,
+    pub wrote_frame_revision: bool,
+    pub bound_current_delivery: bool,
+    pub synced_hook_runtime_target: bool,
+    pub diagnostics: Vec<String>,
+}
+
+impl AcceptedLaunchCommitOutcome {
+    pub fn empty() -> Self {
+        Self {
+            frame_id: None,
+            agent_id: None,
+            wrote_frame_revision: false,
+            bound_current_delivery: false,
+            synced_hook_runtime_target: false,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn with_diagnostic(message: impl Into<String>) -> Self {
+        let mut outcome = Self::empty();
+        outcome.diagnostics.push(message.into());
+        outcome
+    }
+}
+
+#[async_trait]
+pub trait AcceptedLaunchCommitPort: Send + Sync {
+    async fn agent_needs_bootstrap(&self, runtime_session_id: &str) -> bool;
+
+    async fn mark_agent_bootstrapped(&self, runtime_session_id: &str);
+
+    async fn commit_accepted_launch(
+        &self,
+        input: AcceptedLaunchCommitInput,
+    ) -> AcceptedLaunchCommitOutcome;
+}
+
+#[async_trait]
+pub trait AcceptedLaunchHookRuntimeSync: Send + Sync {
+    async fn sync_accepted_launch_hook_runtime(
+        &self,
+        target: crate::runtime_surface_adoption::AgentFrameRuntimeTarget,
+        turn_id: &str,
+    ) -> Result<(), agentdash_spi::ConnectorError>;
+}

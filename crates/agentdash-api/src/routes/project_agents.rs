@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::{
+use agentdash_application::runtime_session_agent_run_bridge::{
+    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+    agent_run_session_launch,
+};
+use agentdash_application_agentrun::AgentRunRepositorySet;
+use agentdash_application_agentrun::agent_run::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
@@ -130,9 +135,10 @@ pub async fn list_project_agents(
         .await
         .map_err(ApiError::from)?;
 
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = build_project_agent_context(&state.repos, agent)
+        let bridge = build_project_agent_context(&agent_run_repos, agent)
             .await
             .map_err(ApiError::Internal)?;
         response.push(build_project_agent_summary(&project, &bridge));
@@ -180,7 +186,11 @@ pub async fn create_project_agent_run(
         "ProjectAgent run start request parsed"
     );
 
-    let (service, initial_message) = project_agent_run_start_service_parts(state.as_ref());
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let (repos, initial_message) =
+        project_agent_run_start_service_parts(state.as_ref(), &agent_run_repos);
+    let session_core = agent_run_session_core(state.services.session_core.clone());
+    let service = ProjectAgentRunStartService::new(repos, &session_core);
     tracing::info!(
         project_id = %project_id,
         project_agent_id = %project_agent_id,
@@ -211,7 +221,7 @@ pub async fn create_project_agent_run(
         "ProjectAgent run start service returned"
     );
 
-    let agent_context = build_project_agent_context(&state.repos, &dispatch.project_agent)
+    let agent_context = build_project_agent_context(&agent_run_repos, &dispatch.project_agent)
         .await
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);
@@ -306,17 +316,13 @@ fn spawn_initial_project_agent_mailbox_schedule(
             agent_id = %agent_id,
             "ProjectAgent initial mailbox background schedule entered"
         );
-        let service = AgentRunMailboxService::new(
-            state.repos.lifecycle_run_repo.as_ref(),
-            state.repos.lifecycle_agent_repo.as_ref(),
-            state.repos.agent_frame_repo.as_ref(),
-            state.repos.execution_anchor_repo.as_ref(),
-            state.repos.agent_run_command_receipt_repo.as_ref(),
-            state.repos.agent_run_mailbox_repo.as_ref(),
-            state.services.session_core.clone(),
-            state.services.session_control.clone(),
-            state.services.session_eventing.clone(),
-            state.services.session_launch.clone(),
+        let agent_run_repos = state.repos.to_agent_run_repository_set();
+        let repos = ProjectAgentRunStartRepos::from_repository_set(&agent_run_repos);
+        let service = repos.mailbox_service(
+            agent_run_session_core(state.services.session_core.clone()),
+            agent_run_session_control(state.services.session_control.clone()),
+            agent_run_session_eventing(state.services.session_eventing.clone()),
+            agent_run_session_launch(state.services.session_launch.clone()),
         );
         if let Err(error) = service
             .schedule(
@@ -346,18 +352,18 @@ fn spawn_initial_project_agent_mailbox_schedule(
     });
 }
 
-fn project_agent_run_start_service_parts(
-    state: &AppState,
-) -> (ProjectAgentRunStartService<'_>, AgentRunMailboxService<'_>) {
-    let repos = ProjectAgentRunStartRepos::from_repository_set(&state.repos);
+fn project_agent_run_start_service_parts<'a>(
+    state: &'a AppState,
+    agent_run_repos: &'a AgentRunRepositorySet,
+) -> (ProjectAgentRunStartRepos<'a>, AgentRunMailboxService<'a>) {
+    let repos = ProjectAgentRunStartRepos::from_repository_set(agent_run_repos);
     let initial_message = repos.mailbox_service(
-        state.services.session_core.clone(),
-        state.services.session_control.clone(),
-        state.services.session_eventing.clone(),
-        state.services.session_launch.clone(),
+        agent_run_session_core(state.services.session_core.clone()),
+        agent_run_session_control(state.services.session_control.clone()),
+        agent_run_session_eventing(state.services.session_eventing.clone()),
+        agent_run_session_launch(state.services.session_launch.clone()),
     );
-    let service = ProjectAgentRunStartService::new(repos, &state.services.session_core);
-    (service, initial_message)
+    (repos, initial_message)
 }
 
 fn build_project_agent_summary(

@@ -57,5 +57,6 @@ impl SessionOwnerResolver {
             self.story_repo.as_ref(),
         )
         .await
+        .map_err(ApplicationError::from)
     }
 }

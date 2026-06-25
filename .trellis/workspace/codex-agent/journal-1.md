@@ -1168,3 +1168,59 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: Release application crate split
+
+**Date**: 2026-06-25
+**Task**: Release application crate split
+**Branch**: `codex/release-crate-split-refactor`
+
+### Summary
+
+完成 release 前 application crate split 主轴：固定 physical dependency contract，抽取 RuntimeGateway/RuntimeSession/VFS/AgentRun/Lifecycle crates，收束 application composition facade 和 API/local/MCP wiring，并通过 workspace check。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2aea00d` | (see git log) |
+| `61e64204` | (see git log) |
+| `47004415` | (see git log) |
+| `6c6b1aa7` | (see git log) |
+| `3ed3eab6` | (see git log) |
+| `14fed2af` | (see git log) |
+| `8cf26d6e` | (see git log) |
+| `3f3525a5` | (see git log) |
+| `868ac6b3` | (see git log) |
+| `9317e30b` | (see git log) |
+| `0a5c65ef` | (see git log) |
+| `2ec19c89` | (see git log) |
+| `a5fb8e34` | (see git log) |
+| `fd2a0beb` | (see git log) |
+| `f79621c1` | (see git log) |
+| `feadae38` | (see git log) |
+| `6dc0d7d4` | (see git log) |
+| `193e2022` | (see git log) |
+| `d84a0859` | (see git log) |
+| `f0eb9138` | (see git log) |
+| `94705c69` | (see git log) |
+| `30b84a4e` | (see git log) |
+| `a7cd0f2a` | (see git log) |
+| `62f50704` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

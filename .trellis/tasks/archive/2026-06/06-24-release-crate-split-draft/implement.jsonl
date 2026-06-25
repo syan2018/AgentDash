@@ -1,0 +1,38 @@
+{"file":".trellis/tasks/06-24-release-crate-split-draft/prd.md","reason":"Mainline requirements and acceptance criteria."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/design.md","reason":"Target graph, ownership rules, waves and static gates."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/implement.md","reason":"Execution plan, dispatch order and validation commands."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/physical-dependency-contract.md","reason":"Authoritative target Cargo graph and forbidden dependency edges for crates-first split."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/00-index.md","reason":"Current split research synthesis."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/import-graph-crate-review.md","reason":"Cargo/module import blockers and extraction waves."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/session-runtime-crate-review.md","reason":"RuntimeSession substrate extraction blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/agentrun-lifecycle-crate-review.md","reason":"AgentRun/Lifecycle ownership and port boundaries."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/api-gateway-vfs-consumer-review.md","reason":"API/RuntimeGateway/VFS consumer cleanup evidence."}
+{"file":".trellis/tasks/06-24-release-crate-boundary-review/research/05-crate-split-coupling-map.md","reason":"Parent crate split coupling evidence."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Backend clean architecture and composition root rules."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Crate/layer baseline and application-ports role."}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession and AgentRun frame/surface contract."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway admission and action boundary."}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle/AgentRun/RuntimeSessionExecutionAnchor control-plane contract."}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"AgentRun resource surface and VFS boundary."}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"AgentRun effective capability/admission contract."}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"Permission grant effect and AgentFrame surface update contract."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/00-dispatch-map.md","reason":"Worker dispatch and conflict ownership map."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/01-ports-boundary-expansion.md","reason":"Ports expansion implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/02-runtime-gateway-setup-boundary.md","reason":"RuntimeGateway setup port implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/03-agentrun-surface-facade.md","reason":"AgentRun runtime/resource surface implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/04-runtime-session-substrate-boundary.md","reason":"RuntimeSession dependency inversion implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/05-agentrun-lifecycle-boundary.md","reason":"AgentRun/Lifecycle port boundary implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/06-api-consumer-facade-cleanup.md","reason":"API consumer facade cleanup implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/07-vfs-resource-surface-boundary.md","reason":"VFS/resource surface boundary implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/08-public-visibility-cleanup.md","reason":"Public facade contraction implementation item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/09-physical-crate-extraction-runtime.md","reason":"RuntimeGateway/RuntimeSession physical extraction item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/work-items/10-physical-crate-extraction-control-plane-vfs.md","reason":"AgentRun/Lifecycle/VFS physical extraction item."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-1.md","reason":"Round 1 worker ids, ownership and checkpoint plan."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave 1/2 checkpoint validation, check-agent findings and next dispatch constraints."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-2.md","reason":"Round 2 worker lanes, ownership boundaries and checkpoint plan."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-2.md","reason":"Round 2 validation, check-agent verdicts and remaining extraction blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 port-wiring convergence lanes, prompt injection rules and checkpoint waves."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 validation, check-agent verdicts and remaining RuntimeSession/VFS/visibility blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-4.md","reason":"Round 4 substrate convergence lanes for neutral RuntimeSession launch envelope, live ports, visibility cleanup and VFS owner split."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-4.md","reason":"Round 4 validation, check-agent verdicts and next VFS extraction readiness."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-5.md","reason":"Round 5 crates-first physical split lanes, shared ownership locks and checkpoint gates."}

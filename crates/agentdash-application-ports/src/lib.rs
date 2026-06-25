@@ -1,5 +1,16 @@
+pub mod agent_frame_materialization;
+pub mod agent_run_surface;
 pub mod backend_transport;
 pub mod extension_runtime;
+pub mod frame_launch_envelope;
+pub mod lifecycle_materialization;
+pub mod lifecycle_surface_projection;
 pub mod mcp_discovery;
 pub mod runtime_gateway_mcp_surface;
+pub mod runtime_gateway_setup;
+pub mod runtime_session_delivery;
+pub mod runtime_session_live;
+pub mod runtime_surface_adoption;
 pub mod vfs_materialization;
+pub mod vfs_surface_runtime;
+pub mod workflow_graph_planning;

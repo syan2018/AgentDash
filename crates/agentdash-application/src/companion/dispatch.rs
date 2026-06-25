@@ -169,6 +169,7 @@ impl<'a> CompanionChildDispatchService<'a> {
         )
         .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
+        .with_frame_construction_port(self.repos.agent_frame_construction.as_ref())
     }
 
     async fn bind_selected_project_agent(

@@ -6,7 +6,7 @@
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use agentdash_application::vfs::selected_workspace_binding;
+use agentdash_application_vfs::selected_workspace_binding;
 use axum::Json;
 use axum::extract::{Query, State};
 use uuid::Uuid;
@@ -18,7 +18,7 @@ use crate::dto::{
     ReadFileRequest, ReadFileResponse, ReadFileResult,
 };
 use crate::rpc::ApiError;
-use agentdash_application::vfs::{ListOptions, ResourceRef};
+use agentdash_application_vfs::{ListOptions, ResourceRef};
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB

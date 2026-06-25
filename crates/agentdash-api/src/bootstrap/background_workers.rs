@@ -20,9 +20,9 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         }
     }
 
-    agentdash_application::session::stall_detector::spawn_stall_detector(
+    agentdash_application_runtime_session::session::stall_detector::spawn_stall_detector(
         state.services.session_runtime.clone(),
-        agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
+        agentdash_application_runtime_session::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
     );
 
     let routine_executor = Arc::new(RoutineExecutor::new(

@@ -6,8 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::agent_run::AgentRunPermissionRuntimeSurfaceUpdateService;
 use agentdash_application::permission::PermissionGrantService;
+use agentdash_application_agentrun::agent_run::AgentRunPermissionRuntimeSurfaceUpdateService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
     PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,

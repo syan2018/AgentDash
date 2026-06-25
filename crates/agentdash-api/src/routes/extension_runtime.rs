@@ -16,7 +16,6 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -25,12 +24,12 @@ use agentdash_application::extension_runtime::{
     UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
     uninstall_extension_installation,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
-    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
-    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
-    attach_extension_invocation_workspace,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult, RuntimeActionKey,
+    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
+    RuntimeTrace, attach_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
@@ -225,11 +224,9 @@ pub async fn invoke_project_extension_runtime_channel(
             },
         )
         .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
-    let invoker = ExtensionRuntimeChannelInvoker::new(
-        state.repos.project_extension_installation_repo.clone(),
-        state.services.backend_registry.clone(),
-    );
-    let result = invoker
+    let result = state
+        .services
+        .extension_runtime_channel_invoker
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
             session_id: session_id.to_string(),

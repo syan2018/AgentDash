@@ -40,7 +40,7 @@ use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
 use crate::shell_session_manager::ShellSessionManager;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::SessionRuntimeServices;
+use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
 
 /// 本机命令 router，只负责 relay envelope 分发。

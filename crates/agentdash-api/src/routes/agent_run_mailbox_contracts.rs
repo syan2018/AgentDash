@@ -1,4 +1,4 @@
-use agentdash_application::agent_run::{
+use agentdash_application_agentrun::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome,
     AgentRunMailboxCommandResult, workspace as app_workspace,
 };

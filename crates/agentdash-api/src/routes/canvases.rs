@@ -4,7 +4,6 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
-use agentdash_application::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasListScopeFilter, CanvasMutationInput,
     CanvasRuntimeBridgeSnapshot, CanvasRuntimeSnapshot, CanvasWithAccess, CopyCanvasInput,
@@ -19,7 +18,8 @@ use agentdash_application::extension_package::{
     StoreExtensionPackageArchiveInput, install_extension_package_artifact,
     store_extension_package_archive,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };

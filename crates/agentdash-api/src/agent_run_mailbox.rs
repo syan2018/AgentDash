@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 
-use agentdash_application::agent_run::{AgentRunMailboxScheduleTrigger, AgentRunMailboxService};
-use agentdash_application::lifecycle::WorkflowApplicationError;
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::{
-    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
-    SessionTerminalCallback,
+use agentdash_application_agentrun::agent_run::{
+    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
+    SessionCoreService, SessionEventingService, SessionLaunchService,
 };
+use agentdash_application_runtime_session::session::SessionTerminalCallback;
 
 #[derive(Clone)]
 pub(crate) struct AgentRunMailboxTerminalCallback {
@@ -52,7 +51,7 @@ impl AgentRunMailboxTerminalCallback {
     async fn schedule_turn_boundary(
         &self,
         session_id: &str,
-    ) -> Result<(), WorkflowApplicationError> {
+    ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
         let Some(anchor) = self
             .repos
             .execution_anchor_repo

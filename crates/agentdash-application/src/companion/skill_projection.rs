@@ -3,7 +3,6 @@ use agentdash_spi::Vfs;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::lifecycle::ActivityActivation;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_lifecycle_skill_asset_projection};
@@ -44,31 +43,6 @@ pub(crate) fn append_lifecycle_companion_system_projection(
         return false;
     }
     append_lifecycle_skill_asset_projection(vfs, project_id, skill_asset_keys)
-}
-
-pub(crate) async fn project_companion_system_skill_to_activation(
-    repos: &RepositorySet,
-    project_id: Uuid,
-    activation: &mut ActivityActivation,
-) -> Result<(), ApplicationError> {
-    ensure_companion_system_skill_asset(repos, project_id).await?;
-    let mut skill_asset_keys = Vec::new();
-    append_companion_system_skill_key(&mut skill_asset_keys);
-    append_lifecycle_companion_system_projection(
-        &mut activation.lifecycle_vfs,
-        project_id,
-        &skill_asset_keys,
-    );
-    if let Some(mount) = activation
-        .lifecycle_vfs
-        .mounts
-        .iter()
-        .find(|mount| mount.id == "lifecycle" && mount.provider == PROVIDER_LIFECYCLE_VFS)
-        .cloned()
-    {
-        activation.lifecycle_mount = mount;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

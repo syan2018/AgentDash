@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
+- **Total Sessions**: 33
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1170 | Active |
+| `journal-1.md` | ~1226 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-06-25 | Release application crate split | `e2aea00d`, `61e64204`, `47004415`, `6c6b1aa7`, `3ed3eab6`, `14fed2af`, `8cf26d6e`, `3f3525a5`, `868ac6b3`, `9317e30b`, `0a5c65ef`, `2ec19c89`, `a5fb8e34`, `fd2a0beb`, `f79621c1`, `feadae38`, `6dc0d7d4`, `193e2022`, `d84a0859`, `f0eb9138`, `94705c69`, `30b84a4e`, `a7cd0f2a`, `62f50704` | `codex/release-crate-split-refactor` |
 | 32 | 2026-06-25 | Agent Memory Discovery System | `a3804e86`, `1cdb1d70`, `68289460`, `fb3d8b07`, `b6c39c08`, `f5524659`, `24eb03e2` | `main` |
 | 31 | 2026-06-24 | Canvas 个人与项目共用分发权限系统 | `06fe5f4b6`, `2d6c93a95`, `630c93a80`, `7d2c9b154`, `137e76aeb`, `de6c05b9c`, `4c005c86d`, `dc94c5982`, `296d8face` | `codex/canvas-personal-shared-distribution-permission` |
 | 30 | 2026-06-24 | 会话事件仓储粒度收敛：delta ephemeral 化 + 终态承载 + suffix-only 读取 | `422f76dc0`, `4dab0e48c`, `55e43a113`, `15b376d16`, `b50ac3abc`, `06701c219` | `main` |

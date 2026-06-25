@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application_runtime_gateway::RuntimeGateway;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext};
 use async_trait::async_trait;
@@ -7,7 +8,6 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::agent_run::AgentRunRuntimeSurfaceUpdateService;
-use crate::runtime_gateway::RuntimeGateway;
 use crate::session::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionHookService,
     SessionLaunchService, SessionRuntimeTransitionService,

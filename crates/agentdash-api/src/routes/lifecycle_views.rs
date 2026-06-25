@@ -6,13 +6,13 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::agent_run::{
+use agentdash_application_agentrun::agent_run::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunRuntimeSurfaceQueryError, ConversationEffectiveExecutorConfigModel,
     ConversationModelConfigSourceModel, RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel,
     SessionRuntimeControlPlaneStatusModel,
 };
-use agentdash_application::lifecycle::run_view_builder::{
+use agentdash_application_lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
 use agentdash_contracts::workflow::{
@@ -75,7 +75,8 @@ pub async fn get_lifecycle_run_view(
     )
     .await?;
 
-    let view = run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &run).await?;
     Ok(Json(lifecycle_run_view_to_contract(view)))
 }
 
@@ -85,8 +86,9 @@ pub async fn get_subject_execution(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
     let view =
-        run_view_builder::build_subject_execution_view(&state.repos, subject.clone()).await?;
+        run_view_builder::build_subject_execution_view(&lifecycle_repos, subject.clone()).await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
@@ -144,7 +146,9 @@ pub async fn get_project_active_agents(
     )
     .await?;
 
-    let view = run_view_builder::build_project_active_agents_view(&state.repos, project_id).await?;
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let view =
+        run_view_builder::build_project_active_agents_view(&lifecycle_repos, project_id).await?;
     Ok(Json(project_active_agents_view_to_contract(view)))
 }
 
@@ -389,6 +393,7 @@ pub(crate) fn presentation_read_model_error_to_api(
                 ApiError::Internal(message)
             }
         },
+        AgentRunPresentationReadModelError::Application(error) => ApiError::from(error),
         AgentRunPresentationReadModelError::Domain(error) => ApiError::from(error),
         AgentRunPresentationReadModelError::SessionStore(error) => ApiError::from(error),
         AgentRunPresentationReadModelError::Io(error) => ApiError::Internal(format!(

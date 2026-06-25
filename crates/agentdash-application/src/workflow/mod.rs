@@ -1,5 +1,6 @@
 mod catalog;
 mod definition;
+mod graph_planner;
 pub mod graph_resolver;
 pub mod orchestration;
 pub mod script;
@@ -13,6 +14,7 @@ pub use definition::{
     BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
     get_builtin_workflow_template, list_builtin_workflow_templates,
 };
+pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use orchestration::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,

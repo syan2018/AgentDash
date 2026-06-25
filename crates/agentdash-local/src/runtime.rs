@@ -4,7 +4,9 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application::session::{SessionExecutionState, SessionRuntimeServices};
+use agentdash_application_runtime_session::session::{
+    SessionExecutionState, SessionRuntimeServices,
+};
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::PostgresSessionRepository;

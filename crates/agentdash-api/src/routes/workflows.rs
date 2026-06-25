@@ -17,13 +17,13 @@ use agentdash_application::capability::tool_catalog::{
     ToolCatalogSource as ApplicationToolCatalogSource,
 };
 use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::lifecycle::{
-    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
-    run_view_builder,
-};
 use agentdash_application::workflow::{
     ActivityLifecycleCatalogService, OrchestrationExecutorLauncher, ScriptCompiler,
     SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
+};
+use agentdash_application_lifecycle::{
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    run_view_builder,
 };
 use agentdash_contracts::workflow::{
     AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
@@ -56,7 +56,7 @@ use crate::dto::{
     ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
-use agentdash_application::session::context::normalize_string;
+use agentdash_application_runtime_session::session::context::normalize_string;
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
@@ -539,9 +539,10 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
     let launcher = OrchestrationExecutorLauncher::new_with_platform_config(
-        state.repos.clone(),
-        state.config.platform_config.clone(),
+        lifecycle_repos.clone(),
+        lifecycle_platform_config(&state),
     )
     .with_function_runner(state.services.function_runner.clone());
     let result = launcher
@@ -556,7 +557,7 @@ pub async fn submit_orchestration_human_decision(
                 .unwrap_or_else(|| current_user.user_id.to_string()),
         })
         .await?;
-    let view = run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &result.run).await?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
         run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),
@@ -856,15 +857,27 @@ async fn lifecycle_run_to_contract_view(
     state: &Arc<AppState>,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, ApiError> {
-    run_view_builder::build_lifecycle_run_view(&state.repos, run)
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    run_view_builder::build_lifecycle_run_view(&lifecycle_repos, run)
         .await
         .map(lifecycle_run_view_to_contract)
         .map_err(ApiError::from)
 }
 
 fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {
-    LifecycleRunCommandService::new(state.repos.clone(), state.config.platform_config.clone())
-        .with_function_runner(state.services.function_runner.clone())
+    LifecycleRunCommandService::new(
+        state.repos.to_lifecycle_repository_set(),
+        lifecycle_platform_config(state),
+    )
+    .with_function_runner(state.services.function_runner.clone())
+}
+
+fn lifecycle_platform_config(
+    state: &Arc<AppState>,
+) -> agentdash_application_lifecycle::SharedPlatformConfig {
+    Arc::new(agentdash_application_lifecycle::PlatformConfig {
+        mcp_base_url: state.config.platform_config.mcp_base_url.clone(),
+    })
 }
 
 async fn continue_lifecycle_run_result_to_contract(

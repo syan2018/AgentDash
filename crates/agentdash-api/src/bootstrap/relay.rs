@@ -11,7 +11,8 @@ pub(crate) struct RelayBootstrapOutput {
     pub setup_action_transport:
         Arc<dyn agentdash_application_ports::backend_transport::BackendTransport>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
-    pub terminal_cache: Arc<agentdash_application::session::terminal_cache::SessionTerminalCache>,
+    pub terminal_cache:
+        Arc<agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache>,
 }
 
 pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutput {
@@ -23,7 +24,7 @@ pub(crate) fn build_relay_runtime(channel_capacity: usize) -> RelayBootstrapOutp
     > = backend_registry.clone();
     let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
     let terminal_cache =
-        agentdash_application::session::terminal_cache::SessionTerminalCache::new();
+        agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache::new();
 
     RelayBootstrapOutput {
         backend_registry,

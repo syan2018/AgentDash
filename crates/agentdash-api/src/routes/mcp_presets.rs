@@ -13,7 +13,7 @@ use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
     UpdateMcpPresetInput,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_runtime_gateway::{
     MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, RuntimeActionKey, RuntimeActor,
     RuntimeContext, RuntimeInvocationRequest,
 };

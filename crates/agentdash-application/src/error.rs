@@ -51,6 +51,54 @@ impl From<ConnectorError> for ApplicationError {
     }
 }
 
+impl From<agentdash_application_agentrun::ApplicationError> for ApplicationError {
+    fn from(error: agentdash_application_agentrun::ApplicationError) -> Self {
+        match error {
+            agentdash_application_agentrun::ApplicationError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_application_agentrun::ApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Forbidden(message) => {
+                Self::Forbidden(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_application_agentrun::ApplicationError::InvalidConfig(message) => {
+                Self::InvalidConfig(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Unavailable(message) => {
+                Self::Unavailable(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
+impl From<agentdash_application_lifecycle::WorkflowApplicationError> for ApplicationError {
+    fn from(error: agentdash_application_lifecycle::WorkflowApplicationError) -> Self {
+        match error {
+            agentdash_application_lifecycle::WorkflowApplicationError::BadRequest(message)
+            | agentdash_application_lifecycle::WorkflowApplicationError::ModelRequired(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
         tracing::error!(error = %error, "application IO error");

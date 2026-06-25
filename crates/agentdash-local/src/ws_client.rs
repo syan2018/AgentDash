@@ -16,7 +16,7 @@ use crate::handlers::LocalCommandRouter;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::SessionRuntimeServices;
+use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 use agentdash_spi::AgentConnector;
 

@@ -13,8 +13,8 @@ pub use agentdash_contracts::vfs::{
 
 pub fn surface_source_to_application(
     source: &ResolvedVfsSurfaceSource,
-) -> Result<agentdash_application::vfs::ResolvedVfsSurfaceSource, String> {
-    use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppSource;
+) -> Result<agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource, String> {
+    use agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource as AppSource;
 
     match source {
         ResolvedVfsSurfaceSource::ProjectPreview { project_id } => Ok(AppSource::ProjectPreview {
@@ -64,9 +64,9 @@ pub fn surface_source_to_application(
 }
 
 pub fn surface_source_from_application(
-    source: agentdash_application::vfs::ResolvedVfsSurfaceSource,
+    source: agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource,
 ) -> ResolvedVfsSurfaceSource {
-    use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppSource;
+    use agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource as AppSource;
 
     match source {
         AppSource::ProjectPreview { project_id } => ResolvedVfsSurfaceSource::ProjectPreview {
@@ -116,7 +116,7 @@ pub fn surface_source_from_application(
 }
 
 pub fn surface_from_application(
-    surface: agentdash_application::vfs::ResolvedVfsSurface,
+    surface: agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurface,
 ) -> ResolvedVfsSurface {
     ResolvedVfsSurface {
         surface_ref: surface.surface_ref,
@@ -131,7 +131,7 @@ pub fn surface_from_application(
 }
 
 fn mount_summary_from_application(
-    mount: agentdash_application::vfs::ResolvedMountSummary,
+    mount: agentdash_application_ports::vfs_surface_runtime::ResolvedMountSummary,
 ) -> ResolvedMountSummary {
     ResolvedMountSummary {
         id: mount.id,
@@ -152,9 +152,9 @@ fn mount_summary_from_application(
 }
 
 fn mount_purpose_from_application(
-    purpose: agentdash_application::vfs::ResolvedMountPurpose,
+    purpose: agentdash_application_ports::vfs_surface_runtime::ResolvedMountPurpose,
 ) -> ResolvedMountPurpose {
-    use agentdash_application::vfs::ResolvedMountPurpose as AppPurpose;
+    use agentdash_application_ports::vfs_surface_runtime::ResolvedMountPurpose as AppPurpose;
 
     match purpose {
         AppPurpose::Workspace => ResolvedMountPurpose::Workspace,

@@ -7,9 +7,8 @@ use agentdash_domain::canvas::{Canvas, CanvasRepository, CanvasScope};
 use agentdash_domain::project::ProjectAuthorization;
 use agentdash_spi::{AuthIdentity, Vfs};
 
-use crate::canvas::canvas_access_projection;
+use crate::canvas::{CanvasMountAccess, append_canvas_mount, canvas_access_projection};
 use crate::project::project_authorization_context_from_identity;
-use crate::vfs::{CanvasMountAccess, append_canvas_mount};
 
 pub fn canvas_runtime_mount_access(
     canvas: &Canvas,

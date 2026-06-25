@@ -1,7 +1,7 @@
 # Execution Hook Runtime
 
 > AgentDash Hook Runtime 的跨层执行契约。
-> 实现细节直接查代码：`application::hooks`、`agentdash-spi::hooks`、`agentdash-agent-types` delegate。
+> 实现细节直接查代码：`agentdash-application-hooks`、`agentdash-spi::hooks`、`agentdash-agent-types` delegate。
 
 ---
 
@@ -25,7 +25,7 @@ AgentRuntimeDelegate（agent loop 边界同步消费）
 |-------|------|--------|
 | `agentdash-agent` | 只依赖 `AgentRuntimeDelegate`，在 loop 边界 await | 查询 workflow/task/story/project/repo |
 | `agentdash-executor` | 持有 `AgentFrameHookRuntime`，缓存 snapshot，适配为 delegate | 直接实现业务解析逻辑 |
-| `agentdash-application::hooks` | 实现 `ExecutionHookProvider`，从业务对象解析 Hook 信息 | — |
+| `agentdash-application-hooks` | 实现 `ExecutionHookProvider`，从业务 projection/effect port 与 hook SPI 解析 Hook 信息 | — |
 | `agentdash-api` | HTTP surface `/api/sessions/{id}/hook-runtime` | 持有 hook 解析逻辑 |
 
 ---

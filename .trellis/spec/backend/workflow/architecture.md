@@ -81,8 +81,8 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `workflow/frame_construction/owner_bootstrap.rs` | Project / Story / Routine owner surface composition，产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile |
 | `agentdash-spi::workflow::script` | Workflow script evaluator port；application 只消费脚本校验与 builder document 输出，不依赖具体脚本引擎 |
 | `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
-| `agentdash-application::workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
-| `agentdash-application::workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
+| `agentdash-application-workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
+| `agentdash-application-workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
 
 ## Local Decisions
 
@@ -384,7 +384,7 @@ dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun w
 ### 1. Scope / Trigger
 
 - Trigger: 新增或修改 workflow script builder helper、`WorkflowScriptEvaluator` SPI、typed builder document、preflight API，或 workflow script 到 OrchestrationPlan compiler 的映射。
-- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application::workflow::script`、`agentdash-application::workflow::orchestration::ScriptCompiler`、`/api/workflow-scripts/preflight`。
+- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application-workflow::script`、`agentdash-application-workflow::orchestration::ScriptCompiler`、`/api/workflow-scripts/preflight`。
 
 ### 2. Signatures
 
@@ -491,7 +491,7 @@ RhaiWorkflowScriptEvaluator -> OrchestrationPlanSnapshot
 
 ```text
 RhaiWorkflowScriptEvaluator -> builder document JSON
-  -> agentdash-application::workflow::script typed builder document
+  -> agentdash-application-workflow::script typed builder document
   -> ScriptCompiler -> OrchestrationPlanSnapshot
 ```
 

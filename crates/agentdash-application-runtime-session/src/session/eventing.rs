@@ -1471,7 +1471,7 @@ fn backbone_event_type_name_for_guard(event: &BackboneEvent) -> &'static str {
     }
 }
 
-/// 进度态事件分类：仅这 7 类为 ephemeral（不入 durable session_events，仅 live 广播）。
+/// 进度态事件分类：仅这些类为 ephemeral（不入 durable session_events，仅 live 广播）。
 /// 其余一律 durable（白名单 durable、默认 durable）。
 fn is_ephemeral_event(event: &BackboneEvent) -> bool {
     matches!(
@@ -1483,6 +1483,7 @@ fn is_ephemeral_event(event: &BackboneEvent) -> bool {
             | BackboneEvent::FileChangeDelta(_)
             | BackboneEvent::McpToolCallProgress(_)
             | BackboneEvent::ItemUpdated(_)
+            | BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(_))
     )
 }
 
@@ -2503,6 +2504,70 @@ mod tests {
         assert!(received.ephemeral);
         assert_eq!(received.event_seq, 1);
         assert_eq!(received.session_update_type, "agent_message_delta");
+    }
+
+    #[tokio::test]
+    async fn provider_attempt_status_is_live_only() {
+        let session_id = "sess-ephemeral-provider-status";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+        let mut rx = service.ensure_session(session_id).await;
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                BackboneEnvelope::new(
+                    BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(
+                        agentdash_agent_protocol::ProviderAttemptStatus {
+                            turn_id: "turn-provider".to_string(),
+                            phase: agentdash_agent_protocol::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+                            attempt: 1,
+                            max_attempts: 3,
+                            will_retry: false,
+                            delay_ms: None,
+                            reason_code: None,
+                            message: None,
+                            provider: None,
+                            model: None,
+                        },
+                    )),
+                    session_id,
+                    test_source_info(),
+                )
+                .with_trace(TraceInfo {
+                    turn_id: Some("turn-provider".to_string()),
+                    entry_index: None,
+                }),
+            )
+            .await
+            .expect("persist provider status");
+
+        assert!(persisted.ephemeral);
+        assert_eq!(persisted.event_seq, 1);
+        assert_eq!(persisted.session_update_type, "provider_attempt_status");
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert!(backlog.backlog.is_empty());
+        assert_eq!(backlog.ephemeral_backlog.len(), 1);
+        assert_eq!(
+            backlog.ephemeral_backlog[0].session_update_type,
+            "provider_attempt_status"
+        );
+
+        let received = rx
+            .try_recv()
+            .expect("broadcast provider attempt status to subscriber");
+        assert!(received.ephemeral);
+        assert_eq!(received.session_update_type, "provider_attempt_status");
     }
 
     #[tokio::test]

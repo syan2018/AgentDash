@@ -2,7 +2,8 @@
  * 会话流管理 Hook
  *
  * 先从数据库历史事件 hydrate，再连接增量流。
- * `rawEvents` 才是事实源；`entries` 只是基于事件流派生出来的显示状态。
+ * `rawEvents` 承载 durable 历史事实；live-only provider waiting 状态由 stream state 单独承载。
+ * `entries` 是基于事件流派生出来的显示状态。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +39,7 @@ export interface UseSessionStreamOptions {
 export interface UseSessionStreamResult {
   entries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
+  providerWaitingSeqs: ReadonlyMap<string, number>;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -321,6 +323,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   return {
     entries: streamState.entries,
     rawEvents: streamState.rawEvents,
+    providerWaitingSeqs: streamState.providerWaitingSeqs,
     isConnected,
     isLoading,
     isReceiving,

@@ -14,6 +14,7 @@ export interface SessionStreamState {
   entries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
+  providerWaitingSeqs: ReadonlyMap<string, number>;
   lastAppliedSeq: number;
   /**
    * 最近应用的 ephemeral 事件的 ephemeral_seq（承载于 event.event_seq）。
@@ -31,6 +32,7 @@ export function createInitialStreamState(initialEntries: SessionDisplayEntry[]):
     entries: initialEntries,
     rawEvents: [],
     tokenUsage: null,
+    providerWaitingSeqs: new Map(),
     lastAppliedSeq,
     lastEphemeralSeq: 0,
   };
@@ -165,6 +167,82 @@ function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
 
 function isWillRetryErrorEvent(event: BackboneEvent): boolean {
   return event.type === "error" && event.payload.willRetry === true;
+}
+
+function readStringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function eventTurnId(event: SessionEventEnvelope): string | undefined {
+  return event.turn_id ?? event.notification.trace.turnId ?? undefined;
+}
+
+function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
+  const bbEvent = event.notification.event;
+  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
+    return null;
+  }
+
+  const platform: Record<string, unknown> = bbEvent.payload;
+  const kind = readStringField(platform, "kind");
+  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
+    return null;
+  }
+
+  const phase = readStringField(platform.data, "phase");
+  if (!phase) {
+    return null;
+  }
+
+  return {
+    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
+    phase,
+  };
+}
+
+function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
+  const bbEvent = event.notification.event;
+  if (bbEvent.type === "turn_completed") {
+    return bbEvent.payload.turn.id;
+  }
+
+  if (
+    bbEvent.type !== "platform" ||
+    bbEvent.payload.kind !== "session_meta_update" ||
+    bbEvent.payload.data.key !== "turn_terminal" ||
+    !isRecord(bbEvent.payload.data.value)
+  ) {
+    return null;
+  }
+
+  return readStringField(bbEvent.payload.data.value, "turn_id") ?? eventTurnId(event) ?? null;
+}
+
+function updateProviderWaitingSeqs(
+  current: ReadonlyMap<string, number>,
+  event: SessionEventEnvelope,
+): ReadonlyMap<string, number> {
+  const terminalTurnId = extractTerminalTurnId(event);
+  if (terminalTurnId) {
+    if (!current.has(terminalTurnId)) return current;
+    const next = new Map(current);
+    next.delete(terminalTurnId);
+    return next;
+  }
+
+  const status = extractProviderAttemptStatus(event);
+  if (!status?.turnId) {
+    return current;
+  }
+
+  const next = new Map(current);
+  if (status.phase === "connected_waiting_first_delta") {
+    next.set(status.turnId, event.event_seq);
+  } else {
+    next.delete(status.turnId);
+  }
+  return next;
 }
 
 function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
@@ -504,6 +582,10 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
+    if (platform.kind === "provider_attempt_status") {
+      return prev;
+    }
+
     if (platform.kind === "terminal_output" || platform.kind === "terminal_state_changed") {
       return prev;
     }
@@ -560,6 +642,7 @@ export function reduceStreamState(
   let entries = prev.entries;
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
+  let providerWaitingSeqs = prev.providerWaitingSeqs;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
@@ -570,6 +653,7 @@ export function reduceStreamState(
       if (event.event_seq <= lastEphemeralSeq) {
         continue;
       }
+      providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
       entries = applyEventToEntries(entries, event);
       lastEphemeralSeq = event.event_seq;
       continue;
@@ -580,6 +664,7 @@ export function reduceStreamState(
     }
 
     rawEvents = [...rawEvents, event];
+    providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
     entries = applyEventToEntries(entries, event);
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {
@@ -592,6 +677,7 @@ export function reduceStreamState(
     entries,
     rawEvents,
     tokenUsage,
+    providerWaitingSeqs,
     lastAppliedSeq,
     lastEphemeralSeq,
   };
@@ -601,13 +687,14 @@ export function reduceStreamState(
  * 重置 ephemeral 去重游标（后端进程重启 / epoch 变化时调用）。
  * 后端重启后 ephemeral_seq 从 0 重来，旧 state 的高位 lastEphemeralSeq 会误跳过新 turn 的
  * live delta；epoch 变化时把游标归零，使新 epoch 的 ephemeral 流从头应用。
- * 仅动 lastEphemeralSeq，不触碰已累积的 entries / rawEvents / durable 游标。
+ * 同时清掉 live-only provider waiting 状态，避免后端重启后保留旧连接过程提示。
+ * 不触碰已累积的 entries / rawEvents / durable 游标。
  */
 export function resetEphemeralCursor(prev: SessionStreamState): SessionStreamState {
-  if (prev.lastEphemeralSeq === 0) {
+  if (prev.lastEphemeralSeq === 0 && prev.providerWaitingSeqs.size === 0) {
     return prev;
   }
-  return { ...prev, lastEphemeralSeq: 0 };
+  return { ...prev, providerWaitingSeqs: new Map(), lastEphemeralSeq: 0 };
 }
 
 export function shouldFlushStreamEventImmediately(event: SessionEventEnvelope): boolean {

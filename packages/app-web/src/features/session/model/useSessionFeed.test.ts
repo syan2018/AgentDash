@@ -384,6 +384,10 @@ function isThinkingGroup(item: unknown): item is AggregatedThinkingGroup {
   return (item as AggregatedThinkingGroup)?.type === "aggregated_thinking";
 }
 
+function providerWaitingSeqs(eventSeq: number, turnId = "u1"): ReadonlyMap<string, number> {
+  return new Map([[turnId, eventSeq]]);
+}
+
 describe("aggregateEntries — tool burst", () => {
   it("T1: 5 connected commands fold into one tool_burst unit", () => {
     const entries = [
@@ -818,9 +822,7 @@ describe("aggregateEntries — tool burst", () => {
   });
 
   it("T27: provider waiting creates a streaming thinking card without reasoning text", () => {
-    const display = mergeThinkingIntoDisplayItems([], [
-      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems([], providerWaitingSeqs(2));
 
     expect(display).toHaveLength(1);
     expect(isThinkingGroup(display[0])).toBe(true);
@@ -832,9 +834,7 @@ describe("aggregateEntries — tool burst", () => {
 
   it("T27b: provider waiting placeholder is anchored after the user input", () => {
     const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), [
-      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), providerWaitingSeqs(2));
 
     expect(display).toHaveLength(2);
     expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
@@ -847,9 +847,7 @@ describe("aggregateEntries — tool burst", () => {
   it("T27c: provider waiting placeholder follows the latest visible item in the turn", () => {
     const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
     const tool = mkCmdEntry("c1", "ls", { status: "inProgress" });
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user, tool]), [
-      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user, tool]), providerWaitingSeqs(2));
 
     expect(display).toHaveLength(3);
     expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
@@ -862,9 +860,7 @@ describe("aggregateEntries — tool burst", () => {
 
   it("T28: provider waiting merges with reasoning into one streaming thinking card", () => {
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning]), [
-      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning]), providerWaitingSeqs(1));
 
     expect(display).toHaveLength(1);
     expect(isThinkingGroup(display[0])).toBe(true);
@@ -875,9 +871,7 @@ describe("aggregateEntries — tool burst", () => {
 
   it("T29: agent message removes empty provider thinking placeholder", () => {
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), [
-      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([agent]), providerWaitingSeqs(1));
 
     expect(display).toHaveLength(1);
     expect(isThinkingGroup(display[0])).toBe(false);
@@ -887,9 +881,7 @@ describe("aggregateEntries — tool burst", () => {
   it("T30: reasoning stays as historical thinking once agent message arrives", () => {
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), [
-      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning, agent]), providerWaitingSeqs(1));
 
     expect(display).toHaveLength(2);
     expect(isThinkingGroup(display[0])).toBe(true);
@@ -903,9 +895,10 @@ describe("aggregateEntries — tool burst", () => {
     const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
     const agent = mkMessageEntry("m1", "正式输出");
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user, reasoning, agent]), [
-      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(
+      aggregateEntries([user, reasoning, agent]),
+      providerWaitingSeqs(2),
+    );
 
     expect(display).toHaveLength(3);
     expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
@@ -933,20 +926,14 @@ describe("aggregateEntries — tool burst", () => {
   });
 
   it("T32: later provider status clears waiting thinking placeholder", () => {
-    const display = mergeThinkingIntoDisplayItems([], [
-      rawProviderAttemptStatus(1, { phase: "connected_waiting_first_delta" }),
-      rawProviderAttemptStatus(2, { phase: "succeeded" }),
-    ]);
+    const display = mergeThinkingIntoDisplayItems([], new Map());
 
     expect(display).toHaveLength(0);
   });
 
   it("T32b: turn terminal clears empty provider waiting placeholder even without provider succeeded", () => {
     const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
-    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), [
-      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
-      rawTurnCompleted(3, "completed", 1_000),
-    ]);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), new Map());
 
     expect(display).toHaveLength(1);
     expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
@@ -960,7 +947,7 @@ describe("aggregateEntries — tool burst", () => {
     const agent = mkMessageEntry("m1", "正式输出");
     agent.eventSeq = 101;
 
-    const display = mergeThinkingIntoDisplayItems([tool, reasoning, agent], []);
+    const display = mergeThinkingIntoDisplayItems([tool, reasoning, agent], new Map());
 
     expect(display).toHaveLength(3);
     expect((display[0] as SessionDisplayEntry).id).toBe("c1");

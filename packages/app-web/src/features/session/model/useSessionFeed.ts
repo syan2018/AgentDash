@@ -327,28 +327,6 @@ function markLiveInsertionIndex(
   }
 }
 
-function extractProviderWaitingSeqs(rawEvents: SessionEventEnvelope[]): Map<string, number> {
-  const result = new Map<string, number>();
-  for (const event of [...rawEvents].sort((a, b) => a.event_seq - b.event_seq)) {
-    const terminal = extractTurnTerminalMeta(event);
-    if (terminal) {
-      result.delete(terminal.turnId);
-      continue;
-    }
-
-    const status = extractProviderAttemptStatus(event);
-    if (!status?.turnId) {
-      continue;
-    }
-    if (status.phase === "connected_waiting_first_delta") {
-      result.set(status.turnId, event.event_seq);
-    } else {
-      result.delete(status.turnId);
-    }
-  }
-  return result;
-}
-
 function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup | null {
   const hasThinkingText = state.entries.length > 0;
   const isStreamingThinking = state.waitingSeq != null && !state.hasAgentMessage;
@@ -372,15 +350,14 @@ function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup 
 
 function mergeThinkingIntoDisplayItems(
   displayItems: SessionDisplayItem[],
-  rawEvents: SessionEventEnvelope[],
+  providerWaitingSeqs: ReadonlyMap<string, number>,
 ): SessionDisplayItem[] {
-  const waitingSeqs = extractProviderWaitingSeqs(rawEvents);
-  if (displayItems.length === 0 && waitingSeqs.size === 0) {
+  if (displayItems.length === 0 && providerWaitingSeqs.size === 0) {
     return displayItems;
   }
 
   const thinkingStates = new Map<string, TurnThinkingState>();
-  for (const [turnId, waitingSeq] of waitingSeqs.entries()) {
+  for (const [turnId, waitingSeq] of providerWaitingSeqs.entries()) {
     const state = ensureTurnThinkingState(thinkingStates, turnId, waitingSeq);
     state.waitingSeq = waitingSeq;
   }
@@ -608,21 +585,6 @@ interface TurnMeta {
   activity?: TurnActivityStatus;
 }
 
-interface ProviderAttemptStatusPayload {
-  turnId?: string;
-  phase: string;
-  attempt?: number;
-  maxAttempts?: number;
-  willRetry?: boolean;
-  message?: string;
-}
-
-const PROVIDER_STATUS_META_KEYS = new Set([
-  "provider_attempt_status",
-  "provider_retry",
-  "provider_status",
-]);
-
 function readStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
@@ -641,11 +603,6 @@ function readNumberField(record: Record<string, unknown>, key: string): number |
     return Number(value);
   }
   return undefined;
-}
-
-function readBooleanField(record: Record<string, unknown>, key: string): boolean | undefined {
-  const value = record[key];
-  return typeof value === "boolean" ? value : undefined;
 }
 
 function eventTurnId(event: SessionEventEnvelope): string | undefined {
@@ -726,54 +683,6 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
     turnId,
     status,
     durationMs: readNumberField(value, "duration_ms"),
-  };
-}
-
-function extractProviderAttemptStatus(event: SessionEventEnvelope): ProviderAttemptStatusPayload | null {
-  const bbEvent = event.notification.event;
-  if (bbEvent.type === "error" && bbEvent.payload.willRetry) {
-    return {
-      turnId: bbEvent.payload.turnId || eventTurnId(event),
-      phase: "retrying",
-      willRetry: true,
-      message: bbEvent.payload.error.message,
-    };
-  }
-
-  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
-    return null;
-  }
-
-  const platform: Record<string, unknown> = bbEvent.payload;
-  const kind = readStringField(platform, "kind");
-  let data: Record<string, unknown> | null = null;
-
-  if (kind === "provider_attempt_status") {
-    data = isRecord(platform.data) ? platform.data : null;
-  } else if (kind === "session_meta_update" && isRecord(platform.data)) {
-    const metaData = platform.data;
-    const key = readStringField(metaData, "key");
-    if (key && PROVIDER_STATUS_META_KEYS.has(key) && isRecord(metaData.value)) {
-      data = metaData.value;
-    }
-  }
-
-  if (!data) {
-    return null;
-  }
-
-  const phase = readStringField(data, "phase");
-  if (!phase) {
-    return null;
-  }
-
-  return {
-    turnId: readStringField(data, "turn_id") ?? eventTurnId(event),
-    phase,
-    attempt: readNumberField(data, "attempt"),
-    maxAttempts: readNumberField(data, "max_attempts"),
-    willRetry: readBooleanField(data, "will_retry"),
-    message: readStringField(data, "message"),
   };
 }
 
@@ -896,6 +805,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   const {
     entries,
     rawEvents,
+    providerWaitingSeqs,
     isConnected,
     isLoading,
     isReceiving,
@@ -915,9 +825,9 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
       ? aggregateEntries(entries, { includeVerboseEvents: prefs.hookVerbose })
       : (entries as SessionDisplayItem[]);
     return enableAggregation
-      ? mergeThinkingIntoDisplayItems(baseDisplayItems, rawEvents)
+      ? mergeThinkingIntoDisplayItems(baseDisplayItems, providerWaitingSeqs)
       : baseDisplayItems;
-  }, [entries, rawEvents, enableAggregation, prefs.hookVerbose]);
+  }, [entries, providerWaitingSeqs, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
     () => segmentByTurn(displayItems, rawEvents),

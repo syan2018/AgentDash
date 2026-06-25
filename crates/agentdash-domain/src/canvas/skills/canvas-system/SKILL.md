@@ -62,9 +62,19 @@ Read `references/runtime-bridge.md` when Canvas source needs:
 - `window.agentdash.invoke(...)` session runtime actions.
 - `window.agentdash.assets.url(...)` VFS image rendering.
 - `window.agentdash.interaction.*` to expose Agent-visible form, selection, filter, or recent-event state.
-- `window.agentdash.agent.submit(...)` to submit an explicit Canvas user action to the current AgentRun mailbox.
-- MCP runtime action input/output shapes.
-- Browser-side boundaries for tokens, backend ids, relay commands, and arbitrary HTTP calls.
+- `window.agentdash.agent.submit(...)` to submit structured user feedback or follow-up context from Canvas to the current AgentRun mailbox.
+- Agent-side Canvas module operations and URI boundaries.
+
+`runtime-bridge.md` routes to focused references for RuntimeGateway actions, VFS image assets, interaction state, submit-to-Agent, and Agent-side interfaces.
+
+## References
+
+- If you need to choose which Canvas bridge path fits the task, read `references/runtime-bridge.md` first; it maps user intent to the focused references below.
+- If a Canvas button should call a tool/runtime capability and show the result inside the Canvas, read `references/runtime-actions.md`, then call `window.agentdash.invoke(...)` from the click/submit handler.
+- If the Canvas needs to render images stored in session VFS mounts, read `references/vfs-assets.md`, then resolve image URLs through `window.agentdash.assets.url(...)` instead of putting mount URIs directly in `src`.
+- If the Agent should understand the user's current selection, form values, filters, or recent UI actions, read `references/interaction-state.md`, then publish compact semantic state with `window.agentdash.interaction.setState/emit`.
+- If Canvas UI should let the user submit structured feedback, a decision, or follow-up context from the current surface, read `references/agent-submit.md`, then call `window.agentdash.agent.submit(...)` and include interaction/render facts only when they matter.
+- If you are operating from the Agent side rather than writing iframe code, read `references/agent-side-interfaces.md`, then use workspace module operations for create/copy/attach, bind, diagnose, and present.
 
 ## Quality Rules
 

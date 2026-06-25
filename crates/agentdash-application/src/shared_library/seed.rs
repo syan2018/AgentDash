@@ -36,7 +36,7 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,
         key: "canvas-system",
-        version: "1.0.9",
+        version: "1.0.10",
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,

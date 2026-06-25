@@ -9,6 +9,16 @@ pub const CANVAS_SYSTEM_SKILL_NAME: &str = "canvas-system";
 const CANVAS_SYSTEM_SKILL_CONTENT: &str = include_str!("skills/canvas-system/SKILL.md");
 const CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT: &str =
     include_str!("skills/canvas-system/references/runtime-bridge.md");
+const CANVAS_SYSTEM_RUNTIME_ACTIONS_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/runtime-actions.md");
+const CANVAS_SYSTEM_VFS_ASSETS_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/vfs-assets.md");
+const CANVAS_SYSTEM_INTERACTION_STATE_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/interaction-state.md");
+const CANVAS_SYSTEM_AGENT_SUBMIT_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/agent-submit.md");
+const CANVAS_SYSTEM_AGENT_SIDE_INTERFACES_REFERENCE_CONTENT: &str =
+    include_str!("skills/canvas-system/references/agent-side-interfaces.md");
 const CANVAS_SYSTEM_BUNDLE_FILES: &[EmbeddedSkillFile] = &[
     EmbeddedSkillFile {
         relative_path: "SKILL.md",
@@ -18,6 +28,31 @@ const CANVAS_SYSTEM_BUNDLE_FILES: &[EmbeddedSkillFile] = &[
     EmbeddedSkillFile {
         relative_path: "references/runtime-bridge.md",
         content: CANVAS_SYSTEM_RUNTIME_BRIDGE_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/runtime-actions.md",
+        content: CANVAS_SYSTEM_RUNTIME_ACTIONS_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/vfs-assets.md",
+        content: CANVAS_SYSTEM_VFS_ASSETS_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/interaction-state.md",
+        content: CANVAS_SYSTEM_INTERACTION_STATE_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/agent-submit.md",
+        content: CANVAS_SYSTEM_AGENT_SUBMIT_REFERENCE_CONTENT,
+        kind: EmbeddedSkillFileKind::Reference,
+    },
+    EmbeddedSkillFile {
+        relative_path: "references/agent-side-interfaces.md",
+        content: CANVAS_SYSTEM_AGENT_SIDE_INTERFACES_REFERENCE_CONTENT,
         kind: EmbeddedSkillFileKind::Reference,
     },
 ];

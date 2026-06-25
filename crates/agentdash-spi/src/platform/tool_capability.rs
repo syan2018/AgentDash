@@ -363,7 +363,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform(
             "workspace_module_operate",
             "Operate Workspace Module",
-            "执行 workspace module 平台操作；Canvas 使用 operation=canvas.create_personal/attach_existing/copy_to_personal 后返回 canvas:{canvas_mount_id}",
+            "执行 workspace module 平台操作；Canvas 使用 operation=canvas.create/canvas.attach/canvas.copy 后返回 canvas:{canvas_mount_id}",
             ToolCluster::WorkspaceModule,
             CAP_WORKSPACE_MODULE,
         ),

@@ -38,11 +38,12 @@ pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
         delivery_runtime_session_id: &str,
     ) -> Result<AgentRunEffectiveCapabilityView, String>;
 
-    async fn expose_canvas_mount_to_agent_run(
+    async fn apply_canvas_runtime_surface_update_to_agent_run(
         &self,
         delivery_runtime_session_id: &str,
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
+        request: RuntimeSurfaceUpdateRequest,
     ) -> Result<Vfs, String>;
 
     async fn inject_agent_run_notification(
@@ -187,7 +188,12 @@ pub async fn submit_canvas_runtime_surface_update(
         ))
     })?;
     let active_vfs = bridge
-        .expose_canvas_mount_to_agent_run(delivery_runtime_session_id, canvas, current_user)
+        .apply_canvas_runtime_surface_update_to_agent_run(
+            delivery_runtime_session_id,
+            canvas,
+            current_user,
+            request.clone(),
+        )
         .await
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!(
@@ -230,7 +236,9 @@ fn ensure_canvas_surface_request_targets_canvas(
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
     let canvas_mount_id = match request {
-        RuntimeSurfaceUpdateRequest::CanvasBindingChanged { canvas_mount_id }
+        RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+            canvas_mount_id, ..
+        }
         | RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
             canvas_mount_id, ..
         } => canvas_mount_id,

@@ -307,7 +307,7 @@ import type {
 
 ### 2. Signatures
 
-- `workspace_module_operate(operation="canvas.create_personal" | "canvas.attach_existing" | "canvas.copy_to_personal", input={...}) -> WorkspaceModuleDescriptor`
+- `workspace_module_operate(operation="canvas.create" | "canvas.attach" | "canvas.copy", input={...}) -> WorkspaceModuleDescriptor`
 - `workspace_module_describe(module_id: string) -> WorkspaceModuleDescriptor`
 - `workspace_module_invoke(module_id: string, operation_key: string, input: unknown) -> operation result`
 - `workspace_module_present(module_id: string, view_key: string) -> workspace_module_presented event`
@@ -546,7 +546,7 @@ pub struct CanvasResponse {
 - API tests assert scope query parsing, response mapping, personal delete vs shared unpublish decision, and Canvas effective access for update/get/by-mount/runtime routes.
 - Application tests assert publish/copy/unpublish deep-copy lineage and access projection.
 - VFS tests assert writable personal Canvas includes `write`, read-only project shared Canvas omits `write`, and provider write/delete/rename reject read-only mounts.
-- WorkspaceModule tests assert personal owner descriptor exposes `canvas.bind_data`, shared descriptor omits it, and forged bind invoke returns `canvas_source_read_only`.
+- WorkspaceModule tests assert personal and shared Canvas descriptors expose `canvas.bind_data`, bind writes AgentRun-scoped runtime metadata, and Canvas source bindings remain unchanged.
 - Frontend service tests assert scoped list query and publish/copy/unpublish endpoints.
 - Frontend typecheck asserts Canvas service/UI consume generated DTO aliases without hand-written wire unions.
 

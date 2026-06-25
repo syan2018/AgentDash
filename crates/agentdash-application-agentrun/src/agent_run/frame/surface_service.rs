@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agentdash_domain::canvas::CanvasDataBinding;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use thiserror::Error;
@@ -66,6 +67,7 @@ impl FrameConstructionCommand {
 pub enum RuntimeSurfaceUpdateRequest {
     CanvasBindingChanged {
         canvas_mount_id: String,
+        binding: CanvasDataBinding,
     },
     CanvasVisibilityRequested {
         canvas_mount_id: String,
@@ -483,6 +485,10 @@ mod tests {
         };
         let update = RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
             canvas_mount_id: "cvs-dashboard".to_string(),
+            binding: CanvasDataBinding::new(
+                "stats".to_string(),
+                "workspace://stats.json".to_string(),
+            ),
         };
 
         let construct_outcome = service

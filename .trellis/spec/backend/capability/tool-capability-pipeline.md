@@ -197,7 +197,7 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 
 ### 2. Signatures
 
-- `workspace_module_operate(operation="canvas.create_personal" | "canvas.attach_existing" | "canvas.copy_to_personal", input={...})`
+- `workspace_module_operate(operation="canvas.create" | "canvas.attach" | "canvas.copy", input={...})`
 - `workspace_module_list()`
 - `workspace_module_describe(module_id: string)`
 - `workspace_module_invoke(module_id: string, operation_key: string, input: object)`
@@ -208,7 +208,7 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 - `workspace_module` 是 Canvas Agent 操作的 well-known capability key。
 - 默认 Agent 工具面包含 `workspace_module_operate/list/describe/invoke/present`。
 - 已创建 Canvas 表达为 `canvas:{canvas_mount_id}` module。
-- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`；绑定结果在 Canvas runtime 与 `{canvas_mount_id}` mount 中投影为 `bindings/<alias>.<ext>` 只读生成文件，扩展名来自显式 `content_type` 或 `source_uri` 推断。
+- Canvas binding 表达为实例 operation：`operation_key="canvas.bind_data"`；绑定落在当前 AgentRun 的 Canvas mount metadata overlay，不写回 Canvas 源对象；结果在 Canvas runtime 与 `{canvas_mount_id}` mount 中投影为 `bindings/<alias>.<ext>` 只读生成文件，扩展名来自显式 `content_type` 或 `source_uri` 推断。
 - Canvas render diagnostics 表达为实例 operation：`operation_key="canvas.inspect_render_state"`；调用只读取 AgentRun→Canvas 引用上的 latest runtime observation，不写入模型历史。
 - Canvas interaction diagnostics 表达为实例 operation：`operation_key="canvas.get_interaction_state"`；调用只读取 Canvas source 显式上报的 latest interaction snapshot，不写入模型历史。
 - Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{canvas_mount_id}"`。
@@ -230,8 +230,8 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 
 ### 5. Reference Cases
 
-- Operate flow: `workspace_module_operate(operation="canvas.create_personal")` 返回 `canvas:{canvas_mount_id}`，随后 `workspace_module_describe` 能看到 `canvas.bind_data` 与 `preview` UI entry。
-- Copy flow: `workspace_module_operate(operation="canvas.copy_to_personal")` 从只读 shared Canvas materialize 新 personal Canvas module，返回的新 descriptor 恢复 source edit operations。
+- Operate flow: `workspace_module_operate(operation="canvas.create")` 返回 `canvas:{canvas_mount_id}`，随后 `workspace_module_describe` 能看到 `canvas.bind_data` 与 `preview` UI entry。
+- Copy flow: `workspace_module_operate(operation="canvas.copy")` 从只读 shared Canvas materialize 新 personal Canvas module，返回的新 descriptor 恢复 source edit operations。
 - Diagnostic flow: `workspace_module_describe` 返回 `canvas.inspect_render_state` 与 `canvas.get_interaction_state`，Agent 通过 `workspace_module_invoke` 读取 latest Canvas runtime facts。
 - Existing Canvas flow: 已存在 Canvas 通过 `workspace_module_list -> describe -> present` 打开。
 - Capability catalog: Canvas authoring 归入 workspace module capability，原因是同一 Canvas 实例的 lifecycle、operation 与 presentation 需要共享一条 discoverable module path。
@@ -254,7 +254,7 @@ top-level Canvas capability + separate workspace module capability for the same 
 #### Correct
 
 ```text
-workspace_module_operate(operation="canvas.create_personal")
+workspace_module_operate(operation="canvas.create")
 workspace_module_describe(module_id="canvas:{canvas_mount_id}")
 workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.bind_data", input={...})
 workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect_render_state", input={})

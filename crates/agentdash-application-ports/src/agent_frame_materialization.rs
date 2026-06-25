@@ -1,3 +1,4 @@
+use agentdash_domain::canvas::CanvasDataBinding;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -43,6 +44,7 @@ impl FrameConstructionCommand {
 pub enum RuntimeSurfaceUpdateRequest {
     CanvasBindingChanged {
         canvas_mount_id: String,
+        binding: CanvasDataBinding,
     },
     CanvasVisibilityRequested {
         canvas_mount_id: String,

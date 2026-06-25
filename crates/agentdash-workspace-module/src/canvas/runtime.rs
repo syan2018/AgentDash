@@ -204,6 +204,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::canvas::{
+        CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, CanvasMountAccess, build_canvas_mount,
+    };
     use agentdash_application_runtime_gateway::{
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
         RuntimeSurface,
@@ -288,6 +291,49 @@ mod tests {
         assert_eq!(
             snapshot.resource_surface_ref.as_deref(),
             Some("session-runtime:session-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn build_runtime_snapshot_includes_agent_run_runtime_binding_metadata() {
+        let canvas = Canvas::new(
+            Uuid::new_v4(),
+            "cvs-demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
+        let mut canvas_mount = build_canvas_mount(&canvas, CanvasMountAccess::read_only());
+        canvas_mount.metadata.as_object_mut().unwrap().insert(
+            CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY.to_string(),
+            serde_json::to_value(vec![CanvasDataBinding::new(
+                "stats".to_string(),
+                "workspace://reports/stats.json".to_string(),
+            )])
+            .unwrap(),
+        );
+        let vfs = Vfs {
+            mounts: vec![canvas_mount],
+            default_mount_id: Some(canvas.mount_id.clone()),
+            ..Default::default()
+        };
+        let service = VfsService::new(Arc::new(MountProviderRegistry::default()));
+
+        let snapshot = build_runtime_snapshot_with_bindings(
+            &canvas,
+            Some("session-1".to_string()),
+            Some(&vfs),
+            &service,
+        )
+        .await;
+
+        assert_eq!(snapshot.bindings.len(), 1);
+        assert_eq!(snapshot.bindings[0].alias, "stats");
+        assert_eq!(snapshot.bindings[0].data_path, "bindings/stats.json");
+        assert!(
+            snapshot
+                .files
+                .iter()
+                .any(|file| file.path == "bindings/stats.json")
         );
     }
 

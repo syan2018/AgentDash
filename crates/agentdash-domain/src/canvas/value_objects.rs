@@ -202,7 +202,7 @@ root.innerHTML = `
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CanvasDataBinding {
     pub alias: String,
     pub source_uri: String,

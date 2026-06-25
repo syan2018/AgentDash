@@ -33,8 +33,10 @@ pub use runtime::{
 };
 pub use runtime_resource::CanvasRuntimeResourceService;
 pub use vfs_mount::{
-    CanvasMountAccess, append_canvas_mount, append_canvas_mounts, build_canvas_mount,
-    build_canvas_mount_id, refresh_canvas_mount_binding_files,
+    CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, CanvasMountAccess, append_canvas_mount,
+    append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
+    canvas_mount_runtime_data_bindings, canvas_with_runtime_data_bindings,
+    refresh_canvas_mount_binding_files, upsert_canvas_runtime_data_binding,
 };
 pub use vfs_provider::CanvasFsMountProvider;
 pub use visibility::{append_visible_canvas_mounts, canvas_runtime_mount_access};

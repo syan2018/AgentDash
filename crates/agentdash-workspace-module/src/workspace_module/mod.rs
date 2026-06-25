@@ -335,7 +335,7 @@ fn build_canvas_module(
     access: &CanvasAccessProjection,
 ) -> WorkspaceModuleDescriptor {
     let mut operations: Vec<WorkspaceModuleOperation> = Vec::new();
-    if access.allows(CanvasAccessAction::EditSource) {
+    if access.can_view {
         operations.push(canvas_bind_data_operation());
     }
     operations.push(canvas_inspect_render_state_operation());
@@ -382,7 +382,7 @@ fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
     WorkspaceModuleOperation {
         operation_key: CANVAS_BIND_DATA_OPERATION_KEY.to_string(),
         origin: CANVAS_BIND_DATA_ORIGIN.to_string(),
-        description: "Declare or update a data binding for this Canvas instance.".to_string(),
+        description: "Declare or update a data binding for this Canvas in the current AgentRun runtime surface.".to_string(),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -403,7 +403,7 @@ fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
             },
             "required": ["canvas_id", "canvas_mount_id", "vfs_mount_id", "bindings"]
         })),
-        permission_summary: vec!["canvas.source:edit".to_string()],
+        permission_summary: vec!["canvas.runtime_binding:write".to_string()],
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::BindData,
         },

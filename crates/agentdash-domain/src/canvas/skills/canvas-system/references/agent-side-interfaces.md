@@ -4,9 +4,9 @@ Use this reference when the Agent needs workspace module operations for Canvas w
 
 ## Module Lifecycle
 
-- `workspace_module_operate(operation="canvas.create_personal", input={...})`: create a new editable Canvas and return the `canvas:{canvas_mount_id}` descriptor.
-- `workspace_module_operate(operation="canvas.attach_existing", input={ canvas_mount_id })`: attach an existing Canvas to the current AgentRun workspace surface.
-- `workspace_module_operate(operation="canvas.copy_to_personal", input={ source_canvas_mount_id, canvas_mount_id?, title?, description? })`: copy a read-only shared Canvas before editing.
+- `workspace_module_operate(operation="canvas.create", input={...})`: create a new editable Canvas and return the `canvas:{canvas_mount_id}` descriptor.
+- `workspace_module_operate(operation="canvas.attach", input={ canvas_mount_id })`: attach an existing Canvas to the current AgentRun workspace surface.
+- `workspace_module_operate(operation="canvas.copy", input={ source_canvas_mount_id, canvas_mount_id?, title?, description? })`: copy a read-only shared Canvas before editing.
 - `workspace_module_list`: inspect project workspace modules, including existing Canvas modules named `canvas:{canvas_mount_id}`.
 - `workspace_module_describe(module_id="canvas:{canvas_mount_id}")`: inspect the Canvas module UI entries and operation schemas before invoking or presenting it.
 

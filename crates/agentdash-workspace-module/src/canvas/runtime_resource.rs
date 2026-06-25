@@ -4,8 +4,8 @@ use agentdash_spi::Vfs;
 use agentdash_application_vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
 
 use super::{
-    CanvasResolvedBindingFile, CanvasRuntimeSnapshot, build_runtime_snapshot,
-    unresolved_canvas_binding_files,
+    CanvasResolvedBindingFile, CanvasRuntimeSnapshot, build_runtime_snapshot, canvas_vfs_mount_id,
+    canvas_with_runtime_data_bindings, unresolved_canvas_binding_files,
 };
 
 pub struct CanvasRuntimeResourceService<'a> {
@@ -23,7 +23,11 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         session_id: Option<String>,
         vfs: Option<&Vfs>,
     ) -> CanvasRuntimeSnapshot {
-        let mut snapshot = build_runtime_snapshot(canvas, session_id);
+        let effective_canvas = vfs
+            .and_then(|vfs| canvas_runtime_mount(vfs, canvas))
+            .map(|mount| canvas_with_runtime_data_bindings(canvas, mount))
+            .unwrap_or_else(|| canvas.clone());
+        let mut snapshot = build_runtime_snapshot(&effective_canvas, session_id);
         let Some(vfs) = vfs else {
             return snapshot;
         };
@@ -36,7 +40,7 @@ impl<'a> CanvasRuntimeResourceService<'a> {
             );
         }
 
-        let resolved_files = self.resolve_binding_files(canvas, vfs).await;
+        let resolved_files = self.resolve_binding_files(&effective_canvas, vfs).await;
         for resolved_file in resolved_files {
             let Some(binding) = snapshot
                 .bindings
@@ -64,7 +68,10 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         canvas: &Canvas,
         vfs: &Vfs,
     ) -> Vec<CanvasResolvedBindingFile> {
-        let mut files = unresolved_canvas_binding_files(canvas);
+        let effective_canvas = canvas_runtime_mount(vfs, canvas)
+            .map(|mount| canvas_with_runtime_data_bindings(canvas, mount))
+            .unwrap_or_else(|| canvas.clone());
+        let mut files = unresolved_canvas_binding_files(&effective_canvas);
         for file in &mut files {
             let Ok(resource_ref) = parse_mount_uri(&file.source_uri, vfs) else {
                 continue;
@@ -81,4 +88,12 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         }
         files
     }
+}
+
+fn canvas_runtime_mount<'a>(
+    vfs: &'a Vfs,
+    canvas: &Canvas,
+) -> Option<&'a agentdash_domain::common::Mount> {
+    let mount_id = canvas_vfs_mount_id(&canvas.mount_id);
+    vfs.mounts.iter().find(|mount| mount.id == mount_id)
 }

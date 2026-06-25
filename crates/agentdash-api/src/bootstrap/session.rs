@@ -87,11 +87,12 @@ impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge 
             .map(convert_effective_capability_view)
     }
 
-    async fn expose_canvas_mount_to_agent_run(
+    async fn apply_canvas_runtime_surface_update_to_agent_run(
         &self,
         delivery_runtime_session_id: &str,
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
+        request: agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest,
     ) -> Result<Vfs, String> {
         let services = self
             .inner
@@ -100,7 +101,12 @@ impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge 
             .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
         services
             .runtime_surface_update
-            .expose_canvas_mount(delivery_runtime_session_id, canvas, current_user)
+            .apply_canvas_runtime_surface_update(
+                delivery_runtime_session_id,
+                canvas,
+                current_user,
+                request,
+            )
             .await
     }
 

@@ -25,9 +25,8 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch,
 };
 use agentdash_domain::canvas::{
-    CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessAction, CanvasAccessProjection,
-    CanvasDataBinding, CanvasRepository, CanvasRuntimeStateRepository, CanvasScope,
-    canvas_access_projection,
+    CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessProjection, CanvasDataBinding, CanvasRepository,
+    CanvasRuntimeStateRepository, CanvasScope, canvas_access_projection,
 };
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
@@ -463,7 +462,7 @@ impl AgentTool for WorkspaceModuleDescribeTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkspaceModuleOperateParams {
-    /// Operation to apply, e.g. `canvas.create_personal`, `canvas.attach_existing`, or `canvas.copy_to_personal`.
+    /// Operation to apply, e.g. `canvas.create`, `canvas.attach`, or `canvas.copy`.
     pub operation: String,
     /// Operation-specific payload.
     #[serde(default)]
@@ -597,7 +596,7 @@ impl AgentTool for WorkspaceModuleOperateTool {
     }
 
     fn description(&self) -> &str {
-        "Operate on workspace modules. For Canvas, pass operation=`canvas.create_personal`, `canvas.attach_existing`, or `canvas.copy_to_personal` with operation-specific input; returns the materialized canvas:{canvas_mount_id} descriptor and exposes its Canvas VFS mount to the current session."
+        "Operate on workspace modules. For Canvas, pass operation=`canvas.create`, `canvas.attach`, or `canvas.copy` with operation-specific input; returns the materialized canvas:{canvas_mount_id} descriptor and exposes its Canvas VFS mount to the current session."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -627,11 +626,11 @@ impl AgentTool for WorkspaceModuleOperateTool {
             canvas_repo: self.canvas_repo.as_ref(),
         };
         let (canvas, canvas_result) = match operation.as_str() {
-            "canvas.create_personal" => {
+            "canvas.create" => {
                 let params: CreatePersonalCanvasModuleParams = serde_json::from_value(input)
                     .map_err(|error| {
                         AgentToolError::InvalidArguments(format!(
-                            "invalid canvas.create_personal input: {error}"
+                            "invalid canvas.create input: {error}"
                         ))
                     })?;
                 operate_create_personal_canvas_for_workspace_module(
@@ -645,11 +644,11 @@ impl AgentTool for WorkspaceModuleOperateTool {
                 )
                 .await?
             }
-            "canvas.attach_existing" => {
+            "canvas.attach" => {
                 let params: AttachExistingCanvasModuleParams = serde_json::from_value(input)
                     .map_err(|error| {
                         AgentToolError::InvalidArguments(format!(
-                            "invalid canvas.attach_existing input: {error}"
+                            "invalid canvas.attach input: {error}"
                         ))
                     })?;
                 operate_attach_existing_canvas_for_workspace_module(
@@ -663,11 +662,11 @@ impl AgentTool for WorkspaceModuleOperateTool {
                 )
                 .await?
             }
-            "canvas.copy_to_personal" => {
+            "canvas.copy" => {
                 let params: CopyCanvasToPersonalModuleParams = serde_json::from_value(input)
                     .map_err(|error| {
                         AgentToolError::InvalidArguments(format!(
-                            "invalid canvas.copy_to_personal input: {error}"
+                            "invalid canvas.copy input: {error}"
                         ))
                     })?;
                 operate_copy_canvas_to_personal_for_workspace_module(
@@ -688,9 +687,9 @@ impl AgentTool for WorkspaceModuleOperateTool {
                     serde_json::json!({
                         "operation": operation,
                         "supported_operations": [
-                            "canvas.create_personal",
-                            "canvas.attach_existing",
-                            "canvas.copy_to_personal"
+                            "canvas.create",
+                            "canvas.attach",
+                            "canvas.copy"
                         ],
                     }),
                 ));
@@ -736,9 +735,7 @@ async fn operate_create_personal_canvas_for_workspace_module(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            AgentToolError::InvalidArguments(
-                "title is required for canvas.create_personal".to_string(),
-            )
+            AgentToolError::InvalidArguments("title is required for canvas.create".to_string())
         })?;
     let canvas = create_personal_canvas(
         repos,
@@ -760,7 +757,7 @@ async fn operate_create_personal_canvas_for_workspace_module(
         delivery_runtime_session_id,
         current_user,
         canvas,
-        "created_personal",
+        "created",
         CanvasVisibilityReason::Created,
     )
     .await
@@ -777,7 +774,7 @@ async fn operate_attach_existing_canvas_for_workspace_module(
 ) -> Result<(Canvas, WorkspaceModuleCanvasToolResult), AgentToolError> {
     let canvas_mount_id = required_canvas_mount_id(
         params.canvas_mount_id.as_deref(),
-        "canvas.attach_existing input.canvas_mount_id",
+        "canvas.attach input.canvas_mount_id",
     )?;
     let canvas = load_canvas_by_project_mount_id(repos, project_id, &canvas_mount_id)
         .await
@@ -789,7 +786,7 @@ async fn operate_attach_existing_canvas_for_workspace_module(
         delivery_runtime_session_id,
         current_user,
         canvas,
-        "attached_existing",
+        "attached",
         CanvasVisibilityReason::Presented,
     )
     .await
@@ -806,7 +803,7 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
 ) -> Result<(Canvas, WorkspaceModuleCanvasToolResult), AgentToolError> {
     let source_canvas_mount_id = required_canvas_mount_id(
         params.source_canvas_mount_id.as_deref(),
-        "canvas.copy_to_personal input.source_canvas_mount_id",
+        "canvas.copy input.source_canvas_mount_id",
     )?;
     let source = load_canvas_by_project_mount_id(repos, project_id, &source_canvas_mount_id)
         .await
@@ -830,7 +827,7 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
         delivery_runtime_session_id,
         current_user,
         copy,
-        "copied_to_personal",
+        "copied",
         CanvasVisibilityReason::Created,
     )
     .await
@@ -900,12 +897,18 @@ fn ensure_canvas_visible_to_current_user(
     }
 }
 
-async fn bind_canvas_data_for_loaded_canvas(
-    canvas_repo: &dyn CanvasRepository,
+fn bind_canvas_data_for_loaded_canvas(
     project_id: Uuid,
-    mut canvas: Canvas,
+    canvas: Canvas,
     params: BindCanvasDataParams,
-) -> Result<(Canvas, WorkspaceModuleCanvasBindingResult), AgentToolError> {
+) -> Result<
+    (
+        Canvas,
+        CanvasDataBinding,
+        WorkspaceModuleCanvasBindingResult,
+    ),
+    AgentToolError,
+> {
     if canvas.project_id != project_id {
         return Err(AgentToolError::ExecutionFailed(
             "当前 session 无权操作其它 Project 的 Canvas".to_string(),
@@ -925,23 +928,20 @@ async fn bind_canvas_data_for_loaded_canvas(
     let alias = binding.alias.clone();
     let source_uri = binding.source_uri.clone();
     let content_type = binding.content_type.clone();
-    upsert_canvas_binding(&mut canvas, binding)
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-    canvas_repo
-        .update(&canvas)
-        .await
+    let mut effective_canvas = canvas.clone();
+    upsert_canvas_binding(&mut effective_canvas, binding.clone())
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
     let result = WorkspaceModuleCanvasBindingResult {
         canvas_id: canvas.id.to_string(),
         canvas_mount_id: canvas.mount_id.clone(),
         vfs_mount_id: canvas_vfs_mount_id(&canvas.mount_id),
-        bindings: canvas.bindings.clone(),
+        bindings: effective_canvas.bindings.clone(),
         alias,
         source_uri,
         content_type,
     };
-    Ok((canvas, result))
+    Ok((canvas, binding, result))
 }
 
 /// 在已聚合（且 capability 过滤后）的 module 列表里定位 module + operation。
@@ -1176,7 +1176,7 @@ impl WorkspaceModuleInvokeTool {
         .await
     }
 
-    async fn load_canvas_for_source_edit(
+    async fn load_canvas_for_runtime_binding(
         &self,
         canvas_mount_id: &str,
     ) -> Result<Canvas, AgentToolResult> {
@@ -1186,7 +1186,7 @@ impl WorkspaceModuleInvokeTool {
                 "canvas.bind_data 需要当前 runtime identity".to_string(),
                 serde_json::json!({
                     "canvas_mount_id": canvas_mount_id,
-                    "required_action": "edit_source",
+                    "required_action": "runtime_binding",
                 }),
             ));
         };
@@ -1209,20 +1209,20 @@ impl WorkspaceModuleInvokeTool {
             }
         };
         let access = canvas_access_for_workspace_module(&canvas, current_user);
-        if access.allows(CanvasAccessAction::EditSource) {
+        if access.can_view {
             Ok(canvas)
         } else {
             Err(structured_tool_error(
-                "canvas_source_read_only",
+                "canvas_not_viewable",
                 format!(
-                    "Canvas `{}` 当前不允许修改源内容；需要复制为个人 Canvas 后再执行 canvas.bind_data",
+                    "当前用户无权查看 Canvas `{}`，无法挂接运行期数据",
                     canvas.mount_id
                 ),
                 serde_json::json!({
                     "canvas_id": canvas.id,
                     "canvas_mount_id": canvas.mount_id,
                     "scope": canvas.scope,
-                    "required_action": "edit_source",
+                    "required_action": "runtime_binding",
                 }),
             ))
         }
@@ -1347,7 +1347,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                             && module.summary.module_id == module_id
                     })
                     && let Err(guard_result) = self
-                        .load_canvas_for_source_edit(&module.summary.source)
+                        .load_canvas_for_runtime_binding(&module.summary.source)
                         .await
                 {
                     return Ok(guard_result);
@@ -1472,7 +1472,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
             WorkspaceModuleOperationDispatch::HostCanvas { canvas_action } => match canvas_action {
                 WorkspaceModuleCanvasHostAction::BindData => {
                     let editable_canvas = match self
-                        .load_canvas_for_source_edit(&module.summary.source)
+                        .load_canvas_for_runtime_binding(&module.summary.source)
                         .await
                     {
                         Ok(canvas) => canvas,
@@ -1499,17 +1499,16 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                                 "invalid canvas.bind_data input: {error}"
                             ))
                         })?;
-                    let (canvas, result) = bind_canvas_data_for_loaded_canvas(
-                        self.canvas_repo.as_ref(),
+                    let (canvas, binding, result) = bind_canvas_data_for_loaded_canvas(
                         self.project_id,
                         editable_canvas,
                         bind_params,
-                    )
-                    .await?;
+                    )?;
                     self.submit_canvas_runtime_surface_request(
                         &canvas,
                         RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
                             canvas_mount_id: canvas.mount_id.clone(),
+                            binding,
                         },
                     )
                     .await?;
@@ -1912,6 +1911,7 @@ mod tests {
     #[derive(Default)]
     struct FakeAgentRunBridge {
         exposed_canvas_mount_ids: Mutex<Vec<String>>,
+        requests: Mutex<Vec<RuntimeSurfaceUpdateRequest>>,
     }
 
     #[async_trait]
@@ -1926,16 +1926,18 @@ mod tests {
             ))
         }
 
-        async fn expose_canvas_mount_to_agent_run(
+        async fn apply_canvas_runtime_surface_update_to_agent_run(
             &self,
             _delivery_runtime_session_id: &str,
             canvas: &Canvas,
             _current_user: Option<&ProjectAuthorizationContext>,
+            request: RuntimeSurfaceUpdateRequest,
         ) -> Result<agentdash_domain::common::Vfs, String> {
             self.exposed_canvas_mount_ids
                 .lock()
                 .expect("exposed canvas lock")
                 .push(canvas.mount_id.clone());
+            self.requests.lock().expect("requests lock").push(request);
             Ok(agentdash_domain::common::Vfs::default())
         }
 
@@ -2503,7 +2505,7 @@ mod tests {
             .execute(
                 "t",
                 serde_json::json!({
-                    "operation": "canvas.create_personal",
+                    "operation": "canvas.create",
                     "input": {
                         "canvas_mount_id": "cvs-sales-board",
                         "title": "Sales Board",
@@ -2560,7 +2562,7 @@ mod tests {
             .execute(
                 "t",
                 serde_json::json!({
-                    "operation": "canvas.copy_to_personal",
+                    "operation": "canvas.copy",
                     "input": {
                         "source_canvas_mount_id": "cvs-shared-dashboard"
                     }
@@ -2577,7 +2579,7 @@ mod tests {
             details
                 .pointer("/canvas/action")
                 .and_then(serde_json::Value::as_str),
-            Some("copied_to_personal")
+            Some("copied")
         );
         let mount_id = details
             .pointer("/canvas/canvas_mount_id")
@@ -2964,7 +2966,11 @@ mod tests {
     #[tokio::test]
     async fn invoke_canvas_bind_data_routes_to_host_canvas_use_case() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None);
+        let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
+        let bridge = Arc::new(FakeAgentRunBridge::default());
+        bridge_handle.set(bridge.clone()).await;
+        let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None)
+            .with_agent_run_visibility(bridge_handle);
         let result = tool
             .execute(
                 "t",
@@ -3002,17 +3008,27 @@ mod tests {
             .await
             .expect("load canvas")
             .expect("canvas");
-        let binding = saved
-            .bindings
-            .iter()
-            .find(|binding| binding.alias == "stats")
-            .expect("binding should be saved");
+        assert!(
+            saved.bindings.is_empty(),
+            "canvas.bind_data must not persist AgentRun bindings to Canvas source"
+        );
+        let requests = bridge.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 1);
+        let RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+            canvas_mount_id,
+            binding,
+        } = &requests[0]
+        else {
+            panic!("expected CanvasBindingChanged request");
+        };
+        assert_eq!(canvas_mount_id, "cvs-dashboard-a");
+        assert_eq!(binding.alias, "stats");
         assert_eq!(binding.source_uri, "project://data/stats.csv");
         assert_eq!(binding.content_type, "text/csv");
     }
 
     #[tokio::test]
-    async fn invoke_canvas_bind_data_rejects_forged_shared_canvas_operation() {
+    async fn invoke_canvas_bind_data_allows_shared_canvas_runtime_binding() {
         let project_id = Uuid::new_v4();
         let install_repo = Arc::new(FakeInstallationRepo::default());
         let canvas_repo = Arc::new(FakeCanvasRepo::default());
@@ -3028,7 +3044,11 @@ mod tests {
             .create(&shared_canvas)
             .await
             .expect("create shared canvas");
-        let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None);
+        let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
+        let bridge = Arc::new(FakeAgentRunBridge::default());
+        bridge_handle.set(bridge.clone()).await;
+        let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None)
+            .with_agent_run_visibility(bridge_handle);
 
         let result = tool
             .execute(
@@ -3045,23 +3065,27 @@ mod tests {
                 None,
             )
             .await
-            .expect("invoke forged canvas bind data");
+            .expect("invoke shared canvas bind data");
 
-        assert!(result.is_error, "expected shared Canvas bind to fail");
-        assert_eq!(
-            result
-                .details
-                .as_ref()
-                .and_then(|details| details.get("error"))
-                .and_then(serde_json::Value::as_str),
-            Some("canvas_source_read_only")
-        );
+        assert!(!result.is_error, "expected shared Canvas bind to succeed");
         let saved = canvas_repo
             .get_by_mount_id(project_id, "cvs-shared-dashboard")
             .await
             .expect("load shared canvas")
             .expect("shared canvas");
         assert!(saved.bindings.is_empty());
+        let requests = bridge.requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 1);
+        let RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+            canvas_mount_id,
+            binding,
+        } = &requests[0]
+        else {
+            panic!("expected CanvasBindingChanged request");
+        };
+        assert_eq!(canvas_mount_id, "cvs-shared-dashboard");
+        assert_eq!(binding.alias, "stats");
+        assert_eq!(binding.source_uri, "project://data/stats.csv");
     }
 
     #[tokio::test]

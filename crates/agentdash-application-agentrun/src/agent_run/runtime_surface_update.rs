@@ -1,6 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use agentdash_agent_types::DynAgentTool;
+use agentdash_application_ports::agent_frame_materialization::{
+    CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
+};
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
@@ -11,7 +14,10 @@ use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
-use agentdash_workspace_module::canvas::{canvas_module_id, canvas_provider_root_ref};
+use agentdash_workspace_module::canvas::{
+    CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, canvas_module_id, canvas_provider_root_ref,
+    upsert_canvas_runtime_data_binding,
+};
 use async_trait::async_trait;
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
@@ -75,6 +81,26 @@ impl AgentRunRuntimeSurfaceUpdateService {
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
     ) -> Result<Vfs, String> {
+        self.apply_canvas_runtime_surface_update(
+            session_id,
+            canvas,
+            current_user,
+            RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+                canvas_mount_id: canvas.mount_id.clone(),
+                reason: CanvasVisibilityReason::Presented,
+            },
+        )
+        .await
+    }
+
+    pub async fn apply_canvas_runtime_surface_update(
+        &self,
+        session_id: &str,
+        canvas: &Canvas,
+        current_user: Option<&ProjectAuthorizationContext>,
+        request: RuntimeSurfaceUpdateRequest,
+    ) -> Result<Vfs, String> {
+        ensure_canvas_runtime_surface_request_targets_canvas(&request, canvas)?;
         let surface = self
             .surface_query
             .current_runtime_surface(
@@ -107,6 +133,10 @@ impl AgentRunRuntimeSurfaceUpdateService {
             ));
         };
         append_canvas_mount(&mut active_vfs, canvas, mount_access);
+        if let RuntimeSurfaceUpdateRequest::CanvasBindingChanged { binding, .. } = &request {
+            upsert_canvas_runtime_data_binding(&mut active_vfs, canvas, binding.clone())
+                .map_err(|error| error.to_string())?;
+        }
         let _ = self.vfs_service.as_deref();
         after_state.vfs.active = Some(active_vfs.clone());
         self.derive_skill_baseline_for_transition_state(
@@ -117,9 +147,14 @@ impl AgentRunRuntimeSurfaceUpdateService {
         .await;
 
         let workspace_module_ref = canvas_module_id(&canvas.mount_id);
+        let created_by_kind = match request {
+            RuntimeSurfaceUpdateRequest::CanvasBindingChanged { .. } => "canvas_bind_data",
+            RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested { .. } => "canvas_expose",
+            _ => "canvas_surface_update",
+        };
         let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
-            .with_created_by("canvas_expose", Some(current_frame.id.to_string()))
+            .with_created_by(created_by_kind, Some(current_frame.id.to_string()))
             .with_runtime_session(session_id.to_string())
             .build_uncommitted(self.frame_repo.as_ref())
             .await
@@ -213,6 +248,33 @@ impl AgentRunRuntimeSurfaceUpdateService {
     }
 }
 
+fn ensure_canvas_runtime_surface_request_targets_canvas(
+    request: &RuntimeSurfaceUpdateRequest,
+    canvas: &Canvas,
+) -> Result<(), String> {
+    let canvas_mount_id = match request {
+        RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+            canvas_mount_id, ..
+        }
+        | RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+            canvas_mount_id, ..
+        } => canvas_mount_id,
+        other => {
+            return Err(format!(
+                "Canvas runtime surface update received non-Canvas request: {other:?}"
+            ));
+        }
+    };
+    if canvas_mount_id == &canvas.mount_id {
+        Ok(())
+    } else {
+        Err(format!(
+            "Canvas runtime surface request target `{canvas_mount_id}` does not match Canvas `{}`",
+            canvas.mount_id
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CanvasMountAccess {
     pub runtime_write_allowed: bool,
@@ -284,12 +346,27 @@ fn project_authorization_context_from_identity(
 }
 
 fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess) {
-    let mount = build_canvas_mount(canvas, access);
+    let mut mount = build_canvas_mount(canvas, access);
     if let Some(existing) = vfs
         .mounts
         .iter_mut()
         .find(|existing| existing.id == mount.id)
     {
+        if let Some(runtime_bindings) = existing
+            .metadata
+            .get(CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY)
+            .cloned()
+        {
+            if !mount.metadata.is_object() {
+                mount.metadata = serde_json::json!({});
+            }
+            if let Some(metadata) = mount.metadata.as_object_mut() {
+                metadata.insert(
+                    CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY.to_string(),
+                    runtime_bindings,
+                );
+            }
+        }
         *existing = mount;
     } else {
         vfs.mounts.push(mount);
@@ -356,7 +433,7 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
 mod tests {
     use super::*;
 
-    use agentdash_domain::canvas::Canvas;
+    use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
     use agentdash_spi::{AgentConfig, AuthIdentity, AuthMode, RuntimeMcpServer, ToolCluster};
@@ -542,6 +619,100 @@ mod tests {
         assert!(!mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
+    }
+
+    #[tokio::test]
+    async fn canvas_binding_update_writes_agent_run_vfs_metadata_without_source_write() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let canvas = Canvas::new(
+            project_id,
+            "cvs-dashboard-a".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        let active_vfs = base_vfs(project_id);
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(active_vfs.clone());
+
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
+        frame.mcp_surface_json =
+            Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
+        frame.execution_profile_json =
+            Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo.create(&frame).await.expect("frame should save");
+        let adopter = Arc::new(RecordingAdopter::default());
+        let service = AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: Arc::new(FixedSurfaceQuery {
+                surface: runtime_surface_for_frame(
+                    "runtime-1",
+                    run_id,
+                    project_id,
+                    &frame,
+                    capability_state,
+                    active_vfs,
+                    Some(identity("alice")),
+                ),
+            }),
+            frame_repo: frame_repo.clone(),
+            vfs_service: Some(Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistry::default(),
+            )))),
+            active_adopter: adopter.clone(),
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        });
+
+        let returned_vfs = service
+            .apply_canvas_runtime_surface_update(
+                "runtime-1",
+                &canvas,
+                None,
+                RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+                    canvas_mount_id: canvas.mount_id.clone(),
+                    binding: CanvasDataBinding::new(
+                        "stats".to_string(),
+                        "workspace://reports/stats.csv".to_string(),
+                    ),
+                },
+            )
+            .await
+            .expect("runtime binding update should succeed");
+
+        let mount = returned_vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == canvas.mount_id)
+            .expect("Canvas mount should be appended");
+        assert!(mount.supports(MountCapability::Read));
+        assert!(!mount.supports(MountCapability::Write));
+        let runtime_bindings = mount
+            .metadata
+            .get(CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY)
+            .and_then(|value| serde_json::from_value::<Vec<CanvasDataBinding>>(value.clone()).ok())
+            .expect("runtime data bindings metadata");
+        assert_eq!(runtime_bindings.len(), 1);
+        assert_eq!(runtime_bindings[0].alias, "stats");
+        assert_eq!(
+            runtime_bindings[0].source_uri,
+            "workspace://reports/stats.csv"
+        );
+
+        let frames = frame_repo
+            .list_by_agent(agent_id)
+            .await
+            .expect("frames should list");
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            adopter.targets.lock().await.len(),
+            1,
+            "runtime binding surface change should be adopted"
+        );
     }
 
     #[tokio::test]

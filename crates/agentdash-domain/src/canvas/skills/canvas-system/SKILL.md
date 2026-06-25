@@ -9,7 +9,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 
 ## Core Flow
 
-1. Use `workspace_module_operate(operation="canvas.create_personal", input={...})` to create a new editable Canvas, or `workspace_module_operate(operation="canvas.copy_to_personal", input={ source_canvas_mount_id })` before editing a read-only shared Canvas.
+1. Use `workspace_module_operate(operation="canvas.create", input={...})` to create a new editable Canvas, or `workspace_module_operate(operation="canvas.copy", input={ source_canvas_mount_id })` before editing a read-only shared Canvas source.
 2. Use `workspace_module_list` and `workspace_module_describe(module_id="canvas:{canvas_mount_id}")` to inspect existing Canvas modules, UI entries, and available operations.
 3. Confirm that the module exposes source mutation operations before editing. Project shared Canvas modules can be previewed but may be source read-only.
 4. Edit canvas source through VFS tools, usually `fs_apply_patch` against `{canvas_mount_id}://...`, only when the mount exposes write capability.
@@ -41,7 +41,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 
 - Call `workspace_module_describe(module_id="canvas:{canvas_mount_id}")` before binding and follow the described `canvas.bind_data` input schema.
 - Invoke `canvas.bind_data` with `workspace_module_invoke` to map a VFS `source_uri` to `bindings/<alias>.<ext>`.
-- If `canvas.bind_data` is absent from the descriptor, the Canvas source is read-only in this context. Present or read it, then call `workspace_module_operate(operation="canvas.copy_to_personal", input={ source_canvas_mount_id })` before changing bindings.
+- `canvas.bind_data` writes an AgentRun-scoped runtime binding; it does not edit the Canvas source. Copy a shared Canvas only when the source files themselves must change.
 - `alias` must be a plain name without `/` or `\`.
 - `content_type` is optional; omitted values are inferred from the `source_uri` extension.
 - JSON bindings use `bindings/<alias>.json`; CSV, Markdown, HTML, CSS, JavaScript, SVG, YAML, XML, and plain text bindings keep matching text-oriented extensions.

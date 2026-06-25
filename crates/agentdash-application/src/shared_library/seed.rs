@@ -1,13 +1,8 @@
 use serde_json::json;
 
 use agentdash_domain::DomainError;
-use agentdash_domain::embedded_skill::EmbeddedSkillFileKind;
-use agentdash_domain::shared_library::{
-    BuiltinSeed, LibraryAssetType, SkillTemplateFilePayload, SkillTemplatePayload, seed_digest,
-};
-use agentdash_domain::skill_asset::SkillAssetFileKind;
+use agentdash_domain::shared_library::{BuiltinSeed, LibraryAssetType, seed_digest};
 
-use crate::skill_asset::list_builtin_skill_asset_templates;
 use crate::workflow::list_builtin_workflow_templates;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,31 +28,6 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
         key: "builtin_workflow_admin",
         version: "1.0.1",
     },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::SkillTemplate,
-        key: "canvas-system",
-        version: "1.0.10",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::SkillTemplate,
-        key: "workspace-module-system",
-        version: "1.0.2",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::SkillTemplate,
-        key: "companion-system",
-        version: "1.0.3",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::SkillTemplate,
-        key: "routine-memory",
-        version: "1.0.1",
-    },
-    BuiltinAssetVersion {
-        asset_type: LibraryAssetType::SkillTemplate,
-        key: "memory-manager",
-        version: "1.0.0",
-    },
 ];
 
 pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
@@ -65,7 +35,6 @@ pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
     seeds.push(agent_template_seed()?);
     seeds.extend(mcp_server_template_seeds()?);
     seeds.extend(workflow_template_seeds()?);
-    seeds.extend(skill_template_seeds()?);
     Ok(seeds)
 }
 
@@ -153,54 +122,6 @@ fn workflow_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
         .collect()
 }
 
-fn skill_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
-    list_builtin_skill_asset_templates()
-        .into_iter()
-        .map(|template| {
-            let asset_type = LibraryAssetType::SkillTemplate;
-            template
-                .bundle
-                .validate()
-                .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
-            let files = template
-                .bundle
-                .files
-                .iter()
-                .map(|file| SkillTemplateFilePayload {
-                    path: file.relative_path.to_string(),
-                    content: file.content.to_string(),
-                    kind: embedded_skill_kind_to_asset_kind(file.kind),
-                })
-                .collect::<Vec<_>>();
-            let payload = serde_json::to_value(SkillTemplatePayload {
-                files,
-                disable_model_invocation: false,
-            })
-            .map_err(DomainError::Serialization)?;
-
-            Ok(BuiltinSeed {
-                asset_type,
-                key: template.builtin_key.to_string(),
-                display_name: template.display_name.to_string(),
-                description: Some(format!("内置 Skill 模板: {}", template.bundle.name)),
-                version: builtin_asset_version(asset_type, template.builtin_key)?.to_string(),
-                source_ref: builtin_source_ref(asset_type, template.builtin_key),
-                payload_digest: seed_digest(&payload)?,
-                payload,
-            })
-        })
-        .collect()
-}
-
-fn embedded_skill_kind_to_asset_kind(kind: EmbeddedSkillFileKind) -> SkillAssetFileKind {
-    match kind {
-        EmbeddedSkillFileKind::Skill => SkillAssetFileKind::Skill,
-        EmbeddedSkillFileKind::Reference => SkillAssetFileKind::Reference,
-        EmbeddedSkillFileKind::Script => SkillAssetFileKind::Script,
-        EmbeddedSkillFileKind::Asset => SkillAssetFileKind::Asset,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
@@ -208,7 +129,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_library_seeds_cover_all_template_types() {
+    fn builtin_library_seeds_cover_marketplace_template_types() {
         let seeds = builtin_library_seeds().expect("load seeds");
         let types = seeds
             .iter()
@@ -217,7 +138,7 @@ mod tests {
 
         assert!(types.contains(&LibraryAssetType::AgentTemplate));
         assert!(types.contains(&LibraryAssetType::WorkflowTemplate));
-        assert!(types.contains(&LibraryAssetType::SkillTemplate));
+        assert!(!types.contains(&LibraryAssetType::SkillTemplate));
         for seed in seeds {
             seed.validate().expect("builtin seed payload must validate");
             assert!(seed.payload_digest.starts_with("sha256:"));
@@ -249,58 +170,5 @@ mod tests {
             seeds.len(),
             "builtin asset version manifest 不能包含未使用的资产版本"
         );
-    }
-
-    #[test]
-    fn builtin_canvas_system_skill_template_uses_skill_asset_relative_paths() {
-        let seed = builtin_library_seeds()
-            .expect("load seeds")
-            .into_iter()
-            .find(|seed| {
-                seed.asset_type == LibraryAssetType::SkillTemplate && seed.key == "canvas-system"
-            })
-            .expect("canvas-system skill template seed");
-        let payload = serde_json::from_value::<SkillTemplatePayload>(seed.payload)
-            .expect("skill template payload should be typed");
-
-        assert!(payload.files.iter().any(|file| file.path == "SKILL.md"));
-        assert!(
-            payload
-                .files
-                .iter()
-                .any(|file| file.path == "references/runtime-bridge.md")
-        );
-        assert!(
-            payload
-                .files
-                .iter()
-                .all(|file| !file.path.starts_with("skills/canvas-system/")),
-            "SkillTemplate payload paths are SkillAsset-root relative; the skill_asset_fs provider adds skills/<key>/ during projection"
-        );
-    }
-
-    #[test]
-    fn builtin_memory_manager_skill_template_uses_vfs_file_memory() {
-        let seed = builtin_library_seeds()
-            .expect("load seeds")
-            .into_iter()
-            .find(|seed| {
-                seed.asset_type == LibraryAssetType::SkillTemplate && seed.key == "memory-manager"
-            })
-            .expect("memory-manager skill template seed");
-        let payload = serde_json::from_value::<SkillTemplatePayload>(seed.payload)
-            .expect("skill template payload should be typed");
-        let skill = payload
-            .files
-            .iter()
-            .find(|file| file.path == "SKILL.md")
-            .expect("memory-manager SKILL.md");
-
-        assert_eq!(payload.files.len(), 1);
-        assert!(skill.content.contains("agent://MEMORY.md"));
-        assert!(skill.content.contains("topics/*.md"));
-        assert!(skill.content.contains("fs.apply_patch"));
-        assert!(!skill.content.contains("memory.read"));
-        assert!(!skill.content.contains("memory.write"));
     }
 }

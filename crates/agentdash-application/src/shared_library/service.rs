@@ -668,18 +668,15 @@ mod tests {
             );
         }
 
-        let skill_templates = service
+        let missing_skill_templates = service
             .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
                 asset_type: Some(LibraryAssetType::SkillTemplate),
                 key: None,
             })
-            .await
-            .expect("skill template seeds should load");
-        assert!(!skill_templates.is_empty());
+            .await;
         assert!(
-            skill_templates
-                .iter()
-                .all(|asset| asset.asset_type == LibraryAssetType::SkillTemplate)
+            matches!(missing_skill_templates, Err(DomainError::NotFound { .. })),
+            "内置系统 Skill 由 runtime bootstrap 管理，不进入 Shared Library 市场 seed"
         );
     }
 

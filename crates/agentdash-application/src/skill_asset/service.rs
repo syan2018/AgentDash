@@ -7,7 +7,7 @@ use agentdash_domain::shared_library::{
     SkillTemplateFilePayload, SkillTemplatePayload,
 };
 use agentdash_domain::skill_asset::{
-    SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
+    SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository, SkillAssetSource,
 };
 use agentdash_spi::{
     RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
@@ -222,7 +222,21 @@ where
                 .get_by_project_and_builtin_key(project_id, template.builtin_key)
                 .await?
             {
-                created_or_existing.push(existing);
+                created_or_existing.push(
+                    self.sync_existing_from_builtin_template(existing, template)
+                        .await?,
+                );
+                continue;
+            }
+            if let Some(existing) = self
+                .repo
+                .get_by_project_and_key(project_id, template.bundle.name)
+                .await?
+            {
+                created_or_existing.push(
+                    self.sync_existing_from_builtin_template(existing, template)
+                        .await?,
+                );
                 continue;
             }
             created_or_existing.push(
@@ -335,6 +349,17 @@ where
             })
             .collect();
         self.repo.create(&asset).await?;
+        Ok(asset)
+    }
+
+    async fn sync_existing_from_builtin_template(
+        &self,
+        mut asset: SkillAsset,
+        template: BuiltinSkillAssetTemplate,
+    ) -> Result<SkillAsset, SkillAssetApplicationError> {
+        if apply_builtin_template(&mut asset, template)? {
+            self.repo.update(&asset).await?;
+        }
         Ok(asset)
     }
 
@@ -716,6 +741,37 @@ fn files_from_embedded_bundle(
         &files,
     )?;
     Ok((meta.description, meta.disable_model_invocation, files))
+}
+
+fn apply_builtin_template(
+    asset: &mut SkillAsset,
+    template: BuiltinSkillAssetTemplate,
+) -> Result<bool, SkillAssetApplicationError> {
+    let (description, disable_model_invocation, files) =
+        files_from_embedded_bundle(asset.id, template.bundle)?;
+    let target_source = SkillAssetSource::BuiltinSeed {
+        key: template.builtin_key.to_string(),
+    };
+    let changed = asset.key != template.bundle.name
+        || asset.display_name != template.display_name
+        || asset.description != description
+        || asset.disable_model_invocation != disable_model_invocation
+        || asset.source != target_source
+        || asset.installed_source.is_some()
+        || digest_skill_files(&asset.files) != digest_skill_files(&files);
+
+    if changed {
+        asset.key = template.bundle.name.to_string();
+        asset.display_name = template.display_name.to_string();
+        asset.description = description;
+        asset.disable_model_invocation = disable_model_invocation;
+        asset.source = target_source;
+        asset.installed_source = None;
+        asset.files = files;
+        asset.touch();
+    }
+
+    Ok(changed)
 }
 
 fn build_files(
@@ -1303,7 +1359,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_bootstrap_is_idempotent_and_reset_restores_template() {
+    async fn builtin_bootstrap_syncs_embedded_template() {
         let repo = InMemorySkillAssetRepo::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
@@ -1333,7 +1389,8 @@ mod tests {
             .bootstrap_builtins(project_id, Some("canvas-system"))
             .await
             .expect("bootstrap again");
-        assert_eq!(second[0].description, edited_description);
+        assert_ne!(second[0].description, edited_description);
+        assert!(second[0].files.iter().any(|file| file.path == "SKILL.md"));
 
         let reset = service
             .reset_from_builtin(asset.id)
@@ -1341,6 +1398,49 @@ mod tests {
             .expect("reset builtin seed");
         assert_ne!(reset.description, edited_description);
         assert!(reset.files.iter().any(|file| file.path == "SKILL.md"));
+    }
+
+    #[tokio::test]
+    async fn builtin_bootstrap_converges_same_key_user_snapshot() {
+        let repo = InMemorySkillAssetRepo::default();
+        let service = SkillAssetService::new(&repo);
+        let project_id = Uuid::new_v4();
+        let mut snapshot = SkillAsset::new_user(
+            project_id,
+            "companion-system",
+            "Companion System",
+            "旧市场安装快照",
+            false,
+        );
+        snapshot.files = build_files(
+            snapshot.id,
+            vec![skill_file("companion-system", "旧市场安装快照")],
+        )
+        .expect("snapshot files");
+        let snapshot_id = snapshot.id;
+        repo.create(&snapshot).await.expect("create snapshot");
+
+        let synced = service
+            .bootstrap_builtins(project_id, Some("companion-system"))
+            .await
+            .expect("bootstrap");
+
+        assert_eq!(synced.len(), 1);
+        assert_eq!(synced[0].id, snapshot_id);
+        assert_eq!(
+            synced[0].source,
+            SkillAssetSource::BuiltinSeed {
+                key: "companion-system".to_string()
+            }
+        );
+        assert_eq!(synced[0].installed_source, None);
+        assert_ne!(synced[0].description, "旧市场安装快照");
+        assert!(
+            synced[0]
+                .files
+                .iter()
+                .any(|file| file.path == "references/payload-envelope.md")
+        );
     }
 
     #[test]

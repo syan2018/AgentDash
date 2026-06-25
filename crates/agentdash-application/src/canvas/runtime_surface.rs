@@ -1,4 +1,5 @@
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
+use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_spi::AgentToolError;
 use uuid::Uuid;
 
@@ -11,6 +12,7 @@ pub(crate) async fn submit_canvas_runtime_surface_update(
     vfs: Option<&SharedRuntimeVfs>,
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
+    current_user: Option<&ProjectAuthorizationContext>,
     canvas: &Canvas,
     request: RuntimeSurfaceUpdateRequest,
 ) -> Result<(), AgentToolError> {
@@ -27,7 +29,7 @@ pub(crate) async fn submit_canvas_runtime_surface_update(
     })?;
     let active_vfs = session_services
         .runtime_surface_update
-        .expose_canvas_mount(session_id, canvas)
+        .expose_canvas_mount(session_id, canvas, current_user)
         .await
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!(
@@ -47,12 +49,14 @@ pub(crate) async fn submit_existing_canvas_visibility_request(
     vfs: Option<&SharedRuntimeVfs>,
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
+    current_user: Option<&ProjectAuthorizationContext>,
 ) -> Result<Canvas, AgentToolError> {
     let canvas = load_canvas_by_project_mount_id(canvas_repo, project_id, canvas_mount_id).await?;
     submit_canvas_runtime_surface_update(
         vfs,
         session_services_handle,
         current_session_id,
+        current_user,
         &canvas,
         RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
             canvas_mount_id: canvas.mount_id.clone(),

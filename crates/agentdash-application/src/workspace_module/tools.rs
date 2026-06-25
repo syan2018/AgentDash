@@ -21,9 +21,9 @@ use agentdash_contracts::workspace_module::{
 };
 use agentdash_domain::canvas::{
     CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessAction, CanvasAccessProjection,
-    CanvasDataBinding, CanvasRepository, CanvasScope,
+    CanvasDataBinding, CanvasRepository, CanvasScope, canvas_access_projection,
 };
-use agentdash_domain::project::ProjectAuthorizationContext;
+use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
@@ -192,24 +192,21 @@ fn canvas_access_for_workspace_module(
     canvas: &Canvas,
     current_user: &ProjectAuthorizationContext,
 ) -> CanvasAccessProjection {
-    let is_owner = canvas.owner_user_id.as_deref() == Some(current_user.user_id.as_str());
-    match canvas.scope {
-        CanvasScope::Personal => CanvasAccessProjection {
-            can_view: is_owner || current_user.is_admin,
-            can_edit_source: is_owner,
-            can_publish: is_owner,
-            can_manage_shared: current_user.is_admin,
-            can_copy: is_owner || current_user.is_admin,
-            runtime_write_allowed: is_owner,
-        },
-        CanvasScope::Project => CanvasAccessProjection {
-            can_view: true,
-            can_edit_source: false,
-            can_publish: false,
-            can_manage_shared: false,
-            can_copy: true,
-            runtime_write_allowed: false,
-        },
+    canvas_access_projection(
+        canvas,
+        current_user,
+        &workspace_module_project_access(canvas, current_user),
+    )
+}
+
+fn workspace_module_project_access(
+    canvas: &Canvas,
+    current_user: &ProjectAuthorizationContext,
+) -> ProjectAuthorization {
+    ProjectAuthorization {
+        role: None,
+        via_admin_bypass: current_user.is_admin,
+        via_template_visibility: canvas.scope == CanvasScope::Project,
     }
 }
 
@@ -711,6 +708,7 @@ async fn create_or_attach_canvas_for_workspace_module(
         Some(vfs),
         session_services_handle,
         current_session_id,
+        Some(current_user),
         &canvas,
         RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
             canvas_mount_id: canvas.mount_id.clone(),
@@ -998,8 +996,15 @@ impl WorkspaceModuleInvokeTool {
         let Some(handle) = self.session_services_handle.as_ref() else {
             return Ok(());
         };
-        submit_canvas_runtime_surface_update(None, handle, Some(&self.session_id), canvas, request)
-            .await
+        submit_canvas_runtime_surface_update(
+            None,
+            handle,
+            Some(&self.session_id),
+            self.current_user.as_ref(),
+            canvas,
+            request,
+        )
+        .await
     }
 
     async fn load_canvas_for_source_edit(
@@ -1439,6 +1444,7 @@ impl AgentTool for WorkspaceModulePresentTool {
                 &self.vfs,
                 &self.session_services_handle,
                 Some(&self.session_id),
+                self.visibility_source.current_user.as_ref(),
             )
             .await?;
         }

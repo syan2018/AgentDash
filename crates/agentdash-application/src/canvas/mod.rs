@@ -9,6 +9,7 @@ mod vfs_mount;
 mod vfs_provider;
 mod visibility;
 
+pub use agentdash_domain::canvas::canvas_access_projection;
 pub use identity::{
     CANVAS_MODULE_ID_PREFIX, CANVAS_MOUNT_ID_PREFIX, CANVAS_PRESENTATION_SCHEME,
     CANVAS_PROVIDER_ROOT_SCHEME, canvas_module_id, canvas_presentation_uri,
@@ -18,12 +19,11 @@ pub use identity::{
 pub use management::{
     CanvasListScopeFilter, CanvasMutationInput, CanvasWithAccess, CopyCanvasInput,
     CreateCanvasInput, CreatePersonalCanvasInput, PublishCanvasInput, UnpublishCanvasResult,
-    apply_canvas_mutation, build_canvas, build_personal_canvas, canvas_access_projection,
-    copy_canvas_to_personal, create_personal_canvas, create_project_canvas, delete_canvas_record,
-    list_canvases_for_user, list_project_canvases, load_canvas_by_id,
-    load_canvas_by_project_mount_id, load_canvas_with_access, publish_canvas_to_project,
-    unpublish_project_canvas, update_canvas_record, upsert_canvas_binding,
-    validate_canvas_contract,
+    apply_canvas_mutation, build_canvas, build_personal_canvas, copy_canvas_to_personal,
+    create_personal_canvas, create_project_canvas, delete_canvas_record, list_canvases_for_user,
+    list_project_canvases, load_canvas_by_id, load_canvas_by_project_mount_id,
+    load_canvas_with_access, publish_canvas_to_project, unpublish_project_canvas,
+    update_canvas_record, upsert_canvas_binding, validate_canvas_contract,
 };
 pub use promotion::{
     CANVAS_EXTENSION_SNAPSHOT_ENTRY, CanvasExtensionPackage, CanvasExtensionPackageInput,

@@ -1,7 +1,9 @@
+mod access;
 mod entity;
 mod repository;
 mod value_objects;
 
+pub use access::canvas_access_projection;
 pub use entity::Canvas;
 pub use repository::CanvasRepository;
 pub use value_objects::{

@@ -1,4 +1,5 @@
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
+use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_spi::AgentToolError;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -33,6 +34,7 @@ pub async fn request_existing_canvas_visibility_for_runtime(
     vfs: &SharedRuntimeVfs,
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
+    current_user: Option<&ProjectAuthorizationContext>,
 ) -> Result<Canvas, AgentToolError> {
     submit_existing_canvas_visibility_request(
         canvas_repo,
@@ -41,6 +43,7 @@ pub async fn request_existing_canvas_visibility_for_runtime(
         Some(vfs),
         session_services_handle,
         current_session_id,
+        current_user,
     )
     .await
 }

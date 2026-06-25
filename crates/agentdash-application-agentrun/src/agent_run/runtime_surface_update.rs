@@ -4,8 +4,11 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
-use agentdash_domain::canvas::{Canvas, CanvasScope};
+use agentdash_domain::canvas::{
+    Canvas, CanvasAccessProjection, CanvasScope, canvas_access_projection,
+};
 use agentdash_domain::common::{Mount, MountCapability};
+use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
 use async_trait::async_trait;
@@ -70,6 +73,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         &self,
         session_id: &str,
         canvas: &Canvas,
+        current_user: Option<&ProjectAuthorizationContext>,
     ) -> Result<Vfs, String> {
         let surface = self
             .surface_query
@@ -94,7 +98,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
                 current_frame.id
             ));
         };
-        let Some(mount_access) = canvas_runtime_mount_access(canvas, surface.identity.as_ref())
+        let Some(mount_access) =
+            canvas_runtime_mount_access(canvas, current_user, surface.identity.as_ref())
         else {
             return Err(format!(
                 "当前身份无权将 Canvas `{}` 暴露到运行时",
@@ -219,30 +224,63 @@ impl CanvasMountAccess {
             runtime_write_allowed: false,
         }
     }
-
-    pub const fn writable() -> Self {
-        Self {
-            runtime_write_allowed: true,
-        }
-    }
 }
 
 fn canvas_runtime_mount_access(
     canvas: &Canvas,
-    identity: Option<&AuthIdentity>,
+    current_user: Option<&ProjectAuthorizationContext>,
+    surface_identity: Option<&AuthIdentity>,
 ) -> Option<CanvasMountAccess> {
-    if canvas.scope == CanvasScope::Project {
+    let current_user = current_user
+        .cloned()
+        .or_else(|| surface_identity.map(project_authorization_context_from_identity));
+    if current_user.is_none() && canvas.scope == CanvasScope::Project {
         return Some(CanvasMountAccess::read_only());
     }
-    let Some(identity) = identity else {
-        return None;
-    };
-    let owner_matches = canvas.owner_user_id.as_deref() == Some(identity.user_id.as_str());
-    if owner_matches || identity.is_admin {
-        Some(CanvasMountAccess::writable())
+    let current_user = current_user?;
+    let access = canvas_access_projection(
+        canvas,
+        &current_user,
+        &runtime_canvas_project_access(canvas, &current_user),
+    );
+    if access.can_view {
+        Some(CanvasMountAccess::from(access))
     } else {
         None
     }
+}
+
+impl From<CanvasAccessProjection> for CanvasMountAccess {
+    fn from(access: CanvasAccessProjection) -> Self {
+        Self {
+            runtime_write_allowed: access.runtime_write_allowed,
+        }
+    }
+}
+
+fn runtime_canvas_project_access(
+    canvas: &Canvas,
+    current_user: &ProjectAuthorizationContext,
+) -> ProjectAuthorization {
+    ProjectAuthorization {
+        role: None,
+        via_admin_bypass: current_user.is_admin,
+        via_template_visibility: canvas.scope == CanvasScope::Project,
+    }
+}
+
+fn project_authorization_context_from_identity(
+    identity: &AuthIdentity,
+) -> ProjectAuthorizationContext {
+    ProjectAuthorizationContext::new(
+        identity.user_id.clone(),
+        identity
+            .groups
+            .iter()
+            .map(|group| group.group_id.clone())
+            .collect(),
+        identity.is_admin,
+    )
 }
 
 fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess) {
@@ -423,7 +461,7 @@ mod tests {
         });
 
         let returned_vfs = service
-            .expose_canvas_mount("runtime-1", &canvas)
+            .expose_canvas_mount("runtime-1", &canvas, None)
             .await
             .expect("repeated expose should succeed");
 
@@ -491,7 +529,7 @@ mod tests {
         });
 
         let returned_vfs = service
-            .expose_canvas_mount("runtime-1", &canvas)
+            .expose_canvas_mount("runtime-1", &canvas, None)
             .await
             .expect("project shared canvas expose should succeed");
 
@@ -502,6 +540,71 @@ mod tests {
             .expect("Canvas mount should be appended");
         assert!(mount.supports(MountCapability::Read));
         assert!(!mount.supports(MountCapability::Write));
+        assert!(mount.supports(MountCapability::List));
+        assert!(mount.supports(MountCapability::Search));
+    }
+
+    #[tokio::test]
+    async fn personal_canvas_expose_uses_requesting_user_when_surface_identity_is_empty() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let canvas = Canvas::new_personal(
+            project_id,
+            "alice".to_string(),
+            "cvs-dashboard-a".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        let active_vfs = base_vfs(project_id);
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(active_vfs.clone());
+
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
+        frame.mcp_surface_json =
+            Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
+        frame.execution_profile_json =
+            Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo.create(&frame).await.expect("frame should save");
+        let adopter = Arc::new(RecordingAdopter::default());
+        let service = AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: Arc::new(FixedSurfaceQuery {
+                surface: runtime_surface_for_frame(
+                    "runtime-1",
+                    run_id,
+                    project_id,
+                    &frame,
+                    capability_state,
+                    active_vfs,
+                    None,
+                ),
+            }),
+            frame_repo,
+            vfs_service: Some(Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistry::default(),
+            )))),
+            active_adopter: adopter,
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        });
+        let current_user = ProjectAuthorizationContext::new("alice".to_string(), Vec::new(), false);
+
+        let returned_vfs = service
+            .expose_canvas_mount("runtime-1", &canvas, Some(&current_user))
+            .await
+            .expect("requesting owner should expose personal canvas");
+
+        let mount = returned_vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == canvas.mount_id)
+            .expect("Canvas mount should be appended");
+        assert!(mount.supports(MountCapability::Read));
+        assert!(mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
     }

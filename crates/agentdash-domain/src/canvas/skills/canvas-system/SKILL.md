@@ -1,6 +1,6 @@
 ---
 name: canvas-system
-description: AgentDashboard Canvas authoring guide. Use when a session has workspace_module access for Canvas work, a canvas:{canvas_mount_id} workspace module, or a canvas VFS mount; use for creating or editing runnable React/HTML/CSS Canvas assets, binding VFS data into Canvas previews, rendering VFS image assets, or calling session runtime actions from Canvas UI.
+description: AgentDashboard Canvas authoring guide. Use when a session has workspace_module access for Canvas work, a canvas:{canvas_mount_id} workspace module, or a canvas VFS mount; use for creating or editing runnable React/HTML/CSS Canvas assets, binding VFS data into Canvas previews, rendering VFS image assets, exposing Canvas interaction state, submitting explicit Canvas user actions to the current AgentRun, diagnosing rendered Canvas state, or calling session runtime actions from Canvas UI.
 ---
 
 # Canvas System
@@ -15,6 +15,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 4. Edit canvas source through VFS tools, usually `fs_apply_patch` against `{canvas_mount_id}://...`, only when the mount exposes write capability.
 5. Bind external data with `workspace_module_invoke` on the `canvas:{canvas_mount_id}` module operation `canvas.bind_data` when the Canvas needs session VFS facts and the operation is present.
 6. Call `workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")` when the Canvas is ready for user inspection.
+7. Diagnose a presented Canvas with `workspace_module_invoke` operations `canvas.inspect_render_state` and `canvas.get_interaction_state` when those operations appear in `workspace_module_describe`.
 
 ## Core Rules
 
@@ -60,6 +61,8 @@ Read `references/runtime-bridge.md` when Canvas source needs:
 
 - `window.agentdash.invoke(...)` session runtime actions.
 - `window.agentdash.assets.url(...)` VFS image rendering.
+- `window.agentdash.interaction.*` to expose Agent-visible form, selection, filter, or recent-event state.
+- `window.agentdash.agent.submit(...)` to submit an explicit Canvas user action to the current AgentRun mailbox.
 - MCP runtime action input/output shapes.
 - Browser-side boundaries for tokens, backend ids, relay commands, and arbitrary HTTP calls.
 

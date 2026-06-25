@@ -27,7 +27,10 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 - The created or attached module is `canvas:{canvas_mount_id}`.
 - The current session can edit Canvas files after create or present through `{canvas_mount_id}://...`.
 - The Canvas presentation URI is `canvas://{canvas_mount_id}`; `{canvas_mount_id}://...` is the authoring VFS URI.
+- Treat `workspace_module_describe` as the source of truth for Canvas operations. Invoke only operations returned in the descriptor.
 - Bind Canvas data by describing the module, then invoking the `canvas.bind_data` operation on that same `canvas:{canvas_mount_id}` module.
+- Inspect the user-visible runtime state by invoking `canvas.inspect_render_state`; it returns the latest render observation reported by the Canvas iframe and does not modify conversation history.
+- Inspect Canvas-exposed UI state by invoking `canvas.get_interaction_state`; it returns the latest interaction snapshot explicitly published by Canvas source and does not modify conversation history.
 - Use the lifecycle-projected `canvas-system` skill for source editing, runtime bridge usage, data binding details, and Canvas UI quality rules.
 
 ## Extension Modules

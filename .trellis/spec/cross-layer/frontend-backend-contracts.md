@@ -316,6 +316,8 @@ import type {
 
 - Canvas module id is `canvas:{canvas_mount_id}`.
 - Canvas bind operation key is `canvas.bind_data` and is discoverable through describe.
+- Canvas render diagnostic operation key is `canvas.inspect_render_state` and returns `{ observation }`, where `observation` is the latest AgentRun-scoped Canvas runtime observation or `null`.
+- Canvas interaction diagnostic operation key is `canvas.get_interaction_state` and returns `{ snapshot }`, where `snapshot` is the latest Canvas interaction snapshot or `null`.
 - Canvas UI entry exposes `view_key="preview"` and `presentation_uri="canvas://{canvas_mount_id}"`.
 - Canvas VFS edit URI is `{canvas_mount_id}://...` and may appear in tool results or diagnostics as `vfs_mount_uri`.
 - `workspace_module_presented` payload includes `module_id`, `view_key`, `renderer_kind`, `presentation_uri`, `title`, and optional Canvas diagnostics such as `vfs_mount_uri`.
@@ -334,6 +336,7 @@ import type {
 ### 5. Reference Cases
 
 - Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` refreshes runtime surface, emits `workspace_module_presented.presentation_uri=canvas://{canvas_mount_id}`, and WorkspacePanel opens that URI.
+- Canvas diagnostic flow: Canvas iframe posts runtime observation and explicit interaction snapshots through AgentRun-scoped routes; Agent reads them through `workspace_module_invoke(canvas.inspect_render_state)` and `workspace_module_invoke(canvas.get_interaction_state)`.
 - Extension presentation flow: Extension UI entries continue using their own renderer URI fields.
 - URI responsibility: `view_key` selects the module UI entry, `canvas://{canvas_mount_id}` identifies the Canvas tab, and `{canvas_mount_id}://...` identifies the VFS authoring mount.
 
@@ -341,6 +344,7 @@ import type {
 
 - Contract generation check for workspace module DTO/event payload.
 - Backend test asserts Canvas present refreshes VFS/capability state before emitting `workspace_module_presented`.
+- Backend test asserts Canvas descriptor exposes render and interaction diagnostic operations, and invoke returns latest facts without creating mailbox input.
 - Frontend focused test asserts Canvas `workspace_module_presented.presentation_uri` opens the tab.
 - Frontend typecheck asserts event handling consumes generated DTO fields, not hand-written aliases.
 
@@ -357,6 +361,85 @@ openWorkspaceTab(`canvas://${event.view_key}`);
 ```ts
 openWorkspaceTab(event.presentation_uri);
 ```
+
+## Scenario: Canvas Runtime Observation, Interaction, And Agent Submit Contract
+
+### 1. Scope / Trigger
+
+- Trigger: Canvas runtime needs to expose user-visible render state, explicit UI interaction state, and Canvas-origin user actions to the current AgentRun.
+- Scope: `agentdash-contracts::canvas`, AgentRun-scoped Canvas routes, generated `canvas-contracts.ts`, `CanvasRuntimePreview`, Canvas iframe SDK, AgentRun mailbox command response, and WorkspaceModule Canvas operation contracts.
+
+### 2. Signatures
+
+Browser SDK:
+
+```ts
+window.agentdash.interaction.setState(key, value)
+window.agentdash.interaction.clearState(key)
+window.agentdash.interaction.emit(event)
+window.agentdash.interaction.getState()
+window.agentdash.agent.submit({
+  text?,
+  input?,
+  include_interaction_state?,
+  include_render_observation?,
+  delivery_intent?,
+  client_command_id?,
+})
+```
+
+AgentRun-scoped HTTP routes:
+
+```text
+GET  /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-observation
+POST /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-observation
+GET  /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/interaction-snapshot
+POST /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/interaction-snapshot
+POST /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/agent-input-submit
+```
+
+Workspace module operations:
+
+```text
+workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect_render_state", input={})
+workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.get_interaction_state", input={})
+```
+
+### 3. Contracts
+
+- Runtime observation is keyed by AgentRun, Agent, Canvas mount, and frame generation. It records latest ready/error/building status, viewport, DOM summary, diagnostics, and optional screenshot reference.
+- Interaction snapshot is keyed by AgentRun, Agent, Canvas mount, and frame generation. It records explicit Canvas source state and recent user events.
+- Observation and interaction snapshot uploads are diagnostic facts. They do not create mailbox input and do not automatically enter model-visible history.
+- `window.agentdash.agent.submit(...)` is the Canvas-origin user input channel. The backend converts the request to canonical `UserInput` and calls AgentRun mailbox with `MailboxMessageSource::CanvasAction`.
+- Submit response uses the existing `AgentRunMessageCommandResponse` so Canvas UI, workspace composer, scheduler outcome, and command receipt semantics stay aligned.
+- `window.agentdash.invoke(...)` remains RuntimeGateway action invocation. It must not be used to submit user input to the Agent.
+- The Canvas iframe never sends `sessionId`; parent page and backend resolve AgentRun, Agent, Canvas reference, current delivery runtime, and trace coordinates.
+- If no live AgentRun bridge exists, Canvas preview may render but submit-to-Agent and diagnostic upload are unavailable with a clear UI/runtime error.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `frame_id` / `generation` does not match active iframe | Parent page ignores diagnostic upload or returns stale-generation submit error |
+| Canvas preview lacks live AgentRun bridge | Runtime action submit returns bridge-unavailable diagnostic |
+| Observation has not been uploaded | `canvas.inspect_render_state` returns `observation=null` |
+| Interaction state has not been uploaded | `canvas.get_interaction_state` returns `snapshot=null` |
+| Submit request has no `text` or `input` | Frontend rejects before POST or API returns bad request |
+| Submit references current interaction/render ids | Backend accepts the mailbox command using canonical `UserInput` |
+| Runtime action uses `agentdash.invoke` | Route goes through RuntimeGateway and does not create mailbox input |
+
+### 5. Reference Cases
+
+- Canvas ready flow: iframe posts ready observation, backend stores latest runtime observation, Agent calls `canvas.inspect_render_state` and receives DOM/diagnostic summary.
+- Canvas selection flow: source calls `interaction.setState("selection", ...)`, Agent calls `canvas.get_interaction_state` and sees the current selection without mailbox side effects.
+- Canvas action flow: user clicks a Canvas button that calls `agent.submit({ text, include_interaction_state: true })`; backend creates a `CanvasAction` mailbox message and scheduler returns the standard command response.
+
+### 6. Tests Required
+
+- Frontend runtime preview test asserts observation, interaction snapshot, and submit envelopes route through AgentRun Canvas bridge and report bridge-unavailable errors when missing.
+- API test asserts AgentRun Canvas submit uses `MailboxMessageSource::CanvasAction` and returns `AgentRunMessageCommandResponse`.
+- WorkspaceModule test asserts diagnostic operations are discoverable from describe and invoke reads latest facts only.
+- Contract check asserts canvas observation, interaction snapshot, submit DTO, workspace module operation dispatch, and mailbox source enums stay generated in TypeScript.
 
 ## Scenario: Canvas Personal And Project Shared Distribution Contract
 

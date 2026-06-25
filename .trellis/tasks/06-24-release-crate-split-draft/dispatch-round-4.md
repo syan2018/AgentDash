@@ -152,6 +152,16 @@ Dispatch after implement workers complete:
 | `check-vfs-owner-split` | Generic VFS core has no owner imports; remaining owner files are classified and excluded from physical VFS extraction. |
 | `check-round-4-readiness` | Decide whether RuntimeSession physical extraction or AgentRun/Lifecycle physical extraction can start next. |
 
+## Checkpoint Checks Started
+
+| Worker | Agent id | Nickname |
+| --- | --- | --- |
+| `check-runtime-session-envelope` | `019efca4-f84c-7802-b12a-b50096240d95` | Singer |
+| `check-runtime-session-live-ports` | `019efca5-0c65-7522-9ce3-d3b764eac68c` | Bernoulli |
+| `check-gateway-visibility` | `019efca5-20f9-7b90-8899-f0d96d94af0c` | Rawls |
+| `check-vfs-owner-split` | `019efca5-352a-7980-88ed-1f8ab7e5fb90` | Parfit |
+| `check-round-4-readiness` | `019efca5-4a73-78e1-bba3-7a680d892402` | Galileo |
+
 Check agents classify findings as `delete`, `move`, `port`, or `keep`, assign each finding to a work item owner, and avoid broad workspace tests unless narrow gates pass first.
 
 ## Round 4 Commit Rule

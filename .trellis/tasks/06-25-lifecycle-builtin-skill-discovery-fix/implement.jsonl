@@ -1,0 +1,10 @@
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/prd.md","reason":"当前任务目标、确认事实、需求与验收标准"}
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/design.md","reason":"目标 crate 边界、runtime 数据流、VFS-first discovery 修复方案"}
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/implement.md","reason":"实现顺序、验证命令和风险点"}
+{"file":".trellis/spec/backend/embedded-skill-bundles.md","reason":"embedded builtin skill bundle、SkillAsset bootstrap 与 lifecycle projection 契约"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"Skill baseline 的权限/发现事实源与 CapabilityState 投影约束"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"skill baseline 如何进入 connector-facing runtime context"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"VFS mount/provider/surface 边界"}
+{"file":".trellis/spec/backend/architecture.md","reason":"application/domain/crate 分层约束"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"清理重复 helper 和抽 crate 的复用判断"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨 lifecycle/agentrun/application/API 的事实源一致性检查"}

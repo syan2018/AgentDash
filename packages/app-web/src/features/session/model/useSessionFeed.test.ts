@@ -50,7 +50,7 @@ function mkCmdEntry(
     type: "item_started",
     payload: { item, threadId: "t1", turnId: "u1", startedAtMs: 0 },
   };
-  return asEntry(id, event, { isPendingApproval: opts?.isPendingApproval });
+  return asEntry(id, event, { isPendingApproval: opts?.isPendingApproval, turnId: "u1" });
 }
 
 function mkCmdUpdatedEntry(
@@ -830,6 +830,36 @@ describe("aggregateEntries — tool burst", () => {
     expect(group.isStreamingThinking).toBe(true);
   });
 
+  it("T27b: provider waiting placeholder is anchored after the user input", () => {
+    const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), [
+      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(2);
+    expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
+    expect(isThinkingGroup(display[1])).toBe(true);
+    const group = display[1] as AggregatedThinkingGroup;
+    expect(group.entries).toHaveLength(0);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
+  it("T27c: provider waiting placeholder follows the latest visible item in the turn", () => {
+    const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
+    const tool = mkCmdEntry("c1", "ls", { status: "inProgress" });
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user, tool]), [
+      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(3);
+    expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
+    expect((display[1] as SessionDisplayEntry).id).toBe("c1");
+    expect(isThinkingGroup(display[2])).toBe(true);
+    const group = display[2] as AggregatedThinkingGroup;
+    expect(group.entries).toHaveLength(0);
+    expect(group.isStreamingThinking).toBe(true);
+  });
+
   it("T28: provider waiting merges with reasoning into one streaming thinking card", () => {
     const reasoning = mkReasoningEntryWithText("r1", "分析中");
     const display = mergeThinkingIntoDisplayItems(aggregateEntries([reasoning]), [
@@ -869,6 +899,23 @@ describe("aggregateEntries — tool burst", () => {
     expect((display[1] as SessionDisplayEntry).id).toBe("m1");
   });
 
+  it("T30b: historical reasoning stays after user input and before the final agent message", () => {
+    const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
+    const reasoning = mkReasoningEntryWithText("r1", "分析中");
+    const agent = mkMessageEntry("m1", "正式输出");
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user, reasoning, agent]), [
+      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
+    ]);
+
+    expect(display).toHaveLength(3);
+    expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
+    expect(isThinkingGroup(display[1])).toBe(true);
+    const group = display[1] as AggregatedThinkingGroup;
+    expect(group.entries.map((entry) => entry.id)).toEqual(["r1"]);
+    expect(group.isStreamingThinking).toBe(false);
+    expect((display[2] as SessionDisplayEntry).id).toBe("m1");
+  });
+
   it("T31: user message remains outside completed assistant turn segment", () => {
     const user = mkUserInputEntry("u-input", "hello", 1);
     const segments = segmentByTurn([user], [
@@ -892,6 +939,17 @@ describe("aggregateEntries — tool burst", () => {
     ]);
 
     expect(display).toHaveLength(0);
+  });
+
+  it("T32b: turn terminal clears empty provider waiting placeholder even without provider succeeded", () => {
+    const user = mkUserInputEntry("u-input", "请帮我看一下", 1);
+    const display = mergeThinkingIntoDisplayItems(aggregateEntries([user]), [
+      rawProviderAttemptStatus(2, { phase: "connected_waiting_first_delta" }),
+      rawTurnCompleted(3, "completed", 1_000),
+    ]);
+
+    expect(display).toHaveLength(1);
+    expect((display[0] as SessionDisplayEntry).id).toBe("u-input");
   });
 
   it("T33: thinking merge keeps display order instead of sorting ephemeral and durable seq together", () => {

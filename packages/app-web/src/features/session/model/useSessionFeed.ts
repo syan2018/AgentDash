@@ -283,7 +283,8 @@ interface TurnThinkingState {
   turnId: string;
   waitingSeq?: number;
   firstSeq: number;
-  insertionIndex?: number;
+  reasoningInsertionIndex?: number;
+  liveInsertionIndex?: number;
   hasAgentMessage: boolean;
   entries: SessionDisplayEntry[];
 }
@@ -308,18 +309,33 @@ function ensureTurnThinkingState(
   return created;
 }
 
-function markThinkingInsertionIndex(
+function markReasoningInsertionIndex(
   state: TurnThinkingState,
   insertionIndex: number,
 ): void {
-  if (state.insertionIndex == null || insertionIndex < state.insertionIndex) {
-    state.insertionIndex = insertionIndex;
+  if (state.reasoningInsertionIndex == null || insertionIndex < state.reasoningInsertionIndex) {
+    state.reasoningInsertionIndex = insertionIndex;
+  }
+}
+
+function markLiveInsertionIndex(
+  state: TurnThinkingState,
+  insertionIndex: number,
+): void {
+  if (state.liveInsertionIndex == null || insertionIndex > state.liveInsertionIndex) {
+    state.liveInsertionIndex = insertionIndex;
   }
 }
 
 function extractProviderWaitingSeqs(rawEvents: SessionEventEnvelope[]): Map<string, number> {
   const result = new Map<string, number>();
   for (const event of [...rawEvents].sort((a, b) => a.event_seq - b.event_seq)) {
+    const terminal = extractTurnTerminalMeta(event);
+    if (terminal) {
+      result.delete(terminal.turnId);
+      continue;
+    }
+
     const status = extractProviderAttemptStatus(event);
     if (!status?.turnId) {
       continue;
@@ -340,7 +356,9 @@ function createThinkingGroup(state: TurnThinkingState): AggregatedThinkingGroup 
     return null;
   }
 
-  const eventSeq = state.waitingSeq ?? state.entries[0]?.eventSeq ?? state.firstSeq;
+  const eventSeq = isStreamingThinking
+    ? state.waitingSeq ?? state.entries[0]?.eventSeq ?? state.firstSeq
+    : state.entries[0]?.eventSeq ?? state.firstSeq;
   return {
     type: "aggregated_thinking",
     entries: state.entries,
@@ -375,7 +393,7 @@ function mergeThinkingIntoDisplayItems(
     if ("event" in item && isThinkingEvent(item.event)) {
       if (turnId) {
         const state = ensureTurnThinkingState(thinkingStates, turnId, eventSeq);
-        markThinkingInsertionIndex(state, nonThinkingItems.length);
+        markReasoningInsertionIndex(state, nonThinkingItems.length);
         state.entries.push(item);
       }
       continue;
@@ -386,7 +404,7 @@ function mergeThinkingIntoDisplayItems(
       const groupTurnId = group.turnId ?? group.entries[0]?.turnId;
       if (groupTurnId) {
         const state = ensureTurnThinkingState(thinkingStates, groupTurnId, group.eventSeq);
-        markThinkingInsertionIndex(state, nonThinkingItems.length);
+        markReasoningInsertionIndex(state, nonThinkingItems.length);
         state.entries.push(...group.entries);
       }
       continue;
@@ -395,7 +413,7 @@ function mergeThinkingIntoDisplayItems(
     if (turnId) {
       const existingState = thinkingStates.get(turnId);
       if (existingState) {
-        markThinkingInsertionIndex(existingState, nonThinkingItems.length);
+        markLiveInsertionIndex(existingState, nonThinkingItems.length + 1);
       }
     }
 
@@ -409,7 +427,9 @@ function mergeThinkingIntoDisplayItems(
   for (const state of thinkingStates.values()) {
     const group = createThinkingGroup(state);
     if (!group) continue;
-    const insertionIndex = state.insertionIndex ?? nonThinkingItems.length;
+    const insertionIndex = group.isStreamingThinking
+      ? state.liveInsertionIndex ?? nonThinkingItems.length
+      : state.reasoningInsertionIndex ?? nonThinkingItems.length;
     const groups = thinkingGroups.get(insertionIndex);
     if (groups) {
       groups.push(group);

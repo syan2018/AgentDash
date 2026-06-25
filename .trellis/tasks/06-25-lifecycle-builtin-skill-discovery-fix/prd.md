@@ -28,13 +28,13 @@
 
 ## Acceptance Criteria
 
-- [ ] 新增或调整测试证明 `EnsureAndProject([CanvasSystem, WorkspaceModuleSystem, CompanionSystem])` 会创建/同步对应项目级 builtin SkillAsset，并在 lifecycle mount metadata 中投影相同 keys。
-- [ ] 新增或调整测试证明 `companion-system` 通过统一 builtin lifecycle skill 流程进入 projection，不依赖 companion-only ensure helper。
-- [ ] 新增或调整测试证明 lifecycle VFS 中的 `skills/canvas-system/SKILL.md` 能进入 session skill baseline，且 baseline 包含正确 capability key / file path / base dir。
-- [ ] 新增或调整测试证明 VFS-first provider 不再被 `vfs_scanner_unavailable` 跳过，而是能基于 active VFS discovery rules 产出默认暴露 skills。
-- [ ] `agentdash-application-skill` 进入 workspace，`agentdash-application-lifecycle` 和 `agentdash-application-agentrun` 通过该 crate 消费标准 skill bootstrap/discovery 能力；总 `agentdash-application` 不再持有这些底层 skill 实现作为唯一入口。
-- [ ] 现有 `skill_asset::service::builtin_bootstrap_*` 测试继续通过，旧市场安装快照仍会收敛为 builtin seed SkillAsset。
-- [ ] `cargo test` 覆盖被修改的 Rust crates 中相关单元测试；至少包含 application / application-lifecycle / application-agentrun 中受影响的 skill 或 lifecycle projection 测试。
+- [x] 新增或调整测试证明 `EnsureAndProject([CanvasSystem, WorkspaceModuleSystem, CompanionSystem])` 会创建/同步对应项目级 builtin SkillAsset，并在 lifecycle mount metadata 中投影相同 keys。
+- [x] 新增或调整测试证明 `companion-system` 通过统一 builtin lifecycle skill 流程进入 projection，不依赖 companion-only ensure helper。
+- [x] 新增或调整测试证明 lifecycle VFS 中的 `skills/canvas-system/SKILL.md` 能进入 session skill baseline，且 baseline 包含正确 capability key / file path / base dir。
+- [x] 新增或调整测试证明 VFS-first provider 不再被 `vfs_scanner_unavailable` 跳过，而是能基于 active VFS discovery rules 产出默认暴露 skills。
+- [x] `agentdash-application-skill` 进入 workspace，`agentdash-application-lifecycle` 和 `agentdash-application-agentrun` 通过该 crate 消费标准 skill bootstrap/discovery 能力；总 `agentdash-application` 不再持有这些底层 skill 实现作为唯一入口。
+- [x] 现有 `skill_asset::service::builtin_bootstrap_*` 测试继续通过，旧市场安装快照仍会收敛为 builtin seed SkillAsset。
+- [x] `cargo test` 覆盖被修改的 Rust crates 中相关单元测试；至少包含 application / application-lifecycle / application-agentrun 中受影响的 skill 或 lifecycle projection 测试。
 
 ## Notes
 

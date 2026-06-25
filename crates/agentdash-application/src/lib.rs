@@ -34,7 +34,9 @@ pub mod runtime_tools;
 pub mod scheduling;
 pub mod session;
 pub mod shared_library;
-pub mod skill;
+pub mod skill {
+    pub use agentdash_application_skill::skill::*;
+}
 pub mod skill_asset;
 pub mod story;
 pub mod task;

@@ -113,6 +113,75 @@ CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -
 >
 > **Skill 权限 vs 发现**：skill 的"授予"是 `skill_asset_keys`（声明式 Replace，种进 lifecycle mount metadata）；`CapabilityState.skill.skills`（`SkillEntry`）是 `load_skills_from_vfs` 扫 mount 的**发现物化结果**，供上下文展示和执行侧读取。`frame_builder` 的 `inherit_skills_from` carry-forward 是发现缓存（热修订不重扫 VFS），与权限原语无关。
 
+## Skill Baseline Discovery Contract
+
+### 1. Scope / Trigger
+
+Session skill baseline 从 final active VFS 和 integration skill dirs 派生。该路径跨 `agentdash-application-skill`、`agentdash-application-agentrun`、lifecycle VFS provider 与 capability context，因此新增 skill provider 或 lifecycle-projected builtin Skill 时必须遵守此契约。
+
+### 2. Signatures
+
+```rust
+agentdash_application_skill::discovery::load_skills_from_vfs(vfs_service, active_vfs).await;
+agentdash_application_skill::discovery::load_skills_from_local_dirs(extra_skill_dirs, existing_names);
+agentdash_application_skill::discovery::discover_skill_vfs_files(
+    vfs_service,
+    active_vfs,
+    &provider.vfs_discovery_rules(),
+    identity,
+).await;
+
+provider.discover_from_vfs(context, files).await;
+```
+
+### 3. Contracts
+
+- `agentdash-application-skill` owns SKILL.md parsing, builtin VFS skill dir scanning, local skill dir scanning, and provider-rule VFS file scanning.
+- `agentdash-application-agentrun` owns runtime baseline orchestration: collect workspace/local clusters, call VFS-first providers, normalize provider output, and build `SessionBaselineCapabilities`.
+- A provider with empty `vfs_discovery_rules()` uses `discover(context)`.
+- A provider with non-empty `vfs_discovery_rules()` requires active VFS and `VfsService`; the host scans files and calls `discover_from_vfs(context, files)`.
+- Normal VFS-first discovery diagnostics describe actual scan/provider problems. `vfs_scanner_unavailable` is reserved for missing active VFS/service.
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| VFS-first provider runs with active VFS/service | scanned files are passed to `discover_from_vfs` |
+| VFS-first provider runs without active VFS/service | diagnostic code `vfs_scanner_unavailable` |
+| discovered skill path is not controlled VFS URI | diagnostic code `invalid_vfs_skill_path` |
+| provider emits duplicate local name in one provider cluster | first wins, diagnostic code `duplicate_local_name` |
+| SKILL.md frontmatter invalid | diagnostic code `skill_file_invalid` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: lifecycle mount exposes `skills/canvas-system/SKILL.md`; `load_skills_from_vfs` materializes `workspace/canvas-system` with `lifecycle://skills/canvas-system/SKILL.md`.
+- Base: no VFS and no providers/local dirs returns no baseline update.
+- Bad: agentrun implements its own VFS scanner; provider rules diverge from lifecycle/local skill discovery semantics.
+
+### 6. Tests Required
+
+- skill crate tests cover VFS/local loader and provider-rule VFS scanner diagnostics.
+- agentrun projection tests cover VFS-first provider success and absence of `vfs_scanner_unavailable` on normal active VFS.
+- frame construction tests cover that lifecycle-projected builtin skills become part of the final active VFS before baseline derivation.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+if !provider.vfs_discovery_rules().is_empty() {
+    diagnostics.push(vfs_scanner_unavailable);
+}
+```
+
+#### Correct
+
+```rust
+let (files, scan_diagnostics) =
+    discover_skill_vfs_files(vfs_service, active_vfs, &rules, identity).await;
+let output = provider.discover_from_vfs(context, files).await;
+```
+
 > **Memory discovery 事实源**：memory 没有 capability declaration/effect，也不进入 `CapabilityState`。`MemoryDiscoveryOutput` 从 final VFS 与 Host Integration `MemoryDiscoveryProvider` 派生，并作为 launch plan 的 connector context 投影进入 `memory_context` frame。这样 Agent 能看到可用 memory source 和 bounded index，但读写仍必须通过原有 VFS mount capability 完成。
 
 > **Companion roster 事实源**：可派发 companion agent 列表归属 `CapabilityState.companion.agents`。CAP snapshot / delta ContextFrame 从该投影生成 `companion_agent_roster_delta` section，供模型上下文、前端 timeline 和调试视图消费。这样 companion 工具可用性（`tool.capabilities` 中的 `collaboration`）与可派发对象列表（`companion.agents`）在同一能力状态闭包下观察，runtime transition、context query 和前端展示使用同一份投影。

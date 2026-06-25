@@ -57,6 +57,71 @@ pub const MY_SKILL_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
 - 若受管文件路径使用 `\`，materializer 应归一为 `/`。
 - 若受管文件内容与源码 bundle 不一致，materializer 以源码 bundle 为准覆盖。
 
+## Runtime Builtin SkillAsset Contract
+
+### 1. Scope / Trigger
+
+源码内嵌系统 Skill 进入 AgentRun 时必须先成为项目级 builtin `SkillAsset`，再由 lifecycle mount 暴露给 session。该契约适用于 `canvas-system`、`workspace-module-system`、`companion-system`、`routine-memory` 以及后续同类系统 Skill。
+
+### 2. Signatures
+
+```rust
+agentdash_application_skill::skill_asset::SkillAssetService::new(repo)
+    .bootstrap_builtins(project_id, Some(builtin_key))
+    .await;
+
+AgentRunLifecycleSurfaceInput {
+    explicit_skill_asset_keys,
+    builtin_skills: BuiltinLifecycleSkillPolicy::EnsureAndProject(skills),
+    ..
+}
+```
+
+### 3. Contracts
+
+- `agentdash-application-skill` owns builtin SkillAsset template lookup, embedded bundle parsing, file sync, and builtin seed convergence.
+- `agentdash-application-lifecycle` owns lifecycle surface projection. `EnsureAndProject` calls the skill service for each builtin key, then writes the normalized effective key list into the single `lifecycle` mount metadata.
+- `PreserveProjected` reads existing lifecycle metadata and does not bootstrap builtin SkillAsset content.
+- `LifecycleMountProvider` exposes projected files as `lifecycle://skills/<key>/SKILL.md` and related bundle files.
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| builtin key 没有 embedded template | skill service returns not found |
+| embedded bundle `SKILL.md` 缺失或 metadata 不一致 | skill service validation error |
+| project 已有同 key 旧快照 | sync to builtin seed source and embedded files |
+| lifecycle surface lacks required projection facts | lifecycle projector returns projection error |
+
+### 5. Good/Base/Bad Cases
+
+- Good: caller passes `EnsureAndProject([CanvasSystem, WorkspaceModuleSystem, CompanionSystem])`; all three project `SkillAsset` records are synced before lifecycle metadata is refreshed.
+- Base: caller passes `PreserveProjected`; session carries forward existing projected keys only.
+- Bad: caller manually creates one system SkillAsset outside the skill service; reset/sync and lifecycle file projection no longer share the same source of truth.
+
+### 6. Tests Required
+
+- lifecycle projector test asserts bootstrap calls happen before metadata projection for multiple builtin keys.
+- skill service builtin bootstrap tests assert embedded bundle sync and old project snapshot convergence.
+- frame construction tests assert project owner and companion paths declare builtin policy instead of writing skill metadata directly.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+append_lifecycle_skill_asset_projection(vfs, project_id, &[builtin_key.to_string()]);
+```
+
+#### Correct
+
+```rust
+AgentRunLifecycleSurfaceInput {
+    builtin_skills: BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![BuiltinLifecycleSkill::CanvasSystem]),
+    ..
+}
+```
+
 Canvas authoring 协议使用项目级内嵌 Skill 路径：`canvas-system` 先通过
 `SkillAssetService::bootstrap_builtins(project_id, Some(key))` 同步到项目 SkillAsset，
 再经 AgentRun lifecycle VFS projection 暴露给 session。这样 Canvas runnable asset

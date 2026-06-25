@@ -8,6 +8,7 @@ license.workspace = true
 agentdash-agent-protocol = { workspace = true }
 agentdash-agent-types = { workspace = true }
 agentdash-application-ports = { workspace = true }
+agentdash-application-skill = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
@@ -23,3 +24,6 @@ tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.18"

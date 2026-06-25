@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
+use agentdash_application_skill::asset::SkillAssetService;
 use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
 use agentdash_domain::canvas::CANVAS_SYSTEM_SKILL_NAME;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -419,19 +420,53 @@ impl From<OrchestrationNodeProjectionFacts>
     }
 }
 
+#[async_trait::async_trait]
+pub trait BuiltinLifecycleSkillBootstrapper: Send + Sync {
+    async fn bootstrap_builtin(&self, project_id: Uuid, builtin_key: &str) -> Result<(), String>;
+}
+
+struct SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
+    repo: Arc<dyn SkillAssetRepository>,
+}
+
+impl SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
+    fn new(repo: Arc<dyn SkillAssetRepository>) -> Self {
+        Self { repo }
+    }
+}
+
+#[async_trait::async_trait]
+impl BuiltinLifecycleSkillBootstrapper for SkillAssetServiceBuiltinLifecycleSkillBootstrapper {
+    async fn bootstrap_builtin(&self, project_id: Uuid, builtin_key: &str) -> Result<(), String> {
+        SkillAssetService::new(self.repo.as_ref())
+            .bootstrap_builtins(project_id, Some(builtin_key))
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub struct AgentRunLifecycleSurfaceProjector {
-    skill_asset_repo: Arc<dyn SkillAssetRepository>,
+    builtin_skill_bootstrapper: Arc<dyn BuiltinLifecycleSkillBootstrapper>,
 }
 
 impl AgentRunLifecycleSurfaceProjector {
     pub fn new(repos: &RepositorySet) -> Self {
-        Self {
-            skill_asset_repo: repos.skill_asset_repo.clone(),
-        }
+        Self::from_skill_asset_repo(repos.skill_asset_repo.clone())
     }
 
     pub fn from_skill_asset_repo(skill_asset_repo: Arc<dyn SkillAssetRepository>) -> Self {
-        Self { skill_asset_repo }
+        Self::from_builtin_skill_bootstrapper(Arc::new(
+            SkillAssetServiceBuiltinLifecycleSkillBootstrapper::new(skill_asset_repo),
+        ))
+    }
+
+    pub fn from_builtin_skill_bootstrapper(
+        builtin_skill_bootstrapper: Arc<dyn BuiltinLifecycleSkillBootstrapper>,
+    ) -> Self {
+        Self {
+            builtin_skill_bootstrapper,
+        }
     }
 
     pub async fn project_workspace_read_surface(
@@ -497,6 +532,9 @@ impl AgentRunLifecycleSurfaceProjector {
 
         if let BuiltinLifecycleSkillPolicy::EnsureAndProject(skills) = &input.builtin_skills {
             for skill in skills {
+                self.builtin_skill_bootstrapper
+                    .bootstrap_builtin(input.project_id, skill.key())
+                    .await?;
                 skill_asset_keys.push(skill.key().to_string());
             }
         }
@@ -794,7 +832,119 @@ fn projection_set(
 mod tests {
     use super::*;
     use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
+    use agentdash_domain::DomainError;
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetSource};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingBuiltinSkillBootstrapper {
+        calls: Mutex<Vec<(Uuid, String)>>,
+    }
+
+    impl RecordingBuiltinSkillBootstrapper {
+        fn calls(&self) -> Vec<(Uuid, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BuiltinLifecycleSkillBootstrapper for RecordingBuiltinSkillBootstrapper {
+        async fn bootstrap_builtin(
+            &self,
+            project_id: Uuid,
+            builtin_key: &str,
+        ) -> Result<(), String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((project_id, builtin_key.to_string()));
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct InMemorySkillAssetRepo {
+        assets: Mutex<Vec<SkillAsset>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SkillAssetRepository for InMemorySkillAssetRepo {
+        async fn create(&self, asset: &SkillAsset) -> Result<(), DomainError> {
+            self.assets.lock().unwrap().push(asset.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|asset| asset.id == id)
+                .cloned())
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|asset| asset.project_id == project_id && asset.key == key)
+                .cloned())
+        }
+
+        async fn get_by_project_and_builtin_key(
+            &self,
+            project_id: Uuid,
+            builtin_key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|asset| {
+                    asset.project_id == project_id
+                        && asset.source.builtin_key() == Some(builtin_key)
+                })
+                .cloned())
+        }
+
+        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            Ok(self
+                .assets
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|asset| asset.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
+            let mut guard = self.assets.lock().unwrap();
+            if let Some(existing) = guard.iter_mut().find(|existing| existing.id == asset.id) {
+                *existing = asset.clone();
+                Ok(())
+            } else {
+                Err(DomainError::NotFound {
+                    entity: "skill_asset",
+                    id: asset.id.to_string(),
+                })
+            }
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.assets.lock().unwrap().retain(|asset| asset.id != id);
+            Ok(())
+        }
+    }
 
     fn lifecycle_node_vfs(project_id: Uuid) -> Vfs {
         let mut vfs = Vfs {
@@ -864,6 +1014,143 @@ mod tests {
         assert_eq!(
             projected_skill_keys_for_project(Some(&vfs), project_id),
             vec!["companion-system".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_and_project_bootstraps_builtin_keys_before_metadata_projection() {
+        let project_id = Uuid::new_v4();
+        let bootstrapper = Arc::new(RecordingBuiltinSkillBootstrapper::default());
+        let projector = AgentRunLifecycleSurfaceProjector::from_builtin_skill_bootstrapper(
+            bootstrapper.clone(),
+        );
+
+        let surface = projector
+            .project(AgentRunLifecycleSurfaceInput {
+                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                    BuiltinLifecycleSkill::CanvasSystem,
+                    BuiltinLifecycleSkill::WorkspaceModuleSystem,
+                    BuiltinLifecycleSkill::CompanionSystem,
+                ]),
+                ..projector_input(
+                    project_id,
+                    Some(Vfs {
+                        mounts: vec![workspace_mount()],
+                        default_mount_id: Some("main".to_string()),
+                        source_project_id: None,
+                        source_story_id: None,
+                        links: Vec::new(),
+                    }),
+                    AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+                )
+            })
+            .await
+            .expect("project lifecycle surface");
+
+        let expected_keys = vec![
+            "canvas-system".to_string(),
+            "workspace-module-system".to_string(),
+            "companion-system".to_string(),
+        ];
+        assert_eq!(surface.skill_asset_keys, expected_keys);
+        assert_eq!(
+            surface
+                .lifecycle_mount
+                .metadata
+                .get("skill_asset_keys")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                }),
+            Some(surface.skill_asset_keys.clone())
+        );
+
+        assert_eq!(
+            bootstrapper.calls(),
+            expected_keys
+                .into_iter()
+                .map(|key| (project_id, key))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_and_project_with_skill_service_creates_builtin_seed_assets() {
+        let project_id = Uuid::new_v4();
+        let repo = Arc::new(InMemorySkillAssetRepo::default());
+        let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo.clone());
+
+        let surface = projector
+            .project(AgentRunLifecycleSurfaceInput {
+                builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
+                    BuiltinLifecycleSkill::CanvasSystem,
+                    BuiltinLifecycleSkill::WorkspaceModuleSystem,
+                    BuiltinLifecycleSkill::CompanionSystem,
+                ]),
+                ..projector_input(
+                    project_id,
+                    Some(Vfs {
+                        mounts: vec![workspace_mount()],
+                        default_mount_id: Some("main".to_string()),
+                        source_project_id: None,
+                        source_story_id: None,
+                        links: Vec::new(),
+                    }),
+                    AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+                )
+            })
+            .await
+            .expect("project lifecycle surface");
+
+        let expected_keys = vec![
+            "canvas-system".to_string(),
+            "workspace-module-system".to_string(),
+            "companion-system".to_string(),
+        ];
+        assert_eq!(surface.skill_asset_keys, expected_keys);
+        let assets = repo
+            .list_by_project(project_id)
+            .await
+            .expect("list skill assets");
+        assert_eq!(assets.len(), 3);
+        for key in expected_keys {
+            let asset = assets
+                .iter()
+                .find(|asset| asset.key == key)
+                .unwrap_or_else(|| panic!("missing asset {key}"));
+            assert_eq!(
+                asset.source,
+                SkillAssetSource::BuiltinSeed { key: key.clone() }
+            );
+            assert!(asset.files.iter().any(|file| file.path == "SKILL.md"));
+        }
+    }
+
+    #[tokio::test]
+    async fn preserve_projected_keeps_existing_metadata_without_bootstrap() {
+        let project_id = Uuid::new_v4();
+        let bootstrapper = Arc::new(RecordingBuiltinSkillBootstrapper::default());
+        let projector = AgentRunLifecycleSurfaceProjector::from_builtin_skill_bootstrapper(
+            bootstrapper.clone(),
+        );
+
+        let surface = projector
+            .project(projector_input(
+                project_id,
+                Some(lifecycle_node_vfs(project_id)),
+                AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
+            ))
+            .await
+            .expect("project lifecycle surface");
+
+        assert_eq!(surface.skill_asset_keys, vec!["companion-system"]);
+        assert!(
+            bootstrapper.calls().is_empty(),
+            "PreserveProjected must not call builtin bootstrap service"
         );
     }
 

@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,6 +14,10 @@ use agentdash_spi::{
     SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
+use agentdash_application_skill::discovery::{
+    LoadSkillsResult, SkillDiagnostic, discover_skill_vfs_files, load_skills_from_local_dirs,
+    load_skills_from_vfs,
+};
 use agentdash_application_vfs::mount::mount_owner_kind;
 use agentdash_application_vfs::{VfsService, mount_purpose};
 
@@ -95,20 +99,30 @@ pub async fn derive_runtime_skill_baseline(
     let mut clusters = Vec::new();
     let mut diagnostics = Vec::new();
 
-    if input.vfs_service.is_some() && input.active_vfs.is_some() {
-        tracing::debug!(
-            label = input.diagnostics_label,
-            provider_key = WORKSPACE_SKILL_PROVIDER_KEY,
-            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; built-in VFS skill scan lives outside the AgentRun crate"
+    if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
+        let loaded = load_skills_from_vfs(vfs_service, active_vfs).await;
+        let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
+            loaded,
+            WORKSPACE_SKILL_PROVIDER_KEY,
+            "Workspace Skills",
         );
+        diagnostics.extend(cluster_diagnostics);
+        if let Some(cluster) = cluster {
+            clusters.push(cluster);
+        }
     }
 
     if !input.extra_skill_dirs.is_empty() {
-        tracing::debug!(
-            label = input.diagnostics_label,
-            provider_key = INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
-            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; static local skill dir scan lives outside the AgentRun crate"
+        let loaded = load_skills_from_local_dirs(input.extra_skill_dirs, &HashMap::new());
+        let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
+            loaded,
+            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
+            "Integration Static Skills",
         );
+        diagnostics.extend(cluster_diagnostics);
+        if let Some(cluster) = cluster {
+            clusters.push(cluster);
+        }
     }
 
     let discovery_context =
@@ -117,14 +131,25 @@ pub async fn derive_runtime_skill_baseline(
         let rules = provider.vfs_discovery_rules();
         let vfs_first = !rules.is_empty();
         let output = if vfs_first {
-            diagnostics.push(SkillDiscoveryDiagnostic {
-                provider_key: provider.provider_key().to_string(),
-                code: "vfs_scanner_unavailable".to_string(),
-                message: "provider 声明了 VFS discovery rules；AgentRun crate 只消费外部注入的 discovery output，文件扫描由 composition owner 提供".to_string(),
-                local_name: None,
-                file_path: None,
-            });
-            continue;
+            let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs)
+            else {
+                diagnostics.push(SkillDiscoveryDiagnostic {
+                    provider_key: provider.provider_key().to_string(),
+                    code: "vfs_scanner_unavailable".to_string(),
+                    message: "provider 声明了 VFS discovery rules，但当前 runtime projection 没有 active VFS 或 VFS service".to_string(),
+                    local_name: None,
+                    file_path: None,
+                });
+                continue;
+            };
+            let (files, scan_diagnostics) =
+                discover_skill_vfs_files(vfs_service, active_vfs, &rules, input.identity).await;
+            diagnostics.extend(scan_diagnostics.into_iter().map(|diagnostic| {
+                diagnostic.into_skill_discovery_diagnostic(provider.provider_key())
+            }));
+            provider
+                .discover_from_vfs(discovery_context.clone(), files)
+                .await
         } else {
             provider.discover(discovery_context.clone()).await
         };
@@ -536,6 +561,60 @@ fn skill_discovery_user_context_from_identity(
     }
 }
 
+fn load_skills_result_to_provider_cluster(
+    result: LoadSkillsResult,
+    provider_key: &str,
+    display_name: &str,
+) -> (Option<SkillProviderCluster>, Vec<SkillDiscoveryDiagnostic>) {
+    let diagnostics = result
+        .diagnostics
+        .into_iter()
+        .map(|diag| skill_diagnostic_to_discovery(provider_key, diag))
+        .collect();
+    if result.skills.is_empty() {
+        return (None, diagnostics);
+    }
+
+    let default_exposed_skills = result
+        .skills
+        .into_iter()
+        .map(|skill| SkillCapabilityEntry {
+            capability_key: skill_capability_key(provider_key, &skill.name),
+            provider_key: provider_key.to_string(),
+            local_name: skill.name,
+            display_name: None,
+            description: skill.description,
+            file_path: skill.file_path.to_string_lossy().to_string(),
+            base_dir: Some(skill.base_dir.to_string_lossy().to_string()),
+            exposure: SkillContextExposure::DefaultExposed,
+            disable_model_invocation: skill.disable_model_invocation,
+        })
+        .collect();
+
+    (
+        Some(SkillProviderCluster {
+            provider_key: provider_key.to_string(),
+            display_name: display_name.to_string(),
+            default_exposed_skills,
+            ..Default::default()
+        }),
+        diagnostics,
+    )
+}
+
+fn skill_diagnostic_to_discovery(
+    provider_key: &str,
+    diag: SkillDiagnostic,
+) -> SkillDiscoveryDiagnostic {
+    SkillDiscoveryDiagnostic {
+        provider_key: provider_key.to_string(),
+        code: "skill_file_invalid".to_string(),
+        message: diag.message,
+        local_name: Some(diag.name),
+        file_path: Some(diag.file_path.to_string_lossy().to_string()),
+    }
+}
+
 fn provider_output_to_surface(
     output: SkillDiscoveryOutput,
     fallback_provider_key: &str,
@@ -770,7 +849,6 @@ mod tests {
 
     fn mount_file(mount_id: &str, path: &str, content: &str) -> DiscoveredMountFile {
         DiscoveredMountFile {
-            rule_key: "agents_md".to_string(),
             mount_id: mount_id.to_string(),
             path: path.to_string(),
             content: content.to_string(),
@@ -1036,6 +1114,59 @@ mod tests {
             context: SkillDiscoveryContext,
         ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
             *self.context.lock().expect("context lock") = Some(context);
+            Ok(SkillDiscoveryOutput::default())
+        }
+    }
+
+    struct ProjectionSkillProvider;
+
+    #[async_trait]
+    impl SkillDiscoveryProvider for ProjectionSkillProvider {
+        fn provider_key(&self) -> &str {
+            "test.vfs"
+        }
+
+        fn vfs_discovery_rules(&self) -> Vec<agentdash_spi::SkillDiscoveryVfsRule> {
+            let mut rule = agentdash_spi::SkillDiscoveryVfsRule::new("skill-md");
+            rule.exact_paths = vec!["skills/review/SKILL.md".to_string()];
+            vec![rule]
+        }
+
+        async fn discover_from_vfs(
+            &self,
+            _context: SkillDiscoveryContext,
+            files: Vec<agentdash_spi::SkillDiscoveryVfsFile>,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+            let skills = files
+                .into_iter()
+                .map(|file| {
+                    let base_dir = file.path.rsplit_once('/').map(|(base, _)| base);
+                    DiscoveredSkill {
+                        local_name: "review".to_string(),
+                        display_name: Some("Review".to_string()),
+                        description: file.content,
+                        file_path: format!("{}://{}", file.mount_id, file.path),
+                        base_dir: base_dir.map(|base| format!("{}://{}", file.mount_id, base)),
+                        exposure: SkillContextExposure::DefaultExposed,
+                        disable_model_invocation: false,
+                    }
+                })
+                .collect();
+            Ok(SkillDiscoveryOutput {
+                clusters: vec![SkillDiscoveryCluster {
+                    provider_key: self.provider_key().to_string(),
+                    display_name: "Test VFS Skills".to_string(),
+                    skills,
+                    ..Default::default()
+                }],
+                diagnostics: Vec::new(),
+            })
+        }
+
+        async fn discover(
+            &self,
+            _context: SkillDiscoveryContext,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
             Ok(SkillDiscoveryOutput::default())
         }
     }
@@ -1322,6 +1453,41 @@ mod tests {
         assert!(captured.project_id.is_none());
         assert!(captured.agent_type.is_none());
         assert!(captured.detected_facts.is_none());
+    }
+
+    #[tokio::test]
+    async fn vfs_first_skill_provider_discovers_files_without_unavailable_diagnostic() {
+        let (service, vfs) = memory_vfs(HashMap::from([(
+            "skills/review/SKILL.md".to_string(),
+            "Review changes from VFS".to_string(),
+        )]));
+        let provider = Arc::new(ProjectionSkillProvider);
+        let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider];
+
+        let caps = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
+            vfs_service: Some(&service),
+            active_vfs: Some(&vfs),
+            identity: None,
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &providers,
+            diagnostics_label: "test",
+        })
+        .await
+        .expect("capabilities");
+
+        let skill = caps
+            .skills
+            .iter()
+            .find(|skill| skill.capability_key == "test.vfs/review")
+            .expect("vfs-first skill");
+        assert_eq!(skill.file_path, "agent://skills/review/SKILL.md");
+        assert_eq!(skill.base_dir.as_deref(), Some("agent://skills/review"));
+        assert!(
+            !caps
+                .skill_diagnostics
+                .iter()
+                .any(|diag| diag.code == "vfs_scanner_unavailable")
+        );
     }
 
     #[test]

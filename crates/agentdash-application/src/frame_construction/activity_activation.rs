@@ -16,12 +16,7 @@ use crate::capability::{
     CompanionContribution, CompanionSliceMode, ContextContributionSource, ContextContributions,
     McpCandidates, ToolContribution,
 };
-use crate::companion::skill_projection::{
-    append_companion_system_skill_key, append_lifecycle_companion_system_projection,
-    ensure_companion_system_skill_asset,
-};
 use crate::platform_config::PlatformConfig;
-use crate::repository_set::RepositorySet;
 
 pub(super) struct ActivityActivationInput<'a> {
     pub owner_ctx: CapabilityScopeCtx,
@@ -176,37 +171,6 @@ pub(super) async fn load_scoped_port_output_map(
         (!content.trim().is_empty()).then_some((port_key, content))
     })
     .collect()
-}
-
-pub(super) async fn project_companion_system_skill_to_activation(
-    repos: &RepositorySet,
-    project_id: Uuid,
-    activation: &mut ActivityActivation,
-) -> Result<(), String> {
-    ensure_companion_system_skill_asset(repos, project_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut skill_asset_keys = Vec::new();
-    append_companion_system_skill_key(&mut skill_asset_keys);
-    append_lifecycle_companion_system_projection(
-        &mut activation.lifecycle_vfs,
-        project_id,
-        &skill_asset_keys,
-    );
-    if let Some(mount) = activation
-        .lifecycle_vfs
-        .mounts
-        .iter()
-        .find(|mount| {
-            mount.id == agentdash_application_ports::lifecycle_surface_projection::LIFECYCLE_MOUNT_ID
-                && mount.provider
-                    == agentdash_application_ports::lifecycle_surface_projection::PROVIDER_LIFECYCLE_VFS
-        })
-        .cloned()
-    {
-        activation.lifecycle_mount = mount;
-    }
-    Ok(())
 }
 
 fn build_kickoff_prompt_fragment(input: &ActivityActivationInput<'_>) -> KickoffPromptFragment {

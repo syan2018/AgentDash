@@ -4,7 +4,7 @@ use agentdash_domain::common::StoredFileContent;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 use agentdash_domain::shared_library::{
     LibraryAsset, LibraryAssetRepository, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
-    SkillTemplateFilePayload, SkillTemplatePayload,
+    SkillTemplateFilePayload, SkillTemplatePayload, seed_digest,
 };
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository, SkillAssetSource,
@@ -16,11 +16,6 @@ use agentdash_spi::{
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::repository_set::RepositorySet;
-use crate::shared_library::{
-    InstallLibraryAssetInput, InstallLibraryAssetOutput, install_library_asset_to_project,
-    seed_digest,
-};
 use crate::skill::parse_skill_file;
 
 use super::definition::{
@@ -382,11 +377,12 @@ where
 
 // ─── Remote import ───────────────────────────────────────────────────────────
 
-pub async fn import_remote_skill_url_to_project(
-    repos: &RepositorySet,
-    input: ImportRemoteSkillAssetInput,
+pub async fn prepare_remote_skill_import(
+    skill_repo: &dyn SkillAssetRepository,
+    library_repo: &dyn LibraryAssetRepository,
+    input: &ImportRemoteSkillAssetInput,
     source: &dyn RemoteSkillSource,
-) -> Result<SkillAsset, SkillAssetApplicationError> {
+) -> Result<LibraryAsset, SkillAssetApplicationError> {
     let owner_id = normalize_remote_import_owner_id(&input.owner_id)?;
     let fetched = source
         .fetch(&input.url)
@@ -394,43 +390,13 @@ pub async fn import_remote_skill_url_to_project(
         .map_err(map_remote_skill_source_error)?;
     let materialized = materialize_remote_skill_template(remote_template_input(fetched))?;
     ensure_remote_import_target_available(
-        repos.skill_asset_repo.as_ref(),
+        skill_repo,
         input.project_id,
         &materialized.key,
         &materialized.source_ref,
     )
     .await?;
-    let library_asset = upsert_remote_imported_skill_template(
-        repos.shared_library_repo.as_ref(),
-        owner_id,
-        materialized,
-    )
-    .await?;
-
-    let output = install_library_asset_to_project(
-        repos,
-        InstallLibraryAssetInput {
-            project_id: input.project_id,
-            library_asset_id: library_asset.id,
-            target_key: None,
-            overwrite: true,
-            install_options: None,
-        },
-    )
-    .await
-    .map_err(map_shared_library_domain_error)?;
-
-    let InstallLibraryAssetOutput::SkillAsset { id } = output else {
-        return Err(SkillAssetApplicationError::Internal(
-            "skill_template 安装结果不是 SkillAsset".to_string(),
-        ));
-    };
-    repos
-        .skill_asset_repo
-        .get(id)
-        .await
-        .map_err(map_shared_library_domain_error)?
-        .ok_or_else(|| SkillAssetApplicationError::NotFound(format!("skill_asset 不存在: {id}")))
+    upsert_remote_imported_skill_template(library_repo, owner_id, materialized).await
 }
 
 pub fn materialize_remote_skill_template(
@@ -598,7 +564,7 @@ fn normalize_remote_import_owner_id(owner_id: &str) -> Result<String, SkillAsset
     Ok(owner_id.to_string())
 }
 
-fn map_shared_library_domain_error(
+pub fn map_shared_library_domain_error(
     error: agentdash_domain::DomainError,
 ) -> SkillAssetApplicationError {
     match error {

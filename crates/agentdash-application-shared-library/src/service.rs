@@ -6,12 +6,14 @@ use agentdash_domain::shared_library::{
     LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
 };
 
-use super::{builtin_library_seeds, seed_digest};
+use super::{BuiltinLibrarySeedProviderInput, seed_digest};
+use crate::builtin_library_seeds;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SeedBuiltinLibraryAssetsInput {
     pub asset_type: Option<LibraryAssetType>,
     pub key: Option<String>,
+    pub seed_provider: BuiltinLibrarySeedProviderInput,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +53,17 @@ impl<'a> SharedLibraryService<'a> {
         input: SeedBuiltinLibraryAssetsInput,
     ) -> Result<Vec<LibraryAsset>, DomainError> {
         let is_unfiltered_seed = input.asset_type.is_none() && input.key.is_none();
-        let seeds = builtin_library_seeds()?;
+        if input.seed_provider.workflow_templates.is_empty()
+            && input
+                .asset_type
+                .is_none_or(|asset_type| asset_type == LibraryAssetType::WorkflowTemplate)
+        {
+            return Err(DomainError::InvalidConfig(
+                "Shared Library builtin seed 需要 workflow crate 提供 workflow template seed provider"
+                    .to_string(),
+            ));
+        }
+        let seeds = builtin_library_seeds(input.seed_provider.clone())?;
         let active_builtin_identities = seeds
             .iter()
             .map(|seed| (seed.asset_type, seed.key.clone()))
@@ -313,6 +325,8 @@ mod tests {
     use std::sync::Mutex;
 
     use serde_json::json;
+
+    use crate::WorkflowTemplateLibrarySeed;
 
     use super::*;
 
@@ -641,11 +655,11 @@ mod tests {
         let service = SharedLibraryService::new(&repo);
 
         let first = service
-            .seed_builtin_assets(Default::default())
+            .seed_builtin_assets(seed_builtin_input())
             .await
             .expect("builtin seeds should load");
         let second = service
-            .seed_builtin_assets(Default::default())
+            .seed_builtin_assets(seed_builtin_input())
             .await
             .expect("builtin seeds should upsert");
 
@@ -672,6 +686,7 @@ mod tests {
             .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
                 asset_type: Some(LibraryAssetType::SkillTemplate),
                 key: None,
+                seed_provider: BuiltinLibrarySeedProviderInput::default(),
             })
             .await;
         assert!(
@@ -712,6 +727,7 @@ mod tests {
             .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
                 asset_type: Some(LibraryAssetType::AgentTemplate),
                 key: Some("pi_agent_general".to_string()),
+                seed_provider: BuiltinLibrarySeedProviderInput::default(),
             })
             .await
             .expect_err("builtin payload change without version bump must fail");
@@ -751,7 +767,7 @@ mod tests {
         repo.create(&stale).await.expect("insert stale asset");
 
         service
-            .seed_builtin_assets(Default::default())
+            .seed_builtin_assets(seed_builtin_input())
             .await
             .expect("seed all builtins");
 
@@ -761,5 +777,45 @@ mod tests {
             .expect("load stale")
             .expect("stale asset still exists");
         assert!(stale.deprecated);
+    }
+
+    fn seed_builtin_input() -> SeedBuiltinLibraryAssetsInput {
+        SeedBuiltinLibraryAssetsInput {
+            asset_type: None,
+            key: None,
+            seed_provider: BuiltinLibrarySeedProviderInput {
+                workflow_templates: vec![
+                    workflow_seed("trellis_dag_task", "Trellis DAG Task"),
+                    workflow_seed("builtin_workflow_admin", "Builtin Workflow Admin"),
+                ],
+            },
+        }
+    }
+
+    fn workflow_seed(key: &str, name: &str) -> WorkflowTemplateLibrarySeed {
+        serde_json::from_value(json!({
+            "key": key,
+            "name": name,
+            "description": "",
+            "workflows": [],
+            "graph": {
+                "key": key,
+                "name": name,
+                "description": "",
+                "entry_activity_key": "plan",
+                "activities": [{
+                    "key": "plan",
+                    "executor": {
+                        "kind": "human",
+                        "type": "approval",
+                        "form_schema_key": "approval"
+                    },
+                    "input_ports": [],
+                    "output_ports": []
+                }],
+                "transitions": []
+            }
+        }))
+        .expect("workflow seed")
     }
 }

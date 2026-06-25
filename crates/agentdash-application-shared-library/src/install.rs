@@ -18,12 +18,12 @@ use agentdash_domain::shared_library::{
 };
 use agentdash_domain::workflow::{ToolCapabilityDirective, mcp_capability_key};
 
-use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
+use agentdash_application_vfs::{PROJECT_VFS_MOUNT_CONTAINER_ID, normalize_mount_relative_path};
+use agentdash_application_workflow::BuiltinWorkflowTemplateBundle;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 use agentdash_domain::workflow::{DefinitionSource, WorkflowTemplateInstallBundle};
 
-use crate::repository_set::RepositorySet;
-use crate::workflow::BuiltinWorkflowTemplateBundle;
+use crate::repository_set::SharedLibraryRepositorySet;
 
 #[derive(Debug, Clone)]
 pub struct InstallLibraryAssetInput {
@@ -101,7 +101,7 @@ pub struct ProjectAssetSourceStatusItem {
 }
 
 pub async fn install_library_asset_to_project(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: InstallLibraryAssetInput,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
     let asset = repos
@@ -246,7 +246,7 @@ fn reject_install_options_for_non_agent(
 }
 
 async fn extension_template_package_artifact_for_install(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     asset: &LibraryAsset,
     payload: &agentdash_domain::shared_library::ExtensionTemplatePayload,
 ) -> Result<Option<agentdash_domain::extension_package::ExtensionPackageArtifact>, DomainError> {
@@ -269,7 +269,7 @@ async fn extension_template_package_artifact_for_install(
 }
 
 pub async fn list_project_asset_source_status(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     project_id: Uuid,
 ) -> Result<ProjectAssetSourceStatus, DomainError> {
     let mut project_agents = Vec::new();
@@ -400,7 +400,7 @@ pub async fn list_project_asset_source_status(
 }
 
 async fn install_agent_template(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: InstallLibraryAssetInput,
     asset: LibraryAsset,
     config: agentdash_domain::shared_library::AgentTemplateConfig,
@@ -500,7 +500,7 @@ struct AgentMcpPresetInstallPlan {
 }
 
 async fn resolve_agent_mcp_preset_install_plans(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     agent_asset: &LibraryAsset,
     dependencies: &[AgentMcpDependencyTemplate],
     install_options: Option<&InstallLibraryAssetOptions>,
@@ -724,7 +724,7 @@ fn source_family(asset: &LibraryAsset) -> Option<String> {
 }
 
 async fn install_vfs_mount_template(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: InstallLibraryAssetInput,
     asset: LibraryAsset,
     payload: VfsMountTemplatePayload,
@@ -815,7 +815,7 @@ async fn install_vfs_mount_template(
         let inline_files = files
             .into_iter()
             .map(|file| {
-                let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
+                let path = normalize_mount_relative_path(&file.path, false)
                     .map_err(DomainError::InvalidConfig)?;
                 match file.content_kind.as_str() {
                     "text" => Ok(InlineFile::new_text(
@@ -870,7 +870,7 @@ async fn install_vfs_mount_template(
 }
 
 async fn upsert_mcp_preset(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     preset: McpPreset,
     overwrite: bool,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
@@ -900,7 +900,7 @@ async fn upsert_mcp_preset(
 }
 
 async fn install_workflow_template(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: InstallLibraryAssetInput,
     asset: LibraryAsset,
     mut template: serde_json::Value,
@@ -936,7 +936,7 @@ async fn install_workflow_template(
 }
 
 async fn upsert_skill_asset(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     skill: SkillAsset,
     overwrite: bool,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
@@ -967,7 +967,7 @@ async fn upsert_skill_asset(
 }
 
 async fn upsert_extension_installation(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     installation: ProjectExtensionInstallation,
     overwrite: bool,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
@@ -1002,7 +1002,7 @@ async fn upsert_extension_installation(
 }
 
 async fn source_status_item(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     asset_kind: &'static str,
     project_asset_id: Uuid,
     project_asset_key: String,

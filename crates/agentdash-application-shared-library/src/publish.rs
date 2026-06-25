@@ -5,6 +5,9 @@ use serde_json::json;
 use thiserror::Error;
 use uuid::Uuid;
 
+use agentdash_application_workflow::{
+    BuiltinLifecycleTemplate, BuiltinWorkflowTemplate, BuiltinWorkflowTemplateBundle,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner,
@@ -18,11 +21,8 @@ use agentdash_domain::shared_library::{
 };
 use agentdash_domain::workflow::{ActivityExecutorSpec, AgentProcedure, WorkflowGraph};
 
-use crate::repository_set::RepositorySet;
-use crate::shared_library::seed_digest;
-use crate::workflow::{
-    BuiltinLifecycleTemplate, BuiltinWorkflowTemplate, BuiltinWorkflowTemplateBundle,
-};
+use crate::repository_set::SharedLibraryRepositorySet;
+use crate::seed_digest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectAssetPublishKind {
@@ -72,7 +72,7 @@ pub enum PublishLibraryAssetError {
 }
 
 pub async fn publish_project_asset_to_library(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: PublishLibraryAssetInput,
 ) -> Result<LibraryAsset, PublishLibraryAssetError> {
     validate_publish_input(&input)?;
@@ -146,7 +146,7 @@ pub async fn publish_project_asset_to_library(
 }
 
 async fn publish_vfs_mount_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let mount = repos
@@ -219,7 +219,7 @@ async fn publish_vfs_mount_payload(
 }
 
 async fn publish_extension_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let installation = repos
@@ -246,7 +246,7 @@ async fn publish_extension_payload(
 }
 
 async fn publish_extension_package_artifact(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
     library_asset: &LibraryAsset,
 ) -> Result<(), PublishLibraryAssetError> {
@@ -344,7 +344,7 @@ fn validate_publish_input(
 }
 
 async fn publish_agent_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let agent = repos
@@ -384,7 +384,7 @@ async fn publish_agent_payload(
 }
 
 async fn publish_mcp_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let preset = repos
@@ -412,7 +412,7 @@ async fn publish_mcp_payload(
 }
 
 async fn publish_skill_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let skill = repos
@@ -452,7 +452,7 @@ async fn publish_skill_payload(
 }
 
 async fn publish_workflow_payload(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
     let lifecycle = repos
@@ -477,7 +477,7 @@ async fn publish_workflow_payload(
 }
 
 async fn collect_lifecycle_workflows(
-    repos: &RepositorySet,
+    repos: &SharedLibraryRepositorySet,
     lifecycle: &WorkflowGraph,
 ) -> Result<Vec<AgentProcedure>, PublishLibraryAssetError> {
     let procedure_keys = lifecycle

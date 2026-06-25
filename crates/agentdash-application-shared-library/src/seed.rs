@@ -1,9 +1,8 @@
 use serde_json::json;
 
+use agentdash_application_workflow::BuiltinWorkflowTemplateBundle;
 use agentdash_domain::DomainError;
 use agentdash_domain::shared_library::{BuiltinSeed, LibraryAssetType, seed_digest};
-
-use crate::workflow::list_builtin_workflow_templates;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltinAssetVersion {
@@ -30,11 +29,20 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     },
 ];
 
-pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
+#[derive(Debug, Clone, Default)]
+pub struct BuiltinLibrarySeedProviderInput {
+    pub workflow_templates: Vec<WorkflowTemplateLibrarySeed>,
+}
+
+pub type WorkflowTemplateLibrarySeed = BuiltinWorkflowTemplateBundle;
+
+pub fn builtin_library_seeds(
+    input: BuiltinLibrarySeedProviderInput,
+) -> Result<Vec<BuiltinSeed>, DomainError> {
     let mut seeds = Vec::new();
     seeds.push(agent_template_seed()?);
     seeds.extend(mcp_server_template_seeds()?);
-    seeds.extend(workflow_template_seeds()?);
+    seeds.extend(workflow_template_seeds(input.workflow_templates)?);
     Ok(seeds)
 }
 
@@ -88,8 +96,9 @@ fn mcp_server_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
     Ok(vec![])
 }
 
-fn workflow_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
-    let templates = list_builtin_workflow_templates().map_err(DomainError::InvalidConfig)?;
+fn workflow_template_seeds(
+    templates: Vec<WorkflowTemplateLibrarySeed>,
+) -> Result<Vec<BuiltinSeed>, DomainError> {
     templates
         .into_iter()
         .map(|template| {
@@ -130,7 +139,7 @@ mod tests {
 
     #[test]
     fn builtin_library_seeds_cover_marketplace_template_types() {
-        let seeds = builtin_library_seeds().expect("load seeds");
+        let seeds = builtin_library_seeds(test_seed_input()).expect("load seeds");
         let types = seeds
             .iter()
             .map(|seed| seed.asset_type)
@@ -151,7 +160,7 @@ mod tests {
 
     #[test]
     fn builtin_asset_versions_cover_all_seeds() {
-        let seeds = builtin_library_seeds().expect("load seeds");
+        let seeds = builtin_library_seeds(test_seed_input()).expect("load seeds");
         let versions = BUILTIN_ASSET_VERSIONS
             .iter()
             .map(|item| ((item.asset_type, item.key), item.version))
@@ -170,5 +179,41 @@ mod tests {
             seeds.len(),
             "builtin asset version manifest 不能包含未使用的资产版本"
         );
+    }
+
+    fn test_seed_input() -> BuiltinLibrarySeedProviderInput {
+        BuiltinLibrarySeedProviderInput {
+            workflow_templates: vec![
+                workflow_seed("trellis_dag_task", "Trellis DAG Task"),
+                workflow_seed("builtin_workflow_admin", "Builtin Workflow Admin"),
+            ],
+        }
+    }
+
+    fn workflow_seed(key: &str, name: &str) -> WorkflowTemplateLibrarySeed {
+        serde_json::from_value(json!({
+            "key": key,
+            "name": name,
+            "description": "",
+            "workflows": [],
+            "graph": {
+                "key": key,
+                "name": name,
+                "description": "",
+                "entry_activity_key": "plan",
+                "activities": [{
+                    "key": "plan",
+                    "executor": {
+                        "kind": "human",
+                        "type": "approval",
+                        "form_schema_key": "approval"
+                    },
+                    "input_ports": [],
+                    "output_ports": []
+                }],
+                "transitions": []
+            }
+        }))
+        .expect("workflow seed")
     }
 }

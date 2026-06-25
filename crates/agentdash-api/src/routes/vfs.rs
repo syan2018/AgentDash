@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::vfs::{ListOptions, selected_workspace_binding};
+use agentdash_application_vfs::{ListOptions, selected_workspace_binding};
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, ListEntriesResponse, ListVfssResponse, SelectorHint, VfsDescriptor,
     VfsEntry,

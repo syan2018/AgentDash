@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::{SessionPersistence, SessionToolResultCache};
-use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
-use agentdash_application::vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
+use agentdash_application_runtime_session::session::{SessionPersistence, SessionToolResultCache};
+use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 
@@ -60,7 +60,7 @@ pub(crate) fn build_vfs_kernel(
         crate::vfs_materialization::RelayVfsMaterializationTransport::new(backend_registry.clone()),
     );
     let materialization_service =
-        Arc::new(agentdash_application::vfs::VfsMaterializationService::new(
+        Arc::new(agentdash_application_vfs::VfsMaterializationService::new(
             vfs_service.clone(),
             materialization_transport,
         ));

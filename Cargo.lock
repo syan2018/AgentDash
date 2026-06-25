@@ -195,8 +195,12 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-types",
+ "agentdash-application-agentrun",
+ "agentdash-application-lifecycle",
  "agentdash-application-ports",
  "agentdash-application-runtime-gateway",
+ "agentdash-application-runtime-session",
+ "agentdash-application-vfs",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-infrastructure",
@@ -233,6 +237,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-agentrun"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-types",
+ "agentdash-application-ports",
+ "agentdash-application-vfs",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-application-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-types",
+ "agentdash-application-ports",
+ "agentdash-application-vfs",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "globset",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [
@@ -266,6 +315,60 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "agentdash-application-runtime-session"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-types",
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "agentdash-relay",
+ "agentdash-spi",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-application-vfs"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-agent-types",
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "agentdash-relay",
+ "agentdash-spi",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "globset",
+ "json-patch 2.0.0",
+ "lru 0.12.5",
+ "regex",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shell-words",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

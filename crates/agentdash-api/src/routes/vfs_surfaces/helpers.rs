@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::vfs::{
+use agentdash_application_vfs::{
     PROVIDER_INLINE_FS, RuntimeFileEntry, VfsMutationError,
     types::{runtime_entry_content_kind, runtime_entry_mime_type},
 };

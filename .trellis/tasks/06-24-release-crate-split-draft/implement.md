@@ -110,16 +110,16 @@ cargo check -p agentdash-api -p agentdash-local -p agentdash-mcp
 ### Remaining Physical Extraction: Crates-First
 
 - [x] Add workspace crate `agentdash-application-runtime-gateway`.
-- [ ] Add workspace crate `agentdash-application-runtime-session`.
-- [ ] Add workspace crate `agentdash-application-vfs`.
-- [ ] Add workspace crate `agentdash-application-agentrun`.
-- [ ] Add workspace crate `agentdash-application-lifecycle`.
-- [ ] Move RuntimeSession substrate into `agentdash-application-runtime-session`.
-- [ ] Move generic VFS core into `agentdash-application-vfs`.
-- [ ] Move AgentRun modules into `agentdash-application-agentrun`.
-- [ ] Move Lifecycle modules and Lifecycle-owned orchestration runtime into `agentdash-application-lifecycle`.
-- [ ] Rewire `agentdash-application` as composition/facade crate.
-- [ ] Rewire API/local/MCP composition roots.
+- [x] Add workspace crate `agentdash-application-runtime-session`.
+- [x] Add workspace crate `agentdash-application-vfs`.
+- [x] Add workspace crate `agentdash-application-agentrun`.
+- [x] Add workspace crate `agentdash-application-lifecycle`.
+- [x] Move RuntimeSession substrate into `agentdash-application-runtime-session`.
+- [x] Move generic VFS core into `agentdash-application-vfs`.
+- [x] Move AgentRun modules into `agentdash-application-agentrun`.
+- [x] Move Lifecycle modules and Lifecycle-owned orchestration runtime into `agentdash-application-lifecycle`.
+- [x] Rewire `agentdash-application` as composition/facade crate.
+- [x] Rewire API/local/MCP composition roots.
 
 Gate:
 
@@ -137,6 +137,19 @@ Checkpoint rule:
 - Round 5A may commit with compile red when target crates exist and every failure is assigned to a crate owner / forbidden edge.
 - Round 5B should drive target crate checks toward green through ports/composition/deletion.
 - Round 5C owns final workspace integration.
+
+Round 5A checkpoint result on 2026-06-25:
+
+- Target crates exist in the workspace and own their moved implementation directories.
+- `agentdash-application` is now the umbrella composition/facade crate for extracted owners.
+- API/local/MCP old moved-module import gates are clean.
+- `cargo fmt --check`, `cargo metadata`, `agentdash-application-ports` check and `agentdash-application-runtime-gateway` check passed.
+- Target crate checks remain red by design and are assigned to Round 5B owners:
+  - `vfs-repair`: old `crate::runtime`, `crate::skill_asset`, `crate::runtime_tools`.
+  - `runtime-session-repair`: old `crate::runtime`, `crate::vfs`, `crate::context`, `crate::hooks`, `crate::backend_execution_placement`.
+  - `agentrun-repair`: old `crate::session`, `crate::lifecycle`, app service/repository/context imports and VFS facade assumptions.
+  - `lifecycle-repair`: old `crate::session`, `crate::agent_run`, `crate::vfs`, workflow compiler, repository and owner-provider imports.
+- Full checkpoint details live in `checkpoint-wave-5a.md`.
 
 ## Subagent Dispatch Plan
 

@@ -17,13 +17,13 @@ use agentdash_application::capability::tool_catalog::{
     ToolCatalogSource as ApplicationToolCatalogSource,
 };
 use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::lifecycle::{
-    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
-    run_view_builder,
-};
 use agentdash_application::workflow::{
     ActivityLifecycleCatalogService, OrchestrationExecutorLauncher, ScriptCompiler,
     SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
+};
+use agentdash_application_lifecycle::{
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    run_view_builder,
 };
 use agentdash_contracts::workflow::{
     AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
@@ -56,7 +56,7 @@ use crate::dto::{
     ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
-use agentdash_application::session::context::normalize_string;
+use agentdash_application_runtime_session::session::context::normalize_string;
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,

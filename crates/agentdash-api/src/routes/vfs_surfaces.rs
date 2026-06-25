@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use agentdash_application::vfs::{ListOptions, ReadResult, ResourceRef};
+use agentdash_application_vfs::{ListOptions, ReadResult, ResourceRef};
 
 use crate::{
     app_state::AppState,
@@ -413,7 +413,7 @@ pub async fn delete_surface_file(
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
     let normalized_path =
-        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
+        agentdash_application_vfs::normalize_mount_relative_path(&req.path, false)
             .map_err(ApiError::BadRequest)?;
     ensure_not_skill_asset_document_path(&source, &normalized_path, "删除")?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
@@ -449,10 +449,9 @@ pub async fn rename_surface_file(
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
-    let from_path =
-        agentdash_application::vfs::normalize_mount_relative_path(&req.from_path, false)
-            .map_err(ApiError::BadRequest)?;
-    let to_path = agentdash_application::vfs::normalize_mount_relative_path(&req.to_path, false)
+    let from_path = agentdash_application_vfs::normalize_mount_relative_path(&req.from_path, false)
+        .map_err(ApiError::BadRequest)?;
+    let to_path = agentdash_application_vfs::normalize_mount_relative_path(&req.to_path, false)
         .map_err(ApiError::BadRequest)?;
     if from_path == to_path {
         return Ok(Json(SurfaceRenameFileResponse {

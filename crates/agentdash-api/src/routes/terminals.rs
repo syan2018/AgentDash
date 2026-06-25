@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agentdash_application::session::terminal_cache::TerminalState;
+use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
 use agentdash_relay::*;
 
 use crate::agent_run_runtime_surface::resolve_terminal_launch_target_for_api;

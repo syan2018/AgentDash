@@ -6,36 +6,36 @@ use tokio::sync::broadcast;
 
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
-use agentdash_application::agent_run::runtime_surface::{
-    AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
-};
-use agentdash_application::agent_run::{
-    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
-    AgentRunRuntimeSurfaceUpdateService,
-};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
-use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
-use agentdash_application::session::{
-    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
-    SessionRuntimeTransitionService, SessionTitleService,
-};
-use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
+use agentdash_application_agentrun::agent_run::runtime_surface::{
+    AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
+};
+use agentdash_application_agentrun::agent_run::{
+    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
+    AgentRunRuntimeSurfaceUpdateService,
+};
+use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
 };
+use agentdash_application_runtime_session::session::{
+    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
+    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionTitleService,
+};
+use agentdash_application_vfs::MountProviderRegistry;
+use agentdash_application_vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -98,7 +98,8 @@ pub struct ServiceSet {
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     /// 交互式终端运行时状态缓存
-    pub terminal_cache: Arc<agentdash_application::session::terminal_cache::SessionTerminalCache>,
+    pub terminal_cache:
+        Arc<agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -176,7 +177,8 @@ impl AppState {
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
-        let tool_result_cache = agentdash_application::session::SessionToolResultCache::new();
+        let tool_result_cache =
+            agentdash_application_runtime_session::session::SessionToolResultCache::new();
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(

@@ -3,10 +3,10 @@
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_application::vfs::inline_persistence::{
+    use agentdash_application_vfs::inline_persistence::{
         InlineContentOverlay, InlineContentPersister,
     };
-    use agentdash_application::vfs::*;
+    use agentdash_application_vfs::*;
     use agentdash_spi::{MountCapability, Vfs};
 
     use agentdash_agent::AgentTool;
@@ -18,7 +18,7 @@ mod tests {
     use chrono::Utc;
     use tokio::sync::{Mutex, mpsc};
 
-    use agentdash_application::vfs::tools::fs::{
+    use agentdash_application_vfs::tools::fs::{
         FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
         ShellExecTool,
     };
@@ -453,7 +453,7 @@ mod tests {
         let hits = service
             .search_text(
                 &vfs,
-                agentdash_application::vfs::BasicTextSearchRequest {
+                agentdash_application_vfs::BasicTextSearchRequest {
                     mount_id: "brief",
                     path: ".",
                     query: "verify",
@@ -574,7 +574,7 @@ mod tests {
         let hits = service
             .search_text(
                 &runtime_vfs,
-                agentdash_application::vfs::BasicTextSearchRequest {
+                agentdash_application_vfs::BasicTextSearchRequest {
                     mount_id: "brief",
                     path: ".",
                     query: "patched inline",

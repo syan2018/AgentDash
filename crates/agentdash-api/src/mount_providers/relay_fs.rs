@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application::runtime::Mount;
-use agentdash_application::vfs::{
+use agentdash_application_vfs::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, GrepQuery,
     ListOptions, ListResult, MountEditCapabilities, MountError, MountOperationContext,
     MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,

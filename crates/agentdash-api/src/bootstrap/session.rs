@@ -2,14 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
-use agentdash_application::agent_run::{
-    AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
-    AgentRunRuntimeSurfaceQueryDeps,
-    AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
-    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
-    runtime_session_effective_capability_port,
-};
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
@@ -18,17 +10,25 @@ use agentdash_application::runtime_tools::{
     SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, TaskRuntimeToolProvider,
     VfsRuntimeToolProvider, WorkflowRuntimeToolProvider, WorkspaceModuleRuntimeToolProvider,
 };
-use agentdash_application::session::{
+use agentdash_application_agentrun::agent_run::{
+    AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
+    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
+    accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
+    runtime_session_effective_capability_port,
+};
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort;
+use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
+use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
     SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
     SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
     SessionToolResultCache, SessionToolResultCachePut,
 };
-use agentdash_application::vfs::VfsMaterializationService;
-use agentdash_application::vfs::VfsService;
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort;
-use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
+use agentdash_application_vfs::VfsMaterializationService;
+use agentdash_application_vfs::VfsService;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
@@ -251,7 +251,7 @@ pub(crate) async fn build_session_runtime(
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(
-        agentdash_application::lifecycle::LifecycleOrchestrator::new_with_platform_config(
+        agentdash_application_lifecycle::LifecycleOrchestrator::new_with_platform_config(
             repos.clone(),
             platform_config.clone(),
         )
@@ -323,9 +323,9 @@ fn build_session_runtime_tool_composer(
     deps: SessionRuntimeToolComposerDeps,
 ) -> Arc<dyn RuntimeToolProvider> {
     let inline_persister: Arc<
-        dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
+        dyn agentdash_application_vfs::inline_persistence::InlineContentPersister,
     > = Arc::new(
-        agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
+        agentdash_application_vfs::inline_persistence::DbInlineContentPersister::new(
             deps.repos.inline_file_repo.clone(),
         ),
     );

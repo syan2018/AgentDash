@@ -117,6 +117,21 @@ Round 5 can checkpoint with red compile if all of these are true:
 - Every `cargo metadata` or `cargo check` failure is assigned to a crate owner and forbidden edge.
 - Check agents have reviewed VFS core purity, RuntimeSession forbidden edges, AgentRun/Lifecycle mutual edges and API wiring.
 
+## Round 5A Checkpoint
+
+Checkpoint file:
+
+- `checkpoint-wave-5a.md`
+
+Current status on 2026-06-25:
+
+- All target crates exist and are workspace members.
+- `agentdash-application-runtime-gateway` and `agentdash-application-ports` still pass crate checks.
+- `cargo fmt --check` and `cargo metadata --no-deps --format-version 1` pass.
+- Static forbidden-edge gates listed below are clean.
+- Target implementation crate checks are red by source/path ownership, not manifest cycles or forbidden Cargo dependencies.
+- Round 5B should start with source repair owners: `vfs-repair`, `runtime-session-repair`, `agentrun-repair`, `lifecycle-repair`, `application-facade-repair`, plus `api-contract-check`.
+
 ## Initial Static Gates
 
 ```powershell

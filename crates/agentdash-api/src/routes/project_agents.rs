@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::{
+use agentdash_application_agentrun::agent_run::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,

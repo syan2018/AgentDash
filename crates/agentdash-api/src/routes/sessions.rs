@@ -22,7 +22,7 @@ use crate::routes::lifecycle_views::{
 };
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_agent::MessageRef;
-use agentdash_application::session::{
+use agentdash_application_runtime_session::session::{
     SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
@@ -192,13 +192,13 @@ pub async fn get_session_runtime_control(
 }
 
 fn map_session_event(
-    event: agentdash_application::session::PersistedSessionEvent,
+    event: agentdash_application_runtime_session::session::PersistedSessionEvent,
 ) -> SessionEventResponse {
     event.into()
 }
 
 fn stream_event_payload(
-    event: agentdash_application::session::PersistedSessionEvent,
+    event: agentdash_application_runtime_session::session::PersistedSessionEvent,
 ) -> SessionNdjsonEnvelope {
     SessionNdjsonEnvelope::event(event)
 }
@@ -342,7 +342,7 @@ pub async fn list_session_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_application::session::{
+    use agentdash_application_runtime_session::session::{
         ExecutionStatus, PromptLaunchPath, RuntimeTraceLaunchState,
         SessionAttachmentContextContribution, SessionContextUsageCategory, SessionContextUsageItem,
         SessionContextUsageReadModel, SessionMessageContextBreakdown,

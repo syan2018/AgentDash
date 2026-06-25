@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
+use agentdash_application_vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
 use agentdash_relay::{FileEntryRelay, SearchHit};
 use ignore::WalkBuilder;
 

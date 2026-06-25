@@ -3,14 +3,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use sqlx::PgPool;
 
-use agentdash_application::agent_run::frame::AgentRunLaunchAnchorFrameConstructionAdapter;
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::lifecycle::SessionPersistenceRuntimeSessionCreator;
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{
     IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
 };
+use agentdash_application_agentrun::agent_run::frame::AgentRunLaunchAnchorFrameConstructionAdapter;
+use agentdash_application_lifecycle::SessionPersistenceRuntimeSessionCreator;
+use agentdash_application_runtime_session::session::SessionPersistence;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,

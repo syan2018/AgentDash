@@ -4,6 +4,10 @@ members = [
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
     "crates/agentdash-application-runtime-gateway",
+    "crates/agentdash-application-runtime-session",
+    "crates/agentdash-application-vfs",
+    "crates/agentdash-application-agentrun",
+    "crates/agentdash-application-lifecycle",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
     "crates/agentdash-spi",
@@ -72,6 +76,10 @@ rhai = { version = "1.24", features = ["serde", "sync"] }
 agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
+agentdash-application-runtime-session = { path = "crates/agentdash-application-runtime-session" }
+agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
+agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
+agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }

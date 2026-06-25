@@ -6,8 +6,8 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::lifecycle::run_view_builder;
-use agentdash_application::lifecycle::run_view_builder::LifecycleRunStatusView;
+use agentdash_application_lifecycle::run_view_builder;
+use agentdash_application_lifecycle::run_view_builder::LifecycleRunStatusView;
 use agentdash_contracts::workflow::SubjectExecutionView;
 use agentdash_domain::workflow::SubjectRef;
 

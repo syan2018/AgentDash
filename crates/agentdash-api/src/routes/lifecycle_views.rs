@@ -6,13 +6,13 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::agent_run::{
+use agentdash_application_agentrun::agent_run::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunRuntimeSurfaceQueryError, ConversationEffectiveExecutorConfigModel,
     ConversationModelConfigSourceModel, RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel,
     SessionRuntimeControlPlaneStatusModel,
 };
-use agentdash_application::lifecycle::run_view_builder::{
+use agentdash_application_lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
 use agentdash_contracts::workflow::{

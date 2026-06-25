@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use agentdash_application::agent_run::{self as app_agent_run, workspace as app_workspace};
-use agentdash_application::agent_run::{
+use agentdash_application::repository_set::RepositorySet;
+use agentdash_application_agentrun::agent_run::{
+    self as app_agent_run, workspace as app_workspace,
+};
+use agentdash_application_agentrun::agent_run::{
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
 };
-use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application::repository_set::RepositorySet;
+use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
     AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
@@ -1679,7 +1681,7 @@ fn command_policy_error(error: app_workspace::AgentRunWorkspaceCommandPolicyErro
 
 #[cfg(test)]
 mod tests {
-    use agentdash_application::agent_run::DeliveryRuntimeSelectionRepositories;
+    use agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionRepositories;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentSource, DeliveryBindingStatus, LifecycleAgent,

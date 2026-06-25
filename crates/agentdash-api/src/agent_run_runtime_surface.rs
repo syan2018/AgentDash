@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::agent_run::{
+use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
     AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
     terminal_launch_target_from_current_surface,

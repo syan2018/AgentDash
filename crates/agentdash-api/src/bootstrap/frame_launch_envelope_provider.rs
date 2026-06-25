@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::agent_run::frame::{FrameConstructionDeps, FrameConstructionService};
-use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_agentrun::agent_run::frame::{
+    FrameConstructionDeps, FrameConstructionService,
+};
+use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
 };

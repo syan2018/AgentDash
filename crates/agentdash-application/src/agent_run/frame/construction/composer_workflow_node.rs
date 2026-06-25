@@ -9,7 +9,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 
@@ -23,7 +23,7 @@ pub(super) async fn compose(
     frame: &AgentFrame,
     _agent: LifecycleAgent,
     run: LifecycleRun,
-    input: &FrameLaunchEnvelopeProviderInput,
+    input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let anchor = svc

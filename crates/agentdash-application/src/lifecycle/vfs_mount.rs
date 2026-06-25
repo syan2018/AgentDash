@@ -1,8 +1,8 @@
 use crate::runtime::{Mount, MountCapability};
 use uuid::Uuid;
 
-use super::lifecycle_catalog::lifecycle_directory_hint;
-use super::mount::PROVIDER_LIFECYCLE_VFS;
+use super::vfs_catalog::lifecycle_directory_hint;
+use crate::vfs::mount::PROVIDER_LIFECYCLE_VFS;
 
 pub(crate) fn build_agent_run_session_lifecycle_mount(
     run_id: Uuid,

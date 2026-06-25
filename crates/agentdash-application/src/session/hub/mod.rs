@@ -22,7 +22,8 @@ use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::runtime_session_live::{
-    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionHookTargetPort,
+    RuntimeSessionMailboxRuntimePort,
 };
 use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -99,6 +100,7 @@ pub struct SessionRuntimeInner {
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
     pub(super) permission_grant_repo: Option<Arc<dyn PermissionGrantRepository>>,
     pub(super) effective_capability_port: Option<Arc<dyn RuntimeSessionEffectiveCapabilityPort>>,
+    pub(super) hook_target_port: Option<Arc<dyn RuntimeSessionHookTargetPort>>,
     pub(super) mailbox_runtime_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。

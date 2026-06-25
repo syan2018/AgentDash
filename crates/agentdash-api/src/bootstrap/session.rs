@@ -7,7 +7,8 @@ use agentdash_application::agent_run::{
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    accepted_launch_commit_port, mailbox_runtime_port, runtime_session_effective_capability_port,
+    accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
+    runtime_session_effective_capability_port,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
@@ -197,6 +198,7 @@ pub(crate) async fn build_session_runtime(
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
     .with_effective_capability_port(effective_capability_port)
+    .with_hook_target_port(hook_target_runtime_port())
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {

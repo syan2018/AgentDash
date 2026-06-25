@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
+use agentdash_application_ports::runtime_session_live::RuntimeSessionHookTargetRuntimeRequest;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget,
 };
@@ -13,7 +14,6 @@ use agentdash_spi::hooks::{
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
-use crate::agent_run::frame::hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
 pub struct SessionHookService {
@@ -531,11 +531,19 @@ pub(crate) async fn build_frame_hook_runtime(
             target.agent_id
         )));
     }
-    Ok(Some(Arc::new(AgentFrameHookRuntime::from_frame(
-        target.run_id,
-        &frame,
-        session_id.to_string(),
-        provider,
-        snapshot,
-    ))))
+    let Some(hook_target_port) = hub.hook_target_port.as_ref() else {
+        return Err(ConnectorError::Runtime(
+            "SessionRuntimeInner 缺少 hook_target_port，无法创建 hook runtime".to_string(),
+        ));
+    };
+    hook_target_port
+        .build_hook_runtime(RuntimeSessionHookTargetRuntimeRequest {
+            delivery_runtime_session_id: session_id.to_string(),
+            control_target: target,
+            frame_revision: frame.revision,
+            provider,
+            snapshot,
+        })
+        .await
+        .map_err(|error| ConnectorError::Runtime(error.to_string()))
 }

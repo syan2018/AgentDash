@@ -4,7 +4,7 @@ use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::ConnectorError;
 
 use crate::agent_run::frame::launch_envelope_provider::{
-    CompanionLaunchSource, FrameLaunchEnvelopeProviderInput,
+    CompanionLaunchSource, FrameLaunchEnvelopeConstructionInput,
 };
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
@@ -17,7 +17,7 @@ pub(super) async fn compose_project_agent_owner_modifier(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
-    input: &FrameLaunchEnvelopeProviderInput,
+    input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let identity = command.identity();
@@ -56,7 +56,7 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
     companion: CompanionLaunchSource,
-    input: &FrameLaunchEnvelopeProviderInput,
+    input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let identity = command.identity();

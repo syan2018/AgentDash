@@ -19,9 +19,9 @@ use crate::lifecycle::surface::journey::{
     group_events_into_turn_summaries, item_file_name, session_summary_archives, to_json_pretty,
     tool_result_metadata_for_projection,
 };
+use crate::lifecycle::vfs_catalog::lifecycle_root_entries;
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::{SessionPersistence, SessionToolResultCache};
-use crate::vfs::lifecycle_catalog::lifecycle_root_entries;
 use crate::vfs::mount::PROVIDER_LIFECYCLE_VFS;
 use crate::vfs::mount_inline::list_inline_entries;
 use crate::vfs::path::normalize_mount_relative_path;
@@ -1390,12 +1390,12 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+    use crate::lifecycle::{
+        build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
+    };
     use crate::session::MemorySessionPersistence;
     use crate::session::{
         ExecutionStatus, SessionEventStore, SessionMeta, SessionMetaStore, TitleSource,
-    };
-    use crate::vfs::{
-        build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
     };
 
     #[derive(Default)]

@@ -171,22 +171,6 @@ pub struct RuntimeTraceLaunchStateRef {
     pub last_event_seq: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeDeliveryCommandRef {
-    pub command_id: String,
-    pub command_kind: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct FrameLaunchEnvelopeProviderInput {
-    pub runtime_session_id: String,
-    pub command_source: FrameLaunchSource,
-    pub runtime_trace_state: RuntimeTraceLaunchStateRef,
-    pub had_existing_runtime: bool,
-    pub requested_runtime_commands: Vec<RuntimeDeliveryCommandRef>,
-    pub agent_needs_bootstrap: bool,
-}
-
 #[derive(Clone)]
 pub struct FrameLaunchEnvelopeRequest {
     pub runtime_session_id: String,
@@ -205,14 +189,6 @@ pub enum FrameLaunchEnvelopeError {
     MissingField { field: &'static str },
     #[error("frame launch envelope projection failed: {message}")]
     Projection { message: String },
-}
-
-#[async_trait]
-pub trait FrameLaunchEnvelopeProvider: Send + Sync {
-    async fn build_frame_launch_envelope(
-        &self,
-        input: FrameLaunchEnvelopeProviderInput,
-    ) -> Result<FrameLaunchEnvelope, FrameLaunchEnvelopeError>;
 }
 
 #[async_trait]

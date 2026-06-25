@@ -16,6 +16,8 @@ mod subject_context_assignment;
 mod subject_execution_control;
 pub mod surface;
 pub mod tools;
+pub(crate) mod vfs_catalog;
+pub(crate) mod vfs_mount;
 mod vfs_provider;
 
 pub(crate) use activity_activation::ActivityActivation;
@@ -70,5 +72,8 @@ pub use surface::surface_projector::{
     BuiltinLifecycleSkill, BuiltinLifecycleSkillPolicy, MessageStreamProjectionFacts,
     MessageStreamProjectionRef, MessageStreamTraceKind, OrchestrationNodeProjectionFacts,
     OrchestrationNodeProjectionInput,
+};
+pub(crate) use vfs_mount::{
+    build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
 pub(crate) use vfs_provider::LifecycleMountProvider;

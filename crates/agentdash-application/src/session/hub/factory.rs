@@ -11,7 +11,8 @@ use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::runtime_session_live::{
-    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionHookTargetPort,
+    RuntimeSessionMailboxRuntimePort,
 };
 use tokio::sync::Mutex;
 
@@ -126,6 +127,7 @@ impl SessionRuntimeInner {
             lifecycle_agent_repo: None,
             permission_grant_repo: None,
             effective_capability_port: None,
+            hook_target_port: None,
             mailbox_runtime_port: Arc::new(tokio::sync::RwLock::new(None)),
             lifecycle_gate_repo: None,
         }
@@ -226,6 +228,11 @@ impl SessionRuntimeInner {
         port: Arc<dyn RuntimeSessionEffectiveCapabilityPort>,
     ) -> Self {
         self.effective_capability_port = Some(port);
+        self
+    }
+
+    pub fn with_hook_target_port(mut self, port: Arc<dyn RuntimeSessionHookTargetPort>) -> Self {
+        self.hook_target_port = Some(port);
         self
     }
 
@@ -346,6 +353,9 @@ impl SessionRuntimeInner {
         }
         if self.effective_capability_port.is_none() {
             return Err("SessionRuntimeInner 缺少 effective_capability_port".to_string());
+        }
+        if self.hook_target_port.is_none() {
+            return Err("SessionRuntimeInner 缺少 hook_target_port".to_string());
         }
         if self.mailbox_runtime_port.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 mailbox_runtime_port".to_string());

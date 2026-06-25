@@ -5,7 +5,7 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 
 use super::{
@@ -25,7 +25,7 @@ pub(super) async fn route_and_compose(
     frame: AgentFrame,
     agent: LifecycleAgent,
     run: LifecycleRun,
-    input: FrameLaunchEnvelopeProviderInput,
+    input: FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let has_orchestration = if agent.project_agent_id.is_some() {
         false

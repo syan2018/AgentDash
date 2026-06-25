@@ -1,4 +1,9 @@
+use std::sync::Arc;
+
 use agentdash_agent_protocol::UserInputBlock;
+use agentdash_spi::hooks::{
+    AgentFrameHookSnapshot, ExecutionHookProvider, HookControlTarget, SharedHookRuntime,
+};
 use agentdash_spi::{CapabilityState, DynAgentRuntimeDelegate};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -46,4 +51,20 @@ pub trait RuntimeSessionEffectiveCapabilityPort: Send + Sync {
         runtime_session_id: &str,
         base_state: CapabilityState,
     ) -> Result<CapabilityState, RuntimeSessionLivePortError>;
+}
+
+pub struct RuntimeSessionHookTargetRuntimeRequest {
+    pub delivery_runtime_session_id: String,
+    pub control_target: HookControlTarget,
+    pub frame_revision: i32,
+    pub provider: Arc<dyn ExecutionHookProvider>,
+    pub snapshot: AgentFrameHookSnapshot,
+}
+
+#[async_trait]
+pub trait RuntimeSessionHookTargetPort: Send + Sync {
+    async fn build_hook_runtime(
+        &self,
+        request: RuntimeSessionHookTargetRuntimeRequest,
+    ) -> Result<Option<SharedHookRuntime>, RuntimeSessionLivePortError>;
 }

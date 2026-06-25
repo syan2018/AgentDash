@@ -6,7 +6,8 @@ use agentdash_application_ports::frame_launch_envelope::{
 };
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_application_ports::runtime_session_live::{
-    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionHookTargetPort,
+    RuntimeSessionMailboxRuntimePort,
 };
 use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_spi::AgentConnector;
@@ -195,6 +196,11 @@ impl SessionRuntimeBuilder {
         port: Arc<dyn RuntimeSessionEffectiveCapabilityPort>,
     ) -> Self {
         self.inner = self.inner.with_effective_capability_port(port);
+        self
+    }
+
+    pub fn with_hook_target_port(mut self, port: Arc<dyn RuntimeSessionHookTargetPort>) -> Self {
+        self.inner = self.inner.with_hook_target_port(port);
         self
     }
 

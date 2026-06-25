@@ -10,14 +10,15 @@ pub(crate) mod surface_service;
 
 pub use builder::AgentFrameBuilder;
 pub use construction::{FrameConstructionDeps, FrameConstructionService};
-pub use hook_runtime::AgentFrameHookRuntime;
+pub use hook_runtime::{
+    AgentFrameHookRuntime, AgentRunHookTargetRuntimeAdapter, hook_target_runtime_port,
+};
 pub use launch_commit::{
     AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
     accepted_launch_commit_port,
 };
 pub use launch_envelope_provider::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeProvider,
-    FrameLaunchEnvelopeProviderInput, RoutineLaunchSource, SharedFrameLaunchEnvelopeProvider,
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
 };
 pub use lifecycle_materialization::AgentRunLaunchAnchorFrameConstructionAdapter;
 pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};

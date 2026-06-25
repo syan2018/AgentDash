@@ -3,7 +3,7 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
 use agentdash_spi::ConnectorError;
 
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::project_agent_context::{
@@ -23,7 +23,7 @@ pub(super) async fn compose(
     frame: &AgentFrame,
     agent: LifecycleAgent,
     run: LifecycleRun,
-    input: &FrameLaunchEnvelopeProviderInput,
+    input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let project_agent_id = agent.project_agent_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("LifecycleAgent {} 缺少 project_agent_id", agent.id))

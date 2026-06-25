@@ -15,6 +15,10 @@ use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionHookTargetPort, RuntimeSessionHookTargetRuntimeRequest,
+    RuntimeSessionLivePortError,
+};
 use agentdash_spi::hooks::{
     AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
     AgentFrameRuntimeSnapshot, ContextTokenStats, ExecutionHookProvider, HookControlTarget,
@@ -63,6 +67,31 @@ impl std::fmt::Debug for AgentFrameHookRuntime {
             .field("runtime_session_id", &self.runtime_session_id)
             .field("revision", &self.revision())
             .finish()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct AgentRunHookTargetRuntimeAdapter;
+
+pub fn hook_target_runtime_port() -> Arc<dyn RuntimeSessionHookTargetPort> {
+    Arc::new(AgentRunHookTargetRuntimeAdapter)
+}
+
+#[async_trait]
+impl RuntimeSessionHookTargetPort for AgentRunHookTargetRuntimeAdapter {
+    async fn build_hook_runtime(
+        &self,
+        request: RuntimeSessionHookTargetRuntimeRequest,
+    ) -> Result<Option<agentdash_spi::hooks::SharedHookRuntime>, RuntimeSessionLivePortError> {
+        Ok(Some(Arc::new(AgentFrameHookRuntime::new(
+            request.control_target.run_id,
+            request.control_target.agent_id,
+            request.control_target.frame_id,
+            request.frame_revision,
+            request.delivery_runtime_session_id,
+            request.provider,
+            request.snapshot,
+        ))))
     }
 }
 

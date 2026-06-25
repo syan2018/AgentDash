@@ -10,11 +10,11 @@ use uuid::Uuid;
 use agentdash_domain::workflow::RuntimeSessionExecutionAnchor;
 
 use crate::lifecycle::projection::ActiveWorkflowProjection;
-use crate::vfs::mount::{SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY};
-use crate::vfs::{
-    append_lifecycle_skill_asset_projection, build_agent_run_session_lifecycle_mount,
-    build_lifecycle_mount_with_node_scope,
+use crate::lifecycle::{
+    build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
+use crate::vfs::append_lifecycle_skill_asset_projection;
+use crate::vfs::mount::{SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY};
 
 fn empty_vfs() -> Vfs {
     Vfs {

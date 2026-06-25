@@ -1,11 +1,9 @@
 pub mod apply_patch;
 pub mod binding_resolver;
 pub mod inline_persistence;
-pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
 pub mod mount_inline;
-pub(crate) mod mount_lifecycle;
 pub mod mount_project;
 pub mod mount_routine;
 pub mod mount_skill_asset;
@@ -46,9 +44,6 @@ pub use mount::{
 pub use mount_inline::{
     build_context_container_mount, list_inline_entries, normalize_inline_files,
     parse_inline_mount_owner,
-};
-pub(crate) use mount_lifecycle::{
-    build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
 pub use mount_project::{
     append_agent_knowledge_mounts, apply_agent_vfs_access_grants, build_derived_vfs,

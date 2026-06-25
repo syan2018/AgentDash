@@ -29,7 +29,7 @@ use agentdash_spi::{
 };
 
 use crate::agent_run::frame::builder::AgentFrameBuilder;
-use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeProviderInput;
+use crate::agent_run::frame::launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 use crate::agent_run::frame::runtime_launch::{
     FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace,
@@ -53,7 +53,6 @@ use crate::workspace::resolution::BackendAvailability;
 
 /// Session frame compose 的唯一入口。
 ///
-/// 替代此前散落在 API 层 `AppStateFrameLaunchEnvelopeProvider` 中的 5 个 compose 方法，
 /// 将"路径分类 → compose → 持久化 → FrameLaunchEnvelope"收束为一次调用。
 pub struct FrameConstructionService {
     pub(crate) repos: RepositorySet,
@@ -110,9 +109,9 @@ impl FrameConstructionService {
     }
 
     /// 统一 frame construction 入口：分类 → compose → 持久化 → envelope。
-    pub async fn construct_launch_envelope(
+    pub(crate) async fn construct_launch_envelope(
         &self,
-        input: FrameLaunchEnvelopeProviderInput,
+        input: FrameLaunchEnvelopeConstructionInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let session_id = input.session_id.clone();
         let anchor = self
@@ -216,7 +215,7 @@ impl FrameConstructionService {
     pub(crate) fn prompt_launch_path(
         &self,
         executor_config: Option<&AgentConfig>,
-        input: &FrameLaunchEnvelopeProviderInput,
+        input: &FrameLaunchEnvelopeConstructionInput,
     ) -> PromptLaunchPath {
         let supports_repository_restore = executor_config
             .map(|config| {
@@ -261,8 +260,8 @@ impl FrameConstructionService {
 
 fn frame_launch_provider_input_from_request(
     request: FrameLaunchEnvelopeRequest,
-) -> Result<FrameLaunchEnvelopeProviderInput, ConnectorError> {
-    Ok(FrameLaunchEnvelopeProviderInput {
+) -> Result<FrameLaunchEnvelopeConstructionInput, ConnectorError> {
+    Ok(FrameLaunchEnvelopeConstructionInput {
         session_id: request.runtime_session_id,
         command: launch_command_from_frame_launch(request.command)?,
         runtime_trace_state: runtime_trace_launch_state_from_ref(request.runtime_trace_state),

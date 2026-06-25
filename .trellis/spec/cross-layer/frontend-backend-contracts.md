@@ -496,7 +496,6 @@ pub struct CanvasResponse {
     pub entry_file: String,
     pub sandbox_config: CanvasSandboxConfigDto,
     pub files: Vec<CanvasFileDto>,
-    pub bindings: Vec<CanvasDataBindingDto>,
     pub published_from_canvas_id: Option<String>,
     pub shared_canvas_id: Option<String>,
     pub cloned_from_canvas_id: Option<String>,

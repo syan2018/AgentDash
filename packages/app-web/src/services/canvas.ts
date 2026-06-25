@@ -9,6 +9,7 @@ import type {
   CanvasInteractionSnapshot,
   CanvasInteractionSnapshotUpsertRequest,
   CanvasRuntimeDiagnosticDto,
+  CanvasRuntimeBindingUpsertRequest,
   CanvasRuntimeInvokeRequest,
   CanvasRuntimeObservation,
   CanvasRuntimeObservationUpsertRequest,
@@ -56,6 +57,10 @@ export interface SubmitCanvasAgentInput {
 export interface CanvasRuntimeInvokeInput extends Omit<CanvasRuntimeInvokeRequest, "input"> {
   input?: JsonValue;
 }
+
+export type UpsertCanvasRuntimeBindingInput = CanvasRuntimeBindingUpsertRequest & {
+  alias: string;
+};
 
 function agentRunCanvasPath(
   bridge: AgentRunCanvasBridgeIdentity,
@@ -180,6 +185,19 @@ export async function fetchAgentRunCanvasRuntimeSnapshot(
   bridge: AgentRunCanvasBridgeIdentity,
 ): Promise<CanvasAgentRunRuntimeSnapshotDto> {
   return api.get<CanvasAgentRunRuntimeSnapshotDto>(agentRunCanvasPath(bridge, "/runtime-snapshot"));
+}
+
+export async function upsertAgentRunCanvasRuntimeBinding(
+  bridge: AgentRunCanvasBridgeIdentity,
+  input: UpsertCanvasRuntimeBindingInput,
+): Promise<CanvasAgentRunRuntimeSnapshotDto> {
+  return api.put<CanvasAgentRunRuntimeSnapshotDto>(
+    agentRunCanvasPath(bridge, `/runtime-bindings/${encodeURIComponent(input.alias)}`),
+    {
+      source_uri: input.source_uri,
+      content_type: input.content_type,
+    },
+  );
 }
 
 export async function uploadCanvasRenderObservation(

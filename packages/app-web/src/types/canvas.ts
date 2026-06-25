@@ -2,12 +2,12 @@
 import type {
   CanvasAccessDto,
   CanvasAgentRunRuntimeSnapshotDto,
-  CanvasDataBindingDto,
   CanvasFileDto,
   CanvasImportMapDto,
   CanvasListScopeDto,
   CanvasResponse,
   CanvasRuntimeBindingDto,
+  CanvasRuntimeBindingUpsertRequest,
   CanvasRuntimeBridgeSnapshotDto,
   CanvasRuntimeFileDto,
   CanvasRuntimeSnapshotDto,
@@ -34,8 +34,6 @@ export type CanvasSandboxConfig = CanvasSandboxConfigDto;
 
 export type CanvasFile = CanvasFileDto;
 
-export type CanvasDataBinding = CanvasDataBindingDto;
-
 export type CanvasScope = CanvasScopeDto;
 
 export type CanvasListScope = CanvasListScopeDto;
@@ -61,6 +59,8 @@ export type UnpublishCanvasResult = UnpublishCanvasResponse;
 export type CanvasRuntimeFile = CanvasRuntimeFileDto;
 
 export type CanvasRuntimeBinding = CanvasRuntimeBindingDto;
+
+export type CanvasRuntimeBindingUpsertInput = CanvasRuntimeBindingUpsertRequest;
 
 export type RuntimeActionKind = RuntimeActionKindDto;
 

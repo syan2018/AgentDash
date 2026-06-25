@@ -12,8 +12,6 @@ export type CanvasAgentRunRuntimeBridgeSnapshotDto = { enabled: boolean, actions
 
 export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasAgentRunRuntimeBridgeSnapshotDto, };
 
-export type CanvasDataBindingDto = { alias: string, source_uri: string, content_type: string, };
-
 export type CanvasFileDto = { path: string, content: string, };
 
 export type CanvasImportMapDto = { imports: { [key in string]?: string }, };
@@ -26,9 +24,11 @@ export type CanvasInteractionSnapshotUpsertRequest = { frame_id: string, updated
 
 export type CanvasListScopeDto = "all" | "mine" | "shared";
 
-export type CanvasResponse = { canvas_id: string, project_id: string, owner_user_id: string | null, scope: CanvasScopeDto, access: CanvasAccessDto, canvas_mount_id: string, vfs_mount_id: string, title: string, description: string, entry_file: string, sandbox_config: CanvasSandboxConfigDto, files: Array<CanvasFileDto>, bindings: Array<CanvasDataBindingDto>, published_from_canvas_id: string | null, shared_canvas_id: string | null, cloned_from_canvas_id: string | null, published_at: string | null, published_by_user_id: string | null, created_at: string, updated_at: string, };
+export type CanvasResponse = { canvas_id: string, project_id: string, owner_user_id: string | null, scope: CanvasScopeDto, access: CanvasAccessDto, canvas_mount_id: string, vfs_mount_id: string, title: string, description: string, entry_file: string, sandbox_config: CanvasSandboxConfigDto, files: Array<CanvasFileDto>, published_from_canvas_id: string | null, shared_canvas_id: string | null, cloned_from_canvas_id: string | null, published_at: string | null, published_by_user_id: string | null, created_at: string, updated_at: string, };
 
 export type CanvasRuntimeBindingDto = { alias: string, source_uri: string, data_path: string, content_type: string, resolved: boolean, };
+
+export type CanvasRuntimeBindingUpsertRequest = { source_uri: string, content_type?: string, };
 
 export type CanvasRuntimeBridgeSnapshotDto = { enabled: boolean, surface?: RuntimeSurfaceDto, disabled_reason?: string, };
 
@@ -56,7 +56,7 @@ export type CanvasScopeDto = "personal" | "project";
 
 export type CopyCanvasToPersonalRequest = { canvas_mount_id?: string, title?: string, description?: string, };
 
-export type CreateCanvasRequest = { canvas_mount_id?: string, title: string, description?: string, entry_file?: string, sandbox_config?: CanvasSandboxConfigDto, files?: Array<CanvasFileDto>, bindings?: Array<CanvasDataBindingDto>, };
+export type CreateCanvasRequest = { canvas_mount_id?: string, title: string, description?: string, entry_file?: string, sandbox_config?: CanvasSandboxConfigDto, files?: Array<CanvasFileDto>, };
 
 export type DeleteCanvasResponse = { deleted: string, };
 
@@ -82,4 +82,4 @@ export type RuntimeTraceDto = { trace_id: string, invocation_id: string, parent_
 
 export type UnpublishCanvasResponse = { unpublished_canvas_id: string, source_canvas_id: string | null, };
 
-export type UpdateCanvasRequest = { title?: string, description?: string, entry_file?: string, sandbox_config?: CanvasSandboxConfigDto, files?: Array<CanvasFileDto>, bindings?: Array<CanvasDataBindingDto>, };
+export type UpdateCanvasRequest = { title?: string, description?: string, entry_file?: string, sandbox_config?: CanvasSandboxConfigDto, files?: Array<CanvasFileDto>, };

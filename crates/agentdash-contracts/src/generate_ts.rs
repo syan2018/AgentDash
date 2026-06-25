@@ -32,17 +32,17 @@ use agentdash_contracts::backend::{
 };
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
-    CanvasAgentRunRuntimeSnapshotDto, CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto,
-    CanvasInteractionEventDto, CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest,
-    CanvasListScopeDto, CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
-    CanvasRuntimeInvokeRequest, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
-    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
-    CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
-    DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
-    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
-    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
-    RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
+    CanvasAgentRunRuntimeSnapshotDto, CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto,
+    CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto,
+    CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest,
+    CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto,
+    CanvasRuntimeFileDto, CanvasRuntimeInvokeRequest, CanvasRuntimeObservation,
+    CanvasRuntimeObservationStatusDto, CanvasRuntimeObservationUpsertRequest,
+    CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto, CanvasSandboxConfigDto, CanvasScopeDto,
+    CopyCanvasToPersonalRequest, CreateCanvasRequest, DeleteCanvasResponse, ListCanvasesQuery,
+    PublishCanvasToProjectRequest, RuntimeActionDescriptorDto, RuntimeActionKindDto,
+    RuntimeContextDto, RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto,
+    RuntimeSurfaceDto, RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
 };
 use agentdash_contracts::common_response::{
     DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
@@ -791,7 +791,6 @@ fn main() {
             export_all::<CanvasFileDto>(dir);
             export_all::<CanvasImportMapDto>(dir);
             export_all::<CanvasSandboxConfigDto>(dir);
-            export_all::<CanvasDataBindingDto>(dir);
             export_all::<CanvasScopeDto>(dir);
             export_all::<CanvasListScopeDto>(dir);
             export_all::<CanvasAccessDto>(dir);
@@ -805,6 +804,7 @@ fn main() {
             export_all::<UnpublishCanvasResponse>(dir);
             export_all::<CanvasRuntimeFileDto>(dir);
             export_all::<CanvasRuntimeBindingDto>(dir);
+            export_all::<CanvasRuntimeBindingUpsertRequest>(dir);
             export_all::<RuntimeActionKindDto>(dir);
             export_all::<RuntimePolicyDto>(dir);
             export_all::<RuntimeActionDescriptorDto>(dir);

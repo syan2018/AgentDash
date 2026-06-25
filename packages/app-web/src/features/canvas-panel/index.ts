@@ -1,3 +1,3 @@
 export * from "./CanvasRuntimePanel";
-export * from "./CanvasBindingsEditor";
+export * from "./CanvasRuntimeBindingsEditor";
 export * from "./ProjectCanvasManager";

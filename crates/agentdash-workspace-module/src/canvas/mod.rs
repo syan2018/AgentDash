@@ -22,8 +22,8 @@ pub use management::{
     copy_canvas_to_personal, create_personal_canvas, create_project_canvas, delete_canvas_record,
     list_canvases_for_user, list_project_canvases, load_canvas_by_id,
     load_canvas_by_project_mount_id, load_canvas_with_access, publish_canvas_to_project,
-    unpublish_project_canvas, update_canvas_record, upsert_canvas_binding,
-    validate_canvas_contract,
+    unpublish_project_canvas, update_canvas_record, upsert_canvas_data_binding,
+    validate_canvas_contract, validate_canvas_data_bindings,
 };
 pub use runtime::{
     CanvasResolvedBindingFile, CanvasRuntimeBinding, CanvasRuntimeBridgeSnapshot,
@@ -35,8 +35,8 @@ pub use runtime_resource::CanvasRuntimeResourceService;
 pub use vfs_mount::{
     CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, CanvasMountAccess, append_canvas_mount,
     append_canvas_mounts, build_canvas_mount, build_canvas_mount_id,
-    canvas_mount_runtime_data_bindings, canvas_with_runtime_data_bindings,
-    refresh_canvas_mount_binding_files, upsert_canvas_runtime_data_binding,
+    canvas_mount_runtime_data_bindings, refresh_canvas_mount_binding_files,
+    upsert_canvas_runtime_data_binding,
 };
 pub use vfs_provider::CanvasFsMountProvider;
 pub use visibility::{append_visible_canvas_mounts, canvas_runtime_mount_access};

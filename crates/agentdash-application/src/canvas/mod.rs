@@ -27,7 +27,7 @@ pub use agentdash_workspace_module::canvas::{
     apply_canvas_mutation, build_canvas, build_canvas_mount, build_canvas_mount_id,
     build_personal_canvas, build_runtime_snapshot, build_runtime_snapshot_with_bindings,
     canvas_runtime_mount_access, refresh_canvas_mount_binding_files, resolve_canvas_binding_files,
-    unresolved_canvas_binding_files, upsert_canvas_binding, validate_canvas_contract,
+    unresolved_canvas_binding_files, validate_canvas_contract, validate_canvas_data_bindings,
 };
 pub use diagnostics::{
     CanvasAgentRunContext, CanvasInteractionSnapshotInput, CanvasRuntimeObservationInput,

@@ -28,15 +28,6 @@ pub struct CanvasSandboxConfigDto {
     pub import_map: CanvasImportMapDto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct CanvasDataBindingDto {
-    pub alias: String,
-    pub source_uri: String,
-    #[serde(default)]
-    pub content_type: String,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum CanvasScopeDto {
@@ -86,7 +77,6 @@ pub struct CanvasResponse {
     pub entry_file: String,
     pub sandbox_config: CanvasSandboxConfigDto,
     pub files: Vec<CanvasFileDto>,
-    pub bindings: Vec<CanvasDataBindingDto>,
     pub published_from_canvas_id: Option<String>,
     pub shared_canvas_id: Option<String>,
     pub cloned_from_canvas_id: Option<String>,
@@ -115,9 +105,6 @@ pub struct CreateCanvasRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub files: Option<Vec<CanvasFileDto>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub bindings: Option<Vec<CanvasDataBindingDto>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -138,9 +125,6 @@ pub struct UpdateCanvasRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub files: Option<Vec<CanvasFileDto>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub bindings: Option<Vec<CanvasDataBindingDto>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -200,6 +184,15 @@ pub struct CanvasRuntimeBindingDto {
     pub data_path: String,
     pub content_type: String,
     pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CanvasRuntimeBindingUpsertRequest {
+    pub source_uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

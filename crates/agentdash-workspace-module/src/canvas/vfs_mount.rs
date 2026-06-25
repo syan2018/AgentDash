@@ -6,7 +6,7 @@ use agentdash_application_vfs::PROVIDER_CANVAS_FS;
 
 use crate::canvas::{
     CanvasResolvedBindingFile, canvas_provider_root_ref, canvas_vfs_mount_id,
-    upsert_canvas_binding, validate_canvas_contract,
+    upsert_canvas_data_binding, validate_canvas_data_bindings,
 };
 
 pub const CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY: &str = "runtime_data_bindings";
@@ -145,13 +145,6 @@ pub fn canvas_mount_runtime_data_bindings(mount: &Mount) -> Vec<CanvasDataBindin
         .unwrap_or_default()
 }
 
-pub fn canvas_with_runtime_data_bindings(canvas: &Canvas, mount: &Mount) -> Canvas {
-    let runtime_bindings = canvas_mount_runtime_data_bindings(mount);
-    let mut effective = canvas.clone();
-    effective.bindings = merge_canvas_runtime_data_bindings(&canvas.bindings, &runtime_bindings);
-    effective
-}
-
 pub fn upsert_canvas_runtime_data_binding(
     vfs: &mut Vfs,
     canvas: &Canvas,
@@ -168,33 +161,19 @@ pub fn upsert_canvas_runtime_data_binding(
             ))
         })?;
     let binding_alias = binding.alias.trim().to_string();
-    let mut effective = canvas_with_runtime_data_bindings(canvas, mount);
-    upsert_canvas_binding(&mut effective, binding)?;
-    let normalized_binding = effective
-        .bindings
-        .iter()
-        .find(|item| item.alias == binding_alias)
-        .cloned()
-        .ok_or_else(|| {
-            DomainError::InvalidConfig(format!(
-                "Canvas runtime binding `{binding_alias}` 规范化失败"
-            ))
-        })?;
-
     let mut runtime_bindings = canvas_mount_runtime_data_bindings(mount);
-    if let Some(existing) = runtime_bindings
-        .iter_mut()
-        .find(|item| item.alias == normalized_binding.alias)
+    upsert_canvas_data_binding(&mut runtime_bindings, binding)?;
+    if !runtime_bindings
+        .iter()
+        .any(|item| item.alias == binding_alias)
     {
-        *existing = normalized_binding;
-    } else {
-        runtime_bindings.push(normalized_binding);
+        return Err(DomainError::InvalidConfig(format!(
+            "Canvas runtime binding `{binding_alias}` 规范化失败"
+        )));
     }
 
-    let mut validation_canvas = canvas.clone();
-    validation_canvas.bindings =
-        merge_canvas_runtime_data_bindings(&canvas.bindings, &runtime_bindings);
-    validate_canvas_contract(&validation_canvas)?;
+    validate_canvas_data_bindings(canvas, &runtime_bindings)?;
+    runtime_bindings.sort_by(|left, right| left.alias.cmp(&right.alias));
 
     let metadata = ensure_mount_metadata_object(mount);
     metadata.insert(
@@ -203,25 +182,7 @@ pub fn upsert_canvas_runtime_data_binding(
             .map_err(|error| DomainError::InvalidConfig(error.to_string()))?,
     );
 
-    Ok(validation_canvas.bindings)
-}
-
-fn merge_canvas_runtime_data_bindings(
-    source_bindings: &[CanvasDataBinding],
-    runtime_bindings: &[CanvasDataBinding],
-) -> Vec<CanvasDataBinding> {
-    let mut merged = source_bindings.to_vec();
-    for runtime_binding in runtime_bindings {
-        if let Some(existing) = merged
-            .iter_mut()
-            .find(|binding| binding.alias == runtime_binding.alias)
-        {
-            *existing = runtime_binding.clone();
-        } else {
-            merged.push(runtime_binding.clone());
-        }
-    }
-    merged
+    Ok(runtime_bindings)
 }
 
 fn preserve_canvas_mount_runtime_data_bindings(existing: &Mount, next: &mut Mount) {

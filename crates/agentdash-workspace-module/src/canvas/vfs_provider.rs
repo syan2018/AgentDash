@@ -16,7 +16,7 @@ use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository};
 use agentdash_domain::common::{Mount, MountCapability};
 
 use crate::canvas::{
-    CanvasResolvedBindingFile, canvas_with_runtime_data_bindings, unresolved_canvas_binding_files,
+    CanvasResolvedBindingFile, canvas_mount_runtime_data_bindings, unresolved_canvas_binding_files,
 };
 
 pub struct CanvasFsMountProvider {
@@ -77,14 +77,13 @@ impl MountProvider for CanvasFsMountProvider {
     ) -> Result<ReadResult, MountError> {
         let path = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         let canvas = self.load_canvas(mount).await?;
-        let effective_canvas = canvas_with_runtime_data_bindings(&canvas, mount);
         let file_content = canvas
             .files
             .iter()
             .find(|file| file.path == path)
             .map(|file| file.content.clone());
         let binding_file = if file_content.is_none() {
-            canvas_binding_files(mount, &effective_canvas, _ctx)
+            canvas_binding_files(mount, _ctx)
                 .await
                 .into_iter()
                 .find(|file| file.path == path)
@@ -116,8 +115,7 @@ impl MountProvider for CanvasFsMountProvider {
         ensure_canvas_mount_writable(mount)?;
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
-            let effective_canvas = canvas_with_runtime_data_bindings(canvas, mount);
-            reject_generated_binding_file_write(&effective_canvas, &normalized)?;
+            reject_generated_binding_file_write(mount, &normalized)?;
             if let Some(file) = canvas.files.iter_mut().find(|file| file.path == normalized) {
                 file.content = content.to_string();
             } else {
@@ -139,8 +137,7 @@ impl MountProvider for CanvasFsMountProvider {
         ensure_canvas_mount_writable(mount)?;
         let normalized = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
-            let effective_canvas = canvas_with_runtime_data_bindings(canvas, mount);
-            reject_generated_binding_file_write(&effective_canvas, &normalized)?;
+            reject_generated_binding_file_write(mount, &normalized)?;
             let before = canvas.files.len();
             canvas.files.retain(|file| file.path != normalized);
             if before == canvas.files.len() {
@@ -164,9 +161,8 @@ impl MountProvider for CanvasFsMountProvider {
         let from_path = normalize_mount_relative_path(from_path, false).map_err(map_mount_err)?;
         let to_path = normalize_mount_relative_path(to_path, false).map_err(map_mount_err)?;
         self.update_canvas(mount, move |canvas| {
-            let effective_canvas = canvas_with_runtime_data_bindings(canvas, mount);
-            reject_generated_binding_file_write(&effective_canvas, &from_path)?;
-            reject_generated_binding_file_write(&effective_canvas, &to_path)?;
+            reject_generated_binding_file_write(mount, &from_path)?;
+            reject_generated_binding_file_write(mount, &to_path)?;
             if canvas.files.iter().any(|file| file.path == to_path) {
                 return Err(MountError::OperationFailed(format!(
                     "目标路径已存在: {to_path}"
@@ -191,9 +187,8 @@ impl MountProvider for CanvasFsMountProvider {
     ) -> Result<ListResult, MountError> {
         let path = normalize_mount_relative_path(&options.path, true).map_err(map_mount_err)?;
         let canvas = self.load_canvas(mount).await?;
-        let effective_canvas = canvas_with_runtime_data_bindings(&canvas, mount);
-        let binding_files = canvas_binding_files(mount, &effective_canvas, _ctx).await;
-        let files = canvas_files_map_from_bindings(&effective_canvas, &binding_files);
+        let binding_files = canvas_binding_files(mount, _ctx).await;
+        let files = canvas_files_map_from_bindings(&canvas, &binding_files);
         let binding_attrs = binding_files
             .into_iter()
             .map(|file| (file.path.clone(), binding_file_attributes(&file)))
@@ -223,8 +218,7 @@ impl MountProvider for CanvasFsMountProvider {
         let max_results = query.max_results.unwrap_or(usize::MAX);
         let mut matches = Vec::new();
 
-        let effective_canvas = canvas_with_runtime_data_bindings(&canvas, mount);
-        for (path, content) in canvas_files_map(mount, &effective_canvas, _ctx).await {
+        for (path, content) in canvas_files_map(mount, &canvas, _ctx).await {
             if !base_path.is_empty()
                 && path != base_path
                 && !path.starts_with(&format!("{base_path}/"))
@@ -298,7 +292,7 @@ async fn canvas_files_map(
     canvas: &Canvas,
     ctx: &MountOperationContext,
 ) -> BTreeMap<String, String> {
-    let binding_files = canvas_binding_files(mount, canvas, ctx).await;
+    let binding_files = canvas_binding_files(mount, ctx).await;
     canvas_files_map_from_bindings(canvas, &binding_files)
 }
 
@@ -321,10 +315,10 @@ fn canvas_files_map_from_bindings(
 
 async fn canvas_binding_files(
     mount: &Mount,
-    canvas: &Canvas,
     ctx: &MountOperationContext,
 ) -> Vec<CanvasResolvedBindingFile> {
-    let mut files = unresolved_canvas_binding_files(canvas)
+    let runtime_bindings = canvas_mount_runtime_data_bindings(mount);
+    let mut files = unresolved_canvas_binding_files(&runtime_bindings)
         .into_iter()
         .map(|file| (file.path.clone(), file))
         .collect::<BTreeMap<_, _>>();
@@ -351,9 +345,8 @@ async fn canvas_binding_files(
     files.into_values().collect()
 }
 
-fn reject_generated_binding_file_write(canvas: &Canvas, path: &str) -> Result<(), MountError> {
-    if canvas
-        .bindings
+fn reject_generated_binding_file_write(mount: &Mount, path: &str) -> Result<(), MountError> {
+    if canvas_mount_runtime_data_bindings(mount)
         .iter()
         .any(|binding| binding.data_path() == path)
     {
@@ -556,20 +549,25 @@ mod tests {
     #[tokio::test]
     async fn canvas_mount_exposes_resolved_binding_files_as_read_only_generated_files() {
         let project_id = Uuid::new_v4();
-        let mut canvas = Canvas::new(
+        let canvas = Canvas::new(
             project_id,
             "cvs-dashboard".to_string(),
             "Dashboard".to_string(),
             String::new(),
         );
-        canvas.bindings = vec![CanvasDataBinding::new(
-            "stats".to_string(),
-            "main://data/stats.csv".to_string(),
-        )];
+        let mut canvas_mount = build_canvas_mount(&canvas, CanvasMountAccess::writable());
+        canvas_mount.metadata.as_object_mut().unwrap().insert(
+            CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY.to_string(),
+            serde_json::to_value(vec![CanvasDataBinding::new(
+                "stats".to_string(),
+                "main://data/stats.csv".to_string(),
+            )])
+            .unwrap(),
+        );
 
         let vfs = agentdash_spi::Vfs {
             mounts: vec![
-                build_canvas_mount(&canvas, CanvasMountAccess::writable()),
+                canvas_mount.clone(),
                 Mount {
                     id: "main".to_string(),
                     provider: "inline_fs".to_string(),
@@ -584,7 +582,7 @@ mod tests {
             default_mount_id: Some(canvas.mount_id.clone()),
             ..Default::default()
         };
-        let mount = vfs.mounts.first().expect("mount").clone();
+        let mount = canvas_mount;
         let resolver = Arc::new(StaticRuntimeTextResolver {
             content: Mutex::new("name,value\nA,1".to_string()),
         });
@@ -698,11 +696,9 @@ mod tests {
             .expect("read runtime binding file");
         assert_eq!(read.content, "name,value\nA,1");
 
-        let saved = repo
-            .get_by_id(canvas.id)
+        repo.get_by_id(canvas.id)
             .await
             .expect("load canvas")
             .expect("canvas");
-        assert!(saved.bindings.is_empty());
     }
 }

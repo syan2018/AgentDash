@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig, CanvasScope};
+use super::value_objects::{CanvasFile, CanvasSandboxConfig, CanvasScope};
 
 /// Canvas — Project 级可运行前端资产。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +17,6 @@ pub struct Canvas {
     pub entry_file: String,
     pub sandbox_config: CanvasSandboxConfig,
     pub files: Vec<CanvasFile>,
-    pub bindings: Vec<CanvasDataBinding>,
     pub published_from_canvas_id: Option<Uuid>,
     pub shared_canvas_id: Option<Uuid>,
     pub cloned_from_canvas_id: Option<Uuid>,
@@ -75,7 +74,6 @@ impl Canvas {
             entry_file: "src/main.tsx".to_string(),
             sandbox_config: CanvasSandboxConfig::default(),
             files: vec![CanvasFile::default_entry()],
-            bindings: Vec::new(),
             published_from_canvas_id: None,
             shared_canvas_id: None,
             cloned_from_canvas_id: None,
@@ -92,7 +90,6 @@ impl Canvas {
         self.entry_file = source.entry_file.clone();
         self.sandbox_config = source.sandbox_config.clone();
         self.files = source.files.clone();
-        self.bindings = source.bindings.clone();
         self.touch();
     }
 

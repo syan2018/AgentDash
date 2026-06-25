@@ -46,7 +46,8 @@ use crate::canvas::{
     CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_RENDERER_KIND, CanvasMutationInput, CanvasRepositorySet,
     CopyCanvasInput, CreatePersonalCanvasInput, canvas_module_id, canvas_presentation_uri,
     canvas_vfs_mount_id, copy_canvas_to_personal, create_personal_canvas,
-    load_canvas_by_project_mount_id, normalize_canvas_mount_id, upsert_canvas_binding,
+    load_canvas_by_project_mount_id, normalize_canvas_mount_id, upsert_canvas_data_binding,
+    validate_canvas_data_bindings,
 };
 use crate::workspace_module::runtime_bridge::SharedWorkspaceModuleAgentRunBridgeHandle;
 use crate::workspace_module::{
@@ -928,15 +929,17 @@ fn bind_canvas_data_for_loaded_canvas(
     let alias = binding.alias.clone();
     let source_uri = binding.source_uri.clone();
     let content_type = binding.content_type.clone();
-    let mut effective_canvas = canvas.clone();
-    upsert_canvas_binding(&mut effective_canvas, binding.clone())
+    let mut runtime_bindings = Vec::new();
+    upsert_canvas_data_binding(&mut runtime_bindings, binding.clone())
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+    validate_canvas_data_bindings(&canvas, &runtime_bindings)
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
     let result = WorkspaceModuleCanvasBindingResult {
         canvas_id: canvas.id.to_string(),
         canvas_mount_id: canvas.mount_id.clone(),
         vfs_mount_id: canvas_vfs_mount_id(&canvas.mount_id),
-        bindings: effective_canvas.bindings.clone(),
+        bindings: runtime_bindings,
         alias,
         source_uri,
         content_type,
@@ -1791,7 +1794,7 @@ mod tests {
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
     use agentdash_application_vfs::tools::SharedRuntimeVfs;
     use agentdash_domain::DomainError;
-    use agentdash_domain::canvas::Canvas;
+    use agentdash_domain::canvas::{Canvas, CanvasFile};
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::project::{
         Project, ProjectAuthorizationContext, ProjectRepository, ProjectRole, ProjectSubjectGrant,
@@ -1858,6 +1861,13 @@ mod tests {
     }
 
     const TEST_USER_ID: &str = "user-1";
+
+    fn canvas_file_pairs(files: &[CanvasFile]) -> Vec<(&str, &str)> {
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_str()))
+            .collect()
+    }
 
     #[derive(Default)]
     struct FakeCanvasRuntimeStateRepository {
@@ -2971,6 +2981,11 @@ mod tests {
         bridge_handle.set(bridge.clone()).await;
         let tool = invoke_tool_with_backend(install_repo, canvas_repo.clone(), project_id, None)
             .with_agent_run_visibility(bridge_handle);
+        let before = canvas_repo
+            .get_by_mount_id(project_id, "cvs-dashboard-a")
+            .await
+            .expect("load canvas before bind")
+            .expect("canvas before bind");
         let result = tool
             .execute(
                 "t",
@@ -3008,9 +3023,10 @@ mod tests {
             .await
             .expect("load canvas")
             .expect("canvas");
-        assert!(
-            saved.bindings.is_empty(),
-            "canvas.bind_data must not persist AgentRun bindings to Canvas source"
+        assert_eq!(saved.entry_file, before.entry_file);
+        assert_eq!(
+            canvas_file_pairs(&saved.files),
+            canvas_file_pairs(&before.files)
         );
         let requests = bridge.requests.lock().expect("requests lock");
         assert_eq!(requests.len(), 1);
@@ -3073,7 +3089,11 @@ mod tests {
             .await
             .expect("load shared canvas")
             .expect("shared canvas");
-        assert!(saved.bindings.is_empty());
+        assert_eq!(saved.entry_file, shared_canvas.entry_file);
+        assert_eq!(
+            canvas_file_pairs(&saved.files),
+            canvas_file_pairs(&shared_canvas.files)
+        );
         let requests = bridge.requests.lock().expect("requests lock");
         assert_eq!(requests.len(), 1);
         let RuntimeSurfaceUpdateRequest::CanvasBindingChanged {

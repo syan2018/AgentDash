@@ -1,11 +1,14 @@
+use std::collections::BTreeSet;
+
 use agentdash_domain::canvas::Canvas;
 use agentdash_spi::Vfs;
 
 use agentdash_application_vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
 
+use super::runtime::runtime_binding_from_canvas_binding;
 use super::{
-    CanvasResolvedBindingFile, CanvasRuntimeSnapshot, build_runtime_snapshot, canvas_vfs_mount_id,
-    canvas_with_runtime_data_bindings, unresolved_canvas_binding_files,
+    CanvasResolvedBindingFile, CanvasRuntimeFile, CanvasRuntimeSnapshot, build_runtime_snapshot,
+    canvas_mount_runtime_data_bindings, canvas_vfs_mount_id, unresolved_canvas_binding_files,
 };
 
 pub struct CanvasRuntimeResourceService<'a> {
@@ -23,11 +26,7 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         session_id: Option<String>,
         vfs: Option<&Vfs>,
     ) -> CanvasRuntimeSnapshot {
-        let effective_canvas = vfs
-            .and_then(|vfs| canvas_runtime_mount(vfs, canvas))
-            .map(|mount| canvas_with_runtime_data_bindings(canvas, mount))
-            .unwrap_or_else(|| canvas.clone());
-        let mut snapshot = build_runtime_snapshot(&effective_canvas, session_id);
+        let mut snapshot = build_runtime_snapshot(canvas, session_id);
         let Some(vfs) = vfs else {
             return snapshot;
         };
@@ -39,8 +38,30 @@ impl<'a> CanvasRuntimeResourceService<'a> {
                 .surface_ref(),
             );
         }
+        let runtime_bindings = canvas_runtime_mount(vfs, canvas)
+            .map(canvas_mount_runtime_data_bindings)
+            .unwrap_or_default();
+        snapshot.bindings = runtime_bindings
+            .iter()
+            .map(runtime_binding_from_canvas_binding)
+            .collect();
+        let mut existing_paths = snapshot
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        for binding in &runtime_bindings {
+            let path = binding.data_path();
+            if existing_paths.insert(path.clone()) {
+                snapshot.files.push(CanvasRuntimeFile {
+                    path,
+                    content: binding.placeholder_content().to_string(),
+                    file_type: "data".to_string(),
+                });
+            }
+        }
 
-        let resolved_files = self.resolve_binding_files(&effective_canvas, vfs).await;
+        let resolved_files = self.resolve_binding_files(canvas, vfs).await;
         for resolved_file in resolved_files {
             let Some(binding) = snapshot
                 .bindings
@@ -68,10 +89,10 @@ impl<'a> CanvasRuntimeResourceService<'a> {
         canvas: &Canvas,
         vfs: &Vfs,
     ) -> Vec<CanvasResolvedBindingFile> {
-        let effective_canvas = canvas_runtime_mount(vfs, canvas)
-            .map(|mount| canvas_with_runtime_data_bindings(canvas, mount))
-            .unwrap_or_else(|| canvas.clone());
-        let mut files = unresolved_canvas_binding_files(&effective_canvas);
+        let runtime_bindings = canvas_runtime_mount(vfs, canvas)
+            .map(canvas_mount_runtime_data_bindings)
+            .unwrap_or_default();
+        let mut files = unresolved_canvas_binding_files(&runtime_bindings);
         for file in &mut files {
             let Ok(resource_ref) = parse_mount_uri(&file.source_uri, vfs) else {
                 continue;

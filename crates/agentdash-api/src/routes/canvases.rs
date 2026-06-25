@@ -31,17 +31,18 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunMailboxService, AgentRunMailboxUserMessageCommand, ProjectAgentRunStartRepos,
     RuntimeSurfaceQueryPurpose,
 };
+use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
-    CanvasAgentRunRuntimeSnapshotDto, CanvasDataBindingDto, CanvasFileDto, CanvasImportMapDto,
-    CanvasInteractionEventDto, CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest,
-    CanvasListScopeDto, CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
-    CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
+    CanvasAgentRunRuntimeSnapshotDto, CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto,
+    CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto,
+    CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest,
+    CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto,
+    CanvasRuntimeFileDto, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
     CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
     CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
     DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
@@ -134,6 +135,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_agent_run_canvas_runtime_snapshot),
         )
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-bindings/{alias}",
+            axum::routing::put(upsert_agent_run_canvas_runtime_binding),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-invoke",
             axum::routing::post(invoke_agent_run_canvas_runtime_action),
         )
@@ -182,12 +187,6 @@ pub async fn create_canvas(
                 files: req
                     .files
                     .map(|files| files.into_iter().map(canvas_file_from_contract).collect()),
-                bindings: req.bindings.map(|bindings| {
-                    bindings
-                        .into_iter()
-                        .map(canvas_data_binding_from_contract)
-                        .collect()
-                }),
                 ..CanvasMutationInput::default()
             },
         },
@@ -260,12 +259,6 @@ pub async fn update_canvas(
             files: req
                 .files
                 .map(|files| files.into_iter().map(canvas_file_from_contract).collect()),
-            bindings: req.bindings.map(|bindings| {
-                bindings
-                    .into_iter()
-                    .map(canvas_data_binding_from_contract)
-                    .collect()
-            }),
         },
     )
     .await?;
@@ -320,11 +313,6 @@ fn canvas_to_contract(canvas: Canvas, access: CanvasAccessProjection) -> CanvasR
             .files
             .into_iter()
             .map(canvas_file_to_contract)
-            .collect(),
-        bindings: canvas
-            .bindings
-            .into_iter()
-            .map(canvas_data_binding_to_contract)
             .collect(),
         published_from_canvas_id: canvas.published_from_canvas_id.map(|id| id.to_string()),
         shared_canvas_id: canvas.shared_canvas_id.map(|id| id.to_string()),
@@ -392,22 +380,6 @@ fn canvas_file_from_contract(file: CanvasFileDto) -> CanvasFile {
         path: file.path,
         content: file.content,
     }
-}
-
-fn canvas_data_binding_to_contract(binding: CanvasDataBinding) -> CanvasDataBindingDto {
-    CanvasDataBindingDto {
-        alias: binding.alias,
-        source_uri: binding.source_uri,
-        content_type: binding.content_type,
-    }
-}
-
-fn canvas_data_binding_from_contract(binding: CanvasDataBindingDto) -> CanvasDataBinding {
-    CanvasDataBinding::with_content_type(
-        binding.alias,
-        binding.source_uri,
-        Some(binding.content_type),
-    )
 }
 
 pub async fn promote_canvas_to_extension(
@@ -741,6 +713,54 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
         &context.canvas,
         None,
         Some(&runtime_surface.vfs),
+        state.services.vfs_service.as_ref(),
+    )
+    .await;
+    snapshot.runtime_bridge = build_canvas_runtime_bridge_surface(
+        state.as_ref(),
+        &context.canvas,
+        &context.runtime_session_id,
+    )?;
+    Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
+        snapshot,
+    )))
+}
+
+pub async fn upsert_agent_run_canvas_runtime_binding(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, canvas_mount_id, alias)): Path<(String, String, String, String)>,
+    Json(req): Json<CanvasRuntimeBindingUpsertRequest>,
+) -> Result<Json<CanvasAgentRunRuntimeSnapshotDto>, ApiError> {
+    let context = resolve_agent_run_canvas_route_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        &canvas_mount_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let current_user_context = project_authorization_context(&current_user);
+    let binding = CanvasDataBinding::with_content_type(alias, req.source_uri, req.content_type);
+    let active_vfs = state
+        .services
+        .runtime_surface_update
+        .apply_canvas_runtime_surface_update(
+            &context.runtime_session_id,
+            &context.canvas,
+            Some(&current_user_context),
+            RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+                canvas_mount_id: context.canvas.mount_id.clone(),
+                binding,
+            },
+        )
+        .await
+        .map_err(ApiError::Conflict)?;
+    let mut snapshot = build_runtime_snapshot_with_bindings(
+        &context.canvas,
+        None,
+        Some(&active_vfs),
         state.services.vfs_service.as_ref(),
     )
     .await;

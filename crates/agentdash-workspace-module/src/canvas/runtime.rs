@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 
 use agentdash_application_runtime_gateway::RuntimeSurface;
@@ -82,7 +80,7 @@ pub fn build_runtime_snapshot(
     canvas: &Canvas,
     session_id: Option<String>,
 ) -> CanvasRuntimeSnapshot {
-    let mut files = canvas
+    let files = canvas
         .files
         .iter()
         .map(|file| CanvasRuntimeFile {
@@ -92,28 +90,7 @@ pub fn build_runtime_snapshot(
         })
         .collect::<Vec<_>>();
 
-    let existing_paths = files
-        .iter()
-        .map(|file| file.path.clone())
-        .collect::<BTreeSet<_>>();
-
-    let bindings = canvas
-        .bindings
-        .iter()
-        .map(runtime_binding_from_canvas_binding)
-        .collect::<Vec<_>>();
-
-    for binding in &canvas.bindings {
-        let path = binding.data_path();
-        if existing_paths.contains(&path) {
-            continue;
-        }
-        files.push(CanvasRuntimeFile {
-            path,
-            content: binding.placeholder_content().to_string(),
-            file_type: "data".to_string(),
-        });
-    }
+    let bindings = Vec::new();
 
     let runtime_bridge = if session_id.is_some() {
         CanvasRuntimeBridgeSnapshot::disabled("Canvas runtime bridge surface 尚未装配")
@@ -157,9 +134,10 @@ pub async fn resolve_canvas_binding_files(
         .await
 }
 
-pub fn unresolved_canvas_binding_files(canvas: &Canvas) -> Vec<CanvasResolvedBindingFile> {
-    canvas
-        .bindings
+pub fn unresolved_canvas_binding_files(
+    bindings: &[CanvasDataBinding],
+) -> Vec<CanvasResolvedBindingFile> {
+    bindings
         .iter()
         .map(|binding| CanvasResolvedBindingFile {
             alias: binding.alias.clone(),
@@ -172,7 +150,9 @@ pub fn unresolved_canvas_binding_files(canvas: &Canvas) -> Vec<CanvasResolvedBin
         .collect()
 }
 
-fn runtime_binding_from_canvas_binding(binding: &CanvasDataBinding) -> CanvasRuntimeBinding {
+pub(crate) fn runtime_binding_from_canvas_binding(
+    binding: &CanvasDataBinding,
+) -> CanvasRuntimeBinding {
     CanvasRuntimeBinding {
         alias: binding.alias.clone(),
         source_uri: binding.source_uri.clone(),
@@ -214,7 +194,7 @@ mod tests {
     use agentdash_application_vfs::{MountProviderRegistry, VfsService};
 
     #[test]
-    fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {
+    fn build_runtime_snapshot_omits_agent_run_bindings_without_runtime_surface() {
         let mut canvas = Canvas::new(
             Uuid::new_v4(),
             "cvs-demo".to_string(),
@@ -225,24 +205,19 @@ mod tests {
             "src/main.tsx".to_string(),
             "console.log('ok')".to_string(),
         )];
-        canvas.bindings = vec![CanvasDataBinding::new(
-            "stats".to_string(),
-            "lifecycle://active/artifacts/stats.json".to_string(),
-        )];
 
         let snapshot = build_runtime_snapshot(&canvas, Some("session-1".to_string()));
 
         assert_eq!(snapshot.entry, "src/main.tsx");
         assert!(snapshot.resource_surface_ref.is_none());
         assert!(snapshot.files.iter().any(|file| file.file_type == "code"));
+        assert!(snapshot.bindings.is_empty());
         assert!(
-            snapshot
+            !snapshot
                 .files
                 .iter()
-                .any(|file| file.path == "bindings/stats.json" && file.file_type == "data")
+                .any(|file| file.path.starts_with("bindings/"))
         );
-        assert_eq!(snapshot.bindings[0].data_path, "bindings/stats.json");
-        assert!(!snapshot.bindings[0].resolved);
     }
 
     #[test]

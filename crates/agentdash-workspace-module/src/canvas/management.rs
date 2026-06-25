@@ -28,7 +28,6 @@ pub struct CanvasMutationInput {
     pub entry_file: Option<String>,
     pub sandbox_config: Option<CanvasSandboxConfig>,
     pub files: Option<Vec<CanvasFile>>,
-    pub bindings: Option<Vec<CanvasDataBinding>>,
 }
 
 #[derive(Debug, Clone)]
@@ -562,10 +561,6 @@ pub fn apply_canvas_mutation(
     if let Some(files) = input.files {
         canvas.files = files;
     }
-    if let Some(bindings) = input.bindings {
-        canvas.bindings = bindings;
-    }
-
     normalize_canvas(canvas)?;
     validate_canvas_contract(canvas)?;
     canvas.touch();
@@ -624,8 +619,34 @@ pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
         )));
     }
 
+    Ok(())
+}
+
+pub fn upsert_canvas_data_binding(
+    bindings: &mut Vec<CanvasDataBinding>,
+    binding: CanvasDataBinding,
+) -> Result<(), DomainError> {
+    let mut binding = binding;
+    normalize_canvas_data_binding(&mut binding);
+    if let Some(existing) = bindings.iter_mut().find(|item| item.alias == binding.alias) {
+        *existing = binding;
+    } else {
+        bindings.push(binding);
+    }
+    Ok(())
+}
+
+pub fn validate_canvas_data_bindings(
+    canvas: &Canvas,
+    bindings: &[CanvasDataBinding],
+) -> Result<(), DomainError> {
+    let file_paths = canvas
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>();
     let mut binding_aliases = BTreeSet::new();
-    for binding in &canvas.bindings {
+    for binding in bindings {
         if binding.alias.trim().is_empty() {
             return Err(DomainError::InvalidConfig(
                 "Canvas binding alias 不能为空".to_string(),
@@ -667,25 +688,6 @@ pub fn validate_canvas_contract(canvas: &Canvas) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn upsert_canvas_binding(
-    canvas: &mut Canvas,
-    binding: CanvasDataBinding,
-) -> Result<(), DomainError> {
-    if let Some(existing) = canvas
-        .bindings
-        .iter_mut()
-        .find(|item| item.alias == binding.alias)
-    {
-        *existing = binding;
-    } else {
-        canvas.bindings.push(binding);
-    }
-    normalize_canvas(canvas)?;
-    validate_canvas_contract(canvas)?;
-    canvas.touch();
-    Ok(())
-}
-
 fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
     canvas.mount_id = normalize_canvas_mount_id_for_domain(&canvas.mount_id)?;
     canvas.owner_user_id = normalize_optional_text(canvas.owner_user_id.take());
@@ -697,14 +699,15 @@ fn normalize_canvas(canvas: &mut Canvas) -> Result<(), DomainError> {
     for file in &mut canvas.files {
         file.path = normalize_path(&file.path)?;
     }
-    for binding in &mut canvas.bindings {
-        binding.alias = binding.alias.trim().to_string();
-        binding.source_uri = binding.source_uri.trim().to_string();
-        binding.content_type =
-            normalize_binding_content_type(Some(&binding.content_type), &binding.source_uri);
-    }
 
     Ok(())
+}
+
+fn normalize_canvas_data_binding(binding: &mut CanvasDataBinding) {
+    binding.alias = binding.alias.trim().to_string();
+    binding.source_uri = binding.source_uri.trim().to_string();
+    binding.content_type =
+        normalize_binding_content_type(Some(&binding.content_type), &binding.source_uri);
 }
 
 fn normalize_canvas_mount_id_for_domain(raw: &str) -> Result<String, DomainError> {
@@ -773,7 +776,6 @@ fn replace_canvas_authoring_payload(source: &Canvas, target: &mut Canvas) {
     target.entry_file = source.entry_file.clone();
     target.sandbox_config = source.sandbox_config.clone();
     target.files = source.files.clone();
-    target.bindings = source.bindings.clone();
     target.touch();
 }
 
@@ -1028,8 +1030,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_canvas_contract_rejects_binary_data_binding() {
-        let mut canvas = build_canvas(
+    fn validate_canvas_data_bindings_rejects_binary_binding() {
+        let canvas = build_canvas(
             Uuid::new_v4(),
             Some("cvs-demo".to_string()),
             "Demo".to_string(),
@@ -1037,13 +1039,13 @@ mod tests {
             CanvasMutationInput::default(),
         )
         .expect("应能创建 canvas");
-        canvas.bindings = vec![CanvasDataBinding::with_content_type(
+        let bindings = vec![CanvasDataBinding::with_content_type(
             "logo".to_string(),
             "main://assets/logo.png".to_string(),
             Some("image/png".to_string()),
         )];
 
-        let err = validate_canvas_contract(&canvas).expect_err("应拒绝非文本绑定");
+        let err = validate_canvas_data_bindings(&canvas, &bindings).expect_err("应拒绝非文本绑定");
         assert!(err.to_string().contains("不是文本数据类型"));
     }
 

@@ -4,12 +4,13 @@ import {
   fetchAgentRunCanvasRuntimeSnapshot,
   fetchCanvasByMountId,
   fetchCanvasRuntimeSnapshot,
+  upsertAgentRunCanvasRuntimeBinding,
   updateCanvas,
   type AgentRunCanvasBridgeIdentity,
 } from "../../services/canvas";
-import type { Canvas, CanvasDataBinding, CanvasRuntimeSnapshot } from "../../types";
-import { CanvasBindingsEditor } from "./CanvasBindingsEditor";
+import type { Canvas, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasFilesEditor, type CanvasFilesEditorSaveInput } from "./CanvasFilesEditor";
+import { CanvasRuntimeBindingsEditor, type CanvasRuntimeBindingDraft } from "./CanvasRuntimeBindingsEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
 
 export interface CanvasRuntimePanelProps {
@@ -92,36 +93,24 @@ export function CanvasRuntimePanel({
     void loadCanvasData();
   }, [loadCanvasData, refreshRevision]);
 
-  const handleBindingsSave = useCallback(async (bindings: CanvasDataBinding[]) => {
-    if (!canvas) {
-      return;
-    }
-    if (canvas.access.can_edit_source !== true) {
-      const accessError = new Error("当前 Canvas 源为只读，不能保存数据绑定。");
+  const handleBindingUpsert = useCallback(async (binding: CanvasRuntimeBindingDraft) => {
+    if (!agentRunBridge) {
+      const accessError = new Error("当前视图没有 AgentRun runtime bridge，不能保存运行期绑定。");
       setBindingsError(accessError.message);
       throw accessError;
     }
-    const targetCanvasId = canvas.canvas_id;
-    if (!targetCanvasId) {
-      return;
-    }
-
     setIsSavingBindings(true);
     setBindingsError(null);
     try {
-      const nextCanvas = await updateCanvas(targetCanvasId, { bindings });
-      setCanvas(nextCanvas);
-      const nextSnapshot = agentRunBridge
-        ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
-        : await fetchCanvasRuntimeSnapshot(targetCanvasId);
+      const nextSnapshot = await upsertAgentRunCanvasRuntimeBinding(agentRunBridge, binding);
       setSnapshot(nextSnapshot);
     } catch (err) {
-      setBindingsError(err instanceof Error ? err.message : "保存绑定失败");
+      setBindingsError(err instanceof Error ? err.message : "保存运行期绑定失败");
       throw err;
     } finally {
       setIsSavingBindings(false);
     }
-  }, [agentRunBridge, canvas]);
+  }, [agentRunBridge]);
 
   const handleFilesSave = useCallback(async (input: CanvasFilesEditorSaveInput) => {
     if (!canvas) {
@@ -328,12 +317,12 @@ export function CanvasRuntimePanel({
                       ))}
                     </section>
 
-                    <CanvasBindingsEditor
-                      value={canvas?.bindings ?? []}
+                    <CanvasRuntimeBindingsEditor
+                      value={snapshot.bindings}
                       isSaving={isSavingBindings}
                       error={bindingsError}
-                      readOnly={!canEditSource}
-                      onSave={handleBindingsSave}
+                      readOnly={!agentRunBridge}
+                      onUpsert={handleBindingUpsert}
                     />
                   </>
                 )}

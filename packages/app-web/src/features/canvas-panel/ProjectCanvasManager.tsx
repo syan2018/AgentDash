@@ -459,7 +459,6 @@ export function ProjectCanvasManager({
                       {canvas.shared_canvas_id && <CanvasMetaBadge>已发布</CanvasMetaBadge>}
                       {canvas.cloned_from_canvas_id && <CanvasMetaBadge>复制来源</CanvasMetaBadge>}
                       <CanvasMetaBadge>files: {canvas.files.length}</CanvasMetaBadge>
-                      <CanvasMetaBadge>bindings: {canvas.bindings.length}</CanvasMetaBadge>
                     </div>
 
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -592,7 +591,6 @@ export function ProjectCanvasManager({
                   )}
                   <CanvasMetaBadge>mount: {selectedCanvas.canvas_mount_id}</CanvasMetaBadge>
                   <CanvasMetaBadge>files: {selectedCanvas.files.length}</CanvasMetaBadge>
-                  <CanvasMetaBadge>bindings: {selectedCanvas.bindings.length}</CanvasMetaBadge>
                   <CanvasMetaBadge>更新于 {formatDateTime(selectedCanvas.updated_at)}</CanvasMetaBadge>
                 </div>
               </div>

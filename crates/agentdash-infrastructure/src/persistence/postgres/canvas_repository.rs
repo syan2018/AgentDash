@@ -4,7 +4,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
-    Canvas, CanvasDataBinding, CanvasFile, CanvasRepository, CanvasSandboxConfig, CanvasScope,
+    Canvas, CanvasFile, CanvasRepository, CanvasSandboxConfig, CanvasScope,
 };
 
 pub struct PostgresCanvasRepository {
@@ -17,11 +17,8 @@ impl PostgresCanvasRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        crate::migration::assert_postgres_tables_ready(
-            &self.pool,
-            &["canvases", "canvas_files", "canvas_bindings"],
-        )
-        .await
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["canvases", "canvas_files"])
+            .await
     }
 
     async fn load_files(
@@ -58,44 +55,6 @@ impl PostgresCanvasRepository {
         Ok(file_map)
     }
 
-    async fn load_bindings(
-        &self,
-        canvas_ids: &[String],
-    ) -> Result<BTreeMap<String, Vec<CanvasDataBinding>>, DomainError> {
-        let mut binding_map = BTreeMap::<String, Vec<CanvasDataBinding>>::new();
-        for canvas_id in canvas_ids {
-            binding_map.insert(canvas_id.clone(), Vec::new());
-        }
-        if canvas_ids.is_empty() {
-            return Ok(binding_map);
-        }
-
-        let rows = sqlx::query_as::<_, CanvasBindingWithOwnerRow>(
-            r#"
-            SELECT canvas_id, alias, source_uri, content_type
-            FROM canvas_bindings
-            WHERE canvas_id = ANY($1)
-            ORDER BY canvas_id ASC, alias ASC
-            "#,
-        )
-        .bind(canvas_ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        for row in rows {
-            binding_map
-                .entry(row.canvas_id)
-                .or_default()
-                .push(CanvasDataBinding {
-                    alias: row.alias,
-                    source_uri: row.source_uri,
-                    content_type: row.content_type,
-                });
-        }
-        Ok(binding_map)
-    }
-
     async fn replace_files(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -117,39 +76,6 @@ impl PostgresCanvasRepository {
             row.push_bind(&canvas_id)
                 .push_bind(&file.path)
                 .push_bind(&file.content);
-        });
-        builder
-            .build()
-            .execute(&mut **tx)
-            .await
-            .map_err(super::db_err)?;
-
-        Ok(())
-    }
-
-    async fn replace_bindings(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        canvas: &Canvas,
-    ) -> Result<(), DomainError> {
-        sqlx::query("DELETE FROM canvas_bindings WHERE canvas_id = $1")
-            .bind(canvas.id.to_string())
-            .execute(&mut **tx)
-            .await
-            .map_err(super::db_err)?;
-
-        if canvas.bindings.is_empty() {
-            return Ok(());
-        }
-        let canvas_id = canvas.id.to_string();
-        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
-            "INSERT INTO canvas_bindings (canvas_id, alias, source_uri, content_type) ",
-        );
-        builder.push_values(&canvas.bindings, |mut row, binding| {
-            row.push_bind(&canvas_id)
-                .push_bind(&binding.alias)
-                .push_bind(&binding.source_uri)
-                .push_bind(&binding.content_type);
         });
         builder
             .build()
@@ -205,8 +131,6 @@ impl CanvasRepository for PostgresCanvasRepository {
         .map_err(super::db_err)?;
 
         self.replace_files(&mut tx, canvas).await?;
-        self.replace_bindings(&mut tx, canvas).await?;
-
         tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
@@ -233,8 +157,7 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_id = row.id.clone();
         let files = self.load_files(std::slice::from_ref(&canvas_id)).await?;
-        let bindings = self.load_bindings(std::slice::from_ref(&canvas_id)).await?;
-        Ok(Some(row.try_into_canvas(files, bindings)?))
+        Ok(Some(row.try_into_canvas(files)?))
     }
 
     async fn get_by_mount_id(
@@ -263,8 +186,7 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_id = row.id.clone();
         let files = self.load_files(std::slice::from_ref(&canvas_id)).await?;
-        let bindings = self.load_bindings(std::slice::from_ref(&canvas_id)).await?;
-        Ok(Some(row.try_into_canvas(files, bindings)?))
+        Ok(Some(row.try_into_canvas(files)?))
     }
 
     async fn list_by_project(&self, project_id: uuid::Uuid) -> Result<Vec<Canvas>, DomainError> {
@@ -285,10 +207,9 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
         let files = self.load_files(&canvas_ids).await?;
-        let bindings = self.load_bindings(&canvas_ids).await?;
 
         rows.into_iter()
-            .map(|row| row.try_into_canvas(files.clone(), bindings.clone()))
+            .map(|row| row.try_into_canvas(files.clone()))
             .collect()
     }
 
@@ -315,10 +236,9 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
         let files = self.load_files(&canvas_ids).await?;
-        let bindings = self.load_bindings(&canvas_ids).await?;
 
         rows.into_iter()
-            .map(|row| row.try_into_canvas(files.clone(), bindings.clone()))
+            .map(|row| row.try_into_canvas(files.clone()))
             .collect()
     }
 
@@ -343,10 +263,9 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
         let files = self.load_files(&canvas_ids).await?;
-        let bindings = self.load_bindings(&canvas_ids).await?;
 
         rows.into_iter()
-            .map(|row| row.try_into_canvas(files.clone(), bindings.clone()))
+            .map(|row| row.try_into_canvas(files.clone()))
             .collect()
     }
 
@@ -376,8 +295,7 @@ impl CanvasRepository for PostgresCanvasRepository {
 
         let canvas_id = row.id.clone();
         let files = self.load_files(std::slice::from_ref(&canvas_id)).await?;
-        let bindings = self.load_bindings(std::slice::from_ref(&canvas_id)).await?;
-        Ok(Some(row.try_into_canvas(files, bindings)?))
+        Ok(Some(row.try_into_canvas(files)?))
     }
 
     async fn update(&self, canvas: &Canvas) -> Result<(), DomainError> {
@@ -428,7 +346,6 @@ impl CanvasRepository for PostgresCanvasRepository {
         }
 
         self.replace_files(&mut tx, canvas).await?;
-        self.replace_bindings(&mut tx, canvas).await?;
 
         tx.commit().await.map_err(super::db_err)?;
 
@@ -438,12 +355,6 @@ impl CanvasRepository for PostgresCanvasRepository {
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
         let mut tx = self.pool.begin().await.map_err(super::db_err)?;
         let canvas_id = id.to_string();
-
-        sqlx::query("DELETE FROM canvas_bindings WHERE canvas_id = $1")
-            .bind(&canvas_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(super::db_err)?;
 
         sqlx::query("DELETE FROM canvas_files WHERE canvas_id = $1")
             .bind(&canvas_id)
@@ -497,26 +408,14 @@ struct CanvasFileWithOwnerRow {
     content: String,
 }
 
-#[derive(sqlx::FromRow)]
-struct CanvasBindingWithOwnerRow {
-    canvas_id: String,
-    alias: String,
-    source_uri: String,
-    content_type: String,
-}
-
 impl CanvasRow {
     fn try_into_canvas(
         self,
         files: BTreeMap<String, Vec<CanvasFile>>,
-        bindings: BTreeMap<String, Vec<CanvasDataBinding>>,
     ) -> Result<Canvas, DomainError> {
         let sandbox_config = parse_canvas_sandbox_config(&self.sandbox_config)?;
         let files = files.get(&self.id).cloned().ok_or_else(|| {
             DomainError::InvalidConfig(format!("缺少 canvas_files 映射: {}", self.id))
-        })?;
-        let bindings = bindings.get(&self.id).cloned().ok_or_else(|| {
-            DomainError::InvalidConfig(format!("缺少 canvas_bindings 映射: {}", self.id))
         })?;
 
         Ok(Canvas {
@@ -535,7 +434,6 @@ impl CanvasRow {
             entry_file: self.entry_file,
             sandbox_config,
             files,
-            bindings,
             published_from_canvas_id: parse_optional_uuid(
                 self.published_from_canvas_id,
                 "canvases.published_from_canvas_id",
@@ -604,10 +502,6 @@ mod tests {
             "desc".to_string(),
         );
         canvas.cloned_from_canvas_id = Some(Uuid::new_v4());
-        canvas.bindings = vec![CanvasDataBinding::new(
-            "stats".to_string(),
-            "lifecycle://active/artifacts/1".to_string(),
-        )];
 
         CanvasRepository::create(&repo, &canvas)
             .await
@@ -631,11 +525,10 @@ mod tests {
                 .iter()
                 .all(|file| !file.path.starts_with("skills/canvas-system/"))
         );
-        assert_eq!(persisted.bindings.len(), 1);
     }
 
     #[tokio::test]
-    async fn update_canvas_replaces_files_and_bindings() {
+    async fn update_canvas_replaces_files() {
         let Some(repo) = new_repo().await else {
             return;
         };
@@ -655,10 +548,6 @@ mod tests {
             "console.log('updated')".to_string(),
         )];
         canvas.entry_file = "src/main.ts".to_string();
-        canvas.bindings = vec![CanvasDataBinding::new(
-            "summary".to_string(),
-            "lifecycle://active/artifacts/2".to_string(),
-        )];
         canvas.touch();
 
         CanvasRepository::update(&repo, &canvas)
@@ -672,7 +561,6 @@ mod tests {
 
         assert_eq!(persisted.entry_file, "src/main.ts");
         assert_eq!(persisted.files[0].path, "src/main.ts");
-        assert_eq!(persisted.bindings[0].alias, "summary");
     }
 
     #[tokio::test]
@@ -737,7 +625,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_canvas_removes_files_and_bindings() {
+    async fn delete_canvas_removes_files() {
         let Some(repo) = new_repo().await else {
             return;
         };
@@ -751,10 +639,6 @@ mod tests {
         canvas.files = vec![CanvasFile::new(
             "src/main.tsx".to_string(),
             "export default function App() { return null }".to_string(),
-        )];
-        canvas.bindings = vec![CanvasDataBinding::new(
-            "stats".to_string(),
-            "lifecycle://active/artifacts/stats".to_string(),
         )];
         CanvasRepository::create(&repo, &canvas)
             .await
@@ -771,14 +655,7 @@ mod tests {
                 .fetch_one(&repo.pool)
                 .await
                 .expect("应能查询 canvas_files");
-        let binding_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM canvas_bindings WHERE canvas_id = $1")
-                .bind(&canvas_id)
-                .fetch_one(&repo.pool)
-                .await
-                .expect("应能查询 canvas_bindings");
 
         assert_eq!(file_count, 0);
-        assert_eq!(binding_count, 0);
     }
 }

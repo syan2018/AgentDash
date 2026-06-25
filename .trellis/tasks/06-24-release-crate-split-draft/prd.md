@@ -48,13 +48,15 @@ agentdash-api / agentdash-local / agentdash-mcp
 - RuntimeSession 只拥有 delivery、trace、turn/event stream、connector continuation、runtime registry、active turn/live adoption mechanics；业务 surface、AgentFrame write、Lifecycle reducer、Permission/Canvas/WorkspaceModule 归属各自控制面，原因是这些事实源需要从 AgentRun/Lifecycle 可审计地回放。
 - AgentRun owns current/runtime/resource surface query、effective capability/admission、frame construction/update、surface update/adoption command boundary、mailbox/workspace command surface。
 - Lifecycle owns LifecycleRun control ledger、subject association、orchestration activation/reducer/scheduler/materialization、RuntimeSessionExecutionAnchor 写入与 terminal callback 到 reducer。
-- VFS core 抽取晚于 AgentRun resource surface 和 owner-specific provider 边界收束。
-- 每个 wave checkpoint 必须派 check agents 检查 boundary purity、import graph、dead path/test deletion 和下一 wave readiness，原因是高并发 implement 的局部验证不足以证明整体边界已经可移动。
+- 物理拆分以 `physical-dependency-contract.md` 为权威；后续允许先创建目标 crates 并移动文件，再按 forbidden Cargo edge 修复编译。
+- 每个 wave checkpoint 必须派 check agents 检查 boundary purity、forbidden Cargo edge、import graph、dead path/test deletion 和 owner-assigned blockers，原因是高并发 implement 的局部验证不足以证明整体边界已经可移动。
 
 ## Work Item Files
 
 | File | Purpose |
 | --- | --- |
+| `physical-dependency-contract.md` | 目标 Cargo graph、允许依赖、禁止依赖和 crates-first 判定规则。 |
+| `dispatch-round-5.md` | Round 5 crates-first 物理拆分的并发 worker、共享文件锁和 checkpoint gate。 |
 | `work-items/00-dispatch-map.md` | 总派发表、并行 lane、冲突规则、阶段提交约定。 |
 | `work-items/01-ports-boundary-expansion.md` | 扩展 `agentdash-application-ports` 的纯 port/DTO/error。 |
 | `work-items/02-runtime-gateway-setup-boundary.md` | RuntimeGateway setup actions port 化并准备 RuntimeGateway crate extraction。 |
@@ -77,10 +79,14 @@ agentdash-api / agentdash-local / agentdash-mcp
 - [x] `work-items/*.md` 覆盖全部可并行工作项，并能直接作为 subagent 派发输入。
 - [x] `implement.jsonl`、`check.jsonl` 注入主轴文件、work item、research 与关键 spec。
 - [x] Wave 1 ports-only 工作项完成并至少通过 `cargo check -p agentdash-application-ports`。
-- [ ] Wave 2 import cleanup / facade contraction 完成，static grep gates 显示核心双向引用已改为 port/facade。
-- [ ] RuntimeGateway 与 RuntimeSession crates 完成物理抽取，并通过对应 crate check。
+- [x] RuntimeGateway crate 完成物理抽取，并通过对应 crate check。
+- [x] Round 4 checkpoint 固定 RuntimeSession neutral envelope、live ports、Gateway visibility 与 VFS owner split。
+- [x] 创建 `physical-dependency-contract.md` 作为后续 crates-first 拆分权威依赖合同。
+- [ ] Round 5A 创建并移动 RuntimeSession / AgentRun / Lifecycle / VFS target crates，允许红灯但 blockers 必须归属到 crate owner / forbidden edge。
+- [ ] Round 5B 按 compiler errors 和 forbidden edges 并发修复 target crates。
+- [ ] RuntimeSession crate 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
 - [ ] AgentRun 与 Lifecycle crates 完成物理抽取，并通过对应 crate check 或明确剩余 compile blockers。
-- [ ] VFS core extraction 完成或留下经 design 批准的延后边界，owner-specific provider 依赖方向清楚。
+- [ ] VFS core extraction 完成，owner-specific provider 保持在 owner/application adapter 空间。
 - [ ] 最终集成记录完整 validation 状态、未绿测试和下一步修复点。
 
 ## Notes

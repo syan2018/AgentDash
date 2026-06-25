@@ -1,6 +1,7 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/prd.md","reason":"Mainline requirements and acceptance criteria."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/design.md","reason":"Target graph, ownership rules, waves and static gates."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/implement.md","reason":"Execution plan, dispatch order and validation commands."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/physical-dependency-contract.md","reason":"Authoritative target Cargo graph and forbidden dependency edges for crates-first split."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/research/00-index.md","reason":"Current split research synthesis."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/research/import-graph-crate-review.md","reason":"Cargo/module import blockers and extraction waves."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/research/session-runtime-crate-review.md","reason":"RuntimeSession substrate extraction blockers."}
@@ -34,3 +35,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 validation, check-agent verdicts and remaining RuntimeSession/VFS/visibility blockers."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-4.md","reason":"Round 4 substrate convergence lanes for neutral RuntimeSession launch envelope, live ports, visibility cleanup and VFS owner split."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-4.md","reason":"Round 4 validation, check-agent verdicts and next VFS extraction readiness."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-5.md","reason":"Round 5 crates-first physical split lanes, shared ownership locks and checkpoint gates."}

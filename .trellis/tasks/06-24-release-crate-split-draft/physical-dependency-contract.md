@@ -11,12 +11,19 @@ Date: 2026-06-25
 ```text
 agentdash-api / agentdash-local / agentdash-mcp
   -> agentdash-application
+
+agentdash-application
   -> agentdash-application-agentrun
   -> agentdash-application-lifecycle
   -> agentdash-application-runtime-session
   -> agentdash-application-runtime-gateway
   -> agentdash-application-vfs
   -> agentdash-application-ports
+
+agentdash-application-{agentrun,lifecycle,runtime-session,runtime-gateway,vfs}
+  -> agentdash-application-ports
+
+agentdash-application-ports
   -> agentdash-domain / agentdash-spi / agentdash-agent-protocol / agentdash-agent-types
 ```
 

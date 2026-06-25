@@ -6,11 +6,17 @@
 
 核心判断：
 
-- Cargo graph 当前不是主要阻塞；`agentdash-application` 内部 module graph 才是阻塞。
-- 先补 ports/facades，再清理 import/public visibility，最后物理移动 crate。
-- 允许先锚定 crate 边界并产生 compile errors，再按工作项修复；这个分支用于承载完整迁移。
+- 物理 Cargo graph 是下一阶段的主要约束；继续在 monolithic module graph 里慢慢磨边界会延迟真正的拆分反馈。
+- 后续先钉死 physical dependency contract，再 crates-first 物理移动，让 compiler 把剩余错误边暴露出来。
+- 允许先创建目标 crates、搬文件并产生 compile errors，再按工作项修复；这个分支用于承载完整迁移。
 - 高并发实现阶段以机械迁移为主：批量移动、批量替换、crate-level check 和 static grep gates 比逐点手工 import 更可靠。
-- 波次收口由 check agents 执行，重点检查 direct implementation import、重复 facade、错误链路、陈旧 test 锚定和下一 wave readiness。
+- 波次收口由 check agents 执行，重点检查 forbidden Cargo edge、direct implementation import、重复 facade、错误链路、陈旧 test 锚定和 owner-assigned compile blockers。
+
+物理依赖权威合同：
+
+- `physical-dependency-contract.md`
+
+该合同优先于临时 compile green。任何 repair 如果保留 forbidden edge，即使局部编译通过也不接受；任何红灯如果能归属到目标 crate owner 和 forbidden edge，可以作为 checkpoint 提交。
 
 ## Current Facts
 
@@ -39,19 +45,21 @@
 ```mermaid
 flowchart TD
   API["agentdash-api / agentdash-local / agentdash-mcp"]
+  APP["agentdash-application (composition/facade)"]
   AG["agentdash-application-agentrun"]
   LC["agentdash-application-lifecycle"]
   RS["agentdash-application-runtime-session"]
   RG["agentdash-application-runtime-gateway"]
-  VFS["agentdash-application-vfs (late)"]
+  VFS["agentdash-application-vfs"]
   Ports["agentdash-application-ports"]
   Core["agentdash-domain / agentdash-spi / protocol/type crates"]
 
-  API --> AG
-  API --> LC
-  API --> RS
-  API --> RG
-  API --> VFS
+  API --> APP
+  APP --> AG
+  APP --> LC
+  APP --> RS
+  APP --> RG
+  APP --> VFS
   AG --> Ports
   LC --> Ports
   RS --> Ports
@@ -66,16 +74,27 @@ flowchart TD
 
 Dashed arrows are runtime wiring through ports; implementation crates remain independently movable because the connection is expressed as traits and DTOs.
 
+Forbidden physical edges are listed in `physical-dependency-contract.md`; the most important ones are:
+
+```text
+runtime-session -> agentrun/lifecycle/application
+agentrun -> lifecycle/runtime-session/application
+lifecycle -> agentrun/runtime-session/application
+runtime-gateway -> application/agentrun/lifecycle/runtime-session/vfs
+vfs -> application/agentrun/lifecycle/runtime-session/runtime-gateway
+ports -> any application implementation crate
+```
+
 ## Crate Ownership
 
-| Crate | Owns | Extract after |
+| Crate | Owns | Physical split rule |
 | --- | --- | --- |
-| `agentdash-application-ports` | pure DTO/trait/error for cross-application boundaries: AgentRun surface, RuntimeSession delivery/adoption, Lifecycle projection, RuntimeGateway setup, VFS runtime projection, launch envelope | immediately, before implementation moves |
-| `agentdash-application-runtime-gateway` | action registry, actor/context admission, fixed session/setup providers, extension dynamic provider, tool adapter | MCP + setup action backing ports are complete |
-| `agentdash-application-runtime-session` | runtime session core/control/eventing/persistence, runtime registry/services, launch substrate after `FrameLaunchEnvelope`, turn processor/supervisor, continuation, terminal/tool result caches, lineage/projection | launch/adoption/mailbox/effective-capability deps are ports |
-| `agentdash-application-agentrun` | current/resource surface, effective capability/admission, frame construction/update/launch commit, runtime surface update, mailbox/message delivery, workspace command/read model | no direct Session/Lifecycle implementation imports |
-| `agentdash-application-lifecycle` | dispatch/control ledger, subject association, orchestration activation/reducer/scheduler/materialization, terminal callback to reducer, lifecycle projection implementation | RuntimeSession creation and AgentRun frame materialization are ports |
-| `agentdash-application-vfs` | generic VFS core, path/types/provider/service/surface/summary/materialization/mutation/search/rewrite/fs tools | owner-specific providers are directional |
+| `agentdash-application-ports` | pure DTO/trait/error for cross-application boundaries: AgentRun surface, RuntimeSession delivery/adoption, Lifecycle projection, RuntimeGateway setup, VFS runtime projection, launch envelope | Already active; every forbidden edge repair should prefer ports before adding implementation dependencies. |
+| `agentdash-application-runtime-gateway` | action registry, actor/context admission, fixed session/setup providers, extension dynamic provider, tool adapter | Already extracted; must stay independent from monolithic application and other implementation owners. |
+| `agentdash-application-runtime-session` | runtime session core/control/eventing/persistence, runtime registry/services, launch substrate after `FrameLaunchEnvelope`, turn processor/supervisor, continuation, terminal/tool result caches, lineage/projection | Move in Round 5A even if remaining frame close/capability-delta imports go red; repair through ports/composition in Round 5B. |
+| `agentdash-application-agentrun` | current/resource surface, effective capability/admission, frame construction/update/launch commit, runtime surface update, mailbox/message delivery, workspace command/read model | Move in Round 5A; any direct Lifecycle/RuntimeSession implementation dependency becomes a repair blocker. |
+| `agentdash-application-lifecycle` | dispatch/control ledger, subject association, orchestration activation/reducer/scheduler/materialization, terminal callback to reducer, lifecycle projection implementation | Move in Round 5A; AgentRun/RuntimeSession interaction must be ports or composition wiring. |
+| `agentdash-application-vfs` | generic VFS core, path/types/provider/service/surface/summary/materialization/mutation/search/rewrite/fs tools | Move in Round 5A; owner providers and `VfsSurfaceResolver` stay outside. |
 
 ## Port Modules
 
@@ -138,12 +157,12 @@ Dashed arrows are runtime wiring through ports; implementation crates remain ind
 
 | Lane | Work items | Parallel notes |
 | --- | --- | --- |
-| A | `01-ports-boundary-expansion` | Single owner for `agentdash-application-ports`; other lanes consume after first scaffold commit. |
-| B | `02-runtime-gateway-setup-boundary`, `06-api-consumer-facade-cleanup` | Can run after ports scaffold; edit mostly RuntimeGateway/API. |
-| C | `03-agentrun-surface-facade`, `07-vfs-resource-surface-boundary` | Share AgentRun resource surface; coordinate DTO names before coding. |
-| D | `04-runtime-session-substrate-boundary`, `05-agentrun-lifecycle-boundary` | Highest conflict lane; run with explicit file ownership and frequent checkpoint commits. |
-| E | `08-public-visibility-cleanup` | Runs after facade consumers are mostly moved; uses compile errors and grep gates. |
-| F | `09-physical-crate-extraction-runtime`, `10-physical-crate-extraction-control-plane-vfs` | Runs after import graph has target direction. |
+| Manifest | `09-physical-crate-extraction-runtime`, `10-physical-crate-extraction-control-plane-vfs` | Single owner for workspace manifests and new crate skeletons. |
+| Runtime | `04-runtime-session-substrate-boundary`, `09-physical-crate-extraction-runtime` | Move RuntimeSession first, then repair forbidden edges through ports. |
+| VFS | `07-vfs-resource-surface-boundary`, `10-physical-crate-extraction-control-plane-vfs` | Move generic VFS core; owner providers stay outside. |
+| Control Plane | `03-agentrun-surface-facade`, `05-agentrun-lifecycle-boundary`, `10-physical-crate-extraction-control-plane-vfs` | Move AgentRun/Lifecycle concurrently and repair mutual edges by ports/composition. |
+| Facade/API | `06-api-consumer-facade-cleanup`, `08-public-visibility-cleanup` | Own `agentdash-application` facade and API/local/MCP bootstrap/import wiring. |
+| Ports/Dead Paths | `01-ports-boundary-expansion`, `08-public-visibility-cleanup` | Add minimal missing contracts and delete obsolete path/test anchors. |
 
 ## Checkpoint Review Model
 
@@ -181,22 +200,42 @@ Dashed arrows are runtime wiring through ports; implementation crates remain ind
 - SessionHub/runtime builder consume launch/adoption/mailbox/effective-capability ports.
 - API helpers consume facade handles.
 
-### Wave 3: Runtime Crate Extraction
+### Historical Wave 3: Runtime Crate Extraction
 
 - Extract RuntimeGateway.
 - Extract RuntimeSession.
 - Rewire API/local/MCP composition root.
 
-### Wave 4: Control Plane Extraction
+### Historical Wave 4: Control Plane Extraction
 
 - Extract AgentRun.
 - Extract Lifecycle.
 - Keep workflow runtime/reducer with Lifecycle unless a later design separates workflow definition/compiler.
 
-### Wave 5: VFS Core Extraction
+### Historical Wave 5: VFS Core Extraction
 
 - Extract generic VFS core after owner-specific providers are directional.
 - Keep lifecycle/canvas/routine/skill providers with owners or adapter crates as needed.
+
+### Round 5A: Crates-First Physical Split
+
+- Create all remaining target crates.
+- Move RuntimeSession, AgentRun, Lifecycle and VFS core files to target crates.
+- Keep `agentdash-application` as composition/facade crate.
+- Allow compile red after the checkpoint when failures are owner-assigned.
+
+### Round 5B: Compiler-Driven Repair
+
+- Fix forbidden physical edges by moving DTO/trait/error into ports.
+- Move concrete adapter wiring to application/API composition roots.
+- Delete stale compatibility shells and tests.
+- Target crate checks are preferred over broad workspace tests.
+
+### Round 5C: Integration And Contract Check
+
+- Run dependency/static gates from `physical-dependency-contract.md`.
+- Run target crate checks and then workspace check.
+- Check agents classify remaining blockers by crate owner and forbidden edge.
 
 ## Static Gates
 

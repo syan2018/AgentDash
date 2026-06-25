@@ -107,36 +107,36 @@ cargo check -p agentdash-application-runtime-session
 cargo check -p agentdash-api -p agentdash-local -p agentdash-mcp
 ```
 
-### Wave 4: Control Plane Extraction
+### Remaining Physical Extraction: Crates-First
 
+- [x] Add workspace crate `agentdash-application-runtime-gateway`.
+- [ ] Add workspace crate `agentdash-application-runtime-session`.
+- [ ] Add workspace crate `agentdash-application-vfs`.
 - [ ] Add workspace crate `agentdash-application-agentrun`.
-- [ ] Move AgentRun modules and keep frame internals private to crate.
 - [ ] Add workspace crate `agentdash-application-lifecycle`.
-- [ ] Move Lifecycle + orchestration runtime/reducer/materialization modules.
-- [ ] Rewire umbrella `agentdash-application` according to remaining consumer needs.
+- [ ] Move RuntimeSession substrate into `agentdash-application-runtime-session`.
+- [ ] Move generic VFS core into `agentdash-application-vfs`.
+- [ ] Move AgentRun modules into `agentdash-application-agentrun`.
+- [ ] Move Lifecycle modules and Lifecycle-owned orchestration runtime into `agentdash-application-lifecycle`.
+- [ ] Rewire `agentdash-application` as composition/facade crate.
+- [ ] Rewire API/local/MCP composition roots.
 
 Gate:
 
 ```powershell
 cargo metadata --no-deps --format-version 1
+cargo check -p agentdash-application-runtime-session
+cargo check -p agentdash-application-vfs
 cargo check -p agentdash-application-agentrun
 cargo check -p agentdash-application-lifecycle
 cargo check --workspace
 ```
 
-### Wave 5: VFS Core Extraction
+Checkpoint rule:
 
-- [ ] Add workspace crate `agentdash-application-vfs` if owner-specific provider deps are directional.
-- [ ] Move generic VFS core and fs/mount/shell tools.
-- [ ] Keep owner providers with owners/adapters where dependencies require it.
-- [ ] Rewire API and AgentRun resource surface to stable VFS facades.
-
-Gate:
-
-```powershell
-cargo check -p agentdash-application-vfs
-cargo check --workspace
-```
+- Round 5A may commit with compile red when target crates exist and every failure is assigned to a crate owner / forbidden edge.
+- Round 5B should drive target crate checks toward green through ports/composition/deletion.
+- Round 5C owns final workspace integration.
 
 ## Subagent Dispatch Plan
 
@@ -227,13 +227,16 @@ Round 4 checkpoint result on 2026-06-25:
 - Generic VFS core is ready for a physical extraction attempt with owner adapters excluded.
 - Full checkpoint details live in `checkpoint-wave-4.md`.
 
-Round 5 dispatch bias:
+Round 5 planned dispatch:
 
-- Prefer `agentdash-application-vfs` physical extraction first.
-- Move only generic VFS mechanics and tool/provider/service/path/materialization/mutation/search/rewrite modules.
-- Keep Canvas, Lifecycle, Session owner providers and `VfsSurfaceResolver` outside the extracted generic VFS crate.
-- Dispatch implement agents by file ownership and keep broad tests for checkpoint check agents.
-- After the main crate-split task completes, create a separate task for evaluating Canvas, Marketplace and other isolated large modules.
+- Dispatch file: `dispatch-round-5.md`
+- Contract file: `physical-dependency-contract.md`
+- Mode: crates-first physical split; red compile allowed after checkpoint if failures are owner-assigned.
+- Round 5A implement lanes: cargo manifest owner, RuntimeSession crate split, VFS crate split, AgentRun crate split, Lifecycle crate split, application facade owner, API wiring owner, ports gap owner, dead path cleaner.
+- Round 5B repair lanes: runtime-session repair, VFS repair, AgentRun repair, Lifecycle repair, API repair, ports repair, stale test repair, import graph check.
+- Round 5C integration lanes: runtime crates check, control-plane crates check, VFS core check, API contract check, dead export check, workspace check owner.
+- Shared surfaces are locked to single owners: manifests, application facade, ports, API/local/MCP wiring and task docs.
+- Broad tests remain checkpoint/check-agent work; implement agents run only minimal crate/metadata/static gates.
 
 Each worker prompt starts with:
 

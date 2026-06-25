@@ -1290,3 +1290,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: 收束 Session 事件流与 AgentRun 列表事实源
+
+**Date**: 2026-06-25
+**Task**: 收束 Session 事件流与 AgentRun 列表事实源
+**Branch**: `main`
+
+### Summary
+
+并行完成 Session durable/ephemeral 排序拆轴、tool burst 运行态聚合、AgentRun 列表投影事实源收束与事件驱动刷新，补齐前后端回归测试并同步 hook 规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `387e099fc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

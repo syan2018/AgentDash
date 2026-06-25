@@ -1224,3 +1224,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Canvas boundary helper crate
+
+**Date**: 2026-06-25
+**Task**: Canvas boundary helper crate
+**Branch**: `main`
+
+### Summary
+
+抽取 agentdash-canvas 纯边界 crate，收束 Canvas identity、module ref、URI 与 operation key helper；保留父任务继续推进 observation/interaction/submit-to-Agent。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27bf2810d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

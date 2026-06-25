@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
-use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -23,6 +22,7 @@ use agentdash_application_agentrun::agent_run::{
     accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
     runtime_session_effective_capability_port,
 };
+use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityView as PortsAgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
@@ -245,22 +245,13 @@ pub(crate) async fn build_session_runtime(
             function_runner: function_runner.clone(),
             platform_config: platform_config.clone(),
         });
+    let hook_preset_scripts = AppExecutionHookProvider::builtin_preset_scripts();
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
-        agentdash_application::hooks::AppExecutionHookProviderRepos {
-            project_repo: repos.project_repo.clone(),
-            story_repo: repos.story_repo.clone(),
-            agent_procedure_repo: repos.agent_procedure_repo.clone(),
-            agent_frame_repo: repos.agent_frame_repo.clone(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
-            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
-            execution_anchor_repo: repos.execution_anchor_repo.clone(),
-            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.clone(),
-            inline_file_repo: repos.inline_file_repo.clone(),
-        },
-        |preset_scripts| {
-            Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
-                preset_scripts,
-            ))
+        AppExecutionHookProviderDeps {
+            workflow_projection: repos.hook_workflow_projection_port(),
+            script_evaluator: Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
+                &hook_preset_scripts,
+            )),
         },
     ));
     let runtime_surface_query_impl = Arc::new(AgentRunRuntimeSurfaceQuery::new(

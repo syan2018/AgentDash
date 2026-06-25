@@ -9,13 +9,12 @@ use std::collections::{BTreeMap, HashMap};
 use chrono::Utc;
 use uuid::Uuid;
 
+use agentdash_application_workflow::WorkflowApplicationError;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleRunRepository,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
-
-use super::error::WorkflowApplicationError;
 
 fn parse_event_kind(s: &str) -> Option<LifecycleExecutionEventKind> {
     match s {

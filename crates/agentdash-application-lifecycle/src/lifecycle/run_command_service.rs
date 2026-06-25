@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use agentdash_application_workflow::{
+    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
+};
 use agentdash_domain::workflow::{
     ExecutionSource, LifecycleRun, LifecycleRunStartIntent, WorkflowGraphRef,
 };
 use agentdash_spi::FunctionRunner;
 use uuid::Uuid;
 
-use crate::workflow::{OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher};
 use crate::{RepositorySet, SharedPlatformConfig};
 
 use super::{LifecycleDispatchService, WorkflowApplicationError};
@@ -27,15 +29,13 @@ pub struct ContinueLifecycleRunResult {
 #[derive(Clone)]
 pub struct LifecycleRunCommandService {
     repos: RepositorySet,
-    platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 impl LifecycleRunCommandService {
-    pub fn new(repos: RepositorySet, platform_config: SharedPlatformConfig) -> Self {
+    pub fn new(repos: RepositorySet, _platform_config: SharedPlatformConfig) -> Self {
         Self {
             repos,
-            platform_config,
             function_runner: None,
         }
     }
@@ -75,10 +75,8 @@ impl LifecycleRunCommandService {
         &self,
         run_id: Uuid,
     ) -> Result<ContinueLifecycleRunResult, WorkflowApplicationError> {
-        let mut launcher = OrchestrationExecutorLauncher::new_with_platform_config(
-            self.repos.clone(),
-            self.platform_config.clone(),
-        );
+        let mut launcher =
+            OrchestrationExecutorLauncher::new(self.repos.to_workflow_repository_set());
         if let Some(function_runner) = &self.function_runner {
             launcher = launcher.with_function_runner(function_runner.clone());
         }

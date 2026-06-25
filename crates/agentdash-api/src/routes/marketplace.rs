@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
-use agentdash_application::shared_library::{
+use agentdash_application_shared_library::{
     ExternalMarketplaceRefreshStatus as ApplicationRefreshStatus,
     ImportExternalMarketplaceAssetInput, RefreshExternalMarketplaceAssetInput,
     RefreshExternalMarketplaceAssetOutput, UPSERT_LIBRARY_ASSET_IMPORT_MODE,

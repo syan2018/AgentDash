@@ -10,7 +10,7 @@ use agentdash_domain::skill_asset::SkillAsset;
 use agentdash_spi::RemoteSkillSource;
 
 use crate::repository_set::RepositorySet;
-use crate::shared_library::{
+use agentdash_application_shared_library::{
     InstallLibraryAssetInput, InstallLibraryAssetOutput, install_library_asset_to_project,
 };
 
@@ -28,7 +28,7 @@ pub async fn import_remote_skill_url_to_project(
     .await?;
 
     let output = install_library_asset_to_project(
-        repos,
+        &repos.to_shared_library_repository_set(),
         InstallLibraryAssetInput {
             project_id: input.project_id,
             library_asset_id: library_asset.id,

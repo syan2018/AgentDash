@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application::shared_library::IntegrationEmbeddedLibraryAssetSeed;
+use agentdash_application_shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
     AgentDashIntegration, AuthProvider, IdentityDirectoryProvider, LibraryAssetType,
     MarketplaceSourceDescriptor, MarketplaceSourceProvider, MemoryDiscoveryProvider,

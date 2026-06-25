@@ -11,6 +11,12 @@
 
 use std::sync::Arc;
 
+use agentdash_application_workflow::orchestration::{
+    OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
+};
+use agentdash_application_workflow::{
+    OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
+};
 use agentdash_domain::workflow::{
     LifecycleRun, NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
@@ -24,10 +30,6 @@ use crate::{RepositorySet, SharedPlatformConfig};
 use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::lifecycle::session_terminal_summary;
-use crate::workflow::orchestration::{
-    OrchestrationExecutorLauncher, OrchestrationRuntimeError, OrchestrationRuntimeEvent,
-    apply_orchestration_event_to_run,
-};
 
 #[async_trait::async_trait]
 pub trait SessionTerminalCallback: Send + Sync + 'static {
@@ -83,18 +85,16 @@ pub struct AdvanceCurrentNodeResult {
 
 pub struct LifecycleOrchestrator {
     repos: RepositorySet,
-    platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
 }
 
 impl LifecycleOrchestrator {
     pub fn new_with_platform_config(
         repos: RepositorySet,
-        platform_config: SharedPlatformConfig,
+        _platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
             repos,
-            platform_config,
             function_runner: None,
         }
     }
@@ -307,11 +307,9 @@ impl LifecycleOrchestrator {
     async fn drain_ready_nodes(
         &self,
         run_id: Uuid,
-    ) -> Result<crate::workflow::OrchestrationExecutorDrainResult, String> {
-        let mut launcher = OrchestrationExecutorLauncher::new_with_platform_config(
-            self.repos.clone(),
-            self.platform_config.clone(),
-        );
+    ) -> Result<OrchestrationExecutorDrainResult, String> {
+        let mut launcher =
+            OrchestrationExecutorLauncher::new(self.repos.to_workflow_repository_set());
         if let Some(function_runner) = &self.function_runner {
             launcher = launcher.with_function_runner(function_runner.clone());
         }
@@ -493,9 +491,7 @@ fn association_node_is_terminal(
         })
 }
 
-fn orchestration_warning_from_drain(
-    result: &crate::workflow::OrchestrationExecutorDrainResult,
-) -> Option<String> {
+fn orchestration_warning_from_drain(result: &OrchestrationExecutorDrainResult) -> Option<String> {
     if result.failed_nodes.is_empty() {
         return None;
     }

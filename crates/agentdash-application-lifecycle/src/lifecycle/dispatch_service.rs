@@ -1,10 +1,17 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::lifecycle_materialization::{
+    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
+};
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
+use agentdash_application_workflow::orchestration::{
+    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
+    apply_orchestration_event_to_run,
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -26,10 +33,6 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
-use crate::workflow::orchestration::{
-    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
-    apply_orchestration_event_to_run,
-};
 use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Clone)]
@@ -147,21 +150,6 @@ impl DispatchFacts {
             self.orchestration_binding.clone(),
         )
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkflowAgentNodeMaterializationRequest {
-    pub run_id: Uuid,
-    pub orchestration_binding: OrchestrationBindingRefs,
-    pub runtime_policy: RuntimePolicy,
-    pub frame_created_by_id: Option<String>,
-    pub workflow_contract: Option<AgentProcedureContract>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkflowAgentNodeMaterializationResult {
-    pub runtime_refs: AgentRuntimeRefs,
-    pub delivery_runtime_ref: Uuid,
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {

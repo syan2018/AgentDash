@@ -7,6 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use agentdash_application_shared_library::seed_digest;
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactRef,
@@ -21,7 +22,6 @@ pub use agentdash_spi::extension_package::{
 };
 
 use crate::repository_set::RepositorySet;
-use crate::shared_library::seed_digest;
 
 const EXTENSION_MANIFEST_PATH: &str = "agentdash.extension.json";
 const PACKAGE_JSON_PATH: &str = "package.json";

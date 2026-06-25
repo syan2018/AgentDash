@@ -2,7 +2,6 @@ pub(crate) mod activity_activation;
 mod completion;
 mod dispatch_facade;
 pub mod dispatch_service;
-mod error;
 pub mod execution_log;
 pub mod gate_service;
 pub mod orchestrator;
@@ -21,13 +20,10 @@ pub(crate) mod vfs_mount;
 pub mod vfs_provider;
 
 pub(crate) use activity_activation::ActivityActivation;
+pub use agentdash_application_workflow::WorkflowApplicationError;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_facade::LifecycleDispatchFacade;
-pub use dispatch_service::{
-    LifecycleDispatchService, SessionPersistenceRuntimeSessionCreator,
-    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
-};
-pub use error::WorkflowApplicationError;
+pub use dispatch_service::{LifecycleDispatchService, SessionPersistenceRuntimeSessionCreator};
 pub use execution_log::{
     RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,

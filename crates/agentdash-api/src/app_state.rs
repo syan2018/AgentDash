@@ -10,7 +10,6 @@ use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
-use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
@@ -27,6 +26,7 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
+use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAdapter;
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;

@@ -1,15 +1,16 @@
 use uuid::Uuid;
 
-use agentdash_domain::workflow::{
-    AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    OrchestrationBindingRefs, RuntimeControlRefs, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository, SubjectRef,
+use agentdash_application_workflow::orchestration::{
+    OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
 };
-use chrono::{DateTime, Utc};
+use agentdash_domain::workflow::{
+    AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationBindingRefs,
+    RuntimeControlRefs, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    SubjectRef,
+};
 
 use super::WorkflowApplicationError;
-use crate::workflow::orchestration::{OrchestrationRuntimeEvent, apply_orchestration_event_to_run};
 
 #[derive(Debug, Clone)]
 struct DeliveryRuntimeSelection {
@@ -17,8 +18,6 @@ struct DeliveryRuntimeSelection {
     agent_id: Uuid,
     current_frame_id: Uuid,
     runtime_session_id: String,
-    status: DeliveryBindingStatus,
-    observed_at: DateTime<Utc>,
     anchor: RuntimeSessionExecutionAnchor,
 }
 
@@ -336,8 +335,6 @@ async fn select_current_delivery(
         agent_id: anchor.agent_id,
         current_frame_id: current_frame.id,
         runtime_session_id: anchor.runtime_session_id.clone(),
-        status: binding.status,
-        observed_at: binding.observed_at,
         anchor,
     })
 }

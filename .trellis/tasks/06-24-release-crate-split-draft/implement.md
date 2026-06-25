@@ -214,6 +214,27 @@ Round 4 planned dispatch:
 - Implement lanes: neutral launch envelope, mailbox/effective-capability ports, Gateway visibility cleanup, VFS owner adapter split.
 - Check lanes: RuntimeSession envelope, RuntimeSession live ports, Gateway visibility, VFS owner split, Round 4 readiness.
 
+Round 4 checkpoint result on 2026-06-25:
+
+- RuntimeSession launch consumes the neutral `agentdash-application-ports::frame_launch_envelope::FrameLaunchEnvelope`.
+- Stale launch-envelope provider shells and old provider input DTOs are deleted.
+- RuntimeSession mailbox, effective capability and hook target production paths consume ports.
+- RuntimeGateway umbrella re-export from `agentdash-application` is gone.
+- Lifecycle VFS catalog/mount helpers moved under `lifecycle`; generic `vfs/**` no longer declares owner-specific files.
+- Targeted compile/no-run/static gates passed.
+- RuntimeSession physical extraction remains blocked by frame close/capability-delta helper imports from AgentRun.
+- AgentRun/Lifecycle physical extraction remains blocked by cross-control read/model/materialization links.
+- Generic VFS core is ready for a physical extraction attempt with owner adapters excluded.
+- Full checkpoint details live in `checkpoint-wave-4.md`.
+
+Round 5 dispatch bias:
+
+- Prefer `agentdash-application-vfs` physical extraction first.
+- Move only generic VFS mechanics and tool/provider/service/path/materialization/mutation/search/rewrite modules.
+- Keep Canvas, Lifecycle, Session owner providers and `VfsSurfaceResolver` outside the extracted generic VFS crate.
+- Dispatch implement agents by file ownership and keep broad tests for checkpoint check agents.
+- After the main crate-split task completes, create a separate task for evaluating Canvas, Marketplace and other isolated large modules.
+
 Each worker prompt starts with:
 
 ```text

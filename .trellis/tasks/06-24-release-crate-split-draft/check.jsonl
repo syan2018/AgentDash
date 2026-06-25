@@ -16,3 +16,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 checkpoint check focus, stale-path policy and readiness classification rules."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 checkpoint verdicts and next extraction readiness blockers."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-4.md","reason":"Round 4 checkpoint focus and readiness gates for RuntimeSession, Gateway visibility and VFS owner split."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-4.md","reason":"Round 4 checkpoint verdicts, passed gates and remaining extraction blockers."}

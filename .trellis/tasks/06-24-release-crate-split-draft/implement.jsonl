@@ -33,3 +33,4 @@
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 port-wiring convergence lanes, prompt injection rules and checkpoint waves."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 validation, check-agent verdicts and remaining RuntimeSession/VFS/visibility blockers."}
 {"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-4.md","reason":"Round 4 substrate convergence lanes for neutral RuntimeSession launch envelope, live ports, visibility cleanup and VFS owner split."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-4.md","reason":"Round 4 validation, check-agent verdicts and next VFS extraction readiness."}

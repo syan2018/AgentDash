@@ -169,3 +169,23 @@ Check agents classify findings as `delete`, `move`, `port`, or `keep`, assign ea
 1. Commit dispatch docs before spawning workers.
 2. Commit implement integration by compatible lanes if possible.
 3. Commit checkpoint findings separately.
+
+## Checkpoint Completed
+
+Checkpoint file: `checkpoint-wave-4.md`
+
+Code checkpoint commit:
+
+- `193e2022 refactor(crate-split): 收束第四轮 checkpoint fixes`
+
+Check wave result:
+
+| Check worker | Result |
+| --- | --- |
+| `check-runtime-session-envelope` | Passed after stale provider shells were deleted. |
+| `check-runtime-session-live-ports` | Passed after hook target production path was port-mediated. |
+| `check-gateway-visibility` | Passed. Gateway consumers use the extracted crate or ports directly. |
+| `check-vfs-owner-split` | Passed after Lifecycle catalog/mount helpers moved to `lifecycle`. |
+| `check-round-4-readiness` | Generic VFS core is ready for physical extraction; RuntimeSession and AgentRun/Lifecycle remain blocked. |
+
+Validation commands and static gates are recorded in `checkpoint-wave-4.md`.

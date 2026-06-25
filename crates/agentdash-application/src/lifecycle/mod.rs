@@ -16,6 +16,7 @@ mod subject_context_assignment;
 mod subject_execution_control;
 pub mod surface;
 pub mod tools;
+mod vfs_provider;
 
 pub(crate) use activity_activation::ActivityActivation;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
@@ -70,3 +71,4 @@ pub use surface::surface_projector::{
     MessageStreamProjectionRef, MessageStreamTraceKind, OrchestrationNodeProjectionFacts,
     OrchestrationNodeProjectionInput,
 };
+pub(crate) use vfs_provider::LifecycleMountProvider;

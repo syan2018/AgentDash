@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
 use agentdash_application::agent_run::{
-    AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
-    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
-    AgentRunRuntimeSurfaceUpdateService, accepted_launch_commit_port,
+    AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps,
+    AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
+    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
+    accepted_launch_commit_port, mailbox_runtime_port, runtime_session_effective_capability_port,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
@@ -24,6 +26,7 @@ use agentdash_application::session::{
 };
 use agentdash_application::vfs::VfsMaterializationService;
 use agentdash_application::vfs::VfsService;
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort;
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -160,6 +163,22 @@ pub(crate) async fn build_session_runtime(
             ))
         },
     ));
+    let runtime_surface_query_impl = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+        AgentRunRuntimeSurfaceQueryDeps {
+            anchor_repo: repos.execution_anchor_repo.clone(),
+            run_repo: repos.lifecycle_run_repo.clone(),
+            agent_repo: repos.lifecycle_agent_repo.clone(),
+            frame_repo: repos.agent_frame_repo.clone(),
+        },
+    ));
+    let session_runtime_surface_query: Arc<dyn PortsAgentRunRuntimeSurfaceQueryPort> =
+        runtime_surface_query_impl.clone();
+    let runtime_surface_update_query: Arc<dyn ApplicationAgentRunRuntimeSurfaceQueryPort> =
+        runtime_surface_query_impl.clone();
+    let effective_capability_port = runtime_session_effective_capability_port(
+        repos.execution_anchor_repo.clone(),
+        repos.permission_grant_repo.clone(),
+    );
 
     let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
         connector.clone(),
@@ -174,8 +193,10 @@ pub(crate) async fn build_session_runtime(
     .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
+    .with_runtime_surface_query(session_runtime_surface_query)
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
+    .with_effective_capability_port(effective_capability_port)
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
     .with_settings_repository(repos.settings_repo.clone());
     if let Some(base_sp) = base_system_prompt {
@@ -200,34 +221,24 @@ pub(crate) async fn build_session_runtime(
             Some(accepted_launch_hook_sync),
         ))
         .await;
-    let mailbox_runtime_adapter = Arc::new(AgentRunMailboxRuntimeAdapter::new(
-        AgentRunMailboxRuntimeBoundaryDeps {
-            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
-            agent_frame_repo: repos.agent_frame_repo.clone(),
-            execution_anchor_repo: repos.execution_anchor_repo.clone(),
-            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
-            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
-            session_core: session_core.clone(),
-            session_control: session_control.clone(),
-            session_eventing: session_eventing.clone(),
-            session_launch: Arc::new(session_launch.clone()),
-        },
-    ));
+    let runtime_mailbox_port = mailbox_runtime_port(AgentRunMailboxRuntimeBoundaryDeps {
+        lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+        lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+        agent_frame_repo: repos.agent_frame_repo.clone(),
+        execution_anchor_repo: repos.execution_anchor_repo.clone(),
+        command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+        mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+        session_core: session_core.clone(),
+        session_control: session_control.clone(),
+        session_eventing: session_eventing.clone(),
+        session_launch: Arc::new(session_launch.clone()),
+    });
     session_runtime_builder
-        .set_agent_run_mailbox_runtime_adapter(mailbox_runtime_adapter)
+        .set_mailbox_runtime_port(runtime_mailbox_port)
         .await;
-    let runtime_surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
-        AgentRunRuntimeSurfaceQueryDeps {
-            anchor_repo: repos.execution_anchor_repo.clone(),
-            run_repo: repos.lifecycle_run_repo.clone(),
-            agent_repo: repos.lifecycle_agent_repo.clone(),
-            frame_repo: repos.agent_frame_repo.clone(),
-        },
-    ));
     let runtime_surface_update =
         AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
-            surface_query: runtime_surface_query,
+            surface_query: runtime_surface_update_query,
             frame_repo: repos.agent_frame_repo.clone(),
             vfs_service: Some(vfs_service.clone()),
             active_adopter: session_runtime_builder.runtime_surface_adoption_port(),

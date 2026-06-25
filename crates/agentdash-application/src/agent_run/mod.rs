@@ -41,6 +41,7 @@ pub use delivery_runtime_selection::{
 pub use effective_capability::{
     AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityRequest,
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
+    runtime_session_effective_capability_port,
 };
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
@@ -64,7 +65,7 @@ pub use mailbox::{
 };
 pub use mailbox_runtime_adapter::{
     AgentRunMailboxAutoResumeRequest, AgentRunMailboxRuntimeAdapter,
-    AgentRunMailboxRuntimeBoundaryDeps,
+    AgentRunMailboxRuntimeBoundaryDeps, mailbox_runtime_port,
 };
 pub use message_delivery::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,

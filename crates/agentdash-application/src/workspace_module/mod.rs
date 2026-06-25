@@ -15,6 +15,7 @@ pub(crate) mod skill_projection;
 mod tools;
 pub mod visibility;
 
+use agentdash_application_runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentation,
@@ -29,7 +30,6 @@ use crate::canvas::{
     CanvasWithAccess, canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id,
 };
 use crate::extension_runtime::ExtensionRuntimeProjection;
-use crate::runtime_gateway::ExtensionInvocationWorkspaceContext;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::common::Vfs;
 use thiserror::Error;

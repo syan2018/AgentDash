@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use agentdash_application_ports::frame_launch_envelope as launch_port;
 use agentdash_domain::backend::{
     RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
 };
@@ -279,6 +280,54 @@ impl FrameLaunchEnvelope {
     /// Launch-time execution profile。
     pub fn launch_executor_config(&self) -> &AgentConfig {
         &self.launch_surface.execution_profile
+    }
+
+    /// Convert the AgentRun-owned construction envelope into the neutral
+    /// RuntimeSession launch DTO consumed through application ports.
+    pub fn into_runtime_session_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
+        launch_port::FrameLaunchEnvelope {
+            surface: launch_port::FrameRuntimeSurface {
+                agent_id: self.surface.agent_id,
+                frame_id: self.surface.frame_id,
+                frame_revision: self.surface.frame_revision,
+                capability_surface: self.surface.capability_surface,
+                context_slice: self.surface.context_slice,
+                vfs_surface: self.surface.vfs_surface,
+                mcp_surface: self.surface.mcp_surface,
+                runtime_session_id: self.surface.runtime_session_id,
+            },
+            launch_surface: launch_port::FrameLaunchSurface {
+                capability_state: self.launch_surface.capability_state,
+                vfs: self.launch_surface.vfs,
+                mcp_servers: self.launch_surface.mcp_servers,
+                execution_profile: self.launch_surface.execution_profile,
+            },
+            pending_frame: self.pending_frame,
+            intent: launch_port::FrameLaunchIntent {
+                input: self.intent.input,
+                environment_variables: self.intent.environment_variables,
+                identity: self.intent.identity,
+                terminal_hook_effect_binding: self.intent.terminal_hook_effect_binding.map(
+                    |binding| launch_port::TerminalHookEffectBinding {
+                        handler: binding.handler,
+                        supported_effect_kinds: binding.supported_effect_kinds,
+                    },
+                ),
+                discovered_guidelines: self.intent.discovered_guidelines,
+                discovered_memory: self.intent.discovered_memory,
+            },
+            working_directory: self.working_directory,
+            context_bundle: self.context_bundle,
+            continuation_context_frame: self.continuation_context_frame,
+            base_capability_state: self.base_capability_state,
+            runtime_backend_anchor: self.runtime_backend_anchor,
+            resolution_trace: launch_port::LaunchResolutionTrace {
+                vfs_source: self.resolution_trace.vfs_source,
+                mcp_source: self.resolution_trace.mcp_source,
+                capability_source: self.resolution_trace.capability_source,
+                pending_overlay_applied: self.resolution_trace.pending_overlay_applied,
+            },
+        }
     }
 }
 

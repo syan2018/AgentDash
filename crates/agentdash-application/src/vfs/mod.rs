@@ -4,7 +4,6 @@ pub mod inline_persistence;
 pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
-pub(crate) mod mount_canvas;
 pub mod mount_inline;
 pub(crate) mod mount_lifecycle;
 pub mod mount_project;
@@ -13,12 +12,9 @@ pub mod mount_skill_asset;
 pub mod mount_workspace;
 pub mod mutation_dispatcher;
 pub(crate) mod mutation_queue;
-pub(crate) mod owner_providers;
 pub mod path;
 pub mod provider;
-pub(crate) mod provider_canvas;
 pub(crate) mod provider_inline;
-pub(crate) mod provider_lifecycle;
 pub(crate) mod provider_routine;
 pub(crate) mod provider_skill_asset;
 pub mod rewrite;
@@ -26,7 +22,6 @@ pub mod search;
 pub mod service;
 pub mod surface;
 pub mod surface_query;
-pub mod surface_resolver;
 pub mod tools;
 pub mod types;
 
@@ -47,10 +42,6 @@ pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
     PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
     mount_purpose,
-};
-pub use mount_canvas::{
-    CanvasMountAccess, append_canvas_mount, append_canvas_mounts, build_canvas_mount,
-    build_canvas_mount_id, refresh_canvas_mount_binding_files,
 };
 pub use mount_inline::{
     build_context_container_mount, list_inline_entries, normalize_inline_files,
@@ -92,7 +83,6 @@ pub use surface::{
     ResolvedVfsSurfaceSource,
 };
 pub use surface_query::build_surface_summary;
-pub use surface_resolver::{ResolvedVfsSurfaceBundle, VfsSurfaceResolver, VfsSurfaceResolverDeps};
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
     ListResult, MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,

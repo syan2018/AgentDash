@@ -9,6 +9,12 @@ use std::sync::Arc;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
+use agentdash_application_runtime_gateway::{
+    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
+    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
+    RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
+    RuntimeInvocationResult, RuntimeTarget, RuntimeTrace, attach_extension_invocation_workspace,
+};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch,
@@ -35,12 +41,6 @@ use crate::canvas::{
     BindCanvasDataParams, CanvasMutationInput, StartCanvasParams, build_personal_canvas,
     canvas_module_id, canvas_presentation_uri, canvas_vfs_mount_id, normalize_canvas_mount_id,
     request_existing_canvas_visibility_for_runtime, upsert_canvas_binding,
-};
-use crate::runtime_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
-    RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
-    RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
 };
 use crate::runtime_tools::SharedSessionToolServicesHandle;
 use crate::workspace_module::{
@@ -1166,10 +1166,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     backend_id: backend.backend_id.clone(),
                 });
                 if let Some(workspace) = backend.workspace.clone() {
-                    crate::runtime_gateway::attach_extension_invocation_workspace(
-                        &mut request,
-                        Some(workspace),
-                    );
+                    attach_extension_invocation_workspace(&mut request, Some(workspace));
                 }
                 let mut provenance = provenance;
                 if let Some(obj) = provenance.as_object_mut() {
@@ -1576,6 +1573,7 @@ mod tests {
         AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceUpdateDeps,
         AgentRunRuntimeSurfaceUpdateService, frame::builder::AgentFrameBuilder,
     };
+    use crate::canvas::CanvasFsMountProvider;
     use crate::canvas::{build_canvas, build_personal_canvas};
     use crate::runtime_tools::{
         SessionToolServices, SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle,
@@ -1590,7 +1588,6 @@ mod tests {
         MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleGateRepository,
         MemoryRuntimeSessionExecutionAnchorRepository,
     };
-    use crate::vfs::provider_canvas::CanvasFsMountProvider;
     use crate::vfs::{MountProviderRegistry, VfsService};
     use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
 
@@ -2753,10 +2750,12 @@ mod tests {
 
     // ---- invoke tool tests ----
 
-    use crate::runtime_gateway::{RuntimeActionKind, RuntimeInvocationOutput, RuntimeProvider};
     use agentdash_application_ports::extension_runtime::{
         ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
+    };
+    use agentdash_application_runtime_gateway::{
+        RuntimeActionKind, RuntimeInvocationOutput, RuntimeProvider,
     };
 
     struct EchoActionProvider {

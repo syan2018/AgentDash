@@ -20,14 +20,11 @@ use super::super::types::SessionMeta;
 use super::super::types::UserPromptInput;
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
-#[cfg(test)]
-use crate::agent_run::frame::runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
-};
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_application_ports::frame_launch_envelope::{
-    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
+    FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest, FrameLaunchIntent,
+    FrameLaunchSurface, FrameRuntimeSurface, LaunchResolutionTrace,
 };
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
@@ -158,7 +155,7 @@ struct ConstructionLaunchEnvelopeProvider {
 #[cfg(test)]
 #[allow(deprecated)]
 #[async_trait::async_trait]
-impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for ConstructionLaunchEnvelopeProvider {
+impl FrameLaunchEnvelopePort for ConstructionLaunchEnvelopeProvider {
     async fn build_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeRequest,
@@ -229,12 +226,12 @@ pub(super) async fn envelope_from_construction_with_commands(
     };
 
     if !closed_surface.resolution_trace.pending_overlay_applied {
-        closed_surface.resolution_trace = LaunchResolutionTrace {
-            vfs_source: construction.resolution.vfs_source,
-            mcp_source: construction.resolution.mcp_source,
-            capability_source: construction.resolution.capability_source,
-            pending_overlay_applied: construction.resolution.pending_overlay_applied,
-        };
+        closed_surface.resolution_trace.vfs_source = construction.resolution.vfs_source;
+        closed_surface.resolution_trace.mcp_source = construction.resolution.mcp_source;
+        closed_surface.resolution_trace.capability_source =
+            construction.resolution.capability_source;
+        closed_surface.resolution_trace.pending_overlay_applied =
+            construction.resolution.pending_overlay_applied;
     }
     let runtime_backend_anchor = closed_surface
         .launch_surface
@@ -258,8 +255,12 @@ pub(super) async fn envelope_from_construction_with_commands(
             mcp_surface: serde_json::Value::Null,
             runtime_session_id: Some(construction.session_id.clone()),
         },
-        surface_draft,
-        launch_surface: closed_surface.launch_surface,
+        launch_surface: FrameLaunchSurface {
+            capability_state: closed_surface.launch_surface.capability_state,
+            vfs: closed_surface.launch_surface.vfs,
+            mcp_servers: closed_surface.launch_surface.mcp_servers,
+            execution_profile: closed_surface.launch_surface.execution_profile,
+        },
         pending_frame: None,
         intent: FrameLaunchIntent {
             input: construction.prompt.input,
@@ -276,6 +277,11 @@ pub(super) async fn envelope_from_construction_with_commands(
             .base_capability_state
             .or(construction.resolution.runtime_base_capability_state),
         runtime_backend_anchor,
-        resolution_trace: closed_surface.resolution_trace,
+        resolution_trace: LaunchResolutionTrace {
+            vfs_source: closed_surface.resolution_trace.vfs_source,
+            mcp_source: closed_surface.resolution_trace.mcp_source,
+            capability_source: closed_surface.resolution_trace.capability_source,
+            pending_overlay_applied: closed_surface.resolution_trace.pending_overlay_applied,
+        },
     })
 }

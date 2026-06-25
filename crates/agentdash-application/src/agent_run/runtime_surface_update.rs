@@ -18,8 +18,11 @@ use crate::agent_run::{
     AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
 };
-use crate::canvas::{canvas_runtime_mount_access, resolve_canvas_binding_files};
-use crate::vfs::{VfsService, append_canvas_mount, refresh_canvas_mount_binding_files};
+use crate::canvas::{
+    append_canvas_mount, canvas_runtime_mount_access, refresh_canvas_mount_binding_files,
+    resolve_canvas_binding_files,
+};
+use crate::vfs::VfsService;
 
 #[derive(Clone)]
 pub struct AgentRunRuntimeSurfaceUpdateService {
@@ -236,6 +239,8 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::canvas::CanvasMountAccess;
 
     use agentdash_domain::canvas::Canvas;
     use agentdash_domain::common::{Mount, MountCapability};
@@ -534,7 +539,7 @@ mod tests {
 
     fn vfs_with_canvas(canvas: &Canvas) -> Vfs {
         let mut vfs = base_vfs(canvas.project_id);
-        append_canvas_mount(&mut vfs, canvas, crate::vfs::CanvasMountAccess::read_only());
+        append_canvas_mount(&mut vfs, canvas, CanvasMountAccess::read_only());
         vfs
     }
 }

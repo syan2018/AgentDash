@@ -8,12 +8,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agentdash_application::agent_run::frame::{
-    FrameConstructionDeps, FrameConstructionService, FrameLaunchEnvelope,
-};
+use agentdash_application::agent_run::frame::{FrameConstructionDeps, FrameConstructionService};
 use agentdash_application::lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::frame_launch_envelope::{
-    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
+    FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest,
 };
 use agentdash_spi::ConnectorError;
 
@@ -51,7 +49,7 @@ impl AppStateFrameLaunchEnvelopePort {
 }
 
 #[async_trait]
-impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for AppStateFrameLaunchEnvelopePort {
+impl FrameLaunchEnvelopePort for AppStateFrameLaunchEnvelopePort {
     async fn build_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeRequest,
@@ -59,6 +57,7 @@ impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for AppStateFrameLaunchEnvelop
         self.service
             .construct_launch_envelope_from_request(input)
             .await
+            .map(|envelope| envelope.into_runtime_session_launch_envelope())
     }
 }
 

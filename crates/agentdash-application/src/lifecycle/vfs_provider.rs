@@ -13,18 +13,6 @@ use serde::Serialize;
 use tracing::info;
 use uuid::Uuid;
 
-use super::lifecycle_catalog::lifecycle_root_entries;
-use super::mount::PROVIDER_LIFECYCLE_VFS;
-use super::mount_inline::list_inline_entries;
-use super::path::normalize_mount_relative_path;
-use super::provider::{
-    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
-};
-use super::provider_skill_asset::{
-    list_projected_skill_files, parse_skill_asset_mount_metadata, read_projected_skill_file,
-    search_projected_skill_files,
-};
-use super::types::{ListOptions, ListResult, ReadResult};
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
     LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
@@ -33,6 +21,18 @@ use crate::lifecycle::surface::journey::{
 };
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::{SessionPersistence, SessionToolResultCache};
+use crate::vfs::lifecycle_catalog::lifecycle_root_entries;
+use crate::vfs::mount::PROVIDER_LIFECYCLE_VFS;
+use crate::vfs::mount_inline::list_inline_entries;
+use crate::vfs::path::normalize_mount_relative_path;
+use crate::vfs::provider::{
+    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
+};
+use crate::vfs::provider_skill_asset::{
+    list_projected_skill_files, parse_skill_asset_mount_metadata, read_projected_skill_file,
+    search_projected_skill_files,
+};
+use crate::vfs::types::{ListOptions, ListResult, ReadResult};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,

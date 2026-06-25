@@ -30,9 +30,8 @@ use agentdash_application::session::{
     SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::{
-    VfsMutationDispatcher, VfsService, VfsSurfaceResolver, VfsSurfaceResolverDeps,
-};
+use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
+use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,

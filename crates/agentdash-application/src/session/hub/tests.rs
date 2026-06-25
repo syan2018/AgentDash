@@ -76,7 +76,7 @@ use crate::vfs::{
     VfsService,
 };
 use agentdash_application_ports::frame_launch_envelope::{
-    FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest, FrameLaunchModifier,
+    FrameLaunchEnvelope, FrameLaunchEnvelopePort, FrameLaunchEnvelopeRequest, FrameLaunchModifier,
 };
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
@@ -3717,14 +3717,12 @@ async fn accepted_turn_commits_hook_runtime_target_to_new_frame() {
 
 #[tokio::test]
 async fn planner_invalid_config_leaves_current_frame_unchanged() {
-    use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
-
     struct StaticConstructionProvider {
         hub: SessionRuntimeInner,
     }
 
     #[async_trait::async_trait]
-    impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for StaticConstructionProvider {
+    impl FrameLaunchEnvelopePort for StaticConstructionProvider {
         async fn build_launch_envelope(
             &self,
             input: FrameLaunchEnvelopeRequest,
@@ -4070,7 +4068,6 @@ async fn schedule_unanchored_hook_auto_resume_strict_mode_requires_provider() {
 
 #[tokio::test]
 async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
-    use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -4080,7 +4077,7 @@ async fn schedule_unanchored_hook_auto_resume_routes_through_provider() {
     }
 
     #[async_trait::async_trait]
-    impl FrameLaunchEnvelopePort<FrameLaunchEnvelope> for SpyConstructionProvider {
+    impl FrameLaunchEnvelopePort for SpyConstructionProvider {
         async fn build_launch_envelope(
             &self,
             input: FrameLaunchEnvelopeRequest,

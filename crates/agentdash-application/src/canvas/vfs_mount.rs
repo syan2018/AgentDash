@@ -2,8 +2,7 @@ use agentdash_domain::canvas::{Canvas, CanvasAccessProjection};
 
 use crate::canvas::{CanvasResolvedBindingFile, canvas_provider_root_ref, canvas_vfs_mount_id};
 use crate::runtime::{Mount, MountCapability, Vfs};
-
-use super::mount::PROVIDER_CANVAS_FS;
+use crate::vfs::mount::PROVIDER_CANVAS_FS;
 
 pub fn build_canvas_mount_id(canvas: &Canvas) -> String {
     canvas_vfs_mount_id(canvas)

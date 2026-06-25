@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_spi::{AgentToolResult, ContentPart, Vfs};
 use tokio::sync::RwLock;
 
-use crate::vfs::{CanvasMountAccess, ResourceRef, build_canvas_mount, parse_mount_uri};
+use crate::vfs::{ResourceRef, parse_mount_uri};
 
 /// Resolve a tool parameter path into a `ResourceRef`.
 ///
@@ -59,17 +59,6 @@ impl SharedRuntimeVfs {
     pub async fn replace(&self, vfs: Vfs) {
         let mut guard = self.inner.write().await;
         *guard = vfs;
-    }
-
-    pub async fn append_canvas_mount(
-        &self,
-        canvas: &agentdash_domain::canvas::Canvas,
-        access: CanvasMountAccess,
-    ) {
-        let mut guard = self.inner.write().await;
-        let mount = build_canvas_mount(canvas, access);
-        guard.mounts.retain(|existing| existing.id != mount.id);
-        guard.mounts.push(mount);
     }
 }
 

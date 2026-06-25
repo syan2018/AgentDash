@@ -7,10 +7,11 @@ use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentFrame, AgentProcedure, LifecycleRun, WorkflowGraph,
 };
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::session_persistence::RuntimeCommandRecord;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
-    RuntimeMcpServer, Vfs,
+    RuntimeMcpServer, SessionContextBundle, Vfs,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -33,6 +34,7 @@ pub struct FrameLaunchIntent {
     pub input: Option<Vec<UserInputBlock>>,
     pub environment_variables: HashMap<String, String>,
     pub identity: Option<AuthIdentity>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub discovered_memory: MemoryDiscoveryOutput,
 }
@@ -53,14 +55,42 @@ pub struct LaunchResolutionTrace {
     pub pending_overlay_applied: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHookEffectBinding {
+    pub handler: Value,
+    pub supported_effect_kinds: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
     pub surface: FrameRuntimeSurface,
     pub launch_surface: FrameLaunchSurface,
+    pub pending_frame: Option<AgentFrame>,
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub base_capability_state: Option<CapabilityState>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub resolution_trace: LaunchResolutionTrace,
+}
+
+impl FrameLaunchEnvelope {
+    pub fn launch_capability_state(&self) -> &CapabilityState {
+        &self.launch_surface.capability_state
+    }
+
+    pub fn launch_vfs(&self) -> &Vfs {
+        &self.launch_surface.vfs
+    }
+
+    pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServer] {
+        &self.launch_surface.mcp_servers
+    }
+
+    pub fn launch_executor_config(&self) -> &AgentConfig {
+        &self.launch_surface.execution_profile
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,14 +216,14 @@ pub trait FrameLaunchEnvelopeProvider: Send + Sync {
 }
 
 #[async_trait]
-pub trait FrameLaunchEnvelopePort<Envelope>: Send + Sync {
+pub trait FrameLaunchEnvelopePort: Send + Sync {
     async fn build_launch_envelope(
         &self,
         input: FrameLaunchEnvelopeRequest,
-    ) -> Result<Envelope, agentdash_spi::ConnectorError>;
+    ) -> Result<FrameLaunchEnvelope, agentdash_spi::ConnectorError>;
 }
 
-pub type SharedFrameLaunchEnvelopePort<Envelope> = Arc<dyn FrameLaunchEnvelopePort<Envelope>>;
+pub type SharedFrameLaunchEnvelopePort = Arc<dyn FrameLaunchEnvelopePort>;
 
 #[derive(Debug, Clone)]
 pub struct AcceptedLaunchCommitInput {

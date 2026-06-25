@@ -3,6 +3,10 @@ use std::sync::Arc;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, UserInputBlock,
 };
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionLivePortError, RuntimeSessionMailboxAutoResumeRequest,
+    RuntimeSessionMailboxRuntimePort,
+};
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxMessageSource,
     SteeringStopEffect,
@@ -99,6 +103,41 @@ impl AgentRunMailboxRuntimeAdapter {
             Err(WorkflowApplicationError::NotFound(_)) => Ok(false),
             Err(error) => Err(error.to_string()),
         }
+    }
+}
+
+pub fn mailbox_runtime_port(
+    deps: AgentRunMailboxRuntimeBoundaryDeps,
+) -> Arc<dyn RuntimeSessionMailboxRuntimePort> {
+    Arc::new(AgentRunMailboxRuntimeAdapter::new(deps))
+}
+
+#[async_trait]
+impl RuntimeSessionMailboxRuntimePort for AgentRunMailboxRuntimeAdapter {
+    fn runtime_delegate(
+        &self,
+        runtime_session_id: String,
+        inner: Option<DynAgentRuntimeDelegate>,
+    ) -> DynAgentRuntimeDelegate {
+        AgentRunMailboxRuntimeAdapter::runtime_delegate(self, runtime_session_id, inner)
+    }
+
+    async fn accept_hook_auto_resume_effect(
+        &self,
+        request: RuntimeSessionMailboxAutoResumeRequest,
+    ) -> Result<bool, RuntimeSessionLivePortError> {
+        AgentRunMailboxRuntimeAdapter::accept_hook_auto_resume_effect(
+            self,
+            AgentRunMailboxAutoResumeRequest {
+                session_id: request.session_id,
+                effect_id: request.effect_id,
+                source_turn_id: request.source_turn_id,
+                terminal_event_seq: request.terminal_event_seq,
+                input: request.input,
+            },
+        )
+        .await
+        .map_err(RuntimeSessionLivePortError::failed)
     }
 }
 

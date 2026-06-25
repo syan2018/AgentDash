@@ -5,6 +5,7 @@
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //!
 use agentdash_agent_types::DynAgentTool;
+use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
@@ -12,9 +13,6 @@ use agentdash_spi::{ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 
 use super::{LiveRuntimeContextTransitionInput, SessionRuntimeInner};
-use crate::agent_run::AgentRunEffectiveCapabilityService;
-use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::runtime_capability::project_capability_state_from_frame;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
 };
@@ -61,73 +59,34 @@ impl SessionRuntimeInner {
         target: AgentFrameRuntimeTarget,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
         let session_id = target.delivery_runtime_session_id.as_str();
-        let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
+        let surface_query = self.runtime_surface_query.as_ref().ok_or_else(|| {
             ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 AgentFrame repository，无法采用已持久化能力状态"
+                "session `{session_id}` 无 AgentRun runtime surface query port，无法采用已持久化能力状态"
             ))
         })?;
-        let anchor_repo = self.execution_anchor_repo.as_ref().ok_or_else(|| {
-            ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 RuntimeSessionExecutionAnchor repository，无法采用已持久化能力状态"
-            ))
-        })?;
-        let target_frame = frame_repo
-            .get(target.frame_id)
+        let surface = surface_query
+            .current_runtime_surface(
+                session_id,
+                RuntimeSurfaceQueryPurpose::new("runtime_surface_adoption"),
+            )
             .await
             .map_err(|error| {
                 ConnectorError::Runtime(format!(
-                    "查找 AgentFrame `{}` 失败，无法采用已持久化能力状态: {error}",
-                    target.frame_id
-                ))
-            })?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "AgentFrame `{}` 不存在，拒绝采用已持久化能力状态",
-                    target.frame_id
+                    "查询 delivery RuntimeSession `{session_id}` current AgentRun surface 失败，无法采用已持久化能力状态: {error}"
                 ))
             })?;
-        let delivery_anchor = anchor_repo
-            .find_by_session(session_id)
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "查找 delivery RuntimeSession `{session_id}` anchor 失败，无法采用已持久化能力状态: {error}"
-                ))
-            })?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "delivery RuntimeSession `{session_id}` 缺少 RuntimeSessionExecutionAnchor，拒绝采用已持久化能力状态"
-                ))
-            })?;
-        if delivery_anchor.agent_id != target_frame.agent_id {
-            return Err(ConnectorError::Runtime(format!(
-                "Agent `{}` 未绑定 delivery RuntimeSession `{session_id}` 的 anchor，拒绝采用已持久化能力状态",
-                target_frame.agent_id
-            )));
-        }
-        let adopted_frame = frame_repo
-            .get_current(delivery_anchor.agent_id)
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!(
-                    "查找 Agent `{}` 当前 AgentFrame 失败，无法采用已持久化能力状态: {error}",
-                    delivery_anchor.agent_id
-                ))
-            })?
-            .ok_or_else(|| {
-                ConnectorError::Runtime(format!(
-                    "Agent `{}` 缺少当前 AgentFrame，拒绝采用已持久化能力状态",
-                    delivery_anchor.agent_id
-                ))
-            })?;
-        if adopted_frame.id != target.frame_id {
+        if surface.current_surface_frame_id != target.frame_id {
             return Err(ConnectorError::Runtime(format!(
                 "AgentFrame `{}` 不是 delivery RuntimeSession `{session_id}` 当前 revision（当前为 `{}`），拒绝采用不同 revision",
-                target.frame_id, adopted_frame.id
+                target.frame_id, surface.current_surface_frame_id
             )));
         }
-        let state = project_capability_state_from_frame(&adopted_frame);
-        let mcp_servers = adopted_frame.typed_mcp_servers();
+        let state = surface.capability_state.clone();
+        let mcp_servers = surface.mcp_servers.clone();
+        let phase_node = surface.provenance.surface_created_by_kind.clone();
+        let adopted_frame_id = surface.current_surface_frame_id;
+        let agent_id = surface.agent_id;
+        let revision = surface.surface_revision;
 
         let turn_snapshot = self
             .runtime_registry
@@ -149,7 +108,7 @@ impl SessionRuntimeInner {
             .hook_service()
             .ensure_hook_runtime_for_target(
                 &AgentFrameRuntimeTarget {
-                    frame_id: adopted_frame.id,
+                    frame_id: adopted_frame_id,
                     delivery_runtime_session_id: session_id.to_string(),
                 },
                 Some(&turn_snapshot.turn_id),
@@ -199,7 +158,7 @@ impl SessionRuntimeInner {
                 LiveRuntimeContextTransitionInput {
                     delivery_runtime_session_id: session_id.to_string(),
                     turn_id: Some(turn_snapshot.turn_id.clone()),
-                    phase_node: adopted_frame.created_by_kind.clone(),
+                    phase_node,
                     before_state: Some(turn_snapshot.capability_state),
                     after_state: state.clone(),
                     capability_keys: state.capability_keys(),
@@ -217,9 +176,9 @@ impl SessionRuntimeInner {
         tracing::debug!(
             session_id,
             target_frame_id = %target.frame_id,
-            adopted_frame_id = %adopted_frame.id,
-            agent_id = %adopted_frame.agent_id,
-            revision = adopted_frame.revision,
+            adopted_frame_id = %adopted_frame_id,
+            agent_id = %agent_id,
+            revision = revision,
             "已采用持久化 AgentFrame capability revision"
         );
         Ok(all_tools)
@@ -273,20 +232,13 @@ impl SessionRuntimeInner {
         session_id: &str,
         capability_state: &CapabilityState,
     ) -> CapabilityState {
-        let (Some(permission_grant_repo), Some(anchor_repo)) = (
-            self.permission_grant_repo.as_ref(),
-            self.execution_anchor_repo.as_ref(),
-        ) else {
+        let Some(port) = self.effective_capability_port.as_ref() else {
             return capability_state.clone();
         };
 
-        match AgentRunEffectiveCapabilityService::execution_capability_state_for_runtime_session(
-            session_id,
-            capability_state,
-            anchor_repo.as_ref(),
-            permission_grant_repo.as_ref(),
-        )
-        .await
+        match port
+            .execution_capability_state_for_runtime_session(session_id, capability_state.clone())
+            .await
         {
             Ok(state) => state,
             Err(error) => {

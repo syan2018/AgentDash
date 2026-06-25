@@ -6,13 +6,12 @@ use agentdash_application_ports::frame_launch_envelope::{
     SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
+use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxRuntimePort;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
 
-use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
@@ -37,7 +36,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
     pub(super) frame_launch_envelope_provider:
-        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>>>>,
+        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort>>>,
     accepted_launch_commit_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn AcceptedLaunchCommitPort>>>>,
     runtime_registry: SessionRuntimeRegistry,
@@ -50,8 +49,8 @@ pub(in crate::session) struct SessionLaunchDeps {
     mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
-    pub(super) agent_run_mailbox_runtime_adapter:
-        Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
+    pub(super) mailbox_runtime_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
     eventing: SessionEventingService,
     core: SessionCoreService,
     hooks: SessionHookService,
@@ -76,7 +75,7 @@ impl SessionLaunchDeps {
             mcp_tool_discovery: inner.mcp_tool_discovery.clone(),
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
-            agent_run_mailbox_runtime_adapter: inner.agent_run_mailbox_runtime_adapter.clone(),
+            mailbox_runtime_port: inner.mailbox_runtime_port.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),
             hooks: inner.hook_service(),
@@ -87,7 +86,7 @@ impl SessionLaunchDeps {
 
     pub(super) async fn current_frame_launch_envelope_provider(
         &self,
-    ) -> Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>> {
+    ) -> Option<SharedFrameLaunchEnvelopePort> {
         self.frame_launch_envelope_provider.read().await.clone()
     }
 
@@ -101,7 +100,7 @@ impl SessionLaunchDeps {
             context_audit_bus: self.context_audit_bus.clone(),
             backend_execution_transport: self.backend_execution_transport.clone(),
             backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
-            agent_run_mailbox_runtime_adapter: self.agent_run_mailbox_runtime_adapter.clone(),
+            mailbox_runtime_port: self.mailbox_runtime_port.clone(),
         }
     }
 
@@ -187,8 +186,8 @@ pub(super) struct LaunchPlanningDeps {
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
-    agent_run_mailbox_runtime_adapter:
-        Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
+    mailbox_runtime_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
 }
 
 impl LaunchPlanningDeps {
@@ -196,10 +195,10 @@ impl LaunchPlanningDeps {
         self.context_audit_bus.read().await.clone()
     }
 
-    pub(super) async fn current_agent_run_mailbox_runtime_adapter(
+    pub(super) async fn current_mailbox_runtime_port(
         &self,
-    ) -> Option<Arc<AgentRunMailboxRuntimeAdapter>> {
-        self.agent_run_mailbox_runtime_adapter.read().await.clone()
+    ) -> Option<Arc<dyn RuntimeSessionMailboxRuntimePort>> {
+        self.mailbox_runtime_port.read().await.clone()
     }
 }
 

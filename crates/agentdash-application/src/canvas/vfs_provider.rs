@@ -6,17 +6,17 @@ use uuid::Uuid;
 
 use agentdash_domain::canvas::{Canvas, CanvasFile, CanvasRepository};
 
-use super::mount::PROVIDER_CANVAS_FS;
-use super::mount_inline::list_inline_entries;
-use super::path::normalize_mount_relative_path;
-use super::provider::{
+use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
+use crate::runtime::{Mount, MountCapability};
+use crate::vfs::mount::PROVIDER_CANVAS_FS;
+use crate::vfs::mount_inline::list_inline_entries;
+use crate::vfs::parse_mount_uri;
+use crate::vfs::path::normalize_mount_relative_path;
+use crate::vfs::provider::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,
     SearchQuery, SearchResult,
 };
-use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::canvas::{CanvasResolvedBindingFile, unresolved_canvas_binding_files};
-use crate::runtime::{Mount, MountCapability};
-use crate::vfs::parse_mount_uri;
+use crate::vfs::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
 
 pub struct CanvasFsMountProvider {
     canvas_repo: Arc<dyn CanvasRepository>,
@@ -398,7 +398,7 @@ mod tests {
     use agentdash_spi::platform::mount::MountRuntimeTextResolver;
 
     use super::*;
-    use crate::vfs::{CanvasMountAccess, build_canvas_mount};
+    use crate::canvas::{CanvasMountAccess, build_canvas_mount};
 
     #[derive(Default)]
     struct FakeCanvasRepo {

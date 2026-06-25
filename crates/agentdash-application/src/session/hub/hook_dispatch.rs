@@ -20,8 +20,8 @@ use super::super::terminal_effects::{
 };
 use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
-use crate::agent_run::AgentRunMailboxAutoResumeRequest;
 use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
+use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxAutoResumeRequest;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
     HookEffect, HookInjection, HookRuntimeAccess, HookRuntimeEvaluationQuery,
@@ -232,11 +232,11 @@ impl SessionRuntimeInner {
         &self,
         request: &TerminalAutoResumeRequest,
     ) -> AutoResumeMailboxRoute {
-        let Some(adapter) = self.agent_run_mailbox_runtime_adapter.read().await.clone() else {
+        let Some(port) = self.mailbox_runtime_port.read().await.clone() else {
             return AutoResumeMailboxRoute::NoAnchor;
         };
-        match adapter
-            .accept_hook_auto_resume_effect(AgentRunMailboxAutoResumeRequest {
+        match port
+            .accept_hook_auto_resume_effect(RuntimeSessionMailboxAutoResumeRequest {
                 session_id: request.session_id.clone(),
                 effect_id: request.effect_id,
                 source_turn_id: request.turn_id.clone(),

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
+use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
@@ -12,7 +13,6 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::project::project_authorization_context_from_identity;
-use crate::runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
 use crate::runtime_tools::provider::{
     SharedRuntimeGatewayHandle, SharedSessionToolServicesHandle, project_id_from_context,
     runtime_session_id_from_context, shared_runtime_vfs_from_context,

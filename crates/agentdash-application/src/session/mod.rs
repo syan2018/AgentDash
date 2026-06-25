@@ -56,6 +56,7 @@ mod transcript_restore;
 pub(crate) mod turn_processor;
 mod turn_supervisor;
 pub mod types;
+mod vfs_owner_providers;
 
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,

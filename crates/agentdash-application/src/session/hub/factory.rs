@@ -6,8 +6,12 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
+};
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
 };
 use tokio::sync::Mutex;
 
@@ -15,8 +19,6 @@ use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionRuntimeInner;
-use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
@@ -120,9 +122,11 @@ impl SessionRuntimeInner {
             backend_execution_lease_repo: None,
             agent_frame_repo: None,
             execution_anchor_repo: None,
+            runtime_surface_query: None,
             lifecycle_agent_repo: None,
             permission_grant_repo: None,
-            agent_run_mailbox_runtime_adapter: Arc::new(tokio::sync::RwLock::new(None)),
+            effective_capability_port: None,
+            mailbox_runtime_port: Arc::new(tokio::sync::RwLock::new(None)),
             lifecycle_gate_repo: None,
         }
     }
@@ -192,6 +196,14 @@ impl SessionRuntimeInner {
         self
     }
 
+    pub fn with_runtime_surface_query(
+        mut self,
+        query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    ) -> Self {
+        self.runtime_surface_query = Some(query);
+        self
+    }
+
     /// 注入 LifecycleAgent 仓储（launch path 需要查询 agent bootstrap 状态）
     pub fn with_lifecycle_agent_repo(
         mut self,
@@ -209,11 +221,16 @@ impl SessionRuntimeInner {
         self
     }
 
-    pub async fn set_agent_run_mailbox_runtime_adapter(
-        &self,
-        adapter: Arc<AgentRunMailboxRuntimeAdapter>,
-    ) {
-        *self.agent_run_mailbox_runtime_adapter.write().await = Some(adapter);
+    pub fn with_effective_capability_port(
+        mut self,
+        port: Arc<dyn RuntimeSessionEffectiveCapabilityPort>,
+    ) -> Self {
+        self.effective_capability_port = Some(port);
+        self
+    }
+
+    pub async fn set_mailbox_runtime_port(&self, port: Arc<dyn RuntimeSessionMailboxRuntimePort>) {
+        *self.mailbox_runtime_port.write().await = Some(port);
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
@@ -265,7 +282,7 @@ impl SessionRuntimeInner {
     /// 延迟注入设计：用 `Arc<RwLock<...>>` 以便在 AppState 构造完成后再绑定到 hub。
     pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>,
+        provider: SharedFrameLaunchEnvelopePort,
     ) {
         *self.frame_launch_envelope_provider.write().await = Some(provider);
     }
@@ -321,16 +338,17 @@ impl SessionRuntimeInner {
         if self.execution_anchor_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 execution_anchor_repo".to_string());
         }
+        if self.runtime_surface_query.is_none() {
+            return Err("SessionRuntimeInner 缺少 runtime_surface_query".to_string());
+        }
         if self.lifecycle_agent_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 lifecycle_agent_repo".to_string());
         }
-        if self
-            .agent_run_mailbox_runtime_adapter
-            .read()
-            .await
-            .is_none()
-        {
-            return Err("SessionRuntimeInner 缺少 agent_run_mailbox_runtime_adapter".to_string());
+        if self.effective_capability_port.is_none() {
+            return Err("SessionRuntimeInner 缺少 effective_capability_port".to_string());
+        }
+        if self.mailbox_runtime_port.read().await.is_none() {
+            return Err("SessionRuntimeInner 缺少 mailbox_runtime_port".to_string());
         }
         Ok(())
     }

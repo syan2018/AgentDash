@@ -16,11 +16,13 @@ use std::{path::PathBuf, sync::Arc};
 use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
-use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
+};
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
 };
 use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -65,7 +67,7 @@ pub struct SessionRuntimeInner {
     /// Hub 内部的 auto-resume 等场景必须经它补齐 frame/MCP/flow 上下文，
     /// 避免与主通道漂移。用 `Arc<RwLock<...>>` 以便延迟注入（循环依赖场景）。
     pub(super) frame_launch_envelope_provider:
-        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>>>>,
+        Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort>>>,
     pub(super) accepted_launch_commit_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn AcceptedLaunchCommitPort>>>>,
     /// Context Inspector 使用的审计总线。Hub 内部创建 runtime delegate 时需要把它
@@ -91,12 +93,14 @@ pub struct SessionRuntimeInner {
     /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    pub(super) runtime_surface_query: Option<Arc<dyn AgentRunRuntimeSurfaceQueryPort>>,
     /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
     pub(super) lifecycle_agent_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
     pub(super) permission_grant_repo: Option<Arc<dyn PermissionGrantRepository>>,
-    pub(super) agent_run_mailbox_runtime_adapter:
-        Arc<tokio::sync::RwLock<Option<Arc<AgentRunMailboxRuntimeAdapter>>>>,
+    pub(super) effective_capability_port: Option<Arc<dyn RuntimeSessionEffectiveCapabilityPort>>,
+    pub(super) mailbox_runtime_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
     pub(super) lifecycle_gate_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,

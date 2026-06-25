@@ -5,6 +5,8 @@ mod runtime;
 mod runtime_resource;
 pub(crate) mod runtime_surface;
 mod tools;
+mod vfs_mount;
+mod vfs_provider;
 mod visibility;
 
 pub use identity::{
@@ -37,4 +39,9 @@ pub use runtime_resource::CanvasRuntimeResourceService;
 pub(crate) use tools::{
     BindCanvasDataParams, StartCanvasParams, request_existing_canvas_visibility_for_runtime,
 };
+pub use vfs_mount::{
+    CanvasMountAccess, append_canvas_mount, append_canvas_mounts, build_canvas_mount,
+    build_canvas_mount_id, refresh_canvas_mount_binding_files,
+};
+pub(crate) use vfs_provider::CanvasFsMountProvider;
 pub use visibility::{append_visible_canvas_mounts, canvas_runtime_mount_access};

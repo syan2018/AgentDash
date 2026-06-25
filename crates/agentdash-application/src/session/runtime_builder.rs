@@ -1,9 +1,13 @@
 use std::{path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionMailboxRuntimePort,
+};
 use agentdash_application_ports::runtime_surface_adoption::RuntimeSurfaceAdoptionPort;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -21,8 +25,6 @@ use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
-use crate::agent_run::AgentRunMailboxRuntimeAdapter;
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::context::SharedContextAuditBus;
 
 pub struct SessionRuntimeBuilder {
@@ -96,6 +98,14 @@ impl SessionRuntimeBuilder {
         repo: Arc<dyn agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository>,
     ) -> Self {
         self.inner = self.inner.with_execution_anchor_repo(repo);
+        self
+    }
+
+    pub fn with_runtime_surface_query(
+        mut self,
+        query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
+    ) -> Self {
+        self.inner = self.inner.with_runtime_surface_query(query);
         self
     }
 
@@ -180,13 +190,16 @@ impl SessionRuntimeBuilder {
         self
     }
 
-    pub async fn set_agent_run_mailbox_runtime_adapter(
-        &self,
-        adapter: Arc<AgentRunMailboxRuntimeAdapter>,
-    ) {
-        self.inner
-            .set_agent_run_mailbox_runtime_adapter(adapter)
-            .await;
+    pub fn with_effective_capability_port(
+        mut self,
+        port: Arc<dyn RuntimeSessionEffectiveCapabilityPort>,
+    ) -> Self {
+        self.inner = self.inner.with_effective_capability_port(port);
+        self
+    }
+
+    pub async fn set_mailbox_runtime_port(&self, port: Arc<dyn RuntimeSessionMailboxRuntimePort>) {
+        self.inner.set_mailbox_runtime_port(port).await;
     }
 
     pub async fn set_terminal_callback(
@@ -205,7 +218,7 @@ impl SessionRuntimeBuilder {
 
     pub async fn set_frame_launch_envelope_provider(
         &self,
-        provider: SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>,
+        provider: SharedFrameLaunchEnvelopePort,
     ) {
         self.inner
             .set_frame_launch_envelope_provider(provider)

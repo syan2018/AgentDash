@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelope, TerminalHookEffectBinding,
+};
 use agentdash_domain::backend::{BackendExecutionLease, RuntimeBackendAnchor};
 use agentdash_spi::{ConnectorError, DynAgentRuntimeDelegate, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
 use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::{
     BackendSelectionIntent, BackendSelectionRequest, ExecutionPlacementPlan,
     has_available_relay_executor, resolve_backend_execution_placement,
@@ -14,7 +16,7 @@ use crate::session::hook_delegate::HookRuntimeDelegate;
 use crate::session::hook_injection_sink::{
     DynRuntimeHookInjectionSink, SessionRuntimeHookInjectionSink,
 };
-use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
+use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
     BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, PromptLaunchPath,
@@ -156,10 +158,9 @@ impl<'a> LaunchPlanner<'a> {
                     Some(injection_sink),
                 )
             });
-        let runtime_delegate = match self.deps.current_agent_run_mailbox_runtime_adapter().await {
-            Some(mailbox_adapter) => Some(
-                mailbox_adapter
-                    .runtime_delegate(input.session_id.to_string(), hook_runtime_delegate),
+        let runtime_delegate = match self.deps.current_mailbox_runtime_port().await {
+            Some(mailbox_port) => Some(
+                mailbox_port.runtime_delegate(input.session_id.to_string(), hook_runtime_delegate),
             ),
             None => hook_runtime_delegate,
         };

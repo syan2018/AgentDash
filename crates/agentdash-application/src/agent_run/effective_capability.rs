@@ -1,11 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+use agentdash_application_ports::runtime_session_live::{
+    RuntimeSessionEffectiveCapabilityPort, RuntimeSessionLivePortError,
+};
 use agentdash_domain::permission::{PermissionGrant, PermissionGrantRepository};
 use agentdash_domain::workflow::{
     AgentFrame, RuntimeSessionExecutionAnchorRepository, ToolCapabilityPath,
 };
 use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs};
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::agent_run::AgentFrameRuntimeTarget;
@@ -290,6 +295,52 @@ impl AgentRunEffectiveCapabilityService {
             .await?;
         let projection = AgentRunGrantProjection::from_active_grants(&active_grants);
         Ok(projection.apply_to_execution_capability_state(base_state))
+    }
+}
+
+#[derive(Clone)]
+pub struct AgentRunRuntimeSessionEffectiveCapabilityAdapter {
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+}
+
+impl AgentRunRuntimeSessionEffectiveCapabilityAdapter {
+    pub fn new(
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+    ) -> Self {
+        Self {
+            execution_anchor_repo,
+            permission_grant_repo,
+        }
+    }
+}
+
+pub fn runtime_session_effective_capability_port(
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+) -> Arc<dyn RuntimeSessionEffectiveCapabilityPort> {
+    Arc::new(AgentRunRuntimeSessionEffectiveCapabilityAdapter::new(
+        execution_anchor_repo,
+        permission_grant_repo,
+    ))
+}
+
+#[async_trait]
+impl RuntimeSessionEffectiveCapabilityPort for AgentRunRuntimeSessionEffectiveCapabilityAdapter {
+    async fn execution_capability_state_for_runtime_session(
+        &self,
+        runtime_session_id: &str,
+        base_state: CapabilityState,
+    ) -> Result<CapabilityState, RuntimeSessionLivePortError> {
+        AgentRunEffectiveCapabilityService::execution_capability_state_for_runtime_session(
+            runtime_session_id,
+            &base_state,
+            self.execution_anchor_repo.as_ref(),
+            self.permission_grant_repo.as_ref(),
+        )
+        .await
+        .map_err(|error| RuntimeSessionLivePortError::failed(error.to_string()))
     }
 }
 

@@ -87,6 +87,59 @@ rg -n "crate::runtime_gateway|pub use agentdash_application_runtime_gateway as r
 rg -n "crate::session|crate::lifecycle|crate::canvas|provider_lifecycle|provider_canvas|mount_canvas|owner_providers|VfsSurfaceResolver" crates/agentdash-application/src/vfs crates/agentdash-api/src -g '*.rs'
 ```
 
+## VFS Owner Split Classification
+
+Round 4 `vfs-owner-adapter-split-impl` moved the mechanically clear owner files out of the generic VFS module expression:
+
+| File | Classification | Future scope |
+| --- | --- | --- |
+| `crates/agentdash-application/src/canvas/vfs_mount.rs` | `move` from `vfs/mount_canvas.rs`; Canvas mount identity and access are derived from Canvas owner facts. | Canvas owner module. |
+| `crates/agentdash-application/src/canvas/vfs_provider.rs` | `move` from `vfs/provider_canvas.rs`; provider mutates Canvas files and resolves Canvas binding projections. | Canvas owner module. |
+| `crates/agentdash-application/src/lifecycle/vfs_provider.rs` | `move` from `vfs/provider_lifecycle.rs`; provider reads LifecycleRun, node artifact scope, journey/session evidence, and tool-result cache. | Lifecycle owner module. |
+| `crates/agentdash-application/src/session/vfs_owner_providers.rs` | `move` from `vfs/owner_providers.rs`; registry owner composition needs Session persistence/tool-result cache plus Lifecycle and Canvas providers. | Session/application composition adapter. |
+| `crates/agentdash-application/src/vfs_surface_resolver.rs` | `move` from `vfs/surface_resolver.rs`; resolver is an application facade over RepositorySet, AgentRun resource surface query, project workspace, and VFS summary. | Application facade outside generic VFS core. |
+
+The future generic VFS crate scope is the remaining `crates/agentdash-application/src/vfs/**` core: provider registry mechanics, paths, service, summary, materialization, mutation, search, rewrite, inline/routine/skill/project/workspace mount mechanics, and tools. API `AppState` consumes `VfsSurfaceResolver` from the application facade, so the `VfsSurfaceResolver` grep hit is an application consumer reference rather than generic VFS core membership.
+
+## Implementation Completed
+
+All four implement workers completed and were integrated.
+
+| Worker | Result |
+| --- | --- |
+| `session-neutral-envelope-impl` | `agentdash-application-ports::frame_launch_envelope::FrameLaunchEnvelope` is now the RuntimeSession-neutral launch DTO. Session launch/hub signatures no longer bind to AgentRun concrete `FrameLaunchEnvelope`; AgentRun frame construction converts its concrete output at the producer boundary. |
+| `session-mailbox-capability-ports-impl` | Session production paths now consume `RuntimeSessionMailboxRuntimePort`, `RuntimeSessionEffectiveCapabilityPort` and resource-surface query ports instead of `AgentRunMailboxRuntimeAdapter`, `AgentRunEffectiveCapabilityService`, `AgentFrameSurfaceExt` or `project_capability_state_from_frame`. |
+| `gateway-visibility-cleanup-impl` | Removed the `agentdash-application` RuntimeGateway umbrella re-export and updated application consumers to import `agentdash_application_runtime_gateway` directly. |
+| `vfs-owner-adapter-split-impl` | Moved owner-specific VFS providers/facades out of generic `vfs/**` into Canvas, Lifecycle, Session/application adapter and application facade modules. |
+
+Integration validation passed:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo metadata --no-deps --format-version 1`
+- `cargo check -p agentdash-application-ports`
+- `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
+- `cargo check -p agentdash-application-runtime-gateway -p agentdash-local -p agentdash-mcp`
+- `cargo test -p agentdash-application-ports --no-run`
+- `cargo test -p agentdash-application session:: --no-run`
+- `python ./.trellis/scripts/task.py validate .trellis/tasks/06-24-release-crate-split-draft`
+- `git diff --check`
+
+Static gates passed with no matches:
+
+```powershell
+rg -n "crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope|FrameLaunchEnvelopePort<FrameLaunchEnvelope>|SharedFrameLaunchEnvelopePort<FrameLaunchEnvelope>" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap -g '*.rs'
+rg -n "AgentRunMailboxRuntimeAdapter|AgentRunEffectiveCapabilityService|AgentFrameSurfaceExt|project_capability_state_from_frame" crates/agentdash-application/src/session crates/agentdash-api/src/bootstrap -g '*.rs'
+rg -n "crate::runtime_gateway|pub use agentdash_application_runtime_gateway as runtime_gateway|agentdash_application::runtime_gateway" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src crates/agentdash-mcp/src -g '*.rs'
+```
+
+VFS owner gate now has only the expected API application-facade consumer reference:
+
+```powershell
+rg -n "crate::session|crate::lifecycle|crate::canvas|provider_lifecycle|provider_canvas|mount_canvas|owner_providers|VfsSurfaceResolver" crates/agentdash-application/src/vfs crates/agentdash-api/src -g '*.rs'
+```
+
 ## Checkpoint Check Waves
 
 Dispatch after implement workers complete:

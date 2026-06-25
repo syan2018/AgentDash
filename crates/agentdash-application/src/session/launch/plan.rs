@@ -12,7 +12,6 @@ use agentdash_spi::{
     RestoredSessionState, RuntimeMcpServer, SessionContextBundle,
 };
 
-use crate::agent_run::frame::runtime_launch::FrameLaunchEnvelope;
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
@@ -20,6 +19,7 @@ use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PromptLaunchPath,
     ResolvedPromptPayload,
 };
+use agentdash_application_ports::frame_launch_envelope::FrameLaunchEnvelope;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -331,10 +331,6 @@ mod tests {
 
     use super::*;
     use crate::agent_run::FrameSurfaceDraft;
-    use crate::agent_run::frame::runtime_launch::{
-        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-        LaunchResolutionTrace,
-    };
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
@@ -342,6 +338,10 @@ mod tests {
     use crate::session::launch::{LaunchCommand, LaunchSource};
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
+    };
+    use agentdash_application_ports::frame_launch_envelope::{
+        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+        LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 
@@ -458,11 +458,21 @@ mod tests {
             .frame_surface_draft
             .clone()
             .expect("launch plan tests must provide complete FrameSurfaceDraft");
-        let launch_surface = FrameLaunchSurface::from_surface_draft(&surface_draft)
-            .expect("launch plan tests must provide launch-ready typed surface");
-        let runtime_backend_anchor = launch_surface
-            .runtime_backend_anchor(Some("launch_plan.test".to_string()))
-            .expect("anchor result");
+        let launch_surface = FrameLaunchSurface {
+            capability_state: surface_draft
+                .capability_state
+                .clone()
+                .expect("launch plan tests must provide capability_state"),
+            vfs: surface_draft
+                .vfs
+                .clone()
+                .expect("launch plan tests must provide vfs"),
+            mcp_servers: surface_draft.mcp_servers.clone(),
+            execution_profile: surface_draft
+                .execution_profile
+                .clone()
+                .expect("launch plan tests must provide execution_profile"),
+        };
         FrameLaunchEnvelope {
             surface: FrameRuntimeSurface {
                 agent_id: uuid::Uuid::new_v4(),
@@ -474,7 +484,6 @@ mod tests {
                 mcp_surface: serde_json::Value::Null,
                 runtime_session_id: Some("sess-launch".to_string()),
             },
-            surface_draft,
             launch_surface,
             pending_frame: None,
             intent: FrameLaunchIntent {
@@ -489,7 +498,7 @@ mod tests {
             context_bundle: construction.context.bundle,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
-            runtime_backend_anchor,
+            runtime_backend_anchor: None,
             resolution_trace: LaunchResolutionTrace {
                 vfs_source: construction.resolution.vfs_source,
                 mcp_source: construction.resolution.mcp_source,

@@ -19,7 +19,7 @@ use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::task::plan::find_task_plan_item_for_subject;
 
-use super::{
+use crate::vfs::{
     SessionMountTarget, VfsService, build_project_agent_knowledge_vfs,
     build_project_skill_asset_management_mount, build_project_vfs_mount_mount,
     build_surface_summary,

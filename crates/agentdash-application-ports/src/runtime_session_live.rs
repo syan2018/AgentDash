@@ -1,0 +1,49 @@
+use agentdash_agent_protocol::UserInputBlock;
+use agentdash_spi::{CapabilityState, DynAgentRuntimeDelegate};
+use async_trait::async_trait;
+use uuid::Uuid;
+
+pub struct RuntimeSessionMailboxAutoResumeRequest {
+    pub session_id: String,
+    pub effect_id: Uuid,
+    pub source_turn_id: String,
+    pub terminal_event_seq: u64,
+    pub input: Vec<UserInputBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RuntimeSessionLivePortError {
+    #[error("runtime session live port failed: {message}")]
+    Failed { message: String },
+}
+
+impl RuntimeSessionLivePortError {
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+        }
+    }
+}
+
+#[async_trait]
+pub trait RuntimeSessionMailboxRuntimePort: Send + Sync {
+    fn runtime_delegate(
+        &self,
+        runtime_session_id: String,
+        inner: Option<DynAgentRuntimeDelegate>,
+    ) -> DynAgentRuntimeDelegate;
+
+    async fn accept_hook_auto_resume_effect(
+        &self,
+        request: RuntimeSessionMailboxAutoResumeRequest,
+    ) -> Result<bool, RuntimeSessionLivePortError>;
+}
+
+#[async_trait]
+pub trait RuntimeSessionEffectiveCapabilityPort: Send + Sync {
+    async fn execution_capability_state_for_runtime_session(
+        &self,
+        runtime_session_id: &str,
+        base_state: CapabilityState,
+    ) -> Result<CapabilityState, RuntimeSessionLivePortError>;
+}

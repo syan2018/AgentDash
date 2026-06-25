@@ -204,9 +204,29 @@
 
 执行：
 
-- 定义 workflow agent node materialization port 的名称、输入、输出、错误归属。
-- 定义 hook projection/effect port 的名称、输入、输出、错误归属。
-- 定义 `SharedLibraryRepositorySet` 字段清单和 construction owner。
+- workflow agent node materialization port 冻结为 `agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort`：
+  - input：`WorkflowAgentNodeMaterializationRequest { run_id, orchestration_binding, runtime_policy, frame_created_by_id, workflow_contract }`
+  - output：`WorkflowAgentNodeMaterializationResult { runtime_refs, delivery_runtime_ref }`
+  - error：`LifecycleMaterializationError`
+- hook projection/effect port 冻结为 `agentdash_application_ports::hook_workflow_projection::HookWorkflowProjectionPort`：
+  - query：`HookWorkflowProjectionQuery { target, provenance }`
+  - projection output：`HookWorkflowProjection { run_context, active_workflow }`
+  - active workflow facts：`HookActiveWorkflowFacts { projection, fulfilled_output_ports }`
+  - effect command：`HookExecutionLogAppendCommand { entries }`
+  - error：`HookWorkflowProjectionError`
+- 定义 `SharedLibraryRepositorySet` 字段清单和 construction owner：
+  - `shared_library_repo: Arc<dyn agentdash_domain::shared_library::LibraryAssetRepository>`
+  - `extension_package_artifact_repo: Arc<dyn agentdash_domain::extension_package::ExtensionPackageArtifactRepository>`
+  - `project_extension_installation_repo: Arc<dyn agentdash_domain::shared_library::ProjectExtensionInstallationRepository>`
+  - `mcp_preset_repo: Arc<dyn agentdash_domain::mcp_preset::McpPresetRepository>`
+  - `skill_asset_repo: Arc<dyn agentdash_domain::skill_asset::SkillAssetRepository>`
+  - `project_agent_repo: Arc<dyn agentdash_domain::agent::ProjectAgentRepository>`
+  - `project_vfs_mount_repo: Arc<dyn agentdash_domain::project_vfs_mount::ProjectVfsMountRepository>`
+  - `agent_procedure_repo: Arc<dyn agentdash_domain::workflow::AgentProcedureRepository>`
+  - `workflow_template_install_repo: Arc<dyn agentdash_domain::workflow::WorkflowTemplateInstallRepository>`
+  - `workflow_graph_repo: Arc<dyn agentdash_domain::workflow::WorkflowGraphRepository>`
+  - `inline_file_repo: Arc<dyn agentdash_domain::inline_file::InlineFileRepository>`
+  - construction owner：Integration owner 在 `agentdash-application`/API composition 侧从 broad `RepositorySet` 构造该 narrow set；`agentdash-application-shared-library` 只定义字段并消费已有 repository trait object，不依赖 broad `RepositorySet`。
 - 写明 worker ownership：
   - Workflow worker：`crates/agentdash-application-workflow/**`、workflow 原目录搬运、workflow tests。
   - Hooks worker：`crates/agentdash-application-hooks/**`、hooks 原目录搬运、hooks tests。

@@ -1397,3 +1397,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 推进本机运行形态服务化
+
+**Date**: 2026-06-26
+**Task**: 推进本机运行形态服务化
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+落地 Windows 桌面 HKCU 自启动、桌面 runtime 单一 auto-connect 入口、Local Runner Linux systemd 与 Windows SCM/native service dispatcher、runner 文件日志与 relay status snapshot；归档 runner enrollment token 子任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b806695e4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

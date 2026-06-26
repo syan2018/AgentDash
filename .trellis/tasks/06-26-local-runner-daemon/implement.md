@@ -182,3 +182,19 @@ Tests：
 - `runner-enrollment-token` must freeze `/api/local-runtime/runner/claim` DTO and error categories。
 - Windows Service approach must be chosen: native service entrypoint or owned wrapper。
 - Service user default must be chosen and documented。
+
+## Handoff - 2026-06-26 Service / Status / Logging Slice
+
+- Linux service name is `agentdash-local-runner` and unit path is `/etc/systemd/system/agentdash-local-runner.service`。
+- `agentdash-local service install` creates config/state/log parent directories, writes the systemd unit, then runs `systemctl daemon-reload` and `systemctl enable agentdash-local-runner`。
+- `service start|stop|status|uninstall` execute systemd through the service executor abstraction; unit tests use dry-run / recording executors and never touch `/etc` or `systemctl`。
+- `service uninstall` stops/disables/removes the unit and reloads systemd while preserving config, credentials, state, logs, machine identity, and workspace data。
+- `service status` maps a missing unit to `not_installed`, active systemd state to `running`, and installed but inactive/failed state to `stopped`。
+- Windows service name is `AgentDashLocalRunner` and installation uses SCM: `sc.exe create AgentDashLocalRunner binPath= "<agentdash-local>" service run --config "<runner-config>" DisplayName= "AgentDash Local Runner" start= auto`。
+- `agentdash-local service run --config ...` is the native Windows Service dispatcher entrypoint. SCM `Stop` / `Shutdown` sends the runner shutdown signal, allowing the relay loop and status reporter to stop gracefully。
+- Windows `service start|stop|status|uninstall` execute `sc.exe start|stop|query|delete`; status maps missing service to `not_installed`, `RUNNING` to `running`, pending states to `pending`, and other query success to `stopped`。
+- Runner mode initializes a stdout + JSON file tracing subscriber at `runner.log_path` and keeps using `diag!` for process diagnostics。
+- `runner-status.json` now includes `relay_state`; standalone relay updates `connecting`, `registered`, `retrying`, `disconnected`, and `stopped` snapshots without starting any HTTP API。
+- Operator-facing service command plans redact unit paths and command paths; status snapshots and runner logs continue to redact token-bearing values。
+- Validation: `cargo test -p agentdash-local` passes on this slice。
+- Remaining manual validation: Linux systemd lifecycle on a Linux host and Windows Service lifecycle from admin PowerShell still need release-validation evidence before product release。

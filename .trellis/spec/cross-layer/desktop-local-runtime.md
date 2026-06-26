@@ -209,7 +209,7 @@ Status snapshot file:
 - Successful claim writes `backend_id`, `relay_ws_url`, `auth_token`, and registration metadata back to the TOML config through an atomic replace so service restart does not re-require a plaintext token in the environment.
 - `status --json` reports local configuration and latest snapshot facts without starting an HTTP server or binding an inbound business port.
 - Log and status output redacts token-bearing fields and bearer/query token fragments before displaying operator diagnostics.
-- `service` subcommands own OS service integration. First implementations may return an explicit unsupported/plan response per platform, but the command surface must not imply a service is installed when no OS registration happened.
+- `service` subcommands own OS service integration. Linux uses systemd; Windows uses SCM with `agentdash-local service run --config ...` as the native service entrypoint. Unsupported platforms must return an explicit unsupported response and must not imply a service is installed when no OS registration happened.
 
 ### 4. Validation & Error Matrix
 
@@ -221,13 +221,13 @@ Status snapshot file:
 | Config file contains malformed TOML | command returns config parse error with path context |
 | Environment and CLI both provide the same field | CLI value wins |
 | `status --json` without snapshot | returns configured identity plus disconnected/unknown runtime state |
-| Service install unsupported on current platform | returns explicit unsupported status and command plan text |
+| Service install unsupported on current platform | returns explicit unsupported status and no OS mutation |
 | Token appears in config, URL query, JSON, or bearer header | operator-facing output prints redacted value |
 
 ### 5. Operational Rationale
 
 - Linux first boot can provide only `AGENTDASH_RUNNER_SERVER_URL` and `AGENTDASH_RUNNER_REGISTRATION_TOKEN`; runner claims once, writes relay credentials, and later service restarts can use the persisted server-issued relay auth token.
-- Windows service installation records a stable command that points to `agentdash-local run --config ...`, keeping SCM registration separate from one-off CLI overrides.
+- Windows service installation records a stable SCM command that points to `agentdash-local service run --config ...`; SCM stop/shutdown maps to the runner shutdown signal so WebSocket and status snapshots stop gracefully.
 - `agentdash-local status --json` gives support scripts and cloud diagnostics a stable local status surface without adding an inbound HTTP health port.
 - Enrollment and relay authentication stay separate because registration-token revocation, backend relay auth rotation, and ProjectBackendAccess auditing have different lifecycles.
 - Canonical flow: `registration_token -> claim -> persisted backend relay credentials -> WebSocket connect`.
@@ -238,7 +238,7 @@ Status snapshot file:
 - Config tests assert precedence order, TOML roundtrip, environment key parsing, workspace root parsing, and missing credential validation.
 - Claim tests assert request path, Authorization header, response mapping into runtime config, and atomic credentials write-back.
 - Redaction tests assert JSON fields, bearer headers, query params, and common token names are masked.
-- Service tests assert Linux systemd and Windows Service command plans, unsupported response shape, and no accidental OS mutation in dry/unit contexts.
+- Service tests assert Linux systemd command execution through an executor abstraction, Windows SCM command formation, native service run entrypoint parsing, status mapping, and no accidental OS mutation in dry/unit contexts.
 - Status tests assert JSON output shape with and without a snapshot file.
 
 ### 7. Canonical Flow
@@ -305,7 +305,8 @@ Settings file:
 | Runtime start requested from tray without saved profile | log/report clear no-profile status, do not fabricate backend identity |
 | Settings file missing | load default settings |
 | Settings file malformed | return settings load error instead of silently discarding operator intent |
-| Autostart unsupported/stubbed | return `supported=false`, stable message, and no OS registry/service mutation |
+| Windows autostart enabled | write HKCU Run value for installed/current app exe, persist `launch_at_login=true`, and reject setup/installer exe paths |
+| Autostart unsupported on non-Windows platform | return `supported=false`, stable message, and no OS registry/service mutation |
 | Desktop API port unavailable | app reports Desktop API error state; Dashboard waits for `/api/health` before rendering |
 
 ### 5. Operational Rationale
@@ -321,7 +322,7 @@ Settings file:
 - Rust tests assert settings default/load/save behavior and malformed file error behavior.
 - Rust tests assert close request is prevented unless the explicit quit flag is set.
 - Rust tests assert tray runtime actions call the existing runtime manager/profile path and do not create ad hoc identities.
-- Rust tests assert autostart unsupported status shape until real platform integration lands.
+- Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
 

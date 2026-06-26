@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 
 const VALID_API_MODES = new Set(['builtin', 'external', 'sidecar']);
@@ -71,6 +72,9 @@ export function runDesktopBuild(options) {
     if (signal) {
       console.error(`[desktop-build] tauri build 被信号中止: ${signal}`);
       process.exit(1);
+    }
+    if (code === 0) {
+      printDesktopArtifactBoundary(config.root);
     }
     process.exit(code ?? 0);
   });
@@ -321,4 +325,42 @@ function formatSccacheDescription(sccachePath, cacheDir) {
 function formatCacheDirSuffix(cacheDir) {
   const normalized = normalizeOptionalValue(cacheDir);
   return normalized ? `，SCCACHE_DIR=${normalized}` : '';
+}
+
+function printDesktopArtifactBoundary(root) {
+  const releaseDir = path.join(root, 'target', 'release');
+  const nsisDir = path.join(releaseDir, 'bundle', 'nsis');
+  const setupExeFiles = listFiles(nsisDir, (file) => file.toLowerCase().endsWith('.exe'));
+  const appExeCandidates = [
+    path.join(releaseDir, 'AgentDash.exe'),
+    path.join(releaseDir, 'agentdash-local-tauri.exe'),
+  ].filter((file) => fs.existsSync(file));
+
+  console.log('[desktop-build] 产物边界:');
+  if (setupExeFiles.length > 0) {
+    for (const file of setupExeFiles) {
+      console.log(`[desktop-build]   setup exe: ${file}`);
+    }
+  } else {
+    console.log(`[desktop-build]   setup exe: 未在 ${nsisDir} 发现 NSIS exe`);
+  }
+
+  if (appExeCandidates.length > 0) {
+    for (const file of appExeCandidates) {
+      console.log(`[desktop-build]   app exe: ${file}`);
+    }
+  } else {
+    console.log(`[desktop-build]   app exe: 未在 ${releaseDir} 发现 AgentDash.exe 或 agentdash-local-tauri.exe`);
+  }
+}
+
+function listFiles(dir, predicate) {
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(dir, entry.name))
+    .filter(predicate)
+    .sort();
 }

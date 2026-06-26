@@ -21,6 +21,7 @@ use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::{McpClientManager, local_server_to_relay_mcp_server};
 use crate::runner_redaction::redact_secret;
+use crate::runner_status::RunnerStatusReporter;
 use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
@@ -373,8 +374,25 @@ async fn count_active_sessions(
 
 /// standalone CLI 入口：保持原有无限重连行为。
 pub async fn run_standalone(config: LocalRuntimeConfig) -> anyhow::Result<()> {
-    let ws_config = build_ws_config(&config).await?;
-    tokio::spawn(async move { ws_client::run(ws_config).await })
+    run_standalone_with_status(config, None).await
+}
+
+pub async fn run_standalone_with_status(
+    config: LocalRuntimeConfig,
+    runner_status: Option<RunnerStatusReporter>,
+) -> anyhow::Result<()> {
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_standalone_with_status_and_shutdown(config, runner_status, shutdown_rx).await
+}
+
+pub async fn run_standalone_with_status_and_shutdown(
+    config: LocalRuntimeConfig,
+    runner_status: Option<RunnerStatusReporter>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let mut ws_config = build_ws_config(&config).await?;
+    ws_config.runner_status = runner_status;
+    tokio::spawn(async move { ws_client::run_until_shutdown(ws_config, shutdown_rx).await })
         .await
         .map_err(|error| anyhow::anyhow!("standalone runtime task join 失败: {error}"))?
 }
@@ -444,7 +462,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
 
         backend_id = %config.backend_id,
         name = %config.name,
-        cloud_url = %config.cloud_url,
+        cloud_url = %redact_secret(&config.cloud_url),
         workspace_roots = ?config.workspace_roots,
         executor_enabled = config.executor_enabled,
         "启动 AgentDash 本机 runtime"
@@ -512,6 +530,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         extension_artifact_cache_root: local_runtime_data_dir()?
             .join("extension-artifact-cache")
             .join(local_runtime_backend_key(&config.backend_id)),
+        runner_status: None,
     })
 }
 

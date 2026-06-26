@@ -16,6 +16,8 @@ use crate::LocalExtensionHostManager;
 use crate::handlers::LocalCommandRouter;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
+use crate::runner_redaction::redact_secret;
+use crate::runner_status::RunnerStatusReporter;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
@@ -37,12 +39,7 @@ pub struct Config {
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub extension_host: LocalExtensionHostManager,
     pub extension_artifact_cache_root: PathBuf,
-}
-
-/// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
-pub async fn run(config: Config) -> anyhow::Result<()> {
-    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
-    run_until_shutdown(config, shutdown_rx).await
+    pub runner_status: Option<RunnerStatusReporter>,
 }
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连，直到收到 shutdown 信号。
@@ -59,10 +56,18 @@ pub async fn run_until_shutdown(
                 Subsystem::Relay,
                 "收到 shutdown 信号，本机 relay 主循环停止"
             );
+            report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
             return Ok(());
         }
 
         let url = format!("{}?token={}", config.cloud_url, config.token);
+        report_status(
+            &config.runner_status,
+            "connecting",
+            None,
+            "连接云端 WebSocket",
+        )
+        .await;
 
         diag!(
             Info,
@@ -77,13 +82,37 @@ pub async fn run_until_shutdown(
                 diag!(Info, Subsystem::Relay, "WebSocket 连接成功");
 
                 if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
+                    report_status(
+                        &config.runner_status,
+                        "retrying",
+                        Some("session_error"),
+                        &e.to_string(),
+                    )
+                    .await;
                     diag!(Error, Subsystem::Relay,
-        error = %e, "会话异常终止");
+        error = %redact_secret(&e.to_string()), "会话异常终止");
+                } else if *shutdown_rx.borrow() {
+                    report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
+                } else {
+                    report_status(
+                        &config.runner_status,
+                        "retrying",
+                        Some("disconnected"),
+                        "WebSocket 连接关闭",
+                    )
+                    .await;
                 }
             }
             Err(e) => {
+                report_status(
+                    &config.runner_status,
+                    "retrying",
+                    Some("connect_failed"),
+                    &e.to_string(),
+                )
+                .await;
                 diag!(Error, Subsystem::Relay,
-        error = %e, "WebSocket 连接失败");
+        error = %redact_secret(&e.to_string()), "WebSocket 连接失败");
             }
         }
 
@@ -100,6 +129,7 @@ pub async fn run_until_shutdown(
                 if changed.is_err() || *shutdown_rx.borrow() {
                     diag!(Info, Subsystem::Relay,
         "等待重连时收到 shutdown 信号");
+                    report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
                     return Ok(());
                 }
             }
@@ -166,6 +196,7 @@ async fn run_session(
             if let Some(relay_msg) = parse_ws_message(&msg) {
                 match &relay_msg {
                     RelayMessage::RegisterAck { payload, .. } => {
+                        report_status(&config.runner_status, "registered", None, "注册成功").await;
                         diag!(Info, Subsystem::Relay,
 
                             backend_id = %payload.backend_id,
@@ -298,6 +329,35 @@ async fn run_session(
     }
 
     Ok(())
+}
+
+async fn report_status(
+    reporter: &Option<RunnerStatusReporter>,
+    state: &str,
+    code: Option<&str>,
+    message: &str,
+) {
+    let Some(reporter) = reporter else {
+        return;
+    };
+    let result = match state {
+        "connecting" => reporter.mark_connecting().await,
+        "registered" => reporter.mark_registered().await,
+        "retrying" => {
+            reporter
+                .mark_retrying(code.unwrap_or("relay_retrying"), message)
+                .await
+        }
+        "disconnected" => reporter.mark_disconnected(message).await,
+        "stopped" => reporter.mark_stopped().await,
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        diag!(Warn, Subsystem::Relay,
+            error = %redact_secret(&error.to_string()),
+            "写入 runner status snapshot 失败"
+        );
+    }
 }
 
 fn should_handle_in_background(msg: &RelayMessage) -> bool {

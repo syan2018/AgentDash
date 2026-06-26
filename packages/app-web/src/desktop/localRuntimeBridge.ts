@@ -11,12 +11,40 @@ declare global {
   interface Window {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient;
     __AGENTDASH_DESKTOP_BROWSE_DIRECTORY__?: (path?: string) => Promise<BrowseDirectoryResult>;
+    __AGENTDASH_DESKTOP_APP__?: DesktopAppBridge;
   }
 }
+
+interface DesktopAppSettings {
+  launch_at_login: boolean;
+  start_minimized_to_tray: boolean;
+  auto_connect_local_runtime: boolean;
+}
+
+interface DesktopAutostartStatus {
+  supported: boolean;
+  enabled: boolean;
+  message?: string | null;
+}
+
+interface DesktopAppBridge {
+  loadSettings(): Promise<DesktopAppSettings>;
+  saveSettings(settings: DesktopAppSettings): Promise<DesktopAppSettings>;
+  getAutostartStatus(): Promise<DesktopAutostartStatus>;
+  setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>;
+  quit(): Promise<void>;
+}
+
+let desktopRuntimeAutoConnectAttempted = false;
 
 export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
   if (typeof window === 'undefined') return null;
   return window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ ?? null;
+}
+
+export function getDesktopAppBridge(): DesktopAppBridge | null {
+  if (typeof window === 'undefined') return null;
+  return window.__AGENTDASH_DESKTOP_APP__ ?? null;
 }
 
 export function getDesktopBrowseDirectory(): ((path?: string) => Promise<BrowseDirectoryResult>) | undefined {
@@ -26,14 +54,19 @@ export function getDesktopBrowseDirectory(): ((path?: string) => Promise<BrowseD
 
 export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {
   const client = getDesktopLocalRuntimeClient();
+  const desktopApp = getDesktopAppBridge();
   const token = accessToken.trim();
-  if (!client) return;
+  if (!client || !desktopApp) return;
+  if (desktopRuntimeAutoConnectAttempted) return;
+  desktopRuntimeAutoConnectAttempted = true;
+
+  const settings = await desktopApp.loadSettings();
+  if (!settings.auto_connect_local_runtime) return;
 
   const snapshot = await client.runtimeSnapshot().catch(() => null);
   if (snapshot?.state === 'starting' || snapshot?.state === 'running') return;
 
-  const profile = await loadOrCreateAutoStartProfile(client, token);
-  if (!profile.auto_start) return;
+  const profile = await loadOrCreateAutoConnectProfile(client, token);
 
   await client.runtimeStart({
     ...profile,
@@ -42,7 +75,7 @@ export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Pro
   });
 }
 
-async function loadOrCreateAutoStartProfile(
+async function loadOrCreateAutoConnectProfile(
   client: LocalRuntimeClient,
   accessToken: string,
 ): Promise<LocalRuntimeProfile> {
@@ -69,7 +102,7 @@ async function loadOrCreateAutoStartProfile(
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     workspace_roots: [],
     executor_enabled: true,
-    auto_start: true,
+    auto_start: false,
     backend_id: null,
     relay_ws_url: null,
   };

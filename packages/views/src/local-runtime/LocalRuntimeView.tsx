@@ -84,10 +84,6 @@ export function LocalRuntimeView({
         if (!alive || !profile) return
         applyProfile(profile)
         setProfileMessage('已加载本机 profile')
-        if (profile.auto_start && profile.server_url.trim()) {
-          setSnapshot(await client.runtimeStart(profile))
-          setProfileMessage('已加载本机 profile 并自动启动 runtime')
-        }
       } catch (err) {
         if (alive) setProfileMessage(formatError(err))
       }

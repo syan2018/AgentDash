@@ -254,20 +254,21 @@ where
         event.record(&mut visitor);
 
         // 从 event 当前所在的 span 栈中补齐未在 event 上显式给出的关联列。
-        if visitor.session_id.is_none() || visitor.run_id.is_none() || visitor.backend_id.is_none()
+        if (visitor.session_id.is_none()
+            || visitor.run_id.is_none()
+            || visitor.backend_id.is_none())
+            && let Some(scope) = ctx.event_scope(event)
         {
-            if let Some(scope) = ctx.event_scope(event) {
-                for span in scope.from_root() {
-                    if let Some(sf) = span.extensions().get::<SpanFields>() {
-                        if visitor.session_id.is_none() {
-                            visitor.session_id = sf.session_id.clone();
-                        }
-                        if visitor.run_id.is_none() {
-                            visitor.run_id = sf.run_id.clone();
-                        }
-                        if visitor.backend_id.is_none() {
-                            visitor.backend_id = sf.backend_id.clone();
-                        }
+            for span in scope.from_root() {
+                if let Some(sf) = span.extensions().get::<SpanFields>() {
+                    if visitor.session_id.is_none() {
+                        visitor.session_id = sf.session_id.clone();
+                    }
+                    if visitor.run_id.is_none() {
+                        visitor.run_id = sf.run_id.clone();
+                    }
+                    if visitor.backend_id.is_none() {
+                        visitor.backend_id = sf.backend_id.clone();
                     }
                 }
             }

@@ -124,3 +124,52 @@ Before marking this child ready for downstream runner work, write the following 
 - Registration token cannot authenticate relay。
 - Claim route is not accidentally protected by browser access-token middleware。
 - Claim side effects are idempotent under repeated service restarts。
+
+## Completion Handoff
+
+### Delivered Contract
+
+- Management routes:
+  - `POST /api/projects/{project_id}/runner-registration-tokens`
+  - `GET /api/projects/{project_id}/runner-registration-tokens`
+  - `POST /api/projects/{project_id}/runner-registration-tokens/{token_id}/revoke`
+  - `POST /api/projects/{project_id}/runner-registration-tokens/{token_id}/rotate`
+- Public runner claim route:
+  - `POST /api/local-runtime/runner/claim`
+  - Registration token may be supplied in request body `registration_token` or `Authorization: Bearer adrt_<token_id>_<secret>`。
+- Generated DTOs live in `agentdash-contracts::backend` and generated `packages/app-web/src/generated/backend-contracts.ts`:
+  - `RunnerRegistrationTokenCreateRequest`
+  - `RunnerRegistrationTokenCreateResponse`
+  - `RunnerRegistrationTokenMetadataResponse`
+  - `RunnerRegistrationTokenRotateResponse`
+  - `RunnerRegistrationTokenRevokeResponse`
+  - `RunnerRegistrationClaimRequest`
+  - `RunnerRegistrationClaimResponse`
+
+### Runner Claim Semantics
+
+- First version is Project-scoped。
+- Claim creates or reuses a backend by `machine_id + project_id + capability_slot`。
+- Claim response returns server-issued `backend_id`、`relay_ws_url`、`auth_token`、machine identity、share scope、capability slot、`registration_source = runner_registration_token` and `claimed_at`。
+- Claim ensures active `ProjectBackendAccess(project_id, backend_id)` so project dispatch can see the runner。
+- Claim updates token usage metadata: `last_used_at` and `last_claimed_backend_id`。
+- Fatal claim classes: invalid/missing/expired/revoked token, bad request payload, scope forbidden, stable conflict。
+- Retryable runner-side classes are cloud/network/server failures observed by `agentdash-local` claim client; the server endpoint returns stable HTTP status classes for operator diagnosis。
+
+### Storage And Redaction
+
+- Migration `crates/agentdash-infrastructure/migrations/0031_runner_registration_tokens.sql` creates `runner_registration_tokens` with `token_secret_hash` and `token_prefix` only; plaintext token is never persisted。
+- `crates/agentdash-infrastructure/src/migration.rs` readiness includes `runner_registration_tokens`。
+- Metadata/list/revoke responses do not expose plaintext token, token hash, secret, Authorization header, or backend relay `auth_token`。
+- Create/rotate responses return the plaintext registration token once。
+- `/ws/backend` authenticates only backend relay `auth_token`; registration token is rejected by relay auth。
+
+### Validation Evidence
+
+- `cargo test -p agentdash-domain runner_registration_token`
+- `cargo test -p agentdash-application runner_registration`
+- `cargo test -p agentdash-contracts runner_registration`
+- `cargo test -p agentdash-api runner_registration`
+- `cargo check -p agentdash-api`
+- `pnpm run contracts:check`
+- `pnpm run migration:guard`

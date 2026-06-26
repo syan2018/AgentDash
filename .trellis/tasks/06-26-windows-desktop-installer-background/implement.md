@@ -128,3 +128,12 @@ Validation:
 - Explicit exit behavior with active tasks depends on `runtime-diagnostics-settings` active execution summary。
 - Autostart implementation path must be chosen before code: Rust command wrapper vs Tauri plugin exposed to JS。
 - Any release Desktop API mode other than builtin localhost needs security review。
+
+## Handoff - Current Implementation
+
+- Windows 登录自启动由 `agentdash-local-tauri` 的 Rust command 管理 HKCU `Software\Microsoft\Windows\CurrentVersion\Run` 下的 `AgentDash` 字符串值，值格式为带引号的当前 app exe 路径；helper 会拒绝将 setup/installer exe 写入登录项。
+- 非 Windows 平台的 autostart command 返回 `supported=false`、`enabled=false` 和明确 unsupported message，不写系统项。
+- `desktop_settings_save` 会先应用 `launch_at_login` 到 autostart，再把真实 enabled 状态写回 `desktop-app-settings.json`；直接调用 `desktop_autostart_set_enabled` 也会同步该 settings 文件。
+- Runtime auto-connect 单一 owner 是 Web `AuthGate`：Tauri host 注入 Desktop App bridge 且 DashboardHost 已确认 Desktop API health ready 后，用户就绪时读取 `auto_connect_local_runtime`，为 true 才触发一次 runtime start。
+- `LocalRuntimeView` mount 只加载 profile 和刷新状态，不再根据 profile `auto_start` 自动启动 runtime；`runtime_start` 命令对 `starting/running` 返回现有 snapshot，避免重复 claim/start。
+- `scripts/lib/desktop-build.js` 在 Tauri build 成功后打印产物边界：`target/release/bundle/nsis/*.exe` 为 setup exe，`target/release/AgentDash.exe` 或 `target/release/agentdash-local-tauri.exe` 为 app exe 候选。安装后的 autostart 指向运行中的 app exe，而不是 setup exe。

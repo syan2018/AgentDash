@@ -48,4 +48,16 @@ mod tests {
             r#"{"registration_token":"***","auth_token":"***"}"#
         );
     }
+
+    #[test]
+    fn redacts_url_query_token_variants() {
+        let raw = "wss://example.test/ws?token=relay&access_token=access&refresh_token=refresh";
+
+        let redacted = redact_secret(raw);
+
+        assert_eq!(
+            redacted,
+            "wss://example.test/ws?token=***&access_token=***&refresh_token=***"
+        );
+    }
 }

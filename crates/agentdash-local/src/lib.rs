@@ -39,7 +39,7 @@ pub use runtime::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeHandle, LocalRuntimeManager,
     LocalRuntimeSnapshot, LocalRuntimeState, LocalRuntimeStatus, McpProbeResult, StopReason,
     canonicalize_workspace_roots, load_mcp_servers_for_root, probe_mcp_server, run_standalone,
-    save_mcp_servers_for_root,
+    run_standalone_with_status, run_standalone_with_status_and_shutdown, save_mcp_servers_for_root,
 };
 
 pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};

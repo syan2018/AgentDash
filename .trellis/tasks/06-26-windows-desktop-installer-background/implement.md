@@ -137,3 +137,8 @@ Validation:
 - Runtime auto-connect 单一 owner 是 Web `AuthGate`：Tauri host 注入 Desktop App bridge 且 DashboardHost 已确认 Desktop API health ready 后，用户就绪时读取 `auto_connect_local_runtime`，为 true 才触发一次 runtime start。
 - `LocalRuntimeView` mount 只加载 profile 和刷新状态，不再根据 profile `auto_start` 自动启动 runtime；`runtime_start` 命令对 `starting/running` 返回现有 snapshot，避免重复 claim/start。
 - `scripts/lib/desktop-build.js` 在 Tauri build 成功后打印产物边界：`target/release/bundle/nsis/*.exe` 为 setup exe，`target/release/AgentDash.exe` 或 `target/release/agentdash-local-tauri.exe` 为 app exe 候选。安装后的 autostart 指向运行中的 app exe，而不是 setup exe。
+
+## Completion Handoff - 2026-06-26
+
+- Implementation scope is complete for local code: Desktop API loopback port, tray/background lifecycle, explicit quit, desktop settings bridge, Windows HKCU autostart, start-to-tray, auto-connect ownership, runtime start idempotency, and installer/app exe artifact boundary are in place。
+- Remaining work is release evidence, not additional implementation in this child task: NSIS install/uninstall, login autostart after reboot/sign-in, tray hide/restore interaction, Desktop API health gate in installed app, auto-connect behavior, and uninstall cleanup are tracked in `distribution-release-validation`。

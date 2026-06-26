@@ -6,16 +6,10 @@ import { DesktopTitlebar } from './DesktopTitlebar'
 import { createTauriDesktopAppBridge } from './desktopSettings'
 import type { DesktopAppBridge } from './desktopSettings'
 import { createTauriLocalRuntimeClient, tauriBrowseDirectory } from './runtimeApi'
-import type { LocalRuntimeClient } from '@agentdash/core/local-runtime'
+import type { DesktopApiSnapshot, LocalRuntimeClient } from '@agentdash/core/local-runtime'
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
 
 type DashboardApiState = 'checking' | 'ready' | 'unavailable'
-type DesktopApiSnapshot = {
-  state: 'starting' | 'running' | 'error' | 'stopped'
-  origin: string
-  message?: string | null
-  database_url?: string | null
-}
 
 const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
 

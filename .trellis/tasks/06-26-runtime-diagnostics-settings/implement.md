@@ -131,6 +131,25 @@ Write final child summary with:
 - logs redaction test evidence。
 - release validation steps。
 
+## 2026-06-26 Implementation Handoff
+
+已完成：
+
+- `/backends` contract 新增 `registration_source` 字段，server 从 backend device 中已写入的显式 `registration_source` 元数据投影到 generated DTO；前端后端管理详情与诊断 view-model 只消费该字段。
+- `@agentdash/core/local-runtime` 新增 `RuntimeDiagnosticsSnapshot`、layer/relay/registration/settings 类型、`createRuntimeDiagnosticsSnapshot()` 和 `redactRuntimeDiagnosticText()`，用于集中表达 Cloud API、Desktop API、Local Runtime、Runner、relay、registration、logs、settings 的事实源。
+- `app-tauri` desktop bridge 暴露已有 `desktop_api_snapshot`，`app-web` 设置页轮询该 bridge，并把 Project event stream、backend list、runtime-summary、Desktop API snapshot 传入本机 runtime UI。
+- `LocalRuntimeView` 新增运行状态诊断总览、注册身份、独立 runner 只读交接、桌面设置区；桌面设置区接入已有 `desktop_settings_load/save` 与 autostart 状态命令。
+- runtime start/stop/restart、logs tail/clear/copy 继续走既有 `LocalRuntimeClient` port；日志复制增加前端边界脱敏，producer 侧仍复用 `agentdash-local` 的 `runner_redaction`。
+- 桌面托管 runtime 的 WebSocket lifecycle 现在通过 `LocalRuntimeStatus.relay_connection` 输出结构化 relay snapshot，状态由 `ws_client` 在 connecting、registered、reconnecting、disconnected 等生命周期点写入。
+- 独立 runner 未暴露桌面 service 管理 bridge 时，UI 只展示 “由 systemd / Windows Service 或前台进程管理”，不提供假 restart/service 控制。
+
+当前仍保留为 release validation / 后续 runner handoff 的实机项：
+
+- 独立 runner status 文件/`status --json` 尚未接入桌面 UI bridge；本轮仅消费云端 `/backends` 与 `/backends/runtime-summary` 的 runner/backend 投影，并把独立 runner service 管理明确交给 systemd / Windows Service。
+- Windows 开机自启动、启动到托盘、启动后自动连接 runtime 需要在安装包实机验证：注册表 login item、托盘隐藏/恢复、Desktop API ready gate、auto-connect profile 行为。
+- runtime restart active-session 阻止文案沿用 LocalRuntimeManager 返回错误，需要实机覆盖有 running/canceling session 时的桌面提示。
+- 需要 release validation 手工证明日志复制不包含 `token/access_token/refresh_token/auth_token/relay_token/registration_token`、Bearer token 和 URL query token。
+
 ## Risk Checks
 
 - UI never parses logs to infer state。

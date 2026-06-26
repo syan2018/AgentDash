@@ -79,6 +79,7 @@ pub struct LocalRuntimeStatus {
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
     pub message: Option<String>,
+    pub relay_connection: Option<ws_client::RelayConnectionStatus>,
 }
 
 pub type LocalRuntimeSnapshot = LocalRuntimeStatus;
@@ -163,19 +164,46 @@ impl LocalRuntimeManager {
         )
         .await;
 
-        let ws_config = build_ws_config(&config).await?;
-        let initial_status = status_from_config(&config, LocalRuntimeState::Starting, None);
+        let mut ws_config = build_ws_config(&config).await?;
+        let initial_relay_status = ws_client::RelayConnectionStatus::not_configured(Some(
+            redact_secret(&config.cloud_url),
+        ));
+        let (relay_status_tx, mut relay_status_rx) = watch::channel(initial_relay_status.clone());
+        ws_config.relay_status_tx = Some(relay_status_tx);
+        let initial_status = status_from_config(
+            &config,
+            LocalRuntimeState::Starting,
+            None,
+            Some(initial_relay_status),
+        );
         let (status_tx, status_rx) = watch::channel(initial_status);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
         let session_runtime = ws_config.session_runtime.clone();
 
+        tokio::spawn({
+            let status_tx = status_tx.clone();
+            async move {
+                loop {
+                    if relay_status_rx.changed().await.is_err() {
+                        break;
+                    }
+                    let relay_status = relay_status_rx.borrow().clone();
+                    let next = status_with_relay(&status_tx.borrow(), Some(relay_status));
+                    if status_tx.send(next).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
         let join = tokio::spawn({
             let status_tx = status_tx.clone();
             async move {
                 let running_status =
-                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None);
+                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None)
+                        .with_relay(status_tx.borrow().relay_connection.clone());
                 let _ = status_tx.send(running_status);
                 push_log(
                     &logs,
@@ -531,6 +559,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             .join("extension-artifact-cache")
             .join(local_runtime_backend_key(&config.backend_id)),
         runner_status: None,
+        relay_status_tx: None,
     })
 }
 
@@ -582,6 +611,7 @@ fn status_from_config(
     config: &LocalRuntimeConfig,
     state: LocalRuntimeState,
     message: Option<String>,
+    relay_connection: Option<ws_client::RelayConnectionStatus>,
 ) -> LocalRuntimeStatus {
     LocalRuntimeStatus {
         state,
@@ -595,6 +625,7 @@ fn status_from_config(
         executor_enabled: config.executor_enabled,
         mcp_server_count: 0,
         message,
+        relay_connection,
     }
 }
 
@@ -623,6 +654,30 @@ mod tests {
 
         assert!(manager.logs_tail(10).await.is_empty());
     }
+
+    #[test]
+    fn runtime_status_state_transition_preserves_relay_snapshot() {
+        let config = LocalRuntimeConfig::new(
+            "ws://127.0.0.1:17301/ws/backend".to_string(),
+            "secret".to_string(),
+            "backend-local".to_string(),
+            "Desktop Runtime".to_string(),
+            Vec::new(),
+            true,
+        );
+        let relay = ws_client::RelayConnectionStatus::not_configured(Some(
+            "ws://127.0.0.1:17301/ws/backend".to_string(),
+        ));
+        let status = status_from_config(
+            &config,
+            LocalRuntimeState::Starting,
+            None,
+            Some(relay.clone()),
+        );
+        let running = status_with_state(&status, LocalRuntimeState::Running, None);
+
+        assert_eq!(running.relay_connection, Some(relay));
+    }
 }
 
 fn status_from_ws_config(
@@ -646,6 +701,7 @@ fn status_from_ws_config(
             .map(|manager| manager.capability_entries().len())
             .unwrap_or(0),
         message,
+        relay_connection: None,
     }
 }
 
@@ -658,5 +714,34 @@ fn status_with_state(
         state,
         message,
         ..previous.clone()
+    }
+}
+
+fn status_with_relay(
+    previous: &LocalRuntimeStatus,
+    relay_connection: Option<ws_client::RelayConnectionStatus>,
+) -> LocalRuntimeStatus {
+    LocalRuntimeStatus {
+        relay_connection,
+        ..previous.clone()
+    }
+}
+
+trait LocalRuntimeStatusExt {
+    fn with_relay(
+        self,
+        relay_connection: Option<ws_client::RelayConnectionStatus>,
+    ) -> LocalRuntimeStatus;
+}
+
+impl LocalRuntimeStatusExt for LocalRuntimeStatus {
+    fn with_relay(
+        self,
+        relay_connection: Option<ws_client::RelayConnectionStatus>,
+    ) -> LocalRuntimeStatus {
+        LocalRuntimeStatus {
+            relay_connection,
+            ..self
+        }
     }
 }

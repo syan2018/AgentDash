@@ -3,7 +3,13 @@ import {
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
 } from '@agentdash/core/local-runtime';
-import type { LocalRuntimeClient, LocalRuntimeProfile } from '@agentdash/core/local-runtime';
+import type {
+  DesktopApiSnapshot,
+  DesktopAutostartStatus,
+  DesktopRuntimeSettings,
+  LocalRuntimeClient,
+  LocalRuntimeProfile,
+} from '@agentdash/core/local-runtime';
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser';
 import { API_ORIGIN } from '../api/origin';
 
@@ -15,23 +21,12 @@ declare global {
   }
 }
 
-interface DesktopAppSettings {
-  launch_at_login: boolean;
-  start_minimized_to_tray: boolean;
-  auto_connect_local_runtime: boolean;
-}
-
-interface DesktopAutostartStatus {
-  supported: boolean;
-  enabled: boolean;
-  message?: string | null;
-}
-
 interface DesktopAppBridge {
-  loadSettings(): Promise<DesktopAppSettings>;
-  saveSettings(settings: DesktopAppSettings): Promise<DesktopAppSettings>;
+  loadSettings(): Promise<DesktopRuntimeSettings>;
+  saveSettings(settings: DesktopRuntimeSettings): Promise<DesktopRuntimeSettings>;
   getAutostartStatus(): Promise<DesktopAutostartStatus>;
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>;
+  getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>;
   quit(): Promise<void>;
 }
 

@@ -4,17 +4,27 @@ import {
   DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
+  createRuntimeDiagnosticsSnapshot,
   createDefaultMcpLocalServer,
   formatLocalLogLine,
   normalizeMcpLocalServer,
 } from '@agentdash/core/local-runtime'
 import type {
+  DesktopApiSnapshot,
+  DesktopAutostartStatus,
+  DesktopRuntimeSettings,
+  DesktopRuntimeSettingsClient,
+  LayerState,
   LocalLogEvent,
   LocalRuntimeClient,
   LocalRuntimeProfile,
   LocalRuntimeStatus,
   McpLocalServerEntry,
   McpTransportConfig,
+  RuntimeDiagnosticsBackendFact,
+  RuntimeDiagnosticsCloudApiInput,
+  RuntimeDiagnosticsRuntimeSummaryFact,
+  RuntimeDiagnosticsSnapshot,
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
 import {
@@ -27,6 +37,7 @@ import {
   Field,
   Notice,
   Select,
+  StatusDot,
   TextInput,
   cn,
 } from '@agentdash/ui'
@@ -38,15 +49,26 @@ export interface LocalRuntimeViewProps {
   client: LocalRuntimeClient
   /** 注入目录浏览 API（由宿主层提供 backend browse 能力） */
   onBrowseDirectory?: (path?: string) => Promise<BrowseDirectoryResult>
+  desktopApp?: DesktopRuntimeSettingsClient
+  diagnosticsContext?: LocalRuntimeDiagnosticsContext
   defaultServerUrl?: string
   defaultAccessToken?: string
   defaultProfileId?: string
   defaultBackendName?: string
 }
 
+export interface LocalRuntimeDiagnosticsContext {
+  cloud_api: RuntimeDiagnosticsCloudApiInput
+  desktop_api_snapshot: DesktopApiSnapshot | null
+  backends: RuntimeDiagnosticsBackendFact[]
+  runtime_summaries: RuntimeDiagnosticsRuntimeSummaryFact[]
+}
+
 export function LocalRuntimeView({
   client,
   onBrowseDirectory,
+  desktopApp,
+  diagnosticsContext,
   defaultServerUrl = DEFAULT_LOCAL_RUNTIME_SERVER_URL,
   defaultAccessToken = '',
   defaultProfileId = DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
@@ -73,6 +95,11 @@ export function LocalRuntimeView({
   const [expandedMcpIndex, setExpandedMcpIndex] = useState<number | null>(null)
   const [logs, setLogs] = useState<LocalLogEvent[]>([])
   const [logLevel, setLogLevel] = useState('all')
+  const [desktopSettings, setDesktopSettings] = useState<DesktopRuntimeSettings | null>(null)
+  const [desktopSettingsDraft, setDesktopSettingsDraft] = useState<DesktopRuntimeSettings | null>(null)
+  const [autostartStatus, setAutostartStatus] = useState<DesktopAutostartStatus | null>(null)
+  const [desktopSettingsMessage, setDesktopSettingsMessage] = useState<string | null>(null)
+  const [desktopSettingsBusy, setDesktopSettingsBusy] = useState(false)
   const [browseDialogOpen, setBrowseDialogOpen] = useState(false)
   const [browseTargetIndex, setBrowseTargetIndex] = useState<number | null>(null)
 
@@ -118,9 +145,48 @@ export function LocalRuntimeView({
     return () => { alive = false }
   }, [client])
 
+  useEffect(() => {
+    if (!desktopApp) return
+    let alive = true
+    const loadDesktopSettings = async () => {
+      try {
+        const [settings, autostart] = await Promise.all([
+          desktopApp.loadSettings(),
+          desktopApp.getAutostartStatus(),
+        ])
+        if (!alive) return
+        const normalized = { ...settings, launch_at_login: autostart.enabled }
+        setDesktopSettings(normalized)
+        setDesktopSettingsDraft(normalized)
+        setAutostartStatus(autostart)
+      } catch (err) {
+        if (alive) setDesktopSettingsMessage(formatError(err))
+      }
+    }
+    void loadDesktopSettings()
+    return () => { alive = false }
+  }, [desktopApp])
+
   const visibleLogs = useMemo(
     () => logs.filter((log) => logLevel === 'all' || log.level === logLevel),
     [logLevel, logs],
+  )
+
+  const diagnostics = useMemo(
+    () => createRuntimeDiagnosticsSnapshot({
+      cloud_api: diagnosticsContext?.cloud_api ?? {
+        state: 'unknown',
+        target: null,
+        message: null,
+      },
+      desktop_api_snapshot: diagnosticsContext?.desktop_api_snapshot ?? null,
+      local_runtime: snapshot,
+      backends: diagnosticsContext?.backends ?? [],
+      runtime_summaries: diagnosticsContext?.runtime_summaries ?? [],
+      logs,
+      settings: desktopSettings,
+    }),
+    [desktopSettings, diagnosticsContext, logs, snapshot],
   )
 
   async function handleStart(event: FormEvent<HTMLFormElement>) {
@@ -237,6 +303,36 @@ export function LocalRuntimeView({
     }
   }
 
+  function updateDesktopSettingsDraft(update: Partial<DesktopRuntimeSettings>) {
+    setDesktopSettingsDraft((current) => {
+      const base = current ?? {
+        launch_at_login: false,
+        start_minimized_to_tray: false,
+        auto_connect_local_runtime: true,
+      }
+      return { ...base, ...update }
+    })
+  }
+
+  async function handleSaveDesktopSettings() {
+    if (!desktopApp || !desktopSettingsDraft) return
+    setDesktopSettingsBusy(true)
+    setDesktopSettingsMessage(null)
+    try {
+      const saved = await desktopApp.saveSettings(desktopSettingsDraft)
+      const autostart = await desktopApp.getAutostartStatus()
+      const normalized = { ...saved, launch_at_login: autostart.enabled }
+      setDesktopSettings(normalized)
+      setDesktopSettingsDraft(normalized)
+      setAutostartStatus(autostart)
+      setDesktopSettingsMessage('桌面设置已保存')
+    } catch (err) {
+      setDesktopSettingsMessage(formatError(err))
+    } finally {
+      setDesktopSettingsBusy(false)
+    }
+  }
+
   async function handleSaveMcpServers() {
     setMcpMessage(null)
     try {
@@ -293,6 +389,8 @@ export function LocalRuntimeView({
 
   return (
     <div className="space-y-4">
+      <RuntimeDiagnosticsOverview diagnostics={diagnostics} />
+
       {/* ── 状态概览 ── */}
       <Card>
         <CardHeader
@@ -325,6 +423,56 @@ export function LocalRuntimeView({
           </Button>
         </div>
       </Card>
+
+      {desktopApp && (
+        <Card>
+          <CardHeader
+            actions={
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => void handleSaveDesktopSettings()}
+                disabled={desktopSettingsBusy || !desktopSettingsDraft}
+              >
+                {desktopSettingsBusy ? '保存中…' : '保存设置'}
+              </Button>
+            }
+          >
+            <h2 className="text-base font-semibold text-foreground">桌面设置</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              当前桌面壳的启动偏好与本机 runtime 自动连接行为。
+            </p>
+          </CardHeader>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <CheckboxField
+              label="开机自启动"
+              checked={desktopSettingsDraft?.launch_at_login ?? false}
+              onChange={(event) => updateDesktopSettingsDraft({ launch_at_login: event.currentTarget.checked })}
+              disabled={desktopSettingsBusy || autostartStatus?.supported === false}
+            />
+            <CheckboxField
+              label="启动到托盘"
+              checked={desktopSettingsDraft?.start_minimized_to_tray ?? false}
+              onChange={(event) => updateDesktopSettingsDraft({ start_minimized_to_tray: event.currentTarget.checked })}
+              disabled={desktopSettingsBusy}
+            />
+            <CheckboxField
+              label="启动后自动连接 runtime"
+              checked={desktopSettingsDraft?.auto_connect_local_runtime ?? true}
+              onChange={(event) => updateDesktopSettingsDraft({ auto_connect_local_runtime: event.currentTarget.checked })}
+              disabled={desktopSettingsBusy}
+            />
+          </div>
+
+          {autostartStatus?.supported === false ? (
+            <Notice className="mt-3" tone="warning">
+              {autostartStatus.message ?? '当前平台暂不支持开机自启动设置'}
+            </Notice>
+          ) : null}
+          {desktopSettingsMessage ? <Notice className="mt-3">{desktopSettingsMessage}</Notice> : null}
+        </Card>
+      )}
 
       {/* ── 连接配置 (Profile) ── */}
       <Card as="form" onSubmit={handleStart}>
@@ -605,6 +753,130 @@ export function LocalRuntimeView({
   )
 }
 
+function RuntimeDiagnosticsOverview({ diagnostics }: { diagnostics: RuntimeDiagnosticsSnapshot }) {
+  const relayState = diagnostics.relay_connection?.state ?? 'not_configured'
+  const chain = [
+    diagnostics.cloud_api,
+    diagnostics.desktop_api,
+    diagnostics.local_runtime,
+    diagnostics.runner,
+    diagnostics.relay_connection
+      ? {
+          state: relayLayerState(diagnostics.relay_connection.state),
+          label: 'Relay',
+          target: diagnostics.relay_connection.target,
+          message: diagnostics.relay_connection.last_error,
+        }
+      : {
+          state: 'unknown' as LayerState,
+          label: 'Relay',
+          target: null,
+          message: '等待 runtime/runner 结构化上报',
+        },
+  ].filter((item): item is { state: LayerState; label: string; target: string | null; message: string | null } => item !== null)
+  const worst = chain.reduce<LayerState>((current, layer) => (
+    layerSeverity(layer.state) > layerSeverity(current) ? layer.state : current
+  ), 'healthy')
+
+  return (
+    <Card>
+      <CardHeader
+        actions={<Badge variant={layerBadgeVariant(worst)}>{layerStateText(worst)}</Badge>}
+      >
+        <h2 className="text-base font-semibold text-foreground">运行状态诊断</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          按事实源区分 Cloud API、Desktop API、Local Runtime、Runner 与 relay 连接。
+        </p>
+      </CardHeader>
+
+      <div className="grid gap-2 md:grid-cols-5">
+        {chain.map((layer) => (
+          <div key={layer.label} className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <StatusDot tone={layerDotTone(layer.state)} />
+              <span className="text-xs font-medium text-foreground">{layer.label}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{layerStateText(layer.state)}</p>
+            {layer.target ? (
+              <p className="mt-1 truncate font-mono text-[11px] text-foreground/80" title={layer.target}>
+                {layer.target}
+              </p>
+            ) : null}
+            {layer.message ? (
+              <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground" title={layer.message}>
+                {layer.message}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
+          <p className="text-xs font-medium text-muted-foreground">注册与身份</p>
+          {diagnostics.registration ? (
+            <div className="mt-2 grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              <DiagnosticsRow label="来源" value={registrationSourceText(diagnostics.registration.source)} />
+              <DiagnosticsRow label="Backend" value={diagnostics.registration.backend_id} mono />
+              <DiagnosticsRow label="机器" value={diagnostics.registration.machine_label ?? diagnostics.registration.machine_id ?? '-'} />
+              <DiagnosticsRow label="Scope" value={scopeText(diagnostics.registration.share_scope_kind, diagnostics.registration.share_scope_id)} />
+              <DiagnosticsRow label="能力槽" value={diagnostics.registration.capability_slot ?? 'default'} mono />
+              <DiagnosticsRow label="Last seen" value={formatOptionalTimestamp(diagnostics.registration.last_seen_at)} />
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              暂无明确注册来源；需要 server/runner 返回 `registration_source` 后展示。
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
+          <p className="text-xs font-medium text-muted-foreground">Runner 交接</p>
+          {diagnostics.runner ? (
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              <p className="text-foreground">{diagnostics.runner.name}</p>
+              <p>状态：{layerStateText(diagnostics.runner.state)} · {diagnostics.runner.online ? 'registry 在线' : 'registry 离线'}</p>
+              <p>执行占用：{diagnostics.runner.active_session_count ?? 0} 个活跃会话</p>
+              <p>独立 runner 由 systemd / Windows Service 或前台进程管理，桌面 UI 仅展示状态交接。</p>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              未发现独立 runner backend；桌面托管 runtime 可使用下方按钮管理。
+            </p>
+          )}
+        </div>
+      </div>
+
+      {!diagnostics.relay_connection ? (
+        <Notice className="mt-3" tone="info">
+          Relay 连接状态需要 local runtime 或 runner 提供结构化 snapshot；当前不会从日志或 backend.online 推断。
+        </Notice>
+      ) : (
+        <Notice className="mt-3" tone={relayState === 'registered' ? 'success' : 'warning'}>
+          Relay：{relayStateText(relayState)}
+        </Notice>
+      )}
+    </Card>
+  )
+}
+
+function DiagnosticsRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn('truncate text-foreground', mono && 'font-mono')} title={value}>{value}</span>
+    </>
+  )
+}
+
 // ── MCP Server 单卡片 ──
 
 function mcpTransportSummary(t: McpTransportConfig): string {
@@ -743,6 +1015,125 @@ function stateBadgeVariant(state?: LocalRuntimeStatus['state']): 'success' | 'pr
     default:
       return 'neutral'
   }
+}
+
+function layerSeverity(state: LayerState): number {
+  switch (state) {
+    case 'unavailable':
+      return 5
+    case 'degraded':
+      return 4
+    case 'unknown':
+      return 3
+    case 'checking':
+      return 2
+    case 'disabled':
+      return 1
+    case 'healthy':
+      return 0
+  }
+}
+
+function layerStateText(state: LayerState): string {
+  switch (state) {
+    case 'healthy':
+      return '正常'
+    case 'checking':
+      return '检查中'
+    case 'degraded':
+      return '降级'
+    case 'unavailable':
+      return '不可用'
+    case 'disabled':
+      return '未启用'
+    case 'unknown':
+      return '未知'
+  }
+}
+
+function layerBadgeVariant(state: LayerState): 'success' | 'primary' | 'danger' | 'warning' | 'neutral' {
+  switch (state) {
+    case 'healthy':
+      return 'success'
+    case 'checking':
+      return 'primary'
+    case 'degraded':
+      return 'warning'
+    case 'unavailable':
+      return 'danger'
+    case 'disabled':
+    case 'unknown':
+      return 'neutral'
+  }
+}
+
+function layerDotTone(state: LayerState): 'success' | 'warning' | 'danger' | 'info' | 'muted' {
+  switch (state) {
+    case 'healthy':
+      return 'success'
+    case 'checking':
+      return 'info'
+    case 'degraded':
+      return 'warning'
+    case 'unavailable':
+      return 'danger'
+    case 'disabled':
+    case 'unknown':
+      return 'muted'
+  }
+}
+
+function relayLayerState(state: string): LayerState {
+  switch (state) {
+    case 'registered':
+      return 'healthy'
+    case 'connecting':
+    case 'reconnecting':
+      return 'checking'
+    case 'error':
+    case 'disconnected':
+      return 'unavailable'
+    case 'not_configured':
+    default:
+      return 'unknown'
+  }
+}
+
+function relayStateText(state: string): string {
+  switch (state) {
+    case 'registered':
+      return '已注册并连接'
+    case 'connecting':
+      return '连接中'
+    case 'reconnecting':
+      return '重连中'
+    case 'disconnected':
+      return '已断开'
+    case 'error':
+      return '连接错误'
+    case 'not_configured':
+    default:
+      return '未配置'
+  }
+}
+
+function registrationSourceText(source: string): string {
+  if (source === 'desktop_access_token') return '桌面登录授权'
+  if (source === 'runner_registration_token') return 'Runner 注册令牌'
+  return source
+}
+
+function scopeText(kind: string | null, id: string | null): string {
+  if (!kind) return '-'
+  if (!id) return kind
+  return `${kind} / ${id}`
+}
+
+function formatOptionalTimestamp(value: string | null) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
 }
 
 function formatError(error: unknown) {

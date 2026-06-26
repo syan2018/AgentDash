@@ -137,10 +137,12 @@ pub struct BackendResponse {
     pub capability_slot: String,
     pub device: Value,
     pub last_claimed_at: Option<DateTime<Utc>>,
+    pub registration_source: Option<String>,
 }
 
 impl From<agentdash_domain::backend::BackendConfig> for BackendResponse {
     fn from(value: agentdash_domain::backend::BackendConfig) -> Self {
+        let registration_source = backend_registration_source(&value.device);
         Self {
             id: value.id,
             name: value.name,
@@ -158,7 +160,19 @@ impl From<agentdash_domain::backend::BackendConfig> for BackendResponse {
             capability_slot: value.capability_slot,
             device: value.device,
             last_claimed_at: value.last_claimed_at,
+            registration_source,
         }
+    }
+}
+
+fn backend_registration_source(device: &Value) -> Option<String> {
+    let source = device
+        .get("registration_source")
+        .and_then(Value::as_str)
+        .map(str::trim)?;
+    match source {
+        "desktop_access_token" | "runner_registration_token" => Some(source.to_string()),
+        _ => None,
     }
 }
 
@@ -510,7 +524,39 @@ pub struct RunnerRegistrationClaimResponse {
 mod tests {
     use super::*;
     use agentdash_domain::backend::RunnerRegistrationToken;
+    use agentdash_domain::backend::{
+        BackendConfig, BackendShareScopeKind as DomainBackendShareScopeKind,
+        BackendType as DomainBackendType, BackendVisibility as DomainBackendVisibility,
+    };
     use agentdash_domain::project::Project;
+
+    #[test]
+    fn backend_response_projects_explicit_registration_source() {
+        let response = BackendResponse::from(BackendConfig {
+            id: "backend-1".to_string(),
+            name: "backend".to_string(),
+            endpoint: "ws://example.test/ws/backend".to_string(),
+            auth_token: None,
+            enabled: true,
+            backend_type: DomainBackendType::Local,
+            owner_user_id: None,
+            profile_id: Some("default".to_string()),
+            device_id: None,
+            machine_id: Some("machine-1".to_string()),
+            machine_label: Some("Workstation".to_string()),
+            visibility: DomainBackendVisibility::Private,
+            share_scope_kind: DomainBackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
+            device: serde_json::json!({ "registration_source": "runner_registration_token" }),
+            last_claimed_at: None,
+        });
+
+        assert_eq!(
+            response.registration_source.as_deref(),
+            Some("runner_registration_token")
+        );
+    }
 
     #[test]
     fn runner_registration_metadata_response_does_not_expose_secrets() {

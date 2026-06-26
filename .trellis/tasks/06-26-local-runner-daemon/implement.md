@@ -198,3 +198,8 @@ Tests：
 - Operator-facing service command plans redact unit paths and command paths; status snapshots and runner logs continue to redact token-bearing values。
 - Validation: `cargo test -p agentdash-local` passes on this slice。
 - Remaining manual validation: Linux systemd lifecycle on a Linux host and Windows Service lifecycle from admin PowerShell still need release-validation evidence before product release。
+
+## Completion Handoff - 2026-06-26
+
+- Implementation scope is complete for local code: CLI/config/claim/credential persistence/status/logging/Linux systemd/Windows SCM/native service dispatcher are in place。
+- Remaining work is release evidence, not additional implementation in this child task: Linux systemd lifecycle, Windows Service lifecycle from admin PowerShell, cloud online projection,断网重连, service uninstall cleanup, and release binary/version evidence are tracked in `distribution-release-validation`。

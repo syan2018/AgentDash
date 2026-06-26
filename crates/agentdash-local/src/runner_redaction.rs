@@ -6,8 +6,8 @@ pub fn redact_secret(value: &str) -> String {
     let mut redacted = value.to_string();
     let patterns = [
         r#"(?i)(\bBearer\s+)[^\s,;"]+"#,
-        r#"(?i)(\b(?:access_token|refresh_token|auth_token|registration_token|token)\s*=\s*)[^\s&;,]+"#,
-        r#"(?i)("(?:access_token|refresh_token|auth_token|registration_token|token)"\s*:\s*")[^"]+"#,
+        r#"(?i)(\b(?:access_token|refresh_token|auth_token|relay_token|registration_token|token)\s*=\s*)[^\s&;,]+"#,
+        r#"(?i)("(?:access_token|refresh_token|auth_token|relay_token|registration_token|token)"\s*:\s*")[^"]+"#,
     ];
 
     for pattern in patterns {
@@ -51,13 +51,13 @@ mod tests {
 
     #[test]
     fn redacts_url_query_token_variants() {
-        let raw = "wss://example.test/ws?token=relay&access_token=access&refresh_token=refresh";
+        let raw = "wss://example.test/ws?token=relay&relay_token=relay2&access_token=access&refresh_token=refresh";
 
         let redacted = redact_secret(raw);
 
         assert_eq!(
             redacted,
-            "wss://example.test/ws?token=***&access_token=***&refresh_token=***"
+            "wss://example.test/ws?token=***&relay_token=***&access_token=***&refresh_token=***"
         );
     }
 }

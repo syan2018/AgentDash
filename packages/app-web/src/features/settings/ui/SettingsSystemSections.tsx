@@ -380,6 +380,7 @@ function BackendDetailGrid({ view }: { view: BackendViewModel }) {
         <>
           <DetailRow label="机器" value={view.machineLabel} title={backend.machine_id ?? undefined} />
           <DetailRow label="Scope" value={view.scopeLabel} />
+          <DetailRow label="注册来源" value={registrationSourceLabel(backend.registration_source)} />
           <DetailRow label="能力槽" value={backend.capability_slot || "default"} mono />
         </>
       )}
@@ -532,6 +533,12 @@ function runtimeStatusLabel(status: BackendRuntimeHealth["status"]) {
     case "error":
       return "错误";
   }
+}
+
+function registrationSourceLabel(source: BackendConfig["registration_source"]) {
+  if (source === "desktop_access_token") return "桌面登录授权";
+  if (source === "runner_registration_token") return "Runner 注册令牌";
+  return "-";
 }
 
 function formatRuntimeTimestamp(value: string | null | undefined) {

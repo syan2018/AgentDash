@@ -333,6 +333,121 @@ CloseRequested -> prevent default -> hide main window
 desktop_quit_request/tray quit -> stop runtime -> app.exit(0)
 ```
 
+## Scenario: Runtime Diagnostics Snapshot And Relay State
+
+### 1. Scope / Trigger
+
+- Trigger: 桌面设置页需要同时展示 Cloud API、Desktop API、Local Runtime、独立 Runner、WebSocket relay、registration 与日志状态，且不能从日志文本或 `backend.online` 猜测 relay 连接过程。
+- Scope: `LocalRuntimeStatus.relay_connection`、`ws_client::RelayConnectionStatus`、`RuntimeDiagnosticsSnapshot` 前端 view-model、Desktop settings bridge、runner registration source projection。
+
+### 2. Signatures
+
+Rust desktop runtime snapshot:
+
+```rust
+pub struct LocalRuntimeStatus {
+    pub state: LocalRuntimeState,
+    pub backend_id: String,
+    pub name: String,
+    pub workspace_roots: Vec<String>,
+    pub executor_enabled: bool,
+    pub mcp_server_count: usize,
+    pub message: Option<String>,
+    pub relay_connection: Option<ws_client::RelayConnectionStatus>,
+}
+
+pub struct RelayConnectionStatus {
+    pub state: RelayConnectionState,
+    pub target: Option<String>,
+    pub last_connected_at: Option<String>,
+    pub last_disconnected_at: Option<String>,
+    pub last_error: Option<String>,
+    pub retry_count: Option<u32>,
+    pub next_retry_at: Option<String>,
+    pub registered_backend_id: Option<String>,
+}
+```
+
+Frontend diagnostics view-model:
+
+```ts
+type RuntimeDiagnosticsSnapshot = {
+  generated_at: string
+  cloud_api: ApiLayerStatus
+  desktop_api: DesktopApiLayerStatus | null
+  local_runtime: LocalRuntimeLayerStatus | null
+  runner: RunnerLayerStatus | null
+  relay_connection: RelayConnectionStatus | null
+  registration: RuntimeRegistrationStatus | null
+  logs: LocalLogEvent[]
+  settings: DesktopRuntimeSettings | null
+}
+```
+
+Backend `/backends` projection includes:
+
+```ts
+registration_source: string | null
+```
+
+### 3. Contracts
+
+- `ws_client` writes `RelayConnectionStatus` at `connecting`、`registered`、`reconnecting`、`disconnected` lifecycle points through a watch channel owned by `LocalRuntimeManager`。
+- `registered_backend_id` is only set after relay `RegisterAck` confirms the backend registration. Reconnecting/disconnected snapshots preserve the last confirmed `last_connected_at` and `registered_backend_id` so the UI can show the last healthy relay fact.
+- `target` and `last_error` must be redacted before entering local runtime snapshots or logs.
+- Frontend `createRuntimeDiagnosticsSnapshot()` consumes structured facts only. It must not parse logs to infer state and must not treat `backend.online` as relay handshake state.
+- Independent runner rows in diagnostics come from explicit `registration_source === "runner_registration_token"` or remote backend projection. A stopped desktop local backend with `desktop_access_token` must not be displayed as a service-managed Runner.
+- Desktop settings controls use the Desktop App bridge (`desktop_settings_load/save`, autostart status commands). Generic Web Dashboard code does not import Tauri APIs directly.
+- Logs copy/export uses the same redaction surface as display formatting and covers `token`、`access_token`、`refresh_token`、`auth_token`、`relay_token`、`registration_token` and Bearer credentials.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Relay starts connecting | `relay_connection.state = connecting`, retry count set, target redacted |
+| Relay receives `RegisterAck` | `state = registered`, `last_connected_at` set, `registered_backend_id` set |
+| Relay disconnects after successful registration | `state = reconnecting/disconnected`, last confirmed `last_connected_at` and `registered_backend_id` retained |
+| Relay error includes token-bearing URL/header/message | snapshot/log/copy output redacts token-bearing values |
+| Runtime snapshot is absent | local runtime layer is `disabled`; UI may show runner projection separately |
+| Backend has `registration_source=desktop_access_token` and runtime is stopped | UI does not classify it as independent runner |
+| Backend has `registration_source=runner_registration_token` | UI may show it as service-managed/read-only runner |
+| Desktop settings bridge unavailable | Web-only settings page hides desktop-only controls |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Desktop runtime connects, receives `RegisterAck`, then network drops; UI shows Local Runtime process state plus relay reconnecting state with the last confirmed backend id.
+- Good: Linux runner appears in cloud `/backends` with `registration_source=runner_registration_token`; desktop settings page shows it as service-managed and does not render desktop runtime restart controls for it.
+- Base: No runtime snapshot exists in browser-only Web Dashboard; diagnostics omits Desktop API/settings controls and still shows Cloud API state.
+- Bad: UI scans log text for “WebSocket 连接成功” to decide relay state; logs are diagnostics evidence, not a state fact source.
+- Bad: UI treats any `backend_type=local` backend as independent runner; desktop local runtime and service runner have different lifecycle owners.
+
+### 6. Tests Required
+
+- Rust tests assert relay reconnect/disconnect snapshots preserve confirmed `last_connected_at` and `registered_backend_id` after registration.
+- Rust tests assert runtime state transitions preserve `relay_connection` in `LocalRuntimeStatus`.
+- Rust redaction tests cover Bearer, URL query, key-value, and JSON fields for `token/access_token/refresh_token/auth_token/relay_token/registration_token`.
+- Frontend mapper tests assert runtime diagnostics do not infer relay state from logs or backend online state.
+- Frontend mapper tests assert a stopped desktop-access-token local backend is not shown as an independent runner.
+- Type checks assert `app-tauri` exposes Desktop App bridge fields without importing Tauri APIs into `packages/views` or shared Web components.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const relayState = logs.some((line) => line.message.includes("注册成功"))
+  ? "registered"
+  : backend.online
+    ? "registered"
+    : "disconnected"
+```
+
+#### Correct
+
+```ts
+const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configured"
+```
+
 ### Profile
 
 - `agentdash-local::runtime_paths` 是本机 runtime 路径事实源；数据库、机器身份、extension artifact cache、runtime profile 和本机 MCP servers 配置都从同一个 `local-runtime` data root 派生，原因是这些文件共同服务本机后端生命周期，Tauri 壳只负责通过 command 调用本机 runtime。

@@ -1,23 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
+import type {
+  DesktopApiSnapshot,
+  DesktopAutostartStatus,
+  DesktopRuntimeSettings,
+} from '@agentdash/core/local-runtime'
 import { ensureTauriHost, isTauriHost } from './tauriHost'
 
-export interface DesktopAppSettings {
-  launch_at_login: boolean
-  start_minimized_to_tray: boolean
-  auto_connect_local_runtime: boolean
-}
-
-export interface DesktopAutostartStatus {
-  supported: boolean
-  enabled: boolean
-  message?: string | null
-}
+export type DesktopAppSettings = DesktopRuntimeSettings
 
 export interface DesktopAppBridge {
   loadSettings(): Promise<DesktopAppSettings>
   saveSettings(settings: DesktopAppSettings): Promise<DesktopAppSettings>
   getAutostartStatus(): Promise<DesktopAutostartStatus>
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>
+  getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>
   quit(): Promise<void>
 }
 
@@ -27,6 +23,7 @@ export function createTauriDesktopAppBridge(): DesktopAppBridge {
     saveSettings: desktopSettingsSave,
     getAutostartStatus: desktopAutostartIsEnabled,
     setAutostartEnabled: desktopAutostartSetEnabled,
+    getDesktopApiSnapshot: desktopApiSnapshot,
     quit: desktopQuitRequest,
   }
 }
@@ -54,6 +51,11 @@ export async function desktopAutostartSetEnabled(enabled: boolean): Promise<Desk
 export async function desktopQuitRequest(): Promise<void> {
   ensureTauriHost()
   return invoke('desktop_quit_request')
+}
+
+export async function desktopApiSnapshot(): Promise<DesktopApiSnapshot | null> {
+  if (!isTauriHost()) return null
+  return invoke('desktop_api_snapshot')
 }
 
 export async function desktopSettingsLoadOrDefault(): Promise<DesktopAppSettings> {

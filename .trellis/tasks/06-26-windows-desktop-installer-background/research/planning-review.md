@@ -24,7 +24,7 @@
 - `packages/app-tauri/src/runtimeApi.ts` - Tauri `invoke()` 到 `LocalRuntimeClient` 的适配层，当前不含 desktop settings/autostart/window lifecycle API。
 - `packages/app-web/src/desktop/localRuntimeBridge.ts` - Web Dashboard 内部的桌面 runtime 自动启动桥，认证完成后按 profile `auto_start` 调用 `runtimeStart()`。
 - `packages/views/src/local-runtime/LocalRuntimeView.tsx` - 本机 runtime 设置/诊断面板，当前也会在加载到 `profile.auto_start` 后自动启动 runtime。
-- `scripts/desktop-build.js` - 桌面构建入口，默认 `builtin` API mode 和 `http://127.0.0.1:3001`。
+- `scripts/desktop-build.js` - 桌面构建入口，默认 `builtin` API mode 和 `http://127.0.0.1:17301`。
 - `scripts/lib/desktop-build.js` - 桌面构建参数解析、API mode/origin sidecar 注入、sccache 配置和 `pnpm exec tauri build` 调用。
 - `package.json` - 定义 `desktop:check`、`desktop:build`、`desktop:bundle`，其中 bundle 使用 `--bundles nsis --no-sign --ci`。
 
@@ -38,7 +38,7 @@ P0 - 托盘和窗口生命周期尚未落地。当前 `main.rs` 没有 `TrayIcon
 
 P0 - 显式退出与运行中任务的语义不够具体。Local runtime manager 在 Tauri 进程内持有（`crates/agentdash-local-tauri/src/main.rs:25` 到 `crates/agentdash-local-tauri/src/main.rs:29`），关闭窗口隐藏时 runtime 会继续运行，但显式退出桌面进程会终止同进程 runtime。现有 `LocalRuntimeStatus` 没有 active session/lease count（`packages/core/src/local-runtime/index.ts:3` 到 `packages/core/src/local-runtime/index.ts:11`），计划需要定义是否在运行中任务存在时拒绝退出、弹确认，还是允许退出并明确中断。
 
-P0 - Desktop API 的 localhost 约束需要写成 production contract。内置 API 使用 `ApiServerOptions::desktop_localhost(DESKTOP_API_PORT)`（`crates/agentdash-local-tauri/src/main.rs:698` 到 `crates/agentdash-local-tauri/src/main.rs:706`），默认 origin 也是 `http://127.0.0.1:3001`（`crates/agentdash-local-tauri/src/main.rs:956` 到 `crates/agentdash-local-tauri/src/main.rs:958`），但 `desktop_api_config()` 接受 env/build default origin（`crates/agentdash-local-tauri/src/main.rs:993` 到 `crates/agentdash-local-tauri/src/main.rs:1033`），sidecar 还会把 origin host 写入 `HOST`（`crates/agentdash-local-tauri/src/main.rs:778` 到 `crates/agentdash-local-tauri/src/main.rs:788`）。如果 PRD 要求 Desktop API 只绑定 `127.0.0.1`，设计要规定 release bundle 仅使用 builtin localhost 或校验 host 为 loopback。
+P0 - Desktop API 的 localhost 约束需要写成 production contract。内置 API 使用 `ApiServerOptions::desktop_localhost(DESKTOP_API_PORT)`（`crates/agentdash-local-tauri/src/main.rs:698` 到 `crates/agentdash-local-tauri/src/main.rs:706`），默认 origin 是 `http://127.0.0.1:17301`（`crates/agentdash-local-tauri/src/main.rs:956` 到 `crates/agentdash-local-tauri/src/main.rs:958`）。Desktop API 端口独立于普通 cloud/backend dev server 的 `3001`，原因是桌面安装包应避开常见本机调试端口，而普通 Web 开发入口仍保留原 dev server 约定。`desktop_api_config()` 接受 env/build default origin（`crates/agentdash-local-tauri/src/main.rs:993` 到 `crates/agentdash-local-tauri/src/main.rs:1033`），sidecar 还会把 origin host 写入 `HOST`（`crates/agentdash-local-tauri/src/main.rs:778` 到 `crates/agentdash-local-tauri/src/main.rs:788`）。如果 PRD 要求 Desktop API 只绑定 `127.0.0.1`，设计要规定 release bundle 仅使用 builtin localhost 或校验 host 为 loopback。
 
 P1 - 安装包产物和 app exe vs setup exe 缺少边界。当前 `tauri.conf.json` 只写了 `bundle.active=true` 和 `targets="all"`（`crates/agentdash-local-tauri/tauri.conf.json:27` 到 `crates/agentdash-local-tauri/tauri.conf.json:33`），而脚本 `desktop:bundle` 通过 `--bundles nsis` 限定 NSIS（`package.json:24` 到 `package.json:25`）。Design 应明确：setup exe 是安装器产物，安装后 app exe 是真正运行并驻留托盘的进程；release validation 验证两者而不是把 setup exe 当应用进程。
 
@@ -67,7 +67,7 @@ P2 - 现有设置 UI 用 `rounded-full` scope tab 和字面样式（`packages/ap
    - bundle 输出路径由 Tauri CLI 决定，release validation 只读取构建脚本打印/约定的产物路径，不猜 glob。
 
 3. **Desktop API Contract**
-   - release bundle 默认且只使用 builtin Desktop API：`127.0.0.1:3001`。
+   - release bundle 默认且只使用 builtin Desktop API：`127.0.0.1:17301`。
    - `DesktopApiSnapshot.state` 保持 `starting | running | error | stopped`。
    - `DashboardHost` 继续等 `/api/health` ready 后渲染 Web Dashboard。
    - `external/sidecar` mode 只保留开发/诊断入口；生产构建校验 origin host 必须为 loopback，或 release script 固定 builtin。
@@ -226,7 +226,7 @@ P2 - 现有设置 UI 用 `rounded-full` scope tab 和字面样式（`packages/ap
 
 ### Related Specs
 
-- `.trellis/spec/cross-layer/desktop-local-runtime.md` - 规定 Desktop API 默认 `127.0.0.1:3001`、DashboardHost 等 health ready、`app-tauri` 复用 `app-web`、Local Runtime UI 依赖 `@agentdash/core` port、Tauri CLI 使用 `pnpm exec tauri`。
+- `.trellis/spec/cross-layer/desktop-local-runtime.md` - 规定 Desktop API 默认 `127.0.0.1:17301`、DashboardHost 等 health ready、`app-tauri` 复用 `app-web`、Local Runtime UI 依赖 `@agentdash/core` port、Tauri CLI 使用 `pnpm exec tauri`。
 - `.trellis/spec/frontend/design-language.md` - 规定新增桌面设置 UI 使用语义 token、有限 radius、`@agentdash/ui` primitives、避免业务字面色和 ad-hoc UI。
 - `.trellis/spec/frontend/quality-guidelines.md` - 已在 `check.jsonl` 中登记，适合检查桌面设置交互质量。
 - `.trellis/spec/guides/cross-layer-thinking-guide.md` - 已在 `check.jsonl` 中登记，适合检查 Tauri shell、Desktop API、runtime 状态和设置边界。

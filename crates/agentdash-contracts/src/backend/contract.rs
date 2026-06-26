@@ -371,3 +371,137 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventory>
 pub struct RegisterBackendWorkspaceInventoryRequest {
     pub root_ref: String,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerRegistrationTokenStatus {
+    Active,
+    Expired,
+    Revoked,
+}
+
+impl From<agentdash_domain::backend::RunnerRegistrationTokenStatus>
+    for RunnerRegistrationTokenStatus
+{
+    fn from(value: agentdash_domain::backend::RunnerRegistrationTokenStatus) -> Self {
+        match value {
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Active => Self::Active,
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Expired => Self::Expired,
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Revoked => Self::Revoked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct RunnerRegistrationTokenCreateRequest {
+    pub name: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub default_capability_slot: Option<String>,
+    #[serde(default)]
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub machine_policy: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenMetadataResponse {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub token_prefix: String,
+    pub status: RunnerRegistrationTokenStatus,
+    pub created_by_user_id: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_claimed_backend_id: Option<String>,
+    pub default_capability_slot: String,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub machine_policy: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<agentdash_domain::backend::RunnerRegistrationToken>
+    for RunnerRegistrationTokenMetadataResponse
+{
+    fn from(value: agentdash_domain::backend::RunnerRegistrationToken) -> Self {
+        let status = RunnerRegistrationTokenStatus::from(value.status_at(Utc::now()));
+        Self {
+            id: value.id,
+            project_id: value.project_id.to_string(),
+            name: value.name,
+            token_prefix: value.token_prefix,
+            status,
+            created_by_user_id: value.created_by_user_id,
+            expires_at: value.expires_at,
+            revoked_at: value.revoked_at,
+            last_used_at: value.last_used_at,
+            last_claimed_backend_id: value.last_claimed_backend_id,
+            default_capability_slot: value.default_capability_slot,
+            machine_policy: value.machine_policy,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenCreateResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+    pub registration_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenRotateResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+    pub registration_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenRevokeResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct RunnerRegistrationClaimRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub registration_token: Option<String>,
+    pub machine_id: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub machine_label: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub runner_name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub client_version: Option<String>,
+    #[serde(default)]
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub device: Value,
+    #[serde(default)]
+    pub executor_enabled: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub capability_slot: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationClaimResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub relay_ws_url: String,
+    pub auth_token: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
+    pub registration_source: String,
+    pub claimed_at: DateTime<Utc>,
+}

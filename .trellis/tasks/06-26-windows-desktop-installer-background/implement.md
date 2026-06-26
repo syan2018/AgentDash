@@ -90,6 +90,7 @@ Validation:
 ## Step 8 - Desktop API Loopback Contract
 
 - Verify builtin release path binds `127.0.0.1`。
+- Verify Desktop API default origin is fixed to `http://127.0.0.1:17301` while ordinary cloud/backend dev server keeps its `3001` default。
 - Add guard for release sidecar/external origin if those modes remain exposed。
 - Add test/helper for loopback origin validation if implementation adds validation helper。
 

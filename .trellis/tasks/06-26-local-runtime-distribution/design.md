@@ -4,7 +4,7 @@
 
 本任务将本机能力拆成两个产品边界，并用父任务维护跨子任务执行图：
 
-- Windows Desktop App：Tauri 壳负责窗口、托盘、安装包、自启动与用户设置；桌面壳可启动 `Desktop API` 与本机 Local Runtime。`Desktop API` 是桌面内置前端的 Dashboard API 宿主，默认只监听 `127.0.0.1`。
+- Windows Desktop App：Tauri 壳负责窗口、托盘、安装包、自启动与用户设置；桌面壳可启动 `Desktop API` 与本机 Local Runtime。`Desktop API` 是桌面内置前端的 Dashboard API 宿主，默认只监听 `127.0.0.1:17301`。Desktop API 与普通 cloud/backend dev server 的 `3001` 分开，原因是桌面安装包需要稳定且不易撞到用户本机调试应用的 loopback 端口，而普通 Web 开发入口仍保留既有 dev server 约定。
 - Local Runner：`agentdash-local` 的 headless 产品形态，面向服务器托管。Runner 不承载桌面 UI，不启动 Dashboard API，不对外暴露业务 HTTP API；它通过 WebSocket 出站连接云端 relay，并执行云端派发的本机任务。
 
 父任务不直接实现大块代码，它维护依赖关系、集成契约、review gates 与最终验收。每个子任务的 `design.md` / `implement.md` 必须写清自己的产出如何交给下游任务消费。

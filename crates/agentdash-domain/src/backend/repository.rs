@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::entity::{
     BackendConfig, BackendExecutionLease, BackendExecutionTerminalKind, BackendWorkspaceInventory,
-    LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RuntimeHealth,
-    RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
+    LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RunnerRegistrationToken,
+    RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
 };
 use crate::common::error::DomainError;
 use uuid::Uuid;
@@ -125,4 +125,26 @@ pub trait BackendWorkspaceInventoryRepository: Send + Sync {
         &self,
         backend_ids: &[String],
     ) -> Result<Vec<BackendWorkspaceInventory>, DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait RunnerRegistrationTokenRepository: Send + Sync {
+    async fn create(&self, token: &RunnerRegistrationToken) -> Result<(), DomainError>;
+    async fn update(&self, token: &RunnerRegistrationToken) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: &str) -> Result<Option<RunnerRegistrationToken>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<RunnerRegistrationToken>, DomainError>;
+    async fn revoke(
+        &self,
+        id: &str,
+        revoked_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
+    async fn record_usage(
+        &self,
+        id: &str,
+        backend_id: &str,
+        used_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
 }

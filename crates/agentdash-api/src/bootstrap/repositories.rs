@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -29,7 +29,8 @@ use agentdash_infrastructure::{
     PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository,
+    PostgresRunnerRegistrationTokenRepository, PostgresRuntimeHealthRepository,
     PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
     PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -73,6 +74,8 @@ pub(crate) async fn build_repositories(
         Arc::new(PostgresBackendExecutionLeaseRepository::new(pool.clone()));
     let project_backend_access_repo =
         Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
+    let runner_registration_token_repo =
+        Arc::new(PostgresRunnerRegistrationTokenRepository::new(pool.clone()));
 
     let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
@@ -89,8 +92,9 @@ pub(crate) async fn build_repositories(
             })
             .await
             .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
-        diag!(Info, Subsystem::Api,
-        
+        diag!(
+            Info,
+            Subsystem::Api,
             seeded = seeded.len(),
             "已同步 builtin Shared Library assets"
         );
@@ -178,6 +182,7 @@ pub(crate) async fn build_repositories(
         backend_execution_lease_repo: backend_execution_lease_repo.clone(),
         project_backend_access_repo: project_backend_access_repo.clone(),
         backend_workspace_inventory_repo: project_backend_access_repo.clone(),
+        runner_registration_token_repo: runner_registration_token_repo.clone(),
         auth_session_repo: auth_session_repo.clone(),
         user_directory_repo: user_directory_repo.clone(),
         settings_repo: settings_repo.clone(),
@@ -219,8 +224,9 @@ pub(crate) async fn build_repositories(
             .seed_integration_embedded_assets(integration_library_asset_seeds)
             .await
             .map_err(|e| anyhow::anyhow!("integration embedded library assets 初始化失败: {e}"))?;
-        diag!(Info, Subsystem::Api,
-        
+        diag!(
+            Info,
+            Subsystem::Api,
             declared = integration_asset_count,
             seeded = seeded.len(),
             "已同步 integration embedded Shared Library assets"

@@ -12,5 +12,5 @@ runDesktopBuild({
   root,
   tauriConfigPath: 'crates/agentdash-local-tauri/tauri.conf.json',
   defaultApiMode: 'builtin',
-  defaultApiOrigin: 'http://127.0.0.1:3001',
+  defaultApiOrigin: 'http://127.0.0.1:17301',
 });

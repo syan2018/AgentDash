@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -16,7 +16,7 @@ use tauri::{Manager, RunEvent, State};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::EnvFilter;
 
-const DESKTOP_API_PORT: u16 = 3001;
+const DESKTOP_API_PORT: u16 = 17301;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
 const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
@@ -456,7 +456,7 @@ async fn claim_local_runtime(
             }
             Err(error) if retry_until_server_ready && attempts < 30 => {
                 diag!(Warn, Subsystem::Api,
-        
+
                     attempt = attempts,
                     error = %error,
                     "领取本机 runtime 失败，等待 server 就绪后重试"
@@ -630,17 +630,30 @@ fn main() {
         .manage(state)
         .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
-            let api_config = desktop_api_config();
-            match api_config.mode {
-                DesktopApiMode::Builtin => start_desktop_api(state),
-                DesktopApiMode::External => {
-                    diag!(Info, Subsystem::Api,
-        
-                        origin = %api_config.origin,
-                        "Tauri 桌面端复用外部 Dashboard API"
+            match desktop_api_config() {
+                Ok(api_config) => match api_config.mode {
+                    DesktopApiMode::Builtin => start_desktop_api(state),
+                    DesktopApiMode::External => {
+                        diag!(Info, Subsystem::Api,
+
+                            origin = %api_config.origin,
+                            "Tauri 桌面端复用外部 Dashboard API"
+                        );
+                    }
+                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
+                },
+                Err(message) => {
+                    diag!(Error, Subsystem::Api,
+                        error = %message,
+                        "桌面端 API 配置无效"
                     );
+                    tauri::async_runtime::spawn(async move {
+                        state
+                            .api
+                            .mark_error_origin(desktop_api_origin(DESKTOP_API_PORT), message)
+                            .await;
+                    });
                 }
-                DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
             }
             let state = app.state::<DesktopState>().inner().clone();
             tauri::async_runtime::spawn(async move {
@@ -748,7 +761,7 @@ fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
     };
 
     diag!(Info, Subsystem::Api,
-        
+
         origin = %config.origin,
         sidecar = %sidecar,
         "Tauri 桌面端启动 API sidecar"
@@ -775,6 +788,7 @@ fn spawn_desktop_api_sidecar(config: &DesktopApiConfig) -> anyhow::Result<Child>
         .sidecar
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("未配置桌面端 API sidecar 命令"))?;
+    validate_sidecar_desktop_api_origin(&config.origin)?;
     let origin = reqwest::Url::parse(&config.origin)
         .map_err(|error| anyhow::anyhow!("桌面端 API origin 无效: {error}"))?;
     let host = origin.host_str().unwrap_or("127.0.0.1");
@@ -812,7 +826,7 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             Ok(response) => {
                 if attempt % 20 == 0 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         attempt,
                         status = %response.status(),
                         "等待桌面端 API sidecar 就绪"
@@ -822,7 +836,7 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             Err(error) => {
                 if attempt % 20 == 0 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         attempt,
                         error = %error,
                         "等待桌面端 API sidecar 就绪"
@@ -958,19 +972,26 @@ fn desktop_api_origin(port: u16) -> String {
 }
 
 fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
-    let config = desktop_api_config();
-    match config.mode {
-        DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
-        DesktopApiMode::External => DesktopApiSnapshot {
-            state: DesktopApiState::Running,
-            origin: config.origin.clone(),
-            message: Some(format!("复用外部 Dashboard API: {}", config.origin)),
-            database_url: None,
+    match desktop_api_config() {
+        Ok(config) => match config.mode {
+            DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
+            DesktopApiMode::External => DesktopApiSnapshot {
+                state: DesktopApiState::Running,
+                origin: config.origin.clone(),
+                message: Some(format!("复用外部 Dashboard API: {}", config.origin)),
+                database_url: None,
+            },
+            DesktopApiMode::Sidecar => DesktopApiSnapshot {
+                state: DesktopApiState::Starting,
+                origin: config.origin.clone(),
+                message: Some(format!("桌面端 API sidecar 正在启动: {}", config.origin)),
+                database_url: None,
+            },
         },
-        DesktopApiMode::Sidecar => DesktopApiSnapshot {
-            state: DesktopApiState::Starting,
-            origin: config.origin.clone(),
-            message: Some(format!("桌面端 API sidecar 正在启动: {}", config.origin)),
+        Err(message) => DesktopApiSnapshot {
+            state: DesktopApiState::Error,
+            origin: desktop_api_origin(DESKTOP_API_PORT),
+            message: Some(message),
             database_url: None,
         },
     }
@@ -990,46 +1011,129 @@ struct DesktopApiConfig {
     sidecar: Option<String>,
 }
 
-fn desktop_api_config() -> DesktopApiConfig {
-    let explicit_origin = env_trimmed(DESKTOP_API_ORIGIN_ENV).map(normalize_origin);
-    let build_default_origin = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
-        .and_then(|value| normalize_optional_text(value.to_string()))
-        .map(normalize_origin);
-    let origin = explicit_origin
-        .or(build_default_origin)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopApiBuildProfile {
+    Debug,
+    Release,
+}
+
+fn active_desktop_api_build_profile() -> DesktopApiBuildProfile {
+    if cfg!(debug_assertions) {
+        DesktopApiBuildProfile::Debug
+    } else {
+        DesktopApiBuildProfile::Release
+    }
+}
+
+fn desktop_api_config() -> Result<DesktopApiConfig, String> {
+    desktop_api_config_from_values(
+        env_trimmed(DESKTOP_API_ORIGIN_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        env_trimmed(DESKTOP_API_SIDECAR_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        env_trimmed(DESKTOP_API_MODE_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        active_desktop_api_build_profile(),
+    )
+}
+
+fn desktop_api_config_from_values(
+    explicit_origin: Option<String>,
+    build_default_origin: Option<String>,
+    explicit_sidecar: Option<String>,
+    build_default_sidecar: Option<String>,
+    explicit_mode: Option<String>,
+    build_default_mode: Option<String>,
+    build_profile: DesktopApiBuildProfile,
+) -> Result<DesktopApiConfig, String> {
+    let configured_origin = explicit_origin
+        .map(normalize_origin)
+        .or_else(|| build_default_origin.map(normalize_origin))
         .unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
 
-    let explicit_sidecar = env_trimmed(DESKTOP_API_SIDECAR_ENV);
-    let build_default_sidecar = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
-        .and_then(|value| normalize_optional_text(value.to_string()));
     let sidecar = explicit_sidecar.or(build_default_sidecar);
 
-    let explicit_mode = env_trimmed(DESKTOP_API_MODE_ENV).and_then(|value| {
+    let explicit_mode = explicit_mode.and_then(|value| {
         parse_desktop_api_mode(&value).or_else(|| {
             diag!(Warn, Subsystem::Api,
         mode = %value, "忽略未知桌面端 API mode");
             None
         })
     });
-    let build_default_mode = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
-        .and_then(|value| normalize_optional_text(value.to_string()))
-        .and_then(|value| {
-            parse_desktop_api_mode(&value).or_else(|| {
-                diag!(Warn, Subsystem::Api,
+    let build_default_mode = build_default_mode.and_then(|value| {
+        parse_desktop_api_mode(&value).or_else(|| {
+            diag!(Warn, Subsystem::Api,
         mode = %value, "忽略未知桌面端默认 API mode");
-                None
-            })
-        });
+            None
+        })
+    });
 
     let mode = explicit_mode
         .or(build_default_mode)
         .unwrap_or(DesktopApiMode::Builtin);
+    let origin = match mode {
+        DesktopApiMode::Builtin => desktop_api_origin(DESKTOP_API_PORT),
+        DesktopApiMode::External | DesktopApiMode::Sidecar => {
+            validate_release_desktop_api_origin(build_profile, &configured_origin)?;
+            configured_origin
+        }
+    };
+    if mode == DesktopApiMode::Sidecar {
+        validate_sidecar_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
+    }
 
-    DesktopApiConfig {
+    Ok(DesktopApiConfig {
         mode,
         origin,
         sidecar,
+    })
+}
+
+fn validate_release_desktop_api_origin(
+    build_profile: DesktopApiBuildProfile,
+    origin: &str,
+) -> Result<(), String> {
+    if build_profile == DesktopApiBuildProfile::Release && !is_default_desktop_api_origin(origin) {
+        return Err(format!(
+            "release 桌面端 API origin 必须是 {}，当前为 {}",
+            desktop_api_origin(DESKTOP_API_PORT),
+            origin
+        ));
     }
+    Ok(())
+}
+
+fn validate_sidecar_desktop_api_origin(origin: &str) -> anyhow::Result<()> {
+    if !is_127_loopback_origin(origin) {
+        anyhow::bail!("桌面端 API sidecar 只允许绑定 127.0.0.1 origin: {origin}");
+    }
+    Ok(())
+}
+
+fn is_default_desktop_api_origin(origin: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port_or_known_default() == Some(DESKTOP_API_PORT)
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+fn is_127_loopback_origin(origin: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str() == Some("127.0.0.1")
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
 }
 
 fn parse_desktop_api_mode(value: &str) -> Option<DesktopApiMode> {
@@ -1060,4 +1164,103 @@ fn profile_path() -> Result<PathBuf, String> {
 
 fn mcp_servers_path() -> Result<PathBuf, String> {
     local_mcp_servers_path().map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_api_default_origin_uses_dedicated_port() {
+        assert_eq!(
+            desktop_api_origin(DESKTOP_API_PORT),
+            "http://127.0.0.1:17301"
+        );
+        assert!(is_default_desktop_api_origin("http://127.0.0.1:17301"));
+        assert!(!is_default_desktop_api_origin("http://127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn builtin_config_keeps_release_origin_fixed() {
+        let config = desktop_api_config_from_values(
+            Some("http://10.0.0.5:3001".to_string()),
+            None,
+            None,
+            None,
+            Some("builtin".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect("builtin origin should be fixed by the desktop API contract");
+
+        assert_eq!(config.mode, DesktopApiMode::Builtin);
+        assert_eq!(config.origin, "http://127.0.0.1:17301");
+    }
+
+    #[test]
+    fn release_external_origin_must_match_desktop_api_origin() {
+        let error = desktop_api_config_from_values(
+            Some("http://127.0.0.1:3001".to_string()),
+            None,
+            None,
+            None,
+            Some("external".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect_err("release external origin must use the Desktop API origin");
+
+        assert!(error.contains("http://127.0.0.1:17301"));
+    }
+
+    #[test]
+    fn debug_external_origin_may_use_dev_server_port() {
+        let config = desktop_api_config_from_values(
+            Some("http://127.0.0.1:3001".to_string()),
+            None,
+            None,
+            None,
+            Some("external".to_string()),
+            None,
+            DesktopApiBuildProfile::Debug,
+        )
+        .expect("desktop dev runtime may reuse the ordinary backend dev server");
+
+        assert_eq!(config.mode, DesktopApiMode::External);
+        assert_eq!(config.origin, "http://127.0.0.1:3001");
+    }
+
+    #[test]
+    fn release_sidecar_origin_must_match_desktop_api_origin() {
+        let config = desktop_api_config_from_values(
+            Some("http://127.0.0.1:17301".to_string()),
+            None,
+            Some("agentdash-api".to_string()),
+            None,
+            Some("sidecar".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect("release sidecar may use the fixed Desktop API origin");
+
+        assert_eq!(config.mode, DesktopApiMode::Sidecar);
+        assert_eq!(config.origin, "http://127.0.0.1:17301");
+        assert_eq!(config.sidecar.as_deref(), Some("agentdash-api"));
+    }
+
+    #[test]
+    fn sidecar_origin_never_binds_non_loopback_host() {
+        let error = desktop_api_config_from_values(
+            Some("http://0.0.0.0:17301".to_string()),
+            None,
+            Some("agentdash-api".to_string()),
+            None,
+            Some("sidecar".to_string()),
+            None,
+            DesktopApiBuildProfile::Debug,
+        )
+        .expect_err("sidecar must not bind a non-loopback host");
+
+        assert!(error.contains("127.0.0.1"));
+    }
 }

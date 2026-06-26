@@ -2,6 +2,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const VALID_API_MODES = new Set(['builtin', 'external', 'sidecar']);
+const DEFAULT_DESKTOP_API_ORIGIN = 'http://127.0.0.1:17301';
 
 export function runDesktopBuild(options) {
   let config;
@@ -88,7 +89,7 @@ function parseDesktopBuildArgs(args, options) {
     env.AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN
       || env.AGENTDASH_DESKTOP_API_ORIGIN
       || options.defaultApiOrigin
-      || 'http://127.0.0.1:3001',
+      || DEFAULT_DESKTOP_API_ORIGIN,
   );
   let apiSidecar = normalizeOptionalValue(
     env.AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR
@@ -152,6 +153,9 @@ function parseDesktopBuildArgs(args, options) {
   if (!help && apiMode === 'sidecar' && !apiSidecar) {
     throw new Error('--api-mode sidecar 需要同时提供 --api-sidecar');
   }
+  if (!help) {
+    validateDesktopApiOrigin(apiOrigin);
+  }
 
   return {
     apiMode,
@@ -168,7 +172,7 @@ function parseDesktopBuildArgs(args, options) {
 
 function printHelp(options) {
   const defaultMode = options.defaultApiMode || 'builtin';
-  const defaultOrigin = options.defaultApiOrigin || 'http://127.0.0.1:3001';
+  const defaultOrigin = options.defaultApiOrigin || DEFAULT_DESKTOP_API_ORIGIN;
   console.log('用法: node ./scripts/desktop-build.js [build-options] [...tauri-build-options]');
   console.log('');
   console.log('AgentDash 桌面端构建入口。');
@@ -207,6 +211,25 @@ function normalizeOrigin(value) {
     throw new Error('--api-origin 不能为空');
   }
   return trimmed;
+}
+
+function validateDesktopApiOrigin(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch (error) {
+    throw new Error(`桌面端 API origin 无效: ${error.message}`);
+  }
+  if (
+    parsed.protocol !== 'http:'
+    || parsed.hostname !== '127.0.0.1'
+    || parsed.port !== '17301'
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw new Error(`桌面端 release 构建的 API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
+  }
 }
 
 function normalizeRequiredValue(value, flagName) {

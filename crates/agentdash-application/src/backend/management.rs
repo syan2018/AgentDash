@@ -51,6 +51,20 @@ pub struct EnsureLocalRuntimeResult {
     pub capability_slot: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct EnsureRunnerProjectRuntimeInput {
+    pub owner_user_id: String,
+    pub project_id: uuid::Uuid,
+    pub machine_id: String,
+    pub machine_label: Option<String>,
+    pub capability_slot: Option<String>,
+    pub runner_name: Option<String>,
+    pub executor_enabled: bool,
+    pub client_version: Option<String>,
+    pub device: serde_json::Value,
+    pub relay_ws_url: String,
+}
+
 pub async fn add_backend_record(
     repos: &RepositorySet,
     identity: &AuthIdentity,
@@ -205,6 +219,88 @@ pub async fn ensure_local_runtime_record(
         backend,
         auth_token,
         profile_id,
+        machine_id,
+        machine_label,
+        share_scope_id,
+        capability_slot,
+    })
+}
+
+pub async fn ensure_runner_project_runtime_record(
+    repos: &RepositorySet,
+    input: EnsureRunnerProjectRuntimeInput,
+) -> Result<EnsureLocalRuntimeResult, ApplicationError> {
+    let machine_id = normalize_required("machine_id", &input.machine_id)?;
+    let machine_label = input
+        .machine_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_machine_label(&machine_id));
+    let capability_slot = input
+        .capability_slot
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "default".to_string());
+    let name = input
+        .runner_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            default_local_runtime_name(&machine_label, BackendShareScopeKind::Project)
+        });
+    let share_scope_id = Some(input.project_id.to_string());
+    let backend_id = stable_local_backend_id(
+        &machine_id,
+        BackendShareScopeKind::Project,
+        share_scope_id.as_deref(),
+        &capability_slot,
+    );
+    let mut device = normalize_device_payload(input.device)?;
+    if let Some(client_version) = normalize_optional_string(input.client_version) {
+        device["client_version"] = serde_json::Value::String(client_version);
+    }
+    device["executor_enabled"] = serde_json::Value::Bool(input.executor_enabled);
+    device["registration_source"] =
+        serde_json::Value::String("runner_registration_token".to_string());
+
+    let claim = LocalBackendClaim {
+        owner_user_id: input.owner_user_id,
+        profile_id: "runner-registration".to_string(),
+        machine_id: machine_id.clone(),
+        machine_label: machine_label.clone(),
+        visibility: BackendVisibility::Shared,
+        share_scope_kind: BackendShareScopeKind::Project,
+        share_scope_id: share_scope_id.clone(),
+        capability_slot: capability_slot.clone(),
+        backend_id,
+        name,
+        endpoint: input.relay_ws_url,
+        auth_token: generate_backend_auth_token(),
+        device,
+        rotate_token: false,
+    };
+
+    let backend = repos
+        .backend_repo
+        .ensure_local_backend(&claim)
+        .await
+        .map_err(ApplicationError::from)?;
+    let auth_token = normalize_optional_string(backend.auth_token.clone()).ok_or_else(|| {
+        ApplicationError::Internal(format!(
+            "本机 backend `{}` 缺少 server 颁发的 relay token",
+            backend.id
+        ))
+    })?;
+    Ok(EnsureLocalRuntimeResult {
+        backend,
+        auth_token,
+        profile_id: "runner-registration".to_string(),
         machine_id,
         machine_label,
         share_scope_id,

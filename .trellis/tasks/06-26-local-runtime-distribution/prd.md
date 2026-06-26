@@ -7,7 +7,7 @@
 ## Requirements
 
 - 统一术语与边界：
-  - `Desktop API` 仅属于桌面完整安装包，用于桌面内置前端访问 Dashboard API，默认绑定 `127.0.0.1`。
+  - `Desktop API` 仅属于桌面完整安装包，用于桌面内置前端访问 Dashboard API，默认绑定 `127.0.0.1:17301`。
   - `Local Runner` 指无 UI 本机执行器，不监听业务 API，不开放入站业务端口，第一版只通过 WebSocket 出站连接云端。
 - Windows 桌面完整安装包包含 Tauri 桌面壳、内置前端、Desktop API、Local Runtime 生命周期管理、托盘、后台运行、自启动设置。
 - 独立 Local Runner 面向 Linux 与 Windows 服务器托管场景，支持配置文件、环境变量、CLI 参数、日志路径、状态输出与系统服务安装/卸载/启动/停止。

@@ -17,7 +17,8 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 
 ### API 与 Dashboard
 
-- Desktop API 默认 `127.0.0.1:3001`，`service_name = "agentdash_desktop_api"`
+- Desktop API 默认 `127.0.0.1:17301`，`service_name = "agentdash_desktop_api"`。Desktop API 属于 Tauri 内置 Dashboard API 宿主，和普通 cloud/backend dev server 的 `3001` 分开，原因是桌面安装包应避开用户或开发者本机常见 Web 调试端口，同时保持内置前端访问目标稳定。
+- release bundle 的 builtin Desktop API origin 固定为 `http://127.0.0.1:17301`；release external/sidecar 诊断入口如果存在，也必须使用同一个 loopback origin，原因是 Desktop API 只服务桌面内置前端，不以 localhost 作为认证边界向 LAN 暴露。
 - `desktop_api_snapshot` 的 `state` 只能是 `starting | running | error | stopped`
 - DashboardHost 必须先确认 `/api/health` ready 后才渲染 Web Dashboard
 - `packages/app-web` 只导出 `App`，`app-tauri` 复用该入口，不能复制组件树
@@ -32,6 +33,137 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - `machine_label` / hostname 只用于展示；profile load/save/start 都由 `agentdash-local` 持久化身份覆盖 canonical machine id
 - profile 保存当前 server、profile、workspace roots、backend claim 结果和启动偏好；机器身份事实由 `agentdash-local machine-identity` 独立持有
 - `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议，通过 `agentdash-local machine-identity` 读取身份
+
+## Scenario: Runner Registration Token Enrollment
+
+### 1. Scope / Trigger
+
+- Trigger: 独立 Local Runner 在无 UI 服务器场景中不能保存用户 access token，需要用云端生成的 registration token 领取正式 backend relay 凭据。
+- Scope: Project-scoped runner token 管理 API、public runner claim API、`runner_registration_tokens` PostgreSQL 表、`BackendConfig` project-scope ensure、`ProjectBackendAccess` 授权、generated backend contracts。
+
+### 2. Signatures
+
+Management API under secured project routes:
+
+```text
+POST /api/projects/{project_id}/runner-registration-tokens
+GET  /api/projects/{project_id}/runner-registration-tokens
+POST /api/projects/{project_id}/runner-registration-tokens/{token_id}/revoke
+POST /api/projects/{project_id}/runner-registration-tokens/{token_id}/rotate
+```
+
+Public runner claim route:
+
+```text
+POST /api/local-runtime/runner/claim
+Authorization: Bearer adrt_<token_id>_<secret>   # optional when body carries registration_token
+```
+
+Claim request / response contract:
+
+```rust
+pub struct RunnerRegistrationClaimRequest {
+    pub registration_token: Option<String>,
+    pub machine_id: String,
+    pub machine_label: Option<String>,
+    pub runner_name: Option<String>,
+    pub client_version: Option<String>,
+    pub device: serde_json::Value,
+    pub executor_enabled: bool,
+    pub capability_slot: Option<String>,
+}
+
+pub struct RunnerRegistrationClaimResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub relay_ws_url: String,
+    pub auth_token: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
+    pub registration_source: String,
+    pub claimed_at: chrono::DateTime<chrono::Utc>,
+}
+```
+
+Database table:
+
+```sql
+runner_registration_tokens(
+  id text primary key,
+  project_id text not null references projects(id) on delete cascade,
+  name text not null,
+  token_secret_hash text not null,
+  token_prefix text not null,
+  created_by_user_id text not null,
+  expires_at timestamptz not null,
+  revoked_at timestamptz null,
+  last_used_at timestamptz null,
+  last_claimed_backend_id text null,
+  default_capability_slot text not null default 'default',
+  machine_policy jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+)
+```
+
+### 3. Contracts
+
+- Registration token plaintext format is `adrt_<token_id>_<secret>`. Only create and rotate responses return the plaintext token once.
+- Metadata/list/revoke responses return `token_prefix`, status, scope and usage metadata; they never return plaintext token, `token_secret_hash`, backend relay `auth_token`, or Authorization header contents.
+- Claim route is public in the HTTP router and does not extract `CurrentUser`. It authenticates only with the runner registration token from body `registration_token` or `Authorization: Bearer`.
+- Claim creates or reuses a project-scoped local backend using `machine_id + Project + project_id + capability_slot`. Returned `backend_id` and relay `auth_token` come from the server backend ensure path.
+- Claim sets backend facts as `share_scope_kind=project`, `share_scope_id=project_id`, `visibility=shared`, `owner_user_id=token.created_by_user_id`, and `registration_source=runner_registration_token`.
+- Claim ensures active `ProjectBackendAccess(project_id, backend_id)` so Project runtime dispatch and workspace routing can see the runner through the same access projection as manually granted backends.
+- `/ws/backend` continues to authenticate only with backend relay `auth_token`; a registration token is not a relay token.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing registration token | 401 |
+| Malformed token, unknown token id, or secret hash mismatch | 401 with the same invalid-token class |
+| Expired token | 401 with expired-token class |
+| Revoked token | 403 with revoked-token class |
+| Invalid machine/device payload | 400 |
+| Project scope unavailable | 403 without exposing unrelated project facts |
+| ProjectBackendAccess concurrent create conflict | Re-check active access, otherwise 409 |
+| Database/internal failure | 500 with fixed internal message |
+| Registration token used against `/ws/backend` | Reject as invalid backend auth token |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Linux runner starts with `adrt_...`, claims once, stores `backend_id + relay_ws_url + auth_token`, then connects to `/ws/backend` with the returned backend auth token.
+- Good: Same machine restarts and repeats claim with the same project/capability slot; backend id and relay token are reused unless a later explicit rotate path changes backend auth.
+- Base: Token metadata list shows `token_prefix`, `last_used_at` and `last_claimed_backend_id` for operator diagnostics.
+- Bad: Runner stores a user access token or sends registration token to `/ws/backend`; this mixes enrollment with runtime relay auth and breaks revocation/audit boundaries.
+
+### 6. Tests Required
+
+- Domain tests assert token plaintext parse/build, secret hash verify, status ordering `revoked > expired > active`, and no plaintext storage in token entity persistence.
+- Repository tests assert create/list/get/revoke/record_usage roundtrip and `token_secret_hash` is persisted while plaintext is not.
+- Application tests assert claim success, repeated claim idempotency, expired/revoked/invalid token failures, project-scoped backend fields, and active `ProjectBackendAccess` side effect.
+- API tests assert management routes require project edit permission, public claim route does not require `CurrentUser`, and claim error responses map to stable HTTP status classes.
+- Relay regression tests assert registration token cannot authenticate `/ws/backend`, returned backend `auth_token` can, and backend id mismatch is rejected.
+- Contract check asserts runner token DTOs remain generated in `backend-contracts.ts`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+runner -> /ws/backend?token=adrt_<token_id>_<secret>
+```
+
+#### Correct
+
+```text
+runner -> POST /api/local-runtime/runner/claim with adrt_<token_id>_<secret>
+server -> { backend_id, relay_ws_url, auth_token }
+runner -> /ws/backend?token=<backend auth_token>
+```
 
 ### Profile
 

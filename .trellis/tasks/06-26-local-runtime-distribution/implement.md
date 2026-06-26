@@ -85,7 +85,7 @@ python ./.trellis/scripts/task.py start 06-26-runner-enrollment-token
 - 拦截关闭窗口，默认隐藏到托盘。
 - 实现显式退出路径。
 - 实现开机启动、启动到托盘、启动后自动连接 runtime 设置。
-- 验证 Desktop API 默认绑定 `127.0.0.1`。
+- 验证 Desktop API 默认绑定 `127.0.0.1:17301`，并确认普通 cloud/backend dev server 默认 `3001` 未被改动。
 - 验证 NSIS 安装/卸载创建和清理系统项。
 
 完成条件：
@@ -150,6 +150,6 @@ python ./.trellis/scripts/task.py start 06-26-runner-enrollment-token
 
 - Runner registration token 的权限范围必须与 backend/project 可见性一致，否则会造成服务器 runner 过度授权。
 - Windows Service 与桌面自启动是不同生命周期，不能复用同一个“开机启动”语义。
-- Desktop API 默认绑定 `127.0.0.1`；独立 runner 不应因为诊断需求引入业务 HTTP API。
+- Desktop API 默认绑定 `127.0.0.1:17301`；独立 runner 不应因为诊断需求引入业务 HTTP API。Desktop API 端口与普通 cloud/backend dev server 分开，原因是桌面安装包的内置 API 不应抢占常见本机 Web 调试端口。
 - 日志、错误消息和配置导出必须脱敏 token 类字段。
 - 父任务不能替代子任务的具体 planning；父任务只记录跨任务依赖和 handoff。

@@ -18,10 +18,11 @@ Windows 桌面完整安装包包含 Tauri 壳、内置前端、Desktop API 与 L
 ## Desktop API Contract
 
 - release bundle 默认使用 builtin Desktop API。
-- release bundle 中 Desktop API 必须绑定 loopback：`127.0.0.1:3001`。
+- release bundle 中 builtin Desktop API 必须绑定 loopback：`127.0.0.1:17301`。
+- Desktop API 使用 `17301`，普通 cloud/backend dev server 继续使用 `3001`。两者分开是因为 Desktop API 只服务 Tauri 内置 Dashboard，安装包不应占用用户和开发者最常见的本机 Web 调试端口；cloud/backend dev server 的默认端口仍服务普通 Web 开发入口。
 - `DesktopApiSnapshot.state` 保持 `starting | running | error | stopped`。
 - DashboardHost 继续等待 `desktop_api_snapshot` running 和 `/api/health` ready 后渲染 Web Dashboard。
-- `external` / `sidecar` mode 只作为开发/诊断入口；如果 release 支持 sidecar，则必须校验 origin host 为 loopback。
+- `external` / `sidecar` mode 只作为开发/诊断入口；如果 release 支持 external/sidecar，则必须校验 origin 为 `http://127.0.0.1:17301`。sidecar 进程绑定 host 也只能是 `127.0.0.1`。
 
 ## Window And Tray Lifecycle
 

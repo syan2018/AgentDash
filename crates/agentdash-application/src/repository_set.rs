@@ -17,7 +17,7 @@ use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
-    ProjectBackendAccessRepository, RuntimeHealthRepository,
+    ProjectBackendAccessRepository, RunnerRegistrationTokenRepository, RuntimeHealthRepository,
 };
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
@@ -64,6 +64,7 @@ pub struct RepositorySet {
     pub backend_execution_lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub backend_workspace_inventory_repo: Arc<dyn BackendWorkspaceInventoryRepository>,
+    pub runner_registration_token_repo: Arc<dyn RunnerRegistrationTokenRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,

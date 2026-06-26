@@ -37,6 +37,22 @@ export type ProjectBackendAccessStatus = "active" | "paused" | "revoked";
 
 export type RegisterBackendWorkspaceInventoryRequest = { root_ref: string, };
 
+export type RunnerRegistrationClaimRequest = { registration_token?: string, machine_id: string, machine_label?: string, runner_name?: string, client_version?: string, device: { [key in string]?: JsonValue }, executor_enabled: boolean, capability_slot?: string, };
+
+export type RunnerRegistrationClaimResponse = { backend_id: string, name: string, relay_ws_url: string, auth_token: string, machine_id: string, machine_label: string, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, registration_source: string, claimed_at: string, };
+
+export type RunnerRegistrationTokenCreateRequest = { name: string, expires_at?: string, default_capability_slot?: string, machine_policy: { [key in string]?: JsonValue }, };
+
+export type RunnerRegistrationTokenCreateResponse = { token: RunnerRegistrationTokenMetadataResponse, registration_token: string, };
+
+export type RunnerRegistrationTokenMetadataResponse = { id: string, project_id: string, name: string, token_prefix: string, status: RunnerRegistrationTokenStatus, created_by_user_id: string, expires_at: string, revoked_at: string | null, last_used_at: string | null, last_claimed_backend_id: string | null, default_capability_slot: string, machine_policy: { [key in string]?: JsonValue }, created_at: string, updated_at: string, };
+
+export type RunnerRegistrationTokenRevokeResponse = { token: RunnerRegistrationTokenMetadataResponse, };
+
+export type RunnerRegistrationTokenRotateResponse = { token: RunnerRegistrationTokenMetadataResponse, registration_token: string, };
+
+export type RunnerRegistrationTokenStatus = "active" | "expired" | "revoked";
+
 export type RuntimeHealthStatus = "online" | "offline" | "starting" | "degraded" | "stopping" | "error";
 
 export type UpdateProjectBackendAccessRequest = { status?: ProjectBackendAccessStatus, access_mode?: ProjectBackendAccessMode, priority?: number, root_policy?: { [key in string]?: JsonValue }, capability_policy?: { [key in string]?: JsonValue }, note?: string, };

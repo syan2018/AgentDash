@@ -7,7 +7,7 @@
 ## Requirements
 
 - 完整安装包继续基于 Tauri/NSIS，包含 Tauri 桌面壳、内置前端、Desktop API 与本机 runtime 管理能力。
-- `Desktop API` 默认绑定 `127.0.0.1`，仅服务桌面内置前端。
+- `Desktop API` 默认绑定 `127.0.0.1:17301`，仅服务桌面内置前端；普通 cloud/backend dev server 继续使用自己的 `3001` 默认端口。
 - 桌面端提供系统托盘，菜单至少包含打开 AgentDash、启动/停止本机 runtime、查看状态、退出。
 - 关闭窗口默认隐藏到托盘；显式退出才终止桌面进程。
 - 设置项包含开机启动 AgentDash、启动后进入托盘、启动后自动连接本机 runtime。
@@ -20,7 +20,7 @@
 - [ ] 关闭窗口后进程仍在后台运行，托盘可重新打开窗口。
 - [ ] 显式退出后桌面进程退出，并按设计处理运行中的本机 runtime。
 - [ ] 开机自启动后可按设置进入托盘并自动连接本机 runtime。
-- [ ] Desktop API 只绑定 `127.0.0.1`。
+- [ ] Desktop API 只绑定 `127.0.0.1:17301`。
 - [ ] `pnpm run desktop:check` 与 `pnpm run desktop:bundle` 通过。
 
 ## Notes

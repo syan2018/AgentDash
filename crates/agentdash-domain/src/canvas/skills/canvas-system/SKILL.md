@@ -9,7 +9,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 
 ## Core Flow
 
-1. Use `workspace_module_operate(operation="canvas.create", input={...})` to create a new editable Canvas, or `workspace_module_operate(operation="canvas.copy", input={ source_canvas_mount_id })` before editing a read-only shared Canvas source.
+1. Use `workspace_module_operate(operation="canvas.create", input={...})` to create a new editable Canvas, or `workspace_module_operate(operation="canvas.copy", input={ source_mount_id })` before editing a read-only shared Canvas source.
 2. Use `workspace_module_list` and `workspace_module_describe(module_id="canvas:{canvas_mount_id}")` to inspect existing Canvas modules, UI entries, and available operations.
 3. Confirm that the module exposes source mutation operations before editing. Project shared Canvas modules can be previewed but may be source read-only.
 4. Edit canvas source through VFS tools, usually `fs_apply_patch` against `{canvas_mount_id}://...`, only when the mount exposes write capability.

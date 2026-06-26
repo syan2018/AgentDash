@@ -490,7 +490,7 @@ pub struct AttachExistingCanvasModuleParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CopyCanvasToPersonalModuleParams {
     /// Existing source Canvas VFS mount identifier (`cvs-...`) to copy.
-    pub source_canvas_mount_id: Option<String>,
+    pub source_mount_id: Option<String>,
     /// Optional target Canvas VFS mount identifier. If omitted, the copy uses `{source}-copy-{xxxx}`.
     pub canvas_mount_id: Option<String>,
     /// Optional title override for the copied personal Canvas.
@@ -802,11 +802,11 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
     delivery_runtime_session_id: Option<&str>,
     params: CopyCanvasToPersonalModuleParams,
 ) -> Result<(Canvas, WorkspaceModuleCanvasToolResult), AgentToolError> {
-    let source_canvas_mount_id = required_canvas_mount_id(
-        params.source_canvas_mount_id.as_deref(),
-        "canvas.copy input.source_canvas_mount_id",
+    let source_mount_id = required_canvas_mount_id(
+        params.source_mount_id.as_deref(),
+        "canvas.copy input.source_mount_id",
     )?;
-    let source = load_canvas_by_project_mount_id(repos, project_id, &source_canvas_mount_id)
+    let source = load_canvas_by_project_mount_id(repos, project_id, &source_mount_id)
         .await
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
     let copy = copy_canvas_to_personal(
@@ -2574,7 +2574,7 @@ mod tests {
                 serde_json::json!({
                     "operation": "canvas.copy",
                     "input": {
-                        "source_canvas_mount_id": "cvs-shared-dashboard"
+                        "source_mount_id": "cvs-shared-dashboard"
                     }
                 }),
                 CancellationToken::new(),

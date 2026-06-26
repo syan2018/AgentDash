@@ -25,7 +25,7 @@ Use workspace module tools as the Agent-facing entry for project capabilities th
 
 - Create a Canvas with `workspace_module_operate(operation="canvas.create", input={ canvas_mount_id?, title, description? })`.
 - Attach an existing Canvas with `workspace_module_operate(operation="canvas.attach", input={ canvas_mount_id })`.
-- Copy a read-only shared Canvas before editing with `workspace_module_operate(operation="canvas.copy", input={ source_canvas_mount_id, canvas_mount_id?, title?, description? })`.
+- Copy a read-only shared Canvas before editing with `workspace_module_operate(operation="canvas.copy", input={ source_mount_id, canvas_mount_id?, title?, description? })`.
 - The created or attached module is `canvas:{canvas_mount_id}`.
 - The current session can edit Canvas files after create or present through `{canvas_mount_id}://...`.
 - The Canvas presentation URI is `canvas://{canvas_mount_id}`; `{canvas_mount_id}://...` is the authoring VFS URI.

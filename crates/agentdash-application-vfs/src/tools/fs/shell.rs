@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
@@ -202,7 +202,7 @@ impl AgentTool for ShellExecTool {
         };
         if !rewrite_output.rewrites.is_empty() {
             diag!(Info, Subsystem::Vfs,
-        
+
                 exec_mount_id = %exec_mount.id,
                 rewrite_count = rewrite_output.rewrites.len(),
                 "shell_exec command 中的 VFS URI 已物化并重写"

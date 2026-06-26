@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -54,21 +54,27 @@ pub async fn run_until_shutdown(
 
     loop {
         if *shutdown_rx.borrow() {
-            diag!(Info, Subsystem::Relay,
-        "收到 shutdown 信号，本机 relay 主循环停止");
+            diag!(
+                Info,
+                Subsystem::Relay,
+                "收到 shutdown 信号，本机 relay 主循环停止"
+            );
             return Ok(());
         }
 
         let url = format!("{}?token={}", config.cloud_url, config.token);
 
-        diag!(Info, Subsystem::Relay,
-        retry = retry_count, "连接云端 WebSocket...");
+        diag!(
+            Info,
+            Subsystem::Relay,
+            retry = retry_count,
+            "连接云端 WebSocket..."
+        );
 
         match connect_async(&url).await {
             Ok((ws_stream, _response)) => {
                 retry_count = 0;
-                diag!(Info, Subsystem::Relay,
-        "WebSocket 连接成功");
+                diag!(Info, Subsystem::Relay, "WebSocket 连接成功");
 
                 if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
                     diag!(Error, Subsystem::Relay,
@@ -82,8 +88,12 @@ pub async fn run_until_shutdown(
         }
 
         let delay = reconnect_delay(retry_count);
-        diag!(Info, Subsystem::Relay,
-        delay_secs = delay.as_secs(), "等待重连...");
+        diag!(
+            Info,
+            Subsystem::Relay,
+            delay_secs = delay.as_secs(),
+            "等待重连..."
+        );
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
             changed = shutdown_rx.changed() => {
@@ -136,8 +146,7 @@ async fn run_session(
     };
 
     send_message(&mut write, &register_msg).await?;
-    diag!(Info, Subsystem::Relay,
-        "已发送注册消息");
+    diag!(Info, Subsystem::Relay, "已发送注册消息");
 
     // 等待 register_ack
     let ack_timeout = loop {
@@ -158,7 +167,7 @@ async fn run_session(
                 match &relay_msg {
                     RelayMessage::RegisterAck { payload, .. } => {
                         diag!(Info, Subsystem::Relay,
-        
+
                             backend_id = %payload.backend_id,
                             status = %payload.status,
                             "注册成功"
@@ -168,8 +177,12 @@ async fn run_session(
                         anyhow::bail!("注册失败: {}", error);
                     }
                     other => {
-                        diag!(Warn, Subsystem::Relay,
-        "期望 register_ack，收到: {:?}", other.id());
+                        diag!(
+                            Warn,
+                            Subsystem::Relay,
+                            "期望 register_ack，收到: {:?}",
+                            other.id()
+                        );
                     }
                 }
             }
@@ -207,7 +220,7 @@ async fn run_session(
                                     for resp in responses {
                                         if outbound_tx.send(resp).is_err() {
                                             diag!(Debug, Subsystem::Relay,
-        
+
                                                 msg_id = %msg_id,
                                                 "relay response 写出通道已关闭"
                                             );
@@ -325,8 +338,7 @@ fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
             }
         },
         Message::Close(_) => {
-            diag!(Info, Subsystem::Relay,
-        "收到关闭帧");
+            diag!(Info, Subsystem::Relay, "收到关闭帧");
             None
         }
         _ => None,

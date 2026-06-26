@@ -1,6 +1,6 @@
 //! Workspace 探测 + 目录浏览命令处理
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_relay::*;
 
 #[derive(Clone, Copy)]

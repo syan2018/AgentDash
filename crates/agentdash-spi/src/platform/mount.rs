@@ -3,7 +3,7 @@
 //! 定义 `MountProvider` trait 及其关联类型，
 //! 供企业插件直接实现外部服务的文件系统级操作。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -713,7 +713,7 @@ pub trait MountProvider: Send + Sync {
                 Ok(r) => r,
                 Err(MountError::NotFound(_)) | Err(MountError::NotSupported(_)) => {
                     diag!(Warn, Subsystem::Infra,
-        
+
                         provider = self.provider_id(),
                         path = %entry.path,
                         "grep_text: skipping unreadable entry"

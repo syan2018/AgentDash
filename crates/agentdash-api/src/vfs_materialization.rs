@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application_ports::vfs_materialization::{
@@ -245,7 +245,7 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
                     .map_err(ConnectorError::Runtime)?;
                 if !output.rewrites.is_empty() {
                     diag!(Info, Subsystem::Vfs,
-        
+
                         server = %server_name,
                         tool = %tool_name,
                         rewrite_count = output.rewrites.len(),

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -818,7 +818,7 @@ fn admin_provider_dto(
             Ok(global) => global,
             Err(error) => {
                 diag!(Warn, Subsystem::Api,
-        
+
                     provider = %provider.slug,
                     error = %error,
                     "LLM Provider 全局密钥无法解密，管理员需要重新保存"

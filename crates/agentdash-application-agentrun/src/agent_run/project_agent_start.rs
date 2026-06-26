@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -245,7 +245,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             input_blocks = command.input.len(),
@@ -275,7 +275,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 ))
             })?;
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             project_agent_name = %project_agent.name,
@@ -300,7 +300,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             effective_executor_config_to_contract(effective_executor_config);
         command.executor_config = Some(model_resolution.config.clone());
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             provider_id = ?model_resolution.config.provider_id,
@@ -336,7 +336,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         )
         .await?;
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             receipt_id = %claim.record.id,
@@ -369,7 +369,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         };
 
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             "ProjectAgent run start launching lifecycle agent"
@@ -387,7 +387,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             }
         };
         diag!(Info, Subsystem::AgentRun,
-        
+
             project_id = %command.project_id,
             project_agent_id = %command.project_agent_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
@@ -406,7 +406,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .to_string();
 
         diag!(Info, Subsystem::AgentRun,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
             agent_id = %dispatch_result.runtime_refs.agent_ref,
@@ -427,7 +427,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 .await
             {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     runtime_session_id = %runtime_session_id,
                     run_id = %dispatch_result.runtime_refs.run_ref,
                     error = %cleanup_error,
@@ -440,7 +440,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         }
 
         diag!(Info, Subsystem::AgentRun,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
             agent_id = %dispatch_result.runtime_refs.agent_ref,
@@ -471,7 +471,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             }
         };
         diag!(Info, Subsystem::AgentRun,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
             agent_id = %dispatch_result.runtime_refs.agent_ref,
@@ -503,7 +503,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             }
         };
         diag!(Info, Subsystem::AgentRun,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
             agent_id = %dispatch_result.runtime_refs.agent_ref,
@@ -524,7 +524,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             )
             .await?;
         diag!(Info, Subsystem::AgentRun,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %dispatch_result.runtime_refs.run_ref,
             agent_id = %dispatch_result.runtime_refs.agent_ref,
@@ -604,7 +604,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .await
         {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 error = %cleanup_error,

@@ -5,7 +5,7 @@
 //! 2. test-only 的 API error encode/decode 辅助（供集成测试使用）
 
 #[cfg(test)]
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -85,8 +85,12 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
         "unprocessable_entity" => Some(ApiError::UnprocessableEntity(detail.to_string())),
         "service_unavailable" => Some(ApiError::ServiceUnavailable(detail.to_string())),
         "internal" => {
-            diag!(Error, Subsystem::Api,
-        detail, "frame launch envelope internal error");
+            diag!(
+                Error,
+                Subsystem::Api,
+                detail,
+                "frame launch envelope internal error"
+            );
             Some(ApiError::Internal(String::from("内部 session 构建错误")))
         }
         _ => None,

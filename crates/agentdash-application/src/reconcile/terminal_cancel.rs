@@ -8,7 +8,7 @@
 //!
 //! 这是"安全网"行为：确保业务状态与 session 生命周期一致。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -74,7 +74,7 @@ impl TerminalCancelCoordinator {
             .await
         {
             diag!(Warn, Subsystem::Reconcile,
-        
+
                 story_id = %story_id,
                 session_id = %command.runtime_session_id,
                 frame_ref = %command.runtime_refs.frame_ref,
@@ -85,7 +85,7 @@ impl TerminalCancelCoordinator {
             );
         } else {
             diag!(Info, Subsystem::Reconcile,
-        
+
                 story_id = %story_id,
                 new_status = ?new_status,
                 session_id = %command.runtime_session_id,
@@ -114,7 +114,7 @@ impl TerminalCancelCoordinator {
             Ok(command) => command,
             Err(err) => {
                 diag!(Debug, Subsystem::Reconcile,
-        
+
                     subject_kind,
                     subject_id = %subject_id,
                     error = %err,

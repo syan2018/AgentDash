@@ -4,8 +4,8 @@
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
 //! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
 
-use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
+use agentdash_diagnostics::{Subsystem, diag};
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -152,7 +152,7 @@ impl SessionTurnProcessor {
                 // terminal 持久化失败仍然释放 active turn，避免 session 永久卡住。
                 deps.turn_supervisor.clear_active_turn(&session_id).await;
                 diag!(Error, Subsystem::AgentRun,
-        
+
                     session_id = %session_id,
                     turn_id = %turn_id,
                     error = %error,
@@ -179,7 +179,7 @@ impl SessionTurnProcessor {
                 Ok(event) => Some(event),
                 Err(error) => {
                     diag!(Error, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         turn_id = %turn_id,
                         terminal_event_seq,

@@ -1,6 +1,6 @@
 //! McpRelayProvider 实现 — 基于 BackendRegistry 的 MCP relay 工具发现与调用
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 
 use agentdash_application::mcp_relay_adapter;
@@ -32,7 +32,7 @@ impl McpRelayProvider for BackendRegistry {
                 Ok(id) => id,
                 Err(error) => {
                     diag!(Warn, Subsystem::Relay,
-        
+
                         server = %server_name,
                         error = %error,
                         "relay MCP list_tools 缺少可用 runtime backend anchor，跳过 server"
@@ -71,7 +71,7 @@ impl McpRelayProvider for BackendRegistry {
                     error: Some(err), ..
                 }) => {
                     diag!(Warn, Subsystem::Relay,
-        
+
                         server = %server_name,
                         error = %err.message,
                         "relay MCP list_tools 失败"
@@ -79,14 +79,14 @@ impl McpRelayProvider for BackendRegistry {
                 }
                 Ok(_) => {
                     diag!(Warn, Subsystem::Relay,
-        
+
                         server = %server_name,
                         "relay MCP list_tools 返回意外消息类型"
                     );
                 }
                 Err(e) => {
                     diag!(Warn, Subsystem::Relay,
-        
+
                         server = %server_name,
                         error = %e,
                         "relay MCP list_tools 通信失败"

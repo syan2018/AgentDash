@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
@@ -99,7 +99,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         command: &AgentRunCommandPreconditionModel,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
         diag!(Debug, Subsystem::AgentRun,
-        
+
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %context.runtime_session_id,
@@ -116,7 +116,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             .inspect_session_execution_state(runtime_session_id)
             .await?;
         diag!(Debug, Subsystem::AgentRun,
-        
+
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %runtime_session_id,
@@ -143,7 +143,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             &availability,
         );
         diag!(Debug, Subsystem::AgentRun,
-        
+
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %context.runtime_session_id,

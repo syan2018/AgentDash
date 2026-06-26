@@ -19,15 +19,15 @@ pub mod vfs_materialization;
 mod vfs_surface_runtime;
 pub mod workspace_resolution;
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use anyhow::Result;
 use axum::Router;
 use tokio::net::TcpListener;
 
 use agentdash_integration_api::AgentDashIntegration;
 
-use app_state::AppState;
 pub use agentdash_diagnostics::DiagnosticBuffer;
+use app_state::AppState;
 pub use integrations::builtin_integrations;
 
 const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 20;
@@ -112,8 +112,12 @@ pub async fn run_server_with_options(
 ) -> Result<()> {
     let server = build_server(integrations, options, diagnostics).await?;
     let ready = server.ready().clone();
-    diag!(Info, Subsystem::Api,
-        "AgentDash API 服务启动: {}", ready.origin);
+    diag!(
+        Info,
+        Subsystem::Api,
+        "AgentDash API 服务启动: {}",
+        ready.origin
+    );
     server.serve().await
 }
 

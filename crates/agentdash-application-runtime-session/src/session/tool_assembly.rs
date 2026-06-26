@@ -1,6 +1,6 @@
-use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::mcp_discovery::{McpToolDiscovery, McpToolDiscoveryRequest};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::RuntimeToolSchemaEntry;
@@ -31,7 +31,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 all_tools.extend(tools);
             }
             Err(e) => diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %session_id,
                 "runtime tool 构建失败: {e}"
             ),
@@ -44,7 +44,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
             .require_runtime_backend_anchor("tool_assembly", Some(session_id))
         {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %session_id,
                 error = %error,
                 "MCP 工具发现跳过：缺少 runtime backend anchor"
@@ -76,7 +76,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 all_tools.extend(entries.into_iter().map(|entry| entry.tool));
             }
             Err(e) => diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %session_id,
                 "MCP 工具发现失败: {e}"
             ),

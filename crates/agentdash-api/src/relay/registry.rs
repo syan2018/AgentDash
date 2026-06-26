@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -315,7 +315,7 @@ impl BackendRegistry {
     ) -> Result<String, RelayMcpBackendResolutionError> {
         let Some(context) = context else {
             diag!(Warn, Subsystem::Relay,
-        
+
                 server = %server_name,
                 "relay MCP runtime context 缺失，跳过 backend fallback"
             );
@@ -328,7 +328,7 @@ impl BackendRegistry {
             .require_backend_anchor("relay_mcp")
             .inspect_err(|error| {
                 diag!(Warn, Subsystem::Relay,
-        
+
                     session_id = %context.session_id,
                     turn_id = ?context.turn_id,
                     server = %server_name,
@@ -343,7 +343,7 @@ impl BackendRegistry {
         }
 
         diag!(Warn, Subsystem::Relay,
-        
+
             session_id = %context.session_id,
             turn_id = ?context.turn_id,
             backend_id = %backend_id,

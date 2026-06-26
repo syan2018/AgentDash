@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::PathBuf;
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
@@ -66,7 +66,7 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
     let config_path = local_backend_config_path(root);
     if !config_path.exists() {
         diag!(Debug, Subsystem::Infra,
-        
+
             path = %config_path.display(),
             "Local backend 配置文件不存在，使用默认配置"
         );
@@ -77,7 +77,7 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
         Ok(content) => match serde_json::from_str::<LocalBackendConfigFile>(&content) {
             Ok(config) => {
                 diag!(Info, Subsystem::Infra,
-        
+
                     path = %config_path.display(),
                     mcp_server_count = config.mcp_servers.len(),
                     mcp_protect_mode = config.mcp_protect_mode,
@@ -89,7 +89,7 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
             }
             Err(error) => {
                 diag!(Warn, Subsystem::Infra,
-        
+
                     error = %error,
                     path = %config_path.display(),
                     "Local backend 配置解析失败，使用默认配置"
@@ -99,7 +99,7 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
         },
         Err(error) => {
             diag!(Warn, Subsystem::Infra,
-        
+
                 error = %error,
                 path = %config_path.display(),
                 "读取 local backend 配置失败，使用默认配置"
@@ -120,7 +120,7 @@ pub fn save_local_backend_config_for_root(
     let content = serde_json::to_string_pretty(config)?;
     std::fs::write(&config_path, content)?;
     diag!(Info, Subsystem::Infra,
-        
+
         path = %config_path.display(),
         mcp_server_count = config.mcp_servers.len(),
         mcp_protect_mode = config.mcp_protect_mode,

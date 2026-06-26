@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;

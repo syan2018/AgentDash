@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -1048,7 +1048,7 @@ fn log_vfs_operation_result(
     success: bool,
 ) {
     diag!(Debug, Subsystem::Vfs,
-        
+
         provider = %mount.provider,
         mount_id = %mount.id,
         operation,

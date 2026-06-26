@@ -4,7 +4,7 @@
 //! 在本机文件系统和 Shell 环境中执行。
 //! 所有执行类操作都受 session mount root 边界约束。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
 
 use agentdash_application_vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
@@ -189,7 +189,7 @@ impl ToolExecutor {
         let source = self.resolve_existing_path(from_path, workspace_root)?;
         let destination = self.resolve_path_for_write(to_path, workspace_root)?;
         diag!(Debug, Subsystem::AgentRun,
-        
+
             from = %source.display(),
             to = %destination.display(),
             "file_rename"
@@ -240,7 +240,7 @@ impl ToolExecutor {
         timeout_ms: Option<u64>,
     ) -> Result<ShellResult, ToolError> {
         diag!(Debug, Subsystem::AgentRun,
-        
+
             command = %command,
             workspace_root = workspace_root,
             requested_cwd = ?cwd,
@@ -270,7 +270,7 @@ impl ToolExecutor {
         }
 
         diag!(Debug, Subsystem::AgentRun,
-        
+
             path = %base.display(),
             pattern = ?pattern,
             recursive = recursive,

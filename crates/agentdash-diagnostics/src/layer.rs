@@ -8,11 +8,11 @@ use serde_json::{Map, Value};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Subscriber};
+use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Layer;
 
-use crate::record::{level_rank, level_str, DiagnosticRecord};
+use crate::record::{DiagnosticRecord, level_rank, level_str};
 
 /// 默认环形缓冲容量。
 pub const DEFAULT_CAPACITY: usize = 4096;
@@ -62,7 +62,10 @@ impl DiagnosticBuffer {
 
     /// 当前缓冲内记录条数。
     pub fn len(&self) -> usize {
-        self.inner.read().expect("diagnostics buffer poisoned").len()
+        self.inner
+            .read()
+            .expect("diagnostics buffer poisoned")
+            .len()
     }
 
     /// 缓冲是否为空。
@@ -204,11 +207,13 @@ impl Visit for FieldVisitor {
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields.insert(field.name().to_string(), Value::from(value));
+        self.fields
+            .insert(field.name().to_string(), Value::from(value));
     }
 
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.fields.insert(field.name().to_string(), Value::from(value));
+        self.fields
+            .insert(field.name().to_string(), Value::from(value));
     }
 }
 
@@ -249,9 +254,7 @@ where
         event.record(&mut visitor);
 
         // 从 event 当前所在的 span 栈中补齐未在 event 上显式给出的关联列。
-        if visitor.session_id.is_none()
-            || visitor.run_id.is_none()
-            || visitor.backend_id.is_none()
+        if visitor.session_id.is_none() || visitor.run_id.is_none() || visitor.backend_id.is_none()
         {
             if let Some(scope) = ctx.event_scope(event) {
                 for span in scope.from_root() {

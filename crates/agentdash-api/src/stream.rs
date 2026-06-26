@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,7 +51,7 @@ pub async fn event_stream_ndjson(
         .await?;
 
     diag!(Info, Subsystem::Api,
-        
+
         project_id = %project.id,
         resume_from = ?resume_from,
         has_resume_cursor = resume_from.is_some(),
@@ -95,7 +95,7 @@ pub async fn event_stream_ndjson(
             yield Ok::<Bytes, std::convert::Infallible>(line);
         }
         diag!(Info, Subsystem::Api,
-        
+
             project_id = %project.id,
             replayed_count = replayed,
             cursor = cursor,

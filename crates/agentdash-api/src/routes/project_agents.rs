@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -156,7 +156,7 @@ pub async fn create_project_agent_run(
     Json(req): Json<CreateProjectAgentRunRequest>,
 ) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
     diag!(Info, Subsystem::Api,
-        
+
         project_id = %project_id,
         agent_key = %agent_key,
         input_blocks = req.input.len(),
@@ -183,7 +183,7 @@ pub async fn create_project_agent_run(
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
     diag!(Info, Subsystem::Api,
-        
+
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         "ProjectAgent run start request parsed"
@@ -195,7 +195,7 @@ pub async fn create_project_agent_run(
     let session_core = agent_run_session_core(state.services.session_core.clone());
     let service = ProjectAgentRunStartService::new(repos, &session_core);
     diag!(Info, Subsystem::Api,
-        
+
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         "ProjectAgent run start service dispatching"
@@ -216,7 +216,7 @@ pub async fn create_project_agent_run(
         .await
         .map_err(ApiError::from)?;
     diag!(Info, Subsystem::Api,
-        
+
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         run_id = %dispatch.run_id,
@@ -235,7 +235,7 @@ pub async fn create_project_agent_run(
         && dispatch.initial_message.mailbox_message.is_some()
     {
         diag!(Info, Subsystem::Api,
-        
+
             run_id = %dispatch.run_id,
             agent_id = %dispatch.agent_id,
             runtime_session_id = %dispatch.runtime_session_id,
@@ -251,7 +251,7 @@ pub async fn create_project_agent_run(
     }
 
     diag!(Info, Subsystem::Api,
-        
+
         run_id = %dispatch.run_id,
         agent_id = %dispatch.agent_id,
         runtime_session_id = %dispatch.runtime_session_id,
@@ -318,7 +318,7 @@ fn spawn_initial_project_agent_mailbox_schedule(
 ) {
     tokio::spawn(async move {
         diag!(Info, Subsystem::Api,
-        
+
             runtime_session_id = %runtime_session_id,
             run_id = %run_id,
             agent_id = %agent_id,
@@ -343,7 +343,7 @@ fn spawn_initial_project_agent_mailbox_schedule(
             .await
         {
             diag!(Warn, Subsystem::Api,
-        
+
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 agent_id = %agent_id,
@@ -352,7 +352,7 @@ fn spawn_initial_project_agent_mailbox_schedule(
             );
         } else {
             diag!(Info, Subsystem::Api,
-        
+
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 agent_id = %agent_id,

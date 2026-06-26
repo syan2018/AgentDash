@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use anyhow::{Result, anyhow};
 use postgresql_embedded::{PostgreSQL, Settings};
 use sqlx::PgPool;
@@ -29,8 +29,11 @@ impl PostgresRuntime {
     pub async fn resolve(service_name: &str, max_connections: u32) -> Result<Self> {
         // ── External PostgreSQL ──────────────────────────────────────────
         if let Some(database_url) = resolve_external_database_url()? {
-            diag!(Info, Subsystem::Infra,
-        "检测到 DATABASE_URL，使用外部 PostgreSQL");
+            diag!(
+                Info,
+                Subsystem::Infra,
+                "检测到 DATABASE_URL，使用外部 PostgreSQL"
+            );
             let pool = PgPoolOptions::new()
                 .max_connections(max_connections)
                 .connect(&database_url)
@@ -93,25 +96,21 @@ impl PostgresRuntime {
         settings.password_file = password_file;
         if let Some(ref pw) = saved_password {
             settings.password = pw.clone();
-            diag!(Info, Subsystem::Infra,
-        "复用已存在的 pgpass 密码");
+            diag!(Info, Subsystem::Infra, "复用已存在的 pgpass 密码");
         }
 
         let mut postgres = PostgreSQL::new(settings);
-        diag!(Info, Subsystem::Infra,
-        "执行 embedded PostgreSQL setup");
+        diag!(Info, Subsystem::Infra, "执行 embedded PostgreSQL setup");
         postgres
             .setup()
             .await
             .map_err(|e| anyhow!("embedded PostgreSQL setup 失败: {e}"))?;
-        diag!(Info, Subsystem::Infra,
-        "执行 embedded PostgreSQL start");
+        diag!(Info, Subsystem::Infra, "执行 embedded PostgreSQL start");
         postgres
             .start()
             .await
             .map_err(|e| anyhow!("embedded PostgreSQL start 失败: {e}"))?;
-        diag!(Info, Subsystem::Infra,
-        "embedded PostgreSQL 已启动");
+        diag!(Info, Subsystem::Infra, "embedded PostgreSQL 已启动");
 
         if !postgres
             .database_exists(&database_name)
@@ -195,8 +194,9 @@ async fn try_reuse_running(
 
     let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
     if TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_err() {
-        diag!(Info, Subsystem::Infra,
-        
+        diag!(
+            Info,
+            Subsystem::Infra,
             port = info.port,
             "postmaster.pid 存在但端口不可达，判定为残留"
         );
@@ -215,8 +215,9 @@ async fn try_reuse_running(
         info.port, database_name
     );
 
-    diag!(Info, Subsystem::Infra,
-        
+    diag!(
+        Info,
+        Subsystem::Infra,
         port = info.port,
         pid = info.pid,
         "检测到已运行的 embedded PostgreSQL，尝试复用"
@@ -229,13 +230,15 @@ async fn try_reuse_running(
         .await
     {
         Ok(pool) => {
-            diag!(Info, Subsystem::Infra,
-        "成功复用已运行的 embedded PostgreSQL");
+            diag!(
+                Info,
+                Subsystem::Infra,
+                "成功复用已运行的 embedded PostgreSQL"
+            );
             Some((pool, display_url))
         }
         Err(e) => {
-            diag!(Warn, Subsystem::Infra,
-        "复用连接失败: {e}");
+            diag!(Warn, Subsystem::Infra, "复用连接失败: {e}");
             None
         }
     }
@@ -248,8 +251,9 @@ async fn try_reuse_running(
 fn cleanup_stale_instance(data_dir: &Path) {
     // 如果有 pid 文件，精准杀对应进程
     if let Some(info) = read_postmaster_pid(data_dir) {
-        diag!(Info, Subsystem::Infra,
-        
+        diag!(
+            Info,
+            Subsystem::Infra,
             pid = info.pid,
             "停止残留 PostgreSQL 进程（来自 postmaster.pid）"
         );

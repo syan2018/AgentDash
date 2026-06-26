@@ -13,8 +13,7 @@ async fn main() -> Result<()> {
     // 统一诊断环形缓冲：既接进 tracing 订阅器（写入），又透传进 AppState（查询）。
     let diagnostics = DiagnosticBuffer::new(DEFAULT_CAPACITY);
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     // JSON line 滚动文件层：按天滚动，写入 AGENTDASH_LOG_DIR（默认 ./logs）。
     let log_dir = std::env::var(LOG_DIR_ENV).unwrap_or_else(|_| DEFAULT_LOG_DIR.into());
@@ -38,7 +37,8 @@ async fn main() -> Result<()> {
     // `file_guard`（tracing_appender WorkerGuard）必须在 main 的整个生命周期内持有：
     // 它一旦 drop，后台写线程会提前退出并丢弃尚未刷盘的日志。下面 await 期间 guard
     // 一直在作用域内，进程退出时才随 main 一起 drop，刷出剩余日志。
-    let result = agentdash_api::run_server(agentdash_api::builtin_integrations(), diagnostics).await;
+    let result =
+        agentdash_api::run_server(agentdash_api::builtin_integrations(), diagnostics).await;
     drop(file_guard);
     result
 }

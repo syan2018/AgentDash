@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
@@ -43,8 +43,9 @@ pub(crate) fn build_vfs_kernel(
         )));
 
     for provider in integration_mount_providers {
-        diag!(Info, Subsystem::Vfs,
-        
+        diag!(
+            Info,
+            Subsystem::Vfs,
             "注册 Host Integration MountProvider: {}",
             provider.provider_id()
         );

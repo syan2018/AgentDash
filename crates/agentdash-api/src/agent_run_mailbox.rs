@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 
 use agentdash_application::repository_set::RepositorySet;
@@ -82,7 +82,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
             "completed" => {
                 if let Err(error) = self.schedule_turn_boundary(session_id).await {
                     diag!(Warn, Subsystem::Api,
-        
+
                         runtime_session_id = %session_id,
                         error = %error,
                         "AgentRun mailbox completed terminal fallback 调度失败"
@@ -100,7 +100,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                     .await
                 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         runtime_session_id = %session_id,
                         error = %error,
                         "AgentRun mailbox failed pause 写入失败"
@@ -118,7 +118,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                     .await
                 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         runtime_session_id = %session_id,
                         error = %error,
                         "AgentRun mailbox interrupted pause 写入失败"

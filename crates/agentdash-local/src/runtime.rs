@@ -1,6 +1,6 @@
 //! 本机 runtime 组装与生命周期管理。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -440,7 +440,7 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
     diag!(Info, Subsystem::Relay,
-        
+
         backend_id = %config.backend_id,
         name = %config.name,
         cloud_url = %config.cloud_url,
@@ -487,12 +487,10 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         error = %error, "启动恢复 session 状态失败（非致命）");
         }
 
-        diag!(Info, Subsystem::Relay,
-        "Session runtime 已初始化");
+        diag!(Info, Subsystem::Relay, "Session runtime 已初始化");
         (Some(session_runtime), Some(connector), Some(db_runtime))
     } else {
-        diag!(Info, Subsystem::Relay,
-        "Session runtime 已禁用");
+        diag!(Info, Subsystem::Relay, "Session runtime 已禁用");
         (None, None, None)
     };
 

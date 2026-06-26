@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{
     collections::HashMap,
     env,
@@ -551,8 +551,9 @@ async fn handle_server_notification(
             }
         }
         _ => {
-            diag!(Debug, Subsystem::AgentRun,
-        
+            diag!(
+                Debug,
+                Subsystem::AgentRun,
                 "codex bridge: unhandled notification method={}",
                 notification.method
             );
@@ -823,8 +824,12 @@ impl AgentConnector for CodexBridgeConnector {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        diag!(Debug, Subsystem::AgentRun,
-        "codex app-server stderr: {}", line.trim());
+                        diag!(
+                            Debug,
+                            Subsystem::AgentRun,
+                            "codex app-server stderr: {}",
+                            line.trim()
+                        );
                     }
                     _ => break,
                 }

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
@@ -168,8 +168,11 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
         }
 
         let Some(project_id) = project_id_from_context(context) else {
-            diag!(Warn, Subsystem::AgentRun,
-        "workspace module tools 注入失败：无法从 hook session 解析 project_id");
+            diag!(
+                Warn,
+                Subsystem::AgentRun,
+                "workspace module tools 注入失败：无法从 hook session 解析 project_id"
+            );
             return Ok(Vec::new());
         };
 
@@ -294,7 +297,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                     .map(|dependency| dependency.as_str())
                     .collect::<Vec<_>>();
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     missing_dependencies = ?missing_names,
                     "workspace_module_invoke 装配为诊断工具：缺少 RuntimeGateway 或 channel transport 注入"
                 );
@@ -312,7 +315,7 @@ impl WorkspaceModuleRuntimeToolProvider {
             Ok(anchor) => anchor,
             Err(error) => {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     delivery_runtime_session_id = %delivery_runtime_session_id,
                     error = %error,
                     "workspace_module_invoke 装配为诊断工具：缺少 runtime backend anchor"

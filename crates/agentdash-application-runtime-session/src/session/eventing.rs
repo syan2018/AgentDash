@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::{
@@ -166,7 +166,7 @@ impl SessionEventingService {
             }
             Err(error) => {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     session_id = %session_id,
                     event_seq = event.event_seq,
                     error = %error,
@@ -312,7 +312,7 @@ impl SessionEventingService {
         ) && expected != actual
         {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %session_id,
                 source = %source,
                 expected_executor_session_id = %expected,
@@ -1077,7 +1077,7 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
     let bounded_bytes = serialized_envelope_len(&envelope)?;
     if truncated_fields > 0 {
         diag!(Warn, Subsystem::AgentRun,
-        
+
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),
@@ -1090,7 +1090,7 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
         );
     } else {
         diag!(Warn, Subsystem::AgentRun,
-        
+
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),

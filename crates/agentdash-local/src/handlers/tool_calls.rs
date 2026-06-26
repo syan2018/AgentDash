@@ -1,6 +1,6 @@
 //! PiAgent Tool Call 命令处理——file_read/write/delete/rename/apply_patch/shell_exec/file_list/search
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_relay::*;
 use base64::Engine;
 use std::sync::Arc;
@@ -214,7 +214,7 @@ impl ToolCommandHandler {
         payload: ToolShellExecPayload,
     ) -> RelayMessage {
         diag!(Info, Subsystem::AgentRun,
-        
+
             call_id = %payload.call_id,
             cwd = ?payload.cwd,
             command = %payload.command,

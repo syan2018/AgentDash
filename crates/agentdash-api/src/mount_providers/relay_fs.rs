@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application::runtime::Mount;
@@ -602,7 +602,7 @@ impl MountProvider for RelayFsMountProvider {
             .clone()
             .unwrap_or_else(|| RelayMessage::new_id("call"));
         diag!(Info, Subsystem::Api,
-        
+
             backend_id = %mount.backend_id,
             mount_id = %mount.id,
             cwd = %cwd,

@@ -1,7 +1,7 @@
-use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ConnectorError;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -178,8 +178,13 @@ impl SessionLaunchOrchestrator {
             }
         };
         let backend_execution = launch_plan.backend_execution.clone();
-        diag!(Debug, Subsystem::SessionLaunch,
-        session_id, turn_id, "session launch preparing turn");
+        diag!(
+            Debug,
+            Subsystem::SessionLaunch,
+            session_id,
+            turn_id,
+            "session launch preparing turn"
+        );
         let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {
                 launch_plan,
@@ -200,8 +205,13 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        diag!(Debug, Subsystem::SessionLaunch,
-        session_id, turn_id, "session launch starting connector");
+        diag!(
+            Debug,
+            Subsystem::SessionLaunch,
+            session_id,
+            turn_id,
+            "session launch starting connector"
+        );
         let accepted = match ConnectorStarter::new(deps.connector_start())
             .start(prepared)
             .await
@@ -217,13 +227,23 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        diag!(Debug, Subsystem::SessionLaunch,
-        session_id, turn_id, "session launch connector accepted");
+        diag!(
+            Debug,
+            Subsystem::SessionLaunch,
+            session_id,
+            turn_id,
+            "session launch connector accepted"
+        );
         let committed = TurnCommitter::new(deps.commit(accepted_launch_commit.clone()))
             .commit(accepted, &mut session_meta, now)
             .await?;
-        diag!(Debug, Subsystem::SessionLaunch,
-        session_id, turn_id, "session launch committed turn");
+        diag!(
+            Debug,
+            Subsystem::SessionLaunch,
+            session_id,
+            turn_id,
+            "session launch committed turn"
+        );
 
         if committed.accepted.prepared.is_owner_bootstrap {
             accepted_launch_commit
@@ -235,7 +255,7 @@ impl SessionLaunchOrchestrator {
             .attach(committed)
             .await;
         diag!(Debug, Subsystem::SessionLaunch,
-        
+
             session_id,
             turn_id = %attached.turn_id,
             "session launch stream ingestion attached"
@@ -258,7 +278,7 @@ async fn fail_claimed_backend_execution(
     };
     if let Err(error) = repo.fail(lease_id, Some(reason), chrono::Utc::now()).await {
         diag!(Warn, Subsystem::SessionLaunch,
-        
+
             lease_id = %lease_id,
             error = %error,
             "标记 backend execution lease failed 失败"

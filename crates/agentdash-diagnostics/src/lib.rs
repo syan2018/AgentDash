@@ -18,7 +18,7 @@ mod macros;
 mod record;
 mod subsystem;
 
-pub use layer::{DiagnosticBuffer, DiagnosticFilter, DiagnosticLayer, DEFAULT_CAPACITY};
+pub use layer::{DEFAULT_CAPACITY, DiagnosticBuffer, DiagnosticFilter, DiagnosticLayer};
 pub use record::DiagnosticRecord;
 pub use subsystem::Subsystem;
 

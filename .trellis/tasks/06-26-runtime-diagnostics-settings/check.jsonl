@@ -1,2 +1,3 @@
 {"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查设置 UI、状态展示和测试覆盖。"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查状态事实源和跨层 DTO 一致性。"}
+{"file": ".trellis/tasks/06-26-runtime-diagnostics-settings/research/runtime-diagnostics-settings-planning-review.md", "reason": "子任务 planning reviewer 输出的状态事实源、DTO、日志脱敏和 handoff 风险。"}

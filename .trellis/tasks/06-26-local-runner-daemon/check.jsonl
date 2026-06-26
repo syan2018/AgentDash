@@ -1,2 +1,3 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 CLI、服务管理与运行时实现质量。"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "实现前确认复用现有 LocalRuntimeManager 与配置路径工具。"}
+{"file": ".trellis/tasks/06-26-local-runner-daemon/research/planning-review-local-runner-daemon.md", "reason": "子任务 planning reviewer 输出的服务化风险、状态机、service handoff 与执行拆分。"}

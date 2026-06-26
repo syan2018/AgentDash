@@ -1,31 +1,141 @@
 # 发布产物与验收流程 - Implement
 
-## Checklist
+## Step 1 - Release Planning Docs
 
-- 发布产物：
-  - 产出 Windows Desktop Installer。
-  - 产出 Linux Local Runner 二进制与 service 安装说明。
-  - 产出 Windows Local Runner 二进制与 service 安装说明。
-- 版本：
-  - 桌面安装包、runner 二进制、协议生成物记录同一版本号。
-  - 每个产物支持版本输出或安装包版本查看。
-- 验收文档：
-  - 编写 Windows Desktop 手工验收 checklist。
-  - 编写 Linux Runner 手工验收 checklist。
-  - 编写 Windows Runner 手工验收 checklist。
-  - 每项包含命令、预期结果、失败诊断入口。
-- 收口：
-  - 确认卸载清理自启动项、服务项和安装期创建的文件。
-  - 确认断网重连与云端 online/offline 状态变化。
+- Expand `design.md` with artifact matrix、version contract、installer/app exe boundary、runner release contract、service validation、cleanup boundary、manual acceptance template、release gate。
+- Expand `implement.md` with concrete handoff gates and validation steps。
+- Link subtask research files in context manifests。
 
-## Validation
+Validation:
+
+- Trellis `task.py validate` for parent and child tasks。
+
+## Step 2 - Version Consistency Check
+
+- Add or document release version check:
+  - root `package.json`。
+  - Cargo workspace。
+  - Tauri config。
+  - runner binary。
+  - generated protocol/contracts。
+- Define evidence file or release notes section to record results。
+
+Validation:
+
+- version check command once implemented。
+- `pnpm run contracts:check`。
+
+## Step 3 - Windows Desktop Release Artifact
+
+- Consume desktop handoff:
+  - `pnpm run desktop:bundle`。
+  - output glob/path。
+  - setup exe name。
+  - installed app exe/process name。
+  - metadata。
+- Write Windows Desktop checklist:
+  - install。
+  - launch。
+  - Desktop API health。
+  - Dashboard render。
+  - close-to-tray。
+  - tray restore。
+  - explicit quit。
+  - launch at login。
+  - start to tray。
+  - auto-connect runtime。
+  - uninstall cleanup。
+
+Validation:
 
 - `pnpm run desktop:bundle`
-- Runner release build 命令在子任务实现后固定。
-- Windows Desktop、Linux Runner、Windows Runner 三套手工验收全部通过。
+- clean Windows manual acceptance。
 
-## Risk Points
+## Step 4 - Linux Runner Release Artifact
 
-- 发布产物不能混用不同版本。
-- 手工验收步骤必须能由非实现者执行。
-- 卸载清理不能删除用户工作区或任务产物。
+- Consume runner handoff:
+  - release build command。
+  - binary path。
+  - config example。
+  - systemd service command。
+  - log/status paths。
+  - version command。
+- Write Linux checklist。
+
+Validation:
+
+- release binary exists。
+- `agentdash-local --version`。
+- systemd install/start/status/stop/uninstall。
+- cloud online/offline/reconnect evidence。
+
+## Step 5 - Windows Runner Release Artifact
+
+- Consume runner handoff:
+  - release build command。
+  - binary path。
+  - Windows Service install command。
+  - service name。
+  - log/status paths。
+  - version command。
+- Write Windows Runner checklist。
+
+Validation:
+
+- admin PowerShell service lifecycle。
+- cloud online/offline/reconnect evidence。
+
+## Step 6 - Cleanup Validation
+
+- Desktop:
+  - installation directory removed。
+  - shortcuts removed。
+  - uninstall registry entry removed。
+  - AgentDash startup entry removed。
+  - process exited。
+- Linux runner:
+  - systemd unit removed/disabled。
+  - process exited。
+  - config/log/data preserved unless explicit purge。
+- Windows runner:
+  - service registration removed。
+  - process exited。
+  - config/log/data preserved unless explicit purge。
+
+Validation:
+
+- platform commands/screenshots recorded in acceptance evidence。
+
+## Step 7 - Manual Acceptance Workbook
+
+- Create final checklist table for:
+  - Windows Desktop。
+  - Linux Runner。
+  - Windows Runner。
+- Each row includes:
+  - action。
+  - expected result。
+  - evidence。
+  - diagnostics。
+  - gate severity。
+- Mark unavailable platforms as blocked by environment, not passed。
+
+## Step 8 - Release Gate Dry Run
+
+- Run build/version/contracts gates。
+- Execute available platform acceptance。
+- Record failures as blocking/warning/info。
+- Do not mark release validation done until all blocking gates pass。
+
+## Blockers Before Start
+
+- Windows Desktop task must output real installer path and lifecycle handoff。
+- Local Runner task must output Linux/Windows service commands and version command。
+- Diagnostics task must output recovery/log paths。
+
+## Risk Checks
+
+- No dev-runtime or target/debug path appears in final user release flow。
+- Setup exe is not confused with app exe。
+- User workspace/task data is not deleted by uninstall。
+- Version evidence matches across artifacts。

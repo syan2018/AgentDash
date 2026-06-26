@@ -1,2 +1,3 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端 API、repository 与测试质量。"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查云端授权、前端 DTO、runner claim 之间的事实源。"}
+{"file": ".trellis/tasks/06-26-runner-enrollment-token/research/planning-review-runner-enrollment-token.md", "reason": "子任务 planning reviewer 输出的风险、设计结构、执行拆分和 handoff contract。"}

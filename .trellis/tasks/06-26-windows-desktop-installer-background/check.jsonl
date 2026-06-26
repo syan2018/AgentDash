@@ -1,2 +1,3 @@
 {"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查桌面前端设置与交互质量。"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查桌面壳、Desktop API、runtime 状态和自启动设置边界。"}
+{"file": ".trellis/tasks/06-26-windows-desktop-installer-background/research/planning-review.md", "reason": "子任务 planning reviewer 输出的桌面安装、托盘、自启动、Desktop API 与 handoff 风险。"}

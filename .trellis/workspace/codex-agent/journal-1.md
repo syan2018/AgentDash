@@ -1430,3 +1430,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 收口本机运行诊断与发布验收交接
+
+**Date**: 2026-06-26
+**Task**: 收口本机运行诊断与发布验收交接
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+补齐 runtime diagnostics UI、registration_source contract、结构化 relay_connection 状态、日志脱敏与 release validation 手工验收 checklist，并归档 runtime diagnostics、local runner daemon、Windows desktop installer/background 三个实现子任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b0fca9ee1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 39
+- **Total Sessions**: 40
 - **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1432 | Active |
+| `journal-1.md` | ~1465 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 40 | 2026-06-26 | 收口本机运行诊断与发布验收交接 | `b0fca9ee1` | `codex/desktop-local-runtime` |
 | 39 | 2026-06-26 | 推进本机运行形态服务化 | `b806695e4` | `codex/desktop-local-runtime` |
 | 38 | 2026-06-26 | 统一后端可观测层：diag! 统一诊断入口 + 持久化 + 查询端点 + clippy 守门 | `326c978a3`, `17c76c0dc` | `main` |
 | 37 | 2026-06-26 | 后端 application 大模块 crate 拆分 | `3d019d61`, `4abb9a3d`, `9aa2ba29`, `6030fd94`, `59213740`, `29645aa6`, `0b2db9b7`, `0a3e2f8a` | `codex/lifecycle-builtin-skill-discovery-fix` |

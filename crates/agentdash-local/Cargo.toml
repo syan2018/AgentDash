@@ -16,6 +16,7 @@ standalone = []
 
 [dependencies]
 agentdash-relay.workspace = true
+agentdash-contracts.workspace = true
 agentdash-spi.workspace = true
 agentdash-agent-protocol = { workspace = true }
 agentdash-executor = { workspace = true }
@@ -49,6 +50,7 @@ clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 ignore = "0.4"
 regex.workspace = true
+toml = "0.8"
 base64 = "0.22"
 flate2.workspace = true
 sha2 = "0.10"

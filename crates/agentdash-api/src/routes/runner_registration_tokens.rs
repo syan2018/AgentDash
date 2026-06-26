@@ -263,3 +263,65 @@ fn api_error_from_claim(error: RunnerRegistrationClaimError) -> ApiError {
         RunnerRegistrationClaimError::Internal(message) => ApiError::Internal(message),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn public_claim_token_can_come_from_body_without_authorization_header() {
+        let headers = HeaderMap::new();
+
+        let token =
+            resolve_registration_token(&headers, Some("  adrt_rtok_abc_secret  ".to_string()))
+                .expect("body token should be accepted");
+
+        assert_eq!(token, "adrt_rtok_abc_secret");
+    }
+
+    #[test]
+    fn public_claim_token_can_come_from_bearer_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Bearer adrt_rtok_abc_secret".parse().expect("header value"),
+        );
+
+        let token =
+            resolve_registration_token(&headers, None).expect("bearer token should be accepted");
+
+        assert_eq!(token, "adrt_rtok_abc_secret");
+    }
+
+    #[test]
+    fn public_claim_missing_token_maps_to_unauthorized() {
+        let response = resolve_registration_token(&HeaderMap::new(), None)
+            .expect_err("missing token should fail")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn claim_error_mapping_keeps_runner_operator_status_classes_stable() {
+        let invalid =
+            api_error_from_claim(RunnerRegistrationClaimError::InvalidToken).into_response();
+        assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+
+        let expired =
+            api_error_from_claim(RunnerRegistrationClaimError::ExpiredToken).into_response();
+        assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+
+        let revoked =
+            api_error_from_claim(RunnerRegistrationClaimError::RevokedToken).into_response();
+        assert_eq!(revoked.status(), StatusCode::FORBIDDEN);
+
+        let conflict = api_error_from_claim(RunnerRegistrationClaimError::Conflict(
+            "ProjectBackendAccess 并发创建冲突".to_string(),
+        ))
+        .into_response();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    }
+}

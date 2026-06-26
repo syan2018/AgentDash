@@ -165,6 +165,173 @@ server -> { backend_id, relay_ws_url, auth_token }
 runner -> /ws/backend?token=<backend auth_token>
 ```
 
+## Scenario: Headless Local Runner CLI, Config, And Status
+
+### 1. Scope / Trigger
+
+- Trigger: 独立 `agentdash-local` runner 需要作为服务器守护进程运行，入口必须把 enrollment、relay 凭据、配置合并、状态诊断和服务管理命令稳定下来。
+- Scope: `agentdash-local` CLI、TOML config、environment variables、runner claim client、credentials write-back、status snapshot、service command plan。
+
+### 2. Signatures
+
+CLI commands:
+
+```text
+agentdash-local run [--config <path>] [--server-url <url>] [--registration-token <adrt_...>] [--backend-id <id>] [--relay-ws-url <url>] [--auth-token <token>] [--runner-name <name>] [--workspace-root <path>...]
+agentdash-local status [--config <path>] [--json]
+agentdash-local service install [--config <path>]
+agentdash-local service uninstall [--config <path>]
+agentdash-local service start [--config <path>]
+agentdash-local service stop [--config <path>]
+agentdash-local service status [--config <path>]
+agentdash-local machine-identity
+```
+
+Runner claim call:
+
+```text
+POST {server_url}/api/local-runtime/runner/claim
+Authorization: Bearer adrt_<token_id>_<secret>
+Content-Type: application/json
+```
+
+Status snapshot file:
+
+```text
+{state_dir}/runner-status.json
+```
+
+### 3. Contracts
+
+- Config precedence is `CLI > environment > config file > default`; this keeps service units deterministic while allowing one-off debugging overrides.
+- Environment keys use the `AGENTDASH_RUNNER_` prefix for runner concerns: `CONFIG`, `SERVER_URL`, `REGISTRATION_TOKEN`, `BACKEND_ID`, `RELAY_WS_URL`, `AUTH_TOKEN`, `RUNNER_NAME`, `STATE_DIR`, `LOG_PATH`, `WORKSPACE_ROOTS`, and `EXECUTOR_ENABLED`.
+- `registration_token` is an enrollment credential. It is only sent to `/api/local-runtime/runner/claim`; WebSocket relay authentication uses the returned `auth_token`.
+- Successful claim writes `backend_id`, `relay_ws_url`, `auth_token`, and registration metadata back to the TOML config through an atomic replace so service restart does not re-require a plaintext token in the environment.
+- `status --json` reports local configuration and latest snapshot facts without starting an HTTP server or binding an inbound business port.
+- Log and status output redacts token-bearing fields and bearer/query token fragments before displaying operator diagnostics.
+- `service` subcommands own OS service integration. First implementations may return an explicit unsupported/plan response per platform, but the command surface must not imply a service is installed when no OS registration happened.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing `backend_id + relay_ws_url + auth_token` and no `registration_token` | `run` returns configuration error before opening WebSocket |
+| `registration_token` present but claim endpoint returns 401/403 | `run` reports enrollment failure and does not persist relay credentials |
+| Claim succeeds but config write-back fails | `run` reports persistence failure before treating enrollment as durable |
+| Config file contains malformed TOML | command returns config parse error with path context |
+| Environment and CLI both provide the same field | CLI value wins |
+| `status --json` without snapshot | returns configured identity plus disconnected/unknown runtime state |
+| Service install unsupported on current platform | returns explicit unsupported status and command plan text |
+| Token appears in config, URL query, JSON, or bearer header | operator-facing output prints redacted value |
+
+### 5. Operational Rationale
+
+- Linux first boot can provide only `AGENTDASH_RUNNER_SERVER_URL` and `AGENTDASH_RUNNER_REGISTRATION_TOKEN`; runner claims once, writes relay credentials, and later service restarts can use the persisted server-issued relay auth token.
+- Windows service installation records a stable command that points to `agentdash-local run --config ...`, keeping SCM registration separate from one-off CLI overrides.
+- `agentdash-local status --json` gives support scripts and cloud diagnostics a stable local status surface without adding an inbound HTTP health port.
+- Enrollment and relay authentication stay separate because registration-token revocation, backend relay auth rotation, and ProjectBackendAccess auditing have different lifecycles.
+- Canonical flow: `registration_token -> claim -> persisted backend relay credentials -> WebSocket connect`.
+
+### 6. Tests Required
+
+- CLI tests assert command parsing for `run`, `status`, `service *`, and `machine-identity`.
+- Config tests assert precedence order, TOML roundtrip, environment key parsing, workspace root parsing, and missing credential validation.
+- Claim tests assert request path, Authorization header, response mapping into runtime config, and atomic credentials write-back.
+- Redaction tests assert JSON fields, bearer headers, query params, and common token names are masked.
+- Service tests assert Linux systemd and Windows Service command plans, unsupported response shape, and no accidental OS mutation in dry/unit contexts.
+- Status tests assert JSON output shape with and without a snapshot file.
+
+### 7. Canonical Flow
+
+```text
+agentdash-local run --registration-token adrt_...
+claim response -> backend_id + relay_ws_url + auth_token
+runner connects to relay_ws_url with auth_token
+```
+
+## Scenario: Desktop Tray, Background Runtime, And Settings Bridge
+
+### 1. Scope / Trigger
+
+- Trigger: Windows desktop full installer needs behave like a resident desktop app: close-to-tray, explicit quit, runtime lifecycle menu, startup preferences, and a stable frontend bridge.
+- Scope: `agentdash-local-tauri` tray/menu/window lifecycle, Tauri commands, `desktop-app-settings.json`, `packages/app-tauri` desktop bridge, Desktop API hosting at loopback port `17301`.
+
+### 2. Signatures
+
+Tauri commands:
+
+```rust
+async fn desktop_settings_load() -> Result<DesktopAppSettings, String>;
+async fn desktop_settings_save(settings: DesktopAppSettings) -> Result<DesktopAppSettings, String>;
+async fn desktop_autostart_is_enabled() -> Result<DesktopAutostartStatus, String>;
+async fn desktop_autostart_set_enabled(enabled: bool) -> Result<DesktopAutostartStatus, String>;
+async fn desktop_quit_request(app: tauri::AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String>;
+```
+
+Frontend bridge:
+
+```ts
+window.__AGENTDASH_DESKTOP_APP__ = {
+  loadSettings(): Promise<DesktopAppSettings>
+  saveSettings(settings: DesktopAppSettings): Promise<DesktopAppSettings>
+  getAutostartStatus(): Promise<DesktopAutostartStatus>
+  setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>
+  quit(): Promise<void>
+}
+```
+
+Settings file:
+
+```text
+{app_config_dir}/desktop-app-settings.json
+```
+
+### 3. Contracts
+
+- Closing the main window hides it to tray by default; the process continues so a running local runtime is not interrupted by an ordinary window close.
+- Explicit quit is a distinct command path. It sets an in-process quit flag, stops the managed local runtime, cleans sidecars, and then exits the Tauri process.
+- Tray menu exposes `Open AgentDash`, runtime start/stop/status actions, and explicit quit. Runtime start uses the saved profile; it does not silently create a profile when none exists.
+- `start_minimized_to_tray` controls first window visibility after setup. When false, setup shows/focuses the main window after Desktop API initialization; when true, the tray-resident process stays hidden.
+- `launch_at_login`, `start_minimized_to_tray`, and `auto_connect_local_runtime` persist in `desktop-app-settings.json` and are surfaced through the frontend bridge.
+- Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
+- Desktop API remains loopback-only at `127.0.0.1:17301`; its presence does not change local runtime/runner WebSocket relay communication.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| User clicks window close | prevent close, hide window, keep process alive |
+| User chooses explicit tray quit or frontend quit command | set quit flag, stop runtime, clean sidecars, exit |
+| Runtime start requested from tray without saved profile | log/report clear no-profile status, do not fabricate backend identity |
+| Settings file missing | load default settings |
+| Settings file malformed | return settings load error instead of silently discarding operator intent |
+| Autostart unsupported/stubbed | return `supported=false`, stable message, and no OS registry/service mutation |
+| Desktop API port unavailable | app reports Desktop API error state; Dashboard waits for `/api/health` before rendering |
+
+### 5. Operational Rationale
+
+- Close-to-tray preserves the Tauri process so ordinary window management does not interrupt long local runtime work.
+- The tray `Quit AgentDash` item performs an intentional shutdown and stops the managed runtime before process exit.
+- `start_minimized_to_tray=true` gives a resident launch path for users who want AgentDash available without opening the dashboard.
+- Window visibility and process lifetime are separate because background execution should not depend on whether the dashboard surface is visible.
+- Canonical flow: window close hides; explicit quit exits.
+
+### 6. Tests Required
+
+- Rust tests assert settings default/load/save behavior and malformed file error behavior.
+- Rust tests assert close request is prevented unless the explicit quit flag is set.
+- Rust tests assert tray runtime actions call the existing runtime manager/profile path and do not create ad hoc identities.
+- Rust tests assert autostart unsupported status shape until real platform integration lands.
+- TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
+- Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
+
+### 7. Canonical Lifecycle
+
+```text
+CloseRequested -> prevent default -> hide main window
+desktop_quit_request/tray quit -> stop runtime -> app.exit(0)
+```
+
 ### Profile
 
 - `agentdash-local::runtime_paths` 是本机 runtime 路径事实源；数据库、机器身份、extension artifact cache、runtime profile 和本机 MCP servers 配置都从同一个 `local-runtime` data root 派生，原因是这些文件共同服务本机后端生命周期，Tauri 壳只负责通过 command 调用本机 runtime。

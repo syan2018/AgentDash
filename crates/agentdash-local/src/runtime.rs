@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, watch};
 use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::{McpClientManager, local_server_to_relay_mcp_server};
+use crate::runner_redaction::redact_secret;
 use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
@@ -555,31 +556,7 @@ fn api_base_url_from_cloud_url(cloud_url: &str) -> anyhow::Result<String> {
 }
 
 fn redact_log_message(message: &str) -> String {
-    let mut redacted = message.to_string();
-    for marker in ["token=", "access_token=", "refresh_token="] {
-        redacted = redact_marker_value(&redacted, marker);
-    }
-    redacted
-}
-
-fn redact_marker_value(message: &str, marker: &str) -> String {
-    let mut output = String::with_capacity(message.len());
-    let mut rest = message;
-
-    while let Some(start) = rest.find(marker) {
-        let marker_end = start + marker.len();
-        output.push_str(&rest[..marker_end]);
-        output.push_str("***");
-
-        let after_marker = &rest[marker_end..];
-        let value_end = after_marker
-            .find(|ch: char| ch == '&' || ch.is_whitespace())
-            .unwrap_or(after_marker.len());
-        rest = &after_marker[value_end..];
-    }
-
-    output.push_str(rest);
-    output
+    redact_secret(message)
 }
 
 fn status_from_config(

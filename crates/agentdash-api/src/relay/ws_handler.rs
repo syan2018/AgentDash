@@ -781,6 +781,10 @@ mod tests {
 
     enum MockTokenResult {
         Ok(BackendConfig),
+        TokenMatches {
+            expected_token: String,
+            config: BackendConfig,
+        },
         NotFound,
     }
 
@@ -804,10 +808,18 @@ mod tests {
 
         async fn get_backend_by_auth_token(
             &self,
-            _token: &str,
+            token: &str,
         ) -> Result<BackendConfig, DomainError> {
             match &self.token_result {
                 MockTokenResult::Ok(config) => Ok(config.clone()),
+                MockTokenResult::TokenMatches {
+                    expected_token,
+                    config,
+                } if token == expected_token => Ok(config.clone()),
+                MockTokenResult::TokenMatches { .. } => Err(DomainError::NotFound {
+                    entity: "backend_auth_token",
+                    id: "mock".to_string(),
+                }),
                 MockTokenResult::NotFound => Err(DomainError::NotFound {
                     entity: "backend_auth_token",
                     id: "mock".to_string(),
@@ -902,6 +914,23 @@ mod tests {
         let err = authorize_backend_token(&repo, "invalid")
             .await
             .expect_err("无效 token 应被拒绝");
+
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(err.response_message, "token 无效或未绑定 backend");
+    }
+
+    #[tokio::test]
+    async fn authorize_backend_token_rejects_runner_registration_token() {
+        let repo = MockBackendRepository {
+            token_result: MockTokenResult::TokenMatches {
+                expected_token: "backend-auth-token".to_string(),
+                config: backend_config("local-a", true),
+            },
+        };
+
+        let err = authorize_backend_token(&repo, "adrt_rtok_abc_secret")
+            .await
+            .expect_err("registration token must not authenticate relay");
 
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
         assert_eq!(err.response_message, "token 无效或未绑定 backend");

@@ -505,3 +505,74 @@ pub struct RunnerRegistrationClaimResponse {
     pub registration_source: String,
     pub claimed_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::backend::RunnerRegistrationToken;
+    use agentdash_domain::project::Project;
+
+    #[test]
+    fn runner_registration_metadata_response_does_not_expose_secrets() {
+        let issued = RunnerRegistrationToken::new_project_scoped(
+            Project::new("Runner Project".to_string(), String::new()).id,
+            "CI runner".to_string(),
+            "user-owner".to_string(),
+            Utc::now() + chrono::Duration::hours(1),
+            "default".to_string(),
+            serde_json::json!({}),
+        );
+
+        let value =
+            serde_json::to_value(RunnerRegistrationTokenMetadataResponse::from(issued.token))
+                .expect("metadata response should serialize");
+
+        let object = value.as_object().expect("metadata response object");
+        assert!(object.contains_key("token_prefix"));
+        assert!(!object.contains_key("registration_token"));
+        assert!(!object.contains_key("token_secret_hash"));
+        assert!(!object.contains_key("secret"));
+        assert!(!object.contains_key("auth_token"));
+        assert!(
+            !value
+                .to_string()
+                .contains(issued.registration_token.as_str())
+        );
+    }
+
+    #[test]
+    fn runner_registration_management_responses_only_return_plaintext_on_create_or_rotate() {
+        let issued = RunnerRegistrationToken::new_project_scoped(
+            Project::new("Runner Project".to_string(), String::new()).id,
+            "CI runner".to_string(),
+            "user-owner".to_string(),
+            Utc::now() + chrono::Duration::hours(1),
+            "default".to_string(),
+            serde_json::json!({}),
+        );
+        let metadata = RunnerRegistrationTokenMetadataResponse::from(issued.token.clone());
+
+        let create = serde_json::to_value(RunnerRegistrationTokenCreateResponse {
+            token: metadata.clone(),
+            registration_token: issued.registration_token.clone(),
+        })
+        .expect("create response should serialize");
+        assert_eq!(create["registration_token"], issued.registration_token);
+        assert!(create["token"].get("token_secret_hash").is_none());
+        assert!(create["token"].get("auth_token").is_none());
+
+        let rotate = serde_json::to_value(RunnerRegistrationTokenRotateResponse {
+            token: metadata.clone(),
+            registration_token: issued.registration_token.clone(),
+        })
+        .expect("rotate response should serialize");
+        assert_eq!(rotate["registration_token"], issued.registration_token);
+
+        let revoke =
+            serde_json::to_value(RunnerRegistrationTokenRevokeResponse { token: metadata })
+                .expect("revoke response should serialize");
+        assert!(revoke.get("registration_token").is_none());
+        assert!(revoke["token"].get("token_secret_hash").is_none());
+        assert!(revoke["token"].get("auth_token").is_none());
+    }
+}

@@ -316,7 +316,7 @@ import type {
 
 - Canvas module id is `canvas:{canvas_mount_id}`.
 - Canvas bind operation key is `canvas.bind_data` and is discoverable through describe.
-- Canvas render diagnostic operation key is `canvas.inspect_render_state` and returns `{ observation }`, where `observation` is the latest AgentRun-scoped Canvas runtime observation or `null`.
+- Canvas render diagnostic operation key is `canvas.inspect` and returns `{ observation }`, where `observation` is the latest AgentRun-scoped Canvas runtime observation or `null`.
 - Canvas interaction diagnostic operation key is `canvas.get_interaction_state` and returns `{ snapshot }`, where `snapshot` is the latest Canvas interaction snapshot or `null`.
 - Canvas UI entry exposes `view_key="preview"` and `presentation_uri="canvas://{canvas_mount_id}"`.
 - Canvas VFS edit URI is `{canvas_mount_id}://...` and may appear in tool results or diagnostics as `vfs_mount_uri`.
@@ -336,7 +336,7 @@ import type {
 ### 5. Reference Cases
 
 - Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` refreshes runtime surface, emits `workspace_module_presented.presentation_uri=canvas://{canvas_mount_id}`, and WorkspacePanel opens that URI.
-- Canvas diagnostic flow: Canvas iframe posts runtime observation and explicit interaction snapshots through AgentRun-scoped routes; Agent reads them through `workspace_module_invoke(canvas.inspect_render_state)` and `workspace_module_invoke(canvas.get_interaction_state)`.
+- Canvas diagnostic flow: Canvas preview posts runtime observation and explicit interaction snapshots through AgentRun-scoped routes; Agent reads them through `workspace_module_invoke(canvas.inspect)` and `workspace_module_invoke(canvas.get_interaction_state)`.
 - Extension presentation flow: Extension UI entries continue using their own renderer URI fields.
 - URI responsibility: `view_key` selects the module UI entry, `canvas://{canvas_mount_id}` identifies the Canvas tab, and `{canvas_mount_id}://...` identifies the VFS authoring mount.
 
@@ -401,7 +401,7 @@ POST /api/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/agent
 Workspace module operations:
 
 ```text
-workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect_render_state", input={})
+workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect", input={})
 workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.get_interaction_state", input={})
 ```
 
@@ -422,7 +422,7 @@ workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="can
 | --- | --- |
 | `frame_id` / `generation` does not match active iframe | Parent page ignores diagnostic upload or returns stale-generation submit error |
 | Canvas preview lacks live AgentRun bridge | Runtime action submit returns bridge-unavailable diagnostic |
-| Observation has not been uploaded | `canvas.inspect_render_state` returns `observation=null` |
+| Observation has not been uploaded | `canvas.inspect` returns `observation=null` |
 | Interaction state has not been uploaded | `canvas.get_interaction_state` returns `snapshot=null` |
 | Submit request has no `text` or `input` | Frontend rejects before POST or API returns bad request |
 | Submit references current interaction/render ids | Backend accepts the mailbox command using canonical `UserInput` |
@@ -430,7 +430,7 @@ workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="can
 
 ### 5. Reference Cases
 
-- Canvas ready flow: iframe posts ready observation, backend stores latest runtime observation, Agent calls `canvas.inspect_render_state` and receives DOM/diagnostic summary.
+- Canvas ready flow: preview posts ready observation, backend stores latest runtime observation, Agent calls `canvas.inspect` and receives DOM/diagnostic summary.
 - Canvas selection flow: source calls `interaction.setState("selection", ...)`, Agent calls `canvas.get_interaction_state` and sees the current selection without mailbox side effects.
 - Canvas action flow: user clicks a Canvas button that calls `agent.submit({ text, include_interaction_state: true })`; backend creates a `CanvasAction` mailbox message and scheduler returns the standard command response.
 

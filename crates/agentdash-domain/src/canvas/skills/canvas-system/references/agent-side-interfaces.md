@@ -13,7 +13,7 @@ Use this reference when the Agent needs workspace module operations for Canvas w
 ## Module Operations
 
 - `workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.bind_data", input={...})`: map a VFS `source_uri` to `bindings/<alias>.<ext>` using the operation schema returned by describe; the extension follows explicit `content_type` or is inferred from `source_uri`.
-- `workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect_render_state", input={})`: read the latest render observation reported by the Canvas iframe, including ready/error status, viewport, DOM summary, and diagnostics.
+- `workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.inspect", input={})`: read the latest render observation reported by the Canvas preview, including ready/error status, viewport, DOM summary, and diagnostics.
 - `workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="canvas.get_interaction_state", input={})`: read the latest interaction snapshot explicitly exposed by Canvas source.
 - `workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")`: expose the Canvas runtime surface to the current session and open its `presentation_uri`.
 

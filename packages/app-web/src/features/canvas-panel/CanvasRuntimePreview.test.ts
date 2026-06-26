@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanvasRuntimeSnapshot } from "../../types";
+import { buildPreviewFailureObservation } from "./CanvasRuntimePreview.observation";
 import {
   buildPreviewDocument,
   createRuntimeAssetUrlCache,
@@ -35,6 +36,38 @@ function snapshot(): CanvasRuntimeSnapshot {
 }
 
 describe("CanvasRuntimePreview VFS image assets", () => {
+  it("builds an error observation for preview document build failures", () => {
+    const observation = buildPreviewFailureObservation(
+      "frame-build-failed",
+      3,
+      "无法解析 Canvas 模块：bindings/events.json",
+      { clientWidth: 640, clientHeight: 360 },
+    );
+
+    expect(observation).toMatchObject({
+      frame_id: "frame-build-failed",
+      generation: 3,
+      status: "error",
+      message: "无法解析 Canvas 模块：bindings/events.json",
+      viewport: {
+        width: 640,
+        height: 360,
+      },
+      document: {
+        root_empty: true,
+        body_text_preview: "",
+        element_count: 0,
+      },
+      diagnostics: [
+        {
+          level: "error",
+          source: "runtime",
+          message: "Canvas 预览构建失败：无法解析 Canvas 模块：bindings/events.json",
+        },
+      ],
+    });
+  });
+
   it("parses safe VFS image mount URIs", () => {
     expect(parseVfsAssetUri("docs-media://assets/doc-1/source.png")).toEqual({
       mountId: "docs-media",

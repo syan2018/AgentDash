@@ -192,7 +192,7 @@ let output = provider.discover_from_vfs(context, files).await;
 
 这个 runtime exposure 与 VFS Accumulate 维度配合使用：workspace module ref 让实例 operation/UI entry 可见，Canvas VFS exposure 让 `{canvas_mount_id}://...` 文件面可见；`canvas-system` 作为 lifecycle-projected SkillAsset 进入同一 AgentRun skill baseline。它们都表达当前 AgentRun 的可操作面，不改变 ProjectAgent 的长期 preset。
 
-Canvas runtime observation 与 interaction snapshot 不是 capability transition。它们由 AgentRun→Canvas 引用上的 runtime state repository 保存，Agent 通过 `canvas.inspect_render_state` / `canvas.get_interaction_state` operation 查询 latest facts；查询本身不追加 mailbox、不修改 frame revision，也不把状态自动写入模型历史。只有 Canvas source 通过 `window.agentdash.agent.submit(...)` 发起显式用户动作时，后端才把请求转换为 canonical `UserInput` 并进入 AgentRun mailbox。
+Canvas runtime observation 与 interaction snapshot 不是 capability transition。它们由 AgentRun→Canvas 引用上的 runtime state repository 保存，Agent 通过 `canvas.inspect` / `canvas.get_interaction_state` operation 查询 latest facts；查询本身不追加 mailbox、不修改 frame revision，也不把状态自动写入模型历史。只有 Canvas source 通过 `window.agentdash.agent.submit(...)` 发起显式用户动作时，后端才把请求转换为 canonical `UserInput` 并进入 AgentRun mailbox。
 
 ## Registry Ordering
 

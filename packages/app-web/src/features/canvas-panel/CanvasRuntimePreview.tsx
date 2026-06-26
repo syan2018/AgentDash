@@ -21,6 +21,7 @@ import {
   type BuiltPreviewDocument,
   type RuntimeAssetUrlCache,
 } from "./CanvasRuntimePreview.runtime";
+import { buildPreviewFailureObservation } from "./CanvasRuntimePreview.observation";
 
 export interface CanvasRuntimePreviewProps {
   snapshot: CanvasRuntimeSnapshot | null;
@@ -177,6 +178,7 @@ export function CanvasRuntimePreview({
   extensionChannelBridge,
 }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const agentRunBridgeRef = useRef<AgentRunCanvasBridgeIdentity | null>(agentRunBridge);
   // 使用 React useId 生成渲染期稳定的 frame id，避免 Math.random 在 render 中被纯度规则拒绝。
   const frameIdBase = `canvas-preview-${useId()}`;
   const generationSeqRef = useRef(0);
@@ -188,6 +190,10 @@ export function CanvasRuntimePreview({
 
   const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
+
+  useEffect(() => {
+    agentRunBridgeRef.current = agentRunBridge;
+  }, [agentRunBridge]);
 
   // snapshot 变化时重建预览文档。构建失败/成功都要把结果写回 UI 状态，属于合法的 derived state。
   useEffect(() => {
@@ -224,12 +230,25 @@ export function CanvasRuntimePreview({
       setRuntimeStatus("building");
       setRuntimeMessage("正在装载 Canvas 运行时...");
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Canvas 预览构建失败";
       activeGenerationRef.current = null;
       revokeAllRuntimeAssetUrlsInCache(generation.assetCache);
       setActiveSrcDoc(null);
-      setBuildError(error instanceof Error ? error.message : "Canvas 预览构建失败");
+      setBuildError(message);
       setRuntimeStatus("error");
-      setRuntimeMessage(error instanceof Error ? error.message : "Canvas 预览构建失败");
+      setRuntimeMessage(message);
+      const currentBridge = agentRunBridgeRef.current;
+      if (currentBridge) {
+        void uploadCanvasRenderObservation(
+          currentBridge,
+          buildPreviewFailureObservation(
+            generation.frameId,
+            generation.generation,
+            message,
+            iframeRef.current,
+          ),
+        ).catch(() => {});
+      }
     }
 
     const capturedBuilt = built;

@@ -1256,7 +1256,7 @@ impl WorkspaceModuleInvokeTool {
         }
     }
 
-    async fn inspect_canvas_render_state(
+    async fn inspect_canvas(
         &self,
         canvas_mount_id: &str,
     ) -> Result<AgentToolResult, AgentToolError> {
@@ -1534,9 +1534,8 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                         details: Some(details),
                     })
                 }
-                WorkspaceModuleCanvasHostAction::InspectRenderState => {
-                    self.inspect_canvas_render_state(&module.summary.source)
-                        .await
+                WorkspaceModuleCanvasHostAction::Inspect => {
+                    self.inspect_canvas(&module.summary.source).await
                 }
                 WorkspaceModuleCanvasHostAction::GetInteractionState => {
                     self.get_canvas_interaction_state(&module.summary.source)
@@ -2417,6 +2416,42 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("runtime_action")
         );
+    }
+
+    #[tokio::test]
+    async fn describe_canvas_exposes_inspect_operation() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_current_user(Some(test_current_user()))
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ));
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({"module_id": "canvas:cvs-dashboard-a"}),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("describe canvas");
+        assert!(!result.is_error);
+        let details = result.details.expect("details");
+        let operation_keys = details
+            .get("operations")
+            .and_then(serde_json::Value::as_array)
+            .expect("operations")
+            .iter()
+            .filter_map(|operation| {
+                operation
+                    .get("operation_key")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(operation_keys.contains(&"canvas.inspect"));
+        assert!(!operation_keys.contains(&"canvas.inspect_render_state"));
     }
 
     #[tokio::test]

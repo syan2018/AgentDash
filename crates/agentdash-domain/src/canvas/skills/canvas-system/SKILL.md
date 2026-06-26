@@ -1,6 +1,6 @@
 ---
 name: canvas-system
-description: AgentDashboard Canvas authoring guide. Use when a session has workspace_module access for Canvas work, a canvas:{canvas_mount_id} workspace module, or a canvas VFS mount; use for creating or editing runnable React/HTML/CSS Canvas assets, binding VFS data into Canvas previews, rendering VFS image assets, exposing Canvas interaction state, submitting explicit Canvas user actions to the current AgentRun, diagnosing rendered Canvas state, or calling session runtime actions from Canvas UI.
+description: Required guide for AgentDashboard Canvas work. Read this first when the user asks to use Canvas, create or modify a Canvas surface, or show information to the user through a visual/workspace panel; it defines the canonical Canvas workflow, VFS authoring boundary, preview/present/inspect operations, data binding, runtime bridge, and user-visible delivery rules.
 ---
 
 # Canvas System
@@ -15,7 +15,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 4. Edit canvas source through VFS tools, usually `fs_apply_patch` against `{canvas_mount_id}://...`, only when the mount exposes write capability.
 5. Bind external data with `workspace_module_invoke` on the `canvas:{canvas_mount_id}` module operation `canvas.bind_data` when the Canvas needs session VFS facts and the operation is present.
 6. Call `workspace_module_present(module_id="canvas:{canvas_mount_id}", view_key="preview")` when the Canvas is ready for user inspection.
-7. Diagnose a presented Canvas with `workspace_module_invoke` operations `canvas.inspect_render_state` and `canvas.get_interaction_state` when those operations appear in `workspace_module_describe`.
+7. Diagnose a presented Canvas with `workspace_module_invoke` operations `canvas.inspect` and `canvas.get_interaction_state` when those operations appear in `workspace_module_describe`.
 
 ## Core Rules
 

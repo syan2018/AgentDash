@@ -6,7 +6,7 @@ import type { JsonValue } from "./common-contracts";
 /**
  * 宿主拥有的 Canvas module operation。
  */
-export type WorkspaceModuleCanvasHostAction = "bind_data" | "inspect_render_state" | "get_interaction_state";
+export type WorkspaceModuleCanvasHostAction = "bind_data" | "inspect" | "get_interaction_state";
 
 /**
  * `describe` 返回的完整 descriptor。

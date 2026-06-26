@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::canvas::{
     CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_BIND_DATA_ORIGIN,
-    CANVAS_GET_INTERACTION_STATE_OPERATION_KEY, CANVAS_INSPECT_RENDER_STATE_OPERATION_KEY,
+    CANVAS_GET_INTERACTION_STATE_OPERATION_KEY, CANVAS_INSPECT_OPERATION_KEY,
     CANVAS_MODULE_ID_PREFIX, CANVAS_PRESENTATION_SCHEME, CANVAS_PREVIEW_VIEW_KEY,
     CANVAS_RENDERER_KIND, CanvasWithAccess, canvas_module_id, canvas_presentation_uri,
     canvas_vfs_mount_id,
@@ -338,7 +338,7 @@ fn build_canvas_module(
     if access.can_view {
         operations.push(canvas_bind_data_operation());
     }
-    operations.push(canvas_inspect_render_state_operation());
+    operations.push(canvas_inspect_operation());
     operations.push(canvas_get_interaction_state_operation());
 
     let ui_entries = vec![WorkspaceModuleUiEntry {
@@ -410,11 +410,11 @@ fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
     }
 }
 
-fn canvas_inspect_render_state_operation() -> WorkspaceModuleOperation {
+fn canvas_inspect_operation() -> WorkspaceModuleOperation {
     WorkspaceModuleOperation {
-        operation_key: CANVAS_INSPECT_RENDER_STATE_OPERATION_KEY.to_string(),
+        operation_key: CANVAS_INSPECT_OPERATION_KEY.to_string(),
         origin: CANVAS_BIND_DATA_ORIGIN.to_string(),
-        description: "Inspect the latest render observation reported by this Canvas runtime."
+        description: "Inspect the latest user-visible runtime observation reported by this Canvas."
             .to_string(),
         input_schema: Some(serde_json::json!({
             "type": "object",
@@ -428,7 +428,7 @@ fn canvas_inspect_render_state_operation() -> WorkspaceModuleOperation {
         })),
         permission_summary: vec!["canvas.runtime:inspect".to_string()],
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
-            canvas_action: WorkspaceModuleCanvasHostAction::InspectRenderState,
+            canvas_action: WorkspaceModuleCanvasHostAction::Inspect,
         },
     }
 }

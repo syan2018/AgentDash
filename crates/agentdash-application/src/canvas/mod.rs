@@ -12,7 +12,7 @@ use crate::ApplicationError;
 pub use agentdash_domain::canvas::canvas_access_projection;
 pub use agentdash_workspace_module::canvas::{
     CANVAS_BIND_DATA_OPERATION_KEY, CANVAS_BIND_DATA_ORIGIN,
-    CANVAS_GET_INTERACTION_STATE_OPERATION_KEY, CANVAS_INSPECT_RENDER_STATE_OPERATION_KEY,
+    CANVAS_GET_INTERACTION_STATE_OPERATION_KEY, CANVAS_INSPECT_OPERATION_KEY,
     CANVAS_MODULE_ID_PREFIX, CANVAS_MOUNT_ID_PREFIX, CANVAS_PRESENTATION_SCHEME,
     CANVAS_PREVIEW_VIEW_KEY, CANVAS_PROVIDER_ROOT_SCHEME, CANVAS_RENDERER_KIND, canvas_module_id,
     canvas_presentation_uri, canvas_provider_root_ref, canvas_vfs_mount_id, canvas_vfs_uri,

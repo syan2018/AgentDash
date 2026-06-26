@@ -2,60 +2,16 @@ use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-use agentdash_spi::{ContextFragment, FragmentScope, MergeStrategy, SessionContextBundle};
+use agentdash_spi::{ContextFragment, FragmentScope, SessionContextBundle};
 use uuid::Uuid;
-
-use crate::runtime::McpServerSummary;
 
 pub(crate) struct Contribution {
     pub fragments: Vec<ContextFragment>,
-    pub mcp_servers: Vec<McpServerSummary>,
 }
 
 impl Contribution {
     pub(crate) fn fragments_only(fragments: Vec<ContextFragment>) -> Self {
-        Self {
-            fragments,
-            mcp_servers: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextBuildPhase {
-    RepositoryRehydrate,
-}
-
-impl ContextBuildPhase {
-    fn as_tag(&self) -> &'static str {
-        match self {
-            ContextBuildPhase::RepositoryRehydrate => "repository_rehydrate",
-        }
-    }
-}
-
-pub(crate) fn build_continuation_bundle_from_markdown(
-    session_id: Uuid,
-    markdown: String,
-) -> SessionContextBundle {
-    let mut bundle =
-        SessionContextBundle::new(session_id, ContextBuildPhase::RepositoryRehydrate.as_tag());
-    if markdown.trim().is_empty() {
-        return bundle;
-    }
-    bundle.upsert_by_slot(build_continuation_transcript_fragment(markdown));
-    bundle
-}
-
-fn build_continuation_transcript_fragment(markdown: String) -> ContextFragment {
-    ContextFragment {
-        slot: "static_fragment".to_string(),
-        label: "continuation_transcript".to_string(),
-        order: 0,
-        strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
-        source: "session:continuation".to_string(),
-        content: markdown,
+        Self { fragments }
     }
 }
 

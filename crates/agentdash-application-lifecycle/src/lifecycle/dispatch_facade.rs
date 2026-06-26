@@ -1,7 +1,8 @@
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::lifecycle_materialization::{
     LifecycleDispatchPort, LifecycleDispatchPortResult, LifecycleDispatchRequest,
-    LifecycleMaterializationError,
+    LifecycleMaterializationError, WorkflowAgentNodeMaterializationPort,
+    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
@@ -13,10 +14,7 @@ use agentdash_domain::workflow::{
 };
 use async_trait::async_trait;
 
-use super::{
-    LifecycleDispatchService, WorkflowAgentNodeMaterializationRequest,
-    WorkflowAgentNodeMaterializationResult, WorkflowApplicationError,
-};
+use super::{LifecycleDispatchService, WorkflowApplicationError};
 
 pub struct LifecycleDispatchFacade<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
@@ -118,6 +116,19 @@ impl LifecycleDispatchPort for LifecycleDispatchFacade<'_> {
             .await
             .map_err(lifecycle_materialization_error_from_workflow)?;
         Ok(LifecycleDispatchPortResult { result })
+    }
+}
+
+#[async_trait]
+impl WorkflowAgentNodeMaterializationPort for LifecycleDispatchFacade<'_> {
+    async fn materialize_workflow_agent_node(
+        &self,
+        request: WorkflowAgentNodeMaterializationRequest,
+    ) -> Result<WorkflowAgentNodeMaterializationResult, LifecycleMaterializationError> {
+        self.service()
+            .materialize_workflow_agent_node(request)
+            .await
+            .map_err(lifecycle_materialization_error_from_workflow)
     }
 }
 

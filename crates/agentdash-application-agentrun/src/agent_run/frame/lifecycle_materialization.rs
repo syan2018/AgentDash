@@ -4,20 +4,12 @@ use agentdash_application_ports::agent_frame_materialization as agent_frame_mate
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
-#[cfg(test)]
-use agentdash_domain::workflow::AgentFrame;
 use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::CapabilityState;
-#[cfg(test)]
-use agentdash_spi::Vfs;
-#[cfg(test)]
-use uuid::Uuid;
 
 use crate::agent_run::frame::builder::{
     AgentFrameActivationSurfaceInput, AgentFrameBuilder, build_lifecycle_activation_surface,
 };
-#[cfg(test)]
-use crate::error::WorkflowApplicationError;
 
 #[derive(Clone)]
 pub struct AgentRunLaunchAnchorFrameConstructionAdapter {
@@ -252,19 +244,4 @@ fn render_input_section(
         .collect::<Vec<_>>()
         .join("\n");
     format!("输入端口状态：\n{items}")
-}
-
-#[cfg(test)]
-pub(crate) async fn construct_launch_anchor_frame_with_vfs(
-    frame_repo: &dyn AgentFrameRepository,
-    agent_id: Uuid,
-    runtime_session_ref: Option<Uuid>,
-    frame_created_by_id: Option<String>,
-    vfs: &Vfs,
-) -> Result<AgentFrame, WorkflowApplicationError> {
-    let mut builder = AgentFrameBuilder::new_launch_anchor(agent_id, frame_created_by_id);
-    if let Some(session_id) = runtime_session_ref {
-        builder = builder.with_runtime_session(session_id.to_string());
-    }
-    Ok(builder.with_vfs_typed(vfs).build(frame_repo).await?)
 }

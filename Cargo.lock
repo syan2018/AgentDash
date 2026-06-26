@@ -148,11 +148,14 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-application",
  "agentdash-application-agentrun",
+ "agentdash-application-hooks",
  "agentdash-application-lifecycle",
  "agentdash-application-ports",
  "agentdash-application-runtime-gateway",
  "agentdash-application-runtime-session",
+ "agentdash-application-shared-library",
  "agentdash-application-vfs",
+ "agentdash-application-workflow",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-executor",
@@ -201,11 +204,15 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-agentrun",
+ "agentdash-application-hooks",
  "agentdash-application-lifecycle",
  "agentdash-application-ports",
  "agentdash-application-runtime-gateway",
  "agentdash-application-runtime-session",
+ "agentdash-application-shared-library",
+ "agentdash-application-skill",
  "agentdash-application-vfs",
+ "agentdash-application-workflow",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-infrastructure",
@@ -249,6 +256,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-application-skill",
  "agentdash-application-vfs",
  "agentdash-contracts",
  "agentdash-domain",
@@ -259,10 +267,26 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-application-hooks"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
  "uuid",
 ]
 
@@ -273,7 +297,9 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-application-skill",
  "agentdash-application-vfs",
+ "agentdash-application-workflow",
  "agentdash-domain",
  "agentdash-spi",
  "agentdash-workspace-module",
@@ -350,6 +376,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-shared-library"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-vfs",
+ "agentdash-application-workflow",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-application-skill"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-vfs",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-application-vfs"
 version = "0.1.0"
 dependencies = [
@@ -379,6 +440,25 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "agentdash-application-workflow"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

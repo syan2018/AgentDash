@@ -247,9 +247,9 @@ impl From<agentdash_application::skill_asset::SkillAssetApplicationError> for Ap
     }
 }
 
-impl From<agentdash_application::shared_library::PublishLibraryAssetError> for ApiError {
-    fn from(err: agentdash_application::shared_library::PublishLibraryAssetError) -> Self {
-        use agentdash_application::shared_library::PublishLibraryAssetError as E;
+impl From<agentdash_application_shared_library::PublishLibraryAssetError> for ApiError {
+    fn from(err: agentdash_application_shared_library::PublishLibraryAssetError) -> Self {
+        use agentdash_application_shared_library::PublishLibraryAssetError as E;
         match err {
             E::BadRequest(message) => ApiError::BadRequest(message),
             E::Conflict(message) => ApiError::Conflict(message),
@@ -258,9 +258,9 @@ impl From<agentdash_application::shared_library::PublishLibraryAssetError> for A
     }
 }
 
-impl From<agentdash_application::shared_library::ExternalMarketplaceLibraryError> for ApiError {
-    fn from(err: agentdash_application::shared_library::ExternalMarketplaceLibraryError) -> Self {
-        use agentdash_application::shared_library::ExternalMarketplaceLibraryError as E;
+impl From<agentdash_application_shared_library::ExternalMarketplaceLibraryError> for ApiError {
+    fn from(err: agentdash_application_shared_library::ExternalMarketplaceLibraryError) -> Self {
+        use agentdash_application_shared_library::ExternalMarketplaceLibraryError as E;
         match err {
             E::BadRequest(message) => ApiError::BadRequest(message),
             E::Conflict(message) => ApiError::Conflict(message),

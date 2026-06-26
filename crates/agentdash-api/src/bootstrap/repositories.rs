@@ -5,9 +5,6 @@ use sqlx::PgPool;
 
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::repository_set::{LifecycleProjectAgentLaunchAdapter, RepositorySet};
-use agentdash_application::shared_library::{
-    IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
-};
 use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
@@ -15,6 +12,10 @@ use agentdash_application_lifecycle::{
     AgentRunLifecycleSurfaceProjector, SessionPersistenceRuntimeSessionCreator,
 };
 use agentdash_application_runtime_session::session::SessionPersistence;
+use agentdash_application_shared_library::{
+    BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
+    SeedBuiltinLibraryAssetsInput, SharedLibraryService,
+};
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
@@ -80,7 +81,11 @@ pub(crate) async fn build_repositories(
     {
         let service = SharedLibraryService::new(shared_library_repo.as_ref());
         let seeded = service
-            .seed_builtin_assets(Default::default())
+            .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
+                asset_type: None,
+                key: None,
+                seed_provider: builtin_seed_provider_input()?,
+            })
             .await
             .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
         tracing::info!(
@@ -226,5 +231,12 @@ pub(crate) async fn build_repositories(
         extension_package_artifact_storage: Arc::new(
             FilesystemExtensionPackageArtifactStorage::default(),
         ),
+    })
+}
+
+fn builtin_seed_provider_input() -> Result<BuiltinLibrarySeedProviderInput> {
+    Ok(BuiltinLibrarySeedProviderInput {
+        workflow_templates: agentdash_application_workflow::list_builtin_workflow_templates()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
     })
 }

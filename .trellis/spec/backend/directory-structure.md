@@ -9,8 +9,11 @@
 ```
 crates/
 ├── agentdash-api/               # Interface Layer — HTTP 路由、DTO、中间件
-├── agentdash-application/       # Application Layer — 用例编排
+├── agentdash-application/       # Application Layer — 剩余用例编排与 composition adapters
 ├── agentdash-application-ports/ # Application Boundary Ports — API/local 实现、application 消费的纯端口
+├── agentdash-application-workflow/ # Application Layer — Workflow catalog/compiler/orchestration runtime
+├── agentdash-application-hooks/ # Application Layer — Hook policy provider 与 script surface
+├── agentdash-application-shared-library/ # Application Layer — Shared Library seed/install/publish use cases
 ├── agentdash-domain/            # Domain Layer — 实体、值对象、Repository 接口
 ├── agentdash-infrastructure/    # Infrastructure Layer — PostgreSQL/SQLite 持久化
 ├── agentdash-workspace-module/  # Workspace Module Boundary — module contract 与 Canvas 子模块业务
@@ -51,7 +54,8 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 | 分层 | Crate | 职责 | 允许依赖 |
 |------|-------|------|----------|
 | **Interface** | `agentdash-api` | HTTP 路由、DTO、中间件、错误映射 | application, domain |
-| **Application** | `agentdash-application` | 用例编排：session / context / task / VFS / story | domain, spi, executor |
+| **Application** | `agentdash-application` | 剩余用例编排与 composition adapters：session / context / task / story / repository set wiring | domain, spi, split application crates |
+| **Application Split Crates** | `agentdash-application-workflow`, `agentdash-application-hooks`, `agentdash-application-shared-library` | 大型 application use case 边界：workflow 编排、hook policy、Shared Library seed/install/publish | domain, spi, application-ports；只在用例所有权明确时依赖 sibling application crate |
 | **Application Ports** | `agentdash-application-ports` | application 边界 port、transport trait、轻量 DTO/error | domain, relay, agent-protocol |
 | **Workspace Module Boundary** | `agentdash-workspace-module` | Workspace Module 业务边界：module identity、presentation URI、operation contract、runtime tool provider，以及 `canvas` 子模块中的 Canvas 管理/runtime/VFS/visibility 业务服务 | domain, application-ports, application-vfs, runtime-gateway |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部业务库 |

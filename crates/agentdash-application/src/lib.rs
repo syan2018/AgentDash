@@ -13,7 +13,6 @@ pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod frame_construction;
-pub mod hooks;
 pub mod lifecycle {
     pub use agentdash_application_lifecycle::*;
 }
@@ -33,8 +32,9 @@ pub mod runtime_session_agent_run_bridge;
 pub mod runtime_tools;
 pub mod scheduling;
 pub mod session;
-pub mod shared_library;
-pub mod skill;
+pub mod skill {
+    pub use agentdash_application_skill::skill::*;
+}
 pub mod skill_asset;
 pub mod story;
 pub mod task;
@@ -43,7 +43,6 @@ pub mod vfs {
 }
 pub mod vfs_owner_providers;
 pub mod vfs_surface_resolver;
-pub mod workflow;
 pub mod workspace;
 
 #[cfg(test)]

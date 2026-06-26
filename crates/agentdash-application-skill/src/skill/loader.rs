@@ -1,0 +1,370 @@
+/// Skill 目录扫描与加载
+///
+/// 通过 VFS 的 relay service 扫描所有 mount 的约定 skill 目录，
+/// 使用 `list()` 遍历子目录，`read_text()` 读取 SKILL.md。
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use agentdash_application_vfs::{
+    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
+    PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService,
+};
+use agentdash_spi::{Mount, MountCapability, SkillRef, Vfs};
+
+use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
+
+const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
+const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
+const MAX_SKILL_FILE_SIZE_BYTES: u64 = 64 * 1024;
+
+// ─── 公共 API ──────────────────────────────────────────────────────────────
+
+/// 加载结果
+#[derive(Debug, Default)]
+pub struct LoadSkillsResult {
+    pub skills: Vec<SkillRef>,
+    pub diagnostics: Vec<SkillDiagnostic>,
+}
+
+/// 扫描插件提供的本地文件系统目录中的 skill
+///
+/// 对每个目录，遍历一级子目录并查找 SKILL.md，解析规则与 mount 扫描一致。
+/// 不经过 VFS mount 系统，直接使用 `std::fs`。
+pub fn load_skills_from_local_dirs(
+    dirs: &[PathBuf],
+    existing_names: &HashMap<String, String>,
+) -> LoadSkillsResult {
+    let mut result = LoadSkillsResult::default();
+    let mut name_map: HashMap<String, String> = existing_names.clone();
+
+    for dir in dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue, // 目录不存在或不可读，静默跳过
+        };
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+
+            let skill_md = entry.path().join("SKILL.md");
+            let content = match std::fs::read_to_string(&skill_md) {
+                Ok(c) => c,
+                Err(_) => continue, // 无 SKILL.md，跳过
+            };
+
+            let (fm, _body) = parse_skill_file(&content);
+            let fm = fm.unwrap_or_default();
+
+            let parent_dir_name = entry.file_name().to_string_lossy().to_string();
+
+            let name = fm
+                .name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| parent_dir_name.clone());
+
+            let mut diags = Vec::new();
+            diags.extend(validate_and_collect(
+                &name,
+                &parent_dir_name,
+                &fm,
+                &skill_md.to_string_lossy(),
+            ));
+
+            if !diags.is_empty() {
+                result.diagnostics.extend(diags);
+                continue;
+            }
+
+            let key = skill_md.to_string_lossy().to_string();
+            if let Some(existing) = name_map.get(&name) {
+                result.diagnostics.push(SkillDiagnostic {
+                    name: name.clone(),
+                    message: format!(
+                        "skill \"{}\" 与 {} 冲突（plugin 路径），忽略 {}",
+                        name, existing, key
+                    ),
+                    file_path: skill_md,
+                });
+            } else {
+                name_map.insert(name.clone(), key);
+                result.skills.push(SkillRef {
+                    name,
+                    description: fm.description.unwrap_or_default(),
+                    file_path: skill_md,
+                    base_dir: entry.path(),
+                    disable_model_invocation: fm.disable_model_invocation,
+                });
+            }
+        }
+    }
+
+    result
+}
+
+/// 通过 VFS service 从所有 mount 扫描 skill（主入口）
+///
+/// 使用通用 `discover_mount_files` 底层机制发现 SKILL.md，
+/// 再对每个文件做 frontmatter 解析 + 验证。
+pub async fn load_skills_from_vfs(service: &VfsService, vfs: &Vfs) -> LoadSkillsResult {
+    let mut result = LoadSkillsResult::default();
+    let mut name_map: HashMap<String, String> = HashMap::new();
+
+    for file in discover_builtin_skill_files(service, vfs).await {
+        let (fm, _body) = parse_skill_file(&file.content);
+        let fm = fm.unwrap_or_default();
+
+        let parent_dir_name = file
+            .path
+            .rsplit('/')
+            .nth(1) // SKILL.md 的父目录名
+            .unwrap_or(&file.path)
+            .rsplit('/')
+            .next()
+            .unwrap_or(&file.path)
+            .to_string();
+
+        let name = fm
+            .name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| parent_dir_name.clone());
+
+        let skill_md_path = file.path.clone();
+        let mut diags = Vec::new();
+        diags.extend(validate_and_collect(
+            &name,
+            &parent_dir_name,
+            &fm,
+            &skill_md_path,
+        ));
+
+        if !diags.is_empty() {
+            result.diagnostics.extend(diags);
+            continue;
+        }
+
+        let key = format!("{}://{}", file.mount_id, skill_md_path);
+        if let Some(existing) = name_map.get(&name) {
+            result.diagnostics.push(SkillDiagnostic {
+                name: name.clone(),
+                message: format!("skill \"{}\" 与 {} 冲突，忽略 {}", name, existing, key),
+                file_path: PathBuf::from(&key),
+            });
+        } else {
+            let parent_path = file.path.rsplit_once('/').map(|(p, _)| p).unwrap_or(".");
+            name_map.insert(name.clone(), key);
+            result.skills.push(SkillRef {
+                name,
+                description: fm.description.unwrap_or_default(),
+                file_path: PathBuf::from(format!("{}://{}", file.mount_id, skill_md_path)),
+                base_dir: PathBuf::from(format!("{}://{}", file.mount_id, parent_path)),
+                disable_model_invocation: fm.disable_model_invocation,
+            });
+        }
+    }
+
+    result
+}
+
+#[derive(Debug)]
+struct DiscoveredSkillFile {
+    mount_id: String,
+    path: String,
+    content: String,
+}
+
+async fn discover_builtin_skill_files(service: &VfsService, vfs: &Vfs) -> Vec<DiscoveredSkillFile> {
+    let mut files = Vec::new();
+
+    for mount in &vfs.mounts {
+        if !should_scan_mount_for_discovery(mount)
+            || !mount.capabilities.contains(&MountCapability::Read)
+            || !mount.capabilities.contains(&MountCapability::List)
+        {
+            continue;
+        }
+
+        for prefix in [".agents/skills", "skills"] {
+            for child_dir in list_children_at(service, vfs, &mount.id, prefix).await {
+                let path = format!("{child_dir}/SKILL.md");
+                if let Some(file) = read_skill_file(service, vfs, &mount.id, &path).await {
+                    files.push(file);
+                }
+            }
+        }
+    }
+
+    files
+}
+
+fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
+    match mount.metadata.get(AUTO_DISCOVERY_METADATA_KEY) {
+        Some(serde_json::Value::Bool(enabled)) => return *enabled,
+        Some(serde_json::Value::String(value)) => {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "allow" | "auto" => return true,
+                "false" | "deny" | "skip" | "manual" => return false,
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    match mount
+        .metadata
+        .get(DISCOVERY_POLICY_METADATA_KEY)
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("auto") | Some("allow") => return true,
+        Some("manual") | Some("skip") | Some("deny") => return false,
+        _ => {}
+    }
+
+    matches!(
+        mount.provider.as_str(),
+        PROVIDER_RELAY_FS
+            | PROVIDER_INLINE_FS
+            | PROVIDER_LIFECYCLE_VFS
+            | PROVIDER_CANVAS_FS
+            | PROVIDER_SKILL_ASSET_FS
+    )
+}
+
+async fn read_skill_file(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    path: &str,
+) -> Option<DiscoveredSkillFile> {
+    let target = ResourceRef {
+        mount_id: mount_id.to_string(),
+        path: path.to_string(),
+    };
+    let read = service.read_text(vfs, &target, None, None).await.ok()?;
+    if read.content.trim().is_empty() || read.content.len() as u64 > MAX_SKILL_FILE_SIZE_BYTES {
+        return None;
+    }
+    Some(DiscoveredSkillFile {
+        mount_id: mount_id.to_string(),
+        path: read.path,
+        content: read.content,
+    })
+}
+
+async fn list_children_at(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+) -> Vec<String> {
+    list_entries_at(service, vfs, mount_id, dir_path)
+        .await
+        .into_iter()
+        .filter(|entry| entry.is_dir)
+        .map(|entry| entry.path)
+        .collect()
+}
+
+async fn list_entries_at(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+) -> Vec<RuntimeFileEntry> {
+    service
+        .list(
+            vfs,
+            mount_id,
+            ListOptions {
+                path: dir_path.to_string(),
+                pattern: None,
+                recursive: false,
+            },
+            None,
+            None,
+        )
+        .await
+        .map(|result| result.entries)
+        .unwrap_or_default()
+}
+
+fn validate_and_collect(
+    name: &str,
+    parent_dir_name: &str,
+    fm: &SkillFrontmatter,
+    path: &str,
+) -> Vec<SkillDiagnostic> {
+    let mut diags = Vec::new();
+
+    if name != parent_dir_name {
+        diags.push(SkillDiagnostic {
+            name: name.to_string(),
+            message: format!("name \"{name}\" 与父目录名 \"{parent_dir_name}\" 不一致"),
+            file_path: PathBuf::from(path),
+        });
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        diags.push(SkillDiagnostic {
+            name: name.to_string(),
+            message: format!(
+                "name 超过 {MAX_NAME_LENGTH} 字符（当前 {} 字符）",
+                name.len()
+            ),
+            file_path: PathBuf::from(path),
+        });
+    }
+    if !name
+        .chars()
+        .all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
+    {
+        diags.push(SkillDiagnostic {
+            name: name.to_string(),
+            message: "name 只能包含小写字母、数字和连字符".to_string(),
+            file_path: PathBuf::from(path),
+        });
+    }
+    match fm.description.as_deref() {
+        None | Some("") => diags.push(SkillDiagnostic {
+            name: name.to_string(),
+            message: "description 为必填项".to_string(),
+            file_path: PathBuf::from(path),
+        }),
+        _ => {}
+    }
+
+    diags
+}
+
+// ─── 测试 ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_catches_bad_name() {
+        let fm = SkillFrontmatter {
+            name: Some("Bad-Name".to_string()),
+            description: Some("desc".to_string()),
+            disable_model_invocation: false,
+        };
+        let diags = validate_and_collect("Bad-Name", "Bad-Name", &fm, "test.md");
+        assert!(diags.iter().any(|d| d.message.contains("小写字母")));
+    }
+
+    #[test]
+    fn validate_catches_missing_description() {
+        let fm = SkillFrontmatter {
+            name: Some("foo".to_string()),
+            description: None,
+            disable_model_invocation: false,
+        };
+        let diags = validate_and_collect("foo", "foo", &fm, "test.md");
+        assert!(diags.iter().any(|d| d.message.contains("description")));
+    }
+}

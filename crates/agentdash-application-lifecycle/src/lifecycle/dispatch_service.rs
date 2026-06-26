@@ -1,10 +1,19 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::lifecycle_materialization::{
+    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
+};
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
+use agentdash_application_ports::workflow_graph_planning::WorkflowGraphPlanningPort;
+use agentdash_application_workflow::ApplicationWorkflowGraphPlanner;
+use agentdash_application_workflow::orchestration::{
+    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
+    apply_orchestration_event_to_run,
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -26,10 +35,6 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
-use crate::workflow::orchestration::{
-    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
-    apply_orchestration_event_to_run,
-};
 use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Clone)]
@@ -98,7 +103,7 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
 /// 和 connector launch（T4 的工作）。
 pub struct LifecycleDispatchService<'a> {
     run_repo: &'a dyn LifecycleRunRepository,
-    _workflow_graph_repo: &'a dyn WorkflowGraphRepository,
+    workflow_graph_repo: &'a dyn WorkflowGraphRepository,
     agent_repo: &'a dyn LifecycleAgentRepository,
     _frame_repo: &'a dyn AgentFrameRepository,
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
@@ -147,21 +152,6 @@ impl DispatchFacts {
             self.orchestration_binding.clone(),
         )
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkflowAgentNodeMaterializationRequest {
-    pub run_id: Uuid,
-    pub orchestration_binding: OrchestrationBindingRefs,
-    pub runtime_policy: RuntimePolicy,
-    pub frame_created_by_id: Option<String>,
-    pub workflow_contract: Option<AgentProcedureContract>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WorkflowAgentNodeMaterializationResult {
-    pub runtime_refs: AgentRuntimeRefs,
-    pub delivery_runtime_ref: Uuid,
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {
@@ -227,7 +217,7 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Self {
         Self {
             run_repo,
-            _workflow_graph_repo: workflow_graph_repo,
+            workflow_graph_repo,
             agent_repo,
             _frame_repo: frame_repo,
             association_repo,
@@ -610,18 +600,19 @@ impl<'a> LifecycleDispatchService<'a> {
         project_id: Uuid,
         workflow_graph_ref: &WorkflowGraphRef,
     ) -> Result<workflow_graph_planning_port::PlannedWorkflowGraph, WorkflowApplicationError> {
-        let planner = self.workflow_graph_planner.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "LifecycleDispatchService 缺少 WorkflowGraphPlanningPort".to_string(),
-            )
-        })?;
-        planner
-            .plan_workflow_graph(workflow_graph_planning_port::WorkflowGraphPlanningRequest {
-                project_id,
-                workflow_graph_ref: workflow_graph_ref.clone(),
-            })
-            .await
-            .map_err(workflow_error_from_workflow_graph_planning_error)
+        let request = workflow_graph_planning_port::WorkflowGraphPlanningRequest {
+            project_id,
+            workflow_graph_ref: workflow_graph_ref.clone(),
+        };
+        match self.workflow_graph_planner {
+            Some(planner) => planner.plan_workflow_graph(request).await,
+            None => {
+                ApplicationWorkflowGraphPlanner::new(self.workflow_graph_repo)
+                    .plan_workflow_graph(request)
+                    .await
+            }
+        }
+        .map_err(workflow_error_from_workflow_graph_planning_error)
     }
 
     async fn dispatch_plain(

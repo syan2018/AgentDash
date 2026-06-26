@@ -23,6 +23,9 @@ agentdash-application-runtime-session = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }
+agentdash-application-workflow = { workspace = true }
+agentdash-application-hooks = { workspace = true }
+agentdash-application-shared-library = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-executor = { workspace = true, features = ["pi-agent"] }

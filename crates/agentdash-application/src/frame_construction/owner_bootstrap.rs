@@ -32,9 +32,6 @@ use crate::capability::{
     ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
     load_available_presets, tool_directives_from_active_workflow,
 };
-use crate::companion::skill_projection::{
-    append_companion_system_skill_key, ensure_companion_system_skill_asset,
-};
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     build_session_context_bundle, emit_bundle_fragments, resolve_workspace_declared_sources,
@@ -372,14 +369,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
         }
 
-        let mut skill_asset_keys = spec.agent_skill_asset_keys.clone();
-        if matches!(spec.owner, OwnerScope::Project { .. }) {
-            ensure_companion_system_skill_asset(self.repos, project_id)
-                .await
-                .map_err(|error| error.to_string())?;
-            append_companion_system_skill_key(&mut skill_asset_keys);
-        }
-
         let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
             let anchor = match spec.audit_session_key.as_deref() {
                 Some(session_id) => self
@@ -431,7 +420,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                                     message_stream: Some(message_stream),
                                     project_id,
                                     mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::WorkflowNodeExecutionSurface,
-                                    explicit_skill_asset_keys: skill_asset_keys.clone(),
+                                    explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
                                     builtin_skills,
                                     node_evidence: Some(node_projection.evidence_ref()),
                                     node_projection: Some(node_projection),
@@ -448,7 +437,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
                                     message_stream: Some(message_stream),
                                     project_id,
                                     mode: ports_lifecycle_surface::AgentRunLifecycleSurfaceMode::LaunchEvidenceSurface,
-                                    explicit_skill_asset_keys: skill_asset_keys.clone(),
+                                    explicit_skill_asset_keys: spec.agent_skill_asset_keys.clone(),
                                     builtin_skills,
                                     node_evidence: None,
                                     node_projection: None,
@@ -477,17 +466,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             )
             .await
             .map_err(|e| e.to_string())?;
-            if !skill_asset_keys.is_empty()
-                && !agentdash_application_vfs::append_lifecycle_skill_asset_projection(
-                    space,
-                    project_id,
-                    &skill_asset_keys,
-                )
-            {
-                return Err(
-                    "session VFS 缺少 lifecycle mount，无法投影 SkillAsset baseline".to_string(),
-                );
-            }
         }
 
         Ok(vfs)

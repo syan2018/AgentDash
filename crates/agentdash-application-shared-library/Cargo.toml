@@ -1,0 +1,20 @@
+[package]
+name = "agentdash-application-shared-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-application-workflow = { workspace = true }
+agentdash-application-vfs = { workspace = true }
+agentdash-domain = { workspace = true }
+agentdash-spi = { workspace = true }
+base64 = "0.22"
+chrono = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { workspace = true, features = ["sync"] }

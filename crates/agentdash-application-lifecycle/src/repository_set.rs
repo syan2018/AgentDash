@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::lifecycle_materialization::{
+    LifecycleMaterializationError, WorkflowAgentNodeMaterializationPort,
+    WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
+};
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -34,6 +38,9 @@ use agentdash_domain::workflow::{
     WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
+use async_trait::async_trait;
+
+use crate::lifecycle::{LifecycleDispatchService, WorkflowApplicationError};
 
 #[derive(Clone)]
 pub struct RepositorySet {
@@ -78,4 +85,75 @@ pub struct RepositorySet {
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+}
+
+impl RepositorySet {
+    pub fn to_workflow_repository_set(
+        &self,
+    ) -> agentdash_application_workflow::WorkflowRepositorySet {
+        agentdash_application_workflow::WorkflowRepositorySet {
+            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            workflow_agent_node_materialization: Arc::new(
+                LifecycleWorkflowAgentNodeMaterializationAdapter::new(self.clone()),
+            ),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LifecycleWorkflowAgentNodeMaterializationAdapter {
+    repos: RepositorySet,
+}
+
+impl LifecycleWorkflowAgentNodeMaterializationAdapter {
+    pub fn new(repos: RepositorySet) -> Self {
+        Self { repos }
+    }
+}
+
+#[async_trait]
+impl WorkflowAgentNodeMaterializationPort for LifecycleWorkflowAgentNodeMaterializationAdapter {
+    async fn materialize_workflow_agent_node(
+        &self,
+        request: WorkflowAgentNodeMaterializationRequest,
+    ) -> Result<WorkflowAgentNodeMaterializationResult, LifecycleMaterializationError> {
+        let service = LifecycleDispatchService::new(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            self.repos.lifecycle_gate_repo.as_ref(),
+            self.repos.agent_lineage_repo.as_ref(),
+        )
+        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
+        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
+        .with_frame_construction_port(self.repos.agent_frame_construction.as_ref())
+        .with_workflow_agent_frame_materialization_port(
+            self.repos.workflow_agent_frame_materialization.as_ref(),
+        );
+
+        service
+            .materialize_workflow_agent_node(request)
+            .await
+            .map_err(lifecycle_materialization_error_from_workflow)
+    }
+}
+
+fn lifecycle_materialization_error_from_workflow(
+    error: WorkflowApplicationError,
+) -> LifecycleMaterializationError {
+    match error {
+        WorkflowApplicationError::BadRequest(message)
+        | WorkflowApplicationError::ModelRequired(message)
+        | WorkflowApplicationError::NotFound(message)
+        | WorkflowApplicationError::Conflict(message) => {
+            LifecycleMaterializationError::Rejected { message }
+        }
+        WorkflowApplicationError::Internal(message) => {
+            LifecycleMaterializationError::Internal { message }
+        }
+    }
 }

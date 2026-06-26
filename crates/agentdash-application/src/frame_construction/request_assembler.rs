@@ -37,7 +37,6 @@ use uuid::Uuid;
 
 use super::activity_activation::{
     ActivityActivationInput, activate_activity_with_platform, load_scoped_port_output_map,
-    project_companion_system_skill_to_activation,
 };
 #[cfg(test)]
 use super::assembly::slice_companion_bundle;
@@ -571,10 +570,6 @@ async fn compose_lifecycle_node_with_audit(
             .map_err(|error| error.to_string())?;
         activation.lifecycle_vfs = surface.vfs;
         activation.lifecycle_mount = surface.lifecycle_mount;
-    } else {
-        project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
-            .await
-            .map_err(|error| error.to_string())?;
     }
 
     // Lifecycle node 与 owner 路径都追加 SessionPlan contribution，保持 vfs /
@@ -959,10 +954,6 @@ async fn compose_companion_with_workflow(
             .map_err(|error| error.to_string())?;
         activation.lifecycle_vfs = surface.vfs;
         activation.lifecycle_mount = surface.lifecycle_mount;
-    } else {
-        project_companion_system_skill_to_activation(repos, project_id, &mut activation)
-            .await
-            .map_err(|error| error.to_string())?;
     }
     dedupe_runtime_mcp_servers(&mut activation.mcp_servers);
 

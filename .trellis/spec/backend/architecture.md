@@ -21,7 +21,10 @@
 | Crate | 当前职责 |
 | --- | --- |
 | `agentdash-api` | HTTP 路由模块、API-only DTO、中间件、AppState 装配 |
-| `agentdash-application` | 用例编排、session/context/workflow/VFS/capability 服务 |
+| `agentdash-application` | 剩余用例编排、session/context/capability 服务与 application composition adapters |
+| `agentdash-application-workflow` | Workflow catalog、builtin templates、graph/script compiler、orchestration reducer 与 executor launcher |
+| `agentdash-application-hooks` | Hook policy provider、preset registry、hook script service 与 `ExecutionHookProvider` implementation |
+| `agentdash-application-shared-library` | Shared Library seed、external marketplace import/refresh、Project install/publish/source-status use cases |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
 | `agentdash-executor` | connector、LLM bridge、hook runtime 适配 |

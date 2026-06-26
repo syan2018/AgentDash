@@ -8,9 +8,7 @@
 
 use std::collections::VecDeque;
 
-use agentdash_spi::{
-    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule,
-};
+use agentdash_spi::{MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
 use agentdash_spi::{Mount, MountCapability, Vfs};
 
 use crate::vfs::types::ResourceRef;
@@ -169,116 +167,26 @@ pub async fn discover_mount_files(
 pub async fn discover_skill_vfs_files(
     service: &VfsService,
     vfs: &Vfs,
-    rules: &[SkillDiscoveryVfsRule],
+    rules: &[agentdash_spi::SkillDiscoveryVfsRule],
 ) -> (
-    Vec<SkillDiscoveryVfsFile>,
+    Vec<agentdash_spi::SkillDiscoveryVfsFile>,
     Vec<MountFileDiscoveryDiagnostic>,
 ) {
-    let mut files = Vec::new();
-    let mut diagnostics = Vec::new();
-
-    for mount in &vfs.mounts {
-        if !should_scan_mount_for_discovery(mount) {
-            tracing::debug!(
-                mount_id = %mount.id,
-                provider = %mount.provider,
-                "跳过 dynamic skill VFS discovery mount"
-            );
-            continue;
-        }
-        if !mount.capabilities.contains(&MountCapability::Read) {
-            continue;
-        }
-
-        let has_list = mount.capabilities.contains(&MountCapability::List);
-        for rule in rules {
-            let rule_key = normalized_rule_key(rule);
-
-            for exact_path in &rule.exact_paths {
-                let Ok(path) =
-                    normalize_rule_path(&rule_key, &mount.id, exact_path, false, &mut diagnostics)
-                else {
-                    continue;
-                };
-                try_read_skill_vfs_file(
-                    service,
-                    vfs,
-                    &mount.id,
-                    &path,
-                    &rule_key,
-                    rule.max_size_bytes,
-                    &mut files,
-                    &mut diagnostics,
-                )
-                .await;
-            }
-
-            if !has_list || rule.scan_prefixes.is_empty() || rule.file_names.is_empty() {
-                continue;
-            }
-
-            let max_files = rule.max_files.unwrap_or(usize::MAX);
-            let mut emitted_for_rule = 0usize;
-            for prefix in &rule.scan_prefixes {
-                if emitted_for_rule >= max_files {
-                    break;
-                }
-                let Ok(prefix) =
-                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut diagnostics)
-                else {
-                    continue;
-                };
-
-                let candidates = if rule.recursive {
-                    list_recursive_files(
-                        service,
-                        vfs,
-                        &mount.id,
-                        &prefix,
-                        rule.max_depth.unwrap_or(8),
-                        max_files.saturating_sub(emitted_for_rule),
-                    )
-                    .await
-                } else {
-                    let children = list_children_at(service, vfs, &mount.id, &prefix).await;
-                    children
-                        .into_iter()
-                        .flat_map(|child_dir| {
-                            rule.file_names
-                                .iter()
-                                .map(move |file_name| format!("{child_dir}/{file_name}"))
-                        })
-                        .collect()
-                };
-
-                for candidate in candidates {
-                    if emitted_for_rule >= max_files {
-                        break;
-                    }
-                    if !matches_any_file_name(&candidate, &rule.file_names) {
-                        continue;
-                    }
-                    let before_len = files.len();
-                    try_read_skill_vfs_file(
-                        service,
-                        vfs,
-                        &mount.id,
-                        &candidate,
-                        &rule_key,
-                        rule.max_size_bytes,
-                        &mut files,
-                        &mut diagnostics,
-                    )
-                    .await;
-                    if files.len() > before_len {
-                        emitted_for_rule += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    (files, diagnostics)
+    let (files, diagnostics) =
+        agentdash_application_skill::discovery::discover_skill_vfs_files(service, vfs, rules, None)
+            .await;
+    (
+        files,
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| MountFileDiscoveryDiagnostic {
+                rule_key: diagnostic.rule_key,
+                mount_id: diagnostic.mount_id,
+                path: diagnostic.path,
+                message: diagnostic.message,
+            })
+            .collect(),
+    )
 }
 
 pub async fn discover_memory_vfs_files(
@@ -433,15 +341,6 @@ fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
     )
 }
 
-fn normalized_rule_key(rule: &SkillDiscoveryVfsRule) -> String {
-    let key = rule.key.trim();
-    if key.is_empty() {
-        "skill_discovery".to_string()
-    } else {
-        key.to_string()
-    }
-}
-
 fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
     let key = rule.key.trim();
     if key.is_empty() {
@@ -466,47 +365,6 @@ fn normalize_rule_path(
             message: format!("discovery path 非法: {error}"),
         });
     })
-}
-
-async fn try_read_skill_vfs_file(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    path: &str,
-    rule_key: &str,
-    max_size_bytes: u64,
-    files: &mut Vec<SkillDiscoveryVfsFile>,
-    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
-) {
-    let target = ResourceRef {
-        mount_id: mount_id.to_string(),
-        path: path.to_string(),
-    };
-    let read = match service.read_text(vfs, &target, None, None).await {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-
-    let content_len = read.content.len() as u64;
-    if content_len > max_size_bytes {
-        diagnostics.push(MountFileDiscoveryDiagnostic {
-            rule_key: rule_key.to_string(),
-            mount_id: mount_id.to_string(),
-            path: path.to_string(),
-            message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
-        });
-        return;
-    }
-    if read.content.trim().is_empty() {
-        return;
-    }
-
-    files.push(SkillDiscoveryVfsFile {
-        rule_key: rule_key.to_string(),
-        mount_id: mount_id.to_string(),
-        path: read.path,
-        content: read.content,
-    });
 }
 
 async fn try_read_memory_vfs_file(

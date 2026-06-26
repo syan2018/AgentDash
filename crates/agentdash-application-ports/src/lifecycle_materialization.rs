@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
-    AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent, OrchestrationBindingRefs,
-    RuntimePolicy,
+    AgentProcedureContract, AgentRuntimeRefs, ExecutionDispatchResult, ExecutionIntent,
+    OrchestrationBindingRefs, RuntimePolicy,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -21,6 +21,7 @@ pub struct WorkflowAgentNodeMaterializationRequest {
     pub orchestration_binding: OrchestrationBindingRefs,
     pub runtime_policy: RuntimePolicy,
     pub frame_created_by_id: Option<String>,
+    pub workflow_contract: Option<AgentProcedureContract>,
 }
 
 #[derive(Debug, Clone)]

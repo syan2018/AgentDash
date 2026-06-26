@@ -3,6 +3,7 @@ pub mod agent_run_surface;
 pub mod backend_transport;
 pub mod extension_runtime;
 pub mod frame_launch_envelope;
+pub mod hook_workflow_projection;
 pub mod lifecycle_materialization;
 pub mod lifecycle_read_model;
 pub mod lifecycle_surface_projection;

@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,13 +9,22 @@ use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
-    MemoryIndexStatus, RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster,
-    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
+    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, Mount, MountCapability,
+    RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster, SkillDiscoveryContext,
+    SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
     SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
+use agentdash_application_skill::discovery::{
+    LoadSkillsResult, SkillDiagnostic, discover_skill_vfs_files, load_skills_from_local_dirs,
+    load_skills_from_vfs,
+};
 use agentdash_application_vfs::mount::mount_owner_kind;
-use agentdash_application_vfs::{VfsService, mount_purpose};
+use agentdash_application_vfs::{
+    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
+    PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService, mount_purpose,
+    normalize_mount_relative_path,
+};
 
 use crate::agent_run::runtime_session_boundary::{
     INTEGRATION_STATIC_SKILL_PROVIDER_KEY, WORKSPACE_SKILL_PROVIDER_KEY,
@@ -27,17 +36,11 @@ const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
 const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
-
-#[derive(Debug, Clone)]
-struct DiscoveredMountFile {
-    mount_id: String,
-    path: String,
-    content: String,
-}
+const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
+const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
 
 #[derive(Debug, Clone)]
 struct MountFileDiscoveryDiagnostic {
-    rule_key: String,
     mount_id: String,
     path: String,
     message: String,
@@ -95,20 +98,30 @@ pub async fn derive_runtime_skill_baseline(
     let mut clusters = Vec::new();
     let mut diagnostics = Vec::new();
 
-    if input.vfs_service.is_some() && input.active_vfs.is_some() {
-        tracing::debug!(
-            label = input.diagnostics_label,
-            provider_key = WORKSPACE_SKILL_PROVIDER_KEY,
-            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; built-in VFS skill scan lives outside the AgentRun crate"
+    if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
+        let loaded = load_skills_from_vfs(vfs_service, active_vfs).await;
+        let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
+            loaded,
+            WORKSPACE_SKILL_PROVIDER_KEY,
+            "Workspace Skills",
         );
+        diagnostics.extend(cluster_diagnostics);
+        if let Some(cluster) = cluster {
+            clusters.push(cluster);
+        }
     }
 
     if !input.extra_skill_dirs.is_empty() {
-        tracing::debug!(
-            label = input.diagnostics_label,
-            provider_key = INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
-            "AgentRun skill baseline relies on injected SkillDiscoveryProvider; static local skill dir scan lives outside the AgentRun crate"
+        let loaded = load_skills_from_local_dirs(input.extra_skill_dirs, &HashMap::new());
+        let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
+            loaded,
+            INTEGRATION_STATIC_SKILL_PROVIDER_KEY,
+            "Integration Static Skills",
         );
+        diagnostics.extend(cluster_diagnostics);
+        if let Some(cluster) = cluster {
+            clusters.push(cluster);
+        }
     }
 
     let discovery_context =
@@ -117,14 +130,25 @@ pub async fn derive_runtime_skill_baseline(
         let rules = provider.vfs_discovery_rules();
         let vfs_first = !rules.is_empty();
         let output = if vfs_first {
-            diagnostics.push(SkillDiscoveryDiagnostic {
-                provider_key: provider.provider_key().to_string(),
-                code: "vfs_scanner_unavailable".to_string(),
-                message: "provider 声明了 VFS discovery rules；AgentRun crate 只消费外部注入的 discovery output，文件扫描由 composition owner 提供".to_string(),
-                local_name: None,
-                file_path: None,
-            });
-            continue;
+            let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs)
+            else {
+                diagnostics.push(SkillDiscoveryDiagnostic {
+                    provider_key: provider.provider_key().to_string(),
+                    code: "vfs_scanner_unavailable".to_string(),
+                    message: "provider 声明了 VFS discovery rules，但当前 runtime projection 没有 active VFS 或 VFS service".to_string(),
+                    local_name: None,
+                    file_path: None,
+                });
+                continue;
+            };
+            let (files, scan_diagnostics) =
+                discover_skill_vfs_files(vfs_service, active_vfs, &rules, input.identity).await;
+            diagnostics.extend(scan_diagnostics.into_iter().map(|diagnostic| {
+                diagnostic.into_skill_discovery_diagnostic(provider.provider_key())
+            }));
+            provider
+                .discover_from_vfs(discovery_context.clone(), files)
+                .await
         } else {
             provider.discover(discovery_context.clone()).await
         };
@@ -186,7 +210,7 @@ pub async fn derive_runtime_memory_inventory(
     }
 
     let context = memory_discovery_context_from_vfs_and_identity(input.active_vfs, input.identity);
-    let _mounts = input
+    let mounts = input
         .active_vfs
         .map(memory_discovery_mounts_from_vfs)
         .unwrap_or_default();
@@ -198,14 +222,29 @@ pub async fn derive_runtime_memory_inventory(
         let output = if rules.is_empty() {
             provider.discover(context.clone()).await
         } else {
-            diagnostics.push(MemoryDiscoveryDiagnostic {
-                provider_key: provider.provider_key().to_string(),
-                code: "vfs_scanner_unavailable".to_string(),
-                message: "provider 声明了 VFS discovery rules；AgentRun crate 只消费外部注入的 discovery output，文件扫描由 composition owner 提供".to_string(),
-                source_key: None,
-                uri: None,
-            });
-            continue;
+            let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs)
+            else {
+                diagnostics.push(MemoryDiscoveryDiagnostic {
+                    provider_key: provider.provider_key().to_string(),
+                    code: "vfs_scanner_unavailable".to_string(),
+                    message: "provider 声明了 VFS discovery rules，但当前 runtime 缺少 VFS service 或 active VFS".to_string(),
+                    source_key: None,
+                    uri: None,
+                });
+                continue;
+            };
+            let (files, scan_diagnostics) =
+                discover_memory_vfs_files(vfs_service, active_vfs, &rules, input.identity).await;
+            let oversized_indexes =
+                oversized_memory_index_paths(&scan_diagnostics, provider.provider_key());
+            diagnostics.extend(memory_mount_diagnostics_to_discovery(
+                provider.provider_key(),
+                scan_diagnostics,
+            ));
+            provider
+                .discover_from_vfs(context.clone(), mounts.clone(), files)
+                .await
+                .map(|output| mark_oversized_memory_indexes(output, &oversized_indexes))
         };
 
         match output {
@@ -307,6 +346,304 @@ fn memory_discovery_mounts_from_vfs(vfs: &Vfs) -> Vec<MemoryDiscoveryMount> {
         .collect()
 }
 
+async fn discover_memory_vfs_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    rules: &[MemoryDiscoveryVfsRule],
+    identity: Option<&AuthIdentity>,
+) -> (
+    Vec<MemoryDiscoveryVfsFile>,
+    Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let mut files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for mount in &vfs.mounts {
+        if !should_scan_mount_for_discovery(mount) {
+            continue;
+        }
+        if !mount.capabilities.contains(&MountCapability::Read) {
+            continue;
+        }
+
+        let has_list = mount.capabilities.contains(&MountCapability::List);
+        for rule in rules {
+            let rule_key = normalized_memory_rule_key(rule);
+
+            for exact_path in &rule.exact_paths {
+                let Ok(path) =
+                    normalize_discovery_rule_path(&mount.id, exact_path, false, &mut diagnostics)
+                else {
+                    continue;
+                };
+                try_read_memory_vfs_file(
+                    service,
+                    vfs,
+                    &mount.id,
+                    &path,
+                    &rule_key,
+                    rule.max_size_bytes,
+                    identity,
+                    &mut files,
+                    &mut diagnostics,
+                )
+                .await;
+            }
+
+            if !has_list || rule.scan_prefixes.is_empty() || rule.file_names.is_empty() {
+                continue;
+            }
+
+            let max_files = rule.max_files.unwrap_or(usize::MAX);
+            let mut emitted_for_rule = 0usize;
+            for prefix in &rule.scan_prefixes {
+                if emitted_for_rule >= max_files {
+                    break;
+                }
+                let Ok(prefix) =
+                    normalize_discovery_rule_path(&mount.id, prefix, true, &mut diagnostics)
+                else {
+                    continue;
+                };
+                let candidates = if rule.recursive {
+                    list_recursive_files(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &prefix,
+                        rule.max_depth.unwrap_or(8),
+                        max_files.saturating_sub(emitted_for_rule),
+                        identity,
+                    )
+                    .await
+                } else {
+                    let children =
+                        list_children_at(service, vfs, &mount.id, &prefix, identity).await;
+                    children
+                        .into_iter()
+                        .flat_map(|child_dir| {
+                            rule.file_names
+                                .iter()
+                                .map(move |file_name| format!("{child_dir}/{file_name}"))
+                        })
+                        .collect()
+                };
+
+                for candidate in candidates {
+                    if emitted_for_rule >= max_files {
+                        break;
+                    }
+                    if !matches_any_file_name(&candidate, &rule.file_names) {
+                        continue;
+                    }
+                    let before_len = files.len();
+                    try_read_memory_vfs_file(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &candidate,
+                        &rule_key,
+                        rule.max_size_bytes,
+                        identity,
+                        &mut files,
+                        &mut diagnostics,
+                    )
+                    .await;
+                    if files.len() > before_len {
+                        emitted_for_rule += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    (files, diagnostics)
+}
+
+fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
+    match mount.metadata.get(AUTO_DISCOVERY_METADATA_KEY) {
+        Some(serde_json::Value::Bool(enabled)) => return *enabled,
+        Some(serde_json::Value::String(value)) => {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "allow" | "auto" => return true,
+                "false" | "deny" | "skip" | "manual" => return false,
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    match mount
+        .metadata
+        .get(DISCOVERY_POLICY_METADATA_KEY)
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("auto") | Some("allow") => return true,
+        Some("manual") | Some("skip") | Some("deny") => return false,
+        _ => {}
+    }
+
+    matches!(
+        mount.provider.as_str(),
+        PROVIDER_RELAY_FS
+            | PROVIDER_INLINE_FS
+            | PROVIDER_LIFECYCLE_VFS
+            | PROVIDER_CANVAS_FS
+            | PROVIDER_SKILL_ASSET_FS
+    )
+}
+
+fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
+    let key = rule.key.trim();
+    if key.is_empty() {
+        "memory_discovery".to_string()
+    } else {
+        key.to_string()
+    }
+}
+
+fn normalize_discovery_rule_path(
+    mount_id: &str,
+    raw_path: &str,
+    allow_empty: bool,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+) -> Result<String, ()> {
+    normalize_mount_relative_path(raw_path, allow_empty).map_err(|error| {
+        diagnostics.push(MountFileDiscoveryDiagnostic {
+            mount_id: mount_id.to_string(),
+            path: raw_path.to_string(),
+            message: format!("discovery path 非法: {error}"),
+        });
+    })
+}
+
+async fn try_read_memory_vfs_file(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    path: &str,
+    rule_key: &str,
+    max_size_bytes: u64,
+    identity: Option<&AuthIdentity>,
+    files: &mut Vec<MemoryDiscoveryVfsFile>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let target = ResourceRef {
+        mount_id: mount_id.to_string(),
+        path: path.to_string(),
+    };
+    let read = match service.read_text(vfs, &target, None, identity).await {
+        Ok(read) => read,
+        Err(_) => return,
+    };
+
+    let content_len = read.content.len() as u64;
+    if content_len > max_size_bytes {
+        diagnostics.push(MountFileDiscoveryDiagnostic {
+            mount_id: mount_id.to_string(),
+            path: path.to_string(),
+            message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
+        });
+        return;
+    }
+    if read.content.trim().is_empty() {
+        return;
+    }
+
+    files.push(MemoryDiscoveryVfsFile {
+        rule_key: rule_key.to_string(),
+        mount_id: mount_id.to_string(),
+        path: read.path,
+        content: read.content,
+        size_bytes: Some(content_len),
+    });
+}
+
+async fn list_recursive_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    root_path: &str,
+    max_depth: usize,
+    max_files: usize,
+    identity: Option<&AuthIdentity>,
+) -> Vec<String> {
+    if max_files == 0 {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([(root_path.to_string(), 0usize)]);
+    while let Some((path, depth)) = queue.pop_front() {
+        if depth > max_depth {
+            continue;
+        }
+        let entries = list_entries_at(service, vfs, mount_id, &path, identity).await;
+        for entry in entries {
+            if entry.is_dir {
+                if depth < max_depth {
+                    queue.push_back((entry.path, depth + 1));
+                }
+            } else {
+                files.push(entry.path);
+                if files.len() >= max_files {
+                    return files;
+                }
+            }
+        }
+    }
+
+    files
+}
+
+fn matches_any_file_name(path: &str, file_names: &[String]) -> bool {
+    let Some(name) = path.rsplit('/').next() else {
+        return false;
+    };
+    file_names.iter().any(|file_name| file_name == name)
+}
+
+async fn list_children_at(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+    identity: Option<&AuthIdentity>,
+) -> Vec<String> {
+    list_entries_at(service, vfs, mount_id, dir_path, identity)
+        .await
+        .into_iter()
+        .filter(|entry| entry.is_dir)
+        .map(|entry| entry.path)
+        .collect()
+}
+
+async fn list_entries_at(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+    identity: Option<&AuthIdentity>,
+) -> Vec<RuntimeFileEntry> {
+    service
+        .list(
+            vfs,
+            mount_id,
+            ListOptions {
+                path: dir_path.to_string(),
+                pattern: None,
+                recursive: false,
+            },
+            None,
+            identity,
+        )
+        .await
+        .map(|result| result.entries)
+        .unwrap_or_default()
+}
+
 fn sanitized_memory_mount_metadata_summary(
     mount: &agentdash_spi::Mount,
 ) -> Option<serde_json::Value> {
@@ -392,66 +729,6 @@ fn memory_mount_diagnostics_to_discovery(
         .collect()
 }
 
-/// 把发现到的原始文件合并为确定性的指引列表。
-///
-/// 合并语义：
-/// - 稳定排序：按 (mount_id, 路径深度, 路径字典序)，保证多次发现顺序可复现；
-///   更深目录（更靠近被操作文件）的指引排在更后，视为更具体/优先，由模型裁决冲突。
-/// - 去重：按 (mount_id, 规范化路径) 去重，避免同一文件重复注入。
-///
-/// 注意：当前发现机制仅扫描 mount 根 + 一级子目录（见 mount_file_discovery
-/// `BUILTIN_GUIDELINE_RULES`），不递归更深层级；亦不做"深层覆盖同名段"——
-/// 后者需要"相对某个被编辑文件逐级解析"的锚点，本架构不具备，属未来独立增强。
-fn merge_discovered_guideline_files(
-    mut files: Vec<DiscoveredMountFile>,
-) -> Vec<DiscoveredGuideline> {
-    // 排序键与去重键一致（均基于规范化路径），且 sort_by 稳定：规范化后相同的
-    // 重复项保持输入顺序，去重时保留首个（surface 出规范形态的路径）。
-    files.sort_by(|a, b| {
-        let (na, nb) = (
-            normalize_guideline_path(&a.path),
-            normalize_guideline_path(&b.path),
-        );
-        a.mount_id
-            .cmp(&b.mount_id)
-            .then_with(|| path_depth(&a.path).cmp(&path_depth(&b.path)))
-            .then_with(|| na.cmp(&nb))
-    });
-
-    let mut seen = HashSet::new();
-    files
-        .into_iter()
-        .filter(|file| seen.insert((file.mount_id.clone(), normalize_guideline_path(&file.path))))
-        .map(|file| DiscoveredGuideline {
-            file_name: file
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file.path)
-                .to_string(),
-            mount_id: file.mount_id,
-            path: file.path,
-            content: file.content,
-        })
-        .collect()
-}
-
-/// 路径深度（`/` 分隔的层级数），用于就近排序。
-fn path_depth(path: &str) -> usize {
-    normalize_guideline_path(path)
-        .split('/')
-        .filter(|seg| !seg.is_empty())
-        .count()
-}
-
-/// 规范化指引路径用于去重：统一分隔符、去掉前导 `./` 与首尾 `/`。
-fn normalize_guideline_path(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim_start_matches("./")
-        .trim_matches('/')
-        .to_string()
-}
-
 pub fn normalize_capability_state_dimensions(
     state: &mut CapabilityState,
     active_vfs: Option<Vfs>,
@@ -533,6 +810,60 @@ fn skill_discovery_user_context_from_identity(
             .iter()
             .map(|group| group.group_id.clone())
             .collect(),
+    }
+}
+
+fn load_skills_result_to_provider_cluster(
+    result: LoadSkillsResult,
+    provider_key: &str,
+    display_name: &str,
+) -> (Option<SkillProviderCluster>, Vec<SkillDiscoveryDiagnostic>) {
+    let diagnostics = result
+        .diagnostics
+        .into_iter()
+        .map(|diag| skill_diagnostic_to_discovery(provider_key, diag))
+        .collect();
+    if result.skills.is_empty() {
+        return (None, diagnostics);
+    }
+
+    let default_exposed_skills = result
+        .skills
+        .into_iter()
+        .map(|skill| SkillCapabilityEntry {
+            capability_key: skill_capability_key(provider_key, &skill.name),
+            provider_key: provider_key.to_string(),
+            local_name: skill.name,
+            display_name: None,
+            description: skill.description,
+            file_path: skill.file_path.to_string_lossy().to_string(),
+            base_dir: Some(skill.base_dir.to_string_lossy().to_string()),
+            exposure: SkillContextExposure::DefaultExposed,
+            disable_model_invocation: skill.disable_model_invocation,
+        })
+        .collect();
+
+    (
+        Some(SkillProviderCluster {
+            provider_key: provider_key.to_string(),
+            display_name: display_name.to_string(),
+            default_exposed_skills,
+            ..Default::default()
+        }),
+        diagnostics,
+    )
+}
+
+fn skill_diagnostic_to_discovery(
+    provider_key: &str,
+    diag: SkillDiagnostic,
+) -> SkillDiscoveryDiagnostic {
+    SkillDiscoveryDiagnostic {
+        provider_key: provider_key.to_string(),
+        code: "skill_file_invalid".to_string(),
+        message: diag.message,
+        local_name: Some(diag.name),
+        file_path: Some(diag.file_path.to_string_lossy().to_string()),
     }
 }
 
@@ -708,22 +1039,6 @@ fn normalize_provider_clusters(
     (clusters, diagnostics)
 }
 
-fn mount_diagnostics_to_discovery(
-    provider_key: &str,
-    diagnostics: Vec<MountFileDiscoveryDiagnostic>,
-) -> Vec<SkillDiscoveryDiagnostic> {
-    diagnostics
-        .into_iter()
-        .map(|diag| SkillDiscoveryDiagnostic {
-            provider_key: provider_key.to_string(),
-            code: "vfs_file_diagnostic".to_string(),
-            message: diag.message,
-            local_name: None,
-            file_path: Some(format!("{}://{}", diag.mount_id, diag.path)),
-        })
-        .collect()
-}
-
 fn log_discovery_diagnostics(
     diagnostics_label: &'static str,
     diagnostics: &[SkillDiscoveryDiagnostic],
@@ -767,51 +1082,6 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-
-    fn mount_file(mount_id: &str, path: &str, content: &str) -> DiscoveredMountFile {
-        DiscoveredMountFile {
-            rule_key: "agents_md".to_string(),
-            mount_id: mount_id.to_string(),
-            path: path.to_string(),
-            content: content.to_string(),
-        }
-    }
-
-    #[test]
-    fn merge_guidelines_sorts_by_mount_depth_path_and_dedupes() {
-        let merged = merge_discovered_guideline_files(vec![
-            mount_file("workspace", "packages/b/AGENTS.md", "B"),
-            mount_file("workspace", "AGENTS.md", "ROOT"),
-            mount_file("workspace", "packages/a/AGENTS.md", "A"),
-            // 重复路径（规范化后相同），应去重保留首个。
-            mount_file("workspace", "./AGENTS.md", "ROOT-DUP"),
-            // 不同 mount 即便同路径也保留。
-            mount_file("docs", "AGENTS.md", "DOCS"),
-        ]);
-
-        let paths: Vec<(&str, &str)> = merged
-            .iter()
-            .map(|g| (g.mount_id.as_str(), g.path.as_str()))
-            .collect();
-
-        // docs 在 workspace 之前（mount_id 字典序）；workspace 内根在前、深层在后。
-        assert_eq!(
-            paths,
-            vec![
-                ("docs", "AGENTS.md"),
-                ("workspace", "AGENTS.md"),
-                ("workspace", "packages/a/AGENTS.md"),
-                ("workspace", "packages/b/AGENTS.md"),
-            ]
-        );
-        // 去重：./AGENTS.md 与 AGENTS.md 视为同一文件，仅保留首个 ROOT。
-        let root = merged
-            .iter()
-            .find(|g| g.mount_id == "workspace" && g.path == "AGENTS.md")
-            .expect("root guideline");
-        assert_eq!(root.content, "ROOT");
-        assert_eq!(merged.len(), 4);
-    }
 
     fn identity_for_projection() -> AuthIdentity {
         AuthIdentity {
@@ -1036,6 +1306,59 @@ mod tests {
             context: SkillDiscoveryContext,
         ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
             *self.context.lock().expect("context lock") = Some(context);
+            Ok(SkillDiscoveryOutput::default())
+        }
+    }
+
+    struct ProjectionSkillProvider;
+
+    #[async_trait]
+    impl SkillDiscoveryProvider for ProjectionSkillProvider {
+        fn provider_key(&self) -> &str {
+            "test.vfs"
+        }
+
+        fn vfs_discovery_rules(&self) -> Vec<agentdash_spi::SkillDiscoveryVfsRule> {
+            let mut rule = agentdash_spi::SkillDiscoveryVfsRule::new("skill-md");
+            rule.exact_paths = vec!["skills/review/SKILL.md".to_string()];
+            vec![rule]
+        }
+
+        async fn discover_from_vfs(
+            &self,
+            _context: SkillDiscoveryContext,
+            files: Vec<agentdash_spi::SkillDiscoveryVfsFile>,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
+            let skills = files
+                .into_iter()
+                .map(|file| {
+                    let base_dir = file.path.rsplit_once('/').map(|(base, _)| base);
+                    DiscoveredSkill {
+                        local_name: "review".to_string(),
+                        display_name: Some("Review".to_string()),
+                        description: file.content,
+                        file_path: format!("{}://{}", file.mount_id, file.path),
+                        base_dir: base_dir.map(|base| format!("{}://{}", file.mount_id, base)),
+                        exposure: SkillContextExposure::DefaultExposed,
+                        disable_model_invocation: false,
+                    }
+                })
+                .collect();
+            Ok(SkillDiscoveryOutput {
+                clusters: vec![SkillDiscoveryCluster {
+                    provider_key: self.provider_key().to_string(),
+                    display_name: "Test VFS Skills".to_string(),
+                    skills,
+                    ..Default::default()
+                }],
+                diagnostics: Vec::new(),
+            })
+        }
+
+        async fn discover(
+            &self,
+            _context: SkillDiscoveryContext,
+        ) -> Result<SkillDiscoveryOutput, agentdash_spi::SkillDiscoveryError> {
             Ok(SkillDiscoveryOutput::default())
         }
     }
@@ -1322,6 +1645,41 @@ mod tests {
         assert!(captured.project_id.is_none());
         assert!(captured.agent_type.is_none());
         assert!(captured.detected_facts.is_none());
+    }
+
+    #[tokio::test]
+    async fn vfs_first_skill_provider_discovers_files_without_unavailable_diagnostic() {
+        let (service, vfs) = memory_vfs(HashMap::from([(
+            "skills/review/SKILL.md".to_string(),
+            "Review changes from VFS".to_string(),
+        )]));
+        let provider = Arc::new(ProjectionSkillProvider);
+        let providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![provider];
+
+        let caps = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
+            vfs_service: Some(&service),
+            active_vfs: Some(&vfs),
+            identity: None,
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &providers,
+            diagnostics_label: "test",
+        })
+        .await
+        .expect("capabilities");
+
+        let skill = caps
+            .skills
+            .iter()
+            .find(|skill| skill.capability_key == "test.vfs/review")
+            .expect("vfs-first skill");
+        assert_eq!(skill.file_path, "agent://skills/review/SKILL.md");
+        assert_eq!(skill.base_dir.as_deref(), Some("agent://skills/review"));
+        assert!(
+            !caps
+                .skill_diagnostics
+                .iter()
+                .any(|diag| diag.code == "vfs_scanner_unavailable")
+        );
     }
 
     #[test]

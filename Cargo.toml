@@ -6,8 +6,12 @@ members = [
     "crates/agentdash-application-runtime-gateway",
     "crates/agentdash-application-runtime-session",
     "crates/agentdash-application-vfs",
+    "crates/agentdash-application-skill",
     "crates/agentdash-application-agentrun",
     "crates/agentdash-application-lifecycle",
+    "crates/agentdash-application-workflow",
+    "crates/agentdash-application-hooks",
+    "crates/agentdash-application-shared-library",
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
@@ -79,8 +83,12 @@ agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
 agentdash-application-runtime-session = { path = "crates/agentdash-application-runtime-session" }
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
+agentdash-application-skill = { path = "crates/agentdash-application-skill" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
 agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
+agentdash-application-workflow = { path = "crates/agentdash-application-workflow" }
+agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
+agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }

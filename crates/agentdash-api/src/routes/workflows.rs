@@ -16,14 +16,15 @@ use agentdash_application::capability::tool_catalog::{
     ToolCatalogPlatformMcpScope as ApplicationToolCatalogPlatformMcpScope,
     ToolCatalogSource as ApplicationToolCatalogSource,
 };
-use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::workflow::{
-    ActivityLifecycleCatalogService, OrchestrationExecutorLauncher, ScriptCompiler,
-    SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
-};
+use agentdash_application_hooks::{HookRulePreset, hook_rule_preset_registry};
 use agentdash_application_lifecycle::{
     ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
     run_view_builder,
+};
+use agentdash_application_workflow::{
+    ActivityLifecycleCatalogService, OrchestrationExecutorDrainResult,
+    OrchestrationExecutorLauncher, ScriptCompiler, SubmitHumanGateDecisionInput,
+    WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
     AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
@@ -540,11 +541,8 @@ pub async fn submit_orchestration_human_decision(
     .await?;
 
     let lifecycle_repos = state.repos.to_lifecycle_repository_set();
-    let launcher = OrchestrationExecutorLauncher::new_with_platform_config(
-        lifecycle_repos.clone(),
-        lifecycle_platform_config(&state),
-    )
-    .with_function_runner(state.services.function_runner.clone());
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.to_workflow_repository_set())
+        .with_function_runner(state.services.function_runner.clone());
     let result = launcher
         .submit_human_gate_decision(SubmitHumanGateDecisionInput {
             run_id,
@@ -891,7 +889,7 @@ async fn continue_lifecycle_run_result_to_contract(
 }
 
 fn orchestration_drain_result_to_contract(
-    result: agentdash_application::workflow::OrchestrationExecutorDrainResult,
+    result: OrchestrationExecutorDrainResult,
 ) -> OrchestrationExecutorDrainResultDto {
     OrchestrationExecutorDrainResultDto {
         launched_agent_nodes: result
@@ -1168,7 +1166,7 @@ pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> 
 }
 
 fn group_presets_by_trigger(
-    presets: &[agentdash_application::hooks::HookRulePreset],
+    presets: &[HookRulePreset],
 ) -> Result<BTreeMap<String, Vec<HookPresetResponse>>, ApiError> {
     let mut groups: BTreeMap<String, Vec<HookPresetResponse>> = BTreeMap::new();
     for preset in presets {

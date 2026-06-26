@@ -10,7 +10,7 @@ use agentdash_domain::workflow::{
 };
 use async_trait::async_trait;
 use serde::Serialize;
-use tracing::info;
+use agentdash_diagnostics::{diag, Subsystem};
 use uuid::Uuid;
 
 use crate::lifecycle::SessionToolResultCache;
@@ -753,7 +753,9 @@ impl MountProvider for LifecycleMountProvider {
                     .write_scoped_port_output(&artifact_ref, content)
                     .await
                     .map_err(map_journey_err)?;
-                info!(
+                diag!(
+                    Info,
+                    Subsystem::Lifecycle,
                     run_id = %artifact_ref.run_id,
                     orchestration_id = %artifact_ref.orchestration_id,
                     node_path = %artifact_ref.node_path,

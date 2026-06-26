@@ -5,6 +5,7 @@
 
 use uuid::Uuid;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::LifecycleGate;
 
 use crate::RepositorySet;
@@ -42,6 +43,16 @@ impl LifecycleGateService {
             .await
             .map_err(|e| format!("create gate failed: {e}"))?;
 
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            run_id = %run_id,
+            agent_id = %agent_id,
+            gate_id = %gate.id,
+            gate_kind = %gate_kind,
+            "gate: 已打开，等待 resolve（durable wait）"
+        );
+
         Ok(gate)
     }
 
@@ -66,6 +77,12 @@ impl LifecycleGateService {
             }
 
             if tokio::time::Instant::now() >= deadline {
+                diag!(
+                    Warn,
+                    Subsystem::Lifecycle,
+                    gate_id = %gate_id,
+                    "gate: 等待 resolve 超时"
+                );
                 return Err(format!("gate {gate_id} timed out waiting for resolve"));
             }
 
@@ -100,6 +117,14 @@ impl LifecycleGateService {
             .update(&gate)
             .await
             .map_err(|e| format!("update gate failed: {e}"))?;
+
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            gate_id = %gate_id,
+            resolved_by = %resolved_by,
+            "gate: 已 resolve"
+        );
 
         Ok(())
     }

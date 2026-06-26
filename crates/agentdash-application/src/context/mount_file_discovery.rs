@@ -6,6 +6,7 @@
 //! 设计参考 `skill/loader.rs` 的 VFS scan 模式，但抽象为通用的"规则 + 扫描"机制，
 //! 不绑定特定文件格式。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::VecDeque;
 
 use agentdash_spi::{MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
@@ -108,7 +109,8 @@ pub async fn discover_mount_files(
 
     for mount in &vfs.mounts {
         if !should_scan_mount_for_discovery(mount) {
-            tracing::debug!(
+            diag!(Debug, Subsystem::AgentRun,
+        
                 mount_id = %mount.id,
                 provider = %mount.provider,
                 "跳过 mount 自动文件发现"
@@ -202,7 +204,8 @@ pub async fn discover_memory_vfs_files(
 
     for mount in &vfs.mounts {
         if !should_scan_mount_for_discovery(mount) {
-            tracing::debug!(
+            diag!(Debug, Subsystem::AgentRun,
+        
                 mount_id = %mount.id,
                 provider = %mount.provider,
                 "跳过 memory VFS discovery mount"

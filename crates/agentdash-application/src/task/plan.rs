@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
@@ -237,7 +238,8 @@ pub async fn reorder_run_tasks(
 pub fn ensure_task_plan_policy_allowed(
     hook: TaskPlanPolicyHook<'_>,
 ) -> Result<(), ApplicationError> {
-    tracing::debug!(
+    diag!(Debug, Subsystem::AgentRun,
+        
         run_id = %hook.run.id,
         project_id = %hook.run.project_id,
         task_id = ?hook.task_id,

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -93,7 +94,8 @@ pub(crate) async fn mark_command_terminal_failed(
         .mark_terminal_failed(receipt_id, error.to_string())
         .await
     {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             receipt_id = %receipt_id,
             error = %mark_error,
             "写入 AgentRun command terminal_failed receipt 失败"

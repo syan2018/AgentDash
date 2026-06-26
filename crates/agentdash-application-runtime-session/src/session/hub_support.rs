@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
     UserInputSubmissionKind, UserInputSubmittedNotification,
@@ -505,7 +506,8 @@ pub(crate) fn meta_to_execution_state(
             message: meta.last_terminal_message.clone(),
         }),
         ExecutionStatus::Running => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 session_id,
                 "meta 显示 running 但内存 map 无记录，视为 interrupted"
             );

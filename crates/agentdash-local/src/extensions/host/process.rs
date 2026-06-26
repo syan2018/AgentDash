@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -110,7 +111,8 @@ impl ExtensionHostProcess {
                 "log" => {
                     let level = message.level.unwrap_or_else(|| "info".to_string());
                     let text = message.message.unwrap_or_default();
-                    tracing::debug!(level = %level, message = %text, "extension host log");
+                    diag!(Debug, Subsystem::AgentRun,
+        level = %level, message = %text, "extension host log");
                 }
                 other => {
                     return Err(LocalExtensionHostError::Protocol(format!(
@@ -182,7 +184,8 @@ fn spawn_stderr_drain(stderr: ChildStderr) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            tracing::debug!(message = %line, "extension host stderr");
+            diag!(Debug, Subsystem::AgentRun,
+        message = %line, "extension host stderr");
         }
     });
 }

@@ -4,6 +4,7 @@
 //! `SubjectExecutionView` 通过 LifecycleRun / LifecycleAgent / AgentFrame /
 //! RuntimeSessionExecutionAnchor 读取。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -30,7 +31,8 @@ pub async fn project_task_view_from_runtime_node_status(
     reason: &str,
     context: serde_json::Value,
 ) -> Result<(), TaskViewProjectionError> {
-    tracing::debug!(
+    diag!(Debug, Subsystem::AgentRun,
+        
         task_id = %task_id,
         node_status = ?node_status,
         reason,
@@ -49,7 +51,8 @@ pub async fn project_task_views_on_boot(
     _lifecycle_agent_repo: &Arc<dyn LifecycleAgentRepository>,
     _execution_anchor_repo: &Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 ) -> Result<(), TaskViewProjectionError> {
-    tracing::info!(
+    diag!(Info, Subsystem::AgentRun,
+        
         "Task view boot projection skipped; SubjectExecutionView derives runtime state from lifecycle evidence"
     );
     Ok(())

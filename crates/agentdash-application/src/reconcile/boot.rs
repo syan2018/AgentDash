@@ -7,6 +7,7 @@
 //! 运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use crate::session::SessionRuntimeService;
@@ -84,7 +85,8 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
 
     let report = BootReconcileReport { phases };
 
-    tracing::info!(
+    diag!(Info, Subsystem::Reconcile,
+        
         total_reconciled = report.total_reconciled(),
         has_errors = report.has_errors(),
         "启动对账管线执行完成"
@@ -96,7 +98,8 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
 async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> PhaseReport {
     match session_runtime.recover_interrupted_sessions().await {
         Ok(()) => {
-            tracing::info!("Phase 1 (Session Recovery) 完成");
+            diag!(Info, Subsystem::Reconcile,
+        "Phase 1 (Session Recovery) 完成");
             PhaseReport {
                 phase: "session_recovery",
                 reconciled: 0, // recover_interrupted_sessions 暂未返回计数
@@ -104,7 +107,8 @@ async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> Phase
             }
         }
         Err(err) => {
-            tracing::warn!(error = %err, "Phase 1 (Session Recovery) 出错（非致命）");
+            diag!(Warn, Subsystem::Reconcile,
+        error = %err, "Phase 1 (Session Recovery) 出错（非致命）");
             PhaseReport {
                 phase: "session_recovery",
                 reconciled: 0,
@@ -127,7 +131,8 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
     .await
     {
         Ok(()) => {
-            tracing::info!("Phase 2 (Task View Projection) 完成");
+            diag!(Info, Subsystem::Reconcile,
+        "Phase 2 (Task View Projection) 完成");
             PhaseReport {
                 phase: "task_view_projection",
                 reconciled: 0,
@@ -135,7 +140,8 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
             }
         }
         Err(err) => {
-            tracing::error!(error = %err, "Phase 2 (Task View Projection) 失败");
+            diag!(Error, Subsystem::Reconcile,
+        error = %err, "Phase 2 (Task View Projection) 失败");
             PhaseReport {
                 phase: "task_view_projection",
                 reconciled: 0,

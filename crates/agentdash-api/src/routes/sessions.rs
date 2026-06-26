@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -1105,7 +1106,8 @@ pub async fn session_stream_ndjson(
     let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
         .or(query.since_id)
         .unwrap_or(0);
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         session_id = %session_id,
         resume_from = resume_from,
         "Session trace stream 连接建立（NDJSON）"
@@ -1118,7 +1120,8 @@ pub async fn session_stream_ndjson(
         .await
         .map_err(ApiError::from)?;
     let replayed = subscription.backlog.len();
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         session_id = %session_id,
         replayed_count = replayed,
         snapshot_seq = subscription.snapshot_seq,
@@ -1177,7 +1180,8 @@ pub async fn session_stream_ndjson(
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!(
+                            diag!(Warn, Subsystem::Api,
+        
                                 session_id = %session_id,
                                 lagged = n,
                                 "Session trace stream 订阅落后，部分消息被跳过（NDJSON）"
@@ -1185,7 +1189,8 @@ pub async fn session_stream_ndjson(
                             continue;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            tracing::info!(
+                            diag!(Info, Subsystem::Api,
+        
                                 session_id = %session_id,
                                 last_seq = seq,
                                 "Session trace stream 连接关闭：广播通道关闭（NDJSON）"
@@ -1243,7 +1248,8 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            tracing::error!(error = %err, "序列化 Session NDJSON 消息失败");
+            diag!(Error, Subsystem::Api,
+        error = %err, "序列化 Session NDJSON 消息失败");
             None
         }
     }

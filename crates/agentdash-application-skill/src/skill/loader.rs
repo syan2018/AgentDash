@@ -9,6 +9,7 @@ use agentdash_application_vfs::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{Mount, MountCapability, SkillRef, Vfs};
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
@@ -101,6 +102,14 @@ pub fn load_skills_from_local_dirs(
         }
     }
 
+    diag!(
+        Info,
+        Subsystem::Skill,
+        dir_count = dirs.len(),
+        skill_count = result.skills.len(),
+        diagnostic_count = result.diagnostics.len(),
+        "discovery: 本地目录 skill 加载完成"
+    );
     result
 }
 
@@ -166,6 +175,13 @@ pub async fn load_skills_from_vfs(service: &VfsService, vfs: &Vfs) -> LoadSkills
         }
     }
 
+    diag!(
+        Info,
+        Subsystem::Skill,
+        skill_count = result.skills.len(),
+        diagnostic_count = result.diagnostics.len(),
+        "discovery: VFS skill 加载完成"
+    );
     result
 }
 

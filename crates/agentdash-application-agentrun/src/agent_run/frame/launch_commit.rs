@@ -4,6 +4,7 @@
 //! adapter owns accepted AgentFrame revision persistence, LifecycleAgent current
 //! delivery binding, and owner-bootstrap status transitions.
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_application_ports::frame_launch_envelope::{
@@ -67,7 +68,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         };
         agent.mark_bootstrapped();
         if let Err(error) = agent_repo.update(&agent).await {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 session_id = %runtime_session_id,
                 agent_id = %agent.id,
                 "标记 agent bootstrapped 失败: {error}"
@@ -131,7 +133,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         pending_frame.mcp_surface_json = surfaces.mcp_surface_json;
         match frame_repo.create(&pending_frame).await {
             Ok(()) => {
-                tracing::debug!(
+                diag!(Debug, Subsystem::AgentRun,
+        
                     session_id = %runtime_session_id,
                     agent_id = %pending_frame.agent_id,
                     revision = pending_frame.revision,
@@ -143,7 +146,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             }
             Err(error) => {
                 let diagnostic = format!("accepted pending AgentFrame revision 写入失败: {error}");
-                tracing::warn!(session_id = %runtime_session_id, "{diagnostic}");
+                diag!(Warn, Subsystem::AgentRun,
+        session_id = %runtime_session_id, "{diagnostic}");
                 outcome.diagnostics.push(diagnostic);
                 return outcome;
             }
@@ -191,7 +195,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             Ok(None) => return AcceptedLaunchCommitOutcome::empty(),
             Err(error) => {
                 let diagnostic = format!("查找 session 关联的 AgentFrame 失败: {error}");
-                tracing::warn!(session_id = %runtime_session_id, "{diagnostic}");
+                diag!(Warn, Subsystem::AgentRun,
+        session_id = %runtime_session_id, "{diagnostic}");
                 return AcceptedLaunchCommitOutcome::with_diagnostic(diagnostic);
             }
         };
@@ -209,7 +214,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         let mut outcome = AcceptedLaunchCommitOutcome::empty();
         match builder.build(frame_repo).await {
             Ok(frame) => {
-                tracing::debug!(
+                diag!(Debug, Subsystem::AgentRun,
+        
                     session_id = %runtime_session_id,
                     agent_id = %frame.agent_id,
                     revision = frame.revision,
@@ -234,7 +240,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             }
             Err(error) => {
                 let diagnostic = format!("accepted AgentFrame revision 写入失败: {error}");
-                tracing::warn!(session_id = %runtime_session_id, "{diagnostic}");
+                diag!(Warn, Subsystem::AgentRun,
+        session_id = %runtime_session_id, "{diagnostic}");
                 outcome.diagnostics.push(diagnostic);
             }
         }
@@ -254,7 +261,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                     .await
             }
             Ok(None) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     session_id = %runtime_session_id,
                     "accepted pending AgentFrame 已写入但缺少 current delivery anchor"
                 );
@@ -264,7 +272,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 let diagnostic = format!(
                     "accepted pending AgentFrame 查询 current delivery anchor 失败: {error}"
                 );
-                tracing::warn!(session_id = %runtime_session_id, "{diagnostic}");
+                diag!(Warn, Subsystem::AgentRun,
+        session_id = %runtime_session_id, "{diagnostic}");
                 Err(diagnostic)
             }
         }
@@ -292,7 +301,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         );
         if let Err(error) = agent_repo.update(&agent).await {
             let diagnostic = format!("同步 accepted current delivery 失败: {error}");
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 session_id = %anchor.runtime_session_id,
                 agent_id = %agent.id,
                 "{diagnostic}"
@@ -321,7 +331,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         {
             Ok(()) => true,
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     session_id = %runtime_session_id,
                     %frame_id,
                     "同步 accepted AgentFrame Hook runtime target 失败: {error}"

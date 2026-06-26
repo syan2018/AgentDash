@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::session_persistence::SessionStoreError;
@@ -44,7 +45,8 @@ impl From<ConnectorError> for ApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                tracing::error!(error = %error, "agentrun connector IO error");
+                diag!(Error, Subsystem::AgentRun,
+        error = %error, "agentrun connector IO error");
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
@@ -54,7 +56,8 @@ impl From<ConnectorError> for ApplicationError {
 
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
-        tracing::error!(error = %error, "agentrun IO error");
+        diag!(Error, Subsystem::AgentRun,
+        error = %error, "agentrun IO error");
         Self::Internal("内部 IO 错误".to_string())
     }
 }
@@ -100,7 +103,8 @@ impl From<ConnectorError> for WorkflowApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                tracing::error!(error = %error, "agentrun workflow connector IO error");
+                diag!(Error, Subsystem::AgentRun,
+        error = %error, "agentrun workflow connector IO error");
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),

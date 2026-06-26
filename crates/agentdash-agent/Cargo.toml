@@ -26,6 +26,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 
 # 日志
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 
 # 通用

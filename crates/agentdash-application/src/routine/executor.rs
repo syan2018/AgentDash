@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -137,7 +138,8 @@ impl RoutineExecutor {
                 execution.mark_failed(format!("模板渲染失败: {err}"));
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
+                    diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
                 }
                 return Err(ApplicationError::InvalidConfig(err));
             }
@@ -150,7 +152,8 @@ impl RoutineExecutor {
                 execution.mark_failed(&reason);
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
+                    diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
                 }
                 return Err(err);
             }
@@ -168,7 +171,8 @@ impl RoutineExecutor {
                     if let Err(update_err) =
                         self.repos.routine_execution_repo.update(&execution).await
                     {
-                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
+                        diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
                     }
                     return Err(ApplicationError::InvalidConfig(reason));
                 }
@@ -178,7 +182,8 @@ impl RoutineExecutor {
                     if let Err(update_err) =
                         self.repos.routine_execution_repo.update(&execution).await
                     {
-                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入跳过）落库失败");
+                        diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入跳过）落库失败");
                     }
                     return Ok(exec_id);
                 }
@@ -194,13 +199,15 @@ impl RoutineExecutor {
                 updated_routine.last_fired_at = Some(Utc::now());
                 updated_routine.updated_at = Utc::now();
                 if let Err(update_err) = self.repos.routine_repo.update(&updated_routine).await {
-                    tracing::error!(target: "routine", routine_id = %updated_routine.id, error = %update_err, "更新 Routine（last_fired_at）落库失败");
+                    diag!(Error, Subsystem::Cron,
+        routine_id = %updated_routine.id, error = %update_err, "更新 Routine（last_fired_at）落库失败");
                 }
 
                 let exec_id = execution.id;
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 完成）落库失败");
+                    diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 完成）落库失败");
                 }
                 Ok(exec_id)
             }
@@ -208,7 +215,8 @@ impl RoutineExecutor {
                 execution.mark_failed(err.to_string());
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 失败）落库失败");
+                    diag!(Error, Subsystem::Cron,
+        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 失败）落库失败");
                 }
                 Err(err)
             }
@@ -255,8 +263,7 @@ impl RoutineExecutor {
 
         execution.mark_dispatched(refs, prompt.to_string());
 
-        tracing::info!(
-            target: "routine",
+        diag!(Info, Subsystem::Cron,
             execution_id = %execution.id,
             run_id = %result.runtime_refs.run_ref,
             agent_id = %result.runtime_refs.agent_ref,

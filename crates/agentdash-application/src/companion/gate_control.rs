@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
@@ -298,7 +299,8 @@ impl CompanionGateControlService {
                 gate_resolved: true,
             };
             if let Err(error) = self.delivery.deliver_human_response(notification).await {
-                tracing::warn!(error = %error, gate_id = %gate.id, "companion gate resolved but runtime notification delivery failed");
+                diag!(Warn, Subsystem::AgentRun,
+        error = %error, gate_id = %gate.id, "companion gate resolved but runtime notification delivery failed");
             }
         }
 
@@ -401,7 +403,8 @@ impl CompanionGateControlService {
                 payload: resolution_payload.clone(),
             };
             if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-                tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "companion gate resolved but parent result notification delivery failed");
+                diag!(Warn, Subsystem::AgentRun,
+        error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "companion gate resolved but parent result notification delivery failed");
             }
         }
 
@@ -414,7 +417,8 @@ impl CompanionGateControlService {
                 payload: resolution_payload.clone(),
             };
             if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-                tracing::warn!(error = %error, gate_id = %gate.id, child_agent_id = %child_frame.agent_id, "companion gate resolved but child result notification delivery failed");
+                diag!(Warn, Subsystem::AgentRun,
+        error = %error, gate_id = %gate.id, child_agent_id = %child_frame.agent_id, "companion gate resolved but child result notification delivery failed");
             }
         }
 
@@ -531,7 +535,8 @@ impl CompanionGateControlService {
             payload: review_payload.clone(),
         };
         if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-            tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "parent companion request gate opened but runtime notification delivery failed");
+            diag!(Warn, Subsystem::AgentRun,
+        error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "parent companion request gate opened but runtime notification delivery failed");
         }
 
         Ok(CompanionParentRequestOpenResult {
@@ -639,7 +644,8 @@ impl CompanionGateControlService {
             payload: resolution_payload.clone(),
         };
         if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-            tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_frame.agent_id, "parent companion request gate resolved but runtime notification delivery failed");
+            diag!(Warn, Subsystem::AgentRun,
+        error = %error, gate_id = %gate.id, parent_agent_id = %parent_frame.agent_id, "parent companion request gate resolved but runtime notification delivery failed");
         }
 
         Ok(Some(CompanionParentRequestResolveResult {

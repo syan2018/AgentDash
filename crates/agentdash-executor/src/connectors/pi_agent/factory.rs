@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_agent::LlmBridge;
@@ -52,7 +53,8 @@ pub async fn build_pi_agent_connector(
             provider.entry.default_model.clone(),
         )
     } else {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             "PiAgentConnector: 启动时未检测到任何 LLM provider 配置，将以动态占位模式注册"
         );
         (Arc::new(NoopBridge) as Arc<dyn LlmBridge>, String::new())
@@ -65,9 +67,11 @@ pub async fn build_pi_agent_connector(
     }
 
     if connector.provider_count() == 0 {
-        tracing::info!("PiAgentConnector 已初始化（动态占位模式，等待 provider 配置）");
+        diag!(Info, Subsystem::AgentRun,
+        "PiAgentConnector 已初始化（动态占位模式，等待 provider 配置）");
     } else {
-        tracing::info!(
+        diag!(Info, Subsystem::AgentRun,
+        
             "PiAgentConnector 已初始化（默认模型：{}，provider 数量：{}）",
             global_default_model,
             connector.provider_count()

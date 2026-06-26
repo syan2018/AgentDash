@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -50,6 +51,7 @@ use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
 use agentdash_integration_api::MemoryDiscoveryProvider;
 use agentdash_integration_api::SkillDiscoveryProvider;
+use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -158,19 +160,29 @@ pub struct AppState {
     /// 身份目录提供者（由 Host Integration 注入，None 表示仅使用本地 projection）
     pub identity_directory_provider:
         Option<Arc<dyn agentdash_integration_api::IdentityDirectoryProvider>>,
+    /// 统一诊断环形缓冲句柄 — 供 `GET /api/diagnostics` 查询"近期"诊断。
+    ///
+    /// 仅 `agentdash-api` main 把它接进 tracing 订阅器（[`DiagnosticLayer`]）；
+    /// 其它宿主（tauri/local）传入一个未接订阅器的空缓冲，查询端点返回空集，
+    /// 行为与原先一致。
+    pub diagnostics: DiagnosticBuffer,
 }
 
 impl AppState {
     pub async fn new(pool: PgPool) -> Result<Arc<Self>> {
-        Self::new_with_integrations(pool, builtin_integrations()).await
+        Self::new_with_integrations(pool, builtin_integrations(), DiagnosticBuffer::new(0)).await
     }
 
     /// 携带 Host Integration 列表构建 AppState
+    ///
+    /// `diagnostics` 为统一诊断环形缓冲句柄：`agentdash-api` main 传入已接进
+    /// tracing 订阅器的缓冲，其它宿主传入空缓冲即可。
     ///
     /// 返回 `Arc<Self>` 以支持需要 AppState 引用的延迟装配。
     pub async fn new_with_integrations(
         pool: PgPool,
         integrations: Vec<Box<dyn AgentDashIntegration>>,
+        diagnostics: DiagnosticBuffer,
     ) -> Result<Arc<Self>> {
         let integration_registration = collect_integration_registration(integrations)
             .map_err(|err| anyhow::anyhow!("Host Integration 注册失败: {err}"))?;
@@ -345,7 +357,8 @@ impl AppState {
             if report.has_errors() {
                 for phase in &report.phases {
                     for err in &phase.errors {
-                        tracing::warn!(phase = phase.phase, error = %err, "启动对账阶段出错");
+                        diag!(Warn, Subsystem::Api,
+        phase = phase.phase, error = %err, "启动对账阶段出错");
                     }
                 }
             }
@@ -429,6 +442,7 @@ impl AppState {
             },
             auth_provider: integration_registration.auth_provider,
             identity_directory_provider: integration_registration.identity_directory_provider,
+            diagnostics,
         };
 
         let mut state = Arc::new(state);

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -252,7 +253,8 @@ fn build_inline_children<'a>(
         const MAX_DEPTH: usize = 16;
         let mut children = Vec::new();
         if depth >= MAX_DEPTH {
-            tracing::warn!(run_id = %run.id, parent = %parent_id, depth, "inline children 触达深度上限，截断");
+            diag!(Warn, Subsystem::Api,
+        run_id = %run.id, parent = %parent_id, depth, "inline children 触达深度上限，截断");
             return Ok(children);
         }
         let Some(direct) = children_map.get(&parent_id) else {
@@ -406,7 +408,8 @@ pub async fn submit_agent_run_composer_input(
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(req): Json<AgentRunComposerSubmitRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
-    tracing::debug!(
+    diag!(Debug, Subsystem::Api,
+        
         run_id = %run_id,
         agent_id = %agent_id,
         input_blocks = req.input.len(),
@@ -435,7 +438,8 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
-    tracing::debug!(
+    diag!(Debug, Subsystem::Api,
+        
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -449,7 +453,8 @@ pub async fn submit_agent_run_composer_input(
         )
         .await
         .map_err(command_policy_error)?;
-    tracing::debug!(
+    diag!(Debug, Subsystem::Api,
+        
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -476,7 +481,8 @@ pub async fn submit_agent_run_composer_input(
         })
         .await
         .map_err(ApiError::from)?;
-    tracing::debug!(
+    diag!(Debug, Subsystem::Api,
+        
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -768,7 +774,8 @@ async fn cancel_agent_run(
             .mark_terminal_failed(receipt.id, error.to_string())
             .await
         {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Api,
+        
                 receipt_id = %receipt.id,
                 error = %mark_error,
                 "写入 AgentRun cancel terminal_failed receipt 失败"
@@ -1579,7 +1586,8 @@ fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32
     let mut count: u32 = 0;
     while let Some((node, depth)) = stack.pop() {
         if depth >= MAX_DEPTH {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Api,
+        
                 root = %root,
                 node = %node,
                 depth,

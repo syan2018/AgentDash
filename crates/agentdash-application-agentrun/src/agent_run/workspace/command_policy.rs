@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
@@ -50,8 +51,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         let execution_state = self
             .session_core
             .inspect_session_execution_state(runtime_session_id)
-            .await
-            .map_err(WorkflowApplicationError::from)?;
+            .await?;
         let frame = self
             .resolve_current_frame(context.agent, current_delivery.as_ref())
             .await?;
@@ -98,7 +98,8 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         command: &AgentRunCommandPreconditionModel,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %context.runtime_session_id,
@@ -113,9 +114,9 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         let execution_state = self
             .session_core
             .inspect_session_execution_state(runtime_session_id)
-            .await
-            .map_err(WorkflowApplicationError::from)?;
-        tracing::debug!(
+            .await?;
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %runtime_session_id,
@@ -141,7 +142,8 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             context,
             &availability,
         );
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %context.run.id,
             agent_id = %context.agent.id,
             runtime_session_id = %context.runtime_session_id,

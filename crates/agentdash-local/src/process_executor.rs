@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -96,7 +97,8 @@ impl ProcessExecutor {
         env: &[(String, String)],
     ) -> Result<ProcessOutput, ToolError> {
         let cwd = self.resolve_cwd(workspace_root, cwd)?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             command = %command,
             workspace_root = workspace_root,
             cwd = %cwd.display(),
@@ -118,7 +120,8 @@ impl ProcessExecutor {
         env: &[(String, String)],
     ) -> Result<ProcessOutput, ToolError> {
         let cwd = self.resolve_cwd(workspace_root, cwd)?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             command = %command,
             args = ?args,
             workspace_root = workspace_root,

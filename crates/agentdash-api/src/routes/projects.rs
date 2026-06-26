@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_application::project::{
@@ -625,7 +626,8 @@ fn map_directory_resolve_error(
         )),
         DirectoryProviderError::Unavailable(message) => ApiError::ServiceUnavailable(message),
         DirectoryProviderError::Internal(message) => {
-            tracing::error!(error = %message, "身份目录 provider 解析 Project 授权主体失败");
+            diag!(Error, Subsystem::Api,
+        error = %message, "身份目录 provider 解析 Project 授权主体失败");
             ApiError::Internal("身份目录服务错误".to_string())
         }
     }

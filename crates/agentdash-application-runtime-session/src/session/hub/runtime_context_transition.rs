@@ -4,6 +4,7 @@
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
 //! 不再各自手写事件 JSON 或 hook 触发顺序。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::BTreeSet;
 
 use agentdash_spi::hooks::{
@@ -174,7 +175,8 @@ impl SessionRuntimeInner {
                 ) {
                     Ok(state) => state,
                     Err(error) => {
-                        tracing::warn!(
+                        diag!(Warn, Subsystem::AgentRun,
+        
                             input.session_id,
                             frame_transition_id = %pending.id,
                             "pending runtime capability transition replay failed before event emission: {error}"

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -154,7 +155,8 @@ pub async fn create_project_agent_run(
     Path((project_id, agent_key)): Path<(String, String)>,
     Json(req): Json<CreateProjectAgentRunRequest>,
 ) -> Result<Json<ProjectAgentRunStartResult>, ApiError> {
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         project_id = %project_id,
         agent_key = %agent_key,
         input_blocks = req.input.len(),
@@ -180,7 +182,8 @@ pub async fn create_project_agent_run(
         .map(serde_json::from_value::<AgentConfig>)
         .transpose()
         .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         "ProjectAgent run start request parsed"
@@ -191,7 +194,8 @@ pub async fn create_project_agent_run(
         project_agent_run_start_service_parts(state.as_ref(), &agent_run_repos);
     let session_core = agent_run_session_core(state.services.session_core.clone());
     let service = ProjectAgentRunStartService::new(repos, &session_core);
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         "ProjectAgent run start service dispatching"
@@ -211,7 +215,8 @@ pub async fn create_project_agent_run(
         )
         .await
         .map_err(ApiError::from)?;
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         project_id = %project_id,
         project_agent_id = %project_agent_id,
         run_id = %dispatch.run_id,
@@ -229,7 +234,8 @@ pub async fn create_project_agent_run(
     if dispatch.initial_message.outcome == AgentRunMailboxCommandOutcome::Queued
         && dispatch.initial_message.mailbox_message.is_some()
     {
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+        
             run_id = %dispatch.run_id,
             agent_id = %dispatch.agent_id,
             runtime_session_id = %dispatch.runtime_session_id,
@@ -244,7 +250,8 @@ pub async fn create_project_agent_run(
         );
     }
 
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         run_id = %dispatch.run_id,
         agent_id = %dispatch.agent_id,
         runtime_session_id = %dispatch.runtime_session_id,
@@ -310,7 +317,8 @@ fn spawn_initial_project_agent_mailbox_schedule(
     identity: agentdash_spi::platform::auth::AuthIdentity,
 ) {
     tokio::spawn(async move {
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+        
             runtime_session_id = %runtime_session_id,
             run_id = %run_id,
             agent_id = %agent_id,
@@ -334,7 +342,8 @@ fn spawn_initial_project_agent_mailbox_schedule(
             )
             .await
         {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Api,
+        
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 agent_id = %agent_id,
@@ -342,7 +351,8 @@ fn spawn_initial_project_agent_mailbox_schedule(
                 "ProjectAgent 初始 mailbox 后台调度失败"
             );
         } else {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 agent_id = %agent_id,

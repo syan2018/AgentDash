@@ -1,5 +1,6 @@
 //! 本机 MCP Client 管理器 — 管理 stdio 进程和 localhost HTTP 连接
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 
 use agentdash_application::mcp_relay_adapter::{
@@ -134,7 +135,8 @@ impl McpClientManager {
                 continue;
             };
             let _ = client.cancel().await;
-            tracing::info!(server = %server_name, "MCP client 已关闭");
+            diag!(Info, Subsystem::Mcp,
+        server = %server_name, "MCP client 已关闭");
         }
         Ok(())
     }
@@ -189,7 +191,8 @@ impl McpClientManager {
 
         let mut clients = self.clients.write().await;
         clients.insert(key.clone(), client);
-        tracing::info!(server = %entry.name, transport = %transport_kind, "MCP client 已连接");
+        diag!(Info, Subsystem::Mcp,
+        server = %entry.name, transport = %transport_kind, "MCP client 已连接");
         Ok(key)
     }
 

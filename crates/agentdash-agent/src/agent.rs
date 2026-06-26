@@ -8,6 +8,7 @@
 /// - 事件驱动状态同步 — 对齐 Pi `Agent._processLoopEvent`
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -539,7 +540,8 @@ impl Agent {
                         let mut s = state.lock().await;
                         s.error = Some(error_text.clone());
                     }
-                    tracing::error!(error = %error_text, "Agent loop failed");
+                    diag!(Error, Subsystem::AgentRun,
+        error = %error_text, "Agent loop failed");
                     Err(error)
                 }
             };

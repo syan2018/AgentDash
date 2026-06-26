@@ -35,6 +35,7 @@ use agentdash_domain::workflow::{
 };
 
 use super::WorkflowApplicationError;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Clone)]
@@ -300,7 +301,22 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         intent: &AgentLaunchIntent,
     ) -> Result<AgentLaunchDispatchResult, WorkflowApplicationError> {
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            project_id = %intent.project_id,
+            source = ?intent.source,
+            has_graph = intent.workflow_graph_ref.is_some(),
+            "dispatch: launch_agent 进入"
+        );
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            run_id = %facts.run.id,
+            agent_id = %facts.agent.id,
+            "dispatch: launch_agent 完成"
+        );
         Ok(AgentLaunchDispatchResult {
             runtime_refs: facts.runtime_refs(),
             delivery_runtime_ref: facts.runtime_session_ref,
@@ -311,6 +327,14 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         intent: &SubjectExecutionIntent,
     ) -> Result<SubjectExecutionDispatchResult, WorkflowApplicationError> {
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            project_id = %intent.project_id,
+            subject_kind = %intent.subject_ref.kind,
+            subject_id = %intent.subject_ref.id,
+            "dispatch: execute_subject 进入"
+        );
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
         let runtime_refs = facts.runtime_refs();
         let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
@@ -329,6 +353,15 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         intent: &InteractionDispatchIntent,
     ) -> Result<InteractionGateOpenedDispatchResult, WorkflowApplicationError> {
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            project_id = %intent.project_id,
+            parent_run_id = %intent.parent_run_id,
+            parent_agent_id = %intent.parent_agent_id,
+            gate_kind = %intent.gate_policy.gate_kind,
+            "dispatch: open_interaction_gate 进入"
+        );
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
         let gate_ref = facts.gate_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -359,6 +392,15 @@ impl<'a> LifecycleDispatchService<'a> {
             plan_snapshot,
         )?;
         self.run_repo.create(&run).await?;
+
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            project_id = %intent.project_id,
+            run_id = %run.id,
+            orchestration_id = %orchestration_binding.orchestration_ref,
+            "dispatch: start_lifecycle_run 创建 root orchestration"
+        );
 
         Ok(LifecycleRunStartDispatchResult {
             run_ref: run.id,
@@ -462,6 +504,16 @@ impl<'a> LifecycleDispatchService<'a> {
             chrono::Utc::now(),
         );
         self.agent_repo.update(&agent).await?;
+
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
+            run_id = %run.id,
+            agent_id = %agent.id,
+            orchestration_id = %request.orchestration_binding.orchestration_ref,
+            node_path = %request.orchestration_binding.node_path,
+            "dispatch: workflow agent node materialized，已绑定 delivery anchor"
+        );
 
         Ok(WorkflowAgentNodeMaterializationResult {
             runtime_refs: AgentRuntimeRefs::new(

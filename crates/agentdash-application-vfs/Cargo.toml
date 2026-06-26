@@ -28,6 +28,7 @@ shell-words = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 walkdir = "2.5"

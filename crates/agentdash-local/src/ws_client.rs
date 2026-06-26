@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -53,35 +54,42 @@ pub async fn run_until_shutdown(
 
     loop {
         if *shutdown_rx.borrow() {
-            tracing::info!("收到 shutdown 信号，本机 relay 主循环停止");
+            diag!(Info, Subsystem::Relay,
+        "收到 shutdown 信号，本机 relay 主循环停止");
             return Ok(());
         }
 
         let url = format!("{}?token={}", config.cloud_url, config.token);
 
-        tracing::info!(retry = retry_count, "连接云端 WebSocket...");
+        diag!(Info, Subsystem::Relay,
+        retry = retry_count, "连接云端 WebSocket...");
 
         match connect_async(&url).await {
             Ok((ws_stream, _response)) => {
                 retry_count = 0;
-                tracing::info!("WebSocket 连接成功");
+                diag!(Info, Subsystem::Relay,
+        "WebSocket 连接成功");
 
                 if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
-                    tracing::error!(error = %e, "会话异常终止");
+                    diag!(Error, Subsystem::Relay,
+        error = %e, "会话异常终止");
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "WebSocket 连接失败");
+                diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 连接失败");
             }
         }
 
         let delay = reconnect_delay(retry_count);
-        tracing::info!(delay_secs = delay.as_secs(), "等待重连...");
+        diag!(Info, Subsystem::Relay,
+        delay_secs = delay.as_secs(), "等待重连...");
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("等待重连时收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "等待重连时收到 shutdown 信号");
                     return Ok(());
                 }
             }
@@ -128,7 +136,8 @@ async fn run_session(
     };
 
     send_message(&mut write, &register_msg).await?;
-    tracing::info!("已发送注册消息");
+    diag!(Info, Subsystem::Relay,
+        "已发送注册消息");
 
     // 等待 register_ack
     let ack_timeout = loop {
@@ -136,7 +145,8 @@ async fn run_session(
             result = tokio::time::timeout(Duration::from_secs(10), read.next()) => break result,
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("等待注册响应时收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "等待注册响应时收到 shutdown 信号");
                     return Ok(());
                 }
             }
@@ -147,7 +157,8 @@ async fn run_session(
             if let Some(relay_msg) = parse_ws_message(&msg) {
                 match &relay_msg {
                     RelayMessage::RegisterAck { payload, .. } => {
-                        tracing::info!(
+                        diag!(Info, Subsystem::Relay,
+        
                             backend_id = %payload.backend_id,
                             status = %payload.status,
                             "注册成功"
@@ -157,7 +168,8 @@ async fn run_session(
                         anyhow::bail!("注册失败: {}", error);
                     }
                     other => {
-                        tracing::warn!("期望 register_ack，收到: {:?}", other.id());
+                        diag!(Warn, Subsystem::Relay,
+        "期望 register_ack，收到: {:?}", other.id());
                     }
                 }
             }
@@ -194,7 +206,8 @@ async fn run_session(
                                     let responses = handler.handle(relay_msg).await;
                                     for resp in responses {
                                         if outbound_tx.send(resp).is_err() {
-                                            tracing::debug!(
+                                            diag!(Debug, Subsystem::Relay,
+        
                                                 msg_id = %msg_id,
                                                 "relay response 写出通道已关闭"
                                             );
@@ -206,7 +219,8 @@ async fn run_session(
                                 let responses = handler.handle(relay_msg).await;
                                 for resp in responses {
                                     if outbound_tx.send(resp).is_err() {
-                                        tracing::debug!("relay response 写出通道已关闭");
+                                        diag!(Debug, Subsystem::Relay,
+        "relay response 写出通道已关闭");
                                         break;
                                     }
                                 }
@@ -214,11 +228,13 @@ async fn run_session(
                         }
                     }
                     Some(Err(e)) => {
-                        tracing::error!(error = %e, "WebSocket 读取错误");
+                        diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 读取错误");
                         break;
                     }
                     None => {
-                        tracing::info!("WebSocket 连接关闭");
+                        diag!(Info, Subsystem::Relay,
+        "WebSocket 连接关闭");
                         break;
                     }
                 }
@@ -227,12 +243,14 @@ async fn run_session(
                 match event {
                     Some(relay_msg) => {
                         if outbound_tx.send(relay_msg).is_err() {
-                            tracing::warn!("relay event 写出通道已关闭");
+                            diag!(Warn, Subsystem::Relay,
+        "relay event 写出通道已关闭");
                             break;
                         }
                     }
                     None => {
-                        tracing::warn!("事件通道关闭");
+                        diag!(Warn, Subsystem::Relay,
+        "事件通道关闭");
                         break;
                     }
                 }
@@ -242,15 +260,19 @@ async fn run_session(
             }
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("消息循环收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "消息循环收到 shutdown 信号");
                     break;
                 }
             }
             writer_result = &mut writer_task => {
                 match writer_result {
-                    Ok(Ok(())) => tracing::info!("WebSocket 写出任务结束"),
-                    Ok(Err(e)) => tracing::error!(error = %e, "WebSocket 写出错误"),
-                    Err(e) => tracing::error!(error = %e, "WebSocket 写出任务异常结束"),
+                    Ok(Ok(())) => diag!(Info, Subsystem::Relay,
+        "WebSocket 写出任务结束"),
+                    Ok(Err(e)) => diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 写出错误"),
+                    Err(e) => diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 写出任务异常结束"),
                 }
                 break;
             }
@@ -297,12 +319,14 @@ fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
         Message::Text(text) => match serde_json::from_str::<RelayMessage>(text.as_ref()) {
             Ok(relay_msg) => Some(relay_msg),
             Err(e) => {
-                tracing::warn!(error = %e, "无法解析 WebSocket 消息");
+                diag!(Warn, Subsystem::Relay,
+        error = %e, "无法解析 WebSocket 消息");
                 None
             }
         },
         Message::Close(_) => {
-            tracing::info!("收到关闭帧");
+            diag!(Info, Subsystem::Relay,
+        "收到关闭帧");
             None
         }
         _ => None,

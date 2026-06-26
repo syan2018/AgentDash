@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use jsonschema::validator_for;
@@ -844,7 +845,8 @@ fn record_agent_tool_result_cache_write(
         return;
     }
 
-    tracing::debug!(
+    diag!(Debug, Subsystem::AgentRun,
+        
         item_id = write.item_id,
         lifecycle_path = write.lifecycle_path,
         original_bytes = write.original_bytes,

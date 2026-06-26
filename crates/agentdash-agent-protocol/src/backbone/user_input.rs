@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_types::ContentPart;
 use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
@@ -121,7 +122,8 @@ fn image_url_to_content_part(url: &str) -> ContentPart {
     match parse_data_url(url) {
         Some((mime_type, data)) => ContentPart::image(mime_type, data),
         None => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 url = %truncate_for_log(url),
                 "图片 url 非 data URL，无法结构化携带，降级为文本占位（图片采集侧应传 data URL）"
             );
@@ -156,7 +158,8 @@ fn local_image_to_content_part(path: &std::path::Path) -> ContentPart {
             ContentPart::image(mime_type, data)
         }
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 path = %path.display(),
                 error = %error,
                 "本地图片读取失败，降级为文本占位"

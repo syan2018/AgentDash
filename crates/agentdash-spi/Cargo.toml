@@ -17,6 +17,7 @@ chrono = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
 strsim = "0.11"
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 regex = "1"
 globset = "0.4"

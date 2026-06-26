@@ -2,16 +2,21 @@
 
 > AgentDashboard 后端日志记录规范。
 
+> **重要**：平台过程诊断（「平台进程在干什么、哪里出问题」）现在**只走** `agentdash_diagnostics::diag!` 宏，
+> 裸调用 `tracing::{info,warn,error,debug,trace}!` 已被 clippy `disallowed-macros` 禁止。
+> 入口约定、`Subsystem` 取值、关联字段、日志落地与查询端点见
+> [Diagnostics Guidelines](./diagnostics-guidelines.md)。本文档保留级别 / 字段 / 脱敏的通用约定，
+> 但下方代码示例中的 `tracing::xxx!` 应替换为 `diag!(Level, Subsystem::Xxx, ...)`。
+
 ---
 
 ## 概览
 
-使用 `tracing` crate 进行结构化日志记录。
+平台过程诊断使用 `agentdash-diagnostics` 的 `diag!` facade（底层基于 `tracing` + `tracing-subscriber`）进行结构化记录。
 
 ```rust
 // Cargo.toml
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+agentdash-diagnostics = { workspace = true }
 ```
 
 ---

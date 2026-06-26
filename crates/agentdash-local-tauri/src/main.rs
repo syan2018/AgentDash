@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -454,7 +455,8 @@ async fn claim_local_runtime(
                 return Ok(response);
             }
             Err(error) if retry_until_server_ready && attempts < 30 => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Api,
+        
                     attempt = attempts,
                     error = %error,
                     "领取本机 runtime 失败，等待 server 就绪后重试"
@@ -632,7 +634,8 @@ fn main() {
             match api_config.mode {
                 DesktopApiMode::Builtin => start_desktop_api(state),
                 DesktopApiMode::External => {
-                    tracing::info!(
+                    diag!(Info, Subsystem::Api,
+        
                         origin = %api_config.origin,
                         "Tauri 桌面端复用外部 Dashboard API"
                     );
@@ -684,7 +687,8 @@ fn start_desktop_api(state: DesktopState) {
             match runtime {
                 Ok(runtime) => runtime.block_on(run_desktop_api(state)),
                 Err(error) => {
-                    tracing::error!(error = %error, "创建桌面端 API runtime 失败");
+                    diag!(Error, Subsystem::Api,
+        error = %error, "创建桌面端 API runtime 失败");
                 }
             }
         })
@@ -694,12 +698,21 @@ fn start_desktop_api(state: DesktopState) {
 async fn run_desktop_api(state: DesktopState) {
     state.api.mark_starting(DESKTOP_API_PORT).await;
     let options = ApiServerOptions::desktop_localhost(DESKTOP_API_PORT);
-    match agentdash_api::build_server(agentdash_api::builtin_integrations(), options).await {
+    // 桌面宿主保持原 fmt 订阅器，不接 JSON 文件层 / 诊断缓冲层：传入一个未接订阅器的
+    // 空缓冲即可，`/api/diagnostics` 在桌面端返回空集（行为与原先一致）。
+    match agentdash_api::build_server(
+        agentdash_api::builtin_integrations(),
+        options,
+        agentdash_api::DiagnosticBuffer::new(0),
+    )
+    .await
+    {
         Ok(server) => {
             let ready = server.ready().clone();
             state.api.mark_running(&ready).await;
             if let Err(error) = server.serve().await {
-                tracing::error!(error = %error, "桌面端 API 服务退出");
+                diag!(Error, Subsystem::Api,
+        error = %error, "桌面端 API 服务退出");
                 state
                     .api
                     .mark_error(DESKTOP_API_PORT, error.to_string())
@@ -709,7 +722,8 @@ async fn run_desktop_api(state: DesktopState) {
             }
         }
         Err(error) => {
-            tracing::error!(error = %error, "桌面端 API 启动失败");
+            diag!(Error, Subsystem::Api,
+        error = %error, "桌面端 API 启动失败");
             state
                 .api
                 .mark_error(DESKTOP_API_PORT, error.to_string())
@@ -733,7 +747,8 @@ fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
         }
     };
 
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+        
         origin = %config.origin,
         sidecar = %sidecar,
         "Tauri 桌面端启动 API sidecar"
@@ -796,7 +811,8 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             }
             Ok(response) => {
                 if attempt % 20 == 0 {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Api,
+        
                         attempt,
                         status = %response.status(),
                         "等待桌面端 API sidecar 就绪"
@@ -805,7 +821,8 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             }
             Err(error) => {
                 if attempt % 20 == 0 {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Api,
+        
                         attempt,
                         error = %error,
                         "等待桌面端 API sidecar 就绪"
@@ -911,7 +928,8 @@ impl DesktopApiManager {
                 *guard = Some(child);
             }
             Err(error) => {
-                tracing::error!(error = %error, "记录桌面端 API sidecar 句柄失败");
+                diag!(Error, Subsystem::Api,
+        error = %error, "记录桌面端 API sidecar 句柄失败");
             }
         }
     }
@@ -920,13 +938,15 @@ impl DesktopApiManager {
         let child = match self.sidecar.lock() {
             Ok(mut guard) => guard.take(),
             Err(error) => {
-                tracing::error!(error = %error, "停止桌面端 API sidecar 时锁已污染");
+                diag!(Error, Subsystem::Api,
+        error = %error, "停止桌面端 API sidecar 时锁已污染");
                 None
             }
         };
         if let Some(mut child) = child {
             if let Err(error) = child.kill() {
-                tracing::warn!(error = %error, "终止桌面端 API sidecar 失败");
+                diag!(Warn, Subsystem::Api,
+        error = %error, "终止桌面端 API sidecar 失败");
             }
             let _ = child.wait();
         }
@@ -986,7 +1006,8 @@ fn desktop_api_config() -> DesktopApiConfig {
 
     let explicit_mode = env_trimmed(DESKTOP_API_MODE_ENV).and_then(|value| {
         parse_desktop_api_mode(&value).or_else(|| {
-            tracing::warn!(mode = %value, "忽略未知桌面端 API mode");
+            diag!(Warn, Subsystem::Api,
+        mode = %value, "忽略未知桌面端 API mode");
             None
         })
     });
@@ -994,7 +1015,8 @@ fn desktop_api_config() -> DesktopApiConfig {
         .and_then(|value| normalize_optional_text(value.to_string()))
         .and_then(|value| {
             parse_desktop_api_mode(&value).or_else(|| {
-                tracing::warn!(mode = %value, "忽略未知桌面端默认 API mode");
+                diag!(Warn, Subsystem::Api,
+        mode = %value, "忽略未知桌面端默认 API mode");
                 None
             })
         });

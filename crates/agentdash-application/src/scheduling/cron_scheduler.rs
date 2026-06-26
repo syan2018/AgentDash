@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -74,19 +75,22 @@ pub async fn spawn_cron_scheduler(
     let entries = match load_cron_entries(&repos).await {
         Ok(entries) => entries,
         Err(err) => {
-            tracing::error!("加载 Routine cron 调度条目失败，调度器不启动: {err}");
+            diag!(Error, Subsystem::Cron,
+        "加载 Routine cron 调度条目失败，调度器不启动: {err}");
             return;
         }
     };
 
     if entries.is_empty() {
-        tracing::info!(
+        diag!(Info, Subsystem::Cron,
+        
             "未发现配置了 cron_schedule 的 Routine，调度器以空列表启动，等待 Routine 创建"
         );
         // 即使初始无条目也继续监听，这样后续新增 Routine 能动态生效
     }
 
-    tracing::info!(
+    diag!(Info, Subsystem::Cron,
+        
         count = entries.len(),
         "Cron 调度器已加载 {} 条 Routine 调度条目，启动后台循环",
         entries.len()
@@ -119,7 +123,8 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
         let schedule = match Schedule::from_str(cron_expression) {
             Ok(s) => s,
             Err(err) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Cron,
+        
                     routine_id = %routine.id,
                     routine_name = %routine.name,
                     cron = cron_expression,
@@ -140,7 +145,8 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
             None => continue,
         };
 
-        tracing::info!(
+        diag!(Info, Subsystem::Cron,
+        
             routine_id = %routine.id,
             routine_name = %routine.name,
             cron = cron_expression,
@@ -187,7 +193,8 @@ fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEnt
     }
 
     let removed = existing_map.len();
-    tracing::info!(
+    diag!(Info, Subsystem::Cron,
+        
         kept,
         updated,
         added,
@@ -219,7 +226,8 @@ async fn run_cron_loop(
                         entries = merge_entries(entries, fresh);
                     }
                     Err(err) => {
-                        tracing::warn!("热更新 Routine cron 条目失败，保持现有调度: {err}");
+                        diag!(Warn, Subsystem::Cron,
+        "热更新 Routine cron 条目失败，保持现有调度: {err}");
                     }
                 }
             }
@@ -231,7 +239,8 @@ async fn run_cron_loop(
                 continue;
             }
 
-            tracing::info!(
+            diag!(Info, Subsystem::Cron,
+        
                 routine_id = %entry.routine_id,
                 "Routine cron 触发"
             );
@@ -241,7 +250,8 @@ async fn run_cron_loop(
 
             tokio::spawn(async move {
                 if let Err(err) = executor.fire_scheduled(routine_id).await {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Cron,
+        
                         routine_id = %routine_id,
                         "Routine cron 触发失败: {err}"
                     );

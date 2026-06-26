@@ -15,6 +15,7 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ExecutionHookProvider;
 
 use super::active_workflow_contribution::build_active_workflow_step_fragments;
@@ -255,6 +256,14 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, HookError> {
+        diag!(
+            Debug,
+            Subsystem::Hooks,
+            session_id = ?query.provenance.runtime_session_id,
+            trigger = ?query.trigger,
+            tool_name = ?query.tool_name,
+            "hook: evaluate 触发"
+        );
         let snapshot = match query.snapshot.clone() {
             Some(snapshot) => snapshot,
             None => {
@@ -266,7 +275,19 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
         };
         let query = HookRuleEvaluationQuery::from_frame_query(query);
-        Ok(self.evaluate_rules(&snapshot, &query))
+        let resolution = self.evaluate_rules(&snapshot, &query);
+        if !resolution.matched_rule_keys.is_empty() || resolution.block_reason.is_some() {
+            diag!(
+                Info,
+                Subsystem::Hooks,
+                session_id = ?query.runtime_session_id(),
+                trigger = ?query.trigger,
+                matched = resolution.matched_rule_keys.len(),
+                blocked = resolution.block_reason.is_some(),
+                "hook: 命中规则"
+            );
+        }
+        Ok(resolution)
     }
 
     async fn append_execution_log(
@@ -281,6 +302,12 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 }
 
 fn map_projection_error(error: HookWorkflowProjectionError) -> HookError {
+    diag!(
+        Warn,
+        Subsystem::Hooks,
+        error = %error,
+        "hook: workflow projection 加载失败"
+    );
     HookError::Runtime(error.to_string())
 }
 

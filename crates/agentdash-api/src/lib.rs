@@ -19,6 +19,7 @@ pub mod vfs_materialization;
 mod vfs_surface_runtime;
 pub mod workspace_resolution;
 
+use agentdash_diagnostics::{diag, Subsystem};
 use anyhow::Result;
 use axum::Router;
 use tokio::net::TcpListener;
@@ -26,6 +27,7 @@ use tokio::net::TcpListener;
 use agentdash_integration_api::AgentDashIntegration;
 
 use app_state::AppState;
+pub use agentdash_diagnostics::DiagnosticBuffer;
 pub use integrations::builtin_integrations;
 
 const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 20;
@@ -92,30 +94,41 @@ impl ApiServer {
 ///
 /// 接受 Host Integration 列表，在 DI 组装完成后启动 HTTP 服务。
 /// 开源版通常传入 `builtin_integrations()`；企业版在此基础上追加私有集成。
-pub async fn run_server(integrations: Vec<Box<dyn AgentDashIntegration>>) -> Result<()> {
-    run_server_with_options(integrations, ApiServerOptions::from_env()?).await
+///
+/// `diagnostics` 为统一诊断环形缓冲句柄：调用方（main）先把它接进 tracing
+/// 订阅器（[`DiagnosticBuffer::layer`]），再透传到这里供 `GET /api/diagnostics`
+/// 查询。订阅器装配只在 main，本函数不 `.init()`。
+pub async fn run_server(
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
+    diagnostics: DiagnosticBuffer,
+) -> Result<()> {
+    run_server_with_options(integrations, ApiServerOptions::from_env()?, diagnostics).await
 }
 
 pub async fn run_server_with_options(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
 ) -> Result<()> {
-    let server = build_server(integrations, options).await?;
+    let server = build_server(integrations, options, diagnostics).await?;
     let ready = server.ready().clone();
-    tracing::info!("AgentDash API 服务启动: {}", ready.origin);
+    diag!(Info, Subsystem::Api,
+        "AgentDash API 服务启动: {}", ready.origin);
     server.serve().await
 }
 
 pub async fn build_server(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
 ) -> Result<ApiServer> {
     let db_runtime = agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve(
         &options.service_name,
         options.max_connections,
     )
     .await?;
-    tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
+    diag!(Info, Subsystem::Api,
+        database_url = %db_runtime.connection_url, "数据库已就绪");
     agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -123,7 +136,8 @@ pub async fn build_server(
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let state = AppState::new_with_integrations(db_runtime.pool.clone(), integrations).await?;
+    let state =
+        AppState::new_with_integrations(db_runtime.pool.clone(), integrations, diagnostics).await?;
 
     let app = routes::create_router(state);
 

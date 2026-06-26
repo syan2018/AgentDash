@@ -89,6 +89,7 @@ name = "agentdash-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-types",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "anyhow",
  "async-trait",
@@ -115,6 +116,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agentdash-agent-types",
+ "agentdash-diagnostics",
  "base64 0.22.1",
  "chrono",
  "codex-app-server-protocol",
@@ -157,6 +159,7 @@ dependencies = [
  "agentdash-application-vfs",
  "agentdash-application-workflow",
  "agentdash-contracts",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-executor",
  "agentdash-first-party-integrations",
@@ -189,6 +192,7 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "url",
  "uuid",
@@ -214,6 +218,7 @@ dependencies = [
  "agentdash-application-vfs",
  "agentdash-application-workflow",
  "agentdash-contracts",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-infrastructure",
  "agentdash-relay",
@@ -259,6 +264,7 @@ dependencies = [
  "agentdash-application-skill",
  "agentdash-application-vfs",
  "agentdash-contracts",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "agentdash-workspace-module",
@@ -280,6 +286,7 @@ name = "agentdash-application-hooks"
 version = "0.1.0"
 dependencies = [
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",
@@ -300,6 +307,7 @@ dependencies = [
  "agentdash-application-skill",
  "agentdash-application-vfs",
  "agentdash-application-workflow",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "agentdash-workspace-module",
@@ -359,6 +367,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-relay",
  "agentdash-spi",
@@ -397,6 +406,7 @@ name = "agentdash-application-skill"
 version = "0.1.0"
 dependencies = [
  "agentdash-application-vfs",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",
@@ -417,6 +427,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-relay",
  "agentdash-spi",
@@ -447,6 +458,7 @@ name = "agentdash-application-workflow"
 version = "0.1.0"
 dependencies = [
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",
@@ -477,6 +489,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "agentdash-domain"
 version = "0.1.0"
 dependencies = [
@@ -498,6 +520,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-mcp",
  "agentdash-spi",
@@ -536,6 +559,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "agentdash-agent-protocol",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "anyhow",
@@ -578,6 +602,7 @@ dependencies = [
  "agentdash-application",
  "agentdash-application-runtime-session",
  "agentdash-application-vfs",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-executor",
  "agentdash-infrastructure",
@@ -619,6 +644,7 @@ name = "agentdash-local-tauri"
 version = "0.1.0"
 dependencies = [
  "agentdash-api",
+ "agentdash-diagnostics",
  "agentdash-local",
  "agentdash-relay",
  "anyhow",
@@ -639,6 +665,7 @@ name = "agentdash-mcp"
 version = "0.1.0"
 dependencies = [
  "agentdash-application",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",
@@ -672,6 +699,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "anyhow",
  "async-trait",
@@ -700,6 +728,7 @@ dependencies = [
  "agentdash-application-runtime-gateway",
  "agentdash-application-vfs",
  "agentdash-contracts",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",
@@ -9248,6 +9277,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "symlink"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10119,6 +10154,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-appender"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
+dependencies = [
+ "crossbeam-channel",
+ "symlink",
+ "thiserror 2.0.18",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10151,6 +10199,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10160,12 +10218,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -195,7 +196,8 @@ pub async fn derive_runtime_guidelines(
     diagnostics_label: &'static str,
 ) -> Vec<DiscoveredGuideline> {
     let _ = (vfs_service, active_vfs);
-    tracing::debug!(
+    diag!(Debug, Subsystem::AgentRun,
+        
         label = diagnostics_label,
         "AgentRun crate does not run built-in guideline file discovery; guideline providers must be injected by the composition owner"
     );
@@ -1044,7 +1046,8 @@ fn log_discovery_diagnostics(
     diagnostics: &[SkillDiscoveryDiagnostic],
 ) {
     for diag in diagnostics {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             label = diagnostics_label,
             provider_key = %diag.provider_key,
             code = %diag.code,
@@ -1060,7 +1063,8 @@ fn log_memory_discovery_diagnostics(
     diagnostics: &[MemoryDiscoveryDiagnostic],
 ) {
     for diag in diagnostics {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             label = diagnostics_label,
             provider_key = %diag.provider_key,
             code = %diag.code,

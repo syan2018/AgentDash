@@ -66,7 +66,9 @@ pub const CANVAS_SYSTEM_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CanvasScope {
+    #[default]
     Personal,
     Project,
 }
@@ -90,11 +92,6 @@ impl CanvasScope {
     }
 }
 
-impl Default for CanvasScope {
-    fn default() -> Self {
-        Self::Personal
-    }
-}
 
 impl std::fmt::Display for CanvasScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

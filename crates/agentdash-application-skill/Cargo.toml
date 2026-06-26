@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-application-vfs = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
 chrono = { workspace = true }

@@ -8,6 +8,7 @@
 //! 每 session 最多保留 `capacity_per_session` 条（默认 2000）；session_events 持久化
 //! 稳定后再迁移。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
@@ -127,7 +128,8 @@ impl ContextAuditBus for InMemoryContextAuditBus {
         let mut guard = match self.store.write() {
             Ok(g) => g,
             Err(poisoned) => {
-                tracing::warn!("context audit bus lock poisoned; 恢复并继续");
+                diag!(Warn, Subsystem::AgentRun,
+        "context audit bus lock poisoned; 恢复并继续");
                 poisoned.into_inner()
             }
         };

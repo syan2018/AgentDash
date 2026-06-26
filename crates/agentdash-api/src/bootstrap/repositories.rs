@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -88,7 +89,8 @@ pub(crate) async fn build_repositories(
             })
             .await
             .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+        
             seeded = seeded.len(),
             "已同步 builtin Shared Library assets"
         );
@@ -217,7 +219,8 @@ pub(crate) async fn build_repositories(
             .seed_integration_embedded_assets(integration_library_asset_seeds)
             .await
             .map_err(|e| anyhow::anyhow!("integration embedded library assets 初始化失败: {e}"))?;
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+        
             declared = integration_asset_count,
             seeded = seeded.len(),
             "已同步 integration embedded Shared Library assets"

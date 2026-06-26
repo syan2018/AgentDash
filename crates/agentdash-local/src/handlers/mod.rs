@@ -19,6 +19,7 @@ mod tool_calls;
 mod workspace;
 pub use workspace::browse_directory;
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -254,7 +255,8 @@ impl LocalCommandRouter {
             }
 
             other => {
-                tracing::debug!(msg_id = %other.id(), "忽略非命令消息");
+                diag!(Debug, Subsystem::AgentRun,
+        msg_id = %other.id(), "忽略非命令消息");
                 vec![]
             }
         }

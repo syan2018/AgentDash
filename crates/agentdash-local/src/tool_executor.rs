@@ -4,6 +4,7 @@
 //! 在本机文件系统和 Shell 环境中执行。
 //! 所有执行类操作都受 session mount root 边界约束。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::path::{Path, PathBuf};
 
 use agentdash_application_vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
@@ -130,7 +131,8 @@ impl ToolExecutor {
 
     pub async fn file_read(&self, path: &str, workspace_root: &str) -> Result<String, ToolError> {
         let full_path = self.resolve_existing_path(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_read");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_read");
         let content = tokio::fs::read_to_string(&full_path).await?;
         Ok(content)
     }
@@ -144,7 +146,8 @@ impl ToolExecutor {
         if !full_path.is_file() {
             return Err(ToolError::InvalidPath(path.to_string()));
         }
-        tracing::debug!(path = %full_path.display(), "file_read_binary");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_read_binary");
         let data = tokio::fs::read(&full_path).await?;
         Ok(BinaryFileResult {
             data,
@@ -159,7 +162,8 @@ impl ToolExecutor {
         workspace_root: &str,
     ) -> Result<(), ToolError> {
         let full_path = self.resolve_path_for_write(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_write");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_write");
 
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -170,7 +174,8 @@ impl ToolExecutor {
 
     pub async fn file_delete(&self, path: &str, workspace_root: &str) -> Result<(), ToolError> {
         let full_path = self.resolve_existing_path(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_delete");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_delete");
         tokio::fs::remove_file(&full_path).await?;
         Ok(())
     }
@@ -183,7 +188,8 @@ impl ToolExecutor {
     ) -> Result<(), ToolError> {
         let source = self.resolve_existing_path(from_path, workspace_root)?;
         let destination = self.resolve_path_for_write(to_path, workspace_root)?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             from = %source.display(),
             to = %destination.display(),
             "file_rename"
@@ -204,7 +210,8 @@ impl ToolExecutor {
         workspace_root: &str,
     ) -> Result<ApplyPatchAffectedPaths, ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        tracing::debug!(workspace_root = %ws.display(), "apply_patch");
+        diag!(Debug, Subsystem::AgentRun,
+        workspace_root = %ws.display(), "apply_patch");
         let target = FsPatchTarget::new(&ws).map_err(|e| ToolError::PatchApply(e.to_string()))?;
         apply_patch_to_target(&target, patch)
             .await
@@ -232,7 +239,8 @@ impl ToolExecutor {
         cwd: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<ShellResult, ToolError> {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             command = %command,
             workspace_root = workspace_root,
             requested_cwd = ?cwd,
@@ -261,7 +269,8 @@ impl ToolExecutor {
             return Ok(Vec::new());
         }
 
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             path = %base.display(),
             pattern = ?pattern,
             recursive = recursive,

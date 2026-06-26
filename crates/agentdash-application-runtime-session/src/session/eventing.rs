@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::{
@@ -164,7 +165,8 @@ impl SessionEventingService {
                 event.notification = notification;
             }
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     session_id = %session_id,
                     event_seq = event.event_seq,
                     error = %error,
@@ -309,7 +311,8 @@ impl SessionEventingService {
             executor_session_id.as_deref(),
         ) && expected != actual
         {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 session_id = %session_id,
                 source = %source,
                 expected_executor_session_id = %expected,
@@ -1073,7 +1076,8 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
     let truncated_fields = bound_known_output_fields(&mut envelope, original_bytes);
     let bounded_bytes = serialized_envelope_len(&envelope)?;
     if truncated_fields > 0 {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),
@@ -1085,7 +1089,8 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
             "SessionEventingService append guard 裁切了超大 BackboneEnvelope"
         );
     } else {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),

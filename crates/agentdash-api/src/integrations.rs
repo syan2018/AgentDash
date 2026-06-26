@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,7 +123,8 @@ pub(crate) fn collect_integration_registration(
 
     for integration in integrations {
         let integration_name = integration.name().to_string();
-        tracing::info!("加载 Host Integration: {}", integration_name);
+        diag!(Info, Subsystem::Api,
+        "加载 Host Integration: {}", integration_name);
 
         integration
             .on_init()
@@ -135,7 +137,8 @@ pub(crate) fn collect_integration_registration(
 
         let mp = integration.mount_providers();
         if !mp.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 注册了 {} 个 MountProvider",
                 integration_name,
                 mp.len()
@@ -145,7 +148,8 @@ pub(crate) fn collect_integration_registration(
 
         let skill_dirs = integration.extra_skill_dirs();
         if !skill_dirs.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 注册了 {} 个 skill 扫描目录",
                 integration_name,
                 skill_dirs.len()
@@ -155,7 +159,8 @@ pub(crate) fn collect_integration_registration(
 
         let skill_providers = integration.skill_discovery_providers();
         if !skill_providers.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 注册了 {} 个 SkillDiscoveryProvider",
                 integration_name,
                 skill_providers.len()
@@ -186,7 +191,8 @@ pub(crate) fn collect_integration_registration(
 
         let memory_providers = integration.memory_discovery_providers();
         if !memory_providers.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 注册了 {} 个 MemoryDiscoveryProvider",
                 integration_name,
                 memory_providers.len()
@@ -217,7 +223,8 @@ pub(crate) fn collect_integration_registration(
 
         let seeds = integration.library_asset_seeds();
         if !seeds.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 声明了 {} 个 Shared Library asset",
                 integration_name,
                 seeds.len()
@@ -232,7 +239,8 @@ pub(crate) fn collect_integration_registration(
 
         let sources = integration.marketplace_source_providers();
         if !sources.is_empty() {
-            tracing::info!(
+            diag!(Info, Subsystem::Api,
+        
                 "  Host Integration `{}` 注册了 {} 个 MarketplaceSourceProvider",
                 integration_name,
                 sources.len()

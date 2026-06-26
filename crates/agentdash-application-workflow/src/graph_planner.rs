@@ -2,6 +2,7 @@ use agentdash_application_ports::workflow_graph_planning::{
     PlannedWorkflowGraph, WorkflowGraphPlanningDiagnostic, WorkflowGraphPlanningError,
     WorkflowGraphPlanningPort, WorkflowGraphPlanningRequest,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::WorkflowGraphRepository;
 use async_trait::async_trait;
 
@@ -30,6 +31,12 @@ impl WorkflowGraphPlanningPort for ApplicationWorkflowGraphPlanner<'_> {
         &self,
         request: WorkflowGraphPlanningRequest,
     ) -> Result<PlannedWorkflowGraph, WorkflowGraphPlanningError> {
+        diag!(
+            Info,
+            Subsystem::Workflow,
+            project_id = %request.project_id,
+            "plan: 开始解析并编译 workflow graph"
+        );
         let graph = WorkflowGraphResolver::new(self.workflow_graph_repo)
             .resolve(request.project_id, &request.workflow_graph_ref)
             .await
@@ -38,6 +45,21 @@ impl WorkflowGraphPlanningPort for ApplicationWorkflowGraphPlanner<'_> {
 
         let output = WorkflowGraphCompiler::compile(WorkflowGraphCompileInput::strict(&graph));
         if output.has_blocking_diagnostics() {
+            let blocking_codes = output
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.is_blocking())
+                .map(|diagnostic| diagnostic.code.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            diag!(
+                Warn,
+                Subsystem::Workflow,
+                project_id = %request.project_id,
+                workflow_graph_id = %graph.id,
+                blocking_codes = %blocking_codes,
+                "plan: 编译产生阻塞诊断，拒绝规划"
+            );
             return Err(WorkflowGraphPlanningError::BlockingDiagnostics {
                 workflow_graph_id: graph.id,
                 diagnostics: output
@@ -48,6 +70,15 @@ impl WorkflowGraphPlanningPort for ApplicationWorkflowGraphPlanner<'_> {
             });
         }
 
+        diag!(
+            Info,
+            Subsystem::Workflow,
+            project_id = %request.project_id,
+            workflow_graph_id = %graph.id,
+            node_count = output.plan_snapshot.nodes.len(),
+            plan_digest = %output.plan_snapshot.plan_digest,
+            "plan: 编译完成，生成 OrchestrationPlanSnapshot"
+        );
         Ok(PlannedWorkflowGraph {
             graph,
             plan_snapshot: output.plan_snapshot,

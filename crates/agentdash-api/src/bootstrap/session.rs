@@ -436,8 +436,7 @@ fn build_session_runtime_tool_composer(
         .with_shell_output_registry(deps.shell_output_registry);
     let workflow_provider = WorkflowRuntimeToolProvider::new(
         deps.repos.to_lifecycle_repository_set(),
-        agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle::default(
-        ),
+        agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle,
         lifecycle_platform_config(&deps.platform_config),
         deps.function_runner,
     );

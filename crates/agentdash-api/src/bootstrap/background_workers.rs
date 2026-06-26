@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,11 +13,13 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         .await
     {
         Ok(count) if count > 0 => {
-            tracing::info!(count, "已调度 terminal effect outbox 恢复执行");
+            diag!(Info, Subsystem::Api,
+        count, "已调度 terminal effect outbox 恢复执行");
         }
         Ok(_) => {}
         Err(error) => {
-            tracing::warn!(error = %error, "terminal effect outbox 恢复执行失败");
+            diag!(Warn, Subsystem::Api,
+        error = %error, "terminal effect outbox 恢复执行失败");
         }
     }
 
@@ -49,9 +52,11 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         loop {
             interval.tick().await;
             match auth_session_service.cleanup_expired_sessions().await {
-                Ok(count) if count > 0 => tracing::info!(deleted = count, "已清理过期认证会话"),
+                Ok(count) if count > 0 => diag!(Info, Subsystem::Api,
+        deleted = count, "已清理过期认证会话"),
                 Ok(_) => {}
-                Err(err) => tracing::warn!(error = %err, "清理过期认证会话失败"),
+                Err(err) => diag!(Warn, Subsystem::Api,
+        error = %err, "清理过期认证会话失败"),
             }
         }
     });

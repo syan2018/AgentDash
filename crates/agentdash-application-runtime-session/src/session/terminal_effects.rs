@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::io;
 use std::sync::Arc;
 
@@ -223,7 +224,8 @@ impl SessionTerminalEffectDispatcher {
                 .effects
                 .push(EnqueuedTerminalEffect { record, executor }),
             Err(error) => {
-                tracing::error!(
+                diag!(Error, Subsystem::AgentRun,
+        
                     error = %error,
                     "Terminal effect outbox 写入失败，终态事实已保留"
                 );
@@ -234,7 +236,8 @@ impl SessionTerminalEffectDispatcher {
     pub async fn execute_enqueued(&self, batch: EnqueuedTerminalEffects) {
         for item in batch.effects {
             if let Err(error) = self.execute_one(item.clone()).await {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     effect_id = %item.record.id,
                     effect_type = item.record.effect_type.as_str(),
                     error = %error,
@@ -265,7 +268,8 @@ impl SessionTerminalEffectDispatcher {
                 .execute_one(EnqueuedTerminalEffect { record, executor })
                 .await
             {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     error = %error,
                     "Terminal effect durable replay 失败"
                 );
@@ -410,7 +414,8 @@ impl SessionTerminalEffectDispatcher {
         if !supported.is_empty() {
             for effect in effects {
                 if !supported.contains(&effect.kind.as_str()) {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::AgentRun,
+        
                         session_id = %record.session_id,
                         effect_kind = %effect.kind,
                         supported = ?supported,

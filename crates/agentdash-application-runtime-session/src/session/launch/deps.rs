@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -289,7 +290,8 @@ impl TurnCommitDeps {
             }
             Ok(None) => {}
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::SessionLaunch,
+        
                     session_id = %session_id,
                     error = %error,
                     "自动标题写入失败"

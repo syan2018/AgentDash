@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
@@ -130,7 +131,8 @@ pub async fn list_directory_users(
                 return Ok(Json(response).into_response());
             }
             Err(DirectoryProviderError::Unavailable(message)) => {
-                tracing::warn!(error = %message, "身份目录 provider 不可用，回退到本地 user projection");
+                diag!(Warn, Subsystem::Api,
+        error = %message, "身份目录 provider 不可用，回退到本地 user projection");
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -165,7 +167,8 @@ pub async fn list_directory_groups(
                 return Ok(Json(response).into_response());
             }
             Err(DirectoryProviderError::Unavailable(message)) => {
-                tracing::warn!(error = %message, "身份目录 provider 不可用，回退到本地 group projection");
+                diag!(Warn, Subsystem::Api,
+        error = %message, "身份目录 provider 不可用，回退到本地 group projection");
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -188,7 +191,8 @@ pub async fn list_directory_group_tree(
         match provider.list_group_children(query.tree_request()).await {
             Ok(result) => return Ok(Json(provider_tree_response(result))),
             Err(DirectoryProviderError::Unavailable(message)) => {
-                tracing::warn!(error = %message, "身份目录 provider 不可用，回退到本地 group projection tree");
+                diag!(Warn, Subsystem::Api,
+        error = %message, "身份目录 provider 不可用，回退到本地 group projection tree");
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -517,7 +521,8 @@ async fn apply_projected_user_fields(state: &AppState, users: &mut [DirectoryUse
             Ok(Some(user)) => user,
             Ok(None) => continue,
             Err(error) => {
-                tracing::debug!(error = %error, user_id = %user.user_id, "投影用户字段查询失败，跳过补全");
+                diag!(Debug, Subsystem::Api,
+        error = %error, user_id = %user.user_id, "投影用户字段查询失败，跳过补全");
                 continue;
             }
         };
@@ -539,7 +544,8 @@ fn map_provider_error(error: DirectoryProviderError) -> ApiError {
         }
         DirectoryProviderError::Unavailable(message) => ApiError::ServiceUnavailable(message),
         DirectoryProviderError::Internal(message) => {
-            tracing::error!(error = %message, "身份目录 provider 内部错误");
+            diag!(Error, Subsystem::Api,
+        error = %message, "身份目录 provider 内部错误");
             ApiError::Internal("身份目录服务错误".to_string())
         }
     }

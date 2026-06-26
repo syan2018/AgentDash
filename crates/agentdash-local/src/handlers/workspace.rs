@@ -1,5 +1,6 @@
 //! Workspace 探测 + 目录浏览命令处理
 
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_relay::*;
 
 #[derive(Clone, Copy)]
@@ -25,7 +26,8 @@ impl WorkspaceCommandHandler {
                 }
             };
 
-        tracing::debug!(path = %workspace_root.display(), "workspace_detect");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %workspace_root.display(), "workspace_detect");
         let detected = match tokio::task::spawn_blocking(move || {
             crate::workspace_probe::detect_workspace(&workspace_root)
         })

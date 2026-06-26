@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
 #[cfg(test)]
 use agentdash_spi::HookEvaluationQuery;
@@ -154,6 +155,14 @@ fn apply_contract_hook_rules(
                 }
             }
             Err(err) => {
+                diag!(
+                    Warn,
+                    Subsystem::Hooks,
+                    rule_key = %rule.key,
+                    trigger = ?ctx.query.trigger,
+                    error = %err,
+                    "hook: 规则脚本执行失败"
+                );
                 resolution.diagnostics.push(HookDiagnosticEntry {
                     code: "hook_script_error".to_string(),
                     message: format!("Hook 规则 `{}` 脚本执行失败: {}", rule.key, err),

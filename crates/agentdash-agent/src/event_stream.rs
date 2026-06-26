@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -53,7 +54,8 @@ impl<T: Clone + Send + 'static> Stream for EventReceiver<T> {
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(item))) => return Poll::Ready(Some(item)),
                 Poll::Ready(Some(Err(err))) => {
-                    tracing::warn!(error = ?err, "Agent 事件流消费者发生 lagged，已跳过部分旧事件");
+                    diag!(Warn, Subsystem::AgentRun,
+        error = ?err, "Agent 事件流消费者发生 lagged，已跳过部分旧事件");
                     continue;
                 }
                 Poll::Ready(None) => return Poll::Ready(None),

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -327,7 +328,8 @@ impl ProviderEntry {
             match list_models().await {
                 Ok(models) => (models, ModelDiscoveryStatus::Ok),
                 Err(error) => {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::AgentRun,
+        
                         "PiAgentConnector: provider={} 动态获取模型失败: {}",
                         self.provider_id,
                         error
@@ -447,7 +449,8 @@ pub async fn build_effective_profile_catalog_from_db(
     let providers = match repo.list_all().await {
         Ok(list) => list,
         Err(e) => {
-            tracing::error!("PiAgentConnector: 从 DB 读取 LLM providers 失败: {e}");
+            diag!(Error, Subsystem::AgentRun,
+        "PiAgentConnector: 从 DB 读取 LLM providers 失败: {e}");
             return EffectiveLlmProfileCatalog {
                 providers: Vec::new(),
             };
@@ -534,7 +537,8 @@ async fn build_provider_entry_from_db(
     {
         Ok(credential) => credential,
         Err(error) => {
-            tracing::error!(
+            diag!(Error, Subsystem::AgentRun,
+        
                 provider = %db_provider.slug,
                 error = %error,
                 "PiAgentConnector: Provider 凭据解析失败"
@@ -552,7 +556,8 @@ async fn build_provider_entry_from_db(
         .map(|credential| credential.api_key)
         .unwrap_or_default();
     if api_key.is_empty() && !provider_allows_empty_api_key(db_provider) {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+        
             provider = %db_provider.slug,
             mode = %db_provider.credential_mode,
             "PiAgentConnector: Provider 当前身份缺少可用凭据，已从可执行列表隐藏"
@@ -580,7 +585,8 @@ async fn build_provider_entry_from_db(
         match resolve_openai_wire_api(wire_api_setting, base_url.as_deref()) {
             Ok(api) => Some(api),
             Err(err) => {
-                tracing::error!(
+                diag!(Error, Subsystem::AgentRun,
+        
                     "PiAgentConnector: provider={} wire_api 配置错误: {err}",
                     db_provider.slug
                 );
@@ -602,7 +608,8 @@ async fn build_provider_entry_from_db(
     let configured_models = match parse_model_list(&db_provider.models) {
         Some(models) => models,
         None => {
-            tracing::error!(
+            diag!(Error, Subsystem::AgentRun,
+        
                 "PiAgentConnector: provider={} models 字段解析失败: {:?}",
                 db_provider.slug,
                 db_provider.models
@@ -613,7 +620,8 @@ async fn build_provider_entry_from_db(
     let blocked_models: HashSet<String> = match parse_string_list(&db_provider.blocked_models) {
         Some(list) => list.into_iter().collect(),
         None => {
-            tracing::error!(
+            diag!(Error, Subsystem::AgentRun,
+        
                 "PiAgentConnector: provider={} blocked_models 字段解析失败: {:?}",
                 db_provider.slug,
                 db_provider.blocked_models
@@ -640,7 +648,8 @@ async fn build_provider_entry_from_db(
         build_model_lister_by_protocol(db_provider.protocol, api_key, base_url, discovery_url);
 
     let provider_id = db_provider.slug.clone();
-    tracing::info!(
+    diag!(Info, Subsystem::AgentRun,
+        
         "PiAgentConnector: provider={} ({}) 已注册（protocol={}, default_model={}{}）",
         db_provider.name,
         provider_id,

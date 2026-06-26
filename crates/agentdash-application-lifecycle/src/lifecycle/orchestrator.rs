@@ -22,7 +22,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
-use tracing::{info, warn};
+use agentdash_diagnostics::{diag, Subsystem};
 use uuid::Uuid;
 
 use crate::{RepositorySet, SharedPlatformConfig};
@@ -143,7 +143,9 @@ impl LifecycleOrchestrator {
             return Ok(None);
         };
 
-        info!(
+        diag!(
+            Info,
+            Subsystem::Lifecycle,
             run_id = %association.run.id,
             orchestration_id = %association.orchestration_id,
             node_path = %association.node_path,
@@ -392,7 +394,9 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
     async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
         match self.on_session_terminal(session_id, terminal_state).await {
             Ok(Some(result)) => {
-                info!(
+                diag!(
+                    Info,
+                    Subsystem::Lifecycle,
                     run_id = %result.run_id,
                     activated = ?result.activated_nodes.iter().map(|n| &n.node_key).collect::<Vec<_>>(),
                     "Orchestrator callback: activated successor activities"
@@ -400,7 +404,9 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
             }
             Ok(None) => {}
             Err(e) => {
-                warn!(
+                diag!(
+                    Warn,
+                    Subsystem::Lifecycle,
                     session_id = %session_id,
                     error = %e,
                     "Orchestrator callback failed"

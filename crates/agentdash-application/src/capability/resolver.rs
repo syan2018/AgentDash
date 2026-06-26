@@ -3,6 +3,7 @@
 //! 负责把各来源 contributions（agent / workflow）+ MCP 候选 归约为 session
 //! 的有效能力状态：`CapabilityState`。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::McpPreset;
@@ -261,7 +262,8 @@ impl CapabilityResolver {
         platform: &PlatformConfig,
     ) -> CapabilityResolverOutput {
         Self::resolve_checked(input, platform).unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "CapabilityResolver resolve 降级为非严格 MCP 解析");
+            diag!(Warn, Subsystem::AgentRun,
+        error = %error, "CapabilityResolver resolve 降级为非严格 MCP 解析");
             CapabilityState::default()
         })
     }
@@ -311,7 +313,8 @@ impl CapabilityResolver {
                                 resolved_mcp_servers.push(server);
                             }
                         } else {
-                            tracing::warn!(
+                            diag!(Warn, Subsystem::AgentRun,
+        
                                 key = %cap.key(),
                                 server_name = %server_name,
                                 "directive 声明了 mcp:{server_name}，但 Project MCP Preset 未注册"

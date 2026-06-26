@@ -204,7 +204,7 @@ pub async fn list_canvases_for_user(
             .map_err(ApplicationError::from)?,
     };
 
-    canvases.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    canvases.sort_by_key(|canvas| std::cmp::Reverse(canvas.created_at));
 
     Ok(canvases
         .into_iter()
@@ -337,18 +337,13 @@ pub async fn publish_canvas_to_project(
     normalize_canvas(&mut shared).map_err(ApplicationError::from)?;
     validate_canvas_contract(&shared).map_err(ApplicationError::from)?;
 
-    if source.shared_canvas_id == Some(shared.id) {
-        repos
+    if source.shared_canvas_id == Some(shared.id)
+        || repos
             .canvas_repo()
-            .update(&shared)
+            .get_by_id(shared.id)
             .await
-            .map_err(ApplicationError::from)?;
-    } else if repos
-        .canvas_repo()
-        .get_by_id(shared.id)
-        .await
-        .map_err(ApplicationError::from)?
-        .is_some()
+            .map_err(ApplicationError::from)?
+            .is_some()
     {
         repos
             .canvas_repo()

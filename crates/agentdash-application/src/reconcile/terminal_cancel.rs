@@ -8,6 +8,7 @@
 //!
 //! 这是"安全网"行为：确保业务状态与 session 生命周期一致。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -72,7 +73,8 @@ impl TerminalCancelCoordinator {
             .cancel(&command.runtime_session_id)
             .await
         {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Reconcile,
+        
                 story_id = %story_id,
                 session_id = %command.runtime_session_id,
                 frame_ref = %command.runtime_refs.frame_ref,
@@ -82,7 +84,8 @@ impl TerminalCancelCoordinator {
                 "终态取消协调器：Story 进入终态后取消关联 session 失败"
             );
         } else {
-            tracing::info!(
+            diag!(Info, Subsystem::Reconcile,
+        
                 story_id = %story_id,
                 new_status = ?new_status,
                 session_id = %command.runtime_session_id,
@@ -110,7 +113,8 @@ impl TerminalCancelCoordinator {
         {
             Ok(command) => command,
             Err(err) => {
-                tracing::debug!(
+                diag!(Debug, Subsystem::Reconcile,
+        
                     subject_kind,
                     subject_id = %subject_id,
                     error = %err,

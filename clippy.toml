@@ -1,0 +1,7 @@
+disallowed-macros = [
+  { path = "tracing::info",  reason = "用 agentdash_diagnostics::diag! 统一平台过程诊断入口" },
+  { path = "tracing::warn",  reason = "用 diag!" },
+  { path = "tracing::error", reason = "用 diag!" },
+  { path = "tracing::debug", reason = "用 diag!" },
+  { path = "tracing::trace", reason = "用 diag!" },
+]

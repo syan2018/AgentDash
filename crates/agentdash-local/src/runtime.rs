@@ -1,5 +1,6 @@
 //! 本机 runtime 组装与生命周期管理。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -382,7 +383,8 @@ pub fn canonicalize_workspace_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
         .into_iter()
         .map(|path| {
             std::fs::canonicalize(&path).unwrap_or_else(|_| {
-                tracing::warn!(path = %path.display(), "无法规范化路径");
+                diag!(Warn, Subsystem::Relay,
+        path = %path.display(), "无法规范化路径");
                 path
             })
         })
@@ -437,7 +439,8 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 }
 
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
-    tracing::info!(
+    diag!(Info, Subsystem::Relay,
+        
         backend_id = %config.backend_id,
         name = %config.name,
         cloud_url = %config.cloud_url,
@@ -480,13 +483,16 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         );
 
         if let Err(error) = session_runtime.runtime.recover_interrupted_sessions().await {
-            tracing::warn!(error = %error, "启动恢复 session 状态失败（非致命）");
+            diag!(Warn, Subsystem::Relay,
+        error = %error, "启动恢复 session 状态失败（非致命）");
         }
 
-        tracing::info!("Session runtime 已初始化");
+        diag!(Info, Subsystem::Relay,
+        "Session runtime 已初始化");
         (Some(session_runtime), Some(connector), Some(db_runtime))
     } else {
-        tracing::info!("Session runtime 已禁用");
+        diag!(Info, Subsystem::Relay,
+        "Session runtime 已禁用");
         (None, None, None)
     };
 

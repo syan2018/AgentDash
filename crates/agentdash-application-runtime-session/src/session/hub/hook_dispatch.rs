@@ -6,6 +6,7 @@
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
 //! - `schedule_unanchored_hook_auto_resume`（非 AgentRun runtime 的 hook auto-resume）
 
+use agentdash_diagnostics::{diag, Subsystem};
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_injection_sink::{
@@ -141,7 +142,8 @@ impl SessionRuntimeInner {
                 HookTriggerDispatchResult { effects }
             }
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Hooks,
+        
                     session_id = %session_id,
                     trigger = ?trigger,
                     error = %error,
@@ -201,7 +203,8 @@ impl SessionRuntimeInner {
             .await;
 
         if decision {
-            tracing::info!(
+            diag!(Info, Subsystem::Hooks,
+        
                 session_id = %session_id,
                 "Hook auto-resume: stop gate unsatisfied, scheduling retry"
             );
@@ -219,7 +222,8 @@ impl SessionRuntimeInner {
             }
             Ok(true)
         } else {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Hooks,
+        
                 session_id = %session_id,
                 max = MAX_HOOK_AUTO_RESUMES,
                 "Hook auto-resume: 达到上限，放弃续跑"
@@ -258,7 +262,8 @@ impl SessionRuntimeInner {
             }
             Ok(false) => AutoResumeMailboxRoute::NoAnchor,
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Hooks,
+        
                     session_id = %request.session_id,
                     effect_id = %request.effect_id,
                     error = %error,
@@ -297,7 +302,8 @@ impl SessionRuntimeInner {
                 .launch_command(&session_id, command)
                 .await
             {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Hooks,
+        
                     session_id = %session_id,
                     error = %e,
                     "Hook auto-resume launch 失败"

@@ -19,6 +19,7 @@ schemars = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }

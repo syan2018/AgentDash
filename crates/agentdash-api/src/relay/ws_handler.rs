@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -51,15 +52,18 @@ async fn handle_backend_connection(
     {
         Ok(Ok(Some(msg))) => msg,
         Ok(Ok(None)) => {
-            tracing::error!("等待注册消息时连接关闭");
+            diag!(Error, Subsystem::Relay,
+        "等待注册消息时连接关闭");
             return;
         }
         Ok(Err(error)) => {
-            tracing::error!(authorized_backend_id = %authorized_backend.id, error = %error, "等待注册消息时收到非法 relay 消息");
+            diag!(Error, Subsystem::Relay,
+        authorized_backend_id = %authorized_backend.id, error = %error, "等待注册消息时收到非法 relay 消息");
             return;
         }
         Err(_) => {
-            tracing::error!("等待注册消息超时");
+            diag!(Error, Subsystem::Relay,
+        "等待注册消息超时");
             return;
         }
     };
@@ -67,7 +71,8 @@ async fn handle_backend_connection(
     let (reg_id, payload) = match relay_msg {
         RelayMessage::Register { id, payload } => (id, payload),
         other => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Relay,
+        
                 authorized_backend_id = %authorized_backend.id,
                 msg_type = %other.id(),
                 "首条消息不是 register，拒绝建立 relay 注册"
@@ -84,7 +89,8 @@ async fn handle_backend_connection(
 
     let bid = payload.backend_id.clone();
     if let Err(error) = validate_register_payload(&authorized_backend, &payload) {
-        tracing::warn!(
+        diag!(Warn, Subsystem::Relay,
+        
             authorized_backend_id = %authorized_backend.id,
             claimed_backend_id = %payload.backend_id,
             error_code = error.code.as_str(),
@@ -95,7 +101,8 @@ async fn handle_backend_connection(
         return;
     }
 
-    tracing::info!(
+    diag!(Info, Subsystem::Relay,
+        
         backend_id = %bid,
         name = %payload.name,
         "收到本机后端注册"
@@ -124,7 +131,8 @@ async fn handle_backend_connection(
                 RelayError::conflict(format!("backend `{backend_id}` 已在线，拒绝重复注册"))
             }
         };
-        tracing::warn!(
+        diag!(Warn, Subsystem::Relay,
+        
             backend_id = %bid,
             error_code = error.code.as_str(),
             error = %error.message.as_str(),
@@ -149,7 +157,8 @@ async fn handle_backend_connection(
         })
         .await
     {
-        tracing::error!(backend_id = %bid, error = %error, "写入 runtime health 在线状态失败");
+        diag!(Error, Subsystem::Relay,
+        backend_id = %bid, error = %error, "写入 runtime health 在线状态失败");
         state.services.backend_registry.unregister(&bid).await;
         let _ = send_relay_error(
             &mut ws_tx,
@@ -176,7 +185,8 @@ async fn handle_backend_connection(
     }
     notify_backend_runtime_changed(&state, &bid);
 
-    tracing::info!(backend_id = %bid, "本机后端注册完成，进入消息循环");
+    diag!(Info, Subsystem::Relay,
+        backend_id = %bid, "本机后端注册完成，进入消息循环");
 
     // 心跳定时器
     let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -190,17 +200,20 @@ async fn handle_backend_connection(
                         match parse_relay_message_text(text.as_ref()) {
                             Ok(relay_msg) => handle_backend_message(&state, &bid, relay_msg).await,
                             Err(error) => {
-                                tracing::error!(backend_id = %bid, error = %error, "收到非法 relay 消息，关闭连接");
+                                diag!(Error, Subsystem::Relay,
+        backend_id = %bid, error = %error, "收到非法 relay 消息，关闭连接");
                                 break;
                             }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
-                        tracing::info!(backend_id = %bid, "本机后端断开");
+                        diag!(Info, Subsystem::Relay,
+        backend_id = %bid, "本机后端断开");
                         break;
                     }
                     Some(Err(e)) => {
-                        tracing::error!(backend_id = %bid, error = %e, "WebSocket 读取错误");
+                        diag!(Error, Subsystem::Relay,
+        backend_id = %bid, error = %e, "WebSocket 读取错误");
                         break;
                     }
                     _ => {}
@@ -232,7 +245,8 @@ async fn handle_backend_connection(
         Some("backend disconnected".to_string()),
     );
     if lost_session_count > 0 {
-        tracing::warn!(
+        diag!(Warn, Subsystem::Relay,
+        
             backend_id = %bid,
             count = lost_session_count,
             "后端断连，已向 active relay session 投递 lost terminal"
@@ -249,7 +263,8 @@ async fn handle_backend_connection(
         .await
     {
         Ok(count) if count > 0 => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Relay,
+        
                 backend_id = %bid,
                 count,
                 "后端断连，已标记 active backend execution lease 为 lost"
@@ -257,7 +272,8 @@ async fn handle_backend_connection(
         }
         Ok(_) => {}
         Err(error) => {
-            tracing::warn!(backend_id = %bid, error = %error, "标记 backend execution lease lost 失败");
+            diag!(Warn, Subsystem::Relay,
+        backend_id = %bid, error = %error, "标记 backend execution lease lost 失败");
         }
     }
     state.services.backend_registry.unregister(&bid).await;
@@ -271,7 +287,8 @@ async fn handle_backend_connection(
         )
         .await
     {
-        tracing::warn!(backend_id = %bid, error = %error, "写入 runtime health 离线状态失败");
+        diag!(Warn, Subsystem::Relay,
+        backend_id = %bid, error = %error, "写入 runtime health 离线状态失败");
     }
     notify_backend_runtime_changed(&state, &bid);
 
@@ -305,7 +322,8 @@ async fn handle_backend_connection(
                 .inject_notification(&term_state.session_id, envelope)
                 .await
             {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Relay,
+        
                     backend_id = %bid,
                     terminal_id = %terminal_id,
                     session_id = %term_state.session_id,
@@ -316,7 +334,8 @@ async fn handle_backend_connection(
         }
     }
     if !lost_terminal_ids.is_empty() {
-        tracing::info!(
+        diag!(Info, Subsystem::Relay,
+        
             backend_id = %bid,
             count = lost_terminal_ids.len(),
             "后端断连，已标记终端为 Lost"
@@ -327,20 +346,23 @@ async fn handle_backend_connection(
 async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: RelayMessage) {
     match &msg {
         RelayMessage::Pong { .. } => {
-            tracing::debug!(backend_id = %backend_id, "收到 pong");
+            diag!(Debug, Subsystem::Relay,
+        backend_id = %backend_id, "收到 pong");
             if let Err(error) = state
                 .repos
                 .runtime_health_repo
                 .mark_seen(backend_id, chrono::Utc::now())
                 .await
             {
-                tracing::warn!(backend_id = %backend_id, error = %error, "更新 runtime health last_seen 失败");
+                diag!(Warn, Subsystem::Relay,
+        backend_id = %backend_id, error = %error, "更新 runtime health last_seen 失败");
             }
         }
         // 响应消息 → 分发到等待方
         response if is_pending_response_message(response) => {
             if !state.services.backend_registry.resolve_response(&msg).await {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Relay,
+        
                     backend_id = %backend_id,
                     msg_id = %msg.id(),
                     "无匹配的挂起请求"
@@ -358,7 +380,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                         &payload.session_id,
                         RelaySessionEvent::Notification(Box::new(envelope)),
                     ) {
-                        tracing::debug!(
+                        diag!(Debug, Subsystem::Relay,
+        
                             backend_id = %backend_id,
                             session_id = %payload.session_id,
                             "relay notification 到达时 session sink 不存在（session 可能已结束）"
@@ -366,7 +389,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     }
                 }
                 Err(err) => {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Relay,
+        
                         backend_id = %backend_id,
                         session_id = %payload.session_id,
                         error = %err,
@@ -380,7 +404,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 RelaySessionEvent, RelayTerminalKind,
             };
 
-            tracing::info!(
+            diag!(Info, Subsystem::Relay,
+        
                 backend_id = %backend_id,
                 session_id = %payload.session_id,
                 state = ?payload.state,
@@ -405,7 +430,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     message: payload.message.clone(),
                 },
             ) {
-                tracing::debug!(
+                diag!(Debug, Subsystem::Relay,
+        
                     backend_id = %backend_id,
                     session_id = %payload.session_id,
                     "relay terminal 到达时 session sink 不存在（session 可能已结束）"
@@ -413,7 +439,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventCapabilitiesChanged { payload, .. } => {
-            tracing::info!(backend_id = %backend_id, "收到能力变更通知");
+            diag!(Info, Subsystem::Relay,
+        backend_id = %backend_id, "收到能力变更通知");
             state
                 .services
                 .backend_registry
@@ -428,7 +455,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 )
                 .await
             {
-                tracing::warn!(backend_id = %backend_id, error = %error, "更新 runtime health capabilities 失败");
+                diag!(Warn, Subsystem::Relay,
+        backend_id = %backend_id, error = %error, "更新 runtime health capabilities 失败");
             }
             notify_backend_runtime_changed(state, backend_id);
         }
@@ -437,7 +465,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .clone()
                 .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
             if !state.services.shell_output_registry.route(&payload) {
-                tracing::debug!(
+                diag!(Debug, Subsystem::Relay,
+        
                     backend_id = %backend_id,
                     call_id = %payload.call_id,
                     "shell output 到达时无匹配 sink（命令可能已结束）"
@@ -449,7 +478,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 .clone()
                 .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
             let terminal_id = &payload.terminal_id;
-            tracing::info!(
+            diag!(Info, Subsystem::Relay,
+        
                 backend_id = %backend_id,
                 terminal_id = %terminal_id,
                 data_len = payload.data.len(),
@@ -477,7 +507,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     .inject_notification(&term_state.session_id, envelope)
                     .await
                 {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Relay,
+        
                         terminal_id = %terminal_id,
                         session_id = %term_state.session_id,
                         error = %e,
@@ -485,14 +516,16 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     );
                 }
             } else {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Relay,
+        
                     terminal_id = %terminal_id,
                     "终端输出事件到达但 terminal_cache 中未找到"
                 );
             }
         }
         RelayMessage::EventTerminalStateChanged { payload, .. } => {
-            tracing::info!(
+            diag!(Info, Subsystem::Relay,
+        
                 backend_id = %backend_id,
                 terminal_id = %payload.terminal_id,
                 state = ?payload.state,
@@ -538,7 +571,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     .inject_notification(&term_state.session_id, envelope)
                     .await
                 {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Relay,
+        
                         terminal_id = %payload.terminal_id,
                         error = %e,
                         "终端状态变更注入 session 失败"
@@ -547,10 +581,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
-            tracing::debug!(backend_id = %backend_id, "收到选项发现 patch");
+            diag!(Debug, Subsystem::Relay,
+        backend_id = %backend_id, "收到选项发现 patch");
         }
         other => {
-            tracing::debug!(
+            diag!(Debug, Subsystem::Relay,
+        
                 backend_id = %backend_id,
                 msg_id = %other.id(),
                 "忽略意外消息"
@@ -659,7 +695,8 @@ async fn authorize_backend_token(
 ) -> Result<BackendConfig, AuthResponseError> {
     let trimmed = token.trim();
     if trimmed.is_empty() {
-        tracing::warn!("relay 握手缺少 token");
+        diag!(Warn, Subsystem::Relay,
+        "relay 握手缺少 token");
         return Err(AuthResponseError::unauthorized(
             "缺少 relay token",
             "未携带 token，拒绝升级 WebSocket",
@@ -669,14 +706,16 @@ async fn authorize_backend_token(
     match backend_repo.get_backend_by_auth_token(trimmed).await {
         Ok(config) => Ok(config),
         Err(DomainError::NotFound { .. }) => {
-            tracing::warn!("relay 握手 token 无效");
+            diag!(Warn, Subsystem::Relay,
+        "relay 握手 token 无效");
             Err(AuthResponseError::unauthorized(
                 "relay token 无效",
                 "token 无效或未绑定 backend",
             ))
         }
         Err(err) => {
-            tracing::error!(error = %err, error_debug = ?err, "relay 握手 token 查找失败");
+            diag!(Error, Subsystem::Relay,
+        error = %err, error_debug = ?err, "relay 握手 token 查找失败");
             Err(AuthResponseError::internal(
                 "relay token 校验失败",
                 "服务端无法完成 token 校验",

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::{collections::HashMap, sync::Arc};
 
 use agentdash_spi::{
@@ -224,7 +225,8 @@ pub async fn discover_mcp_tool_entries(
 
     for server in servers {
         let Some(server_spec) = parse_http_mcp_server(server) else {
-            tracing::debug!("跳过非 HTTP MCP Server");
+            diag!(Debug, Subsystem::Mcp,
+        "跳过非 HTTP MCP Server");
             continue;
         };
 

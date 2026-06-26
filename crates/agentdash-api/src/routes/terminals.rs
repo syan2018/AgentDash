@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use axum::Json;
@@ -159,7 +160,8 @@ pub async fn terminal_input(
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
-            tracing::error!(error = %e, terminal_id, "terminal input relay command failed");
+            diag!(Error, Subsystem::Api,
+        error = %e, terminal_id, "terminal input relay command failed");
             Err(ApiError::ServiceUnavailable(String::from(
                 "终端输入命令发送失败",
             )))
@@ -195,7 +197,8 @@ pub async fn terminal_resize(
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
-            tracing::error!(error = %e, terminal_id, "terminal resize relay command failed");
+            diag!(Error, Subsystem::Api,
+        error = %e, terminal_id, "terminal resize relay command failed");
             Err(ApiError::ServiceUnavailable(String::from(
                 "终端尺寸调整命令发送失败",
             )))
@@ -230,7 +233,8 @@ pub async fn terminal_kill(
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
-            tracing::error!(error = %e, terminal_id, "terminal kill relay command failed");
+            diag!(Error, Subsystem::Api,
+        error = %e, terminal_id, "terminal kill relay command failed");
             Err(ApiError::ServiceUnavailable(String::from(
                 "终端结束命令发送失败",
             )))

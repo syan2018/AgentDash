@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::{iter::Peekable, str::Chars, sync::Arc};
 
@@ -430,7 +431,8 @@ fn make_apply_patch_file_change_item(
     match thread_item::file_change(item_id, changes, status) {
         Ok(item) => Some(item.into()),
         Err(error) => {
-            tracing::warn!("Failed to build FileChange from fs_apply_patch: {error}");
+            diag!(Warn, Subsystem::AgentRun,
+        "Failed to build FileChange from fs_apply_patch: {error}");
             None
         }
     }
@@ -1418,7 +1420,8 @@ fn reconcile_chunk(
                 Some(suffix.to_string())
             }
         } else {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+        
                 turn_id = %turn_id,
                 entry_index = entry_index,
                 kind = kind,

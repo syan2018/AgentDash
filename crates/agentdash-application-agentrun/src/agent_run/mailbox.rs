@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
@@ -249,7 +250,8 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxUserMessageTargetCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %command.target.address.run_id,
             agent_id = %command.target.address.agent_id,
             frame_id = %command.target.address.frame_id,
@@ -281,7 +283,8 @@ impl<'a> AgentRunMailboxService<'a> {
             message_stream,
         } = self.resolve_command_target(command.target).await?;
         let runtime_session_id = message_stream.runtime_session_id;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run.id,
             agent_id = %agent.id,
             runtime_session_id = %runtime_session_id,
@@ -294,7 +297,8 @@ impl<'a> AgentRunMailboxService<'a> {
             .inspect_session_execution_state(&runtime_session_id)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run.id,
             agent_id = %agent.id,
             runtime_session_id = %runtime_session_id,
@@ -375,7 +379,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 retain_payload: false,
             })
             .await?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run.id,
             agent_id = %agent.id,
             runtime_session_id = %runtime_session_id,
@@ -390,7 +395,8 @@ impl<'a> AgentRunMailboxService<'a> {
             .await?;
 
         let outcomes = if command.schedule_on_submit {
-            tracing::debug!(
+            diag!(Debug, Subsystem::AgentRun,
+        
                 run_id = %run.id,
                 agent_id = %agent.id,
                 runtime_session_id = %runtime_session_id,
@@ -411,7 +417,8 @@ impl<'a> AgentRunMailboxService<'a> {
         } else {
             Vec::new()
         };
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run.id,
             agent_id = %agent.id,
             runtime_session_id = %runtime_session_id,
@@ -1015,7 +1022,8 @@ impl<'a> AgentRunMailboxService<'a> {
         let run_id = target.run.id;
         let agent_id = target.agent.id;
         let runtime_session_id = target.message_stream.runtime_session_id;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run_id,
             agent_id = %agent_id,
             runtime_session_id = %runtime_session_id,
@@ -1029,7 +1037,8 @@ impl<'a> AgentRunMailboxService<'a> {
             .inspect_session_execution_state(&runtime_session_id)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run_id,
             agent_id = %agent_id,
             runtime_session_id = %runtime_session_id,
@@ -1181,7 +1190,8 @@ impl<'a> AgentRunMailboxService<'a> {
         identity: Option<AuthIdentity>,
     ) -> Result<Vec<AgentRunMailboxScheduleOutcome>, WorkflowApplicationError> {
         let claim_token = Uuid::new_v4();
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run_id,
             agent_id = %agent_id,
             runtime_session_id = %runtime_session_id,
@@ -1205,7 +1215,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 claim_expires_at: Utc::now() + Duration::seconds(CLAIM_LEASE_SECONDS),
             })
             .await?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             run_id = %run_id,
             agent_id = %agent_id,
             runtime_session_id = %runtime_session_id,
@@ -1216,7 +1227,8 @@ impl<'a> AgentRunMailboxService<'a> {
         );
         let mut outcomes = Vec::with_capacity(claimed.len());
         for message in claimed {
-            tracing::debug!(
+            diag!(Debug, Subsystem::AgentRun,
+        
                 run_id = %run_id,
                 agent_id = %agent_id,
                 runtime_session_id = %runtime_session_id,
@@ -1356,7 +1368,8 @@ impl<'a> AgentRunMailboxService<'a> {
         trigger: AgentRunMailboxScheduleTrigger,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             runtime_session_id = %message.runtime_session_id,
             mailbox_message_id = %message.id,
             delivery = ?message.delivery,
@@ -1371,7 +1384,8 @@ impl<'a> AgentRunMailboxService<'a> {
                     .inspect_session_execution_state(&message.runtime_session_id)
                     .await
                     .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-                tracing::debug!(
+                diag!(Debug, Subsystem::AgentRun,
+        
                     runtime_session_id = %message.runtime_session_id,
                     mailbox_message_id = %message.id,
                     execution_state = ?execution_state,
@@ -1407,7 +1421,8 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             runtime_session_id = %message.runtime_session_id,
             mailbox_message_id = %message.id,
             "AgentRun mailbox launch consumption entered"
@@ -1415,7 +1430,8 @@ impl<'a> AgentRunMailboxService<'a> {
         let input = message_input(&message)?;
         let executor_config = message_executor_config(&message)?;
         let delivery = SessionTurnMessageDeliveryPort::new(self.session_launch.clone());
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             runtime_session_id = %message.runtime_session_id,
             mailbox_message_id = %message.id,
             input_blocks = input.len(),
@@ -1433,7 +1449,8 @@ impl<'a> AgentRunMailboxService<'a> {
         {
             Ok(turn_id) => turn_id,
             Err(error) => {
-                tracing::debug!(
+                diag!(Debug, Subsystem::AgentRun,
+        
                     runtime_session_id = %message.runtime_session_id,
                     mailbox_message_id = %message.id,
                     error = %error,
@@ -1459,7 +1476,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 });
             }
         };
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             runtime_session_id = %message.runtime_session_id,
             mailbox_message_id = %message.id,
             turn_id = %turn_id,
@@ -1669,7 +1687,7 @@ impl<'a> AgentRunMailboxService<'a> {
                         Some(error.to_string()),
                     )
                     .await?;
-                self.mark_message_receipt_terminal_failed(&failed, error.into())
+                self.mark_message_receipt_terminal_failed(&failed, error)
                     .await;
                 return Ok(AgentRunMailboxScheduleOutcome {
                     outcome: AgentRunMailboxCommandOutcome::Failed,

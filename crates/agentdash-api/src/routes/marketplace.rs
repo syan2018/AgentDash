@@ -1,5 +1,6 @@
 //! Enterprise Marketplace HTTP routes.
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::sync::Arc;
 
 use axum::Json;
@@ -514,7 +515,8 @@ fn provider_error_to_api(error: MarketplaceSourceError) -> ApiError {
         MarketplaceSourceError::NotFound { .. } => ApiError::NotFound(error.to_string()),
         MarketplaceSourceError::Unavailable(message) => ApiError::ServiceUnavailable(message),
         MarketplaceSourceError::Internal(message) => {
-            tracing::error!(error = %message, "marketplace source provider internal error");
+            diag!(Error, Subsystem::Api,
+        error = %message, "marketplace source provider internal error");
             ApiError::Internal("Marketplace source 内部错误".to_string())
         }
     }

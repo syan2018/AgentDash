@@ -5,6 +5,7 @@ use agentdash_application_vfs::{
     PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService,
     normalize_mount_relative_path,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{
     AuthIdentity, Mount, MountCapability, SkillDiscoveryDiagnostic, SkillDiscoveryVfsFile,
     SkillDiscoveryVfsRule, Vfs,
@@ -149,6 +150,14 @@ pub async fn discover_skill_vfs_files(
         }
     }
 
+    diag!(
+        Info,
+        Subsystem::Skill,
+        rule_count = rules.len(),
+        file_count = files.len(),
+        diagnostic_count = diagnostics.len(),
+        "discovery: VFS 规则扫描完成"
+    );
     (files, diagnostics)
 }
 

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 
@@ -43,7 +44,8 @@ impl From<ConnectorError> for ApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                tracing::error!(error = %error, "connector IO error");
+                diag!(Error, Subsystem::Infra,
+        error = %error, "connector IO error");
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
@@ -126,7 +128,8 @@ impl From<agentdash_application_lifecycle::WorkflowApplicationError> for Applica
 
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
-        tracing::error!(error = %error, "application IO error");
+        diag!(Error, Subsystem::Infra,
+        error = %error, "application IO error");
         Self::Internal("内部 IO 错误".to_string())
     }
 }

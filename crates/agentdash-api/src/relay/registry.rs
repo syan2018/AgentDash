@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -131,7 +132,8 @@ impl BackendRegistry {
         }
         backends.insert(id.clone(), backend);
         self.rebuild_executor_snapshot(&backends);
-        tracing::info!(backend_id = %id, "本机后端已注册");
+        diag!(Info, Subsystem::Relay,
+        backend_id = %id, "本机后端已注册");
         Ok(())
     }
 
@@ -149,7 +151,8 @@ impl BackendRegistry {
             .write()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, route| route.backend_id != backend_id);
-        tracing::info!(backend_id = %backend_id, "本机后端已断开");
+        diag!(Info, Subsystem::Relay,
+        backend_id = %backend_id, "本机后端已断开");
     }
 
     /// 向指定后端发送命令并等待响应
@@ -248,7 +251,8 @@ impl BackendRegistry {
         if let Some(backend) = backends.get_mut(backend_id) {
             backend.capabilities = capabilities;
             self.rebuild_executor_snapshot(&backends);
-            tracing::info!(backend_id = %backend_id, "后端能力已更新");
+            diag!(Info, Subsystem::Relay,
+        backend_id = %backend_id, "后端能力已更新");
         }
     }
 
@@ -310,7 +314,8 @@ impl BackendRegistry {
         context: Option<&RelayMcpCallContext>,
     ) -> Result<String, RelayMcpBackendResolutionError> {
         let Some(context) = context else {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Relay,
+        
                 server = %server_name,
                 "relay MCP runtime context 缺失，跳过 backend fallback"
             );
@@ -322,7 +327,8 @@ impl BackendRegistry {
         let anchor = context
             .require_backend_anchor("relay_mcp")
             .inspect_err(|error| {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Relay,
+        
                     session_id = %context.session_id,
                     turn_id = ?context.turn_id,
                     server = %server_name,
@@ -336,7 +342,8 @@ impl BackendRegistry {
             return Ok(backend_id.to_string());
         }
 
-        tracing::warn!(
+        diag!(Warn, Subsystem::Relay,
+        
             session_id = %context.session_id,
             turn_id = ?context.turn_id,
             backend_id = %backend_id,

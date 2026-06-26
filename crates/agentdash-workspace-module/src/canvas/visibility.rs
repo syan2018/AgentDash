@@ -17,9 +17,7 @@ pub fn canvas_runtime_mount_access(
         return Some(CanvasMountAccess::read_only());
     }
 
-    let Some(identity) = identity else {
-        return None;
-    };
+    let identity = identity?;
     let current_user = ProjectAuthorizationContext {
         user_id: identity.user_id.clone(),
         group_ids: identity

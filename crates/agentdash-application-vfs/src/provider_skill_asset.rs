@@ -1,5 +1,6 @@
 //! `skill_asset_fs` mount：把项目级 SkillAsset 只读投影为 `skills/<key>/...`。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -106,7 +107,8 @@ pub(crate) async fn load_projected_skill_files(
             .await
             .map_err(map_domain_err)?
         else {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Skill,
+        
                 project_id = %project_id,
                 skill_asset_key = %key,
                 "Agent preset 引用了不存在的 SkillAsset，VFS projection 已跳过"

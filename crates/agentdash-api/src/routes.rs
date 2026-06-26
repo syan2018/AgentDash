@@ -4,6 +4,7 @@ pub mod backend_access;
 pub mod backends;
 pub mod canvases;
 pub mod companion_gates;
+pub mod diagnostics;
 pub mod discovered_options;
 pub mod discovery;
 pub mod extension_package_artifacts;
@@ -105,6 +106,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(file_picker::router())
         .merge(discovery::router())
         .merge(discovered_options::router())
+        .merge(diagnostics::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::authenticate_request,

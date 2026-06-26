@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{diag, Subsystem};
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -98,7 +99,8 @@ impl IntoResponse for ApiError {
 impl From<std::io::Error> for ApiError {
     /// session 持久化层统一返回 `io::Error`，对外一律视为 500 Internal。
     fn from(err: std::io::Error) -> Self {
-        tracing::error!(error = %err, "session persistence IO error");
+        diag!(Error, Subsystem::Api,
+        error = %err, "session persistence IO error");
         ApiError::Internal(String::from("内部 IO 错误"))
     }
 }
@@ -110,11 +112,13 @@ impl From<agentdash_spi::session_persistence::SessionStoreError> for ApiError {
             E::NotFound(message) => ApiError::NotFound(message),
             E::InvalidInput(message) | E::InvalidData(message) => ApiError::BadRequest(message),
             E::Database(message) => {
-                tracing::error!(error = %message, "session persistence database error");
+                diag!(Error, Subsystem::Api,
+        error = %message, "session persistence database error");
                 ApiError::Internal(String::from("内部数据库错误"))
             }
             E::Internal(message) => {
-                tracing::error!(error = %message, "session persistence internal error");
+                diag!(Error, Subsystem::Api,
+        error = %message, "session persistence internal error");
                 ApiError::Internal(String::from("内部会话持久化错误"))
             }
         }
@@ -165,7 +169,8 @@ impl From<agentdash_spi::ConnectorError> for ApiError {
             E::ConnectionFailed(message) => ApiError::ServiceUnavailable(message),
             E::SpawnFailed(message) | E::Runtime(message) => ApiError::Internal(message),
             E::Io(error) => {
-                tracing::error!(error = %error, "connector IO error");
+                diag!(Error, Subsystem::Api,
+        error = %error, "connector IO error");
                 ApiError::Internal(String::from("内部连接器 IO 错误"))
             }
             E::Json(error) => ApiError::BadRequest(error.to_string()),

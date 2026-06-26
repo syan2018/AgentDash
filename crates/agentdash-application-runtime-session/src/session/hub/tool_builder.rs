@@ -4,6 +4,7 @@
 //! - runtime tool + 直连 MCP + relay MCP 的运行中重构。
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //!
+use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::agent_run_surface::RuntimeSurfaceQueryPurpose;
 use agentdash_application_ports::runtime_surface_adoption::{
@@ -173,7 +174,8 @@ impl SessionRuntimeInner {
             })?;
         }
 
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+        
             session_id,
             target_frame_id = %target.frame_id,
             adopted_frame_id = %adopted_frame_id,
@@ -242,7 +244,8 @@ impl SessionRuntimeInner {
         {
             Ok(state) => state,
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+        
                     session_id,
                     "AgentRun execution capability projection skipped: {error}"
                 );

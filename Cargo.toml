@@ -12,6 +12,7 @@ members = [
     "crates/agentdash-application-workflow",
     "crates/agentdash-application-hooks",
     "crates/agentdash-application-shared-library",
+    "crates/agentdash-diagnostics",
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
@@ -60,7 +61,8 @@ thiserror = "2.0"
 
 # 日志
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 
 # 正则表达式
 regex = "1"
@@ -89,6 +91,7 @@ agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecyc
 agentdash-application-workflow = { path = "crates/agentdash-application-workflow" }
 agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
 agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
+agentdash-diagnostics = { path = "crates/agentdash-diagnostics" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端 API、repository 与测试质量。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查云端授权、前端 DTO、runner claim 之间的事实源。"}

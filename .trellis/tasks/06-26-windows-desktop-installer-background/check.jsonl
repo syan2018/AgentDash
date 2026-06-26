@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查桌面前端设置与交互质量。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查桌面壳、Desktop API、runtime 状态和自启动设置边界。"}

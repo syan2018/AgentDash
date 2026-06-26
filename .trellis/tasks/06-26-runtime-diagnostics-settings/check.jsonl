@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查设置 UI、状态展示和测试覆盖。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查状态事实源和跨层 DTO 一致性。"}

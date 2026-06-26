@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
+- **Total Sessions**: 38
 - **Last Active**: 2026-06-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1365 | Active |
+| `journal-1.md` | ~1399 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-06-26 | 统一后端可观测层：diag! 统一诊断入口 + 持久化 + 查询端点 + clippy 守门 | `326c978a3`, `17c76c0dc` | `main` |
 | 37 | 2026-06-26 | 后端 application 大模块 crate 拆分 | `3d019d61`, `4abb9a3d`, `9aa2ba29`, `6030fd94`, `59213740`, `29645aa6`, `0b2db9b7`, `0a3e2f8a` | `codex/lifecycle-builtin-skill-discovery-fix` |
 | 36 | 2026-06-25 | 收束 Session 事件流与 AgentRun 列表事实源 | `387e099fc` | `main` |
 | 35 | 2026-06-25 | Canvas interaction diagnostics workspace-module convergence | `9e2bb4e85` | `main` |

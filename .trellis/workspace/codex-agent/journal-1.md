@@ -1363,3 +1363,37 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 38: 统一后端可观测层：diag! 统一诊断入口 + 持久化 + 查询端点 + clippy 守门
+
+**Date**: 2026-06-26
+**Task**: 统一后端可观测层：diag! 统一诊断入口 + 持久化 + 查询端点 + clippy 守门
+**Branch**: `main`
+
+### Summary
+
+后端日志此前分裂成 5 套各自为政的通道、无持久化、状态靠犄角旮旯翻找。规划并落地统一平台过程诊断层：新建 agentdash-diagnostics crate（diag! 宏展开为 tracing::event! 以与 clippy 守门共存 + 14 个 Subsystem + 有界环形缓冲 Layer）；agentdash-api 装配三层订阅器（stdout pretty + JSON line 按天滚动文件 AGENTDASH_LOG_DIR 默认 ./logs/ + 缓冲，WorkerGuard 全程持有）；新增只读端点 GET /api/diagnostics。全 workspace 431 处裸 tracing 事件宏迁移到 diag!，定向给此前几乎无埋点的 lifecycle/workflow/hooks/skill 补诊断。新增 clippy.toml disallowed-macros 防回退。独立复核发现 backend:clippy 在 main 上本就因 canvas 等预存 lint 红着，顺带清理（canvas/agentrun/bootstrap ~9 处，行为保持）使其转绿、守门即时生效。范围只覆盖 api 进程暴露；context audit/session events/lifecycle 等领域通道明确不动。验证：build 绿、backend:clippy EXIT 0、受影响 crate 测试全过。未 push。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `326c978a3` | (see git log) |
+| `17c76c0dc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

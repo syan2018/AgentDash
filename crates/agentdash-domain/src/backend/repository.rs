@@ -106,6 +106,18 @@ pub trait ProjectBackendAccessRepository: Send + Sync {
         project_id: Uuid,
         backend_id: &str,
     ) -> Result<Option<ProjectBackendAccess>, DomainError>;
+    /// 列出指向某个 backend 的所有 active grant（跨 project 的反向视图）。
+    ///
+    /// 鉴权路径据此判断一个 User-scoped backend 通过哪些 project 的 active grant 被授权。
+    async fn list_active_by_backend(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
+    /// 批量列出指向多个 backend 的所有 active grant，供列表路径一次预取，避免 N+1。
+    async fn list_active_by_backends(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
     async fn set_status(
         &self,
         id: Uuid,

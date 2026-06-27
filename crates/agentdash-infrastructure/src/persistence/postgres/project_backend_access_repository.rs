@@ -154,6 +154,42 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         row.map(|row| access_from_row(&row)).transpose()
     }
 
+    async fn list_active_by_backend(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        let rows = sqlx::query(
+            "SELECT id, project_id, backend_id, status, access_mode, priority, root_policy, capability_policy, note, created_by, created_at, updated_at
+             FROM project_backend_access WHERE backend_id = $1 AND status = 'active'
+             ORDER BY priority DESC, created_at ASC",
+        )
+        .bind(backend_id.trim())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(super::db_err)?;
+        rows.into_iter().map(|row| access_from_row(&row)).collect()
+    }
+
+    async fn list_active_by_backends(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        if backend_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let trimmed: Vec<String> = backend_ids.iter().map(|id| id.trim().to_string()).collect();
+        let rows = sqlx::query(
+            "SELECT id, project_id, backend_id, status, access_mode, priority, root_policy, capability_policy, note, created_by, created_at, updated_at
+             FROM project_backend_access WHERE backend_id = ANY($1) AND status = 'active'
+             ORDER BY backend_id ASC, priority DESC, created_at ASC",
+        )
+        .bind(&trimmed)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(super::db_err)?;
+        rows.into_iter().map(|row| access_from_row(&row)).collect()
+    }
+
     async fn set_status(
         &self,
         id: Uuid,

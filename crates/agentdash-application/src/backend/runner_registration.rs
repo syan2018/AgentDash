@@ -11,7 +11,7 @@ use agentdash_domain::backend::{
 use agentdash_domain::project::ProjectRepository;
 
 use crate::ApplicationError;
-use crate::backend::EnsureRunnerProjectRuntimeInput;
+use crate::backend::{EnrollLocalBackendRequest, EnrollmentSource, enroll_local_backend};
 use crate::repository_set::RepositorySet;
 
 const DEFAULT_TOKEN_TTL_DAYS: i64 = 30;
@@ -56,6 +56,7 @@ pub struct RunnerRegistrationClaimResult {
     pub share_scope_kind: BackendShareScopeKind,
     pub share_scope_id: Option<String>,
     pub capability_slot: String,
+    pub registration_source: String,
     pub claimed_at: DateTime<Utc>,
 }
 
@@ -227,19 +228,27 @@ async fn claim_runner_registration_token_with_ports(
 
     let capability_slot = normalize_optional_string(input.capability_slot)
         .unwrap_or_else(|| token.default_capability_slot.clone());
-    let ensured = ensure_runner_project_runtime_record_with_ports(
+
+    // 收束到统一 enrollment use case：runner 身份去项目化，share_scope=User(owner=token 创建者)，
+    // 项目可见性靠下面的 ProjectBackendAccess active projection 承载。
+    let enrolled = enroll_local_backend(
         backend_repo,
-        EnsureRunnerProjectRuntimeInput {
-            owner_user_id: token.created_by_user_id.clone(),
+        EnrollmentSource::RunnerRegistrationToken {
             project_id: token.project_id,
+            created_by_user_id: token.created_by_user_id.clone(),
+        },
+        EnrollLocalBackendRequest {
             machine_id: input.machine_id,
             machine_label: input.machine_label,
             capability_slot: Some(capability_slot),
-            runner_name: input.runner_name,
+            name: input.runner_name,
             executor_enabled: input.executor_enabled,
             client_version: input.client_version,
             device: input.device,
             relay_ws_url: input.relay_ws_url,
+            rotate_token: false,
+            scope: None,
+            profile_id: None,
         },
     )
     .await
@@ -248,7 +257,7 @@ async fn claim_runner_registration_token_with_ports(
     ensure_active_project_backend_access(
         project_backend_access_repo,
         token.project_id,
-        &ensured.backend.id,
+        &enrolled.backend.id,
         &token.created_by_user_id,
     )
     .await
@@ -256,102 +265,22 @@ async fn claim_runner_registration_token_with_ports(
 
     let claimed_at = Utc::now();
     runner_registration_token_repo
-        .record_usage(&token.id, &ensured.backend.id, claimed_at)
+        .record_usage(&token.id, &enrolled.backend.id, claimed_at)
         .await
         .map_err(claim_internal_from_domain)?;
 
     Ok(RunnerRegistrationClaimResult {
-        backend_id: ensured.backend.id,
-        name: ensured.backend.name,
-        relay_ws_url: ensured.backend.endpoint,
-        auth_token: ensured.auth_token,
-        machine_id: ensured.machine_id,
-        machine_label: ensured.machine_label,
-        share_scope_kind: ensured.backend.share_scope_kind,
-        share_scope_id: ensured.share_scope_id,
-        capability_slot: ensured.capability_slot,
+        backend_id: enrolled.backend.id,
+        name: enrolled.backend.name,
+        relay_ws_url: enrolled.backend.endpoint,
+        auth_token: enrolled.auth_token,
+        machine_id: enrolled.machine_id,
+        machine_label: enrolled.machine_label,
+        share_scope_kind: enrolled.share_scope_kind,
+        share_scope_id: enrolled.share_scope_id,
+        capability_slot: enrolled.capability_slot,
+        registration_source: enrolled.registration_source,
         claimed_at,
-    })
-}
-
-async fn ensure_runner_project_runtime_record_with_ports(
-    backend_repo: &dyn BackendRepository,
-    input: EnsureRunnerProjectRuntimeInput,
-) -> Result<crate::backend::EnsureLocalRuntimeResult, ApplicationError> {
-    let machine_id = normalize_required("machine_id", &input.machine_id)?;
-    let machine_label = input
-        .machine_label
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| default_machine_label(&machine_id));
-    let capability_slot = input
-        .capability_slot
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| "default".to_string());
-    let name = input
-        .runner_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            default_local_runtime_name(&machine_label, BackendShareScopeKind::Project)
-        });
-    let share_scope_id = Some(input.project_id.to_string());
-    let backend_id = stable_local_backend_id(
-        &machine_id,
-        BackendShareScopeKind::Project,
-        share_scope_id.as_deref(),
-        &capability_slot,
-    );
-    let mut device = normalize_device_payload(input.device)?;
-    if let Some(client_version) = normalize_optional_string(input.client_version) {
-        device["client_version"] = serde_json::Value::String(client_version);
-    }
-    device["executor_enabled"] = serde_json::Value::Bool(input.executor_enabled);
-    device["registration_source"] =
-        serde_json::Value::String("runner_registration_token".to_string());
-
-    let claim = agentdash_domain::backend::LocalBackendClaim {
-        owner_user_id: input.owner_user_id,
-        profile_id: "runner-registration".to_string(),
-        machine_id: machine_id.clone(),
-        machine_label: machine_label.clone(),
-        visibility: agentdash_domain::backend::BackendVisibility::Shared,
-        share_scope_kind: BackendShareScopeKind::Project,
-        share_scope_id: share_scope_id.clone(),
-        capability_slot: capability_slot.clone(),
-        backend_id,
-        name,
-        endpoint: input.relay_ws_url,
-        auth_token: uuid::Uuid::new_v4().to_string(),
-        device,
-        rotate_token: false,
-    };
-
-    let backend = backend_repo
-        .ensure_local_backend(&claim)
-        .await
-        .map_err(ApplicationError::from)?;
-    let auth_token = normalize_optional_string(backend.auth_token.clone()).ok_or_else(|| {
-        ApplicationError::Internal(format!(
-            "本机 backend `{}` 缺少 server 颁发的 relay token",
-            backend.id
-        ))
-    })?;
-    Ok(crate::backend::EnsureLocalRuntimeResult {
-        backend,
-        auth_token,
-        profile_id: "runner-registration".to_string(),
-        machine_id,
-        machine_label,
-        share_scope_id,
-        capability_slot,
     })
 }
 
@@ -457,75 +386,6 @@ fn normalize_machine_policy(
             "machine_policy 必须是 JSON object 或 null".to_string(),
         )),
     }
-}
-
-fn normalize_device_payload(
-    value: serde_json::Value,
-) -> Result<serde_json::Value, ApplicationError> {
-    match value {
-        serde_json::Value::Null => Ok(serde_json::json!({})),
-        serde_json::Value::Object(_) => Ok(value),
-        _ => Err(ApplicationError::BadRequest(
-            "device 必须是 JSON object 或 null".to_string(),
-        )),
-    }
-}
-
-fn default_machine_label(machine_id: &str) -> String {
-    let suffix = machine_id
-        .rsplit([':', '/', '\\'])
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("desktop");
-    format!("Desktop {suffix}")
-}
-
-fn default_local_runtime_name(
-    machine_label: &str,
-    share_scope_kind: BackendShareScopeKind,
-) -> String {
-    let scope_label = match share_scope_kind {
-        BackendShareScopeKind::User => "Personal",
-        BackendShareScopeKind::Project => "Project Shared",
-        BackendShareScopeKind::System => "System Shared",
-    };
-    format!("{machine_label} / {scope_label}")
-}
-
-fn stable_local_backend_id(
-    machine_id: &str,
-    share_scope_kind: BackendShareScopeKind,
-    share_scope_id: Option<&str>,
-    capability_slot: &str,
-) -> String {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    hasher.update(machine_id.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(share_scope_kind.as_str().as_bytes());
-    hasher.update(b"\n");
-    hasher.update(share_scope_id.unwrap_or("").as_bytes());
-    hasher.update(b"\n");
-    hasher.update(capability_slot.as_bytes());
-    let digest = hasher.finalize();
-    hex_prefix(&digest, 24)
-}
-
-fn hex_prefix(bytes: &[u8], chars: usize) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(chars);
-    for byte in bytes {
-        if out.len() >= chars {
-            break;
-        }
-        out.push(HEX[(byte >> 4) as usize] as char);
-        if out.len() >= chars {
-            break;
-        }
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    format!("local_{out}")
 }
 
 fn claim_internal_from_domain(error: DomainError) -> RunnerRegistrationClaimError {
@@ -1031,6 +891,40 @@ mod tests {
                 .cloned())
         }
 
+        async fn list_active_by_backend(
+            &self,
+            backend_id: &str,
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .accesses
+                .lock()
+                .await
+                .iter()
+                .filter(|access| {
+                    access.backend_id == backend_id
+                        && access.status == ProjectBackendAccessStatus::Active
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_backends(
+            &self,
+            backend_ids: &[String],
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .accesses
+                .lock()
+                .await
+                .iter()
+                .filter(|access| {
+                    backend_ids.iter().any(|id| id == &access.backend_id)
+                        && access.status == ProjectBackendAccessStatus::Active
+                })
+                .cloned()
+                .collect())
+        }
+
         async fn set_status(
             &self,
             id: Uuid,
@@ -1061,20 +955,22 @@ mod tests {
 
         assert_eq!(result.machine_id, "machine-001");
         assert_eq!(result.machine_label, "Builder 1");
-        assert_eq!(result.share_scope_kind, BackendShareScopeKind::Project);
-        assert_eq!(result.share_scope_id, Some(harness.project_id.to_string()));
+        // 身份去 project 化：runner backend 落 User scope，owner = token 创建者，
+        // share_scope_id 不再是 project_id。
+        assert_eq!(result.share_scope_kind, BackendShareScopeKind::User);
+        assert_eq!(result.share_scope_id, Some("user-owner".to_string()));
         assert_eq!(result.capability_slot, "build");
         assert_eq!(result.relay_ws_url, "wss://cloud.test/ws/backend");
+        assert_eq!(result.registration_source, "runner_registration_token");
         assert!(!result.auth_token.is_empty());
 
         let claims = harness.backend_repo.claims().await;
         assert_eq!(claims.len(), 1);
         assert_eq!(claims[0].visibility, BackendVisibility::Shared);
-        assert_eq!(claims[0].share_scope_kind, BackendShareScopeKind::Project);
-        assert_eq!(
-            claims[0].share_scope_id,
-            Some(harness.project_id.to_string())
-        );
+        assert_eq!(claims[0].share_scope_kind, BackendShareScopeKind::User);
+        assert_eq!(claims[0].share_scope_id, Some("user-owner".to_string()));
+        assert_eq!(claims[0].owner_user_id, "user-owner");
+        assert_eq!(claims[0].profile_id, "runner-registration");
         assert_eq!(
             claims[0].device["registration_source"],
             "runner_registration_token"
@@ -1119,6 +1015,40 @@ mod tests {
         assert_eq!(second.auth_token, first.auth_token);
         assert_eq!(harness.access_repo.accesses().await.len(), 1);
         assert_eq!(harness.token_repo.usage_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn same_machine_across_projects_resolves_to_same_backend_id() {
+        // 两个不同 project 的 token，但同一 owner / machine / capability slot。
+        // 身份去 project 化后必须解析到同一 stable backend_id。
+        let project_a = ClaimHarness::new();
+        let token_a = project_a.issue_token().await;
+        let project_b = ClaimHarness::new();
+        let token_b = project_b.issue_token().await;
+        assert_ne!(project_a.project_id, project_b.project_id);
+
+        let result_a = project_a
+            .claim(token_a.registration_token)
+            .await
+            .expect("claim in project A");
+        let result_b = project_b
+            .claim(token_b.registration_token)
+            .await
+            .expect("claim in project B");
+
+        assert_eq!(
+            result_a.backend_id, result_b.backend_id,
+            "same machine + owner + slot must yield one stable backend id across projects"
+        );
+        assert_eq!(result_a.share_scope_kind, BackendShareScopeKind::User);
+        assert_eq!(result_b.share_scope_kind, BackendShareScopeKind::User);
+        // 每个 project 各自落一行 active ProjectBackendAccess（项目归属的唯一权威）。
+        let access_a = project_a.access_repo.accesses().await;
+        let access_b = project_b.access_repo.accesses().await;
+        assert_eq!(access_a.len(), 1);
+        assert_eq!(access_b.len(), 1);
+        assert_eq!(access_a[0].project_id, project_a.project_id);
+        assert_eq!(access_b[0].project_id, project_b.project_id);
     }
 
     #[tokio::test]

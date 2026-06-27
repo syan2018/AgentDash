@@ -10,7 +10,7 @@ use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLease, BackendRepository, BackendShareScopeKind, BackendType,
-    BackendVisibility, RuntimeHealth,
+    BackendVisibility, ProjectBackendAccessRepository, RuntimeHealth,
 };
 use agentdash_domain::project::ProjectRepository;
 
@@ -38,10 +38,16 @@ use agentdash_application_runtime_gateway::{
 
 fn backend_authz(
     state: &AppState,
-) -> BackendAuthorizationService<'_, dyn BackendRepository, dyn ProjectRepository> {
+) -> BackendAuthorizationService<
+    '_,
+    dyn BackendRepository,
+    dyn ProjectRepository,
+    dyn ProjectBackendAccessRepository,
+> {
     BackendAuthorizationService::new(
         state.repos.backend_repo.as_ref(),
         state.repos.project_repo.as_ref(),
+        state.repos.project_backend_access_repo.as_ref(),
     )
 }
 
@@ -464,9 +470,11 @@ pub async fn ensure_local_runtime(
         machine_id: result.machine_id,
         machine_label: result.machine_label,
         visibility: result.backend.visibility,
-        share_scope_kind: result.backend.share_scope_kind,
+        share_scope_kind: result.share_scope_kind,
         share_scope_id: result.share_scope_id,
         capability_slot: result.capability_slot,
+        registration_source: result.registration_source,
+        claimed_at: result.claimed_at,
     }))
 }
 

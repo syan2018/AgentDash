@@ -180,7 +180,7 @@ async fn claim_runner(
         share_scope_kind: BackendShareScopeKindDto::from(result.share_scope_kind),
         share_scope_id: result.share_scope_id,
         capability_slot: result.capability_slot,
-        registration_source: "runner_registration_token".to_string(),
+        registration_source: result.registration_source,
         claimed_at: result.claimed_at,
     }))
 }

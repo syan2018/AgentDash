@@ -58,6 +58,10 @@ pub struct EnsureLocalRuntimeResponse {
     pub share_scope_kind: BackendShareScopeKind,
     pub share_scope_id: Option<String>,
     pub capability_slot: String,
+    // 与 RunnerRegistrationClaimResponse 同构的核心字段，让两条 enrollment 路径
+    // 共享 registration source 与 claim 时间语义。
+    pub registration_source: String,
+    pub claimed_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub type BackendWithStatus = BackendWithStatusResponse;

@@ -116,6 +116,7 @@ pub async fn create_project_backend_access(
     BackendAuthorizationService::new(
         state.repos.backend_repo.as_ref(),
         state.repos.project_repo.as_ref(),
+        state.repos.project_backend_access_repo.as_ref(),
     )
     .require_config(&current_user, &backend, BackendPermission::Manage)
     .await?;

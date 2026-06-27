@@ -1463,3 +1463,37 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 41: Local Runner setup helper
+
+**Date**: 2026-06-27
+**Task**: Local Runner setup helper
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+实现 agentdash-local setup/doctor，一键完成 runner 配置、claim、服务安装启动和只读诊断；同步跨层契约与发布验收 runbook，并归档 local-runner-setup-helper 任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d5a31ad75` | (see git log) |
+| `fa26e73f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

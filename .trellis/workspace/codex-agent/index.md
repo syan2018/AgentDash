@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 40
-- **Last Active**: 2026-06-26
+- **Total Sessions**: 41
+- **Last Active**: 2026-06-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1465 | Active |
+| `journal-1.md` | ~1499 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 41 | 2026-06-27 | Local Runner setup helper | `d5a31ad75`, `fa26e73f7` | `codex/desktop-local-runtime` |
 | 40 | 2026-06-26 | 收口本机运行诊断与发布验收交接 | `b0fca9ee1` | `codex/desktop-local-runtime` |
 | 39 | 2026-06-26 | 推进本机运行形态服务化 | `b806695e4` | `codex/desktop-local-runtime` |
 | 38 | 2026-06-26 | 统一后端可观测层：diag! 统一诊断入口 + 持久化 + 查询端点 + clippy 守门 | `326c978a3`, `17c76c0dc` | `main` |

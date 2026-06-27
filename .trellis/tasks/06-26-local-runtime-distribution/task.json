@@ -24,7 +24,8 @@
     "06-26-windows-desktop-installer-background",
     "06-26-runner-enrollment-token",
     "06-26-distribution-release-validation",
-    "06-27-local-runner-setup-helper"
+    "06-27-local-runner-setup-helper",
+    "06-27-local-backend-enrollment-convergence"
   ],
   "parent": null,
   "relatedFiles": [],

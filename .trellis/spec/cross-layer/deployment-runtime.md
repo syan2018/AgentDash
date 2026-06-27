@@ -66,7 +66,7 @@ pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version <vers
 - 默认 Compose 文件保留内置 `postgres` 服务，并让 `migrate` 等待其 healthy。
 - managed PostgreSQL override 必须让 `migrate` 不依赖 Compose 内置 `postgres`。
 - update script 的执行顺序为 config、pull、backup、migrate、up、health、version、doctor。
-- CI workflow 只构建 image / metadata artifact，不执行远端部署。
+- Cloud image CI 由 release tag 或手动 dispatch 表达发布意图，只构建 image / metadata artifact，不执行远端部署。
 
 ### 4. Validation & Error Matrix
 

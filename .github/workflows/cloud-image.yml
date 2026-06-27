@@ -12,8 +12,6 @@ on:
           - "false"
           - "true"
   push:
-    branches:
-      - main
     tags:
       - "v*"
 
@@ -51,6 +49,16 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
       - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2

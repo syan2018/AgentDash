@@ -83,7 +83,7 @@ pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version 0.2.0
 
 ## CI Artifact Flow
 
-`.github/workflows/cloud-image.yml` 提供 cloud image 构建骨架：
+`.github/workflows/cloud-image.yml` 提供 cloud image 构建骨架，由 release tag 或手动 dispatch 触发。日常 `main` push 由 quick check 覆盖，cloud image 只在需要可交付镜像和 release metadata 时产出：
 
 ```text
 checkout

@@ -1,4 +1,4 @@
-FROM node:22-bookworm AS web-builder
+FROM node:24-bookworm AS web-builder
 WORKDIR /src
 
 RUN corepack enable
@@ -11,7 +11,7 @@ COPY scripts ./scripts
 RUN pnpm install --frozen-lockfile
 RUN pnpm run frontend:build
 
-FROM rust:nightly-bookworm AS server-builder
+FROM rust:bookworm AS server-builder
 WORKDIR /src
 
 RUN apt-get update \
@@ -19,6 +19,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+RUN rustup toolchain install nightly --profile minimal && rustup default nightly
+
 COPY crates ./crates
 
 ARG AGENTDASH_GIT_SHA=unknown

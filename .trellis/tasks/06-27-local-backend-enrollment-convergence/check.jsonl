@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "校验 DTO 同构改动后 TS binding drift check 通过、契约一致"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "校验 auth 放行规则正反路径正确：owner / 无 grant owner-only / 有 active grant 放行 / revoke 后不可见"}
+{"file": ".trellis/spec/backend/permission/policy-engine.md", "reason": "校验最小 auth 规则未破坏既有权限语义、无回退"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "校验 runner 身份去 project 化、ProjectBackendAccess 权威性与工作空间区无断链回退"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "校验 desktop ensure 自动连接路径与 registration_source=desktop_access_token 不回退"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "校验日志/status/doctor/UI 复制内容不泄露 token"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验 enrollment / claim 错误分层与 HTTP 映射（过期/撤销/无效 token）"}

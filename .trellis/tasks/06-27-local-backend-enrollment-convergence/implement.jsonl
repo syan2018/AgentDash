@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Desktop Tauri runtime/ensure 边界与 LocalRuntimeClient 契约，enrollment 收束需遵守"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Backend Access / inventory / workspace 绑定语义，runner 身份去 project 化与工作空间区重构的事实源"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust wire DTO 与 TS 生成 drift 契约；本任务改 response 形状需按此重生成"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "分层基线：handler 薄适配器、application use case 收束的边界"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "backend / ProjectBackendAccess repository 边界，auth 批量预取避免 N+1"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "鉴权模型；新增 User-scoped backend + active grant 放行规则的归属"}
+{"file": ".trellis/spec/backend/permission/policy-engine.md", "reason": "权限判断引擎，最小 auth 放行规则实现需对齐"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "access/registration/relay token 脱敏约定，日志与诊断不得泄露"}

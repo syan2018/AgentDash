@@ -99,10 +99,31 @@
   - 桌面 App 登录后自动挂上本机 runtime。
   - 云端创建 runner token 后复制 setup 命令，Linux/Windows server runner 能上线。
   - 撤销或过期 registration token 后，新 claim 被拒绝，已领取的 relay credential 生命周期按设计保持可解释。
+- [ ] Runner backend 身份不再含 `project_id`：同一 `machine_id + capability_slot` 的 runner 产生**唯一稳定 backend_id**，不因 project 不同而裂成多个 backend（测试覆盖）。
+- [ ] `ProjectBackendAccess` 为 project→backend 权威授权层：claim 成功写 active grant；`authorization.rs` 对「User-scoped backend + active grant」放行给该 project 成员，且无 grant 时维持 owner-only 不回退（测试覆盖正反两路）。
+- [ ] Project Settings 工作空间区可见、可操作 Runner token（create/list/revoke/rotate），create/rotate 仅一次性展示明文，并能复制 `agentdash-local setup` 命令。
+- [ ] 工作空间区完成心智重构：先产出 IA 评估（现状术语负担 → 目标用户语言分组），再落地——工业术语以用户语言重述、本机发现收进 workspace 动作、Workspace Modules 降级诊断、Runner token 管理作为「运行环境」子块融入；全程不引入新的回退或断链。
+
+## Decisions (2026-06-27)
+
+经 review 与确认，本任务范围在原 PRD 基础上做如下收敛（项目尚未部署，破坏性改动成本最低，优先做对模型）：
+
+1. **保留两个 HTTP endpoint**（`/api/local-runtime/ensure`、`/api/local-runtime/runner/claim`）。两者认证边界根本不同（`CurrentUser` session vs 公开路由 + bearer registration token），合并成单 endpoint 在 axum 里反而更乱、更难测。收束发生在 application 层与 response 模型，而非 URL 数量。
+2. **application 层收一个 `enroll_local_backend(request, source)` use case**，`EnrollmentSource = DesktopAccessToken | RunnerRegistrationToken`。合并当前三处近重复逻辑（`ensure_local_runtime_record`、`ensure_runner_project_runtime_record`、`ensure_runner_project_runtime_record_with_ports`），统一 token 生成（单一 helper）、device 拼装、rotate 语义。
+3. **response 收一个共享核心 `LocalBackendEnrollment`**，两条路径字段同构，均返回 `registration_source` 与 `claimed_at`。Desktop 显式写 `registration_source = desktop_access_token`，废除前端「字段缺失=desktop」的隐式推断。
+4. **Runner backend 身份去 project 化（本任务真改）**：`stable_local_backend_id` 不再把 `project_id` 烤进 hash；runner backend 以机器级身份存在，`share_scope = User(owner = token.created_by_user_id)`。`ProjectBackendAccess` 成为 project→backend 的**唯一权威授权层**。
+5. **携最小 auth 放行规则**：`authorization.rs` 增加一条——User-scoped backend 若存在 active `ProjectBackendAccess` 授权给某 project，则该 project 成员按权限可见/可用。Desktop 个人 backend（无 project 授权）维持 owner-only，不回退。
+6. **Runner token 管理 UI 落在 Project Settings → 工作空间区**：create / list / revoke / rotate，create/rotate 仅一次性展示明文，并生成可复制的 `agentdash-local setup` 命令（含 server origin、token、runner name、workspace root、service 参数）。
+7. **Workspace 设置心智重构在本任务内正式评估处理**（升级，不再仅轻量）：围绕用户三问（这个项目能在哪儿跑 / 我在搞哪份代码 / 代码在那台机器上落在哪）重整工作空间区 IA——重命名收拢「Backend Access / Inventory / discovery / binding / resolution / priority」等工业术语、把本机发现收进 workspace 条目动作、Workspace Modules 降级为诊断、Runner token 管理作为「运行环境」子块自然融入。先出 IA 评估再落地，硬约束是不新增回退/断链。
+8. **本任务边界外的延伸**：拆为**独立任务** `06-27-runner-multi-project-access`（不挂父任务），覆盖多 project 复用的完整授权管理（建立/撤销 grant、priority/policy、跨 owner 策略、审计反向视图），并把「是否引入 Org/Team scope 让 runner 所有权脱离个人」作为该任务的后续追踪项。
+
+### 由上述决策回答的原 Open Questions
+
+- Token 管理 UI 落点 → **Project Settings 工作空间区**（决策 6）。
+- Desktop ensure response 是否补 `claimed_at` → **是，两路径同构**（决策 3）。
+- Registration token claim 后是否保留在 runner config → 维持现状（setup helper 既有行为），本任务不改。
+- setup 命令是否支持「内嵌默认 server URL 的专用 binary」模板 → 本任务只做「通用 binary + 显式 origin」一种，专用模板延后。
 
 ## Open Questions
 
-- Project Runner token 管理 UI 首次落点放在 Project Settings、System Settings 还是 Local Runtime 设置页中的 Project 子区？
-- Desktop ensure response 是否需要显式补齐 `claimed_at`，让它与 Runner claim response 完全同构？
-- Registration token 成功 claim 后是否保留在 runner config 中，还是由 setup 提供“claim 后清除 token”的策略选项？
-- 前端生成 setup 命令时是否需要同时支持“通用 runner binary”和“已内嵌默认 server URL 的环境专用 runner binary”两种模板？
+- 机器级 runner backend 的 owner 暂定为 token 创建者（User scope）；长期是否需要引入 Org/Team scope 让所有权脱离个人，留待兄弟任务评估（当前只有 User/Project/System 三种 scope）。

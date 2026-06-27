@@ -18,6 +18,12 @@ import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { LocalWorkspaceDiscoveryPanel } from "../features/workspace/workspace-list/LocalWorkspaceDiscoveryPanel";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { WorkspaceModulesPanel } from "../features/workspace-module/ui/WorkspaceModulesPanel";
+import { RunnerTokensPanel } from "../features/workspace/runner-tokens/RunnerTokensPanel";
+import {
+  classifyMachine,
+  machineKindLabel,
+  type MachineKind,
+} from "../features/workspace/model/machinePresentation";
 import { VfsBrowser } from "../features/vfs";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
@@ -59,7 +65,7 @@ interface SettingsTabItem {
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
   { key: "context", label: "VFS 资源", description: "项目级 VFS Mount、解析结果与 runtime preview" },
-  { key: "workspace", label: "工作空间", description: "默认 workspace 与运行落点" },
+  { key: "workspace", label: "工作空间", description: "项目在哪台机器上运行，以及工作空间落在哪里" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
 
@@ -169,6 +175,32 @@ function ContentGroup({
         {description && <p className="text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
       {children}
+    </section>
+  );
+}
+
+function CollapsibleGroup({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="space-y-3 border-t border-border/70 pt-6 first:border-t-0 first:pt-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <span className="text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
+        <span className="text-sm font-semibold uppercase tracking-[0.14em] text-foreground">{title}</span>
+      </button>
+      {hint && <p className="text-xs leading-6 text-muted-foreground">{hint}</p>}
+      {open && <div className="space-y-4">{children}</div>}
     </section>
   );
 }
@@ -399,6 +431,20 @@ const INVENTORY_STATUS_LABELS: Record<BackendWorkspaceInventory["status"], strin
   error: "异常",
 };
 
+const MACHINE_KIND_TONE: Record<MachineKind, string> = {
+  local_device: "border-primary/30 bg-primary/10 text-primary",
+  server_runner: "border-info/30 bg-info/10 text-info",
+  other: "border-border bg-secondary/40 text-muted-foreground",
+};
+
+function MachineKindBadge({ kind }: { kind: MachineKind }) {
+  return (
+    <span className={`rounded-[8px] border px-2 py-0.5 text-[10px] font-medium ${MACHINE_KIND_TONE[kind]}`}>
+      {machineKindLabel(kind)}
+    </span>
+  );
+}
+
 function BackendAccessPanel({
   projectId,
   canEdit,
@@ -509,6 +555,12 @@ function BackendAccessPanel({
   }, [selectableBackends, selectedBackendId]);
 
   const backendName = (backendId: string) => backends.find((backend) => backend.id === backendId)?.name ?? backendId;
+  const backendMachineKind = (backendId: string): MachineKind => {
+    const backend = backends.find((item) => item.id === backendId);
+    return backend ? classifyMachine(backend) : "other";
+  };
+  const backendIsOnline = (backendId: string): boolean =>
+    backends.find((item) => item.id === backendId)?.online === true;
 
   const handleAddAccess = async () => {
     if (!selectedBackendId) {
@@ -560,7 +612,10 @@ function BackendAccessPanel({
 
   return (
     <div className="space-y-6">
-      <ContentGroup title="Backend Access">
+      <ContentGroup
+        title="可用机器"
+        description="这个项目可以在下面这些机器上运行。本机（这台设备）来自桌面 App，服务器 runner 来自接入令牌。"
+      >
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
           <select
             value={selectedBackendId}
@@ -568,10 +623,10 @@ function BackendAccessPanel({
             disabled={!canEdit}
             className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <option value="">选择 backend</option>
+            <option value="">选择一台已知机器</option>
             {selectableBackends.map((backend) => (
               <option key={backend.id} value={backend.id}>
-                {backend.name} {backend.online ? "(online)" : "(offline)"}
+                {backend.name} · {machineKindLabel(classifyMachine(backend))} {backend.online ? "(在线)" : "(离线)"}
               </option>
             ))}
           </select>
@@ -581,14 +636,14 @@ function BackendAccessPanel({
             disabled={!canEdit || !selectedBackendId}
             className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
           >
-            绑定 Backend
+            添加机器
           </button>
         </div>
 
-        {isLoading && <p className="text-xs text-muted-foreground">正在加载 backend access...</p>}
+        {isLoading && <p className="text-xs text-muted-foreground">正在加载可用机器...</p>}
         {accesses.length === 0 && !isLoading && (
           <p className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
-            当前 Project 还没有 backend 访问权限。
+            这个项目还没有可用机器。把本机加进来，或在下方「接入新服务器」签发令牌后接入服务器 runner。
           </p>
         )}
 
@@ -602,13 +657,14 @@ function BackendAccessPanel({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                          backendIsOnline(access.backend_id) ? "bg-success" : "bg-muted-foreground/30"
+                        }`}
+                        title={backendIsOnline(access.backend_id) ? "在线" : "离线"}
+                      />
                       <p className="truncate text-sm font-medium text-foreground">{backendName(access.backend_id)}</p>
-                      <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                        {ACCESS_STATUS_LABELS[access.status]}
-                      </span>
-                      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                        priority {access.priority}
-                      </span>
+                      <MachineKindBadge kind={backendMachineKind(access.backend_id)} />
                     </div>
                     <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{access.backend_id}</p>
                   </div>
@@ -619,7 +675,7 @@ function BackendAccessPanel({
                       className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
                     >
                       <span className="text-[10px]">{inventoryExpanded ? "▾" : "▸"}</span>
-                      <span>{inventoryExpanded ? "收起 Inventory" : "展开 Inventory"}</span>
+                      <span>{inventoryExpanded ? "收起详情" : "运行落点详情"}</span>
                     </button>
                     <button
                       type="button"
@@ -627,13 +683,21 @@ function BackendAccessPanel({
                       disabled={!canEdit}
                       className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      解绑
+                      移除
                     </button>
                   </div>
                 </div>
 
                 {inventoryExpanded && (
                   <div className="mt-3 space-y-2 border-t border-border/70 pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                        授权状态：{ACCESS_STATUS_LABELS[access.status]}
+                      </span>
+                      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                        优先级 {access.priority}
+                      </span>
+                    </div>
                     {inventoryLoading ? (
                       <p className="rounded-[8px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
                         正在加载 inventory...
@@ -1161,32 +1225,26 @@ export function ProjectSettingsPage() {
               {activeTab === "workspace" && (
                 <>
                   <SectionCard
-                    title="Backend Access"
-                    description="Project 绑定可使用的 backend；可用目录由 backend 上报或本机发现流程登记。"
+                    title="运行环境"
+                    description="这个项目能在哪台机器上运行，哪台是你自己的设备，哪些是服务器 runner，以及怎么把一台新服务器接进来。"
                   >
                     <BackendAccessPanel
                       projectId={project.id}
                       canEdit={canEditProject}
                       inventoryRefreshKey={workspaceInventoryRefreshKey}
                     />
-                  </SectionCard>
 
-                  <SectionCard
-                    title="本机 Workspace 发现"
-                    description="按 Project 内 Workspace identity 在已授权本机 backend 上发现候选目录，确认后写入 binding。"
-                  >
-                    <LocalWorkspaceDiscoveryPanel
-                      projectId={project.id}
-                      workspaces={workspaces}
-                      canEdit={canEditProject}
-                      refreshKey={workspaceInventoryRefreshKey}
-                      onBound={refreshWorkspaceBindings}
-                    />
+                    <ContentGroup
+                      title="接入新服务器"
+                      description="给没有界面、没有登录态的服务器签发接入令牌，复制 setup 命令即可把它作为服务器 runner 接入。"
+                    >
+                      <RunnerTokensPanel projectId={project.id} canEdit={canEditProject} />
+                    </ContentGroup>
                   </SectionCard>
 
                   <SectionCard
                     title="工作空间"
-                    description="逻辑 Workspace 只表达身份；物理 backend/root 落点由可用目录确认。"
+                    description="每个工作空间是一处工作内容；它落在哪台机器的哪个目录，在条目里就地查看与定位。"
                   >
                     <WorkspaceList
                       projectId={project.id}
@@ -1196,13 +1254,31 @@ export function ProjectSettingsPage() {
                       onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
                       onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
                     />
+
+                    <CollapsibleGroup
+                      title="在本机定位目录（高级）"
+                      hint="在已接入的本机上扫描候选目录，确认后写入工作空间。日常使用可直接在工作空间条目的「在机器上定位」里完成。"
+                    >
+                      <LocalWorkspaceDiscoveryPanel
+                        projectId={project.id}
+                        workspaces={workspaces}
+                        canEdit={canEditProject}
+                        refreshKey={workspaceInventoryRefreshKey}
+                        onBound={refreshWorkspaceBindings}
+                      />
+                    </CollapsibleGroup>
                   </SectionCard>
 
                   <SectionCard
-                    title="Workspace Modules"
-                    description="Canvas 与 Extension 贡献的协作模块合并认知：kind / 来源 / 状态 / operations 与 UI entries 数；unavailable 模块给出诊断。启停在各自的 Extension / Canvas 管理入口完成。"
+                    title="高级 / 诊断"
+                    description="只读的诊断信息，日常无需关注。"
                   >
-                    <WorkspaceModulesPanel projectId={project.id} />
+                    <CollapsibleGroup
+                      title="Workspace Modules"
+                      hint="Canvas 与 Extension 贡献的协作模块：kind / 来源 / 状态 / operations 与 UI entries 数；unavailable 模块给出诊断。启停在各自的 Extension / Canvas 管理入口完成。"
+                    >
+                      <WorkspaceModulesPanel projectId={project.id} />
+                    </CollapsibleGroup>
                   </SectionCard>
 
                 </>

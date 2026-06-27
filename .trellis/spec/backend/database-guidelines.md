@@ -22,7 +22,7 @@
 - 新增目标模型列不因为 JSON 文本存储而追加 `_json` / `_jsonb` 后缀；列名优先表达业务语义，例如 `lifecycle_runs.context`、`lifecycle_runs.orchestrations`、`lifecycle_runs.view_projection`
 - 时间字段使用 PostgreSQL 原生 timestamp 类型，repository 直接 bind/read `chrono::DateTime<Utc>`
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
-- API 启动在 repository 装配前运行 PostgreSQL migrations，并执行 schema readiness 检查。
+- 显式 `agentdash-server migrate` 入口负责运行 PostgreSQL migrations；API 长驻服务启动在 repository 装配前只执行 schema readiness 检查。这样发布流程可以把 schema 演进放进一次性部署步骤，并让长期服务只依赖运行期所需数据库权限。
 
 ---
 
@@ -67,6 +67,64 @@ Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 Postg
 - Repository 主线不再读写旧列
 - PostgreSQL 新增 migration 用 `DROP COLUMN IF EXISTS`
 - 阶段性 squash 后，基线 migration 与当前 schema 目标保持一致
+
+## Scenario: Cloud Migration Command Boundary
+
+### 1. Scope / Trigger
+
+- Trigger: 修改云端服务启动、部署命令、Compose / Kubernetes migration job、数据库连接权限或 schema readiness 行为。
+- Scope: `agentdash-server serve`、`agentdash-server migrate`、`agentdash-server doctor`、PostgreSQL migration runner、API repository bootstrap。
+
+### 2. Signatures
+
+```text
+agentdash-server serve
+agentdash-server migrate
+agentdash-server doctor
+```
+
+### 3. Contracts
+
+- `migrate` 连接部署目标 PostgreSQL，运行 `crates/agentdash-infrastructure/migrations/` 中的 SQLx migrations，然后执行 schema readiness 检查。
+- `serve` 连接部署目标 PostgreSQL，只执行 schema readiness 检查；检查通过后再装配 repository 和 HTTP router。
+- `doctor` 连接部署目标 PostgreSQL，只执行 schema readiness 检查，并输出诊断报告。
+- `DATABASE_URL` 是部署期 PostgreSQL 连接串。需要最小权限部署时，`migrate` 可使用具备 DDL 权限的连接串，`serve` 使用业务运行权限连接串。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `migrate` 连接成功且 schema 可迁移 | 输出 `status = ok`、`schema_version` 和 `database_url` |
+| `serve` 发现 schema 缺表或未迁移 | 启动失败，不装配 repository |
+| `doctor` 发现 schema 未 ready | 命令失败并报告 readiness 错误 |
+| `DATABASE_URL` 非 PostgreSQL 协议 | 命令失败并报告配置错误 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 发布流程先运行 `agentdash-server migrate`，成功后启动 `agentdash-server serve`。
+- Base: 开发启动脚本可以先显式调用 `agentdash-server migrate`，再启动 `agentdash-server serve`；外部 PostgreSQL 与 embedded PostgreSQL 仍复用同一套 migrations 与 readiness 检查。
+- Bad: 长驻服务启动时运行 migrations，使多副本部署和最小权限数据库账号无法形成清晰边界。
+
+### 6. Tests Required
+
+- 修改 `agentdash-api` 启动路径时至少运行 `cargo check -p agentdash-api`。
+- 修改 migration 文件时运行 `pnpm run migration:guard`，并用真实 PostgreSQL 路径验证 migration runner。
+- 修改部署脚本或 Compose / Kubernetes 映射时验证 `migrate` 与 `serve` 命令分别使用预期 command。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+agentdash-server serve -> run migrations -> start HTTP server
+```
+
+#### Correct
+
+```text
+agentdash-server migrate -> run migrations -> check schema readiness
+agentdash-server serve -> check schema readiness -> start HTTP server
+```
 
 ## Scenario: Migration History Guard
 

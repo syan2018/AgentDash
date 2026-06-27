@@ -84,7 +84,9 @@ async function main() {
   }
 
   if (!config.skipServer) {
-    console.log(`[2] 启动 agentdash-server (:${config.serverPort})...`);
+    console.log('[2] 执行 agentdash-server migrate...');
+    await runAgentDashServerMigration();
+    console.log(`[2] 启动 agentdash-server serve (:${config.serverPort})...`);
     startAgentDashServer();
   } else {
     console.log(`[2] 跳过 agentdash-server，复用现有服务 (:${config.serverPort})...`);
@@ -688,7 +690,7 @@ function cleanupPostgresLockFiles() {
   }
 }
 
-function startAgentDashServer() {
+function agentDashServerEnv() {
   const env = {
     ...process.env,
     HOST: config.serverHost,
@@ -699,7 +701,25 @@ function startAgentDashServer() {
   } else {
     delete env.DATABASE_URL;
   }
-  startDebugBinary(supervisor, root, 'agentdash-server', { env });
+  return env;
+}
+
+async function runAgentDashServerMigration() {
+  await runCommand(
+    path.join(root, 'target', 'debug', isWindows ? 'agentdash-server.exe' : 'agentdash-server'),
+    ['migrate'],
+    {
+      env: agentDashServerEnv(),
+      label: 'agentdash-server migrate',
+    },
+  );
+}
+
+function startAgentDashServer() {
+  startDebugBinary(supervisor, root, 'agentdash-server', {
+    args: ['serve'],
+    env: agentDashServerEnv(),
+  });
 }
 
 function startFrontendProcess() {

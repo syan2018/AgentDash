@@ -90,7 +90,7 @@ RUST_LOG=info
 
 ## Migration 策略
 
-数据库 migration 是云端更新流程的一等步骤。当前应用启动时已经会运行 PostgreSQL migration 和 schema readiness 检查；产品化部署需要进一步支持显式 migration 步骤。
+数据库 migration 是云端更新流程的一等步骤。`agentdash-server migrate` 负责运行 PostgreSQL migration；`agentdash-server serve` 启动时只执行 schema readiness 检查。这样部署流程能把 schema 演进变成可观察、可重试、可独立排查的一次性步骤，同时让长期服务只依赖运行期所需数据库权限。
 
 基准流程：
 
@@ -127,7 +127,7 @@ services:
       - .env
 ```
 
-应用启动时的 schema readiness check 仍然有价值，它用于确认当前服务看到的数据库结构满足运行要求。部署流程中的显式 migration 则用于把升级步骤变成可观察、可重试、可独立排查的操作。
+应用启动时的 schema readiness check 用于确认当前服务看到的数据库结构满足运行要求。部署流程中的显式 migration 则用于把升级步骤变成可观察、可重试、可独立排查的操作。
 
 ## 更新与回滚
 

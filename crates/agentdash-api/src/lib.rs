@@ -125,12 +125,12 @@ pub async fn run_server_with_options(
 pub async fn run_postgres_migrations_with_options(
     options: ApiServerOptions,
 ) -> Result<DatabaseReady> {
-    let (ready, _db_runtime) = prepare_database(&options, true).await?;
+    let (ready, _db_runtime) = prepare_database(&options, SchemaPreparation::RunMigrations).await?;
     Ok(ready)
 }
 
 pub async fn check_postgres_ready_with_options(options: ApiServerOptions) -> Result<DatabaseReady> {
-    let (ready, _db_runtime) = prepare_database(&options, false).await?;
+    let (ready, _db_runtime) = prepare_database(&options, SchemaPreparation::CheckReady).await?;
     Ok(ready)
 }
 
@@ -138,7 +138,7 @@ pub async fn build_server(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
 ) -> Result<ApiServer> {
-    let (db_ready, db_runtime) = prepare_database(&options, true).await?;
+    let (db_ready, db_runtime) = prepare_database(&options, SchemaPreparation::CheckReady).await?;
 
     let state = AppState::new_with_integrations(db_runtime.pool.clone(), integrations).await?;
 
@@ -166,9 +166,15 @@ pub async fn build_server(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaPreparation {
+    RunMigrations,
+    CheckReady,
+}
+
 async fn prepare_database(
     options: &ApiServerOptions,
-    run_migrations: bool,
+    preparation: SchemaPreparation,
 ) -> Result<(
     DatabaseReady,
     agentdash_infrastructure::postgres_runtime::PostgresRuntime,
@@ -179,7 +185,7 @@ async fn prepare_database(
     )
     .await?;
     tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
-    if run_migrations {
+    if matches!(preparation, SchemaPreparation::RunMigrations) {
         agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;

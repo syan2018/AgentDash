@@ -30,7 +30,7 @@ const manifest = {
   package_manager: packageJson.packageManager,
   cargo_versions: workspaceVersions,
   artifacts: {
-    server_binary: binaryName('agentdash-server'),
+    server_binary: 'agentdash-server',
     cloud_image: `agentdash-cloud:${packageJson.version}`,
     web_dist: 'packages/app-web/dist',
     desktop_installer: `AgentDash_${packageJson.version}_x64-setup.exe`,
@@ -101,8 +101,4 @@ function collectWorkspaceVersions(metadata) {
     }
   }
   return [...versions].sort();
-}
-
-function binaryName(name) {
-  return process.platform === 'win32' ? `${name}.exe` : name;
 }

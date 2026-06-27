@@ -3,17 +3,13 @@ import WebDashboardApp from 'app-web'
 import { Button, StatusScreen } from '@agentdash/ui'
 import { invoke } from '@tauri-apps/api/core'
 import { DesktopTitlebar } from './DesktopTitlebar'
+import { createTauriDesktopAppBridge } from './desktopSettings'
+import type { DesktopAppBridge } from './desktopSettings'
 import { createTauriLocalRuntimeClient, tauriBrowseDirectory } from './runtimeApi'
-import type { LocalRuntimeClient } from '@agentdash/core/local-runtime'
+import type { DesktopApiSnapshot, LocalRuntimeClient } from '@agentdash/core/local-runtime'
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
 
 type DashboardApiState = 'checking' | 'ready' | 'unavailable'
-type DesktopApiSnapshot = {
-  state: 'starting' | 'running' | 'error' | 'stopped'
-  origin: string
-  message?: string | null
-  database_url?: string | null
-}
 
 const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN ?? '').replace(/\/+$/, '')
 
@@ -22,22 +18,26 @@ declare global {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__?: LocalRuntimeClient
     __AGENTDASH_DESKTOP_BROWSE_DIRECTORY__?: (path?: string) => Promise<BrowseDirectoryResult>
     __AGENTDASH_DESKTOP_OPEN_EXTERNAL__?: (url: string) => Promise<void>
+    __AGENTDASH_DESKTOP_APP__?: DesktopAppBridge
   }
 }
 
 function App() {
   const client = useMemo(() => createTauriLocalRuntimeClient(), [])
+  const desktopApp = useMemo(() => createTauriDesktopAppBridge(), [])
 
   useEffect(() => {
     window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ = client
     window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__ = tauriBrowseDirectory
     window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__ = (url: string) => invoke<void>('open_external_url', { url })
+    window.__AGENTDASH_DESKTOP_APP__ = desktopApp
     return () => {
       delete window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__
       delete window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__
       delete window.__AGENTDASH_DESKTOP_OPEN_EXTERNAL__
+      delete window.__AGENTDASH_DESKTOP_APP__
     }
-  }, [client])
+  }, [client, desktopApp])
 
   return (
     <div className="flex h-screen min-w-[960px] flex-col bg-background text-foreground">

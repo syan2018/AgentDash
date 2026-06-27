@@ -15,7 +15,7 @@
 //!                    └─────────────────────────────────────────────────┘
 //! ```
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},

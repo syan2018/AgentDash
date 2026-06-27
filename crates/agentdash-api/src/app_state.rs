@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -42,6 +42,7 @@ use agentdash_application_runtime_session::session::{
 };
 use agentdash_application_vfs::MountProviderRegistry;
 use agentdash_application_vfs::{VfsMutationDispatcher, VfsService};
+use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -51,7 +52,6 @@ use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
 use agentdash_integration_api::MemoryDiscoveryProvider;
 use agentdash_integration_api::SkillDiscoveryProvider;
-use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -105,8 +105,11 @@ pub async fn authenticate_request(
     next: Next,
 ) -> Result<Response, ApiError> {
     let Some(provider) = state.auth_provider.clone() else {
-        diag!(Error, Subsystem::Auth,
-        "业务 API 请求进入时缺少 AuthProvider");
+        diag!(
+            Error,
+            Subsystem::Auth,
+            "业务 API 请求进入时缺少 AuthProvider"
+        );
         return Err(ApiError::ServiceUnavailable(
             "服务端认证能力未初始化".to_string(),
         ));
@@ -126,7 +129,7 @@ pub async fn authenticate_request(
                 {
                     Ok(Some(identity)) => {
                         diag!(Debug, Subsystem::Auth,
-        
+
                             method = %auth_request.method,
                             path = %auth_request.path,
                             user_id = %identity.user_id,
@@ -140,7 +143,7 @@ pub async fn authenticate_request(
                     }
                     Err(store_err) => {
                         diag!(Error, Subsystem::Auth,
-        
+
                             method = %auth_request.method,
                             path = %auth_request.path,
                             error = %store_err,
@@ -251,7 +254,7 @@ pub async fn persist_identity_snapshot_or_service_unavailable(
         .await
         .map_err(|err| {
             diag!(Error, Subsystem::Auth,
-        
+
                 user_id = %identity.user_id,
                 auth_mode = %identity.auth_mode,
                 error = %err,
@@ -349,7 +352,7 @@ fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
     match err {
         AuthError::InvalidCredentials | AuthError::Forbidden(_) | AuthError::BadRequest(_) => {
             diag!(Warn, Subsystem::Auth,
-        
+
                 method = %request.method,
                 path = %request.path,
                 error = %err,
@@ -358,7 +361,7 @@ fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
         }
         AuthError::ServiceUnavailable(_) => {
             diag!(Error, Subsystem::Auth,
-        
+
                 method = %request.method,
                 path = %request.path,
                 error = %err,

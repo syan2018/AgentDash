@@ -4,7 +4,7 @@
 //! 超时的 session 会被自动取消（标记为 interrupted）。
 //! 这是平台级安全网，不依赖 Agent 判断。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::time::Duration;
 
 use super::runtime_control::SessionRuntimeService;
@@ -25,13 +25,17 @@ pub fn spawn_stall_detector(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if stall_timeout_ms == 0 {
-            diag!(Info, Subsystem::AgentRun,
-        "Stall 检测已禁用 (stall_timeout_ms = 0)");
+            diag!(
+                Info,
+                Subsystem::AgentRun,
+                "Stall 检测已禁用 (stall_timeout_ms = 0)"
+            );
             return;
         }
 
-        diag!(Info, Subsystem::AgentRun,
-        
+        diag!(
+            Info,
+            Subsystem::AgentRun,
             stall_timeout_ms,
             scan_interval_secs = SCAN_INTERVAL.as_secs(),
             "Stall 检测器已启动"
@@ -49,7 +53,7 @@ pub fn spawn_stall_detector(
             }
 
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 count = stalled.len(),
                 session_ids = ?stalled,
                 "检测到 stalled session，正在取消"
@@ -58,14 +62,14 @@ pub fn spawn_stall_detector(
             for session_id in stalled {
                 if let Err(err) = session_runtime.cancel(&session_id).await {
                     diag!(Warn, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         error = %err,
                         "取消 stalled session 失败"
                     );
                 } else {
                     diag!(Info, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         "已取消 stalled session"
                     );

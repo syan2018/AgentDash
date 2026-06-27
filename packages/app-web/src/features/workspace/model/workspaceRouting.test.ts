@@ -34,6 +34,7 @@ function backend(id: string, online: boolean, backend_type: "local" | "remote" =
     capability_slot: "default",
     device: {},
     last_claimed_at: null,
+    registration_source: null,
     online,
     runtime_health: null,
     capabilities: null,

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 
 use futures::StreamExt;
@@ -920,7 +920,7 @@ async fn emit_retry_scheduled(
     )
     .await;
     diag!(Warn, Subsystem::AgentRun,
-        
+
         attempt,
         max_attempts = retry_policy.max_attempts,
         delay_ms,

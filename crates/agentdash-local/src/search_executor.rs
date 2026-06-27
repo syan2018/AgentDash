@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -151,7 +151,7 @@ async fn run_ripgrep(
 
         let Ok(rel_path) = workspace_relative_path(Path::new(abs_path), workspace_root) else {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 path = abs_path,
                 workspace_root = %workspace_root.display(),
                 "ripgrep returned path outside workspace root"

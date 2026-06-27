@@ -4,7 +4,7 @@
 //! 用当前 project context + repos 现取现算：每次调用拉 enabled installations + Canvas 候选，
 //! 先按 AgentRun effective capability view 过滤，再按当前用户 Canvas access 重投影。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
@@ -132,7 +132,7 @@ async fn resolve_visible_modules_for_tool(
             .map_err(AgentToolError::ExecutionFailed)?;
     for diagnostic in &projection.diagnostics {
         diag!(Warn, Subsystem::AgentRun,
-        
+
             code = %diagnostic.code,
             module_ref = diagnostic.module_ref.as_deref().unwrap_or(""),
             "workspace module visibility diagnostic: {}",

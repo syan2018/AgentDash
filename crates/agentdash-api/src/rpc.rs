@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;

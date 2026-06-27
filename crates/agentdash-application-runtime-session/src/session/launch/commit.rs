@@ -1,5 +1,5 @@
-use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ConnectorError;
 
 use super::connector_start::ConnectorAcceptedTurn;
@@ -116,8 +116,9 @@ impl TurnCommitter {
             })
             .await;
         for diagnostic in outcome.diagnostics {
-            diag!(Warn, Subsystem::SessionLaunch,
-        
+            diag!(
+                Warn,
+                Subsystem::SessionLaunch,
                 session_id,
                 "accepted launch control-plane commit: {diagnostic}"
             );
@@ -190,7 +191,7 @@ async fn commit_runtime_commands_applied(
     {
         let error_message = error.to_string();
         diag!(Error, Subsystem::SessionLaunch,
-        
+
             session_id = %session_id,
             error = %error_message,
             "标记 requested runtime commands applied 失败，改写为 failed 以避免下一轮重复应用"

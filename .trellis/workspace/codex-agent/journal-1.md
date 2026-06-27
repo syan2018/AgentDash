@@ -1397,3 +1397,103 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 推进本机运行形态服务化
+
+**Date**: 2026-06-26
+**Task**: 推进本机运行形态服务化
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+落地 Windows 桌面 HKCU 自启动、桌面 runtime 单一 auto-connect 入口、Local Runner Linux systemd 与 Windows SCM/native service dispatcher、runner 文件日志与 relay status snapshot；归档 runner enrollment token 子任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b806695e4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 40: 收口本机运行诊断与发布验收交接
+
+**Date**: 2026-06-26
+**Task**: 收口本机运行诊断与发布验收交接
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+补齐 runtime diagnostics UI、registration_source contract、结构化 relay_connection 状态、日志脱敏与 release validation 手工验收 checklist，并归档 runtime diagnostics、local runner daemon、Windows desktop installer/background 三个实现子任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b0fca9ee1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 41: Local Runner setup helper
+
+**Date**: 2026-06-27
+**Task**: Local Runner setup helper
+**Branch**: `codex/desktop-local-runtime`
+
+### Summary
+
+实现 agentdash-local setup/doctor，一键完成 runner 配置、claim、服务安装启动和只读诊断；同步跨层契约与发布验收 runbook，并归档 local-runner-setup-helper 任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d5a31ad75` | (see git log) |
+| `fa26e73f7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

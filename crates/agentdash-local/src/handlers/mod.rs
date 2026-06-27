@@ -19,7 +19,7 @@ mod tool_calls;
 mod workspace;
 pub use workspace::browse_directory;
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -6,7 +6,6 @@
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
 //! - `schedule_unanchored_hook_auto_resume`（非 AgentRun runtime 的 hook auto-resume）
 
-use agentdash_diagnostics::{diag, Subsystem};
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_injection_sink::{
@@ -23,6 +22,7 @@ use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
 use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxAutoResumeRequest;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
     HookEffect, HookInjection, HookRuntimeAccess, HookRuntimeEvaluationQuery,
@@ -143,7 +143,7 @@ impl SessionRuntimeInner {
             }
             Err(error) => {
                 diag!(Warn, Subsystem::Hooks,
-        
+
                     session_id = %session_id,
                     trigger = ?trigger,
                     error = %error,
@@ -204,7 +204,7 @@ impl SessionRuntimeInner {
 
         if decision {
             diag!(Info, Subsystem::Hooks,
-        
+
                 session_id = %session_id,
                 "Hook auto-resume: stop gate unsatisfied, scheduling retry"
             );
@@ -223,7 +223,7 @@ impl SessionRuntimeInner {
             Ok(true)
         } else {
             diag!(Warn, Subsystem::Hooks,
-        
+
                 session_id = %session_id,
                 max = MAX_HOOK_AUTO_RESUMES,
                 "Hook auto-resume: 达到上限，放弃续跑"
@@ -263,7 +263,7 @@ impl SessionRuntimeInner {
             Ok(false) => AutoResumeMailboxRoute::NoAnchor,
             Err(error) => {
                 diag!(Warn, Subsystem::Hooks,
-        
+
                     session_id = %request.session_id,
                     effect_id = %request.effect_id,
                     error = %error,
@@ -303,7 +303,7 @@ impl SessionRuntimeInner {
                 .await
             {
                 diag!(Warn, Subsystem::Hooks,
-        
+
                     session_id = %session_id,
                     error = %e,
                     "Hook auto-resume launch 失败"

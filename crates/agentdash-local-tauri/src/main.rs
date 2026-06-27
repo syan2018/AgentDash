@@ -1,31 +1,48 @@
-use agentdash_diagnostics::{diag, Subsystem};
-use std::path::PathBuf;
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use agentdash_diagnostics::{Subsystem, diag};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
-    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, browse_directory, load_or_create_machine_identity, local_mcp_servers_path,
+    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot,
+    LocalRuntimeState, McpProbeResult, StopReason, browse_directory,
+    load_or_create_machine_identity, local_mcp_servers_path, local_runtime_config_dir,
     local_runtime_profile_path, probe_mcp_server,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, RunEvent, State};
+use tauri::menu::MenuBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::EnvFilter;
 
-const DESKTOP_API_PORT: u16 = 3001;
+const DESKTOP_API_PORT: u16 = 17301;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
 const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
 const DEFAULT_PROFILE_ID: &str = "default";
+const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
+const DESKTOP_AUTOSTART_ENTRY_NAME: &str = "AgentDash";
+#[cfg(target_os = "windows")]
+const WINDOWS_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const MAIN_WINDOW_LABEL: &str = "main";
+const TRAY_MENU_OPEN: &str = "open_agentdash";
+const TRAY_MENU_RUNTIME_START: &str = "start_local_runtime";
+const TRAY_MENU_RUNTIME_STOP: &str = "stop_local_runtime";
+const TRAY_MENU_STATUS: &str = "show_status";
+const TRAY_MENU_QUIT: &str = "quit_agentdash";
 
 #[derive(Clone)]
 struct DesktopState {
     runtime: LocalRuntimeManager,
     api: DesktopApiManager,
+    lifecycle: Arc<DesktopLifecycleState>,
 }
 
 impl Default for DesktopState {
@@ -33,7 +50,23 @@ impl Default for DesktopState {
         Self {
             runtime: LocalRuntimeManager::new(),
             api: DesktopApiManager::from_snapshot(default_desktop_api_snapshot()),
+            lifecycle: Arc::new(DesktopLifecycleState::default()),
         }
+    }
+}
+
+#[derive(Default)]
+struct DesktopLifecycleState {
+    explicit_quit: AtomicBool,
+}
+
+impl DesktopState {
+    fn request_explicit_quit(&self) {
+        self.lifecycle.explicit_quit.store(true, Ordering::SeqCst);
+    }
+
+    fn is_explicit_quit_requested(&self) -> bool {
+        self.lifecycle.explicit_quit.load(Ordering::SeqCst)
     }
 }
 
@@ -115,11 +148,44 @@ struct LocalRuntimeProfile {
     auto_start: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+struct DesktopAppSettings {
+    #[serde(default)]
+    launch_at_login: bool,
+    #[serde(default)]
+    start_minimized_to_tray: bool,
+    #[serde(default = "default_auto_connect_local_runtime")]
+    auto_connect_local_runtime: bool,
+}
+
+impl Default for DesktopAppSettings {
+    fn default() -> Self {
+        Self {
+            launch_at_login: false,
+            start_minimized_to_tray: false,
+            auto_connect_local_runtime: default_auto_connect_local_runtime(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DesktopAutostartStatus {
+    supported: bool,
+    enabled: bool,
+    message: Option<String>,
+}
+
 fn default_profile_id() -> String {
     DEFAULT_PROFILE_ID.to_string()
 }
 
 fn default_executor_enabled() -> bool {
+    true
+}
+
+fn default_auto_connect_local_runtime() -> bool {
     true
 }
 
@@ -136,6 +202,43 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
             executor_enabled: profile.executor_enabled,
         }
     }
+}
+
+#[tauri::command]
+async fn desktop_settings_load() -> Result<DesktopAppSettings, String> {
+    desktop_settings_load_internal()
+}
+
+#[tauri::command]
+async fn desktop_settings_save(settings: DesktopAppSettings) -> Result<DesktopAppSettings, String> {
+    let mut settings = normalize_desktop_app_settings(settings);
+    let autostart = desktop_autostart_set_enabled_internal(settings.launch_at_login)?;
+    settings.launch_at_login = autostart.enabled;
+    desktop_settings_write_internal(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn desktop_autostart_is_enabled() -> Result<DesktopAutostartStatus, String> {
+    desktop_autostart_is_enabled_internal()
+}
+
+#[tauri::command]
+async fn desktop_autostart_set_enabled(enabled: bool) -> Result<DesktopAutostartStatus, String> {
+    let mut settings = desktop_settings_load_internal()?;
+    let status = desktop_autostart_set_enabled_internal(enabled)?;
+    settings.launch_at_login = status.enabled;
+    desktop_settings_write_internal(&settings)?;
+    Ok(status)
+}
+
+#[tauri::command]
+async fn desktop_quit_request(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    request_desktop_quit(app, state.inner().clone()).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -354,54 +457,178 @@ struct EnsureLocalRuntimeResponse {
     capability_slot: String,
 }
 
-async fn auto_start_profile(state: DesktopState) {
-    let profile = match profile_load().await {
-        Ok(Some(profile)) if profile.auto_start => profile,
-        Ok(_) => return,
-        Err(error) => {
-            state
-                .runtime
-                .record_log(
-                    "warn",
-                    "profile",
-                    format!("加载 auto-start profile 失败: {error}"),
-                )
-                .await;
-            return;
+fn desktop_settings_load_internal() -> Result<DesktopAppSettings, String> {
+    let path = desktop_app_settings_path()?;
+    if !path.exists() {
+        return Ok(DesktopAppSettings::default());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let settings =
+        serde_json::from_str(&content).map_err(|error| format!("读取桌面端设置失败: {error}"))?;
+    Ok(normalize_desktop_app_settings(settings))
+}
+
+fn desktop_settings_write_internal(settings: &DesktopAppSettings) -> Result<(), String> {
+    let path = desktop_app_settings_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
+    std::fs::write(&path, content).map_err(|error| error.to_string())
+}
+
+fn normalize_desktop_app_settings(settings: DesktopAppSettings) -> DesktopAppSettings {
+    DesktopAppSettings {
+        launch_at_login: settings.launch_at_login,
+        start_minimized_to_tray: settings.start_minimized_to_tray,
+        auto_connect_local_runtime: settings.auto_connect_local_runtime,
+    }
+}
+
+fn desktop_autostart_is_enabled_internal() -> Result<DesktopAutostartStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let app_exe = current_app_exe_path()?;
+        let expected = build_windows_autostart_command(&app_exe)?;
+        let stored = windows_autostart_read_value()?;
+        let enabled = stored.as_deref() == Some(expected.as_str());
+        let message = match stored {
+            Some(value) if value != expected => Some(
+                "检测到 AgentDash 登录项，但它不指向当前应用可执行文件；请重新启用登录自启动"
+                    .to_string(),
+            ),
+            Some(_) => Some("Windows 登录自启动已启用".to_string()),
+            None => Some("Windows 登录自启动未启用".to_string()),
+        };
+        Ok(DesktopAutostartStatus {
+            supported: true,
+            enabled,
+            message,
+        })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(DesktopAutostartStatus {
+            supported: false,
+            enabled: false,
+            message: Some("当前平台不支持 AgentDash 桌面登录自启动".to_string()),
+        })
+    }
+}
+
+fn desktop_autostart_set_enabled_internal(enabled: bool) -> Result<DesktopAutostartStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if enabled {
+            let app_exe = current_app_exe_path()?;
+            let command = build_windows_autostart_command(&app_exe)?;
+            windows_autostart_write_value(&command)?;
+            Ok(DesktopAutostartStatus {
+                supported: true,
+                enabled: true,
+                message: Some(format!("Windows 登录自启动已指向 {}", app_exe.display())),
+            })
+        } else {
+            windows_autostart_delete_value()?;
+            Ok(DesktopAutostartStatus {
+                supported: true,
+                enabled: false,
+                message: Some("Windows 登录自启动已关闭".to_string()),
+            })
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+        Ok(DesktopAutostartStatus {
+            supported: false,
+            enabled: false,
+            message: Some("当前平台不支持 AgentDash 桌面登录自启动".to_string()),
+        })
+    }
+}
+
+fn current_app_exe_path() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|error| format!("读取当前应用可执行文件路径失败: {error}"))
+}
+
+fn build_windows_autostart_command(app_exe: &Path) -> Result<String, String> {
+    let file_name = app_exe
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "应用可执行文件路径缺少文件名".to_string())?;
+    if is_setup_exe_name(file_name) {
+        return Err(format!(
+            "拒绝将安装器写入登录自启动项: {}",
+            app_exe.display()
+        ));
+    }
+    let raw = app_exe
+        .to_str()
+        .ok_or_else(|| "应用可执行文件路径不是有效 Unicode".to_string())?;
+    if raw.contains('"') {
+        return Err("应用可执行文件路径不能包含双引号".to_string());
+    }
+    Ok(format!("\"{raw}\""))
+}
+
+fn is_setup_exe_name(file_name: &str) -> bool {
+    let normalized = file_name.to_ascii_lowercase();
+    normalized.ends_with(".exe")
+        && (normalized.contains("setup") || normalized.contains("installer"))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_autostart_read_value() -> Result<Option<String>, String> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key = match hkcu.open_subkey(WINDOWS_AUTOSTART_RUN_KEY) {
+        Ok(key) => key,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("读取 Windows 登录自启动注册表失败: {error}")),
     };
+    match run_key.get_value(DESKTOP_AUTOSTART_ENTRY_NAME) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("读取 AgentDash 登录自启动项失败: {error}")),
+    }
+}
 
-    let request = RuntimeStartRequest::from(profile);
-    state
-        .runtime
-        .record_log(
-            "info",
-            "profile",
-            "检测到 auto-start profile，准备连接 server",
-        )
-        .await;
+#[cfg(target_os = "windows")]
+fn windows_autostart_write_value(command: &str) -> Result<(), String> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
 
-    match start_runtime_from_request(&state, request, true).await {
-        Ok(snapshot) => {
-            state
-                .runtime
-                .record_log(
-                    "info",
-                    "profile",
-                    format!("auto-start runtime 已启动: backend={}", snapshot.backend_id),
-                )
-                .await;
-        }
-        Err(error) => {
-            state
-                .runtime
-                .record_log(
-                    "error",
-                    "profile",
-                    format!("auto-start runtime 失败: {error}"),
-                )
-                .await;
-        }
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (run_key, _) = hkcu
+        .create_subkey(WINDOWS_AUTOSTART_RUN_KEY)
+        .map_err(|error| format!("打开 Windows 登录自启动注册表失败: {error}"))?;
+    run_key
+        .set_value(DESKTOP_AUTOSTART_ENTRY_NAME, &command)
+        .map_err(|error| format!("写入 AgentDash 登录自启动项失败: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_autostart_delete_value() -> Result<(), String> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key = match hkcu
+        .open_subkey_with_flags(WINDOWS_AUTOSTART_RUN_KEY, winreg::enums::KEY_SET_VALUE)
+    {
+        Ok(key) => key,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("打开 Windows 登录自启动注册表失败: {error}")),
+    };
+    match run_key.delete_value(DESKTOP_AUTOSTART_ENTRY_NAME) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("删除 AgentDash 登录自启动项失败: {error}")),
     }
 }
 
@@ -410,6 +637,19 @@ async fn start_runtime_from_request(
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
+    if let Some(snapshot) = state.runtime.snapshot().await
+        && matches!(
+            snapshot.state,
+            LocalRuntimeState::Starting | LocalRuntimeState::Running
+        )
+    {
+        state
+            .runtime
+            .record_log("info", "runtime", "runtime 已在启动或运行，复用现有状态")
+            .await;
+        return Ok(snapshot);
+    }
+
     let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
     let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
     let config = LocalRuntimeConfig::new(
@@ -456,7 +696,7 @@ async fn claim_local_runtime(
             }
             Err(error) if retry_until_server_ready && attempts < 30 => {
                 diag!(Warn, Subsystem::Api,
-        
+
                     attempt = attempts,
                     error = %error,
                     "领取本机 runtime 失败，等待 server 就绪后重试"
@@ -625,32 +865,66 @@ fn main() {
 
     let state = DesktopState::default();
     let state_for_exit = state.clone();
+    let state_for_window_events = state.clone();
 
     tauri::Builder::default()
         .manage(state)
-        .setup(|app| {
-            let state = app.state::<DesktopState>().inner().clone();
-            let api_config = desktop_api_config();
-            match api_config.mode {
-                DesktopApiMode::Builtin => start_desktop_api(state),
-                DesktopApiMode::External => {
-                    diag!(Info, Subsystem::Api,
-        
-                        origin = %api_config.origin,
-                        "Tauri 桌面端复用外部 Dashboard API"
+        .on_window_event(move |window, event| {
+            if window.label() != MAIN_WINDOW_LABEL {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if state_for_window_events.is_explicit_quit_requested() {
+                    return;
+                }
+                api.prevent_close();
+                if let Err(error) = window.hide() {
+                    diag!(Warn, Subsystem::Infra,
+                        error = %error,
+                        "关闭窗口时隐藏到托盘失败"
                     );
                 }
-                DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
             }
+        })
+        .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
-            tauri::async_runtime::spawn(async move {
-                auto_start_profile(state).await;
-            });
+            configure_tray(app.handle(), state.clone())?;
+            match desktop_api_config() {
+                Ok(api_config) => match api_config.mode {
+                    DesktopApiMode::Builtin => start_desktop_api(state),
+                    DesktopApiMode::External => {
+                        diag!(Info, Subsystem::Api,
+
+                            origin = %api_config.origin,
+                            "Tauri 桌面端复用外部 Dashboard API"
+                        );
+                    }
+                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
+                },
+                Err(message) => {
+                    diag!(Error, Subsystem::Api,
+                        error = %message,
+                        "桌面端 API 配置无效"
+                    );
+                    tauri::async_runtime::spawn(async move {
+                        state
+                            .api
+                            .mark_error_origin(desktop_api_origin(DESKTOP_API_PORT), message)
+                            .await;
+                    });
+                }
+            }
+            apply_startup_window_visibility(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop_autostart_is_enabled,
+            desktop_autostart_set_enabled,
             desktop_api_snapshot,
             desktop_browse_directory,
+            desktop_quit_request,
+            desktop_settings_load,
+            desktop_settings_save,
             profile_delete,
             profile_load,
             profile_save,
@@ -668,11 +942,228 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("启动 AgentDash 桌面端失败")
         .run(move |_app, event| match event {
-            RunEvent::Exit | RunEvent::ExitRequested { .. } => {
+            RunEvent::ExitRequested { api, .. } => {
+                if !state_for_exit.is_explicit_quit_requested() {
+                    api.prevent_exit();
+                }
+            }
+            RunEvent::Exit => {
                 state_for_exit.api.stop_sidecar();
             }
             _ => {}
         });
+}
+
+fn configure_tray(app: &AppHandle, state: DesktopState) -> tauri::Result<()> {
+    let menu = MenuBuilder::new(app)
+        .text(TRAY_MENU_OPEN, "打开 AgentDash")
+        .separator()
+        .text(TRAY_MENU_RUNTIME_START, "启动本机 runtime")
+        .text(TRAY_MENU_RUNTIME_STOP, "停止本机 runtime")
+        .text(TRAY_MENU_STATUS, "查看状态")
+        .separator()
+        .text(TRAY_MENU_QUIT, "退出 AgentDash")
+        .build()?;
+
+    let mut tray = TrayIconBuilder::with_id("agentdash-main")
+        .tooltip("AgentDash")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    let state_for_menu = state.clone();
+    tray.on_menu_event(move |app, event| {
+        handle_tray_menu_event(app.clone(), state_for_menu.clone(), event.id().as_ref());
+    })
+    .on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            restore_main_window(tray.app_handle());
+        }
+    })
+    .build(app)?;
+
+    Ok(())
+}
+
+fn handle_tray_menu_event(app: AppHandle, state: DesktopState, id: &str) {
+    match id {
+        TRAY_MENU_OPEN => restore_main_window(&app),
+        TRAY_MENU_RUNTIME_START => {
+            tauri::async_runtime::spawn(async move {
+                start_runtime_from_profile(state).await;
+            });
+        }
+        TRAY_MENU_RUNTIME_STOP => {
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = state.runtime.stop(StopReason::UserRequested).await {
+                    state
+                        .runtime
+                        .record_log(
+                            "error",
+                            "runtime",
+                            format!("托盘停止本机 runtime 失败: {error}"),
+                        )
+                        .await;
+                }
+            });
+        }
+        TRAY_MENU_STATUS => {
+            restore_main_window(&app);
+            tauri::async_runtime::spawn(async move {
+                record_tray_status(state).await;
+            });
+        }
+        TRAY_MENU_QUIT => {
+            tauri::async_runtime::spawn(async move {
+                request_desktop_quit(app, state).await;
+            });
+        }
+        _ => {}
+    }
+}
+
+async fn start_runtime_from_profile(state: DesktopState) {
+    let profile = match profile_load().await {
+        Ok(Some(profile)) => profile,
+        Ok(None) => {
+            state
+                .runtime
+                .record_log(
+                    "warn",
+                    "profile",
+                    "未配置本机 runtime profile，无法从托盘启动 runtime",
+                )
+                .await;
+            return;
+        }
+        Err(error) => {
+            state
+                .runtime
+                .record_log(
+                    "error",
+                    "profile",
+                    format!("托盘加载本机 runtime profile 失败: {error}"),
+                )
+                .await;
+            return;
+        }
+    };
+
+    match start_runtime_from_request(&state, RuntimeStartRequest::from(profile), false).await {
+        Ok(snapshot) => {
+            state
+                .runtime
+                .record_log(
+                    "info",
+                    "runtime",
+                    format!("托盘已启动本机 runtime: backend={}", snapshot.backend_id),
+                )
+                .await;
+        }
+        Err(error) => {
+            state
+                .runtime
+                .record_log(
+                    "error",
+                    "runtime",
+                    format!("托盘启动本机 runtime 失败: {error}"),
+                )
+                .await;
+        }
+    }
+}
+
+async fn record_tray_status(state: DesktopState) {
+    let api = state.api.snapshot().await;
+    let runtime = state.runtime.snapshot().await;
+    let runtime_message = runtime
+        .map(|snapshot| format!("{:?}", snapshot.state))
+        .unwrap_or_else(|| "未启动".to_string());
+    state
+        .runtime
+        .record_log(
+            "info",
+            "desktop",
+            format!(
+                "托盘状态查看: desktop_api={:?}, runtime={}",
+                api.state, runtime_message
+            ),
+        )
+        .await;
+}
+
+async fn request_desktop_quit(app: AppHandle, state: DesktopState) {
+    state.request_explicit_quit();
+    if let Err(error) = state.runtime.stop(StopReason::UserRequested).await {
+        state
+            .runtime
+            .record_log(
+                "warn",
+                "runtime",
+                format!("显式退出前停止本机 runtime 失败: {error}"),
+            )
+            .await;
+    }
+    state.api.stop_sidecar();
+    app.exit(0);
+}
+
+fn apply_startup_window_visibility(app: &AppHandle) {
+    let settings = match desktop_settings_load_internal() {
+        Ok(settings) => settings,
+        Err(error) => {
+            diag!(Warn, Subsystem::Infra,
+                error = %error,
+                "读取桌面端启动窗口设置失败，使用默认显示行为"
+            );
+            DesktopAppSettings::default()
+        }
+    };
+
+    if settings.start_minimized_to_tray {
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL)
+            && let Err(error) = window.hide()
+        {
+            diag!(Warn, Subsystem::Infra,
+                error = %error,
+                "按启动到托盘设置隐藏主窗口失败"
+            );
+        }
+    } else {
+        restore_main_window(app);
+    }
+}
+
+fn restore_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    if let Err(error) = window.show() {
+        diag!(Warn, Subsystem::Infra,
+            error = %error,
+            "显示 AgentDash 主窗口失败"
+        );
+    }
+    if let Err(error) = window.unminimize() {
+        diag!(Warn, Subsystem::Infra,
+            error = %error,
+            "还原 AgentDash 主窗口失败"
+        );
+    }
+    if let Err(error) = window.set_focus() {
+        diag!(Warn, Subsystem::Infra,
+            error = %error,
+            "聚焦 AgentDash 主窗口失败"
+        );
+    }
 }
 
 fn start_desktop_api(state: DesktopState) {
@@ -748,7 +1239,7 @@ fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
     };
 
     diag!(Info, Subsystem::Api,
-        
+
         origin = %config.origin,
         sidecar = %sidecar,
         "Tauri 桌面端启动 API sidecar"
@@ -775,6 +1266,7 @@ fn spawn_desktop_api_sidecar(config: &DesktopApiConfig) -> anyhow::Result<Child>
         .sidecar
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("未配置桌面端 API sidecar 命令"))?;
+    validate_sidecar_desktop_api_origin(&config.origin)?;
     let origin = reqwest::Url::parse(&config.origin)
         .map_err(|error| anyhow::anyhow!("桌面端 API origin 无效: {error}"))?;
     let host = origin.host_str().unwrap_or("127.0.0.1");
@@ -812,7 +1304,7 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             Ok(response) => {
                 if attempt % 20 == 0 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         attempt,
                         status = %response.status(),
                         "等待桌面端 API sidecar 就绪"
@@ -822,7 +1314,7 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             Err(error) => {
                 if attempt % 20 == 0 {
                     diag!(Warn, Subsystem::Api,
-        
+
                         attempt,
                         error = %error,
                         "等待桌面端 API sidecar 就绪"
@@ -958,19 +1450,26 @@ fn desktop_api_origin(port: u16) -> String {
 }
 
 fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
-    let config = desktop_api_config();
-    match config.mode {
-        DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
-        DesktopApiMode::External => DesktopApiSnapshot {
-            state: DesktopApiState::Running,
-            origin: config.origin.clone(),
-            message: Some(format!("复用外部 Dashboard API: {}", config.origin)),
-            database_url: None,
+    match desktop_api_config() {
+        Ok(config) => match config.mode {
+            DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
+            DesktopApiMode::External => DesktopApiSnapshot {
+                state: DesktopApiState::Running,
+                origin: config.origin.clone(),
+                message: Some(format!("复用外部 Dashboard API: {}", config.origin)),
+                database_url: None,
+            },
+            DesktopApiMode::Sidecar => DesktopApiSnapshot {
+                state: DesktopApiState::Starting,
+                origin: config.origin.clone(),
+                message: Some(format!("桌面端 API sidecar 正在启动: {}", config.origin)),
+                database_url: None,
+            },
         },
-        DesktopApiMode::Sidecar => DesktopApiSnapshot {
-            state: DesktopApiState::Starting,
-            origin: config.origin.clone(),
-            message: Some(format!("桌面端 API sidecar 正在启动: {}", config.origin)),
+        Err(message) => DesktopApiSnapshot {
+            state: DesktopApiState::Error,
+            origin: desktop_api_origin(DESKTOP_API_PORT),
+            message: Some(message),
             database_url: None,
         },
     }
@@ -990,46 +1489,134 @@ struct DesktopApiConfig {
     sidecar: Option<String>,
 }
 
-fn desktop_api_config() -> DesktopApiConfig {
-    let explicit_origin = env_trimmed(DESKTOP_API_ORIGIN_ENV).map(normalize_origin);
-    let build_default_origin = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
-        .and_then(|value| normalize_optional_text(value.to_string()))
-        .map(normalize_origin);
-    let origin = explicit_origin
-        .or(build_default_origin)
-        .unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopApiBuildProfile {
+    Debug,
+    Release,
+}
 
-    let explicit_sidecar = env_trimmed(DESKTOP_API_SIDECAR_ENV);
-    let build_default_sidecar = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
-        .and_then(|value| normalize_optional_text(value.to_string()));
+fn active_desktop_api_build_profile() -> DesktopApiBuildProfile {
+    if cfg!(debug_assertions) {
+        DesktopApiBuildProfile::Debug
+    } else {
+        DesktopApiBuildProfile::Release
+    }
+}
+
+fn desktop_api_config() -> Result<DesktopApiConfig, String> {
+    desktop_api_config_from_values(
+        env_trimmed(DESKTOP_API_ORIGIN_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        env_trimmed(DESKTOP_API_SIDECAR_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        env_trimmed(DESKTOP_API_MODE_ENV),
+        option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
+            .and_then(|value| normalize_optional_text(value.to_string())),
+        active_desktop_api_build_profile(),
+    )
+}
+
+fn desktop_api_config_from_values(
+    explicit_origin: Option<String>,
+    build_default_origin: Option<String>,
+    explicit_sidecar: Option<String>,
+    build_default_sidecar: Option<String>,
+    explicit_mode: Option<String>,
+    build_default_mode: Option<String>,
+    _build_profile: DesktopApiBuildProfile,
+) -> Result<DesktopApiConfig, String> {
+    let configured_origin = explicit_origin
+        .map(normalize_origin)
+        .or_else(|| build_default_origin.map(normalize_origin));
+
     let sidecar = explicit_sidecar.or(build_default_sidecar);
 
-    let explicit_mode = env_trimmed(DESKTOP_API_MODE_ENV).and_then(|value| {
+    let explicit_mode = explicit_mode.and_then(|value| {
         parse_desktop_api_mode(&value).or_else(|| {
             diag!(Warn, Subsystem::Api,
         mode = %value, "忽略未知桌面端 API mode");
             None
         })
     });
-    let build_default_mode = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
-        .and_then(|value| normalize_optional_text(value.to_string()))
-        .and_then(|value| {
-            parse_desktop_api_mode(&value).or_else(|| {
-                diag!(Warn, Subsystem::Api,
+    let build_default_mode = build_default_mode.and_then(|value| {
+        parse_desktop_api_mode(&value).or_else(|| {
+            diag!(Warn, Subsystem::Api,
         mode = %value, "忽略未知桌面端默认 API mode");
-                None
-            })
-        });
+            None
+        })
+    });
 
     let mode = explicit_mode
         .or(build_default_mode)
-        .unwrap_or(DesktopApiMode::Builtin);
+        .unwrap_or(DesktopApiMode::External);
+    let origin = match mode {
+        DesktopApiMode::Builtin => desktop_api_origin(DESKTOP_API_PORT),
+        DesktopApiMode::External => {
+            let origin = configured_origin
+                .ok_or_else(|| "桌面端 external API mode 需要配置远端 server origin".to_string())?;
+            validate_external_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
+            origin
+        }
+        DesktopApiMode::Sidecar => {
+            let origin = configured_origin.unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
+            validate_sidecar_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
+            origin
+        }
+    };
 
-    DesktopApiConfig {
+    Ok(DesktopApiConfig {
         mode,
         origin,
         sidecar,
+    })
+}
+
+fn validate_external_desktop_api_origin(origin: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(origin)?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("桌面端 external API origin 只支持 http/https: {origin}");
     }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("桌面端 external API origin 不应包含认证信息: {origin}");
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "桌面端 external API origin 必须是 origin，不应包含 path/query/fragment: {origin}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_sidecar_desktop_api_origin(origin: &str) -> anyhow::Result<()> {
+    if !is_127_loopback_origin(origin) {
+        anyhow::bail!("桌面端 API sidecar 只允许绑定 127.0.0.1 origin: {origin}");
+    }
+    Ok(())
+}
+
+fn is_default_desktop_api_origin(origin: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port_or_known_default() == Some(DESKTOP_API_PORT)
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+fn is_127_loopback_origin(origin: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(origin) else {
+        return false;
+    };
+    matches!(url.scheme(), "http" | "https")
+        && url.host_str() == Some("127.0.0.1")
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
 }
 
 fn parse_desktop_api_mode(value: &str) -> Option<DesktopApiMode> {
@@ -1058,6 +1645,169 @@ fn profile_path() -> Result<PathBuf, String> {
     local_runtime_profile_path().map_err(|error| error.to_string())
 }
 
+fn desktop_app_settings_path() -> Result<PathBuf, String> {
+    local_runtime_config_dir()
+        .map(|path| path.join(DESKTOP_APP_SETTINGS_FILE))
+        .map_err(|error| error.to_string())
+}
+
 fn mcp_servers_path() -> Result<PathBuf, String> {
     local_mcp_servers_path().map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_api_default_origin_uses_dedicated_port() {
+        assert_eq!(
+            desktop_api_origin(DESKTOP_API_PORT),
+            "http://127.0.0.1:17301"
+        );
+        assert!(is_default_desktop_api_origin("http://127.0.0.1:17301"));
+        assert!(!is_default_desktop_api_origin("http://127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn builtin_config_keeps_release_origin_fixed() {
+        let config = desktop_api_config_from_values(
+            Some("http://10.0.0.5:3001".to_string()),
+            None,
+            None,
+            None,
+            Some("builtin".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect("builtin origin should be fixed by the desktop API contract");
+
+        assert_eq!(config.mode, DesktopApiMode::Builtin);
+        assert_eq!(config.origin, "http://127.0.0.1:17301");
+    }
+
+    #[test]
+    fn default_config_requires_external_origin() {
+        let error = desktop_api_config_from_values(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect_err("default external mode requires a configured origin");
+
+        assert!(error.contains("external API mode"));
+    }
+
+    #[test]
+    fn release_external_origin_may_use_remote_cloud_origin() {
+        let config = desktop_api_config_from_values(
+            Some("https://agentdash.example.com".to_string()),
+            None,
+            None,
+            None,
+            Some("external".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect("release desktop app may connect to the configured remote server");
+
+        assert_eq!(config.mode, DesktopApiMode::External);
+        assert_eq!(config.origin, "https://agentdash.example.com");
+    }
+
+    #[test]
+    fn debug_external_origin_may_use_dev_server_port() {
+        let config = desktop_api_config_from_values(
+            Some("http://127.0.0.1:3001".to_string()),
+            None,
+            None,
+            None,
+            Some("external".to_string()),
+            None,
+            DesktopApiBuildProfile::Debug,
+        )
+        .expect("desktop dev runtime may reuse the ordinary backend dev server");
+
+        assert_eq!(config.mode, DesktopApiMode::External);
+        assert_eq!(config.origin, "http://127.0.0.1:3001");
+    }
+
+    #[test]
+    fn release_sidecar_origin_must_match_desktop_api_origin() {
+        let config = desktop_api_config_from_values(
+            Some("http://127.0.0.1:17301".to_string()),
+            None,
+            Some("agentdash-api".to_string()),
+            None,
+            Some("sidecar".to_string()),
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect("release sidecar may use the fixed Desktop API origin");
+
+        assert_eq!(config.mode, DesktopApiMode::Sidecar);
+        assert_eq!(config.origin, "http://127.0.0.1:17301");
+        assert_eq!(config.sidecar.as_deref(), Some("agentdash-api"));
+    }
+
+    #[test]
+    fn sidecar_origin_never_binds_non_loopback_host() {
+        let error = desktop_api_config_from_values(
+            Some("http://0.0.0.0:17301".to_string()),
+            None,
+            Some("agentdash-api".to_string()),
+            None,
+            Some("sidecar".to_string()),
+            None,
+            DesktopApiBuildProfile::Debug,
+        )
+        .expect_err("sidecar must not bind a non-loopback host");
+
+        assert!(error.contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn desktop_app_settings_default_keeps_runtime_auto_connect_enabled() {
+        let settings = DesktopAppSettings::default();
+
+        assert!(!settings.launch_at_login);
+        assert!(!settings.start_minimized_to_tray);
+        assert!(settings.auto_connect_local_runtime);
+    }
+
+    #[test]
+    fn normalize_desktop_app_settings_preserves_explicit_choices() {
+        let settings = normalize_desktop_app_settings(DesktopAppSettings {
+            launch_at_login: true,
+            start_minimized_to_tray: true,
+            auto_connect_local_runtime: false,
+        });
+
+        assert!(settings.launch_at_login);
+        assert!(settings.start_minimized_to_tray);
+        assert!(!settings.auto_connect_local_runtime);
+    }
+
+    #[test]
+    fn windows_autostart_command_quotes_app_exe_path() {
+        let command =
+            build_windows_autostart_command(Path::new(r"C:\Program Files\AgentDash\AgentDash.exe"))
+                .expect("installed app exe path should form a Run key command");
+
+        assert_eq!(command, r#""C:\Program Files\AgentDash\AgentDash.exe""#);
+    }
+
+    #[test]
+    fn windows_autostart_command_rejects_setup_exe() {
+        let error = build_windows_autostart_command(Path::new(
+            r"C:\Users\me\Downloads\AgentDash_0.1.0_x64-setup.exe",
+        ))
+        .expect_err("login autostart must not point at the installer");
+
+        assert!(error.contains("安装器"));
+    }
 }

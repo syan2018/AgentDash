@@ -5,7 +5,7 @@
 //!
 //! 每个 StoryMcpServer 实例绑定到一个具体的 Story，工具操作范围受限于该 Story。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -553,7 +553,7 @@ impl StoryMcpServer {
                 })?;
 
         diag!(Info, Subsystem::Mcp,
-        
+
             story_id = %self.story_id,
             from = ?story.status,
             to = ?new_status,

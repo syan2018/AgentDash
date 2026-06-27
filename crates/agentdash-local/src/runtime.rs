@@ -1,6 +1,6 @@
 //! 本机 runtime 组装与生命周期管理。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,6 +20,8 @@ use tokio::sync::{Mutex, watch};
 use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::{McpClientManager, local_server_to_relay_mcp_server};
+use crate::runner_redaction::redact_secret;
+use crate::runner_status::RunnerStatusReporter;
 use crate::runtime_paths::local_runtime_data_dir;
 use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
@@ -77,6 +79,7 @@ pub struct LocalRuntimeStatus {
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
     pub message: Option<String>,
+    pub relay_connection: Option<ws_client::RelayConnectionStatus>,
 }
 
 pub type LocalRuntimeSnapshot = LocalRuntimeStatus;
@@ -161,19 +164,46 @@ impl LocalRuntimeManager {
         )
         .await;
 
-        let ws_config = build_ws_config(&config).await?;
-        let initial_status = status_from_config(&config, LocalRuntimeState::Starting, None);
+        let mut ws_config = build_ws_config(&config).await?;
+        let initial_relay_status = ws_client::RelayConnectionStatus::not_configured(Some(
+            redact_secret(&config.cloud_url),
+        ));
+        let (relay_status_tx, mut relay_status_rx) = watch::channel(initial_relay_status.clone());
+        ws_config.relay_status_tx = Some(relay_status_tx);
+        let initial_status = status_from_config(
+            &config,
+            LocalRuntimeState::Starting,
+            None,
+            Some(initial_relay_status),
+        );
         let (status_tx, status_rx) = watch::channel(initial_status);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
         let session_runtime = ws_config.session_runtime.clone();
 
+        tokio::spawn({
+            let status_tx = status_tx.clone();
+            async move {
+                loop {
+                    if relay_status_rx.changed().await.is_err() {
+                        break;
+                    }
+                    let relay_status = relay_status_rx.borrow().clone();
+                    let next = status_with_relay(&status_tx.borrow(), Some(relay_status));
+                    if status_tx.send(next).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
         let join = tokio::spawn({
             let status_tx = status_tx.clone();
             async move {
                 let running_status =
-                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None);
+                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None)
+                        .with_relay(status_tx.borrow().relay_connection.clone());
                 let _ = status_tx.send(running_status);
                 push_log(
                     &logs,
@@ -372,8 +402,25 @@ async fn count_active_sessions(
 
 /// standalone CLI 入口：保持原有无限重连行为。
 pub async fn run_standalone(config: LocalRuntimeConfig) -> anyhow::Result<()> {
-    let ws_config = build_ws_config(&config).await?;
-    tokio::spawn(async move { ws_client::run(ws_config).await })
+    run_standalone_with_status(config, None).await
+}
+
+pub async fn run_standalone_with_status(
+    config: LocalRuntimeConfig,
+    runner_status: Option<RunnerStatusReporter>,
+) -> anyhow::Result<()> {
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_standalone_with_status_and_shutdown(config, runner_status, shutdown_rx).await
+}
+
+pub async fn run_standalone_with_status_and_shutdown(
+    config: LocalRuntimeConfig,
+    runner_status: Option<RunnerStatusReporter>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let mut ws_config = build_ws_config(&config).await?;
+    ws_config.runner_status = runner_status;
+    tokio::spawn(async move { ws_client::run_until_shutdown(ws_config, shutdown_rx).await })
         .await
         .map_err(|error| anyhow::anyhow!("standalone runtime task join 失败: {error}"))?
 }
@@ -440,10 +487,10 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
     diag!(Info, Subsystem::Relay,
-        
+
         backend_id = %config.backend_id,
         name = %config.name,
-        cloud_url = %config.cloud_url,
+        cloud_url = %redact_secret(&config.cloud_url),
         workspace_roots = ?config.workspace_roots,
         executor_enabled = config.executor_enabled,
         "启动 AgentDash 本机 runtime"
@@ -487,12 +534,10 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         error = %error, "启动恢复 session 状态失败（非致命）");
         }
 
-        diag!(Info, Subsystem::Relay,
-        "Session runtime 已初始化");
+        diag!(Info, Subsystem::Relay, "Session runtime 已初始化");
         (Some(session_runtime), Some(connector), Some(db_runtime))
     } else {
-        diag!(Info, Subsystem::Relay,
-        "Session runtime 已禁用");
+        diag!(Info, Subsystem::Relay, "Session runtime 已禁用");
         (None, None, None)
     };
 
@@ -513,6 +558,8 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         extension_artifact_cache_root: local_runtime_data_dir()?
             .join("extension-artifact-cache")
             .join(local_runtime_backend_key(&config.backend_id)),
+        runner_status: None,
+        relay_status_tx: None,
     })
 }
 
@@ -557,37 +604,14 @@ fn api_base_url_from_cloud_url(cloud_url: &str) -> anyhow::Result<String> {
 }
 
 fn redact_log_message(message: &str) -> String {
-    let mut redacted = message.to_string();
-    for marker in ["token=", "access_token=", "refresh_token="] {
-        redacted = redact_marker_value(&redacted, marker);
-    }
-    redacted
-}
-
-fn redact_marker_value(message: &str, marker: &str) -> String {
-    let mut output = String::with_capacity(message.len());
-    let mut rest = message;
-
-    while let Some(start) = rest.find(marker) {
-        let marker_end = start + marker.len();
-        output.push_str(&rest[..marker_end]);
-        output.push_str("***");
-
-        let after_marker = &rest[marker_end..];
-        let value_end = after_marker
-            .find(|ch: char| ch == '&' || ch.is_whitespace())
-            .unwrap_or(after_marker.len());
-        rest = &after_marker[value_end..];
-    }
-
-    output.push_str(rest);
-    output
+    redact_secret(message)
 }
 
 fn status_from_config(
     config: &LocalRuntimeConfig,
     state: LocalRuntimeState,
     message: Option<String>,
+    relay_connection: Option<ws_client::RelayConnectionStatus>,
 ) -> LocalRuntimeStatus {
     LocalRuntimeStatus {
         state,
@@ -601,6 +625,7 @@ fn status_from_config(
         executor_enabled: config.executor_enabled,
         mcp_server_count: 0,
         message,
+        relay_connection,
     }
 }
 
@@ -629,6 +654,30 @@ mod tests {
 
         assert!(manager.logs_tail(10).await.is_empty());
     }
+
+    #[test]
+    fn runtime_status_state_transition_preserves_relay_snapshot() {
+        let config = LocalRuntimeConfig::new(
+            "ws://127.0.0.1:17301/ws/backend".to_string(),
+            "secret".to_string(),
+            "backend-local".to_string(),
+            "Desktop Runtime".to_string(),
+            Vec::new(),
+            true,
+        );
+        let relay = ws_client::RelayConnectionStatus::not_configured(Some(
+            "ws://127.0.0.1:17301/ws/backend".to_string(),
+        ));
+        let status = status_from_config(
+            &config,
+            LocalRuntimeState::Starting,
+            None,
+            Some(relay.clone()),
+        );
+        let running = status_with_state(&status, LocalRuntimeState::Running, None);
+
+        assert_eq!(running.relay_connection, Some(relay));
+    }
 }
 
 fn status_from_ws_config(
@@ -652,6 +701,7 @@ fn status_from_ws_config(
             .map(|manager| manager.capability_entries().len())
             .unwrap_or(0),
         message,
+        relay_connection: None,
     }
 }
 
@@ -664,5 +714,34 @@ fn status_with_state(
         state,
         message,
         ..previous.clone()
+    }
+}
+
+fn status_with_relay(
+    previous: &LocalRuntimeStatus,
+    relay_connection: Option<ws_client::RelayConnectionStatus>,
+) -> LocalRuntimeStatus {
+    LocalRuntimeStatus {
+        relay_connection,
+        ..previous.clone()
+    }
+}
+
+trait LocalRuntimeStatusExt {
+    fn with_relay(
+        self,
+        relay_connection: Option<ws_client::RelayConnectionStatus>,
+    ) -> LocalRuntimeStatus;
+}
+
+impl LocalRuntimeStatusExt for LocalRuntimeStatus {
+    fn with_relay(
+        self,
+        relay_connection: Option<ws_client::RelayConnectionStatus>,
+    ) -> LocalRuntimeStatus {
+        LocalRuntimeStatus {
+            relay_connection,
+            ..self
+        }
     }
 }

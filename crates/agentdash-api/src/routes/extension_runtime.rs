@@ -1,6 +1,6 @@
 //! Project Extension Runtime HTTP 路由。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use axum::Json;

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "定义 Local Runner、registration token claim、Desktop API 与纯出站 WebSocket 边界。"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "约束 runner setup、doctor、service 输出中的结构化日志和敏感字段脱敏。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "约束本机 runner 诊断入口、状态输出和过程诊断写法。"}
+{"file": ".trellis/tasks/archive/2026-06/06-26-local-runner-daemon/research/planning-review-local-runner-daemon.md", "reason": "复用 daemon/service/config/status 设计评审中已识别的实现风险和状态机。"}
+{"file": ".trellis/tasks/archive/2026-06/06-26-runner-enrollment-token/research/planning-review-runner-enrollment-token.md", "reason": "确认 registration token、runner claim、relay auth token 的授权边界。"}
+{"file": ".trellis/tasks/06-26-local-runtime-distribution/design.md", "reason": "保持一键部署 helper 与父任务两种交付形态的总体边界一致。"}
+{"file": ".trellis/tasks/06-26-distribution-release-validation/implement.md", "reason": "将 setup/doctor 的真实验收接入最终发布验证清单。"}

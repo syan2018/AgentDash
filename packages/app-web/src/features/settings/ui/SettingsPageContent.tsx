@@ -3,16 +3,29 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useCoordinatorStore } from "../../../stores/coordinatorStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
+import { useEventStore, type EventConnectionState } from "../../../stores/eventStore";
 import type { SettingUpdate, SettingsScopeRequest } from "../../../api/settings";
 import { getStoredToken } from "../../../api/client";
 import { API_ORIGIN } from "../../../api/origin";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
-import { getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../../../desktop/localRuntimeBridge";
+import { getDesktopAppBridge, getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../../../desktop/localRuntimeBridge";
+import {
+  ensureDesktopDefaultsLoaded,
+  resolveDefaultLocalRuntimeServerUrl,
+  subscribeDesktopDefaults,
+} from "../../../desktop/defaults";
 import { DebugPrefsSection } from "./DebugPrefsSection";
 import { UserByokSection } from "./UserByokSection";
 import { SectionCard } from "./primitives";
 import { LlmProvidersSection } from "./LlmProvidersSection";
 import { BackendSection, ExecutorSection, PiAgentPreferencesSection } from "./SettingsSystemSections";
+import {
+  backendDiagnosticsFacts,
+  createCloudApiDiagnosticsInput,
+  runtimeSummaryDiagnosticsFacts,
+} from "../model/runtimeDiagnostics";
+import type { DesktopApiSnapshot } from "@agentdash/core/local-runtime";
+import type { BackendConfig, BackendRuntimeSummary } from "../../../types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,17 +62,77 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
   );
 }
 
-function DesktopLocalRuntimePanel() {
+function DesktopLocalRuntimePanel({
+  backends,
+  runtimeSummaries,
+  cloudApiError,
+  cloudApiChecking,
+  eventConnectionState,
+}: {
+  backends: BackendConfig[];
+  runtimeSummaries: BackendRuntimeSummary[];
+  cloudApiError: string | null;
+  cloudApiChecking: boolean;
+  eventConnectionState: EventConnectionState;
+}) {
   const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
   const browseDirectory = useMemo(() => getDesktopBrowseDirectory(), []);
+  const desktopApp = useMemo(() => getDesktopAppBridge(), []);
+  const [desktopApiSnapshot, setDesktopApiSnapshot] = useState<DesktopApiSnapshot | null>(null);
+  const [defaultServerUrl, setDefaultServerUrl] = useState(() => resolveDefaultLocalRuntimeServerUrl());
+
+  useEffect(() => {
+    if (!desktopApp) return;
+    let alive = true;
+    const refreshDesktopApi = async () => {
+      const snapshot = await desktopApp.getDesktopApiSnapshot().catch(() => null);
+      if (alive) setDesktopApiSnapshot(snapshot);
+    };
+    void refreshDesktopApi();
+    const timer = window.setInterval(refreshDesktopApi, 1500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [desktopApp]);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => setDefaultServerUrl(resolveDefaultLocalRuntimeServerUrl());
+    const unsubscribe = subscribeDesktopDefaults(refresh);
+    ensureDesktopDefaultsLoaded()
+      .then(() => {
+        if (alive) refresh();
+      })
+      .catch(() => {
+        if (alive) refresh();
+      });
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, []);
+
   if (!client) return null;
 
   return (
     <LocalRuntimeView
       client={client}
       onBrowseDirectory={browseDirectory}
+      desktopApp={desktopApp ?? undefined}
+      diagnosticsContext={{
+        cloud_api: createCloudApiDiagnosticsInput({
+          apiError: cloudApiError,
+          isChecking: cloudApiChecking,
+          target: API_ORIGIN || "http://127.0.0.1:17301",
+          eventConnectionState,
+        }),
+        desktop_api_snapshot: desktopApiSnapshot,
+        backends: backendDiagnosticsFacts(backends),
+        runtime_summaries: runtimeSummaryDiagnosticsFacts(runtimeSummaries),
+      }}
       defaultAccessToken={getStoredToken() ?? ""}
-      defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
+      defaultServerUrl={defaultServerUrl}
     />
   );
 }
@@ -108,11 +181,14 @@ export function SettingsPage() {
   const {
     backends,
     backendRuntimeSummaries,
+    isLoading: coordinatorLoading,
+    error: coordinatorError,
     fetchBackends,
     fetchBackendRuntimeSummaries,
     removeBackend,
   } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
+  const eventConnectionState = useEventStore((state) => state.connectionState);
   const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
@@ -228,7 +304,15 @@ export function SettingsPage() {
           </div>
         )}
 
-        {activePanel === "local-runtime" && <DesktopLocalRuntimePanel />}
+        {activePanel === "local-runtime" && (
+          <DesktopLocalRuntimePanel
+            backends={backends}
+            runtimeSummaries={backendRuntimeSummaries}
+            cloudApiError={coordinatorError ?? error}
+            cloudApiChecking={coordinatorLoading || loading}
+            eventConnectionState={eventConnectionState}
+          />
+        )}
 
         {activePanel === "system" && !canManageSystemScope && (
           <div className="rounded-[8px] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">

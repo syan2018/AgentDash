@@ -1,5 +1,5 @@
-use agentdash_diagnostics::{diag, Subsystem};
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::{
@@ -87,7 +87,7 @@ impl TurnPreparer {
         let is_owner_bootstrap =
             launch_plan.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         diag!(Debug, Subsystem::SessionLaunch,
-        
+
             session_id = %launch_plan.summary.session_id,
             turn_id = %launch_plan.summary.turn_id,
             launch_path = ?launch_plan.summary.launch_path,
@@ -159,7 +159,7 @@ impl TurnPreparer {
             .unwrap_or_else(|| {
                 let session_uuid = uuid::Uuid::parse_str(&session_id).unwrap_or_else(|_| {
                     diag!(Debug, Subsystem::SessionLaunch,
-        
+
                         session_id = %session_id,
                         "session_id 不是 UUID，使用临时审计 session_id"
                     );
@@ -351,7 +351,7 @@ async fn load_user_preferences(
         Ok(None) => return Vec::new(),
         Err(error) => {
             diag!(Warn, Subsystem::SessionLaunch,
-        
+
                 user_id = %identity.user_id,
                 error = %error,
                 "读取 Pi Agent 用户偏好失败"

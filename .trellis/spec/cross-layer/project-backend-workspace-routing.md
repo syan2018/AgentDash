@@ -46,6 +46,8 @@ registerBackendWorkspaceInventory(
 - `workspace_roots` 为空不表示本机不能浏览或不能 detect；空集合表示本机没有显式预登记 roots，执行类能力以 session `mount_root_ref` 自身作为当前 workspace 边界。
 - Frontend 展示 backend 是否可分配时读取 `/backends/runtime-summary` 的 `active_session_count`、executor `active_session_count` 与 `allocatable`，原因是该投影已经合并 runtime health、registry executor snapshot 与 active backend execution leases。
 - WorkspacePanel extension webview 的 action target 可由 Project workspace binding 提供；前端按 session/story/project default workspace 解析当前 workspace，再读取其默认 binding 与在线状态，原因是插件 tab 属于 Project runtime projection，而可执行本机 host 由 Project workspace/backend 授权关系承载。
+- `ProjectBackendAccess` 是 project→backend 的权威授权层：runner backend 为机器级 `user`-scope 身份（不再 project-baked），一台 runner 通过多行 active grant 复用到多个 project；鉴权对 user-scope backend 在 owner 之外额外按 active grant 放行给对应 project 成员（详见 cross-layer/desktop-local-runtime.md 的 Runner Registration Token Enrollment）。
+- 工作空间设置区按用户心智分三组：**运行环境**（可用机器，显式区分「本机/这台设备」desktop runtime 与「服务器 runner」，依据 `registration_source`；含「接入新服务器」即 runner token 管理子块）/ **工作空间**（保留命名，弱化「代码来源」主语，内联展示各机器落点）/ **高级**（本机目录定位、Workspace Modules 诊断）。grant 状态、priority、inventory 等后台词降到展开/次级，不作为主线术语。完整的多 project grant 管理（priority/policy/跨 owner/审计反向视图）属于独立任务 `06-27-runner-multi-project-access`。
 
 ## Validation And Errors
 

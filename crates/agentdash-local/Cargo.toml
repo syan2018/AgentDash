@@ -16,6 +16,7 @@ standalone = []
 
 [dependencies]
 agentdash-relay.workspace = true
+agentdash-contracts.workspace = true
 agentdash-spi.workspace = true
 agentdash-agent-protocol = { workspace = true }
 agentdash-executor = { workspace = true }
@@ -45,10 +46,12 @@ thiserror.workspace = true
 agentdash-diagnostics = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 ignore = "0.4"
 regex.workspace = true
+toml = "0.8"
 base64 = "0.22"
 flate2.workspace = true
 sha2 = "0.10"
@@ -56,6 +59,9 @@ tar.workspace = true
 postgresql_embedded = { workspace = true }
 gix = { version = "0.83.0", default-features = false, features = ["revision", "sha1"] }
 portable-pty = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
 
 [dev-dependencies]
 tempfile = "3.18"

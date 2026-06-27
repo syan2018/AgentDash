@@ -4,7 +4,7 @@
 //! adapter owns accepted AgentFrame revision persistence, LifecycleAgent current
 //! delivery binding, and owner-bootstrap status transitions.
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application_ports::frame_launch_envelope::{
@@ -69,7 +69,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         agent.mark_bootstrapped();
         if let Err(error) = agent_repo.update(&agent).await {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %runtime_session_id,
                 agent_id = %agent.id,
                 "标记 agent bootstrapped 失败: {error}"
@@ -134,7 +134,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         match frame_repo.create(&pending_frame).await {
             Ok(()) => {
                 diag!(Debug, Subsystem::AgentRun,
-        
+
                     session_id = %runtime_session_id,
                     agent_id = %pending_frame.agent_id,
                     revision = pending_frame.revision,
@@ -215,7 +215,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         match builder.build(frame_repo).await {
             Ok(frame) => {
                 diag!(Debug, Subsystem::AgentRun,
-        
+
                     session_id = %runtime_session_id,
                     agent_id = %frame.agent_id,
                     revision = frame.revision,
@@ -262,7 +262,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             }
             Ok(None) => {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     session_id = %runtime_session_id,
                     "accepted pending AgentFrame 已写入但缺少 current delivery anchor"
                 );
@@ -302,7 +302,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         if let Err(error) = agent_repo.update(&agent).await {
             let diagnostic = format!("同步 accepted current delivery 失败: {error}");
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %anchor.runtime_session_id,
                 agent_id = %agent.id,
                 "{diagnostic}"
@@ -332,7 +332,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             Ok(()) => true,
             Err(error) => {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     session_id = %runtime_session_id,
                     %frame_id,
                     "同步 accepted AgentFrame Hook runtime target 失败: {error}"

@@ -1,6 +1,6 @@
 //! 本机 MCP Client 管理器 — 管理 stdio 进程和 localhost HTTP 连接
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 
 use agentdash_application::mcp_relay_adapter::{

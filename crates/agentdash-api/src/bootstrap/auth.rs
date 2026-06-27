@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use anyhow::Result;
 
 use agentdash_integration_api::AuthMode;

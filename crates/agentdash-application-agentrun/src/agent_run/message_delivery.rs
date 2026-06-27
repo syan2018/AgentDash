@@ -55,5 +55,6 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
             LaunchCommand::lifecycle_agent_user_message_input(user_input, delivery.identity);
         self.session_launch
             .launch_command_in_task(delivery.delivery_runtime_session_id.clone(), command)
-            .await}
+            .await
+    }
 }

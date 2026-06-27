@@ -137,10 +137,12 @@ pub struct BackendResponse {
     pub capability_slot: String,
     pub device: Value,
     pub last_claimed_at: Option<DateTime<Utc>>,
+    pub registration_source: Option<String>,
 }
 
 impl From<agentdash_domain::backend::BackendConfig> for BackendResponse {
     fn from(value: agentdash_domain::backend::BackendConfig) -> Self {
+        let registration_source = backend_registration_source(&value.device);
         Self {
             id: value.id,
             name: value.name,
@@ -158,7 +160,19 @@ impl From<agentdash_domain::backend::BackendConfig> for BackendResponse {
             capability_slot: value.capability_slot,
             device: value.device,
             last_claimed_at: value.last_claimed_at,
+            registration_source,
         }
+    }
+}
+
+fn backend_registration_source(device: &Value) -> Option<String> {
+    let source = device
+        .get("registration_source")
+        .and_then(Value::as_str)
+        .map(str::trim)?;
+    match source {
+        "desktop_access_token" | "runner_registration_token" => Some(source.to_string()),
+        _ => None,
     }
 }
 
@@ -370,4 +384,241 @@ impl From<agentdash_domain::backend::BackendWorkspaceInventory>
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct RegisterBackendWorkspaceInventoryRequest {
     pub root_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerRegistrationTokenStatus {
+    Active,
+    Expired,
+    Revoked,
+}
+
+impl From<agentdash_domain::backend::RunnerRegistrationTokenStatus>
+    for RunnerRegistrationTokenStatus
+{
+    fn from(value: agentdash_domain::backend::RunnerRegistrationTokenStatus) -> Self {
+        match value {
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Active => Self::Active,
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Expired => Self::Expired,
+            agentdash_domain::backend::RunnerRegistrationTokenStatus::Revoked => Self::Revoked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct RunnerRegistrationTokenCreateRequest {
+    pub name: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub default_capability_slot: Option<String>,
+    #[serde(default)]
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub machine_policy: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenMetadataResponse {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub token_prefix: String,
+    pub status: RunnerRegistrationTokenStatus,
+    pub created_by_user_id: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_claimed_backend_id: Option<String>,
+    pub default_capability_slot: String,
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub machine_policy: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<agentdash_domain::backend::RunnerRegistrationToken>
+    for RunnerRegistrationTokenMetadataResponse
+{
+    fn from(value: agentdash_domain::backend::RunnerRegistrationToken) -> Self {
+        let status = RunnerRegistrationTokenStatus::from(value.status_at(Utc::now()));
+        Self {
+            id: value.id,
+            project_id: value.project_id.to_string(),
+            name: value.name,
+            token_prefix: value.token_prefix,
+            status,
+            created_by_user_id: value.created_by_user_id,
+            expires_at: value.expires_at,
+            revoked_at: value.revoked_at,
+            last_used_at: value.last_used_at,
+            last_claimed_backend_id: value.last_claimed_backend_id,
+            default_capability_slot: value.default_capability_slot,
+            machine_policy: value.machine_policy,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenCreateResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+    pub registration_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenRotateResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+    pub registration_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationTokenRevokeResponse {
+    pub token: RunnerRegistrationTokenMetadataResponse,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct RunnerRegistrationClaimRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub registration_token: Option<String>,
+    pub machine_id: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub machine_label: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub runner_name: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub client_version: Option<String>,
+    #[serde(default)]
+    #[ts(type = "{ [key in string]?: JsonValue }")]
+    pub device: Value,
+    #[serde(default)]
+    pub executor_enabled: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub capability_slot: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RunnerRegistrationClaimResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub relay_ws_url: String,
+    pub auth_token: String,
+    pub machine_id: String,
+    pub machine_label: String,
+    pub share_scope_kind: BackendShareScopeKind,
+    pub share_scope_id: Option<String>,
+    pub capability_slot: String,
+    pub registration_source: String,
+    pub claimed_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::backend::RunnerRegistrationToken;
+    use agentdash_domain::backend::{
+        BackendConfig, BackendShareScopeKind as DomainBackendShareScopeKind,
+        BackendType as DomainBackendType, BackendVisibility as DomainBackendVisibility,
+    };
+    use agentdash_domain::project::Project;
+
+    #[test]
+    fn backend_response_projects_explicit_registration_source() {
+        let response = BackendResponse::from(BackendConfig {
+            id: "backend-1".to_string(),
+            name: "backend".to_string(),
+            endpoint: "ws://example.test/ws/backend".to_string(),
+            auth_token: None,
+            enabled: true,
+            backend_type: DomainBackendType::Local,
+            owner_user_id: None,
+            profile_id: Some("default".to_string()),
+            device_id: None,
+            machine_id: Some("machine-1".to_string()),
+            machine_label: Some("Workstation".to_string()),
+            visibility: DomainBackendVisibility::Private,
+            share_scope_kind: DomainBackendShareScopeKind::User,
+            share_scope_id: None,
+            capability_slot: "default".to_string(),
+            device: serde_json::json!({ "registration_source": "runner_registration_token" }),
+            last_claimed_at: None,
+        });
+
+        assert_eq!(
+            response.registration_source.as_deref(),
+            Some("runner_registration_token")
+        );
+    }
+
+    #[test]
+    fn runner_registration_metadata_response_does_not_expose_secrets() {
+        let issued = RunnerRegistrationToken::new_project_scoped(
+            Project::new("Runner Project".to_string(), String::new()).id,
+            "CI runner".to_string(),
+            "user-owner".to_string(),
+            Utc::now() + chrono::Duration::hours(1),
+            "default".to_string(),
+            serde_json::json!({}),
+        );
+
+        let value =
+            serde_json::to_value(RunnerRegistrationTokenMetadataResponse::from(issued.token))
+                .expect("metadata response should serialize");
+
+        let object = value.as_object().expect("metadata response object");
+        assert!(object.contains_key("token_prefix"));
+        assert!(!object.contains_key("registration_token"));
+        assert!(!object.contains_key("token_secret_hash"));
+        assert!(!object.contains_key("secret"));
+        assert!(!object.contains_key("auth_token"));
+        assert!(
+            !value
+                .to_string()
+                .contains(issued.registration_token.as_str())
+        );
+    }
+
+    #[test]
+    fn runner_registration_management_responses_only_return_plaintext_on_create_or_rotate() {
+        let issued = RunnerRegistrationToken::new_project_scoped(
+            Project::new("Runner Project".to_string(), String::new()).id,
+            "CI runner".to_string(),
+            "user-owner".to_string(),
+            Utc::now() + chrono::Duration::hours(1),
+            "default".to_string(),
+            serde_json::json!({}),
+        );
+        let metadata = RunnerRegistrationTokenMetadataResponse::from(issued.token.clone());
+
+        let create = serde_json::to_value(RunnerRegistrationTokenCreateResponse {
+            token: metadata.clone(),
+            registration_token: issued.registration_token.clone(),
+        })
+        .expect("create response should serialize");
+        assert_eq!(create["registration_token"], issued.registration_token);
+        assert!(create["token"].get("token_secret_hash").is_none());
+        assert!(create["token"].get("auth_token").is_none());
+
+        let rotate = serde_json::to_value(RunnerRegistrationTokenRotateResponse {
+            token: metadata.clone(),
+            registration_token: issued.registration_token.clone(),
+        })
+        .expect("rotate response should serialize");
+        assert_eq!(rotate["registration_token"], issued.registration_token);
+
+        let revoke =
+            serde_json::to_value(RunnerRegistrationTokenRevokeResponse { token: metadata })
+                .expect("revoke response should serialize");
+        assert!(revoke.get("registration_token").is_none());
+        assert!(revoke["token"].get("token_secret_hash").is_none());
+        assert!(revoke["token"].get("auth_token").is_none());
+    }
 }

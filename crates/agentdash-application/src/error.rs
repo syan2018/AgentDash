@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 

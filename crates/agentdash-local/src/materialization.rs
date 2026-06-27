@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
@@ -138,7 +138,7 @@ impl MaterializationStore {
 
         let total_size_bytes = prepared.iter().map(|entry| entry.size_bytes).sum();
         diag!(Info, Subsystem::Vfs,
-        
+
             source_uri = %payload.source_uri,
             root_uri = %payload.root_uri,
             local_root = %local_root.display(),

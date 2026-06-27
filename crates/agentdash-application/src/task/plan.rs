@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
@@ -239,7 +239,7 @@ pub fn ensure_task_plan_policy_allowed(
     hook: TaskPlanPolicyHook<'_>,
 ) -> Result<(), ApplicationError> {
     diag!(Debug, Subsystem::AgentRun,
-        
+
         run_id = %hook.run.id,
         project_id = %hook.run.project_id,
         task_id = ?hook.task_id,

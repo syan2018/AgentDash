@@ -1,9 +1,9 @@
-﻿use agentdash_spi::ConnectorError;
+use agentdash_spi::ConnectorError;
 
-use agentdash_diagnostics::{diag, Subsystem};
 use super::commit::CommittedTurn;
 use super::deps::StreamIngestionDeps;
 use crate::session::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
+use agentdash_diagnostics::{Subsystem, diag};
 
 pub(in crate::session) struct AttachedTurn {
     pub turn_id: String,
@@ -90,8 +90,13 @@ fn spawn_stream_adapter(
                         ));
                 }
                 Err(e) => {
-                    diag!(Error, Subsystem::SessionLaunch,
-        "执行流错误 session_id={}: {}", session_id, e);
+                    diag!(
+                        Error,
+                        Subsystem::SessionLaunch,
+                        "执行流错误 session_id={}: {}",
+                        session_id,
+                        e
+                    );
                     let (kind, message) =
                         resolve_stream_terminal(&turn_supervisor, &session_id, &turn_id, Some(e))
                             .await;

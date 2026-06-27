@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{ConnectorError, ExecutionStream};
 
 use super::deps::ConnectorStartDeps;
@@ -34,7 +34,7 @@ impl ConnectorStarter {
         };
 
         diag!(Debug, Subsystem::SessionLaunch,
-        
+
             session_id = %prepared.session_id,
             turn_id = %prepared.turn_id,
             "connector starter calling connector.prompt"
@@ -52,7 +52,7 @@ impl ConnectorStarter {
         {
             Ok(stream) => {
                 diag!(Debug, Subsystem::SessionLaunch,
-        
+
                     session_id = %prepared.session_id,
                     turn_id = %prepared.turn_id,
                     "connector starter accepted connector stream"

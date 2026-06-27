@@ -17,6 +17,7 @@ mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
+mod runner_registration_token_repository;
 mod runtime_health_repository;
 mod session_repository;
 mod settings_repository;
@@ -167,6 +168,7 @@ pub use project_extension_installation_repository::PostgresProjectExtensionInsta
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
+pub use runner_registration_token_repository::PostgresRunnerRegistrationTokenRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;

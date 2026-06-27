@@ -25,6 +25,7 @@ pub mod project_extensions;
 pub mod project_vfs_mounts;
 pub mod projects;
 pub mod routines;
+pub mod runner_registration_tokens;
 pub mod sessions;
 pub mod settings;
 pub mod shared_library;
@@ -78,6 +79,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
+        .merge(runner_registration_tokens::router())
         .merge(canvases::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())
@@ -116,6 +118,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(health::router())
         .merge(auth_routes::public_router())
         .merge(routines::public_router())
+        .merge(runner_registration_tokens::public_router())
         .merge(extension_package_artifacts::public_router())
         .merge(secured_api)
         .with_state(state.clone());

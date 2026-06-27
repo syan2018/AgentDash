@@ -134,14 +134,15 @@ async function maybeStartLocalRuntime() {
 
   const backend = await ensureDevLocalRuntimeClaim(config.serverPort, config);
   const localArgs = [
-    '--cloud-url', backend.relay_ws_url,
-    '--token', backend.auth_token,
-    '--name', backend.name || config.backendName,
+    'run',
+    '--relay-ws-url', backend.relay_ws_url,
+    '--auth-token', backend.auth_token,
+    '--runner-name', backend.name || config.backendName,
     '--backend-id', backend.backend_id,
   ];
   const workspaceRoots = splitWorkspaceRoots(config.workspaceRoots);
   if (workspaceRoots.length > 0) {
-    localArgs.push('--workspace-roots', workspaceRoots.join(','));
+    localArgs.push('--workspace-root', workspaceRoots.join(','));
   }
   if (config.noExecutor) {
     localArgs.push('--no-executor');

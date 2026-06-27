@@ -12,6 +12,11 @@ mod materialization;
 mod mcp_client_manager;
 mod mcp_connect;
 mod process_executor;
+pub mod runner_claim;
+pub mod runner_config;
+mod runner_redaction;
+pub mod runner_service;
+pub mod runner_status;
 mod search_executor;
 mod shell_session_manager;
 mod tool_executor;
@@ -34,10 +39,13 @@ pub use runtime::{
     LocalLogEvent, LocalRuntimeConfig, LocalRuntimeHandle, LocalRuntimeManager,
     LocalRuntimeSnapshot, LocalRuntimeState, LocalRuntimeStatus, McpProbeResult, StopReason,
     canonicalize_workspace_roots, load_mcp_servers_for_root, probe_mcp_server, run_standalone,
-    save_mcp_servers_for_root,
+    run_standalone_with_status, run_standalone_with_status_and_shutdown, save_mcp_servers_for_root,
 };
 
 pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};
+pub use runner_config::{ResolvedRunnerConfig, RunnerCliOverrides, RunnerCredentials};
+pub use runner_redaction::{redact_optional, redact_secret};
+pub use runner_status::RunnerStatusSnapshot;
 pub use runtime_paths::{
     local_mcp_servers_path, local_runtime_config_dir, local_runtime_data_dir,
     local_runtime_profile_path, machine_identity_path,

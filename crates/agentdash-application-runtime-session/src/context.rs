@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{HashMap, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
@@ -99,8 +99,11 @@ impl ContextAuditBus for InMemoryContextAuditBus {
         let mut guard = match self.store.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                diag!(Warn, Subsystem::AgentRun,
-        "context audit bus lock poisoned; 恢复并继续");
+                diag!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    "context audit bus lock poisoned; 恢复并继续"
+                );
                 poisoned.into_inner()
             }
         };

@@ -27,8 +27,11 @@ use agentdash_contracts::backend::{
     BackendWorkspaceInventoryResponse, BackendWorkspaceInventorySource,
     BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, ProjectBackendAccessMode,
     ProjectBackendAccessResponse, ProjectBackendAccessStatus,
-    RegisterBackendWorkspaceInventoryRequest, RuntimeHealthStatus,
-    UpdateProjectBackendAccessRequest,
+    RegisterBackendWorkspaceInventoryRequest, RunnerRegistrationClaimRequest,
+    RunnerRegistrationClaimResponse, RunnerRegistrationTokenCreateRequest,
+    RunnerRegistrationTokenCreateResponse, RunnerRegistrationTokenMetadataResponse,
+    RunnerRegistrationTokenRevokeResponse, RunnerRegistrationTokenRotateResponse,
+    RunnerRegistrationTokenStatus, RuntimeHealthStatus, UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
@@ -402,6 +405,14 @@ fn main() {
             export_all::<BackendWorkspaceInventorySource>(dir);
             export_all::<BackendWorkspaceInventoryResponse>(dir);
             export_all::<RegisterBackendWorkspaceInventoryRequest>(dir);
+            export_all::<RunnerRegistrationTokenStatus>(dir);
+            export_all::<RunnerRegistrationTokenCreateRequest>(dir);
+            export_all::<RunnerRegistrationTokenMetadataResponse>(dir);
+            export_all::<RunnerRegistrationTokenCreateResponse>(dir);
+            export_all::<RunnerRegistrationTokenRotateResponse>(dir);
+            export_all::<RunnerRegistrationTokenRevokeResponse>(dir);
+            export_all::<RunnerRegistrationClaimRequest>(dir);
+            export_all::<RunnerRegistrationClaimResponse>(dir);
         },
     );
 

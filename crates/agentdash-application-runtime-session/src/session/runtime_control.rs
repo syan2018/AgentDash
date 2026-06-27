@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::SourceInfo;
@@ -42,7 +42,7 @@ impl SessionRuntimeService {
                 Ok(()) => {}
                 Err(err) => {
                     diag!(Warn, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         error = %err,
                         "connector.cancel 失败，继续通过 turn processor 兜底终止"
@@ -57,14 +57,14 @@ impl SessionRuntimeService {
                     .is_err()
                 {
                     diag!(Warn, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         "向 turn processor 发送 Terminal 失败（通道可能已关闭）"
                     );
                 }
             } else {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     session_id = %session_id,
                     "running=true 但 processor_tx 缺失，无法向 turn processor 发送终止信号"
                 );
@@ -125,7 +125,7 @@ impl SessionRuntimeService {
                 continue;
             }
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 session_id = %meta.id,
                 "启动恢复：session 上次未正常结束，标记为 interrupted"
             );

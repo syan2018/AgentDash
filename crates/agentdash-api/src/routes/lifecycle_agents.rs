@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -409,7 +409,7 @@ pub async fn submit_agent_run_composer_input(
     Json(req): Json<AgentRunComposerSubmitRequest>,
 ) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     diag!(Debug, Subsystem::Api,
-        
+
         run_id = %run_id,
         agent_id = %agent_id,
         input_blocks = req.input.len(),
@@ -439,7 +439,7 @@ pub async fn submit_agent_run_composer_input(
         ))
     })?;
     diag!(Debug, Subsystem::Api,
-        
+
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -454,7 +454,7 @@ pub async fn submit_agent_run_composer_input(
         .await
         .map_err(command_policy_error)?;
     diag!(Debug, Subsystem::Api,
-        
+
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -482,7 +482,7 @@ pub async fn submit_agent_run_composer_input(
         .await
         .map_err(ApiError::from)?;
     diag!(Debug, Subsystem::Api,
-        
+
         run_id = %context.run.id,
         agent_id = %context.agent.id,
         runtime_session_id = %runtime_session_id,
@@ -775,7 +775,7 @@ async fn cancel_agent_run(
             .await
         {
             diag!(Warn, Subsystem::Api,
-        
+
                 receipt_id = %receipt.id,
                 error = %mark_error,
                 "写入 AgentRun cancel terminal_failed receipt 失败"
@@ -1587,7 +1587,7 @@ fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32
     while let Some((node, depth)) = stack.pop() {
         if depth >= MAX_DEPTH {
             diag!(Warn, Subsystem::Api,
-        
+
                 root = %root,
                 node = %node,
                 depth,

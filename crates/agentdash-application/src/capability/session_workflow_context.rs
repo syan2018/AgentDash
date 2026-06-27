@@ -14,7 +14,7 @@
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
 //! `None`，只记录 `tracing::warn!`，不中断 session 创建。
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -88,7 +88,7 @@ async fn resolve_for_project_agent(
         Ok(None) => return None,
         Err(error) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 project_agent_id = %project_agent_id,
                 error = %error,
@@ -117,7 +117,7 @@ async fn resolve_for_story(
         Ok(agents) => agents,
         Err(error) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 error = %error,
                 "resolve_session_workflow_context: Story - 读取 ProjectAgent 列表失败"
@@ -152,7 +152,7 @@ async fn resolve_from_lifecycle_key(
         Ok(Some(def)) => def,
         Ok(None) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 "resolve_session_workflow_context: ProjectAgent 绑定的 lifecycle 不存在"
@@ -161,7 +161,7 @@ async fn resolve_from_lifecycle_key(
         }
         Err(error) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 error = %error,
@@ -173,7 +173,7 @@ async fn resolve_from_lifecycle_key(
 
     let Some(entry_activity) = find_entry_activity(&lifecycle) else {
         diag!(Warn, Subsystem::AgentRun,
-        
+
             project_id = %project_id,
             lifecycle_key = %lifecycle_key,
             entry_activity_key = %lifecycle.entry_activity_key,
@@ -196,7 +196,7 @@ async fn resolve_from_lifecycle_key(
         Ok(Some(workflow)) => workflow,
         Ok(None) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 procedure_key = %procedure_key,
@@ -206,7 +206,7 @@ async fn resolve_from_lifecycle_key(
         }
         Err(error) => {
             diag!(Warn, Subsystem::AgentRun,
-        
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 procedure_key = %procedure_key,

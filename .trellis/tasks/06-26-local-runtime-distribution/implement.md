@@ -21,11 +21,30 @@
 
 ## Parent Coordination Checklist
 
-- 更新父任务状态板：每个子任务标记 `planning ready`、`in progress`、`blocked`、`ready for review`、`done`。
-- 每个子任务启动前检查上游依赖是否满足。
-- 每个子任务完成后把 handoff contract 回填到父任务，供下游任务消费。
-- 对并行任务维护文件写入边界，避免多个实现 agent 同时改同一批核心文件。
-- 若子任务发现需要 runner 入站 HTTP API、跨平台桌面第一阶段、或混合版本发布，必须回到父任务 design 重新评审。
+- [x] 更新父任务状态板：每个子任务标记 `planning ready`、`in progress`、`blocked`、`ready for review`、`done`。
+- [x] 每个子任务启动前检查上游依赖是否满足。
+- [x] 每个子任务完成后把 handoff contract 回填到父任务，供下游任务消费。
+- [x] 对并行任务维护文件写入边界，避免多个实现 agent 同时改同一批核心文件。
+- [ ] 若子任务发现需要 runner 入站 HTTP API、跨平台桌面第一阶段、或混合版本发布，必须回到父任务 design 重新评审。
+
+## Current Progress Snapshot
+
+截至 2026-06-26：
+
+| 子任务 | 状态 | 当前结论 | 后续处理 |
+| --- | --- | --- | --- |
+| `runner-enrollment-token` | done / archived | registration token、runner claim、ProjectBackendAccess、relay auth 边界已实现并归档 | 无 |
+| `local-runner-daemon` | in progress | CLI/config/claim/status/log redaction、Linux systemd、Windows SCM service command 已实现 | 等 Linux/Windows 实机 service lifecycle、云端 online、断网重连验收后归档 |
+| `windows-desktop-installer-background` | in progress | Desktop API `127.0.0.1:17301`、托盘、后台运行、显式退出、自启动、启动到托盘、自动连接 runtime 已实现 | 等 Windows NSIS 安装/卸载、登录自启动、托盘交互实机验收后归档 |
+| `runtime-diagnostics-settings` | in progress | 进入实现阶段，消费 runner/desktop 状态与设置 handoff | 完成本地可验证 UI/类型/日志脱敏后可归档 |
+| `distribution-release-validation` | planning / handoff target | 已补最终手工验收 checklist | 等三类产物和 diagnostics 全部通过实机验收后归档 |
+| 父任务 `local-runtime-distribution` | planning | 负责最终集成收口 | 等所有子任务归档后归档 |
+
+当前可并行空间：
+
+- `runtime-diagnostics-settings` 可继续做本地实现和类型/测试验证。
+- `distribution-release-validation` 可由接手者按 checklist 执行 Windows/Linux/云端实测。
+- `local-runner-daemon` 与 `windows-desktop-installer-background` 的代码线不再需要大规模并行实现，主要等待真实环境验收 evidence。
 
 ## Subtask Execution Plans
 
@@ -85,7 +104,7 @@ python ./.trellis/scripts/task.py start 06-26-runner-enrollment-token
 - 拦截关闭窗口，默认隐藏到托盘。
 - 实现显式退出路径。
 - 实现开机启动、启动到托盘、启动后自动连接 runtime 设置。
-- 验证 Desktop API 默认绑定 `127.0.0.1`。
+- 验证 Desktop API 默认绑定 `127.0.0.1:17301`，并确认普通 cloud/backend dev server 默认 `3001` 未被改动。
 - 验证 NSIS 安装/卸载创建和清理系统项。
 
 完成条件：
@@ -150,6 +169,6 @@ python ./.trellis/scripts/task.py start 06-26-runner-enrollment-token
 
 - Runner registration token 的权限范围必须与 backend/project 可见性一致，否则会造成服务器 runner 过度授权。
 - Windows Service 与桌面自启动是不同生命周期，不能复用同一个“开机启动”语义。
-- Desktop API 默认绑定 `127.0.0.1`；独立 runner 不应因为诊断需求引入业务 HTTP API。
+- Desktop API 默认绑定 `127.0.0.1:17301`；独立 runner 不应因为诊断需求引入业务 HTTP API。Desktop API 端口与普通 cloud/backend dev server 分开，原因是桌面安装包的内置 API 不应抢占常见本机 Web 调试端口。
 - 日志、错误消息和配置导出必须脱敏 token 类字段。
 - 父任务不能替代子任务的具体 planning；父任务只记录跨任务依赖和 handoff。

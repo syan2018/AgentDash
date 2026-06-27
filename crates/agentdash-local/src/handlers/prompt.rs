@@ -1,6 +1,6 @@
 //! Agent prompt / cancel / discover 命令处理
 
-use agentdash_diagnostics::{diag, Subsystem};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -202,7 +202,7 @@ impl PromptCommandHandler {
         .with_follow_up(follow_up.clone());
 
         diag!(Info, Subsystem::AgentRun,
-        
+
             session_id = %session_id,
             mount_root_ref = mount_root_ref,
             "收到 command.prompt，启动 Agent 执行"
@@ -228,7 +228,7 @@ impl PromptCommandHandler {
                     });
                 } else {
                     diag!(Debug, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         "relay session notification forwarder 已存在，复用现有转发任务"
                     );
@@ -346,7 +346,7 @@ impl PromptCommandHandler {
         payload: CommandDiscoverOptionsPayload,
     ) -> RelayMessage {
         diag!(Debug, Subsystem::AgentRun,
-        
+
             executor = %payload.executor,
             "收到 command.discover_options，但本机 relay 尚未实现该流式能力"
         );
@@ -424,7 +424,7 @@ async fn forward_session_notifications(
 
                 if event_tx.send(relay_msg).is_err() {
                     diag!(Warn, Subsystem::AgentRun,
-        
+
                         session_id = %session_id,
                         "事件通道已关闭，停止通知转发"
                     );
@@ -433,7 +433,7 @@ async fn forward_session_notifications(
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                 diag!(Warn, Subsystem::AgentRun,
-        
+
                     session_id = %session_id,
                     skipped = n,
                     "通知流落后，跳过部分消息"

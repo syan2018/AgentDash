@@ -115,9 +115,11 @@ runner_registration_tokens(
 - Registration token plaintext format is `adrt_<token_id>_<secret>`. Only create and rotate responses return the plaintext token once.
 - Metadata/list/revoke responses return `token_prefix`, status, scope and usage metadata; they never return plaintext token, `token_secret_hash`, backend relay `auth_token`, or Authorization header contents.
 - Claim route is public in the HTTP router and does not extract `CurrentUser`. It authenticates only with the runner registration token from body `registration_token` or `Authorization: Bearer`.
-- Claim creates or reuses a project-scoped local backend using `machine_id + Project + project_id + capability_slot`. Returned `backend_id` and relay `auth_token` come from the server backend ensure path.
-- Claim sets backend facts as `share_scope_kind=project`, `share_scope_id=project_id`, `visibility=shared`, `owner_user_id=token.created_by_user_id`, and `registration_source=runner_registration_token`.
-- Claim ensures active `ProjectBackendAccess(project_id, backend_id)` so Project runtime dispatch and workspace routing can see the runner through the same access projection as manually granted backends.
+- Desktop ensure and runner claim share one application use case `enroll_local_backend(backend_repo, source, req)` with `EnrollmentSource = DesktopAccessToken{user_id} | RunnerRegistrationToken{project_id, created_by_user_id}`. The use case is the single owner of stable backend id derivation, relay `auth_token` issue/reuse (`generate_backend_auth_token`), device metadata projection, and `registration_source` write. The two HTTP routes are thin auth adapters; only their authentication source differs.
+- **Runner backend identity is machine-level, NOT project-scoped.** `stable_local_backend_id` excludes `project_id` for runners; claim lands `share_scope_kind=user`, `share_scope_id=token.created_by_user_id` (owner), `visibility=shared`, `profile_id=runner-registration`, `registration_source=runner_registration_token`. The same `machine_id + capability_slot` yields ONE stable `backend_id` regardless of which project claims it. Returned `backend_id` and relay `auth_token` come from the server backend ensure path.
+- **`ProjectBackendAccess` is the authoritative project→backend grant.** Claim ensures active `ProjectBackendAccess(project_id, backend_id)`; this row — not a project-baked `share_scope` — is what makes a runner visible to a project. One machine-level runner backend can be granted to N projects via N grant rows.
+- Authorization: a `user`-scoped backend is accessible to its owner (unchanged); additionally, if it has an active `ProjectBackendAccess` grant for project P, members of P are allowed per their project permission (`user_scoped_grant_allows`, with batched grant prefetch in the list path). A user-scoped backend with no grant stays owner-only — desktop personal backends do not regress.
+- Desktop ensure response is isomorphic to runner claim on the shared relay-credential + identity core: `EnsureLocalRuntimeResponse` carries `registration_source` (= `desktop_access_token`) and `claimed_at`, in addition to the desktop-only `backend_enabled` / `profile_id`.
 - `/ws/backend` continues to authenticate only with backend relay `auth_token`; a registration token is not a relay token.
 
 ### 4. Validation & Error Matrix
@@ -137,7 +139,8 @@ runner_registration_tokens(
 ### 5. Good/Base/Bad Cases
 
 - Good: Linux runner starts with `adrt_...`, claims once, stores `backend_id + relay_ws_url + auth_token`, then connects to `/ws/backend` with the returned backend auth token.
-- Good: Same machine restarts and repeats claim with the same project/capability slot; backend id and relay token are reused unless a later explicit rotate path changes backend auth.
+- Good: Same machine restarts and repeats claim with the same capability slot; backend id and relay token are reused unless a later explicit rotate path changes backend auth.
+- Good: One machine claims with project A's token, later with project B's token (same slot). It resolves to the SAME machine-level `backend_id`; two `ProjectBackendAccess` rows (A and B) grant it to both projects. No second backend record is created.
 - Base: Token metadata list shows `token_prefix`, `last_used_at` and `last_claimed_backend_id` for operator diagnostics.
 - Bad: Runner stores a user access token or sends registration token to `/ws/backend`; this mixes enrollment with runtime relay auth and breaks revocation/audit boundaries.
 
@@ -145,7 +148,7 @@ runner_registration_tokens(
 
 - Domain tests assert token plaintext parse/build, secret hash verify, status ordering `revoked > expired > active`, and no plaintext storage in token entity persistence.
 - Repository tests assert create/list/get/revoke/record_usage roundtrip and `token_secret_hash` is persisted while plaintext is not.
-- Application tests assert claim success, repeated claim idempotency, expired/revoked/invalid token failures, project-scoped backend fields, and active `ProjectBackendAccess` side effect.
+- Application tests assert claim success, repeated claim idempotency, expired/revoked/invalid token failures, machine-level (project-independent) `backend_id`, user-scope owner fields + `registration_source` on both desktop and runner paths, active `ProjectBackendAccess` side effect, and the four authorization cases (owner allowed / non-owner no-grant denied / non-owner active-grant allowed / revoked denied) on both single and list paths.
 - API tests assert management routes require project edit permission, public claim route does not require `CurrentUser`, and claim error responses map to stable HTTP status classes.
 - Relay regression tests assert registration token cannot authenticate `/ws/backend`, returned backend `auth_token` can, and backend id mismatch is rejected.
 - Contract check asserts runner token DTOs remain generated in `backend-contracts.ts`.

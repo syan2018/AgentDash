@@ -6,9 +6,15 @@ const VALID_API_MODES = new Set(['builtin', 'external', 'sidecar']);
 const DEFAULT_DESKTOP_API_ORIGIN = 'http://127.0.0.1:17301';
 
 export function runDesktopBuild(options) {
+  const root = path.resolve(options.root);
+  loadEnvFile(root);
+
   let config;
   try {
-    config = parseDesktopBuildArgs(process.argv.slice(2), options);
+    config = parseDesktopBuildArgs(process.argv.slice(2), {
+      ...options,
+      root,
+    });
   } catch (error) {
     console.error(`[desktop-build] ${error.message}`);
     process.exit(1);
@@ -237,7 +243,78 @@ function printHelp(options) {
   console.log('  --sccache-dir <path>                  指定 SCCACHE_DIR');
   console.log('  -h, --help                            显示帮助');
   console.log('');
+  console.log('默认读取仓库根目录 .env；shell 环境变量和 CLI 参数优先级更高。');
   console.log('其他参数会原样传给 pnpm exec tauri build。');
+}
+
+function loadEnvFile(root) {
+  const envPath = path.join(root, '.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const entry = parseEnvLine(line);
+    if (!entry) continue;
+    const { key, value } = entry;
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function parseEnvLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) {
+    return null;
+  }
+
+  const normalized = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trimStart() : trimmed;
+  const separatorIndex = normalized.indexOf('=');
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  const key = normalized.slice(0, separatorIndex).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    return null;
+  }
+
+  const rawValue = normalized.slice(separatorIndex + 1).trim();
+  return {
+    key,
+    value: parseEnvValue(rawValue),
+  };
+}
+
+function parseEnvValue(value) {
+  if (!value) {
+    return '';
+  }
+  const quote = value[0];
+  if ((quote === '"' || quote === "'") && value.endsWith(quote)) {
+    const inner = value.slice(1, -1);
+    if (quote === '"') {
+      return inner
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+    return inner;
+  }
+  return stripInlineEnvComment(value).trim();
+}
+
+function stripInlineEnvComment(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '#' && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index);
+    }
+  }
+  return value;
 }
 
 function readNextValue(values, index, flagName) {

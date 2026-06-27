@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

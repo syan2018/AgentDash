@@ -28,6 +28,7 @@ pub enum ConfigSource {
     Cli,
     Env,
     File,
+    Embedded,
     Default,
     Missing,
 }
@@ -38,8 +39,42 @@ impl ConfigSource {
             Self::Cli => "cli",
             Self::Env => "env",
             Self::File => "file",
+            Self::Embedded => "embedded",
             Self::Default => "default",
             Self::Missing => "missing",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunnerEmbeddedDefaults {
+    pub server_url: Option<String>,
+    pub name_prefix: Option<String>,
+    pub workspace_root: Option<PathBuf>,
+}
+
+impl RunnerEmbeddedDefaults {
+    pub fn current() -> Self {
+        Self {
+            server_url: option_env!("AGENTDASH_RUNNER_DEFAULT_SERVER_URL").map(str::to_string),
+            name_prefix: option_env!("AGENTDASH_RUNNER_DEFAULT_NAME_PREFIX").map(str::to_string),
+            workspace_root: option_env!("AGENTDASH_RUNNER_DEFAULT_WORKSPACE_ROOT")
+                .map(PathBuf::from),
+        }
+        .normalized()
+    }
+
+    fn normalized(self) -> Self {
+        Self {
+            server_url: normalize_string(self.server_url),
+            name_prefix: normalize_string(self.name_prefix),
+            workspace_root: self.workspace_root.and_then(|path| {
+                if path.as_os_str().is_empty() {
+                    None
+                } else {
+                    Some(path)
+                }
+            }),
         }
     }
 }
@@ -183,8 +218,19 @@ impl ResolvedRunnerConfig {
 pub fn resolve_runner_config(
     overrides: RunnerCliOverrides,
 ) -> anyhow::Result<ResolvedRunnerConfig> {
+    resolve_runner_config_with_sources(
+        overrides,
+        RunnerEnv::read(),
+        RunnerEmbeddedDefaults::current(),
+    )
+}
+
+fn resolve_runner_config_with_sources(
+    overrides: RunnerCliOverrides,
+    env: RunnerEnv,
+    embedded: RunnerEmbeddedDefaults,
+) -> anyhow::Result<ResolvedRunnerConfig> {
     let default_paths = RunnerDefaultPaths::current();
-    let env = RunnerEnv::read();
     let config_path = first_path(
         overrides.config_path.clone(),
         env.config_path.clone(),
@@ -211,6 +257,7 @@ pub fn resolve_runner_config(
         overrides.server_url,
         env.server_url,
         file_config.runner.server_url,
+        embedded.server_url,
         None,
     );
     sources.insert("server_url".to_string(), server_url.1.as_str().to_string());
@@ -219,6 +266,7 @@ pub fn resolve_runner_config(
         overrides.registration_token,
         env.registration_token,
         file_config.registration.token,
+        None,
         None,
     );
     sources.insert(
@@ -231,6 +279,7 @@ pub fn resolve_runner_config(
         env.backend_id,
         file_config.credentials.backend_id,
         None,
+        None,
     );
     sources.insert("backend_id".to_string(), backend_id.1.as_str().to_string());
 
@@ -238,6 +287,7 @@ pub fn resolve_runner_config(
         overrides.relay_ws_url,
         env.relay_ws_url,
         file_config.credentials.relay_ws_url,
+        None,
         None,
     );
     sources.insert(
@@ -250,6 +300,7 @@ pub fn resolve_runner_config(
         env.auth_token,
         file_config.credentials.auth_token,
         None,
+        None,
     );
     sources.insert("auth_token".to_string(), auth_token.1.as_str().to_string());
 
@@ -257,6 +308,7 @@ pub fn resolve_runner_config(
         overrides.runner_name,
         env.runner_name,
         file_config.runner.name,
+        embedded.name_prefix,
         Some(DEFAULT_RUNNER_NAME.to_string()),
     );
     sources.insert(
@@ -268,6 +320,7 @@ pub fn resolve_runner_config(
         overrides.workspace_roots,
         env.workspace_roots,
         Some(file_config.runner.workspace_roots),
+        embedded.workspace_root.map(|path| vec![path]),
         Some(Vec::new()),
     );
     sources.insert(
@@ -343,6 +396,22 @@ pub fn persist_credentials(
     let mut config = read_config_file(config_path)?;
     config.credentials = credentials;
     atomic_write_config(config_path, &config)
+}
+
+pub fn persist_runner_setup_config(config: &ResolvedRunnerConfig) -> anyhow::Result<()> {
+    let mut file_config = read_config_file(&config.config_path)?;
+    file_config.runner = RunnerSection {
+        name: Some(config.runner_name.clone()),
+        server_url: config.server_url.clone(),
+        workspace_roots: config.workspace_roots.clone(),
+        executor_enabled: Some(config.executor_enabled),
+        log_path: Some(config.log_path.clone()),
+        state_dir: Some(config.state_dir.clone()),
+    };
+    file_config.registration = RegistrationSection {
+        token: config.registration_token.clone(),
+    };
+    atomic_write_config(&config.config_path, &file_config)
 }
 
 fn atomic_write_config(path: &Path, config: &RunnerConfigFile) -> anyhow::Result<()> {
@@ -478,6 +547,7 @@ fn first_string(
     cli: Option<String>,
     env: Option<String>,
     file: Option<String>,
+    embedded: Option<String>,
     default: Option<String>,
 ) -> (Option<String>, ConfigSource) {
     if let Some(value) = normalize_string(cli) {
@@ -488,6 +558,9 @@ fn first_string(
     }
     if let Some(value) = normalize_string(file) {
         return (Some(value), ConfigSource::File);
+    }
+    if let Some(value) = normalize_string(embedded) {
+        return (Some(value), ConfigSource::Embedded);
     }
     if let Some(value) = normalize_string(default) {
         return (Some(value), ConfigSource::Default);
@@ -520,6 +593,7 @@ fn first_vec<T>(
     cli: Option<Vec<T>>,
     env: Option<Vec<T>>,
     file: Option<Vec<T>>,
+    embedded: Option<Vec<T>>,
     default: Option<Vec<T>>,
 ) -> (Option<Vec<T>>, ConfigSource) {
     if let Some(value) = cli {
@@ -531,6 +605,11 @@ fn first_vec<T>(
     if let Some(value) = file {
         if !value.is_empty() {
             return (Some(value), ConfigSource::File);
+        }
+    }
+    if let Some(value) = embedded {
+        if !value.is_empty() {
+            return (Some(value), ConfigSource::Embedded);
         }
     }
     if let Some(value) = default {
@@ -663,5 +742,110 @@ auth_token = "file-auth"
         let loaded = read_config_file(&config_path).expect("read back");
         assert_eq!(loaded.credentials.backend_id.as_deref(), Some("backend-1"));
         assert!(loaded.credentials.is_complete());
+    }
+
+    #[test]
+    fn setup_embedded_defaults_use_expected_precedence_without_secret_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("runner.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[runner]
+name = "file-runner"
+server_url = "https://file.example"
+workspace_roots = ["C:/file-work"]
+"#,
+        )
+        .expect("write config");
+
+        let embedded = RunnerEmbeddedDefaults {
+            server_url: Some("https://embedded.example".to_string()),
+            name_prefix: Some("embedded-runner".to_string()),
+            workspace_root: Some(PathBuf::from("C:/embedded-work")),
+        };
+        let resolved = resolve_runner_config_with_sources(
+            RunnerCliOverrides {
+                config_path: Some(config_path.clone()),
+                server_url: Some("https://cli.example".to_string()),
+                ..Default::default()
+            },
+            RunnerEnv::default(),
+            embedded.clone(),
+        )
+        .expect("resolve cli over file over embedded");
+
+        assert_eq!(resolved.server_url.as_deref(), Some("https://cli.example"));
+        assert_eq!(resolved.runner_name, "file-runner");
+        assert_eq!(resolved.sources["server_url"], "cli");
+        assert_eq!(resolved.sources["runner_name"], "file");
+        assert!(resolved.registration_token.is_none());
+        assert!(resolved.credentials.auth_token.is_none());
+
+        let embedded_only_path = temp.path().join("embedded-only.toml");
+        let embedded_only = resolve_runner_config_with_sources(
+            RunnerCliOverrides {
+                config_path: Some(embedded_only_path),
+                ..Default::default()
+            },
+            RunnerEnv::default(),
+            embedded,
+        )
+        .expect("resolve embedded defaults");
+
+        assert_eq!(
+            embedded_only.server_url.as_deref(),
+            Some("https://embedded.example")
+        );
+        assert_eq!(embedded_only.runner_name, "embedded-runner");
+        assert_eq!(embedded_only.sources["server_url"], "embedded");
+        assert_eq!(embedded_only.sources["runner_name"], "embedded");
+        assert_eq!(embedded_only.sources["workspace_roots"], "embedded");
+        assert!(embedded_only.registration_token.is_none());
+        assert!(embedded_only.credentials.auth_token.is_none());
+    }
+
+    #[test]
+    fn setup_config_write_preserves_existing_credentials() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("runner.toml");
+        persist_credentials(
+            &config_path,
+            RunnerCredentials {
+                backend_id: Some("backend-1".to_string()),
+                relay_ws_url: Some("wss://example/ws/backend".to_string()),
+                auth_token: Some("relay-secret".to_string()),
+                claimed_at: Some(Utc::now()),
+                token_source: Some("runner_registration_token".to_string()),
+            },
+        )
+        .expect("persist credentials");
+        let mut config = resolve_runner_config(RunnerCliOverrides {
+            config_path: Some(config_path.clone()),
+            server_url: Some("https://example.test".to_string()),
+            registration_token: Some("adrt_secret".to_string()),
+            runner_name: Some("runner-1".to_string()),
+            workspace_roots: Some(vec![PathBuf::from("C:/work")]),
+            ..Default::default()
+        })
+        .expect("resolve");
+        config.credentials = RunnerCredentials {
+            backend_id: Some("backend-1".to_string()),
+            relay_ws_url: Some("wss://example/ws/backend".to_string()),
+            auth_token: Some("relay-secret".to_string()),
+            claimed_at: config.credentials.claimed_at,
+            token_source: Some("runner_registration_token".to_string()),
+        };
+
+        persist_runner_setup_config(&config).expect("persist setup config");
+        let loaded = read_config_file(&config_path).expect("read config");
+
+        assert_eq!(loaded.runner.name.as_deref(), Some("runner-1"));
+        assert_eq!(loaded.registration.token.as_deref(), Some("adrt_secret"));
+        assert_eq!(loaded.credentials.backend_id.as_deref(), Some("backend-1"));
+        assert_eq!(
+            loaded.credentials.auth_token.as_deref(),
+            Some("relay-secret")
+        );
     }
 }

@@ -44,6 +44,7 @@ pub use runtime::{
 
 pub use machine_identity::{LocalMachineIdentity, load_or_create_machine_identity};
 pub use runner_config::{ResolvedRunnerConfig, RunnerCliOverrides, RunnerCredentials};
+pub use runner_redaction::{redact_optional, redact_secret};
 pub use runner_status::RunnerStatusSnapshot;
 pub use runtime_paths::{
     local_mcp_servers_path, local_runtime_config_dir, local_runtime_data_dir,

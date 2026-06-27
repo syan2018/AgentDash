@@ -72,7 +72,8 @@ export function runDesktopBuild(options) {
   }
   console.log(`[desktop-build] rust cache: ${rustBuild.description}`);
 
-  const child = spawn(resolvePnpmCommand(), tauriArgs, {
+  const pnpmSpawn = resolvePnpmSpawn(tauriArgs);
+  const child = spawn(pnpmSpawn.command, pnpmSpawn.args, {
     cwd: config.root,
     env,
     stdio: 'inherit',
@@ -514,8 +515,17 @@ function resolveExecutable(name, root) {
   return firstLine || null;
 }
 
-function resolvePnpmCommand() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+function resolvePnpmSpawn(args) {
+  if (process.platform === 'win32') {
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', 'pnpm.cmd', ...args],
+    };
+  }
+  return {
+    command: 'pnpm',
+    args,
+  };
 }
 
 function formatSccacheDescription(sccachePath, cacheDir) {

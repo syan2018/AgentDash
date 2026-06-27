@@ -30,8 +30,18 @@ function buildMountUri(mountId: string, filePath?: string | null): string {
   return filePath ? `${mountId}://${filePath}` : `${mountId}://`;
 }
 
+function resolveVfsTitle(uri: string): string {
+  const parsed = parseMountUri(uri);
+  if (parsed?.path) {
+    const filename = parsed.path.split("/").pop() ?? parsed.path;
+    return filename;
+  }
+  if (parsed?.mountId) return parsed.mountId;
+  return "资源浏览";
+}
+
 function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
-  const { runtimeSurface } = useWorkspaceData();
+  const { runtimeError, runtimeSurface } = useWorkspaceData();
   const parsed = parseMountUri(uri);
 
   const hasMounts = Boolean(runtimeSurface?.mounts.length);
@@ -39,7 +49,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
   const handleNavigate = useCallback(
     (mountId: string, filePath: string | null) => {
       const newUri = buildMountUri(mountId, filePath);
-      useWorkspaceTabStore.getState().updateTabUri(tabId, newUri);
+      useWorkspaceTabStore.getState().updateTabUri(tabId, newUri, resolveVfsTitle(newUri));
     },
     [tabId],
   );
@@ -48,7 +58,7 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
-          当前会话没有挂载的地址空间。
+          {runtimeError ?? "当前会话没有挂载可浏览资源。"}
         </p>
       </div>
     );
@@ -66,22 +76,14 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
 
 export const vfsTabType: TabTypeDescriptor = {
   typeId: "vfs",
-  label: "地址空间",
+  label: "资源浏览",
   icon: VfsIcon,
   allowMultiple: true,
   pinned: false,
 
   renderContent: (props) => <VfsTabContent {...props} />,
 
-  resolveTitle: (uri) => {
-    const parsed = parseMountUri(uri);
-    if (parsed?.path) {
-      const filename = parsed.path.split("/").pop() ?? parsed.path;
-      return filename;
-    }
-    if (parsed?.mountId) return parsed.mountId;
-    return "地址空间";
-  },
+  resolveTitle: resolveVfsTitle,
 
   parseUri: (uri) => {
     const parsed = parseMountUri(uri);

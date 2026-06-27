@@ -1,31 +1,21 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 import type {
-  Story,
-  Task,
-  TaskDispatchPreference,
-  StateChange,
-  ContextSourceRef,
   ContextContainerDefinition,
+  ContextSourceRef,
   SessionComposition,
-} from '../types';
-import * as storyService from '../services/story';
+  Story,
+  StoryTaskProjectionItem,
+} from "../types";
+import type { ProjectStateChange } from "../generated/project-contracts";
+import * as storyService from "../services/story";
 import {
   canMapStoryFromPayload,
-  canMapTaskFromPayload,
   mapStoryFromPayload,
-  mapTaskFromPayload,
-} from '../services/story';
-
-export interface CreateTaskInput {
-  title: string;
-  description?: string;
-  workspace_id?: string | null;
-  dispatch_preference?: TaskDispatchPreference;
-}
+} from "../services/story";
 
 interface StoryState {
   storiesByProjectId: Record<string, Story[]>;
-  tasksByStoryId: Record<string, Task[]>;
+  storyTaskProjectionByStoryId: Record<string, StoryTaskProjectionItem[]>;
   selectedStoryId: string | null;
   selectedTaskId: string | null;
   isLoading: boolean;
@@ -71,55 +61,11 @@ interface StoryState {
   ) => Promise<{ updated: number; failed: number }>;
   batchDeleteStories: (storyIds: string[]) => Promise<{ deleted: number; failed: number }>;
   deleteStory: (storyId: string) => Promise<void>;
-  createTask: (storyId: string, payload: CreateTaskInput) => Promise<Task | null>;
-  updateTask: (
-    taskId: string,
-    payload: {
-      title?: string;
-      description?: string;
-      workspace_id?: string | null;
-      status?: Task["status"];
-      dispatch_preference?: TaskDispatchPreference;
-    },
-  ) => Promise<Task | null>;
-  startTaskExecution: (
-    taskId: string,
-    payload?: {
-      override_prompt?: string;
-      executor_config?: Record<string, unknown>;
-    },
-  ) => Promise<Task | null>;
-  continueTaskExecution: (
-    taskId: string,
-    payload?: {
-      additional_prompt?: string;
-      executor_config?: Record<string, unknown>;
-    },
-  ) => Promise<Task | null>;
-  cancelTaskExecution: (taskId: string) => Promise<Task | null>;
-  refreshTask: (taskId: string) => Promise<Task | null>;
-  deleteTask: (taskId: string, storyId: string) => Promise<void>;
+  fetchStoryTaskProjection: (storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
-  fetchTasks: (storyId: string) => Promise<void>;
-  handleStateChange: (change: StateChange) => void;
+  handleStateChange: (change: ProjectStateChange) => void;
 }
-
-// ─── 客户端缓存 collection helpers ──────────────────────
-
-const upsertTaskInMap = (
-  tasksByStoryId: Record<string, Task[]>,
-  task: Task,
-): Record<string, Task[]> => {
-  const next = { ...tasksByStoryId };
-  const existing = next[task.story_id] ?? [];
-  if (existing.some((item) => item.id === task.id)) {
-    next[task.story_id] = existing.map((item) => (item.id === task.id ? task : item));
-  } else {
-    next[task.story_id] = [task, ...existing];
-  }
-  return next;
-};
 
 const upsertStoryInList = (stories: Story[], story: Story): Story[] => {
   const existingIndex = stories.findIndex((item) => item.id === story.id);
@@ -185,11 +131,10 @@ export const findStoryById = (
 };
 
 const storyRefreshInFlight = new Set<string>();
-const taskRefreshInFlight = new Set<string>();
 
 export const useStoryStore = create<StoryState>((set) => ({
   storiesByProjectId: {},
-  tasksByStoryId: {},
+  storyTaskProjectionByStoryId: {},
   selectedStoryId: null,
   selectedTaskId: null,
   isLoading: false,
@@ -277,11 +222,11 @@ export const useStoryStore = create<StoryState>((set) => ({
             id,
             story?.project_id ?? null,
           );
-          const nextTasks = { ...s.tasksByStoryId };
-          delete nextTasks[id];
+          const nextProjection = { ...s.storyTaskProjectionByStoryId };
+          delete nextProjection[id];
           return {
             storiesByProjectId,
-            tasksByStoryId: nextTasks,
+            storyTaskProjectionByStoryId: nextProjection,
             selectedStoryId: s.selectedStoryId === id ? null : s.selectedStoryId,
           };
         });
@@ -304,11 +249,11 @@ export const useStoryStore = create<StoryState>((set) => ({
           storyId,
           deletedStory?.project_id ?? null,
         );
-        const nextTasks = { ...s.tasksByStoryId };
-        delete nextTasks[storyId];
+        const nextProjection = { ...s.storyTaskProjectionByStoryId };
+        delete nextProjection[storyId];
         return {
           storiesByProjectId,
-          tasksByStoryId: nextTasks,
+          storyTaskProjectionByStoryId: nextProjection,
           selectedStoryId: s.selectedStoryId === storyId ? null : s.selectedStoryId,
         };
       });
@@ -317,93 +262,15 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  createTask: async (storyId, payload) => {
+  fetchStoryTaskProjection: async (storyId) => {
     try {
-      const task = await storyService.createTask(storyId, payload);
-      set((s) => {
-        const existing = s.tasksByStoryId[storyId] ?? [];
-        return {
-          tasksByStoryId: {
-            ...s.tasksByStoryId,
-            [storyId]: [task, ...existing],
-          },
-        };
-      });
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  updateTask: async (taskId, payload) => {
-    try {
-      const task = await storyService.updateTask(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  startTaskExecution: async (taskId, payload) => {
-    try {
-      const task = await storyService.startTaskExecution(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  continueTaskExecution: async (taskId, payload) => {
-    try {
-      const task = await storyService.continueTaskExecution(taskId, payload);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  cancelTaskExecution: async (taskId) => {
-    try {
-      const task = await storyService.cancelTaskExecution(taskId);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  refreshTask: async (taskId) => {
-    try {
-      const task = await storyService.fetchTask(taskId);
-      set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-      return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  deleteTask: async (taskId, storyId) => {
-    try {
-      await storyService.deleteTask(taskId);
-      set((s) => {
-        const existing = s.tasksByStoryId[storyId] ?? [];
-        return {
-          tasksByStoryId: {
-            ...s.tasksByStoryId,
-            [storyId]: existing.filter((task) => task.id !== taskId),
-          },
-          selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
-        };
-      });
+      const projection = await storyService.fetchStoryTaskProjection(storyId);
+      set((s) => ({
+        storyTaskProjectionByStoryId: {
+          ...s.storyTaskProjectionByStoryId,
+          [storyId]: projection.tasks,
+        },
+      }));
     } catch (e) {
       set({ error: (e as Error).message });
     }
@@ -412,22 +279,9 @@ export const useStoryStore = create<StoryState>((set) => ({
   selectStory: (id) => set({ selectedStoryId: id }),
   selectTask: (id) => set({ selectedTaskId: id }),
 
-  fetchTasks: async (storyId) => {
-    try {
-      const tasks = await storyService.fetchTasks(storyId);
-      set((s) => ({
-        tasksByStoryId: { ...s.tasksByStoryId, [storyId]: tasks },
-      }));
-    } catch (e) {
-      set({ error: (e as Error).message });
-    }
-  },
-
-  handleStateChange: (change: StateChange) => {
+  handleStateChange: (change) => {
     const entityId = change.entity_id;
-    const payload = (change.payload && typeof change.payload === 'object'
-      ? change.payload
-      : {}) as Record<string, unknown>;
+    const payload = change.payload;
 
     const refreshStoryById = (storyId: string) => {
       if (storyRefreshInFlight.has(storyId)) return;
@@ -443,24 +297,10 @@ export const useStoryStore = create<StoryState>((set) => ({
         });
     };
 
-    const refreshTaskById = (taskId: string) => {
-      if (taskRefreshInFlight.has(taskId)) return;
-      taskRefreshInFlight.add(taskId);
-      storyService
-        .fetchTask(taskId)
-        .then((task) => {
-          set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-        })
-        .catch(() => {})
-        .finally(() => {
-          taskRefreshInFlight.delete(taskId);
-        });
-    };
-
     switch (change.kind) {
-      case 'story_created':
-      case 'story_updated':
-      case 'story_status_changed': {
+      case "story_created":
+      case "story_updated":
+      case "story_status_changed": {
         if (canMapStoryFromPayload(payload)) {
           const story = mapStoryFromPayload(payload);
           set((s) => {
@@ -472,54 +312,25 @@ export const useStoryStore = create<StoryState>((set) => ({
         refreshStoryById(entityId);
         break;
       }
-      case 'story_deleted': {
+      case "story_deleted": {
         set((s) => {
           const payloadProjectId =
-            typeof payload.project_id === 'string' ? payload.project_id : null;
+            typeof payload.project_id === "string" ? payload.project_id : null;
           const deletedStory = findStoryById(s.storiesByProjectId, entityId);
           const storiesByProjectId = removeStoryFromProjectMap(
             s.storiesByProjectId,
             entityId,
             payloadProjectId ?? deletedStory?.project_id ?? null,
           );
-          const nextTasks = { ...s.tasksByStoryId };
-          delete nextTasks[entityId];
+          const nextProjection = { ...s.storyTaskProjectionByStoryId };
+          delete nextProjection[entityId];
           return {
             storiesByProjectId,
-            tasksByStoryId: nextTasks,
+            storyTaskProjectionByStoryId: nextProjection,
             selectedStoryId:
               s.selectedStoryId === entityId ? null : s.selectedStoryId,
           };
         });
-        break;
-      }
-      case 'task_created':
-      case 'task_updated':
-      case 'task_status_changed':
-      case 'task_artifact_added': {
-        if (canMapTaskFromPayload(payload)) {
-          const task = mapTaskFromPayload(payload);
-          set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
-          break;
-        }
-        refreshTaskById(entityId);
-        break;
-      }
-      case 'task_deleted': {
-        const storyId = payload.story_id ? String(payload.story_id) : null;
-        if (storyId) {
-          set((s) => {
-            const existing = s.tasksByStoryId[storyId] ?? [];
-            return {
-              tasksByStoryId: {
-                ...s.tasksByStoryId,
-                [storyId]: existing.filter((t) => t.id !== entityId),
-              },
-              selectedTaskId:
-                s.selectedTaskId === entityId ? null : s.selectedTaskId,
-            };
-          });
-        }
         break;
       }
     }

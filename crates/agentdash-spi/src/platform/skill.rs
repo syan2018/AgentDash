@@ -1,7 +1,7 @@
 /// Skill 引用 — 跨层共享的 skill 元数据值对象
 ///
 /// 由 Application 层扫描 SKILL.md 文件后构建，
-/// 再并入 session 的 CapabilityState.skill 维度，在 capability_state_update 中体现。
+/// 再并入 session 的 CapabilityState.skill 维度，在 capability_state_snapshot / delta 中体现。
 use std::path::PathBuf;
 
 /// 已发现并验证通过的 skill 引用（仅元数据，不含正文）

@@ -8,7 +8,8 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
-import { ToolCardHeader, type ToolCardHeaderModel } from "./ToolCardHeader";
+import type { ToolCardHeaderModel } from "./ToolCardHeader";
+import { ST } from "./bodies/cardBodyTokens";
 
 export type DisplayStatus =
   | "inProgress"
@@ -42,18 +43,19 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   defaultExpanded,
   children,
 }: ToolCallCardShellProps) {
+  const needsAttention = Boolean(isPendingApproval) || status === "failed" || status === "declined";
+
   const shouldDefaultExpand =
-    defaultExpanded ?? (Boolean(isPendingApproval) || status === "failed");
+    defaultExpanded ?? needsAttention;
   const [expanded, setExpanded] = useState(shouldDefaultExpand);
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [renderStatus, setRenderStatus] = useState<DisplayStatus>(status);
   const inProgressSinceRef = useRef<number | null>(null);
 
-  // 最小 inProgress 可见时间，避免闪烁
   useEffect(() => {
-    const isRunning = status === "inProgress" || status === "pending";
-    if (isRunning) {
+    const running = status === "inProgress" || status === "pending";
+    if (running) {
       inProgressSinceRef.current = Date.now();
       setRenderStatus(status);
       return;
@@ -113,41 +115,56 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       ? formatDuration(durationMs)
       : elapsed;
 
+  // ── 统一渲染：标题栏 + body ──
+  // 所有状态共享同一结构：标题栏（可点击折叠）+ 展开后 body
+  // 状态差异仅通过标题栏背景色和状态指示器体现
+
+  const headerBg =
+    renderStatus === "failed" || renderStatus === "declined"
+      ? "bg-destructive/5"
+      : isPendingApproval
+        ? "bg-warning/5"
+        : renderStatus === "inProgress" || renderStatus === "pending"
+          ? "bg-primary/5"
+          : expanded
+            ? "bg-secondary/30"
+            : "";
+
+  const statusLabel = needsAttention || renderStatus === "inProgress" || renderStatus === "pending";
+
   return (
-    <div
-      className={`rounded-[12px] border border-border bg-background transition-colors ${
-        renderStatus === "failed" || renderStatus === "declined" ? "opacity-90" : ""
-      }`}
-    >
-      {/* Header */}
+    <div>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
+        className={`${ST.itemRow} ${headerBg}`}
       >
-        <ToolCardHeader kind={kind} header={header} />
-
-        <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
-          <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
-          {displayDuration && (
-            <span className="ml-1 tabular-nums text-[10px] text-muted-foreground/50">
-              {displayDuration}
-            </span>
-          )}
-        </div>
-
-        <span className="mt-1 shrink-0 text-[10px] text-muted-foreground/40">
-          {expanded ? "▲" : "▼"}
+        <span className={`${ST.dot} ${statusConfig.dot}`} />
+        <span className={ST.badge}>
+          {kind.badge}
         </span>
+        <span className={ST.title}>
+          {header.primary}
+        </span>
+        {statusLabel && (
+          <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>{statusConfig.label}</span>
+        )}
+        {displayDuration && (
+          <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground/40">
+            {displayDuration}
+          </span>
+        )}
       </button>
 
-      {/* Expanded body */}
       {expanded && (
-        <div className="space-y-3 border-t border-border px-3 py-3">
+        <div className={ST.bodyArea}>
+          {header.secondary != null && header.secondary !== "" && (
+            <p className="text-[10px] text-muted-foreground/50">{header.secondary}</p>
+          )}
+
           {isPendingApproval && (
-            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-warning">
+            <div className="flex items-center gap-2 text-xs text-warning">
+              <span className="inline-flex rounded-[4px] border border-warning/25 bg-warning/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
                 审批
               </span>
               等待用户审批
@@ -155,8 +172,8 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
 
           {renderStatus === "declined" && (
-            <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
-              <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex rounded-[4px] border border-border bg-secondary px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
                 拒绝
               </span>
               已拒绝执行
@@ -169,7 +186,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
                 type="button"
                 onClick={() => { void handleApprove(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/15 disabled:opacity-50"
+                className="rounded-[6px] border border-success/30 bg-success/10 px-2.5 py-1 text-xs text-success transition-colors hover:bg-success/15 disabled:opacity-50"
               >
                 {isSubmittingApproval ? "处理中…" : "批准"}
               </button>
@@ -177,7 +194,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
                 type="button"
                 onClick={() => { void handleReject(); }}
                 disabled={isSubmittingApproval}
-                className="rounded-[8px] border border-warning/30 bg-warning/10 px-3 py-1.5 text-sm text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
+                className="rounded-[6px] border border-warning/30 bg-warning/10 px-2.5 py-1 text-xs text-warning transition-colors hover:bg-warning/15 disabled:opacity-50"
               >
                 拒绝
               </button>
@@ -185,16 +202,12 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
 
           {approvalError && (
-            <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+            <div className="rounded-[6px] bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
               {approvalError}
             </div>
           )}
 
           {children}
-
-          <p className="select-none font-mono text-[10px] text-muted-foreground/25">
-            {itemId.slice(0, 8)}
-          </p>
         </div>
       )}
     </div>

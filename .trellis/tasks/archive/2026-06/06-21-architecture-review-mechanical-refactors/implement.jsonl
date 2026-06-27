@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/index.md", "reason": "机械化重构执行前读取项目 spec 入口和阅读规则"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 contract、API、application、runtime cleanup item 的 spec 索引"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 generated DTO、service、UI 文案 item 的 spec 索引"}
+{"file": ".trellis/spec/cross-layer/index.md", "reason": "跨层 contract、NDJSON、desktop/local/relay item 的 spec 索引"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/followup-backlog.md", "reason": "机械化 item 的来源 backlog"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/coupling-matrix.md", "reason": "区分机械重构与设计耦合问题的来源矩阵"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/10-contract-boundary-deep-dive.md", "reason": "contract surface work items 的详细证据"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/11-agentrun-control-deep-dive.md", "reason": "AgentRun residual surface cleanup work items 的详细证据"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/12-lifecycle-runtime-facts-deep-dive.md", "reason": "Lifecycle/task cleanup 与 tests work items 的详细证据"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/13-permission-frame-vfs-gateway-deep-dive.md", "reason": "RuntimeGateway/WorkspaceModule diagnostics work items 的详细证据"}
+{"file": ".trellis/tasks/06-21-module-topology-coupling-review/research/14-local-placement-relay-deep-dive.md", "reason": "Relay/desktop/UI semantics work items 的详细证据"}

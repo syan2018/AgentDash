@@ -29,11 +29,13 @@ Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersisten
 
 ### 2. 聚合整体持久化必须原子
 
-例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。Story aggregate 的 Task 变更走 `StoryRepository::update` 整体写回（Task 已合入 `stories.tasks` JSONB）。
+例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。`LifecycleRunRepository` 在同一聚合边界内写 lifecycle context、orchestrations、tasks 与 view projection；`StoryRepository` 只写 Story 自身字段与上下文。
 
 ### 3. 跨聚合一致性使用显式 Command Port
 
 需要同时更新多个聚合时，引入独立的命令型事务边界 Port 或 Unit of Work，不要把跨聚合行为伪装成 Repository 的自然职责。
+
+Story 页面展示 Task 时读取 Story projection；Task durable facts 的写命令落在 LifecycleRun aggregate mutation 或 Lifecycle application command 上。这样 Story context、Task plan facts 与 runtime execution projection 的事实源保持可解释。
 
 ### 4. 命名约定
 

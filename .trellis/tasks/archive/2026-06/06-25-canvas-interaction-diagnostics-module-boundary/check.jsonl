@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查 Canvas submit 是否保持用户输入事实进入 Backbone/Mailbox 而非 platform metadata"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 DTO 生成、字段命名和前后端 drift"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查 Canvas/extension/workspace runtime 前端 composition root 边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 generated contract 与 mapper 消费"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "检查 Canvas submit-to-Agent 是否复用 command receipt、mailbox envelope 和 scheduler outcome"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查 runtime action invoke 没有与 Agent 输入通道混淆"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 Canvas render observation 中截图/asset 引用不绕过 VFS/surface 访问边界"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "检查新增 crate 或模块迁移符合后端分层基线"}
+{"file": ".trellis/tasks/06-23-agentframe-canvas-projection-convergence/design.md", "reason": "检查与 AgentFrame/Canvas projection 任务没有重叠事实源"}
+{"file": ".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/design.md", "reason": "检查 Canvas interaction 状态没有被错误写入 runtime surface"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/design.md", "reason": "检查 Canvas identity、presentation URI 和 runtime resource 方向一致"}

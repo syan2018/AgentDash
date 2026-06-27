@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check Story/Task UI remains projection-only."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated DTOs and frontend contracts are updated after backend route changes."}
+{"file": ".trellis/spec/backend/permission/policy-engine.md", "reason": "Check capability examples no longer describe Task Agent launch."}

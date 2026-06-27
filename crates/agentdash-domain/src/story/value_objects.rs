@@ -73,7 +73,6 @@ pub enum ChangeKind {
     TaskUpdated,
     TaskStatusChanged,
     TaskDeleted,
-    TaskArtifactAdded,
 }
 
 /// StateChange — 不可变的状态变更日志

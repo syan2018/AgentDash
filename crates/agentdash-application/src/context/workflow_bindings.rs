@@ -1,5 +1,5 @@
+use crate::lifecycle::ActiveWorkflowProjection;
 use crate::vfs::ResolveBindingsOutput;
-use crate::workflow::ActiveWorkflowProjection;
 use agentdash_spi::{ContextFragment, MergeStrategy};
 
 use super::Contribution;
@@ -18,7 +18,7 @@ pub fn contribute_workflow_binding(
         order: 83,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:contributor:workflow_bindings".to_string(),
+        source: "context_contributor:workflow_bindings".to_string(),
         content: format!(
             "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
             workflow.lifecycle_name,
@@ -48,7 +48,7 @@ pub fn contribute_workflow_binding(
             order: 84 + index as i32,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:workflow_bindings".to_string(),
+            source: "context_contributor:workflow_bindings".to_string(),
             content: section,
         });
     }
@@ -60,7 +60,7 @@ pub fn contribute_workflow_binding(
             order: 89,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:contributor:workflow_bindings".to_string(),
+            source: "context_contributor:workflow_bindings".to_string(),
             content: warning_section,
         });
     }
@@ -78,10 +78,75 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 mod tests {
     use super::*;
     use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
-    use crate::workflow::activity_projection;
+    use agentdash_domain::workflow::{
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        AgentProcedureContract, DefinitionSource, LifecycleNodeType, LifecycleRun,
+        RuntimeNodeState, RuntimeNodeStatus, WorkflowInjectionSpec,
+    };
 
     fn sample_workflow() -> ActiveWorkflowProjection {
-        activity_projection(None)
+        sample_workflow_with_guidance(None)
+    }
+
+    fn sample_workflow_with_guidance(guidance: Option<String>) -> ActiveWorkflowProjection {
+        let project_id = uuid::Uuid::new_v4();
+        let contract = AgentProcedureContract {
+            injection: WorkflowInjectionSpec {
+                guidance,
+                ..WorkflowInjectionSpec::default()
+            },
+            ..AgentProcedureContract::default()
+        };
+        let procedure = AgentProcedure::new(
+            uuid::Uuid::new_v4(),
+            "trellis_dev_task_implement",
+            "Trellis Dev Workflow / Implement",
+            "workflow desc",
+            DefinitionSource::BuiltinSeed,
+            contract,
+        )
+        .expect("workflow definition");
+        ActiveWorkflowProjection {
+            run: LifecycleRun::new_control(project_id),
+            orchestration_id: uuid::Uuid::new_v4(),
+            node_path: "implement".to_string(),
+            lifecycle_graph_id: None,
+            lifecycle_key: "trellis_dev_task".to_string(),
+            lifecycle_name: "Trellis Dev Lifecycle".to_string(),
+            active_activity: ActivityDefinition {
+                key: "implement".to_string(),
+                description: "实现并记录结果".to_string(),
+                executor: ActivityExecutorSpec::Agent(
+                    AgentActivityExecutorSpec::create_activity_agent(procedure.key.clone()),
+                ),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                completion_policy: Default::default(),
+                iteration_policy: Default::default(),
+                join_policy: Default::default(),
+            },
+            active_attempt: RuntimeNodeState {
+                node_id: "implement".to_string(),
+                node_path: "implement".to_string(),
+                kind: agentdash_domain::workflow::PlanNodeKind::AgentCall,
+                status: RuntimeNodeStatus::Running,
+                attempt: 1,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                executor_run_ref: None,
+                children: Vec::new(),
+                phase_path: Vec::new(),
+                started_at: None,
+                completed_at: None,
+                error: None,
+                trace_refs: Vec::new(),
+                cache: None,
+            },
+            active_node_type: LifecycleNodeType::AgentNode,
+            active_procedure_key: Some(procedure.key.clone()),
+            snapshot_contract: None,
+            primary_workflow: Some(procedure),
+        }
     }
 
     #[test]

@@ -33,6 +33,8 @@ pub enum McpTransportConfigRelay {
         args: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         env: Vec<McpEnvVarRelay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
 }
 
@@ -56,13 +58,19 @@ pub struct ResponseMcpProbeTransportPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerRelay {
+    pub name: String,
+    pub transport: McpTransportConfigRelay,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpListToolsPayload {
-    pub server_name: String,
+    pub server: McpServerRelay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpCallToolPayload {
-    pub server_name: String,
+    pub server: McpServerRelay,
     pub tool_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,

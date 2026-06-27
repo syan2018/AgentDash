@@ -1,7 +1,8 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application::runtime::Mount;
-use agentdash_application::vfs::{
+use agentdash_application_vfs::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, GrepQuery,
     ListOptions, ListResult, MountEditCapabilities, MountError, MountOperationContext,
     MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
@@ -10,7 +11,7 @@ use agentdash_application::vfs::{
 use agentdash_relay::{
     RelayMessage, ToolApplyPatchPayload, ToolFileDeletePayload, ToolFileListPayload,
     ToolFileReadPayload, ToolFileRenamePayload, ToolFileWritePayload, ToolSearchPayload,
-    ToolShellExecPayload,
+    ToolShellExecPayload, ToolShellSessionState,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -18,8 +19,28 @@ use base64::Engine;
 use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::runtime_bridge::relay_file_entries_to_runtime;
 
+const DEFAULT_SHELL_EXEC_YIELD_MS: u64 = 1_000;
+const SHELL_EXEC_RPC_TIMEOUT_MS: u64 = 10_000;
+
 fn map_relay_err(e: BackendCommandError) -> MountError {
     MountError::OperationFailed(e.to_string())
+}
+
+fn shell_exec_relay_timeout(_timeout_ms: Option<u64>) -> std::time::Duration {
+    std::time::Duration::from_millis(SHELL_EXEC_RPC_TIMEOUT_MS)
+}
+
+fn shell_state_name(state: ToolShellSessionState) -> &'static str {
+    match state {
+        ToolShellSessionState::Starting => "starting",
+        ToolShellSessionState::Running => "running",
+        ToolShellSessionState::Completed => "completed",
+        ToolShellSessionState::Failed => "failed",
+        ToolShellSessionState::TimedOut => "timed_out",
+        ToolShellSessionState::Killed => "killed",
+        ToolShellSessionState::Lost => "lost",
+        ToolShellSessionState::Closed => "closed",
+    }
 }
 
 /// 通过 `BackendRegistry` 将文件与 shell 操作转发到本机后端。
@@ -580,7 +601,8 @@ impl MountProvider for RelayFsMountProvider {
             .streaming_call_id
             .clone()
             .unwrap_or_else(|| RelayMessage::new_id("call"));
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+
             backend_id = %mount.backend_id,
             mount_id = %mount.id,
             cwd = %cwd,
@@ -589,7 +611,7 @@ impl MountProvider for RelayFsMountProvider {
         );
         let response = self
             .backends
-            .send_command(
+            .send_command_with_timeout(
                 &mount.backend_id,
                 RelayMessage::CommandToolShellExec {
                     id: RelayMessage::new_id("mp-exec"),
@@ -599,8 +621,12 @@ impl MountProvider for RelayFsMountProvider {
                         mount_root_ref: mount.root_ref.clone(),
                         cwd: if cwd.is_empty() { None } else { Some(cwd) },
                         timeout_ms: request.timeout_ms,
+                        yield_time_ms: Some(DEFAULT_SHELL_EXEC_YIELD_MS),
+                        max_output_bytes: None,
+                        tty: false,
                     },
                 },
+                shell_exec_relay_timeout(request.timeout_ms),
             )
             .await
             .map_err(map_relay_err)?;
@@ -611,9 +637,16 @@ impl MountProvider for RelayFsMountProvider {
                 error: None,
                 ..
             } => Ok(ExecResult {
+                state: shell_state_name(payload.state).to_string(),
                 exit_code: payload.exit_code,
                 stdout: payload.stdout,
                 stderr: payload.stderr,
+                pty: payload.pty,
+                session_id: Some(payload.session_id),
+                terminal_id: payload.terminal_id,
+                next_seq: Some(payload.next_seq),
+                truncated: payload.truncation.truncated,
+                omitted_bytes: payload.truncation.omitted_bytes,
             }),
             RelayMessage::ResponseToolShellExec {
                 error: Some(error), ..
@@ -623,5 +656,26 @@ impl MountProvider for RelayFsMountProvider {
                 other.id()
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_exec_relay_timeout_outlives_default_process_timeout() {
+        assert_eq!(
+            shell_exec_relay_timeout(None),
+            std::time::Duration::from_millis(10_000)
+        );
+    }
+
+    #[test]
+    fn shell_exec_relay_timeout_outlives_requested_process_timeout() {
+        assert_eq!(
+            shell_exec_relay_timeout(Some(120_000)),
+            std::time::Duration::from_millis(10_000)
+        );
     }
 }

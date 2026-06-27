@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::entity::{
     BackendConfig, BackendExecutionLease, BackendExecutionTerminalKind, BackendWorkspaceInventory,
-    LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RuntimeHealth,
-    RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
+    LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RunnerRegistrationToken,
+    RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
 };
 use crate::common::error::DomainError;
 use uuid::Uuid;
@@ -106,6 +106,18 @@ pub trait ProjectBackendAccessRepository: Send + Sync {
         project_id: Uuid,
         backend_id: &str,
     ) -> Result<Option<ProjectBackendAccess>, DomainError>;
+    /// 列出指向某个 backend 的所有 active grant（跨 project 的反向视图）。
+    ///
+    /// 鉴权路径据此判断一个 User-scoped backend 通过哪些 project 的 active grant 被授权。
+    async fn list_active_by_backend(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
+    /// 批量列出指向多个 backend 的所有 active grant，供列表路径一次预取，避免 N+1。
+    async fn list_active_by_backends(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError>;
     async fn set_status(
         &self,
         id: Uuid,
@@ -125,4 +137,26 @@ pub trait BackendWorkspaceInventoryRepository: Send + Sync {
         &self,
         backend_ids: &[String],
     ) -> Result<Vec<BackendWorkspaceInventory>, DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait RunnerRegistrationTokenRepository: Send + Sync {
+    async fn create(&self, token: &RunnerRegistrationToken) -> Result<(), DomainError>;
+    async fn update(&self, token: &RunnerRegistrationToken) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: &str) -> Result<Option<RunnerRegistrationToken>, DomainError>;
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<RunnerRegistrationToken>, DomainError>;
+    async fn revoke(
+        &self,
+        id: &str,
+        revoked_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
+    async fn record_usage(
+        &self,
+        id: &str,
+        backend_id: &str,
+        used_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
 }

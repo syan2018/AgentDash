@@ -1,6 +1,6 @@
 # Session Context Bundle 主数据面
 
-`SessionContextBundle` 是 session 业务上下文的主数据面。Construction 负责产出
+`SessionContextBundle` 是 session 业务上下文的主数据面。Frame construction 负责产出
 Bundle，`LaunchPlan` 与 `TurnPreparer` 把它投影到 connector `ExecutionContext`，
 Hook runtime 只通过约定入口追加 per-turn 增量。
 
@@ -21,7 +21,7 @@ pub struct SessionContextBundle {
 
 | 字段 | 语义 | 写入时机 |
 |---|---|---|
-| `bootstrap_fragments` | construction 阶段产出的稳定上下文 | session compose / context rebuild |
+| `bootstrap_fragments` | frame construction 阶段产出的稳定上下文 | session compose / context rebuild |
 | `turn_delta` | 运行期 hook 或 context transition 追加的 per-turn 增量 | 当前 turn 内 |
 
 `bootstrap_fragments` 通过 slot merge 形成稳定视图；`turn_delta` 保留同 slot 多条记录，
@@ -41,15 +41,15 @@ impl SessionContextBundle {
 Application 层、connector 侧自渲染、title/summarizer/bridge replay 都使用这一套
 Bundle API。
 
-## Runtime Agent Slot Whitelist
+## Assignment Slot Whitelist
 
 定义位置：`crates/agentdash-spi/src/context_injection.rs`：
-`RUNTIME_AGENT_CONTEXT_SLOTS`。
+`ASSIGNMENT_CONTEXT_SLOTS`。
 
-新增 RuntimeAgent 可见 slot 时同步处理：
+新增 assignment context 可见 slot 时同步处理：
 
 1. contributor 或 hook bridge 产出明确 slot。
-2. slot 加入 `RUNTIME_AGENT_CONTEXT_SLOTS`。
+2. slot 加入 `ASSIGNMENT_CONTEXT_SLOTS`。
 3. 设置默认 order。
 4. 若 hook injection 可产出该 slot，同步 `HOOK_SLOT_ORDERS`。
 
@@ -73,7 +73,7 @@ SPI hook decisions 不直接携带 Bundle delta，从而保持 agent-types 与 s
 
 `ContextAuditBus` 订阅 fragment emit：
 
-- construction fragment：emit audit 后进入 `bootstrap_fragments`。
+- frame construction fragment：emit audit 后进入 `bootstrap_fragments`。
 - runtime hook fragment：emit audit 后进入 `turn_delta`。
 
 `FragmentScope::Audit` 决定 fragment 是否对审计可见；
@@ -84,7 +84,8 @@ SPI hook decisions 不直接携带 Bundle delta，从而保持 agent-types 与 s
 ```mermaid
 flowchart LR
     Source["LaunchCommand"]
-    Construction["SessionConstructionPlan"]
+    Construction["FrameConstructionService"]
+    Envelope["FrameLaunchEnvelope"]
     Bundle["SessionContextBundle"]
     Launch["LaunchPlan"]
     Prepared["PreparedTurn"]
@@ -92,7 +93,7 @@ flowchart LR
     Audit["ContextAuditBus"]
     Hook["HookRuntimeDelegate"]
 
-    Source --> Construction --> Bundle --> Launch --> Prepared --> Context
+    Source --> Construction --> Envelope --> Bundle --> Launch --> Prepared --> Context
     Construction --> Audit
     Hook --> Bundle
     Hook --> Audit
@@ -100,8 +101,10 @@ flowchart LR
 
 ## Invariants
 
-- `companion_agents`、project/story/task/workspace context、workflow context 与 declared
-  sources 通过 Bundle/ContextFrame 主数据面进入 agent context。
+- project/story/task/workspace context、workflow context 与 declared sources 通过
+  Bundle/ContextFrame 主数据面进入 agent context。
+- capability、VFS、MCP、skills、tool schema 与 companion roster 属于 capability
+  frame 事实域，不通过 assignment slot 表达。
 - `bootstrap_fragments` 与 `turn_delta` 物理分离。
 - 新增 context slot 必须同时考虑 runtime 渲染白名单、order 与 hook bridge。
 - `TransformContextOutput` 只承载 steering 与 block 结果。

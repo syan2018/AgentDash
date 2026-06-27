@@ -3,6 +3,17 @@ resolver = "3"
 members = [
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
+    "crates/agentdash-application-runtime-gateway",
+    "crates/agentdash-application-runtime-session",
+    "crates/agentdash-application-vfs",
+    "crates/agentdash-application-skill",
+    "crates/agentdash-application-agentrun",
+    "crates/agentdash-application-lifecycle",
+    "crates/agentdash-application-workflow",
+    "crates/agentdash-application-hooks",
+    "crates/agentdash-application-shared-library",
+    "crates/agentdash-diagnostics",
+    "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
     "crates/agentdash-spi",
@@ -50,10 +61,12 @@ thiserror = "2.0"
 
 # 日志
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 
 # 正则表达式
 regex = "1"
+shell-words = "1.1.1"
 
 # 通用
 chrono = { version = "0.4", features = ["serde"] }
@@ -69,6 +82,17 @@ rhai = { version = "1.24", features = ["serde", "sync"] }
 # 工作区内部 crate 互相引用
 agentdash-domain = { path = "crates/agentdash-domain" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
+agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
+agentdash-application-runtime-session = { path = "crates/agentdash-application-runtime-session" }
+agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
+agentdash-application-skill = { path = "crates/agentdash-application-skill" }
+agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
+agentdash-application-lifecycle = { path = "crates/agentdash-application-lifecycle" }
+agentdash-application-workflow = { path = "crates/agentdash-application-workflow" }
+agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
+agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
+agentdash-diagnostics = { path = "crates/agentdash-diagnostics" }
+agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
 agentdash-spi = { path = "crates/agentdash-spi" }
@@ -83,8 +107,10 @@ agentdash-local = { path = "crates/agentdash-local" }
 agentdash-integration-api = { path = "crates/agentdash-integration-api" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
-# Codex App Server Protocol
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.133.0", package = "codex-app-server-protocol" }
+# Codex Rust crates
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-app-server-protocol" }
+codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-pty" }
+codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-output-truncation" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }

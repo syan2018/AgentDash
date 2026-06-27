@@ -1,0 +1,16 @@
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/prd.md", "reason": "本任务目标、范围、验收标准与 open question"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/design.md", "reason": "AgentRunLifecycleSurfaceProjector 技术设计"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-surface-projector/implement.md", "reason": "实现阶段步骤、验证命令与风险点"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/design.md", "reason": "上一轮 AgentRun lifecycle 与 companion 收束设计背景"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/research/lifecycle-projection-paths.md", "reason": "上一轮 lifecycle projection 路径研究"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "lifecycle_vfs mount contract 与 provider path contract"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "builtin SkillAsset projection contract"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun workspace resource surface 与 RuntimeSession 边界"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "确认 RuntimeSession 只作为 message stream / connector trace substrate"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "确认 AgentRun runtime address、orchestration node ownership 与 AgentRuntimeRefs 边界"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle/mount.rs", "reason": "现有 AgentRun lifecycle VFS helper 与 active workflow mount helper"}
+{"file": "crates/agentdash-application/src/vfs/mount.rs", "reason": "底层 lifecycle mount builder 与 SkillAsset projection metadata helper"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "lifecycle_vfs provider read/list/write behavior"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/owner_bootstrap.rs", "reason": "ProjectAgent owner bootstrap lifecycle surface caller"}
+{"file": "crates/agentdash-application/src/session/assembler.rs", "reason": "plain companion 与 companion+workflow lifecycle surface caller"}
+{"file": "crates/agentdash-application/src/workflow/agent_run_workspace/query.rs", "reason": "AgentRun workspace query resource surface caller"}

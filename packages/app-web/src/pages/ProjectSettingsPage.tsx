@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
-  DirectoryGroup,
   DirectoryUser,
+  CurrentUser,
   BackendWorkspaceInventory,
   ProjectBackendAccess,
   Project,
@@ -15,8 +15,15 @@ import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
+import { LocalWorkspaceDiscoveryPanel } from "../features/workspace/workspace-list/LocalWorkspaceDiscoveryPanel";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { WorkspaceModulesPanel } from "../features/workspace-module/ui/WorkspaceModulesPanel";
+import { RunnerTokensPanel } from "../features/workspace/runner-tokens/RunnerTokensPanel";
+import {
+  classifyMachine,
+  machineKindLabel,
+  type MachineKind,
+} from "../features/workspace/model/machinePresentation";
 import { VfsBrowser } from "../features/vfs";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
@@ -24,13 +31,28 @@ import {
   DangerConfirmDialog,
 } from "@agentdash/ui";
 import { UserAvatar } from "../components/ui/user-avatar";
-import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
+import {
+  fetchDirectoryGroups,
+  fetchDirectoryUsers,
+} from "../services/directory";
 import {
   createProjectBackendAccess,
   listBackendWorkspaceInventory,
   listProjectBackendAccess,
   revokeProjectBackendAccess,
 } from "../services/backendAccess";
+import {
+  mergeDirectoryUsers,
+  mergeDirectoryGroups,
+  resolveUserLabel,
+  resolveGroupLabel,
+} from "../features/directory/directorySubjectUtils";
+import { DirectorySubjectPicker } from "../features/directory/DirectorySubjectPicker";
+import type {
+  SelectedSubject,
+  DirectoryResponseStatus,
+} from "../features/directory/DirectorySubjectPicker";
+import type { DirectoryGroupSummary } from "../features/directory/directorySubjectUtils";
 
 type SettingsTab = "overview" | "context" | "workspace" | "management";
 
@@ -43,7 +65,7 @@ interface SettingsTabItem {
 const SETTINGS_TABS: SettingsTabItem[] = [
   { key: "overview", label: "概览", description: "项目身份、摘要与基础信息" },
   { key: "context", label: "VFS 资源", description: "项目级 VFS Mount、解析结果与 runtime preview" },
-  { key: "workspace", label: "工作空间", description: "默认 workspace 与运行落点" },
+  { key: "workspace", label: "工作空间", description: "项目在哪台机器上运行，以及工作空间落在哪里" },
   { key: "management", label: "管理动作", description: "共享、模板、clone 与删除" },
 ];
 
@@ -58,6 +80,8 @@ const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   editor: "Editor",
   viewer: "Viewer",
 };
+
+const DIRECTORY_SEARCH_LIMIT = 20;
 
 const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
   private: "私有",
@@ -74,19 +98,14 @@ function describeProjectAccess(project: Project): string {
 function resolveGrantSubjectLabel(
   grant: ProjectSubjectGrant,
   users: DirectoryUser[],
-  groups: DirectoryGroup[],
+  groups: DirectoryGroupSummary[],
 ): string {
   if (grant.subject_type === "user") {
     const user = users.find((item) => item.user_id === grant.subject_id);
-    return user?.display_name?.trim() || user?.email?.trim() || grant.subject_id;
+    return user ? resolveUserLabel(user) : grant.subject_id;
   }
-
   const group = groups.find((item) => item.group_id === grant.subject_id);
-  return group?.display_name?.trim() || grant.subject_id;
-}
-
-function resolveDirectoryUserLabel(user: DirectoryUser): string {
-  return user.display_name?.trim() || user.email?.trim() || user.user_id;
+  return group ? resolveGroupLabel(group) : grant.subject_id;
 }
 
 function findGrantUser(
@@ -95,6 +114,29 @@ function findGrantUser(
 ): DirectoryUser | null {
   if (grant.subject_type !== "user") return null;
   return users.find((item) => item.user_id === grant.subject_id) ?? null;
+}
+
+function userSubjectLabel(user: Pick<DirectoryUser, "user_id" | "subject" | "email">): string {
+  const subject = user.subject?.trim();
+  if (subject && subject !== user.user_id) return subject;
+  const email = user.email?.trim();
+  if (email) return email.includes("@") ? email.split("@")[0] : email;
+  return user.user_id;
+}
+
+function resolveUserAuditLabel(
+  userId: string,
+  users: DirectoryUser[],
+  currentUser: CurrentUser | null,
+): string {
+  const user = users.find((item) => item.user_id === userId);
+  if (user) return userSubjectLabel(user);
+  if (currentUser?.user_id === userId) return userSubjectLabel(currentUser);
+  return userId;
+}
+
+function statusFrom(r: { source?: string; is_projection_only: boolean }): DirectoryResponseStatus {
+  return { source: r.source, is_projection_only: r.is_projection_only };
 }
 
 function SectionCard({
@@ -133,6 +175,32 @@ function ContentGroup({
         {description && <p className="text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
       {children}
+    </section>
+  );
+}
+
+function CollapsibleGroup({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="space-y-3 border-t border-border/70 pt-6 first:border-t-0 first:pt-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <span className="text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
+        <span className="text-sm font-semibold uppercase tracking-[0.14em] text-foreground">{title}</span>
+      </button>
+      {hint && <p className="text-xs leading-6 text-muted-foreground">{hint}</p>}
+      {open && <div className="space-y-4">{children}</div>}
     </section>
   );
 }
@@ -363,6 +431,20 @@ const INVENTORY_STATUS_LABELS: Record<BackendWorkspaceInventory["status"], strin
   error: "异常",
 };
 
+const MACHINE_KIND_TONE: Record<MachineKind, string> = {
+  local_device: "border-primary/30 bg-primary/10 text-primary",
+  server_runner: "border-info/30 bg-info/10 text-info",
+  other: "border-border bg-secondary/40 text-muted-foreground",
+};
+
+function MachineKindBadge({ kind }: { kind: MachineKind }) {
+  return (
+    <span className={`rounded-[8px] border px-2 py-0.5 text-[10px] font-medium ${MACHINE_KIND_TONE[kind]}`}>
+      {machineKindLabel(kind)}
+    </span>
+  );
+}
+
 function BackendAccessPanel({
   projectId,
   canEdit,
@@ -473,6 +555,12 @@ function BackendAccessPanel({
   }, [selectableBackends, selectedBackendId]);
 
   const backendName = (backendId: string) => backends.find((backend) => backend.id === backendId)?.name ?? backendId;
+  const backendMachineKind = (backendId: string): MachineKind => {
+    const backend = backends.find((item) => item.id === backendId);
+    return backend ? classifyMachine(backend) : "other";
+  };
+  const backendIsOnline = (backendId: string): boolean =>
+    backends.find((item) => item.id === backendId)?.online === true;
 
   const handleAddAccess = async () => {
     if (!selectedBackendId) {
@@ -524,7 +612,10 @@ function BackendAccessPanel({
 
   return (
     <div className="space-y-6">
-      <ContentGroup title="Backend Access">
+      <ContentGroup
+        title="可用机器"
+        description="这个项目可以在下面这些机器上运行。本机（这台设备）来自桌面 App，服务器 runner 来自接入令牌。"
+      >
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
           <select
             value={selectedBackendId}
@@ -532,10 +623,10 @@ function BackendAccessPanel({
             disabled={!canEdit}
             className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <option value="">选择 backend</option>
+            <option value="">选择一台已知机器</option>
             {selectableBackends.map((backend) => (
               <option key={backend.id} value={backend.id}>
-                {backend.name} {backend.online ? "(online)" : "(offline)"}
+                {backend.name} · {machineKindLabel(classifyMachine(backend))} {backend.online ? "(在线)" : "(离线)"}
               </option>
             ))}
           </select>
@@ -545,14 +636,14 @@ function BackendAccessPanel({
             disabled={!canEdit || !selectedBackendId}
             className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
           >
-            绑定 Backend
+            添加机器
           </button>
         </div>
 
-        {isLoading && <p className="text-xs text-muted-foreground">正在加载 backend access...</p>}
+        {isLoading && <p className="text-xs text-muted-foreground">正在加载可用机器...</p>}
         {accesses.length === 0 && !isLoading && (
           <p className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
-            当前 Project 还没有 backend 访问权限。
+            这个项目还没有可用机器。把本机加进来，或在下方「接入新服务器」签发令牌后接入服务器 runner。
           </p>
         )}
 
@@ -566,13 +657,14 @@ function BackendAccessPanel({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                          backendIsOnline(access.backend_id) ? "bg-success" : "bg-muted-foreground/30"
+                        }`}
+                        title={backendIsOnline(access.backend_id) ? "在线" : "离线"}
+                      />
                       <p className="truncate text-sm font-medium text-foreground">{backendName(access.backend_id)}</p>
-                      <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                        {ACCESS_STATUS_LABELS[access.status]}
-                      </span>
-                      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                        priority {access.priority}
-                      </span>
+                      <MachineKindBadge kind={backendMachineKind(access.backend_id)} />
                     </div>
                     <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{access.backend_id}</p>
                   </div>
@@ -583,7 +675,7 @@ function BackendAccessPanel({
                       className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary"
                     >
                       <span className="text-[10px]">{inventoryExpanded ? "▾" : "▸"}</span>
-                      <span>{inventoryExpanded ? "收起 Inventory" : "展开 Inventory"}</span>
+                      <span>{inventoryExpanded ? "收起详情" : "运行落点详情"}</span>
                     </button>
                     <button
                       type="button"
@@ -591,20 +683,28 @@ function BackendAccessPanel({
                       disabled={!canEdit}
                       className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      解绑
+                      移除
                     </button>
                   </div>
                 </div>
 
                 {inventoryExpanded && (
                   <div className="mt-3 space-y-2 border-t border-border/70 pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                        授权状态：{ACCESS_STATUS_LABELS[access.status]}
+                      </span>
+                      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                        优先级 {access.priority}
+                      </span>
+                    </div>
                     {inventoryLoading ? (
                       <p className="rounded-[8px] border border-border bg-muted/25 px-3 py-3 text-xs text-muted-foreground">
                         正在加载 inventory...
                       </p>
                     ) : inventory.length === 0 ? (
                       <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                        当前还没有可用目录快照。等待 backend 上报，或在 Workspace 详情中登记新的可用目录。
+                        当前还没有可用目录快照。等待 backend 上报，或使用本机 Workspace 发现登记新的可用目录。
                       </p>
                     ) : (
                       inventory.map((item) => (
@@ -641,6 +741,7 @@ export function ProjectSettingsPage() {
     currentProjectId,
     grantsByProjectId,
     selectProject,
+    fetchProjects,
     updateProject,
     updateProjectConfig,
     fetchProjectGrants,
@@ -660,11 +761,11 @@ export function ProjectSettingsPage() {
   const [templateFlag, setTemplateFlag] = useState(false);
   const [cloneName, setCloneName] = useState("");
   const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>([]);
-  const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroup[]>([]);
+  const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroupSummary[]>([]);
+  const [directoryUsersStatus, setDirectoryUsersStatus] = useState<DirectoryResponseStatus | null>(null);
+  const [directoryGroupsStatus, setDirectoryGroupsStatus] = useState<DirectoryResponseStatus | null>(null);
   const [isDirectoryLoading, setIsDirectoryLoading] = useState(false);
-  const [shareTargetType, setShareTargetType] = useState<"user" | "group">("user");
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [pickerSelections, setPickerSelections] = useState<SelectedSubject[]>([]);
   const [grantRole, setGrantRole] = useState<ProjectRole>("viewer");
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -685,7 +786,18 @@ export function ProjectSettingsPage() {
     [projectId, projects],
   );
   const workspaces: Workspace[] = projectId ? (workspacesByProjectId[projectId] ?? []) : [];
-  const grants = project ? (grantsByProjectId[project.id] ?? []) : [];
+  const grants = useMemo(
+    () => (project ? (grantsByProjectId[project.id] ?? []) : []),
+    [grantsByProjectId, project],
+  );
+  const grantedUserIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "user").map((grant) => grant.subject_id)),
+    [grants],
+  );
+  const grantedGroupIds = useMemo(
+    () => new Set(grants.filter((grant) => grant.subject_type === "group").map((grant) => grant.subject_id)),
+    [grants],
+  );
   const loadedProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -699,14 +811,35 @@ export function ProjectSettingsPage() {
     setCloneName(`${project.name}（副本）`);
     setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
     setDeleteConfirmValue("");
-    setShareTargetType("user");
-    setSelectedUserId("");
-    setSelectedGroupId("");
+    setPickerSelections([]);
     setGrantRole("viewer");
+    setDirectoryUsers([]);
+    setDirectoryGroups([]);
+    setDirectoryUsersStatus(null);
+    setDirectoryGroupsStatus(null);
     setActiveTab("overview");
     setWorkspaceInventoryRefreshKey(0);
     setError(null);
   }, [project]);
+
+  const rememberDirectoryUsers = useCallback((items: DirectoryUser[]) => {
+    setDirectoryUsers((current) => mergeDirectoryUsers(current, items));
+  }, []);
+
+  const rememberDirectoryGroups = useCallback((items: DirectoryGroupSummary[]) => {
+    setDirectoryGroups((current) => mergeDirectoryGroups(current, items));
+  }, []);
+
+  const loadDirectorySnapshot = useCallback(async () => {
+    const [usersResponse, groupsResponse] = await Promise.all([
+      fetchDirectoryUsers({ limit: DIRECTORY_SEARCH_LIMIT }),
+      fetchDirectoryGroups({ limit: DIRECTORY_SEARCH_LIMIT }),
+    ]);
+    rememberDirectoryUsers(usersResponse.items);
+    rememberDirectoryGroups(groupsResponse.items);
+    setDirectoryUsersStatus(statusFrom(usersResponse));
+    setDirectoryGroupsStatus(statusFrom(groupsResponse));
+  }, [rememberDirectoryGroups, rememberDirectoryUsers]);
 
   useEffect(() => {
     if (activeTab !== "management" || !project?.access.can_manage_sharing) return;
@@ -716,22 +849,8 @@ export function ProjectSettingsPage() {
       setIsDirectoryLoading(true);
       try {
         await fetchProjectGrants(project.id);
-        const [users, groups] = await Promise.all([
-          fetchDirectoryUsers(),
-          fetchDirectoryGroups(),
-        ]);
+        await loadDirectorySnapshot();
         if (cancelled) return;
-
-        setDirectoryUsers(users);
-        setDirectoryGroups(groups);
-
-        const firstUser = users.find((item) => item.user_id !== currentUser?.user_id) ?? users[0];
-        if (firstUser) {
-          setSelectedUserId((prev) => prev || firstUser.user_id);
-        }
-        if (groups[0]) {
-          setSelectedGroupId((prev) => prev || groups[0].group_id);
-        }
       } catch (loadError) {
         if (!cancelled) {
           setError((loadError as Error).message);
@@ -748,11 +867,17 @@ export function ProjectSettingsPage() {
     };
   }, [
     activeTab,
-    currentUser?.user_id,
     fetchProjectGrants,
+    loadDirectorySnapshot,
     project?.access.can_manage_sharing,
     project?.id,
   ]);
+
+  const refreshWorkspaceBindings = useCallback(async () => {
+    if (!projectId) return;
+    await fetchWorkspaces(projectId);
+    setWorkspaceInventoryRefreshKey((key) => key + 1);
+  }, [fetchWorkspaces, projectId]);
 
   if (!project) {
     return (
@@ -774,7 +899,9 @@ export function ProjectSettingsPage() {
   const canEditProject = project.access.can_edit;
   const canManageSharing = project.access.can_manage_sharing;
   const contextContainers = project.config.context_containers ?? [];
-  const availableUsers = directoryUsers.filter((item) => item.user_id !== currentUser?.user_id);
+  const pendingSelections = pickerSelections.filter((s) =>
+    s.type === "user" ? !grantedUserIds.has(s.id) : !grantedGroupIds.has(s.id),
+  );
   const activeTabMeta = SETTINGS_TABS.find((item) => item.key === activeTab) ?? SETTINGS_TABS[0];
 
   const saveBaseInfo = async () => {
@@ -860,27 +987,39 @@ export function ProjectSettingsPage() {
     setError(null);
   };
 
-  const submitGrant = async () => {
+  const submitBatchGrant = async () => {
     if (!canManageSharing) {
       setError("当前权限不允许管理共享");
       return;
     }
-
-    const subjectId = shareTargetType === "user" ? selectedUserId : selectedGroupId;
-    if (!subjectId) {
-      setError(shareTargetType === "user" ? "请选择用户" : "请选择用户组");
+    if (pendingSelections.length === 0) {
+      setError("请先选择要授权的用户或用户组");
       return;
     }
 
-    const savedGrant = shareTargetType === "user"
-      ? await grantProjectUser(project.id, subjectId, grantRole)
-      : await grantProjectGroup(project.id, subjectId, grantRole);
-    if (!savedGrant) {
-      setError("共享授权保存失败");
-      return;
+    try {
+      const results = await Promise.allSettled(
+        pendingSelections.map((s) =>
+          s.type === "user"
+            ? grantProjectUser(project.id, s.id, grantRole)
+            : grantProjectGroup(project.id, s.id, grantRole),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length > 0) {
+        setError(`${pendingSelections.length - failed.length} 项授权成功，${failed.length} 项失败`);
+      } else {
+        setError(null);
+      }
+      await Promise.all([
+        fetchProjectGrants(project.id),
+        fetchProjects(),
+        loadDirectorySnapshot(),
+      ]);
+      setPickerSelections([]);
+    } catch (grantError) {
+      setError((grantError as Error).message);
     }
-
-    setError(null);
   };
 
   const revokeGrant = async (grant: ProjectSubjectGrant) => {
@@ -891,6 +1030,10 @@ export function ProjectSettingsPage() {
       setError("撤销授权失败");
       return;
     }
+    await Promise.all([
+      fetchProjectGrants(project.id),
+      fetchProjects(),
+    ]);
     setError(null);
   };
 
@@ -1082,19 +1225,26 @@ export function ProjectSettingsPage() {
               {activeTab === "workspace" && (
                 <>
                   <SectionCard
-                    title="Backend Access"
-                    description="Project 绑定可使用的 backend；可用目录由 backend 上报或在 Workspace 详情中登记。"
+                    title="运行环境"
+                    description="这个项目能在哪台机器上运行，哪台是你自己的设备，哪些是服务器 runner，以及怎么把一台新服务器接进来。"
                   >
                     <BackendAccessPanel
                       projectId={project.id}
                       canEdit={canEditProject}
                       inventoryRefreshKey={workspaceInventoryRefreshKey}
                     />
+
+                    <ContentGroup
+                      title="接入新服务器"
+                      description="给没有界面、没有登录态的服务器签发接入令牌，复制 setup 命令即可把它作为服务器 runner 接入。"
+                    >
+                      <RunnerTokensPanel projectId={project.id} canEdit={canEditProject} />
+                    </ContentGroup>
                   </SectionCard>
 
                   <SectionCard
                     title="工作空间"
-                    description="逻辑 Workspace 只表达身份；物理 backend/root 落点由可用目录确认。"
+                    description="每个工作空间是一处工作内容；它落在哪台机器的哪个目录，在条目里就地查看与定位。"
                   >
                     <WorkspaceList
                       projectId={project.id}
@@ -1104,13 +1254,31 @@ export function ProjectSettingsPage() {
                       onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
                       onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
                     />
+
+                    <CollapsibleGroup
+                      title="在本机定位目录（高级）"
+                      hint="在已接入的本机上扫描候选目录，确认后写入工作空间。日常使用可直接在工作空间条目的「在机器上定位」里完成。"
+                    >
+                      <LocalWorkspaceDiscoveryPanel
+                        projectId={project.id}
+                        workspaces={workspaces}
+                        canEdit={canEditProject}
+                        refreshKey={workspaceInventoryRefreshKey}
+                        onBound={refreshWorkspaceBindings}
+                      />
+                    </CollapsibleGroup>
                   </SectionCard>
 
                   <SectionCard
-                    title="Workspace Modules"
-                    description="Canvas 与 Extension 贡献的协作模块合并认知：kind / 来源 / 状态 / operations 与 UI entries 数；unavailable 模块给出诊断。启停在各自的 Extension / Canvas 管理入口完成。"
+                    title="高级 / 诊断"
+                    description="只读的诊断信息，日常无需关注。"
                   >
-                    <WorkspaceModulesPanel projectId={project.id} />
+                    <CollapsibleGroup
+                      title="Workspace Modules"
+                      hint="Canvas 与 Extension 贡献的协作模块：kind / 来源 / 状态 / operations 与 UI entries 数；unavailable 模块给出诊断。启停在各自的 Extension / Canvas 管理入口完成。"
+                    >
+                      <WorkspaceModulesPanel projectId={project.id} />
+                    </CollapsibleGroup>
                   </SectionCard>
 
                 </>
@@ -1122,51 +1290,28 @@ export function ProjectSettingsPage() {
                     title="共享管理"
                     description="Project 的共享记录独立于 Workspace。这里专门处理用户/用户组授权。"
                   >
-                    <ContentGroup title="共享策略">
+                    <ContentGroup title="添加授权">
                       {canManageSharing ? (
                         <>
-                          <div className="grid gap-3 md:grid-cols-[120px_minmax(0,1fr)_140px_auto]">
-                            <select
-                              value={shareTargetType}
-                              onChange={(event) => setShareTargetType(event.target.value as "user" | "group")}
-                              className="agentdash-form-select"
-                            >
-                              <option value="user">用户</option>
-                              <option value="group">用户组</option>
-                            </select>
+                          <DirectorySubjectPicker
+                            selections={pickerSelections}
+                            onSelectionsChange={setPickerSelections}
+                            knownUsers={directoryUsers}
+                            knownGroups={directoryGroups}
+                            userDirectoryStatus={directoryUsersStatus}
+                            groupDirectoryStatus={directoryGroupsStatus}
+                            grantedUserIds={grantedUserIds}
+                            grantedGroupIds={grantedGroupIds}
+                            currentUserId={currentUser?.user_id}
+                            onUsersObserved={rememberDirectoryUsers}
+                            onGroupsObserved={rememberDirectoryGroups}
+                          />
 
-                            {shareTargetType === "user" ? (
-                              <select
-                                value={selectedUserId}
-                                onChange={(event) => setSelectedUserId(event.target.value)}
-                                className="agentdash-form-select"
-                              >
-                                <option value="">选择用户</option>
-                                {availableUsers.map((user) => (
-                                  <option key={user.user_id} value={user.user_id}>
-                                    {resolveDirectoryUserLabel(user)}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <select
-                                value={selectedGroupId}
-                                onChange={(event) => setSelectedGroupId(event.target.value)}
-                                className="agentdash-form-select"
-                              >
-                                <option value="">选择用户组</option>
-                                {directoryGroups.map((group) => (
-                                  <option key={group.group_id} value={group.group_id}>
-                                    {group.display_name?.trim() || group.group_id}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-
+                          <div className="flex flex-wrap items-center gap-3">
                             <select
                               value={grantRole}
                               onChange={(event) => setGrantRole(event.target.value as ProjectRole)}
-                              className="agentdash-form-select"
+                              className="agentdash-form-select w-auto"
                             >
                               {PROJECT_ROLE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1177,11 +1322,24 @@ export function ProjectSettingsPage() {
 
                             <button
                               type="button"
-                              onClick={() => void submitGrant()}
-                              className="agentdash-button-primary"
+                              onClick={() => void submitBatchGrant()}
+                              disabled={pendingSelections.length === 0}
+                              className="agentdash-button-primary disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              保存授权
+                              {pendingSelections.length > 0
+                                ? `批量授权 (${pendingSelections.length})`
+                                : "批量授权"}
                             </button>
+
+                            {pendingSelections.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setPickerSelections([])}
+                                className="text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                清空选择
+                              </button>
+                            )}
                           </div>
 
                           {isDirectoryLoading && (
@@ -1206,6 +1364,14 @@ export function ProjectSettingsPage() {
                             {grants.map((grant) => {
                               const grantUser = findGrantUser(grant, directoryUsers);
                               const subjectLabel = resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups);
+                              const subjectAuditLabel = grant.subject_type === "user"
+                                ? resolveUserAuditLabel(grant.subject_id, directoryUsers, currentUser)
+                                : grant.subject_id;
+                              const grantorAuditLabel = resolveUserAuditLabel(
+                                grant.granted_by_user_id,
+                                directoryUsers,
+                                currentUser,
+                              );
                               return (
                                 <div
                                   key={`${grant.subject_type}:${grant.subject_id}`}
@@ -1231,8 +1397,13 @@ export function ProjectSettingsPage() {
                                           {PROJECT_ROLE_LABELS[grant.role]}
                                         </span>
                                       </div>
-                                      <p className="mt-1 text-xs text-muted-foreground">
-                                        subject_id: {grant.subject_id} · granted_by: {grant.granted_by_user_id}
+                                      <p
+                                        className="mt-1 text-xs text-muted-foreground"
+                                        title={`subject_id: ${grant.subject_id} · granted_by: ${grant.granted_by_user_id}`}
+                                      >
+                                        {grant.subject_type === "user" ? "subject" : "group_id"}: {subjectAuditLabel}
+                                        {" · granted_by: "}
+                                        {grantorAuditLabel}
                                       </p>
                                     </div>
                                   </div>

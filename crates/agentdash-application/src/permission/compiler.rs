@@ -62,7 +62,7 @@ mod tests {
             "session-1",
             vec![
                 ToolCapabilityPath::parse("story_management").unwrap(),
-                ToolCapabilityPath::parse("task_management::start_task").unwrap(),
+                ToolCapabilityPath::parse("task::read").unwrap(),
             ],
             "test",
             GrantScope::AgentFrame,

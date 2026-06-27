@@ -354,6 +354,7 @@ impl SessionEventStore for PostgresSessionRepository {
             turn_id: projection.turn_id.clone(),
             entry_index: projection.entry_index,
             tool_call_id: projection.tool_call_id.clone(),
+            ephemeral: false,
             notification: envelope.clone(),
         };
         let notification_json = json_string(&persisted.notification, "notification_json")?;
@@ -506,6 +507,34 @@ impl SessionEventStore for PostgresSessionRepository {
             "#,
         )
         .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_session_store_error)?;
+
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            events.push(persisted_event_from_row(&row)?);
+        }
+        Ok(events)
+    }
+
+    async fn list_events_from(
+        &self,
+        session_id: &str,
+        from_seq: u64,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
+        let from_seq_db = encode_u64_as_i64(from_seq, "session_events.from_seq")?;
+        let rows = sqlx::query(
+            r#"
+            SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
+                   session_update_type, turn_id, entry_index, tool_call_id, notification_json
+            FROM session_events
+            WHERE session_id = $1 AND event_seq >= $2
+            ORDER BY event_seq ASC
+            "#,
+        )
+        .bind(session_id)
+        .bind(from_seq_db)
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -1048,6 +1077,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             turn_id: projection.turn_id.clone(),
             entry_index: projection.entry_index,
             tool_call_id: projection.tool_call_id.clone(),
+            ephemeral: false,
             notification: commit.completed_event.clone(),
         };
         let notification_json = json_string(&persisted.notification, "notification_json")?;

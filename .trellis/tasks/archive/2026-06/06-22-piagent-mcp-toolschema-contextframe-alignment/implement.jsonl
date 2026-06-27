@@ -1,0 +1,17 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端分层与相关 session/capability/hooks 规范入口"}
+{"file":".trellis/spec/backend/architecture.md","reason":"后端 crate 分层、application 与 executor 边界"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"Session runtime、PreparedTurn、ContextFrame 与执行上下文边界"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"turn preparation、tool assembly 与 ContextFrame enqueue 链路"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"ExecutionContext frame 与 runtime tool/capability surface 约束"}
+{"file":".trellis/spec/backend/session/pi-agent-streaming.md","reason":"PiAgent connector、streaming 与 tool call 映射边界"}
+{"file":".trellis/spec/backend/hooks/architecture.md","reason":"Hook runtime 与 Agent-visible ContextFrame 的职责归属"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"turn-start notice、transform_context 与 ContextFrame 注入契约"}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"CapabilityState 与工具能力事实源架构"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"平台内嵌 tools、MCP capability、tool path 与 visibility 规则"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"Capability dimension delta 与 ContextFrame section 生成约束"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"ContextFrame event、frontend feed 与 tool card 渲染跨层协议"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范入口与 ContextFrame UI 相关 appendix 指引"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"ContextFrame component 修改约束"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端 ContextFrame parser/type contract 修改约束"}
+{"file":".trellis/tasks/06-22-piagent-mcp-toolschema-contextframe-alignment/design.md","reason":"本任务架构锚点与目标数据流"}
+{"file":".trellis/tasks/06-22-piagent-mcp-toolschema-contextframe-alignment/implement.md","reason":"本任务实施清单与验证要求"}

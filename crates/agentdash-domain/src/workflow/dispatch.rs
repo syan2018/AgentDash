@@ -14,7 +14,6 @@ pub enum ExecutionSource {
     ParentAgent,
     ProjectAgent,
     Api,
-    Migration,
 }
 
 /// 决定 LifecycleRun 的复用策略。

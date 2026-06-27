@@ -22,12 +22,13 @@ AGENTDASH_PUBLIC_ORIGIN=https://agentdash.example.internal
 AGENTDASH_BIND_HOST=0.0.0.0
 AGENTDASH_PORT=3001
 DATABASE_URL=postgres://agentdash:change-me@postgres:5432/agentdash
-AGENTDASH_SECRET_KEY=change-me
-AGENTDASH_ENCRYPTION_KEY=change-me
+AGENTDASH_SECRET_KEY=0123456789abcdef0123456789abcdef
 RUST_LOG=info
 ```
 
 `AGENTDASH_PUBLIC_ORIGIN` 是部署事实源，API URL、Relay WebSocket URL 和桌面端 discovery response 都从它派生。默认 Relay WebSocket path 为 `/ws/backend`；如果反代暴露不同路径，使用 `AGENTDASH_RELAY_WS_URL` 覆盖。
+
+`AGENTDASH_SECRET_KEY` 是服务端 LLM Provider secret 加密主密钥，必须是 32 字节原文或 32 字节 key 的 base64 表示。
 
 `AGENTDASH_IMAGE_REPOSITORY` 与 `AGENTDASH_VERSION` 共同决定 `migrate` 和 `agentdash-cloud` 使用的 cloud image。默认值服务本地验证；远端部署使用 registry repository，例如 `ghcr.io/<owner>/agentdash-cloud`。
 

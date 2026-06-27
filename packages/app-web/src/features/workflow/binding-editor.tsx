@@ -3,8 +3,6 @@ import type { WorkflowContextBinding } from "../../types";
 interface BindingEditorProps {
   binding: WorkflowContextBinding;
   index: number;
-  /** @deprecated 视觉语言统一后不再需要；保留 prop 以兼容调用方。 */
-  compact?: boolean;
   onChange: (patch: Partial<WorkflowContextBinding>) => void;
   onRemove: () => void;
 }

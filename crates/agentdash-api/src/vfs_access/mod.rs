@@ -3,10 +3,10 @@
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_application::vfs::inline_persistence::{
+    use agentdash_application_vfs::inline_persistence::{
         InlineContentOverlay, InlineContentPersister,
     };
-    use agentdash_application::vfs::*;
+    use agentdash_application_vfs::*;
     use agentdash_spi::{MountCapability, Vfs};
 
     use agentdash_agent::AgentTool;
@@ -18,7 +18,7 @@ mod tests {
     use chrono::Utc;
     use tokio::sync::{Mutex, mpsc};
 
-    use agentdash_application::vfs::tools::fs::{
+    use agentdash_application_vfs::tools::fs::{
         FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
         ShellExecTool,
     };
@@ -451,7 +451,17 @@ mod tests {
         assert!(listed.entries.iter().any(|e| e.path == "notes/todo.md"));
 
         let hits = service
-            .search_text(&vfs, "brief", ".", "verify", 10, None)
+            .search_text(
+                &vfs,
+                agentdash_application_vfs::BasicTextSearchRequest {
+                    mount_id: "brief",
+                    path: ".",
+                    query: "verify",
+                    max_results: 10,
+                    overlay: None,
+                    identity: None,
+                },
+            )
             .await
             .expect("inline search");
         assert_eq!(hits.len(), 1);
@@ -564,11 +574,14 @@ mod tests {
         let hits = service
             .search_text(
                 &runtime_vfs,
-                "brief",
-                ".",
-                "patched inline",
-                10,
-                Some(&overlay),
+                agentdash_application_vfs::BasicTextSearchRequest {
+                    mount_id: "brief",
+                    path: ".",
+                    query: "patched inline",
+                    max_results: 10,
+                    overlay: Some(&overlay),
+                    identity: None,
+                },
             )
             .await
             .expect("search patched inline");
@@ -591,7 +604,6 @@ mod tests {
                     supports_discover_options: true,
                     mcp_servers: Vec::new(),
                 },
-                workspace_roots: vec!["/workspace".to_string()],
                 sender,
                 connected_at: Utc::now(),
             })
@@ -667,7 +679,6 @@ mod tests {
                     supports_discover_options: true,
                     mcp_servers: Vec::new(),
                 },
-                workspace_roots: vec!["/workspace".to_string()],
                 sender,
                 connected_at: Utc::now(),
             })

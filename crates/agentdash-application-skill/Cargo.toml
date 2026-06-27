@@ -1,0 +1,22 @@
+[package]
+name = "agentdash-application-skill"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-application-vfs = { workspace = true }
+agentdash-diagnostics = { workspace = true }
+agentdash-domain = { workspace = true }
+agentdash-spi = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+sha2 = "0.10"
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { workspace = true, features = ["macros", "rt"] }

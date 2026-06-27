@@ -1,14 +1,12 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{collections::HashMap, sync::Arc};
 
-use agentdash_agent::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
-    tools::sanitize_tool_schema,
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
+    McpHttpHeader, McpTransportConfig, RuntimeMcpServer, ToolUpdateCallback,
 };
-use agentdash_spi::platform::tool_capability::{
-    CAP_RELAY_MANAGEMENT, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW_MANAGEMENT,
-};
-use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::{
     RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult, Tool},
@@ -23,7 +21,11 @@ use tokio_util::sync::CancellationToken;
 use agentdash_mcp::render_content;
 use agentdash_spi::ConnectorError;
 
-use super::DiscoveredMcpTool;
+use super::{
+    DiscoveredMcpTool,
+    common::{McpToolSurface, build_discovered_entry, normalize_args_object},
+    naming::capability_key_for_mcp_server_name,
+};
 
 type McpHttpClient = RunningService<RoleClient, ()>;
 
@@ -31,6 +33,7 @@ type McpHttpClient = RunningService<RoleClient, ()>;
 struct McpHttpServerSpec {
     name: String,
     url: String,
+    headers: Vec<McpHttpHeader>,
 }
 
 #[derive(Default)]
@@ -87,7 +90,9 @@ impl DirectMcpClientPool {
             return Ok(client);
         }
 
-        let new_client = Arc::new(Mutex::new(connect_http_server(&server.url).await?));
+        let new_client = Arc::new(Mutex::new(
+            connect_http_server(&server.url, &server.headers).await?,
+        ));
         let mut clients = self.clients.write().await;
         if let Some(existing) = clients.get(&key).cloned() {
             drop(clients);
@@ -123,39 +128,32 @@ impl DirectMcpClientPool {
     }
 
     fn key(&self, server: &McpHttpServerSpec) -> String {
-        server.url.clone()
+        format!(
+            "{}\n{}",
+            server.url,
+            serde_json::to_string(&server.headers).unwrap_or_default()
+        )
     }
 }
 
 #[derive(Clone)]
 pub struct McpToolAdapter {
-    runtime_name: String,
-    original_name: String,
-    description: String,
-    parameters_schema: serde_json::Value,
+    surface: McpToolSurface,
     server: McpHttpServerSpec,
     pool: Arc<DirectMcpClientPool>,
 }
 
 impl McpToolAdapter {
     fn from_tool(server: McpHttpServerSpec, pool: Arc<DirectMcpClientPool>, tool: Tool) -> Self {
-        let original_name = tool.name.to_string();
-        let runtime_name = namespaced_tool_name(&server.name, &original_name);
-        let description = tool
-            .description
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("MCP 工具")
-            .to_string();
-        let parameters_schema =
-            sanitize_tool_schema(serde_json::Value::Object((*tool.input_schema).clone()));
+        let surface = McpToolSurface::new(
+            server.name.clone(),
+            tool.name.to_string(),
+            tool.description.as_deref(),
+            serde_json::Value::Object((*tool.input_schema).clone()),
+        );
 
         Self {
-            runtime_name,
-            original_name,
-            description,
-            parameters_schema,
+            surface,
             server,
             pool,
         }
@@ -165,15 +163,15 @@ impl McpToolAdapter {
 #[async_trait]
 impl AgentTool for McpToolAdapter {
     fn name(&self) -> &str {
-        &self.runtime_name
+        &self.surface.runtime_name
     }
 
     fn description(&self) -> &str {
-        &self.description
+        &self.surface.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        self.parameters_schema.clone()
+        self.surface.parameters_schema.clone()
     }
 
     async fn execute(
@@ -183,21 +181,12 @@ impl AgentTool for McpToolAdapter {
         _cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let arguments = match args {
-            serde_json::Value::Null => None,
-            serde_json::Value::Object(map) => Some(map),
-            other => {
-                return Err(AgentToolError::InvalidArguments(format!(
-                    "MCP 工具参数必须是 JSON object，实际为: {}",
-                    other
-                )));
-            }
-        };
+        let arguments = normalize_args_object(args)?;
 
         let request = if let Some(arguments) = arguments {
-            CallToolRequestParams::new(self.original_name.clone()).with_arguments(arguments)
+            CallToolRequestParams::new(self.surface.tool_name.clone()).with_arguments(arguments)
         } else {
-            CallToolRequestParams::new(self.original_name.clone())
+            CallToolRequestParams::new(self.surface.tool_name.clone())
         };
 
         let call_result = self.pool.call_tool(&self.server, request).await;
@@ -205,19 +194,19 @@ impl AgentTool for McpToolAdapter {
         match call_result {
             Ok(result) => Ok(convert_call_result(
                 &self.server,
-                &self.original_name,
+                &self.surface.tool_name,
                 result,
             )),
             Err(error) => Err(AgentToolError::ExecutionFailed(format!(
                 "调用 MCP 工具失败（tool={}）: {}",
-                self.original_name, error
+                self.surface.tool_name, error
             ))),
         }
     }
 }
 
 pub async fn discover_mcp_tools(
-    servers: &[SessionMcpServer],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
     Ok(discover_mcp_tool_entries(servers, capability_state)
@@ -228,70 +217,81 @@ pub async fn discover_mcp_tools(
 }
 
 pub async fn discover_mcp_tool_entries(
-    servers: &[SessionMcpServer],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
     let mut entries = Vec::new();
     let pool = Arc::new(DirectMcpClientPool::default());
 
     for server in servers {
-        let Some(server_spec) = parse_http_session_server(server) else {
-            tracing::debug!("跳过非 HTTP MCP Server");
+        let Some(server_spec) = parse_http_mcp_server(server) else {
+            diag!(Debug, Subsystem::Mcp, "跳过非 HTTP MCP Server");
             continue;
         };
 
         let listed = pool.list_tools(&server_spec).await?;
 
-        let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
-        for tool in listed {
-            if !capability_state.is_capability_tool_enabled(
-                &capability_key,
-                tool.name.as_ref(),
-                None,
-            ) {
-                continue;
-            }
+        entries.extend(build_direct_discovered_entries_from_listed_tools(
+            server_spec,
+            pool.clone(),
+            listed,
+            capability_state,
+        ));
+    }
+
+    Ok(entries)
+}
+
+fn build_direct_discovered_entries_from_listed_tools(
+    server_spec: McpHttpServerSpec,
+    pool: Arc<DirectMcpClientPool>,
+    listed: Vec<Tool>,
+    capability_state: &CapabilityState,
+) -> Vec<DiscoveredMcpTool> {
+    let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
+    listed
+        .into_iter()
+        .filter(|tool| {
+            capability_state.is_capability_tool_enabled(&capability_key, tool.name.as_ref(), None)
+        })
+        .map(|tool| {
             let adapter = Arc::new(McpToolAdapter::from_tool(
                 server_spec.clone(),
                 pool.clone(),
                 tool,
             ));
             let tool = adapter.clone() as DynAgentTool;
-            entries.push(DiscoveredMcpTool {
-                runtime_name: adapter.runtime_name.clone(),
-                server_name: server_spec.name.clone(),
-                tool_name: adapter.original_name.clone(),
-                uses_relay: false,
-                description: adapter.description.clone(),
-                parameters_schema: adapter.parameters_schema.clone(),
-                tool,
-            });
-        }
-    }
-
-    Ok(entries)
-}
-
-pub fn capability_key_for_mcp_server_name(server_name: &str) -> String {
-    match agent_facing_mcp_server_name(server_name).as_str() {
-        "agentdash-relay-tools" => CAP_RELAY_MANAGEMENT.to_string(),
-        "agentdash-story-tools" => CAP_STORY_MANAGEMENT.to_string(),
-        "agentdash-task-tools" => CAP_TASK_MANAGEMENT.to_string(),
-        "agentdash-workflow-tools" => CAP_WORKFLOW_MANAGEMENT.to_string(),
-        other => format!("mcp:{other}"),
-    }
+            build_discovered_entry(&adapter.surface, false, tool)
+        })
+        .collect()
 }
 
 async fn connect_http_server(
     url: &str,
+    headers: &[McpHttpHeader],
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>, ConnectorError> {
-    let worker = StreamableHttpClientWorker::new(
-        reqwest::Client::new(),
-        StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-    );
+    let config = StreamableHttpClientTransportConfig::with_uri(url.to_string())
+        .custom_headers(build_header_map(headers)?);
+    let worker = StreamableHttpClientWorker::new(reqwest::Client::new(), config);
     ().serve(worker)
         .await
         .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))
+}
+
+fn build_header_map(
+    headers: &[McpHttpHeader],
+) -> Result<HashMap<HeaderName, HeaderValue>, ConnectorError> {
+    let mut map = HashMap::new();
+    for header in headers {
+        let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|error| {
+            ConnectorError::InvalidConfig(format!("MCP HTTP header name 无效: {error}"))
+        })?;
+        let value = HeaderValue::from_str(&header.value).map_err(|error| {
+            ConnectorError::InvalidConfig(format!("MCP HTTP header value 无效: {error}"))
+        })?;
+        map.insert(name, value);
+    }
+    Ok(map)
 }
 
 fn convert_call_result(
@@ -335,92 +335,122 @@ fn format_service_error(error: &ServiceError) -> String {
     }
 }
 
-fn parse_http_session_server(server: &SessionMcpServer) -> Option<McpHttpServerSpec> {
+fn parse_http_mcp_server(server: &RuntimeMcpServer) -> Option<McpHttpServerSpec> {
     match &server.transport {
-        McpTransportConfig::Http { url, .. } => Some(McpHttpServerSpec {
+        McpTransportConfig::Http { url, headers } => Some(McpHttpServerSpec {
             name: server.name.clone(),
             url: url.clone(),
+            headers: headers.clone(),
         }),
         _ => None,
     }
 }
 
-pub fn namespaced_tool_name(server_name: &str, tool_name: &str) -> String {
-    let agent_facing_server = agent_facing_mcp_server_name(server_name);
-    format!(
-        "mcp_{}_{}",
-        sanitize_identifier(&agent_facing_server),
-        sanitize_identifier(tool_name)
-    )
-}
-
-pub fn agent_facing_mcp_server_name(server_name: &str) -> String {
-    const PLATFORM_SCOPED_PREFIXES: &[(&str, &str)] = &[
-        ("agentdash-story-tools-", "agentdash-story-tools"),
-        ("agentdash-task-tools-", "agentdash-task-tools"),
-        ("agentdash-workflow-tools-", "agentdash-workflow-tools"),
-    ];
-
-    for (prefix, stable_name) in PLATFORM_SCOPED_PREFIXES {
-        if server_name.starts_with(prefix) {
-            return (*stable_name).to_string();
-        }
-    }
-
-    server_name.to_string()
-}
-
-pub(crate) fn sanitize_identifier(input: &str) -> String {
-    let sanitized = input
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    sanitized.trim_matches('_').to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{borrow::Cow, sync::Arc};
 
-    #[test]
-    fn namespaced_name_hides_platform_scope_ids() {
-        assert_eq!(
-            namespaced_tool_name("agentdash-task-tools-1234", "update_status"),
-            "mcp_agentdash_task_tools_update_status"
-        );
-        assert_eq!(
-            namespaced_tool_name("agentdash-workflow-tools-8de613e7", "get_lifecycle"),
-            "mcp_agentdash_workflow_tools_get_lifecycle"
-        );
+    use agentdash_spi::{ToolCapability, ToolCapabilityFilter};
+
+    fn header(value: &str) -> McpHttpHeader {
+        McpHttpHeader {
+            name: "x-session".to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    fn listed_tool(name: &str) -> Tool {
+        let mut tool = Tool::default();
+        tool.name = Cow::Owned(name.to_string());
+        tool.description = Some(Cow::Owned(format!("{name} description")));
+        let mut input_schema = serde_json::Map::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+        tool.input_schema = Arc::new(input_schema);
+        tool
     }
 
     #[test]
-    fn namespaced_name_keeps_custom_server_namespace() {
-        assert_eq!(
-            namespaced_tool_name("code-analyzer", "scan_repo"),
-            "mcp_code_analyzer_scan_repo"
-        );
+    fn parse_http_mcp_server_preserves_resolved_headers() {
+        let server = RuntimeMcpServer {
+            name: "p4-tools".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
+                headers: vec![header("demo")],
+            },
+            uses_relay: false,
+        };
+
+        let parsed = parse_http_mcp_server(&server).expect("http server should parse");
+        assert_eq!(parsed.name, "p4-tools");
+        assert_eq!(parsed.url, "http://127.0.0.1:8999/mcp?p4_client=demo");
+        assert_eq!(parsed.headers, vec![header("demo")]);
     }
 
     #[test]
-    fn platform_mcp_server_names_map_to_capability_keys() {
-        assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-workflow-tools-8de613e7"),
-            "workflow_management"
+    fn direct_pool_key_includes_url_and_headers() {
+        let pool = DirectMcpClientPool::default();
+        let base = McpHttpServerSpec {
+            name: "p4-tools".to_string(),
+            url: "http://127.0.0.1:8999/mcp".to_string(),
+            headers: vec![header("session-a")],
+        };
+        let same = McpHttpServerSpec {
+            headers: vec![header("session-a")],
+            ..base.clone()
+        };
+        let different_headers = McpHttpServerSpec {
+            headers: vec![header("session-b")],
+            ..base.clone()
+        };
+        let different_url = McpHttpServerSpec {
+            url: "http://127.0.0.1:8999/other".to_string(),
+            ..base.clone()
+        };
+
+        let base_key = pool.key(&base);
+        assert_eq!(base_key, pool.key(&same));
+        assert_ne!(base_key, pool.key(&different_headers));
+        assert_ne!(base_key, pool.key(&different_url));
+    }
+
+    #[test]
+    fn direct_discovery_filters_custom_mcp_raw_tool_policy_from_entries_and_callables() {
+        let server_spec = McpHttpServerSpec {
+            name: "code-analyzer".to_string(),
+            url: "http://127.0.0.1:8999/mcp".to_string(),
+            headers: vec![],
+        };
+        let mut capability_state = CapabilityState::default();
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        capability_state.tool.tool_policy.insert(
+            "mcp:code-analyzer".to_string(),
+            ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["blocked_tool".to_string()].into_iter().collect(),
+            },
         );
-        assert_eq!(
-            capability_key_for_mcp_server_name("agentdash-task-tools-1234"),
-            "task_management"
+
+        let entries = build_direct_discovered_entries_from_listed_tools(
+            server_spec,
+            Arc::new(DirectMcpClientPool::default()),
+            vec![listed_tool("allowed_tool"), listed_tool("blocked_tool")],
+            &capability_state,
         );
-        assert_eq!(
-            capability_key_for_mcp_server_name("code-analyzer"),
-            "mcp:code-analyzer"
-        );
+
+        let raw_tool_names = entries
+            .iter()
+            .map(|entry| entry.tool_name.as_str())
+            .collect::<Vec<_>>();
+        let callable_names = entries
+            .iter()
+            .map(|entry| entry.tool.name())
+            .collect::<Vec<_>>();
+
+        assert_eq!(raw_tool_names, vec!["allowed_tool"]);
+        assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
     }
 }

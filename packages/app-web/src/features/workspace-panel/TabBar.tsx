@@ -22,34 +22,45 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  tabTypeRegistry,
-  useTabTypeRegistrySnapshot,
   type TabInstance,
+  type TabTypeDescriptor,
 } from "./tab-type-registry";
 import { AddTabMenu } from "./AddTabMenu";
+import type { CanvasModuleOpenOption } from "./model/canvasModuleOpen";
 
 // ─── Props ──────────────────────────────────────────────
 
 interface TabBarProps {
   tabs: TabInstance[];
+  tabTypes: TabTypeDescriptor[];
   activeTabId: string | null;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   onAddTab: (typeId: string) => void;
+  canvasOptions: CanvasModuleOpenOption[];
+  canvasOptionsStatus: "idle" | "loading" | "ready" | "refreshing" | "error";
+  canvasOpenBusyKey: string | null;
+  canvasOpenError: string | null;
+  onOpenCanvasModule: (option: CanvasModuleOpenOption) => Promise<boolean>;
 }
 
 // ─── TabBar ─────────────────────────────────────────────
 
 export function TabBar({
   tabs,
+  tabTypes,
   activeTabId,
   onActivate,
   onClose,
   onReorder,
   onAddTab,
+  canvasOptions,
+  canvasOptionsStatus,
+  canvasOpenBusyKey,
+  canvasOpenError,
+  onOpenCanvasModule,
 }: TabBarProps) {
-  useTabTypeRegistrySnapshot();
   const pinnedTabs = useMemo(() => tabs.filter((t) => t.pinned), [tabs]);
   const dynamicTabs = useMemo(() => tabs.filter((t) => !t.pinned), [tabs]);
   const dynamicIds = useMemo(() => dynamicTabs.map((t) => t.id), [dynamicTabs]);
@@ -82,6 +93,7 @@ export function TabBar({
           <TabButton
             key={tab.id}
             tab={tab}
+            tabTypes={tabTypes}
             isActive={tab.id === activeTabId}
             onActivate={onActivate}
             onClose={onClose}
@@ -99,6 +111,7 @@ export function TabBar({
               <SortableTabButton
                 key={tab.id}
                 tab={tab}
+                tabTypes={tabTypes}
                 isActive={tab.id === activeTabId}
                 onActivate={onActivate}
                 onClose={onClose}
@@ -109,7 +122,15 @@ export function TabBar({
       </div>
 
       {/* "+" 新建菜单（放在 overflow 容器之外，避免下拉被裁剪） */}
-      <AddTabMenu onAddTab={onAddTab} />
+      <AddTabMenu
+        tabTypes={tabTypes}
+        onAddTab={onAddTab}
+        canvasOptions={canvasOptions}
+        canvasOptionsStatus={canvasOptionsStatus}
+        canvasOpenBusyKey={canvasOpenBusyKey}
+        canvasOpenError={canvasOpenError}
+        onOpenCanvasModule={onOpenCanvasModule}
+      />
     </div>
   );
 }
@@ -118,16 +139,18 @@ export function TabBar({
 
 function TabButton({
   tab,
+  tabTypes,
   isActive,
   onActivate,
   onClose,
 }: {
   tab: TabInstance;
+  tabTypes: TabTypeDescriptor[];
   isActive: boolean;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
 }) {
-  const type = tabTypeRegistry.getType(tab.typeId);
+  const type = tabTypes.find((descriptor) => descriptor.typeId === tab.typeId);
   const Icon = type?.icon;
 
   return (
@@ -169,11 +192,13 @@ function TabButton({
 
 function SortableTabButton({
   tab,
+  tabTypes,
   isActive,
   onActivate,
   onClose,
 }: {
   tab: TabInstance;
+  tabTypes: TabTypeDescriptor[];
   isActive: boolean;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
@@ -192,7 +217,7 @@ function SortableTabButton({
     transition,
   };
 
-  const type = tabTypeRegistry.getType(tab.typeId);
+  const type = tabTypes.find((descriptor) => descriptor.typeId === tab.typeId);
   const Icon = type?.icon;
 
   return (

@@ -28,9 +28,9 @@
 
 ## 事务规则
 
-- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`）
+- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`，`LifecycleRunRepository` 整体写回 lifecycle context / orchestrations / tasks / view projection）
 - **跨聚合**：使用显式 Command Port 或 Unit of Work，不要硬塞进单一 Repository trait
-- Story aggregate 的 Task CRUD 走 `StoryRepository::update` 整体写回
+- Story projection 与 LifecycleRun Task facts 同时变化时，使用应用层命令编排多个聚合；不要让 `StoryRepository` 承担 Task durable CRUD
 
 ---
 
@@ -94,7 +94,7 @@ agentdash-server doctor
 
 | 条件 | 结果 |
 | --- | --- |
-| `migrate` 连接成功且 schema 可迁移 | 输出 `status = ok`、`schema_version` 和 `database_url` |
+| `migrate` 连接成功且 schema 可迁移 | 输出 `status = ok`、`schema_version` 和脱敏后的数据库描述 |
 | `serve` 发现 schema 缺表或未迁移 | 启动失败，不装配 repository |
 | `doctor` 发现 schema 未 ready | 命令失败并报告 readiness 错误 |
 | `DATABASE_URL` 非 PostgreSQL 协议 | 命令失败并报告配置错误 |

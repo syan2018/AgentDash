@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_run_mailbox;
 pub mod auth_session;
 pub mod backend;
 pub mod canvas;
@@ -21,8 +22,8 @@ pub mod settings;
 pub mod shared_library;
 pub mod skill_asset;
 pub mod story;
-pub mod task;
 pub mod workflow;
 pub mod workspace;
+pub mod workspace_module;
 
 pub use common::error::DomainError;

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 
@@ -43,7 +44,8 @@ impl From<ConnectorError> for ApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                tracing::error!(error = %error, "connector IO error");
+                diag!(Error, Subsystem::Infra,
+        error = %error, "connector IO error");
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
@@ -51,9 +53,83 @@ impl From<ConnectorError> for ApplicationError {
     }
 }
 
+impl From<agentdash_workspace_module::error::ApplicationError> for ApplicationError {
+    fn from(error: agentdash_workspace_module::error::ApplicationError) -> Self {
+        match error {
+            agentdash_workspace_module::error::ApplicationError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Forbidden(message) => {
+                Self::Forbidden(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::InvalidConfig(message) => {
+                Self::InvalidConfig(message)
+            }
+            agentdash_workspace_module::error::ApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
+impl From<agentdash_application_agentrun::ApplicationError> for ApplicationError {
+    fn from(error: agentdash_application_agentrun::ApplicationError) -> Self {
+        match error {
+            agentdash_application_agentrun::ApplicationError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_application_agentrun::ApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Forbidden(message) => {
+                Self::Forbidden(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_application_agentrun::ApplicationError::InvalidConfig(message) => {
+                Self::InvalidConfig(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Unavailable(message) => {
+                Self::Unavailable(message)
+            }
+            agentdash_application_agentrun::ApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
+impl From<agentdash_application_lifecycle::WorkflowApplicationError> for ApplicationError {
+    fn from(error: agentdash_application_lifecycle::WorkflowApplicationError) -> Self {
+        match error {
+            agentdash_application_lifecycle::WorkflowApplicationError::BadRequest(message)
+            | agentdash_application_lifecycle::WorkflowApplicationError::ModelRequired(message) => {
+                Self::BadRequest(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            agentdash_application_lifecycle::WorkflowApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
-        tracing::error!(error = %error, "application IO error");
+        diag!(Error, Subsystem::Infra,
+        error = %error, "application IO error");
         Self::Internal("内部 IO 错误".to_string())
     }
 }
@@ -71,28 +147,6 @@ impl From<crate::skill_asset::SkillAssetApplicationError> for ApplicationError {
                 Self::Conflict(message)
             }
             crate::skill_asset::SkillAssetApplicationError::Internal(message) => {
-                Self::Internal(message)
-            }
-        }
-    }
-}
-
-impl From<crate::task::execution::TaskExecutionError> for ApplicationError {
-    fn from(error: crate::task::execution::TaskExecutionError) -> Self {
-        match error {
-            crate::task::execution::TaskExecutionError::BadRequest(message) => {
-                Self::BadRequest(message)
-            }
-            crate::task::execution::TaskExecutionError::NotFound(message) => {
-                Self::NotFound(message)
-            }
-            crate::task::execution::TaskExecutionError::Conflict(message) => {
-                Self::Conflict(message)
-            }
-            crate::task::execution::TaskExecutionError::UnprocessableEntity(message) => {
-                Self::BadRequest(message)
-            }
-            crate::task::execution::TaskExecutionError::Internal(message) => {
                 Self::Internal(message)
             }
         }

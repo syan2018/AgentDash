@@ -1,11 +1,38 @@
 //! 交互式终端命令处理——spawn / input / resize / kill
 
+use std::sync::Arc;
+
 use agentdash_relay::*;
 
-use super::CommandHandler;
+use crate::shell_session_manager::ShellSessionManager;
+use crate::tool_executor::ToolExecutor;
 
-impl CommandHandler {
-    pub(super) fn handle_terminal_spawn(
+fn terminal_kill_status_name(status: ToolShellTerminateStatus) -> &'static str {
+    match status {
+        ToolShellTerminateStatus::Killed => "killed",
+        ToolShellTerminateStatus::AlreadyExited => "already_exited",
+        ToolShellTerminateStatus::UnknownSession => "unknown_session",
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct TerminalCommandHandler {
+    tool_executor: ToolExecutor,
+    shell_sessions: Arc<ShellSessionManager>,
+}
+
+impl TerminalCommandHandler {
+    pub(super) fn new(
+        tool_executor: ToolExecutor,
+        shell_sessions: Arc<ShellSessionManager>,
+    ) -> Self {
+        Self {
+            tool_executor,
+            shell_sessions,
+        }
+    }
+
+    pub(super) async fn handle_terminal_spawn(
         &self,
         id: String,
         payload: TerminalSpawnPayload,
@@ -26,7 +53,11 @@ impl CommandHandler {
             }
         };
 
-        match self.terminal_manager.spawn(&payload, &workspace_root) {
+        match self
+            .shell_sessions
+            .spawn_terminal(&payload, &workspace_root)
+            .await
+        {
             Ok(resp) => RelayMessage::ResponseTerminalSpawn {
                 id,
                 payload: Some(resp),
@@ -40,15 +71,26 @@ impl CommandHandler {
         }
     }
 
-    pub(super) fn handle_terminal_input(
+    pub(super) async fn handle_terminal_input(
         &self,
         id: String,
         payload: TerminalInputPayload,
     ) -> RelayMessage {
-        match self.terminal_manager.input(&payload) {
-            Ok(resp) => RelayMessage::ResponseTerminalInput {
+        match self
+            .shell_sessions
+            .input_shell(ToolShellInputPayload {
+                session_id: payload.terminal_id.clone(),
+                data: payload.data,
+                wait_ms: Some(0),
+                max_bytes: None,
+            })
+            .await
+        {
+            Ok(_) => RelayMessage::ResponseTerminalInput {
                 id,
-                payload: Some(resp),
+                payload: Some(TerminalInputResponse {
+                    terminal_id: payload.terminal_id,
+                }),
                 error: None,
             },
             Err(e) => RelayMessage::ResponseTerminalInput {
@@ -59,15 +101,17 @@ impl CommandHandler {
         }
     }
 
-    pub(super) fn handle_terminal_resize(
+    pub(super) async fn handle_terminal_resize(
         &self,
         id: String,
         payload: TerminalResizePayload,
     ) -> RelayMessage {
-        match self.terminal_manager.resize(&payload) {
-            Ok(resp) => RelayMessage::ResponseTerminalResize {
+        match self.shell_sessions.resize_terminal(&payload).await {
+            Ok(()) => RelayMessage::ResponseTerminalResize {
                 id,
-                payload: Some(resp),
+                payload: Some(TerminalResizeResponse {
+                    terminal_id: payload.terminal_id,
+                }),
                 error: None,
             },
             Err(e) => RelayMessage::ResponseTerminalResize {
@@ -78,15 +122,24 @@ impl CommandHandler {
         }
     }
 
-    pub(super) fn handle_terminal_kill(
+    pub(super) async fn handle_terminal_kill(
         &self,
         id: String,
         payload: TerminalKillPayload,
     ) -> RelayMessage {
-        match self.terminal_manager.kill(&payload) {
+        match self
+            .shell_sessions
+            .terminate_shell(ToolShellTerminatePayload {
+                session_id: payload.terminal_id.clone(),
+            })
+            .await
+        {
             Ok(resp) => RelayMessage::ResponseTerminalKill {
                 id,
-                payload: Some(resp),
+                payload: Some(TerminalKillResponse {
+                    terminal_id: payload.terminal_id,
+                    status: terminal_kill_status_name(resp.status).to_string(),
+                }),
                 error: None,
             },
             Err(e) => RelayMessage::ResponseTerminalKill {

@@ -95,14 +95,46 @@ const runtimeSurface: ResolvedVfsSurface = {
 };
 
 const sessionCapabilities: SessionBaselineCapabilities = {
-  skills: [
+  skills: [],
+  skill_clusters: [
     {
-      name: "runtime-skill",
-      description: "Skill from final projection",
-      file_path: "runtime-shared://skills/runtime-skill/SKILL.md",
-      disable_model_invocation: false,
+      provider_key: "copilot",
+      display_name: "Copilot Skills",
+      model_summary: "Copilot provider default exposure.",
+      ui_summary: "只展示默认暴露的 Copilot skill。",
+      inventory_hint: "更多 skill 可在 provider inventory 中查看。",
+      inventory_count: 9,
+      default_exposed_skills: [
+        {
+          capability_key: "copilot/config-edit",
+          provider_key: "copilot",
+          local_name: "config-edit",
+          display_name: "Copilot Config",
+          description: "配置编辑 skill",
+          file_path: "copilot://skills/config-edit/SKILL.md",
+          exposure: "default_exposed",
+        },
+      ],
+    },
+    {
+      provider_key: "workspace",
+      display_name: "Workspace Skills",
+      model_summary: "Workspace provider default exposure.",
+      inventory_count: 1,
+      default_exposed_skills: [
+        {
+          capability_key: "workspace/config-edit",
+          provider_key: "workspace",
+          local_name: "config-edit",
+          display_name: "Workspace Config",
+          description: "workspace 配置编辑 skill",
+          file_path: "workspace://skills/config-edit/SKILL.md",
+          exposure: "default_exposed",
+        },
+      ],
     },
   ],
+  skill_diagnostics: [],
 };
 
 const lifecycleRunView: LifecycleRunView = {
@@ -187,7 +219,7 @@ const hookRuntime: AgentFrameHookRuntimeInfo = {
 };
 
 describe("ContextOverviewTab projection contract", () => {
-  it("只从 final runtime surface 展示 Session 地址空间与派生能力", () => {
+  it("只从 final runtime surface 展示 Session 资源浏览与派生能力", () => {
     const html = renderToStaticMarkup(
       <ContextOverviewTab
         contextSnapshot={contextSnapshot}
@@ -204,7 +236,7 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("Runtime Shared");
     expect(html).toContain("Runtime Lifecycle");
     expect(html).toContain("2 个运行时 mount");
-    expect(html).toContain("runtime-skill");
+    expect(html).toContain("copilot/config-edit");
   });
 
   it("从 lifecycle run view 的 orchestration projection 展示活跃 runtime node", () => {
@@ -245,5 +277,28 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("Session Agent");
     expect(html).toContain("Run · Running");
     expect(html).not.toContain("当前会话还没有关联的上下文信息。");
+  });
+
+  it("优先从 skill_clusters 展示 session skill provider 和默认暴露 skill", () => {
+    const html = renderToStaticMarkup(
+      <ContextOverviewTab
+        contextSnapshot={contextSnapshot}
+        ownerStory={null}
+        ownerProjectName="Projection Project"
+        executorSummary={contextSnapshot.executor}
+        runtimeSurface={runtimeSurface}
+        hookRuntime={null}
+        sessionCapabilities={sessionCapabilities}
+        lifecycleRun={null}
+      />,
+    );
+
+    expect(html).toContain("2 个 Skill Provider");
+    expect(html).toContain("Copilot Skills");
+    expect(html).toContain("只展示默认暴露的 Copilot skill。");
+    expect(html).toContain("更多 skill 可在 provider inventory 中查看。");
+    expect(html).toContain("inventory 9");
+    expect(html).toContain("copilot/config-edit");
+    expect(html).toContain("workspace/config-edit");
   });
 });

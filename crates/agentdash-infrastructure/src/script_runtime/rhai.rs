@@ -86,8 +86,7 @@ impl RhaiScriptRuntime {
         ast: &AST,
         ctx: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let ctx_dynamic =
-            rhai::serde::to_dynamic(ctx).map_err(|e| format!("ctx 序列化失败: {e}"))?;
+        let ctx_dynamic = json_to_dynamic(ctx);
 
         let mut scope = Scope::new();
         scope.push("ctx", ctx_dynamic);
@@ -140,6 +139,37 @@ impl RhaiScriptRuntime {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         script.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+fn json_to_dynamic(value: &serde_json::Value) -> Dynamic {
+    match value {
+        serde_json::Value::Null => Dynamic::UNIT,
+        serde_json::Value::Bool(flag) => Dynamic::from(*flag),
+        serde_json::Value::Number(number) => {
+            if let Some(value) = number.as_i64() {
+                Dynamic::from(value as rhai::INT)
+            } else if let Some(value) = number.as_u64() {
+                if let Ok(value) = rhai::INT::try_from(value) {
+                    Dynamic::from(value)
+                } else {
+                    Dynamic::from(number.as_f64().unwrap_or_default() as rhai::FLOAT)
+                }
+            } else {
+                Dynamic::from(number.as_f64().unwrap_or_default() as rhai::FLOAT)
+            }
+        }
+        serde_json::Value::String(text) => Dynamic::from(text.clone()),
+        serde_json::Value::Array(items) => {
+            Dynamic::from(items.iter().map(json_to_dynamic).collect::<rhai::Array>())
+        }
+        serde_json::Value::Object(object) => {
+            let mut map = rhai::Map::new();
+            for (key, value) in object {
+                map.insert(key.clone().into(), json_to_dynamic(value));
+            }
+            Dynamic::from(map)
+        }
     }
 }
 

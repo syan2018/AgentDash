@@ -46,19 +46,18 @@ fetchAgentFrameRuntime(frameId): Promise<AgentFrameRuntimeView>
 fetchRuntimeTrace(runtimeSessionId): Promise<RuntimeSessionTraceView>
 ```
 
-Session command APIs use runtime session as the delivery/control entrypoint:
+AgentRun command APIs use AgentRun workspace identity as the delivery/control entrypoint:
 
 ```ts
-sendAgentRunMessageByRuntimeSession(runtimeSessionId, request: AgentRunMessageRequest)
-steerAgentRunByRuntimeSession(runtimeSessionId, request: AgentRunSteeringRequest)
-listPendingMessages(runtimeSessionId)
-enqueuePendingMessage(runtimeSessionId, request)
-deletePendingMessage(runtimeSessionId, messageId)
-promotePendingMessage(runtimeSessionId, messageId)
+submitAgentRunComposerInput(runId, agentId, request: AgentRunComposerSubmitRequest)
+listAgentRunMailboxMessages(runId, agentId)
+deleteAgentRunMailboxMessage(runId, agentId, messageId)
+promoteAgentRunMailboxMessage(runId, agentId, messageId, request)
+resumeAgentRunMailbox(runId, agentId, request)
 ```
 
-These calls target `/sessions/{runtimeSessionId}/...`; run / agent / frame refs are resolved
-by backend anchors and should not be encoded into the frontend route.
+These calls target `/agent-runs/{runId}/agents/{agentId}/...`; runtime session remains a delivery ref
+inside the workspace snapshot and is not a frontend command owner.
 
 ## Definition Contract
 
@@ -80,7 +79,7 @@ Definition request/response fields:
 type LifecycleRunView = {
   run_ref: LifecycleRunRefDto
   project_id: string
-  topology: "graphless" | "workflow_graph"
+  topology: "plain" | "workflow_graph"
   status: LifecycleRunStatus
   orchestrations: OrchestrationInstanceView[]
   active_runtime_node_refs: ActiveRuntimeNodeRefDto[]
@@ -126,7 +125,7 @@ type ActiveRuntimeNodeRefDto = {
 }
 ```
 
-`topology="graphless"` runs represent ordinary Agent runtime control-plane state with `orchestrations=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their orchestration runtime node tree. Graph-backed provenance is read from `OrchestrationInstanceView.source_ref` and plan metadata, so the UI can display static WorkflowGraph origin without using a run-level graph field.
+`topology="plain"` runs represent ordinary Agent runtime control-plane state with `orchestrations=[]`. Activity timeline UI is entered from `topology="workflow_graph"` runs and their orchestration runtime node tree. Graph-backed provenance is read from `OrchestrationInstanceView.source_ref` and plan metadata, so the UI can display static WorkflowGraph origin without using a run-level graph field.
 
 Runtime node lookup and human gate commands use `orchestration_id + node_path + attempt` as the durable node coordinate.
 
@@ -140,7 +139,7 @@ Runtime node lookup and human gate commands use `orchestration_id + node_path + 
 - agents indexed by `agent_id` and frames by `frame_id`。
 - Runtime trace store indexed by `runtime_session_id` only for debug / trace drill-down。
 
-Lifecycle primary state is indexed by run / orchestration / runtime node / subject / agent / frame. Graphless runs still normalize run / subject / agent / frame state even when no orchestration exists.
+Lifecycle primary state is indexed by run / orchestration / runtime node / subject / agent / frame. Plain runs still normalize run / subject / agent / frame state even when no orchestration exists.
 
 ## Mapper Boundary
 

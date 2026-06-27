@@ -8,7 +8,9 @@
 
 use std::time::{Duration, Instant};
 
-use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_domain::mcp_preset::{
+    McpHttpHeader, McpRuntimeBindingConfig, McpRuntimeBindingSource, McpTransportConfig,
+};
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use serde::{Deserialize, Serialize};
@@ -50,8 +52,8 @@ pub async fn probe_transport(
     http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
     match transport {
-        McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
-            probe_http(http_probe, url).await
+        McpTransportConfig::Http { url, headers } | McpTransportConfig::Sse { url, headers } => {
+            probe_http(http_probe, url, headers).await
         }
         McpTransportConfig::Stdio { .. } => match relay {
             Some(relay) => probe_via_relay(relay, transport).await,
@@ -59,6 +61,57 @@ pub async fn probe_transport(
                 error: "本机 relay 未连接，无法探测 Stdio transport".to_string(),
             },
         },
+    }
+}
+
+/// 普通 Preset probe 没有 runtime context；required runtime binding 不能被静态探测伪装成功。
+pub async fn probe_transport_without_runtime_context(
+    transport: &McpTransportConfig,
+    runtime_binding: Option<&McpRuntimeBindingConfig>,
+    relay: Option<&dyn McpRelayProvider>,
+    http_probe: &dyn McpProbeTransport,
+) -> ProbeResult {
+    if let Some(reason) = required_runtime_binding_unsupported_reason(runtime_binding) {
+        return ProbeResult::Unsupported { reason };
+    }
+
+    probe_transport(transport, relay, http_probe).await
+}
+
+fn required_runtime_binding_unsupported_reason(
+    runtime_binding: Option<&McpRuntimeBindingConfig>,
+) -> Option<String> {
+    let binding = runtime_binding?;
+    let required_sources = binding
+        .bindings
+        .iter()
+        .filter(|rule| rule.required)
+        .map(|rule| runtime_binding_source_path(&rule.source))
+        .collect::<Vec<_>>();
+    if required_sources.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "该 Preset 包含 required runtime_binding，需要 runtime context 后才能探测：{}",
+        required_sources.join(", ")
+    ))
+}
+
+fn runtime_binding_source_path(source: &McpRuntimeBindingSource) -> String {
+    match source {
+        McpRuntimeBindingSource::VfsRootRef => "vfs.main.root_ref".to_string(),
+        McpRuntimeBindingSource::RuntimeBackendAnchorBackendId => {
+            "runtime_backend_anchor.backend_id".to_string()
+        }
+        McpRuntimeBindingSource::WorkspaceId => "workspace.id".to_string(),
+        McpRuntimeBindingSource::WorkspaceBindingId => "workspace.binding_id".to_string(),
+        McpRuntimeBindingSource::WorkspaceIdentity { path } => {
+            format!("workspace.identity.{}", path.join("."))
+        }
+        McpRuntimeBindingSource::WorkspaceDetectedFact { path } => {
+            format!("workspace.detected_facts.{}", path.join("."))
+        }
     }
 }
 
@@ -91,12 +144,16 @@ async fn probe_via_relay(
     }
 }
 
-async fn probe_http(http_probe: &dyn McpProbeTransport, url: &str) -> ProbeResult {
+async fn probe_http(
+    http_probe: &dyn McpProbeTransport,
+    url: &str,
+    headers: &[McpHttpHeader],
+) -> ProbeResult {
     let start = Instant::now();
 
     match timeout(
         Duration::from_secs(PROBE_TIMEOUT_SECS),
-        http_probe.probe_http(url),
+        http_probe.probe_http(url, headers),
     )
     .await
     {
@@ -121,8 +178,26 @@ async fn probe_http(http_probe: &dyn McpProbeTransport, url: &str) -> ProbeResul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::mcp_preset::McpEnvVar;
+    use agentdash_domain::mcp_preset::{McpEnvVar, McpRuntimeBindingRule, McpRuntimeBindingTarget};
     use agentdash_infrastructure::RmcpProbeTransport;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct CapturingHttpProbe {
+        headers: Arc<Mutex<Vec<McpHttpHeader>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpProbeTransport for CapturingHttpProbe {
+        async fn probe_http(
+            &self,
+            _url: &str,
+            headers: &[McpHttpHeader],
+        ) -> Result<Vec<agentdash_spi::platform::mcp_probe::McpProbedTool>, String> {
+            *self.headers.lock().expect("headers lock") = headers.to_vec();
+            Ok(Vec::new())
+        }
+    }
 
     #[tokio::test]
     async fn stdio_without_relay_returns_error() {
@@ -133,6 +208,7 @@ mod tests {
                 name: "FOO".to_string(),
                 value: "bar".to_string(),
             }],
+            cwd: None,
         };
         match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
             ProbeResult::Error { error } => {
@@ -154,6 +230,26 @@ mod tests {
             }
             other => panic!("expected Error, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn http_probe_forwards_transport_headers() {
+        let probe = CapturingHttpProbe::default();
+        let captured = probe.headers.clone();
+        let header = McpHttpHeader {
+            name: "x-session".to_string(),
+            value: "demo".to_string(),
+        };
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![header.clone()],
+        };
+
+        match probe_transport(&transport, None, &probe).await {
+            ProbeResult::Ok { .. } => {}
+            other => panic!("expected Ok from fake probe, got: {other:?}"),
+        }
+        assert_eq!(captured.lock().expect("headers lock").as_slice(), &[header]);
     }
 
     #[test]
@@ -189,5 +285,74 @@ mod tests {
         let json = serde_json::to_value(&result).expect("serialize");
         assert_eq!(json["status"], "unsupported");
         assert_eq!(json["reason"], "Stdio 暂不支持");
+    }
+
+    #[tokio::test]
+    async fn required_runtime_binding_without_runtime_context_returns_unsupported() {
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![],
+        };
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required: true,
+            }],
+        };
+
+        match probe_transport_without_runtime_context(
+            &transport,
+            Some(&runtime_binding),
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
+            ProbeResult::Unsupported { reason } => {
+                assert!(reason.contains("runtime context"));
+                assert!(reason.contains("workspace.detected_facts.p4.client_name"));
+            }
+            other => panic!("expected Unsupported, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_runtime_binding_without_runtime_context_keeps_static_probe() {
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:1/mcp".to_string(),
+            headers: vec![],
+        };
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required: false,
+            }],
+        };
+
+        match probe_transport_without_runtime_context(
+            &transport,
+            Some(&runtime_binding),
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
+            ProbeResult::Error { error } => {
+                assert!(!error.is_empty(), "应继续执行静态 HTTP probe");
+            }
+            other => panic!("expected Error from static probe, got: {other:?}"),
+        }
     }
 }

@@ -5,10 +5,13 @@ pub mod backbone;
 pub use backbone::approval::ApprovalRequest;
 pub use backbone::envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
 pub use backbone::event::BackboneEvent;
-pub use backbone::item::{ItemCompletedNotification, ItemStartedNotification};
+pub use backbone::item::{
+    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+};
 pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
-    HookTraceSeverity, HookTraceTrigger, PlatformEvent,
+    HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
+    ProviderAttemptStatus, SessionRewindReason, SessionRewound,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -23,7 +26,9 @@ pub use backbone::user_input::{
 
 pub use codex_app_server_protocol;
 
-pub use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem};
+pub use agentdash_agent_types::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, ShellExecExecutionMode,
+};
 
 pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};
 
@@ -33,7 +38,10 @@ mod tests {
 
     use ts_rs::TS;
 
-    use super::BackboneEnvelope;
+    use super::{
+        BackboneEnvelope, BackboneEvent, PlatformEvent, ProviderAttemptPhase,
+        ProviderAttemptStatus, SessionRewindReason, SessionRewound,
+    };
 
     #[test]
     fn backbone_types_export_to_explicit_temp_dir() {
@@ -48,5 +56,56 @@ mod tests {
         let generated = fs::read_to_string(dir.path().join("BackboneEnvelope.ts"))
             .expect("read generated envelope type");
         assert!(generated.contains("export type BackboneEnvelope"));
+    }
+
+    #[test]
+    fn provider_status_platform_event_uses_snake_case_contract() {
+        let event = BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(
+            ProviderAttemptStatus {
+                turn_id: "turn-1".to_string(),
+                phase: ProviderAttemptPhase::Retrying,
+                attempt: 2,
+                max_attempts: 3,
+                will_retry: true,
+                delay_ms: Some(2_000),
+                reason_code: Some("stream_disconnected".to_string()),
+                message: Some("Reconnecting... 2/3".to_string()),
+                provider: Some("openai".to_string()),
+                model: Some("gpt-4.1".to_string()),
+            },
+        ));
+
+        let value = serde_json::to_value(event).expect("serialize provider platform event");
+        assert_eq!(value["type"], "platform");
+        assert_eq!(value["payload"]["kind"], "provider_attempt_status");
+        assert_eq!(value["payload"]["data"]["turn_id"], "turn-1");
+        assert_eq!(value["payload"]["data"]["phase"], "retrying");
+        assert_eq!(value["payload"]["data"]["max_attempts"], 3);
+        assert_eq!(value["payload"]["data"]["will_retry"], true);
+        assert_eq!(value["payload"]["data"]["delay_ms"], 2_000);
+        assert_eq!(value["payload"]["data"]["provider"], "openai");
+        assert_eq!(value["payload"]["data"]["model"], "gpt-4.1");
+    }
+
+    #[test]
+    fn session_rewound_platform_event_uses_stable_boundary_contract() {
+        let event = BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
+            discarded_turn_id: "turn-failed".to_string(),
+            discarded_entry_index: Some(1),
+            stable_event_seq: 120,
+            stable_turn_id: Some("turn-stable".to_string()),
+            reason: SessionRewindReason::ProviderFailure,
+            replacement_turn_id: None,
+            message: Some("rewound failed turn".to_string()),
+        }));
+
+        let value = serde_json::to_value(event).expect("serialize rewind platform event");
+        assert_eq!(value["type"], "platform");
+        assert_eq!(value["payload"]["kind"], "session_rewound");
+        assert_eq!(value["payload"]["data"]["discarded_turn_id"], "turn-failed");
+        assert_eq!(value["payload"]["data"]["discarded_entry_index"], 1);
+        assert_eq!(value["payload"]["data"]["stable_event_seq"], 120);
+        assert_eq!(value["payload"]["data"]["stable_turn_id"], "turn-stable");
+        assert_eq!(value["payload"]["data"]["reason"], "provider_failure");
     }
 }

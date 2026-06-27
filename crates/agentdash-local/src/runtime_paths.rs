@@ -8,22 +8,22 @@ const LOCAL_MCP_SERVERS_FILE: &str = "local-mcp-servers.json";
 const MACHINE_IDENTITY_FILE: &str = "machine-identity.json";
 
 pub fn local_runtime_data_dir() -> anyhow::Result<PathBuf> {
-    if cfg!(windows) {
-        if let Some(value) = non_empty_env("APPDATA").or_else(|| non_empty_env("LOCALAPPDATA")) {
-            return Ok(PathBuf::from(value)
-                .join(APP_DIR_NAME)
-                .join(LOCAL_RUNTIME_DIR_NAME));
-        }
+    if cfg!(windows)
+        && let Some(value) = non_empty_env("APPDATA").or_else(|| non_empty_env("LOCALAPPDATA"))
+    {
+        return Ok(PathBuf::from(value)
+            .join(APP_DIR_NAME)
+            .join(LOCAL_RUNTIME_DIR_NAME));
     }
 
-    if cfg!(target_os = "macos") {
-        if let Some(home) = non_empty_env("HOME") {
-            return Ok(PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join(APP_DIR_NAME)
-                .join(LOCAL_RUNTIME_DIR_NAME));
-        }
+    if cfg!(target_os = "macos")
+        && let Some(home) = non_empty_env("HOME")
+    {
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join(APP_DIR_NAME)
+            .join(LOCAL_RUNTIME_DIR_NAME));
     }
 
     if let Some(value) = non_empty_env("XDG_DATA_HOME") {

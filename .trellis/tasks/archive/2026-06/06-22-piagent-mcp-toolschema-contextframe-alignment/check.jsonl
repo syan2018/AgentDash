@@ -1,0 +1,14 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端质量检查入口"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端编码质量与测试检查约束"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查 Session runtime 与 ContextFrame 边界是否保持正确"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"检查 launch preparation、tool assembly 与 ContextFrame enqueue 链路"}
+{"file":".trellis/spec/backend/session/pi-agent-streaming.md","reason":"检查 PiAgent connector 未承担文本渲染职责"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"检查 turn-start notice 与 transform_context 注入契约"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"检查 tool capability、MCP 与 tool path 语义"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"检查 capability dimension delta 与 ContextFrame section 生成"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"检查 ContextFrame event 与前端 feed 跨层一致性"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查前端 ContextFrame parser/type 修改"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查前端 ContextFrame component 修改"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端质量检查约束"}
+{"file":".trellis/tasks/06-22-piagent-mcp-toolschema-contextframe-alignment/design.md","reason":"核对架构锚点与目标数据流"}
+{"file":".trellis/tasks/06-22-piagent-mcp-toolschema-contextframe-alignment/implement.md","reason":"核对验收项、测试项与收尾 spec 更新"}

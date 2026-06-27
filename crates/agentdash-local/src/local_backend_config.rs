@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::PathBuf;
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
@@ -9,6 +10,8 @@ pub const LOCAL_BACKEND_CONFIG_FILENAME: &str = "local-backend.json";
 pub struct LocalBackendConfigFile {
     #[serde(default)]
     pub mcp_servers: Vec<McpLocalServerEntry>,
+    #[serde(default)]
+    pub mcp_protect_mode: bool,
     #[serde(default)]
     pub workspace_contract: WorkspaceContractRuntimeConfig,
 }
@@ -62,7 +65,8 @@ pub fn load_local_backend_config(workspace_roots: &[PathBuf]) -> LocalBackendCon
 pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBackendConfigFile {
     let config_path = local_backend_config_path(root);
     if !config_path.exists() {
-        tracing::debug!(
+        diag!(Debug, Subsystem::Infra,
+
             path = %config_path.display(),
             "Local backend 配置文件不存在，使用默认配置"
         );
@@ -72,9 +76,11 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
     match std::fs::read_to_string(&config_path) {
         Ok(content) => match serde_json::from_str::<LocalBackendConfigFile>(&content) {
             Ok(config) => {
-                tracing::info!(
+                diag!(Info, Subsystem::Infra,
+
                     path = %config_path.display(),
                     mcp_server_count = config.mcp_servers.len(),
+                    mcp_protect_mode = config.mcp_protect_mode,
                     contract_enabled = config.workspace_contract.enabled,
                     prepare_on_first_prompt = config.workspace_contract.prepare_on_first_prompt,
                     "已加载 local backend 配置"
@@ -82,7 +88,8 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
                 config
             }
             Err(error) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::Infra,
+
                     error = %error,
                     path = %config_path.display(),
                     "Local backend 配置解析失败，使用默认配置"
@@ -91,7 +98,8 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
             }
         },
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Infra,
+
                 error = %error,
                 path = %config_path.display(),
                 "读取 local backend 配置失败，使用默认配置"
@@ -111,9 +119,11 @@ pub fn save_local_backend_config_for_root(
     }
     let content = serde_json::to_string_pretty(config)?;
     std::fs::write(&config_path, content)?;
-    tracing::info!(
+    diag!(Info, Subsystem::Infra,
+
         path = %config_path.display(),
         mcp_server_count = config.mcp_servers.len(),
+        mcp_protect_mode = config.mcp_protect_mode,
         "已保存 local backend 配置"
     );
     Ok(())
@@ -131,6 +141,7 @@ mod tests {
     fn default_local_backend_config_is_disabled() {
         let config = LocalBackendConfigFile::default();
         assert!(config.mcp_servers.is_empty());
+        assert!(!config.mcp_protect_mode);
         assert!(!config.workspace_contract.enabled);
         assert!(!config.workspace_contract.prepare_on_first_prompt);
         assert!(!config.workspace_contract.git.enabled);
@@ -156,8 +167,10 @@ mod tests {
                         name: "NODE_ENV".to_string(),
                         value: "test".to_string(),
                     }],
+                    cwd: Some(temp.path().to_string_lossy().to_string()),
                 },
             }],
+            mcp_protect_mode: true,
             workspace_contract: WorkspaceContractRuntimeConfig {
                 enabled: true,
                 prepare_on_first_prompt: true,
@@ -175,10 +188,14 @@ mod tests {
 
         let loaded = load_local_backend_config_for_root(temp.path());
         assert_eq!(loaded.mcp_servers.len(), 1);
+        assert!(loaded.mcp_protect_mode);
         assert_eq!(loaded.mcp_servers[0].name, "filesystem");
         assert_eq!(loaded.mcp_servers[0].transport.transport_kind(), "stdio");
         match &loaded.mcp_servers[0].transport {
-            McpTransportConfig::Stdio { command, .. } => assert_eq!(command, "npx"),
+            McpTransportConfig::Stdio { command, cwd, .. } => {
+                assert_eq!(command, "npx");
+                assert_eq!(cwd.as_deref(), Some(temp.path().to_string_lossy().as_ref()));
+            }
             _ => panic!("expected stdio transport"),
         }
         assert!(loaded.workspace_contract.enabled);

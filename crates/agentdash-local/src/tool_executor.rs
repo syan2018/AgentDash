@@ -4,55 +4,25 @@
 //! 在本机文件系统和 Shell 环境中执行。
 //! 所有执行类操作都受 session mount root 边界约束。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
-use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
+use agentdash_application_vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
+use agentdash_relay::{FileEntryRelay, SearchHit};
 use ignore::WalkBuilder;
-use tokio::io::{AsyncBufReadExt, BufReader};
 
-pub(crate) struct SearchParams<'a> {
-    pub query: &'a str,
-    pub path: Option<&'a str>,
-    pub is_regex: bool,
-    pub include_glob: Option<&'a str>,
-    pub max_results: usize,
-    pub context_lines: usize,
-}
+use crate::file_discovery_policy::FileDiscoveryPolicy;
+use crate::process_executor::ProcessExecutor;
+pub use crate::process_executor::ProcessOutput as ShellResult;
+use crate::search_executor::SearchExecutor;
+pub(crate) use crate::search_executor::SearchParams;
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
-    workspace_roots: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FileDiscoveryIntent {
-    ImplicitWorkspaceScan,
-    ExplicitSubtreeScan,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct FileDiscoveryPolicy {
-    intent: FileDiscoveryIntent,
-}
-
-const HARD_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
-const BUILTIN_NOISE_DIRS: &[&str] = &[
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    ".next",
-    ".venv",
-    "__pycache__",
-];
-
-/// Shell 执行结果
-pub struct ShellResult {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
+    workspace_roots_configured: bool,
+    canonical_workspace_roots: Vec<PathBuf>,
+    process_executor: ProcessExecutor,
+    search_executor: SearchExecutor,
 }
 
 /// 文件 bytes 读取结果
@@ -79,9 +49,32 @@ pub enum ToolError {
     PatchApply(String),
 }
 
+pub(crate) fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut canonical_roots = Vec::new();
+    for root in workspace_roots {
+        let Ok(canonical) = std::fs::canonicalize(root) else {
+            continue;
+        };
+        if !canonical.is_dir() || canonical_roots.contains(&canonical) {
+            continue;
+        }
+        canonical_roots.push(canonical);
+    }
+    canonical_roots
+}
+
 impl ToolExecutor {
     pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
-        Self { workspace_roots }
+        let workspace_roots_configured = !workspace_roots.is_empty();
+        let process_executor = ProcessExecutor::new(workspace_roots.clone());
+        let search_executor = SearchExecutor::new();
+        let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
+        Self {
+            workspace_roots_configured,
+            canonical_workspace_roots,
+            process_executor,
+            search_executor,
+        }
     }
 
     /// 验证执行类操作的 workspace root，并在配置了 workspace roots 时检查其归属。
@@ -103,14 +96,12 @@ impl ToolExecutor {
             )));
         }
 
-        if self.workspace_roots.is_empty() {
+        if !self.workspace_roots_configured {
             return Ok(canonical);
         }
 
-        for root in &self.workspace_roots {
-            if let Ok(root_canonical) = std::fs::canonicalize(root)
-                && canonical.starts_with(&root_canonical)
-            {
+        for root in &self.canonical_workspace_roots {
+            if canonical.starts_with(root) {
                 return Ok(canonical);
             }
         }
@@ -140,7 +131,8 @@ impl ToolExecutor {
 
     pub async fn file_read(&self, path: &str, workspace_root: &str) -> Result<String, ToolError> {
         let full_path = self.resolve_existing_path(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_read");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_read");
         let content = tokio::fs::read_to_string(&full_path).await?;
         Ok(content)
     }
@@ -154,7 +146,8 @@ impl ToolExecutor {
         if !full_path.is_file() {
             return Err(ToolError::InvalidPath(path.to_string()));
         }
-        tracing::debug!(path = %full_path.display(), "file_read_binary");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_read_binary");
         let data = tokio::fs::read(&full_path).await?;
         Ok(BinaryFileResult {
             data,
@@ -169,7 +162,8 @@ impl ToolExecutor {
         workspace_root: &str,
     ) -> Result<(), ToolError> {
         let full_path = self.resolve_path_for_write(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_write");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_write");
 
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -180,7 +174,8 @@ impl ToolExecutor {
 
     pub async fn file_delete(&self, path: &str, workspace_root: &str) -> Result<(), ToolError> {
         let full_path = self.resolve_existing_path(path, workspace_root)?;
-        tracing::debug!(path = %full_path.display(), "file_delete");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %full_path.display(), "file_delete");
         tokio::fs::remove_file(&full_path).await?;
         Ok(())
     }
@@ -193,7 +188,8 @@ impl ToolExecutor {
     ) -> Result<(), ToolError> {
         let source = self.resolve_existing_path(from_path, workspace_root)?;
         let destination = self.resolve_path_for_write(to_path, workspace_root)?;
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+
             from = %source.display(),
             to = %destination.display(),
             "file_rename"
@@ -214,31 +210,25 @@ impl ToolExecutor {
         workspace_root: &str,
     ) -> Result<ApplyPatchAffectedPaths, ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        tracing::debug!(workspace_root = %ws.display(), "apply_patch");
+        diag!(Debug, Subsystem::AgentRun,
+        workspace_root = %ws.display(), "apply_patch");
         let target = FsPatchTarget::new(&ws).map_err(|e| ToolError::PatchApply(e.to_string()))?;
         apply_patch_to_target(&target, patch)
             .await
             .map_err(|e| ToolError::PatchApply(e.to_string()))
     }
 
+    #[allow(dead_code)]
     pub fn resolve_shell_cwd(
         &self,
         workspace_root: &str,
         cwd: Option<&str>,
     ) -> Result<PathBuf, ToolError> {
-        let ws = self.validate_workspace_root(workspace_root)?;
-        let requested = cwd.unwrap_or_default().trim();
-        if requested.is_empty() || requested == "." {
-            return Ok(ws);
-        }
+        self.process_executor.resolve_cwd(workspace_root, cwd)
+    }
 
-        if is_absolute_like(requested) {
-            return Err(ToolError::InvalidPath(
-                "shell cwd 必须是相对于 workspace root 的路径".to_string(),
-            ));
-        }
-
-        resolve_existing_path_with_root(&ws, requested)
+    pub(crate) fn process_executor(&self) -> &ProcessExecutor {
+        &self.process_executor
     }
 
     #[allow(dead_code)]
@@ -249,131 +239,16 @@ impl ToolExecutor {
         cwd: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<ShellResult, ToolError> {
-        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
+        diag!(Debug, Subsystem::AgentRun,
 
-        tracing::debug!(
             command = %command,
             workspace_root = workspace_root,
             requested_cwd = ?cwd,
-            cwd = %ws.display(),
             "shell_exec"
         );
-
-        let child = shell_command(command, &ws)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(output)) => Ok(ShellResult {
-                exit_code: output.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            }),
-            Ok(Err(e)) => Err(ToolError::Io(e)),
-            Err(_) => Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000))),
-        }
-    }
-
-    /// 流式 shell 执行 — 逐行推送 stdout/stderr 到回调，完成后返回最终结果。
-    pub async fn shell_exec_streaming<F>(
-        &self,
-        command: &str,
-        workspace_root: &str,
-        cwd: Option<&str>,
-        timeout_ms: Option<u64>,
-        mut on_output: F,
-    ) -> Result<ShellResult, ToolError>
-    where
-        F: FnMut(&str, ShellOutputStream) + Send,
-    {
-        let ws = self.resolve_shell_cwd(workspace_root, cwd)?;
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
-
-        tracing::debug!(
-            command = %command,
-            cwd = %ws.display(),
-            "shell_exec_streaming"
-        );
-
-        let mut child = shell_command(command, &ws)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take().expect("stderr piped");
-
-        let mut stdout_reader = BufReader::new(stdout);
-        let mut stderr_reader = BufReader::new(stderr);
-        let mut stdout_buf = String::new();
-        let mut stderr_buf = String::new();
-
-        let read_loop = async {
-            let mut stdout_done = false;
-            let mut stderr_done = false;
-            let mut stdout_line = Vec::new();
-            let mut stderr_line = Vec::new();
-
-            while !stdout_done || !stderr_done {
-                tokio::select! {
-                    read = stdout_reader.read_until(b'\n', &mut stdout_line), if !stdout_done => {
-                        match read {
-                            Ok(0) => {
-                                stdout_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stdout_line);
-                                stdout_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stdout);
-                                stdout_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stdout read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                    read = stderr_reader.read_until(b'\n', &mut stderr_line), if !stderr_done => {
-                        match read {
-                            Ok(0) => {
-                                stderr_done = true;
-                            }
-                            Ok(_) => {
-                                let chunk = decode_output_chunk(&stderr_line);
-                                stderr_line.clear();
-                                on_output(&chunk, ShellOutputStream::Stderr);
-                                stderr_buf.push_str(&chunk);
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "stderr read error");
-                                return Err(e);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok::<(), std::io::Error>(())
-        };
-
-        match tokio::time::timeout(timeout, read_loop).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(ToolError::Io(e)),
-            Err(_) => {
-                let _ = child.kill().await;
-                return Err(ToolError::Timeout(timeout_ms.unwrap_or(30_000)));
-            }
-        }
-
-        let status = child.wait().await.map_err(ToolError::Io)?;
-
-        Ok(ShellResult {
-            exit_code: status.code().unwrap_or(-1),
-            stdout: stdout_buf,
-            stderr: stderr_buf,
-        })
+        self.process_executor
+            .shell_exec(command, workspace_root, cwd, timeout_ms, &[])
+            .await
     }
 
     pub async fn file_list(
@@ -394,7 +269,8 @@ impl ToolExecutor {
             return Ok(Vec::new());
         }
 
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+
             path = %base.display(),
             pattern = ?pattern,
             recursive = recursive,
@@ -415,22 +291,7 @@ impl ToolExecutor {
         params: &SearchParams<'_>,
     ) -> Result<(Vec<SearchHit>, bool), ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
-        let search_dir = match params.path {
-            Some(p) if !p.trim().is_empty() && p.trim() != "." => {
-                resolve_existing_path_with_root(&ws, p)?
-            }
-            _ => ws.clone(),
-        };
-        let policy = FileDiscoveryPolicy::from_base(&search_dir, &ws);
-        if !policy.allows_path(&search_dir, &ws) {
-            return Ok((Vec::new(), false));
-        }
-
-        if let Some(rg) = detect_ripgrep().await {
-            return run_ripgrep(&rg, &search_dir, &ws, params, policy).await;
-        }
-
-        fallback_search(&ws, &search_dir, params, policy).await
+        self.search_executor.search(&ws, params).await
     }
 }
 
@@ -454,263 +315,7 @@ pub(crate) fn resolve_detect_workspace_root(workspace_root: &str) -> Result<Path
     Ok(canonical)
 }
 
-async fn detect_ripgrep() -> Option<PathBuf> {
-    let candidates = if cfg!(windows) {
-        vec!["rg.exe", "rg"]
-    } else {
-        vec!["rg"]
-    };
-    for name in candidates {
-        if let Ok(output) =
-            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
-                .arg(name)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .await
-            && output.status.success()
-        {
-            let path_str = String::from_utf8_lossy(&output.stdout);
-            let first_line = path_str.lines().next().unwrap_or("").trim();
-            if !first_line.is_empty() {
-                return Some(PathBuf::from(first_line));
-            }
-        }
-    }
-    None
-}
-
-async fn run_ripgrep(
-    rg_path: &Path,
-    search_dir: &Path,
-    workspace_root: &Path,
-    params: &SearchParams<'_>,
-    policy: FileDiscoveryPolicy,
-) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let mut cmd = tokio::process::Command::new(rg_path);
-    cmd.arg("--json")
-        .arg("--max-count")
-        .arg(params.max_results.to_string());
-    for arg in ripgrep_policy_args(policy) {
-        cmd.arg(arg);
-    }
-
-    if params.context_lines > 0 {
-        cmd.arg("-C").arg(params.context_lines.to_string());
-    }
-    if !params.is_regex {
-        cmd.arg("--fixed-strings");
-    }
-    if let Some(glob) = params.include_glob {
-        cmd.arg("--glob").arg(glob);
-    }
-
-    cmd.arg("--").arg(params.query).arg(search_dir);
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let output = tokio::time::timeout(Duration::from_secs(30), cmd.output())
-        .await
-        .map_err(|_| ToolError::Timeout(30_000))?
-        .map_err(ToolError::Io)?;
-
-    let mut hits = Vec::new();
-    let mut truncated = false;
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let json: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if json.get("type").and_then(|t| t.as_str()) != Some("match") {
-            continue;
-        }
-
-        let data = match json.get("data") {
-            Some(d) => d,
-            None => continue,
-        };
-
-        let abs_path = data
-            .get("path")
-            .and_then(|p| p.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-
-        let Ok(rel_path) = workspace_relative_path(Path::new(abs_path), workspace_root) else {
-            tracing::warn!(
-                path = abs_path,
-                workspace_root = %workspace_root.display(),
-                "ripgrep returned path outside workspace root"
-            );
-            continue;
-        };
-
-        let line_number = data
-            .get("line_number")
-            .and_then(|n| n.as_u64())
-            .unwrap_or(0) as usize;
-
-        let content = data
-            .get("lines")
-            .and_then(|l| l.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .trim_end_matches('\n')
-            .trim_end_matches('\r')
-            .to_string();
-
-        hits.push(SearchHit {
-            path: rel_path,
-            line_number,
-            content,
-            context_before: Vec::new(),
-            context_after: Vec::new(),
-        });
-
-        if hits.len() >= params.max_results {
-            truncated = true;
-            break;
-        }
-    }
-
-    Ok((hits, truncated))
-}
-
-async fn fallback_search(
-    workspace_root: &Path,
-    search_dir: &Path,
-    params: &SearchParams<'_>,
-    policy: FileDiscoveryPolicy,
-) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let ws = workspace_root.to_path_buf();
-    let dir = search_dir.to_path_buf();
-    let query = params.query.to_string();
-    let regex = if params.is_regex {
-        Some(
-            regex::Regex::new(&query)
-                .map_err(|e| ToolError::InvalidPath(format!("无效正则: {e}")))?,
-        )
-    } else {
-        None
-    };
-    let max_results = params.max_results;
-    let context_lines = params.context_lines;
-
-    tokio::task::spawn_blocking(move || {
-        let mut collector = FallbackCollector {
-            workspace_root: &ws,
-            query: &query,
-            regex: regex.as_ref(),
-            max_results,
-            context_lines,
-            policy,
-            hits: Vec::new(),
-            truncated: false,
-        };
-        collector.walk(&dir);
-        Ok((collector.hits, collector.truncated))
-    })
-    .await
-    .map_err(|e| ToolError::Io(std::io::Error::other(e)))?
-}
-
-const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;
-
-struct FallbackCollector<'a> {
-    workspace_root: &'a Path,
-    query: &'a str,
-    regex: Option<&'a regex::Regex>,
-    max_results: usize,
-    context_lines: usize,
-    policy: FileDiscoveryPolicy,
-    hits: Vec<SearchHit>,
-    truncated: bool,
-}
-
-impl FallbackCollector<'_> {
-    fn walk(&mut self, dir: &Path) {
-        let walker = build_walk(dir, self.workspace_root, self.policy, true);
-        for result in walker.build() {
-            if self.hits.len() >= self.max_results {
-                self.truncated = true;
-                return;
-            }
-            let entry = match result {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            if entry.path() == dir {
-                continue;
-            }
-            if entry
-                .file_type()
-                .is_some_and(|file_type| file_type.is_file())
-            {
-                self.scan_file(entry.path());
-            }
-        }
-    }
-
-    fn scan_file(&mut self, path: &Path) {
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => return,
-        };
-        if meta.len() > FALLBACK_MAX_FILE_BYTES {
-            return;
-        }
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let lines: Vec<&str> = content.lines().collect();
-        let Ok(rel) = workspace_relative_path(path, self.workspace_root) else {
-            tracing::warn!(
-                path = %path.display(),
-                workspace_root = %self.workspace_root.display(),
-                "fallback search skipped path outside workspace root"
-            );
-            return;
-        };
-
-        for (idx, line) in lines.iter().enumerate() {
-            let matched = match &self.regex {
-                Some(re) => re.is_match(line),
-                None => line.contains(self.query),
-            };
-            if matched {
-                let ctx_before: Vec<String> = if self.context_lines > 0 {
-                    let start = idx.saturating_sub(self.context_lines);
-                    lines[start..idx].iter().map(|s| s.to_string()).collect()
-                } else {
-                    Vec::new()
-                };
-                let ctx_after: Vec<String> = if self.context_lines > 0 {
-                    let end = (idx + 1 + self.context_lines).min(lines.len());
-                    lines[idx + 1..end].iter().map(|s| s.to_string()).collect()
-                } else {
-                    Vec::new()
-                };
-
-                self.hits.push(SearchHit {
-                    path: rel.clone(),
-                    line_number: idx + 1,
-                    content: line.to_string(),
-                    context_before: ctx_before,
-                    context_after: ctx_after,
-                });
-                if self.hits.len() >= self.max_results {
-                    self.truncated = true;
-                    return;
-                }
-            }
-        }
-    }
-}
-
-fn resolve_existing_path_with_root(
+pub(crate) fn resolve_existing_path_with_root(
     workspace_root: &Path,
     relative_path: &str,
 ) -> Result<PathBuf, ToolError> {
@@ -745,12 +350,26 @@ fn resolve_path_for_write_with_root(
     let parent = candidate
         .parent()
         .ok_or_else(|| ToolError::InvalidPath(relative_path.to_string()))?;
-    std::fs::create_dir_all(parent)?;
-    let canonical_parent = std::fs::canonicalize(parent)?;
+    let canonical_parent = canonical_existing_write_parent(parent, relative_path)?;
     if !canonical_parent.starts_with(workspace_root) {
         return Err(ToolError::PathNotAccessible(relative_path.to_string()));
     }
     Ok(candidate)
+}
+
+fn canonical_existing_write_parent(
+    parent: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, ToolError> {
+    let mut current = parent;
+    loop {
+        if current.exists() {
+            return std::fs::canonicalize(current).map_err(ToolError::Io);
+        }
+        current = current
+            .parent()
+            .ok_or_else(|| ToolError::InvalidPath(relative_path.to_string()))?;
+    }
 }
 
 fn normalize_relative_path(input: &str) -> Result<PathBuf, ToolError> {
@@ -779,7 +398,7 @@ fn normalize_relative_path(input: &str) -> Result<PathBuf, ToolError> {
     Ok(normalized)
 }
 
-fn is_absolute_like(raw: &str) -> bool {
+pub(crate) fn is_absolute_like(raw: &str) -> bool {
     raw.starts_with('/')
         || raw.starts_with('\\')
         || raw.starts_with("//")
@@ -791,7 +410,10 @@ fn is_absolute_like(raw: &str) -> bool {
             .is_some_and(|(second, third)| *second == b':' && (*third == b'\\' || *third == b'/'))
 }
 
-fn workspace_relative_path(path: &Path, workspace_root: &Path) -> Result<String, ToolError> {
+pub(crate) fn workspace_relative_path(
+    path: &Path,
+    workspace_root: &Path,
+) -> Result<String, ToolError> {
     path.strip_prefix(workspace_root)
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .map_err(|_| {
@@ -882,73 +504,6 @@ fn build_walk(
     builder
 }
 
-impl FileDiscoveryPolicy {
-    fn from_base(base: &Path, workspace_root: &Path) -> Self {
-        let intent = if base == workspace_root {
-            FileDiscoveryIntent::ImplicitWorkspaceScan
-        } else {
-            FileDiscoveryIntent::ExplicitSubtreeScan
-        };
-        Self { intent }
-    }
-
-    fn respects_workspace_ignores(self) -> bool {
-        self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
-    }
-
-    fn allows_path(self, path: &Path, workspace_root: &Path) -> bool {
-        if path_has_named_segment(path, workspace_root, HARD_EXCLUDE_DIRS) {
-            return false;
-        }
-        if self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
-            && path_has_named_segment(path, workspace_root, BUILTIN_NOISE_DIRS)
-        {
-            return false;
-        }
-        true
-    }
-}
-
-fn path_has_named_segment(path: &Path, workspace_root: &Path, names: &[&str]) -> bool {
-    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
-    relative.components().any(|component| {
-        let std::path::Component::Normal(segment) = component else {
-            return false;
-        };
-        segment_matches(segment, names)
-    })
-}
-
-fn segment_matches(segment: &std::ffi::OsStr, names: &[&str]) -> bool {
-    segment
-        .to_str()
-        .is_some_and(|value| names.iter().any(|name| value.eq_ignore_ascii_case(name)))
-}
-
-fn ripgrep_policy_args(policy: FileDiscoveryPolicy) -> Vec<String> {
-    let mut args = vec!["--hidden".to_string()];
-    if policy.respects_workspace_ignores() {
-        args.push("--no-require-git".to_string());
-    }
-    if !policy.respects_workspace_ignores() {
-        args.push("--no-ignore".to_string());
-    }
-    push_ripgrep_exclude_globs(&mut args, HARD_EXCLUDE_DIRS);
-    if policy.intent == FileDiscoveryIntent::ImplicitWorkspaceScan {
-        push_ripgrep_exclude_globs(&mut args, BUILTIN_NOISE_DIRS);
-    }
-    args
-}
-
-fn push_ripgrep_exclude_globs(args: &mut Vec<String>, dirs: &[&str]) {
-    for dir in dirs {
-        args.push("--glob".to_string());
-        args.push(format!("!{dir}/**"));
-        args.push("--glob".to_string());
-        args.push(format!("!**/{dir}/**"));
-    }
-}
-
 fn file_content_kind(path: &Path, is_dir: bool) -> Option<String> {
     if is_dir {
         return None;
@@ -985,37 +540,6 @@ fn is_image_path(path: &Path) -> bool {
     infer_mime_type(&path.to_string_lossy()).starts_with("image/")
 }
 
-fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
-    #[cfg(windows)]
-    {
-        let mut shell = tokio::process::Command::new("powershell.exe");
-        let command = format!(
-            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $OutputEncoding; {command}"
-        );
-        shell
-            .arg("-NoLogo")
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-Command")
-            .arg(command)
-            .current_dir(cwd);
-        shell
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut shell = tokio::process::Command::new("sh");
-        shell.arg("-c").arg(command).current_dir(cwd);
-        shell
-    }
-}
-
-fn decode_output_chunk(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,6 +568,28 @@ mod tests {
     }
 
     #[test]
+    fn resolve_path_for_write_does_not_create_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let nested = temp.path().join("nested");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let resolved = executor
+            .resolve_path_for_write("nested/demo.txt", &root)
+            .expect("write path should resolve");
+        let expected = std::fs::canonicalize(temp.path())
+            .expect("canonical workspace")
+            .join("nested")
+            .join("demo.txt");
+
+        assert_eq!(resolved, expected);
+        assert!(
+            !nested.exists(),
+            "write path resolution must not create parent directories"
+        );
+    }
+
+    #[test]
     fn validate_workspace_root_allows_mount_root_when_workspace_roots_empty() {
         let workspace = tempfile::tempdir().expect("workspace");
         let executor = ToolExecutor::new(Vec::new());
@@ -1056,6 +602,37 @@ mod tests {
             resolved,
             std::fs::canonicalize(workspace.path()).expect("canonical workspace")
         );
+    }
+
+    #[test]
+    fn registered_roots_are_canonicalized_and_deduped_on_construction() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let duplicate = workspace.path().join(".");
+        let executor = ToolExecutor::new(vec![workspace.path().to_path_buf(), duplicate]);
+
+        assert!(executor.workspace_roots_configured);
+        assert_eq!(executor.canonical_workspace_roots.len(), 1);
+        assert_eq!(
+            executor.canonical_workspace_roots[0],
+            std::fs::canonicalize(workspace.path()).expect("canonical workspace")
+        );
+    }
+
+    #[test]
+    fn unavailable_registered_roots_do_not_open_workspace_boundary() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let unavailable_parent = tempfile::tempdir().expect("unavailable parent");
+        let unavailable_root = unavailable_parent.path().join("missing");
+        let executor = ToolExecutor::new(vec![unavailable_root]);
+        let root = workspace.path().to_string_lossy().to_string();
+
+        assert!(executor.workspace_roots_configured);
+        assert!(executor.canonical_workspace_roots.is_empty());
+
+        let error = executor
+            .validate_workspace_root(&root)
+            .expect_err("unavailable configured roots should fail closed");
+        assert!(matches!(error, ToolError::PathNotAccessible(_)));
     }
 
     #[test]
@@ -1233,113 +810,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_default_skips_ignored_subtree_but_explicit_path_finds_it() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".gitignore"), "ignored/\n");
-        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
-        write_file(
-            &temp.path().join("ignored/generated.rs"),
-            "needle in generated\n",
-        );
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-
-        let params = SearchParams {
-            query: "needle",
-            path: None,
-            is_regex: false,
-            include_glob: None,
-            max_results: 20,
-            context_lines: 0,
-        };
-        let (default_hits, _) = executor.search(&root, &params).await.expect("search");
-        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
-        assert!(
-            !default_hits
-                .iter()
-                .any(|hit| hit.path.starts_with("ignored/")),
-            "default search should skip ignored subtree: {default_hits:?}"
-        );
-
-        let explicit_params = SearchParams {
-            path: Some("ignored"),
-            ..params
-        };
-        let (explicit_hits, _) = executor
-            .search(&root, &explicit_params)
-            .await
-            .expect("explicit search");
-        assert!(
-            explicit_hits
-                .iter()
-                .any(|hit| hit.path == "ignored/generated.rs"),
-            "explicit ignored subtree should be searchable: {explicit_hits:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn fallback_search_uses_same_ignore_policy() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        write_file(&temp.path().join(".gitignore"), "ignored/\n");
-        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
-        write_file(
-            &temp.path().join("ignored/generated.rs"),
-            "needle in generated\n",
-        );
-        let params = SearchParams {
-            query: "needle",
-            path: None,
-            is_regex: false,
-            include_glob: None,
-            max_results: 20,
-            context_lines: 0,
-        };
-
-        let implicit_policy = FileDiscoveryPolicy::from_base(temp.path(), temp.path());
-        let (default_hits, _) = fallback_search(temp.path(), temp.path(), &params, implicit_policy)
-            .await
-            .expect("fallback search");
-        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
-        assert!(
-            !default_hits
-                .iter()
-                .any(|hit| hit.path.starts_with("ignored/"))
-        );
-
-        let ignored_dir = temp.path().join("ignored");
-        let explicit_policy = FileDiscoveryPolicy::from_base(&ignored_dir, temp.path());
-        let (explicit_hits, _) =
-            fallback_search(temp.path(), &ignored_dir, &params, explicit_policy)
-                .await
-                .expect("fallback explicit search");
-        assert!(
-            explicit_hits
-                .iter()
-                .any(|hit| hit.path == "ignored/generated.rs")
-        );
-    }
-
-    #[test]
-    fn ripgrep_policy_args_enter_explicit_ignored_subtree_without_vcs_metadata() {
-        let implicit = ripgrep_policy_args(FileDiscoveryPolicy {
-            intent: FileDiscoveryIntent::ImplicitWorkspaceScan,
-        });
-        assert!(implicit.contains(&"--hidden".to_string()));
-        assert!(implicit.contains(&"--no-require-git".to_string()));
-        assert!(!implicit.contains(&"--no-ignore".to_string()));
-        assert!(implicit.contains(&"!**/node_modules/**".to_string()));
-        assert!(implicit.contains(&"!**/.git/**".to_string()));
-
-        let explicit = ripgrep_policy_args(FileDiscoveryPolicy {
-            intent: FileDiscoveryIntent::ExplicitSubtreeScan,
-        });
-        assert!(explicit.contains(&"--no-ignore".to_string()));
-        assert!(!explicit.contains(&"--no-require-git".to_string()));
-        assert!(!explicit.contains(&"!**/node_modules/**".to_string()));
-        assert!(explicit.contains(&"!**/.git/**".to_string()));
-    }
-
-    #[tokio::test]
     async fn file_rename_moves_file_inside_workspace() {
         let temp = tempfile::tempdir().expect("tempdir");
         let source = temp.path().join("demo.txt");
@@ -1429,34 +899,5 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "quoted ok");
-    }
-
-    #[tokio::test]
-    async fn shell_exec_streaming_captures_stdout() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let file = temp.path().join("demo.txt");
-        std::fs::write(&file, "stream ok").expect("write");
-        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
-        let root = temp.path().to_string_lossy().to_string();
-        let file_path = file.to_string_lossy();
-        let command = if cfg!(windows) {
-            format!("Get-Content -LiteralPath '{file_path}'")
-        } else {
-            format!("cat \"{file_path}\"")
-        };
-        let mut streamed = String::new();
-
-        let result = executor
-            .shell_exec_streaming(&command, &root, None, Some(10_000), |delta, stream| {
-                if matches!(stream, ShellOutputStream::Stdout) {
-                    streamed.push_str(delta);
-                }
-            })
-            .await
-            .expect("streaming stdout should run");
-
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "stream ok");
-        assert_eq!(streamed.trim(), "stream ok");
     }
 }

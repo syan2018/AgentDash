@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { PendingMessageView } from "../../../generated/workflow-contracts";
+import type {
+  ConversationMailboxSnapshotView,
+  ConversationCommandSetView,
+  ConversationCommandView,
+  ConversationModelConfigView,
+} from "../../../generated/workflow-contracts";
+import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -13,27 +19,31 @@ export interface PromptTemplate {
   content: string;
 }
 
-export type SessionChatPrimaryActionKind = "start_draft" | "send_next" | "steer" | "enqueue" | "none";
-
-export interface SessionChatActionState {
-  enabled: boolean;
-  label: string;
-  unavailableReason?: string;
-}
-
-export interface SessionChatPrimaryActionState extends SessionChatActionState {
-  kind: SessionChatPrimaryActionKind;
-  placeholder: string;
-}
-
-export interface SessionChatControlState {
+export interface SessionChatCommandState {
   mode: "draft" | "runtime";
-  controlPlaneStatus: string;
-  primaryAction: SessionChatPrimaryActionState;
-  cancelAction: SessionChatActionState;
-  /** running 态可用的辅助动作（如 steer 可用时键盘/按钮分流） */
-  secondaryAction?: SessionChatPrimaryActionState;
+  executionStatus: string;
+  commands: ConversationCommandSetView;
+  localDraftAction?: LocalDraftStartAction;
+  modelConfig: ConversationModelConfigView;
   helperText?: string;
+}
+
+export interface LocalDraftStartAction {
+  source: "local_draft";
+  kind: "draft_start_local";
+  command_id: string;
+  enabled: boolean;
+  unavailable_reason?: string;
+  disabled_code?: string;
+  shortcut: "enter";
+  requires_input: true;
+  executor_config_policy: "required";
+}
+
+export type SessionChatCommand = ConversationCommandView | LocalDraftStartAction;
+
+export function isLocalDraftStartAction(command: SessionChatCommand): command is LocalDraftStartAction {
+  return command.kind === "draft_start_local";
 }
 
 export interface SessionChatViewProps {
@@ -44,12 +54,6 @@ export interface SessionChatViewProps {
 
   // ─── 会话生命周期 ────────────────────────────────────
 
-  /** @deprecated RuntimeSession 不再提供默认创建入口；业务执行必须从 lifecycle 入口派发。 */
-  onCreateSession?: (title: string) => Promise<string>;
-
-  /** @deprecated RuntimeSession 不再由聊天 UI 创建或切换。 */
-  onSessionIdChange?: (id: string) => void;
-
   /** 消息发送成功后回调（父组件可刷新列表等） */
   onMessageSent?: () => void;
 
@@ -58,6 +62,9 @@ export interface SessionChatViewProps {
 
   /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
   onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
+
+  /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
+  onTaskPlanChanged?: () => void;
 
   // ─── 执行器 ──────────────────────────────────────────
 
@@ -69,31 +76,55 @@ export interface SessionChatViewProps {
    * 进入会话 / 切换会话时会被用来 hydrate 本地 executor 状态，避免默认显示"选择模型…"。
    * 用户手动改过之后不会被再次覆盖（按 sessionId 计一次）。
    */
-  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | null;
+  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
+
+  /** AgentRun/frame scoped executor state key; changes force authoritative hydration. */
+  executorStateKey?: string | null;
 
   /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
   showExecutorSelector?: boolean;
 
   // ─── 控制动作 ────────────────────────────────────────
 
-  controlState: SessionChatControlState;
+  commandState: SessionChatCommandState;
 
-  onPrimaryAction: (
-    action: SessionChatPrimaryActionKind,
+  onCommand: (
+    command: SessionChatCommand,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
     imageAttachments?: ImageAttachment[],
+    deliveryIntent?: string,
   ) => Promise<void>;
 
-  // ─── Pending Queue ─────────────────────────────────
+  onCancelAction?: () => Promise<void>;
 
-  /** 排队中的消息列表（来自 runtimeControl.pending_messages） */
-  pendingMessages?: PendingMessageView[];
-  /** 引导排队消息（promote to steer） */
-  onPromotePending?: (messageId: string) => void;
-  /** 删除排队消息 */
-  onDeletePending?: (messageId: string) => void;
+  /** 用户在模型选择器中显式选择的本地 override；仅作为 command input，不作为 ProjectAgent 默认值。 */
+  onExecutorConfigOverrideChange?: (config: ExecutorConfig | null) => void;
+
+  // ─── Mailbox ─────────────────────────────────
+
+  /** Mailbox 展示状态与消息列表（来自 conversation.mailbox） */
+  mailboxSnapshot?: ConversationMailboxSnapshotView;
+  /** 引导 mailbox 消息 */
+  onPromoteMailboxMessage?: (messageId: string) => void;
+  /** 删除 mailbox 消息 */
+  onDeleteMailboxMessage?: (messageId: string) => void;
+  /** 恢复暂停的 mailbox */
+  onResumeMailbox?: () => void;
+  /** 召回 mailbox 消息（获取内容 + 删除 + 填充 composer） */
+  onRecallMailboxMessage?: (messageId: string) => void;
+  /** 重排序 mailbox 消息 */
+  onMoveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+
+  // ─── 综合状态栏 Task scope ────────────────────────────
+
+  /** AgentRun scope：用于在输入栏上方的综合状态栏展示 Task 进度（缺省则只展示 mailbox） */
+  statusBarRunId?: string | null;
+  statusBarAgentId?: string | null;
+  /** 外部注入的输入值（recall 后填充 composer），设置后立即消费 */
+  injectedInputValue?: string | null;
+  onInjectedInputConsumed?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

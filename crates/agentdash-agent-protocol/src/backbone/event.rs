@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::backbone::approval::ApprovalRequest;
-use crate::backbone::item::{ItemCompletedNotification, ItemStartedNotification};
+use crate::backbone::item::{
+    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+};
 use crate::backbone::platform::PlatformEvent;
 use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
 use crate::backbone::user_input::UserInputSubmittedNotification;
@@ -25,6 +27,9 @@ pub enum BackboneEvent {
     // ── Item 生命周期（涵盖所有工具调用语义）──
     // AgentDashThreadItem 区分 Codex 原生 item 与 AgentDash native item。
     ItemStarted(ItemStartedNotification),
+    /// item 进度刷新（args/preview/partial output 精化）。区别于 `ItemStarted`
+    /// 的 create-once 语义，`ItemUpdated` 表达同一 item_id 的后续刷新。
+    ItemUpdated(ItemUpdatedNotification),
     ItemCompleted(ItemCompletedNotification),
 
     // ── Item 过程增量 ──

@@ -1,12 +1,20 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
-import { extractPlatformEventType } from "../model/platformEvent";
+import { extractPlatformEventType, isRecord } from "../model/platformEvent";
+import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
+
+export type SessionTurnLifecycleEventType =
+  | "turn_started"
+  | "turn_completed"
+  | "turn_failed"
+  | "turn_interrupted";
 
 export function toExecutorConfigSource(
-  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | null | undefined,
+  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null | undefined,
 ): ExecutorConfigSource | null {
   if (!defaults) return null;
   const source: ExecutorConfigSource = {};
@@ -35,7 +43,70 @@ export function resolveExecutorFromHint(
   return matched?.id ?? trimmed;
 }
 
-export function collectNewSystemEvents(
+function isTurnTerminalType(value: unknown): value is Exclude<SessionTurnLifecycleEventType, "turn_started"> {
+  return value === "turn_completed" ||
+    value === "turn_failed" ||
+    value === "turn_interrupted";
+}
+
+export function extractTurnLifecycleEventType(event: BackboneEvent): SessionTurnLifecycleEventType | null {
+  if (event.type === "turn_started" || event.type === "turn_completed") {
+    return event.type;
+  }
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "session_meta_update" ||
+    event.payload.data.key !== "turn_terminal"
+  ) {
+    return null;
+  }
+  const value = event.payload.data.value;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const terminalType = (value as { terminal_type?: unknown }).terminal_type;
+  return isTurnTerminalType(terminalType) ? terminalType : null;
+}
+
+export function collectRenderableSystemEvents(
+  rawEvents: SessionEventEnvelope[],
+  afterSeq: number,
+): {
+  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
+  lastSeenSeq: number;
+} {
+  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
+  let lastSeenSeq = afterSeq;
+
+  for (const event of rawEvents) {
+    if (event.event_seq <= afterSeq) {
+      continue;
+    }
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+    const bbEvent = event.notification.event;
+    if (bbEvent.type !== "platform") {
+      continue;
+    }
+    const eventType = extractPlatformEventType(bbEvent);
+    if (!eventType) {
+      continue;
+    }
+    if (!shouldNotifyRenderableSystemEvent(bbEvent)) {
+      continue;
+    }
+    items.push({
+      eventSeq: event.event_seq,
+      eventType,
+      event: bbEvent,
+    });
+  }
+
+  return { items, lastSeenSeq };
+}
+
+export const collectNewSystemEvents = collectRenderableSystemEvents;
+
+export function collectAllPlatformEvents(
   rawEvents: SessionEventEnvelope[],
   afterSeq: number,
 ): {
@@ -81,14 +152,33 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
     value.kind === "compaction_summary";
 }
 
+function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {
+  if (event.type !== "platform") {
+    return false;
+  }
+  if (isRecord(event.payload)) {
+    const kind = typeof event.payload.kind === "string" ? event.payload.kind : null;
+    if (kind === "session_rewound") {
+      return true;
+    }
+  }
+  const eventType = extractPlatformEventType(event);
+  return eventType === "session_rewound" ||
+    eventType === "session_rebuilt" ||
+    eventType === "turn_discarded" ||
+    eventType === "projection_invalidated";
+}
+
 function isProjectionRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type === "turn_completed") {
+  const turnLifecycleType = extractTurnLifecycleEventType(event);
+  if (turnLifecycleType && turnLifecycleType !== "turn_started") {
     return true;
   }
   if (event.type !== "platform") {
     return false;
   }
   return extractPlatformEventType(event) === "context_compacted" ||
+    isSessionRewindRefreshEvent(event) ||
     isCompactionSummaryFrame(event);
 }
 

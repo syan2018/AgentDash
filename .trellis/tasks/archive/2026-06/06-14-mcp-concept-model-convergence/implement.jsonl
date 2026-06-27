@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端分层和模块边界基线。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "MCP 与 capability / tool surface 的归属边界。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Tool capability directive 到 runtime surface 的解析链路。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session launch、runtime surface 与 AgentFrame 关系。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "AgentFrame revision 与 runtime projection 契约。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust contract DTO 与 generated TS 的跨层契约。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "桌面本机 runtime、local bridge 与 cloud/local 边界。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO 类型、mapper 与运行时验证约束。"}
+{"file": "docs/relay-protocol.md", "reason": "Relay MCP wire payload 与 cloud/local 通信协议。"}

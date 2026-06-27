@@ -11,11 +11,12 @@ import {
   listWorkspaceInventoryCandidates,
 } from "../../../services/backendAccess";
 import {
-  identityKindLabels,
   identitySummary,
   summarizeAvailability,
   summarizeResolution,
 } from "../model/workspaceRouting";
+import { workspaceMachineAvailability } from "../model/machinePresentation";
+import { IDENTITY_KIND_LABELS } from "../model/workspaceTerms";
 import {
   BindingStatusBadge,
   ResolutionBadge,
@@ -27,7 +28,7 @@ interface WorkspaceListProps {
   workspaces: Workspace[];
   defaultWorkspaceId?: string | null;
   canManageBindings?: boolean;
-  onSetDefault?: (workspaceId: string | null) => void;
+  onSetDefault?: (workspaceId: string | null) => void | Promise<void>;
   onInventoryChanged?: () => void | Promise<void>;
 }
 
@@ -68,7 +69,7 @@ export function WorkspaceList({
     return () => window.clearTimeout(timer);
   }, [fetchBackends, loadRoutingInputs]);
 
-  // 跟随 backend 上下线 / 健康变化重载运行位置输入，与 BackendAccessPanel 保持一致刷新。
+  // 跟随 backend 上下线 / 健康变化重载目录绑定输入，与 BackendAccessPanel 保持一致刷新。
   const backendRuntimeSignature = useMemo(
     () => backends
       .map((backend) => [
@@ -105,19 +106,29 @@ export function WorkspaceList({
     onSetDefault(defaultWorkspaceId === workspaceId ? null : workspaceId);
   };
 
+  const handleOpenCreate = async () => {
+    await loadRoutingInputs();
+    setIsCreateOpen(true);
+  };
+
+  const handleOpenDetail = async (workspaceId: string) => {
+    await loadRoutingInputs();
+    setSelectedWorkspaceId(workspaceId);
+  };
+
   return (
     <>
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Workspace</p>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">工作空间</p>
             <p className="text-xs text-muted-foreground">
-              每个 Workspace 描述一处代码来源，运行位置来自已授权 Backend 的可选目录。
+              每个工作空间会落在某台机器的某个目录；在条目里查看可用机器，用「在机器上定位」完成落点。
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setIsCreateOpen(true)}
+            onClick={() => void handleOpenCreate()}
             className="rounded-[8px] border border-border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             + 新建 Workspace
@@ -142,6 +153,7 @@ export function WorkspaceList({
         {workspaces.map((workspace) => {
           const availability = summarizeAvailability(workspace, backends, accesses);
           const resolution = summarizeResolution(workspace, backends, accesses);
+          const machineAvailability = workspaceMachineAvailability(workspace, backends, accesses);
           const primaryBinding = resolution.binding ?? findWorkspaceBinding(workspace);
           const isDefault = defaultWorkspaceId === workspace.id;
           return (
@@ -164,15 +176,36 @@ export function WorkspaceList({
                     )}
                     <WorkspaceStatusBadge status={workspace.status} />
                     <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
-                      {identityKindLabels[workspace.identity_kind]}
+                      {IDENTITY_KIND_LABELS[workspace.identity_kind]}
                     </span>
                     <ResolutionBadge state={resolution.state} />
                   </div>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    代码来源：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
+                    {resolution.label} · {resolution.description}
                   </p>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">
-                    运行解析：{resolution.label} · {resolution.description}
+                  {machineAvailability.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                        可用机器
+                      </span>
+                      {machineAvailability.map((entry) => (
+                        <span
+                          key={entry.backendId}
+                          className={`inline-flex items-center gap-1 rounded-[8px] border px-2 py-0.5 text-[10px] ${
+                            entry.located
+                              ? "border-success/30 bg-success/10 text-success"
+                              : "border-border bg-background text-muted-foreground"
+                          }`}
+                          title={entry.online ? "在线" : "离线"}
+                        >
+                          {entry.name}
+                          <span>{entry.located ? "✓" : "未定位"}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
+                    {identitySummary(workspace.identity_kind, workspace.identity_payload)}
                   </p>
                   {resolution.warnings.length > 0 && (
                     <p className="mt-1 truncate text-xs text-warning">
@@ -184,7 +217,7 @@ export function WorkspaceList({
                 <div className="flex shrink-0 flex-col items-end gap-2">
                   <div className="text-right">
                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      运行位置
+                      目录绑定
                     </p>
                     <p className="text-sm font-medium text-foreground">
                       {availability.online}/{availability.total}
@@ -210,10 +243,10 @@ export function WorkspaceList({
                     )}
                     <button
                       type="button"
-                      onClick={() => setSelectedWorkspaceId(workspace.id)}
+                      onClick={() => void handleOpenDetail(workspace.id)}
                       className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                     >
-                      详情
+                      在机器上定位
                     </button>
                   </div>
                 </div>
@@ -229,6 +262,7 @@ export function WorkspaceList({
         projectId={projectId}
         mode="create"
         workspace={null}
+        defaultWorkspaceId={defaultWorkspaceId}
         candidates={candidates}
         accesses={accesses}
         canManageBindings={canManageBindings}

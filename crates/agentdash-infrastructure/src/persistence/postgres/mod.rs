@@ -1,8 +1,11 @@
 mod agent_repository;
+mod agent_run_command_receipt_repository;
+mod agent_run_mailbox_repository;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
 mod canvas_repository;
+mod canvas_runtime_state_repository;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod lifecycle_anchor_repository;
@@ -14,6 +17,7 @@ mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
+mod runner_registration_token_repository;
 mod runtime_health_repository;
 mod session_repository;
 mod settings_repository;
@@ -140,10 +144,13 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
+pub use agent_run_command_receipt_repository::PostgresAgentRunCommandReceiptRepository;
+pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
+pub use canvas_runtime_state_repository::PostgresCanvasRuntimeStateRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
 pub use lifecycle_anchor_repository::{
@@ -161,6 +168,7 @@ pub use project_extension_installation_repository::PostgresProjectExtensionInsta
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
+pub use runner_registration_token_repository::PostgresRunnerRegistrationTokenRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;

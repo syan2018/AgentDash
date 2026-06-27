@@ -39,6 +39,10 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
 
   const isPluginType = form.trigger_type === "plugin";
   const isWebhookEdit = mode === "edit" && editingRoutine?.trigger_config.type === "webhook";
+  const webhookEndpoint =
+    editingRoutine?.trigger_config.type === "webhook"
+      ? editingRoutine.trigger_config.endpoint_id
+      : null;
 
   return (
     <aside className="w-[320px] shrink-0 border-l border-border bg-secondary/5 p-5 overflow-y-auto max-lg:w-full max-lg:border-l-0 max-lg:border-t">
@@ -105,12 +109,12 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
           </div>
         )}
 
-        {isWebhookEdit && editingRoutine && (
+        {isWebhookEdit && webhookEndpoint && (
           <div className="rounded-[8px] border border-border bg-secondary/15 p-3 space-y-3">
             <div>
               <p className="text-[11px] font-medium text-muted-foreground">触发端点</p>
               <code className="mt-1 block font-mono text-[11px] text-foreground break-all">
-                POST /api/routine-triggers/{editingRoutine.trigger_config.endpoint_id}/fire
+                POST /api/routine-triggers/{webhookEndpoint}/fire
               </code>
             </div>
             <button

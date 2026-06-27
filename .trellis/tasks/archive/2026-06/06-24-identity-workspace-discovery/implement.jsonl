@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "跨云端、本机、前端的 workspace discovery 边界"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "新增 HTTP DTO 与 generated TypeScript 契约"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Project backend access、workspace detect、inventory/binding 路由事实源"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "API/Application/Domain/Infrastructure/Local 分层职责"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "setup action 必须经 Runtime Gateway 调用"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "inventory source migration 与 repository 映射"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "runtime/provider/API 错误映射"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "identity payload / detected facts JSON 处理边界"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Project 设置页与 feature 分层"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端消费 generated DTO 与 service 类型"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 Project 设置页交互组件"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "新增 panel 的视觉和交互约束"}

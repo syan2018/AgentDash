@@ -59,8 +59,8 @@ export type SessionUpdate =
   | { type: "plan"; entries: PlanEntry[] }
   | { type: "confirmation_request"; request: ConfirmationRequest };
 
-export type RuntimeHealthStatus = import("../generated/core-contracts").RuntimeHealthStatus;
-export type RuntimeHealth = import("../generated/core-contracts").BackendRuntimeHealthResponse;
+export type RuntimeHealthStatus = import("../generated/backend-contracts").RuntimeHealthStatus;
+export type RuntimeHealth = import("../generated/backend-contracts").BackendRuntimeHealthResponse;
 
 export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
 export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";
@@ -107,21 +107,3 @@ export interface ViewConfig {
   filters: Record<string, unknown>;
   sort_by: string | null;
 }
-
-// ─── 项目事件流 ────────────────────────────────────────
-
-export interface StateChange {
-  id: number;
-  project_id: string;
-  entity_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  backend_id: string | null;
-  created_at: string;
-}
-
-export type StreamEvent =
-  | { type: "Connected"; data: { last_event_id: number } }
-  | { type: "StateChanged"; data: StateChange }
-  | { type: "BackendRuntimeChanged"; data: { backend_id: string } }
-  | { type: "Heartbeat"; data: { timestamp: number } };

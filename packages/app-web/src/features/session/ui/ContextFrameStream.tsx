@@ -6,118 +6,86 @@
  * - header 行：CTX badge + "N 帧 · 最后阶段 X" 汇总 + ▲▼
  * - 展开后：横向 frame tab 条（单帧时等效 pill label）+ 对应 frame body
  *
- * 所有 frame 数据是已解析的 `ContextFrame`。SessionEntry 负责从 platform
- * event 提取并解析，再调用本组件。
+ * 所有 frame 数据是 model 层已解析的 `ContextFrame`。UI 只负责展示。
  */
 
-import { useMemo, useState } from "react";
-import { BADGE } from "./EventCards";
+import { useState } from "react";
 import type { ContextFrame } from "../model/contextFrame";
 import { frameKindToToken } from "../model/contextFrame";
 import { ContextFrameBody } from "./ContextFrameBody";
-import { TokenBadge } from "./contextFrame/SectionRenderers";
+import { ST } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameStreamProps {
   frames: ContextFrame[];
-  /** 默认激活的 frame id；用于测试或持久化恢复，未指定时使用首帧 */
-  defaultActiveFrameId?: string;
   /** 默认是否展开外层 shell；测试或持久化可覆盖，默认 false */
   defaultExpanded?: boolean;
 }
 
 export function ContextFrameStream({
   frames,
-  defaultActiveFrameId,
   defaultExpanded = false,
 }: ContextFrameStreamProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-
-  const initialActive = useMemo(() => {
-    if (frames.length === 0) return null;
-    if (defaultActiveFrameId) {
-      const match = frames.find((frame) => frame.id === defaultActiveFrameId);
-      if (match) return match.id;
-    }
-    return frames[0]!.id;
-  }, [frames, defaultActiveFrameId]);
-
-  const [activeId, setActiveId] = useState<string | null>(initialActive);
 
   if (frames.length === 0) {
     return null;
   }
 
-  const activeFrame =
-    frames.find((frame) => frame.id === activeId) ?? frames[0]!;
   const summary = summarizeFrames(frames);
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-secondary/35"
+        className={ST.groupRow}
       >
-        <span
-          className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${BADGE.neutral}`}
-        >
-          CTX
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium tracking-wide text-foreground/85">
-          上下文已更新 {describeFrameSet(frames)}
-        </span>
-        <span className="shrink-0 font-mono text-[10px] tracking-tight text-muted-foreground/50">{summary}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
-          {expanded ? "▲" : "▼"}
+        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
+        <span className={ST.badge}>CTX</span>
+        <span className={ST.hint}>
+          上下文已更新 {describeFrameSet(frames)} {summary ? `· ${summary}` : ""}
         </span>
       </button>
 
       {expanded && (
-        <div className="border-t border-border">
-          <FrameTabBar
-            frames={frames}
-            activeId={activeFrame.id}
-            onSelect={setActiveId}
-          />
-          <div className="border-t border-border px-3 py-2.5">
-            <ContextFrameBody frame={activeFrame} />
-          </div>
+        <div className={ST.itemList}>
+          {frames.map((frame) => (
+            <FrameStripItem key={frame.id} frame={frame} defaultOpen={defaultExpanded} />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function FrameTabBar({
-  frames,
-  activeId,
-  onSelect,
+/** 每个 frame 渲染为一条 strip 行，结构对齐 ToolCallCardShell */
+function FrameStripItem({
+  frame,
+  defaultOpen = false,
 }: {
-  frames: ContextFrame[];
-  activeId: string;
-  onSelect: (id: string) => void;
+  frame: ContextFrame;
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const token = frameKindToToken(frame.kind);
+  const label = frameTabLabel(frame);
+
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 py-2">
-      {frames.map((frame) => {
-        const token = frameKindToToken(frame.kind);
-        const active = frame.id === activeId;
-        return (
-          <button
-            key={frame.id}
-            type="button"
-            onClick={() => onSelect(frame.id)}
-            className={`inline-flex items-center gap-1.5 rounded-[6px] border px-2 py-1 text-[11px] font-mono transition-colors ${
-              active
-                ? "border-border bg-secondary/50 text-foreground"
-                : "border-border/70 bg-background text-muted-foreground hover:bg-secondary/35"
-            }`}
-          >
-            <TokenBadge token={token} />
-            <span className="truncate max-w-[18rem] tracking-tight">{frameTabLabel(frame)}</span>
-          </button>
-        );
-      })}
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`${ST.itemRow} ${open ? "bg-secondary/30" : ""}`}
+      >
+        <span className={`${ST.dot} bg-success`} />
+        <span className={ST.badge}>{token.token}</span>
+        <span className={ST.title}>{label}</span>
+      </button>
+      {open && (
+        <div className={ST.bodyArea}>
+          <ContextFrameBody frame={frame} />
+        </div>
+      )}
     </div>
   );
 }
@@ -134,25 +102,34 @@ function summarizeFrames(frames: ContextFrame[]): string {
 const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
   continuation_context: "CONTINUATION",
-  capability_state_update: "CAPABILITY",
+  capability_state_snapshot: "CAPABILITY SNAPSHOT",
+  capability_state_delta: "CAPABILITY",
   assignment_context: "ASSIGNMENT",
   pending_action: "ACTION",
   auto_resume: "RESUME",
   compaction_summary: "COMPACTION",
+  system_guidelines: "GUIDELINES",
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {
-  const kindSet = new Set(frames.map((f) => f.kind));
-  const labels = [...kindSet]
-    .map((kind) => FRAME_KIND_LABELS[kind] ?? kind.toUpperCase())
+  const labels = frames
+    .map(frameKindLabel)
+    .filter((label, index, all) => all.indexOf(label) === index)
     .slice(0, 4);
   return labels.join(" / ");
+}
+
+function frameKindLabel(frame: ContextFrame): string {
+  if (frame.kind === "capability_state_delta") {
+    return runtimeSurfaceFrameLabel(frame);
+  }
+  return FRAME_KIND_LABELS[frame.kind] ?? frame.kind.toUpperCase();
 }
 
 /**
  * 单个 frame tab 上的文字描述：优先展示阶段/关键变化，退化为 kind。
  *
- * - capability_state_update：展示能力/工具 delta 的增减统计
+ * - capability_state_snapshot / capability_state_delta：展示能力/工具统计
  * - auto_resume：展示 reason
  * - compaction_summary：展示压缩条数
  * - 其他：phase_node 或 kind
@@ -162,7 +139,10 @@ function frameTabLabel(frame: ContextFrame): string {
   if (frame.phase_node) parts.push(frame.phase_node);
   else parts.push(frame.kind);
 
-  if (frame.kind === "capability_state_update") {
+  if (
+    frame.kind === "capability_state_snapshot" ||
+    frame.kind === "capability_state_delta"
+  ) {
     const diff = summarizeRuntimeUpdate(frame);
     if (diff) parts.push(diff);
   } else if (frame.kind === "auto_resume") {
@@ -177,6 +157,12 @@ function frameTabLabel(frame: ContextFrame): string {
     if (compaction && compaction.kind === "compaction_summary") {
       parts.push(`${compaction.messages_compacted} msg`);
     }
+  } else if (frame.kind === "system_guidelines") {
+    const preferences = frame.sections.find((section) => section.kind === "user_preferences");
+    const guidelines = frame.sections.find((section) => section.kind === "project_guidelines");
+    const prefCount = preferences && preferences.kind === "user_preferences" ? preferences.items.length : 0;
+    const fileCount = guidelines && guidelines.kind === "project_guidelines" ? guidelines.entries.length : 0;
+    if (prefCount + fileCount > 0) parts.push(`${prefCount} prefs / ${fileCount} files`);
   }
 
   return parts.join(" · ");
@@ -202,6 +188,14 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
       removed += section.vfs_mounts_removed.length;
     } else if (section.kind === "tool_schema_delta") {
       added += section.added_tools.length;
+    } else if (section.kind === "skill_delta") {
+      added += section.added_skills.length;
+      removed += section.removed_skills.length;
+      changed += section.changed_skills.length;
+    } else if (section.kind === "companion_agent_roster_delta") {
+      added += section.added_agents.length;
+      removed += section.removed_agent_keys.length;
+      changed += section.changed_agents.length;
     }
   }
   if (added + removed + changed === 0) return null;
@@ -210,6 +204,25 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
   if (removed > 0) tokens.push(`−${removed}`);
   if (changed > 0) tokens.push(`↻${changed}`);
   return tokens.join(" ");
+}
+
+function runtimeSurfaceFrameLabel(frame: ContextFrame): string {
+  const sectionKinds = new Set(frame.sections.map((section) => section.kind));
+  const capabilitySection = frame.sections.find(
+    (section) => section.kind === "capability_key_delta",
+  );
+  const hasCapabilityKeyDelta =
+    capabilitySection?.kind === "capability_key_delta" &&
+    capabilitySection.added_capabilities.length + capabilitySection.removed_capabilities.length > 0;
+  if (hasCapabilityKeyDelta) return "CAPABILITY DELTA";
+  if (sectionKinds.size === 1) {
+    if (sectionKinds.has("skill_delta")) return "SKILL UPDATE";
+    if (sectionKinds.has("vfs_delta")) return "VFS UPDATE";
+    if (sectionKinds.has("mcp_server_delta")) return "MCP UPDATE";
+    if (sectionKinds.has("tool_schema_delta")) return "TOOL SURFACE";
+    if (sectionKinds.has("companion_agent_roster_delta")) return "COMPANION UPDATE";
+  }
+  return "CAPABILITY";
 }
 
 export default ContextFrameStream;

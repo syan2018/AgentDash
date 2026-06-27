@@ -3,72 +3,146 @@ import {
   createMcpPreset,
   fetchProjectMcpPresets,
 } from "../../../services/mcpPreset";
-import type {
-  CreateMcpPresetRequest,
-  McpPresetDto,
-  McpRoutePolicy,
-  McpTransportConfig,
-} from "../../../types";
+import { useMcpProbeStore } from "../../../stores/mcpProbeStore";
+import type { CapabilityDirective, McpPresetDto, ProbeMcpToolInfo } from "../../../types";
+import { McpTransportConfigEditor } from "../../mcp-shared";
 import {
-  McpTransportConfigEditor,
-  createDefaultMcpTransportConfig,
-} from "../../mcp-shared";
+  MCP_ROUTE_POLICY_OPTIONS,
+  buildCreateMcpPresetRequest,
+  buildMcpPresetFormState,
+  hasMcpRuntimeBinding,
+  readMcpRoutePolicy,
+  validateMcpPresetForm,
+  type McpPresetFormState,
+} from "../../mcp-shared/helpers";
+import { buildMcpProbeViewModel } from "../../mcp-shared/probeViewModel";
+import { toolBlockedByWorkflow } from "../../workflow/capability-directive-ops";
 import { CapabilityPicker } from "./capability-picker";
+import {
+  addMcpPresetDirective,
+  mcpCapabilityKey,
+  removeMcpPresetDirective,
+  selectedMcpPresetKeysFromDirectives,
+  setMcpToolBlockedDirective,
+} from "./form-state";
 
-interface QuickCreatePresetFormState {
-  key: string;
-  display_name: string;
-  description: string;
-  transport: McpTransportConfig;
-  route_policy: McpRoutePolicy;
-}
+function McpToolBlockList({
+  projectId,
+  preset,
+  directives,
+  onChange,
+}: {
+  projectId?: string;
+  preset: McpPresetDto;
+  directives: CapabilityDirective[];
+  onChange: (directives: CapabilityDirective[]) => void;
+}) {
+  const [isProbing, setIsProbing] = useState(false);
+  useMcpProbeStore((state) => state.cache);
+  const getCachedProbe = useMcpProbeStore((state) => state.getCached);
+  const refreshProbe = useMcpProbeStore((state) => state.refresh);
+  const probeResult = projectId
+    ? getCachedProbe(projectId, preset.transport, preset.runtime_binding)
+    : null;
+  const probeView = useMemo(() => buildMcpProbeViewModel(probeResult), [probeResult]);
+  const capabilityKey = mcpCapabilityKey(preset.key);
 
-function buildQuickCreatePresetForm(): QuickCreatePresetFormState {
-  return {
-    key: "",
-    display_name: "",
-    description: "",
-    transport: createDefaultMcpTransportConfig(),
-    route_policy: "auto",
-  };
-}
-
-function validateQuickCreatePresetForm(form: QuickCreatePresetFormState): string | null {
-  const key = form.key.trim();
-  const displayName = form.display_name.trim();
-  if (!key) return "工具标识不能为空";
-  if (!displayName) return "显示名称不能为空";
-  if (key.startsWith("agentdash-")) return "工具标识不能使用保留前缀 agentdash-";
-  if (key.includes("::")) return "工具标识不能包含 ::";
-  if (/[\\/:\\s]/.test(key)) return "工具标识不能包含空白、冒号或路径分隔符";
-  if (form.transport.type === "http" || form.transport.type === "sse") {
-    if (!form.transport.url.trim()) return "URL 不能为空";
+  const handleProbe = async () => {
+    if (!projectId) return;
+    setIsProbing(true);
     try {
-      new URL(form.transport.url.trim());
-    } catch {
-      return "URL 格式非法";
+      await refreshProbe(projectId, preset.transport, preset.runtime_binding);
+    } finally {
+      setIsProbing(false);
     }
-  }
-  if (form.transport.type === "stdio" && !form.transport.command.trim()) {
-    return "Command 不能为空";
-  }
-  return null;
+  };
+
+  const toggleTool = (tool: ProbeMcpToolInfo) => {
+    const isBlocked = toolBlockedByWorkflow(directives, capabilityKey, tool.name);
+    onChange(setMcpToolBlockedDirective(directives, preset.key, tool.name, !isBlocked));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={`text-[10px] ${
+            probeView.detailTone === "danger"
+              ? "text-destructive"
+              : probeView.detailTone === "success"
+                ? "text-primary"
+                : "text-muted-foreground"
+          }`}
+          title={probeView.bodyTitle ?? undefined}
+        >
+          {probeView.detailMessage ?? probeView.bodyMessage}
+        </span>
+        <button
+          type="button"
+          onClick={() => void handleProbe()}
+          disabled={!projectId || isProbing}
+          className="rounded-[6px] border border-border px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isProbing ? "探测中..." : "探测工具"}
+        </button>
+      </div>
+      {probeView.showToolGrid && (
+        <div className="space-y-1">
+          {probeView.tools.map((tool) => {
+            const isBlocked = toolBlockedByWorkflow(directives, capabilityKey, tool.name);
+            return (
+              <div
+                key={tool.name}
+                className={`flex items-center gap-2 rounded-[7px] border px-2 py-1 text-[11px] ${
+                  isBlocked
+                    ? "border-destructive/30 bg-destructive/5 text-destructive"
+                    : "border-border bg-background text-foreground"
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className={`truncate font-mono ${isBlocked ? "line-through" : ""}`}>
+                    {tool.name}
+                  </div>
+                  {tool.description && (
+                    <div className="truncate text-[10px] text-muted-foreground/75">
+                      {tool.description}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleTool(tool)}
+                  className={`shrink-0 rounded-[6px] border px-2 py-0.5 text-[10px] transition-colors ${
+                    isBlocked
+                      ? "border-primary/30 text-primary hover:bg-primary/5"
+                      : "border-destructive/30 text-destructive hover:bg-destructive/5"
+                  }`}
+                >
+                  {isBlocked ? "恢复" : "屏蔽"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function McpPresetPicker({
   projectId,
-  selectedKeys,
+  directives,
   onChange,
 }: {
   projectId?: string;
-  selectedKeys: string[];
-  onChange: (keys: string[]) => void;
+  directives: CapabilityDirective[];
+  onChange: (directives: CapabilityDirective[]) => void;
 }) {
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [createForm, setCreateForm] = useState<QuickCreatePresetFormState>(buildQuickCreatePresetForm);
+  const [createForm, setCreateForm] = useState<McpPresetFormState>(() => buildMcpPresetFormState());
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -92,17 +166,22 @@ export function McpPresetPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
+  const selectedKeys = useMemo(
+    () => selectedMcpPresetKeysFromDirectives(directives),
+    [directives],
+  );
+
   const toggleKey = (key: string) => {
     if (selectedKeys.includes(key)) {
-      onChange(selectedKeys.filter((item) => item !== key));
+      onChange(removeMcpPresetDirective(directives, key));
       return;
     }
-    onChange([...selectedKeys, key]);
+    onChange(addMcpPresetDirective(directives, key));
   };
 
   const handleCreate = async () => {
     if (!projectId) return;
-    const validationError = validateQuickCreatePresetForm(createForm);
+    const validationError = validateMcpPresetForm(createForm);
     if (validationError) {
       setCreateError(validationError);
       return;
@@ -110,19 +189,11 @@ export function McpPresetPicker({
     setIsCreating(true);
     setCreateError(null);
     try {
-      const input: CreateMcpPresetRequest = {
-        key: createForm.key.trim(),
-        display_name: createForm.display_name.trim(),
-        transport: createForm.transport,
-        route_policy: createForm.route_policy,
-      };
-      const trimmedDesc = createForm.description.trim();
-      if (trimmedDesc) input.description = trimmedDesc;
-      const created = await createMcpPreset(projectId, input);
+      const created = await createMcpPreset(projectId, buildCreateMcpPresetRequest(createForm));
       setPresets((prev) => [...prev, created]);
-      onChange(selectedKeys.includes(created.key) ? selectedKeys : [...selectedKeys, created.key]);
+      onChange(addMcpPresetDirective(directives, created.key));
       setIsCreateOpen(false);
-      setCreateForm(buildQuickCreatePresetForm());
+      setCreateForm(buildMcpPresetFormState());
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "创建 MCP Preset 失败");
     } finally {
@@ -140,7 +211,7 @@ export function McpPresetPicker({
       type="button"
       onClick={() => {
         setCreateError(null);
-        setCreateForm(buildQuickCreatePresetForm());
+        setCreateForm(buildMcpPresetFormState());
         setIsCreateOpen(true);
       }}
       className="flex min-h-[96px] flex-col items-center justify-center gap-1 rounded-[12px] border border-dashed border-border px-3 py-3 text-[11px] text-muted-foreground transition-colors hover:border-primary/50 hover:bg-secondary/20 hover:text-foreground"
@@ -164,7 +235,19 @@ export function McpPresetPicker({
           title: p.display_name,
           subtitle: p.key,
           description: p.description?.trim() || undefined,
-          chips: [{ label: p.transport.type }, { label: p.route_policy }],
+          chips: [
+            { label: p.transport.type },
+            { label: p.route_policy },
+            ...(hasMcpRuntimeBinding(p.runtime_binding) ? [{ label: "运行时绑定" }] : []),
+          ],
+          footer: selectedKeys.includes(p.key) ? (
+            <McpToolBlockList
+              projectId={projectId}
+              preset={p}
+              directives={directives}
+              onChange={onChange}
+            />
+          ) : undefined,
         })}
         onToggle={toggleKey}
         loadingText="正在加载 MCP Preset…"
@@ -219,14 +302,19 @@ export function McpPresetPicker({
             <select
               value={createForm.route_policy}
               onChange={(e) => {
-                setCreateForm((prev) => ({ ...prev, route_policy: e.target.value as McpRoutePolicy }));
+                setCreateForm((prev) => ({
+                  ...prev,
+                  route_policy: readMcpRoutePolicy(e.target.value),
+                }));
                 setCreateError(null);
               }}
               className="agentdash-form-select"
             >
-              <option value="auto">auto（stdio 走 relay，http/sse 直连）</option>
-              <option value="relay">relay（强制经本机）</option>
-              <option value="direct">direct（强制直连）</option>
+              {MCP_ROUTE_POLICY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
           <div>

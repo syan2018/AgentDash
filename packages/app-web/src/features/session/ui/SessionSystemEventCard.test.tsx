@@ -2,57 +2,50 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { JsonValue } from "../../../generated/common-contracts";
+import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 
+type JsonObject = { [key: string]: JsonValue | undefined };
+
 describe("SessionSystemEventCard", () => {
   it("放行并渲染 context_frame 事件", () => {
+    const frameData = sampleContextFrameData();
     const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
         data: {
           key: "context_frame",
-          value: {
-            id: "runtime-context-1",
-            kind: "capability_state_update",
-            source: "runtime_context_update",
-            phase_node: "apply",
-            apply_mode: "live",
-            delivery_status: "queued_for_transform_context",
-            delivery_channel: "turn_start",
-            message_role: "user",
-            rendered_text: "## Tool Schema Delta — Step Transition: apply",
-            created_at_ms: 1,
-            sections: [
-              {
-                kind: "tool_schema_delta",
-                added_tools: [
-                  {
-                    name: "mcp_agentdash_workflow_tools_upsert_workflow_tool",
-                    description: "创建或更新 Workflow 定义",
-                    parameters_schema: {
-                      type: "object",
-                      properties: { key: { type: "string" } },
-                    },
-                    capability_key: "workflow_management",
-                    source: "platform_mcp:workflow",
-                    tool_path: "workflow_management::upsert_workflow_tool",
-                  },
-                ],
-              },
-            ],
-          },
+          value: frameData,
         },
       },
     };
 
     expect(isRenderableSystemEventUpdate(event)).toBe(true);
 
-    const html = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+    const html = renderToStaticMarkup(
+      <SessionSystemEventCard event={event} contextFrame={readFrame(frameData)} />,
+    );
 
     expect(html).toContain("CTX");
-    expect(html).toContain("CAPABILITY");
+    expect(html).toContain("TOOL SURFACE");
+  });
+
+  it("context_frame 事件没有 parsed frame 时不渲染", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_meta_update",
+        data: {
+          key: "context_frame",
+          value: sampleContextFrameData(),
+        },
+      },
+    };
+
+    expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 
   it("有 injections 的 context_injected 应展示注入卡片", () => {
@@ -125,8 +118,9 @@ describe("SessionSystemEventCard", () => {
     const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
     expect(markup).toContain("能力申请");
     expect(markup).toContain("workflow_management::upsert_lifecycle_tool");
-    expect(markup).toContain("批准");
-    expect(markup).toContain("拒绝");
+    expect(markup).toContain("PermissionGrant");
+    expect(markup).not.toContain("批准");
+    expect(markup).not.toContain("拒绝");
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {
@@ -195,3 +189,44 @@ describe("SessionSystemEventCard", () => {
     expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 });
+
+function sampleContextFrameData(): JsonObject {
+  return {
+    id: "runtime-context-1",
+    kind: "capability_state_delta",
+    source: "runtime_context_update",
+    phase_node: "apply",
+    apply_mode: "live",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Tool Schema Delta — Step Transition: apply",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "tool_schema_delta",
+        added_tools: [
+          {
+            name: "mcp_agentdash_workflow_tools_upsert_workflow_tool",
+            description: "创建或更新 Workflow 定义",
+            parameters_schema: {
+              type: "object",
+              properties: { key: { type: "string" } },
+            },
+            capability_key: "workflow_management",
+            source: "platform_mcp:workflow",
+            tool_path: "workflow_management::upsert_workflow_tool",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function readFrame(value: Record<string, unknown>): ContextFrame {
+  const frame = parseContextFrame(value);
+  if (!frame) {
+    throw new Error("invalid context frame test fixture");
+  }
+  return frame;
+}

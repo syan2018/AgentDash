@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "诊断状态需要区分 Desktop API 与 Local Runtime/Runner。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新增状态 DTO、mapper 与注册来源枚举。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "设置页状态区域遵守现有 UI 语言。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "诊断日志和状态快照应复用统一诊断模型。"}

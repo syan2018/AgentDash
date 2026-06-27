@@ -1,5 +1,5 @@
 /**
- * AgentTabView — ProjectAgent Draft 会话入口。
+ * AgentTabView — ProjectAgent Draft AgentRun 入口。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,8 +8,9 @@ import type { ProjectAgentSummary } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import { ActiveSessionList } from "./active-session-list";
-import { projectAgentDraftSessionPath } from "./project-agent-paths";
+import { ActiveAgentRunList } from "./active-agent-run-list";
+import { agentRunWorkspacePath } from "./agent-run-paths";
+import { projectAgentDraftRunPath } from "./project-agent-paths";
 import { ProjectAgentView } from "../project/project-agent-view";
 
 export function AgentTabView() {
@@ -54,7 +55,7 @@ export function AgentTabView() {
   const handleLaunchAgent = useCallback(
     (agent: ProjectAgentSummary) => {
       if (!currentProjectId) return;
-      navigate(projectAgentDraftSessionPath(currentProjectId, agent.key), {
+      navigate(projectAgentDraftRunPath(currentProjectId, agent.key), {
         state: {
           trace_agent: {
             display_name: agent.display_name,
@@ -66,13 +67,11 @@ export function AgentTabView() {
     [currentProjectId, navigate],
   );
 
-  const handleOpenSession = useCallback(
-    (runtimeSessionId: string, agentId?: string) => {
+  const handleOpenAgentRun = useCallback(
+    (runId: string, agentId: string) => {
       if (!currentProjectId) return;
-      if (agentId) {
-        setSelectedAgent({ projectId: currentProjectId, agentId });
-      }
-      navigate(`/session/${runtimeSessionId}`);
+      setSelectedAgent({ projectId: currentProjectId, agentId });
+      navigate(agentRunWorkspacePath(runId, agentId));
     },
     [currentProjectId, navigate],
   );
@@ -101,11 +100,11 @@ export function AgentTabView() {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <ActiveSessionList
+        <ActiveAgentRunList
           projectId={currentProjectId}
           isLoading={lifecycleLoading}
           selectedAgentId={selectedAgentId}
-          onOpenSession={handleOpenSession}
+          onOpenAgentRun={handleOpenAgentRun}
         />
       </div>
     </div>

@@ -1,7 +1,7 @@
 //! 传输层集成
 //!
 //! 提供将 MCP Server 挂载到不同传输通道的辅助函数：
-//! - Streamable HTTP（集成到现有 Axum 服务，面向 Relay / Story / Task 层）
+//! - Streamable HTTP（集成到现有 Axum 服务，面向 Relay / Story 层）
 //! - Stdio（面向 Agent 子进程，可用于后续独立进程模式）
 //!
 //! ## 架构
@@ -12,10 +12,10 @@
 //!                    │                                                 │
 //!  用户 / IDE  ──────┤  POST /mcp/relay        → RelayMcpServer       │
 //!                    │  POST /mcp/story/{id}   → StoryMcpServer       │
-//!                    │  POST /mcp/task/{id}    → TaskMcpServer        │
 //!                    └─────────────────────────────────────────────────┘
 //! ```
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -36,11 +36,14 @@ use uuid::Uuid;
 
 use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
-use crate::servers::{RelayMcpServer, StoryMcpServer, TaskMcpServer, WorkflowMcpServer};
+use crate::servers::{RelayMcpServer, StoryMcpServer, WorkflowMcpServer};
 use crate::services::McpServices;
 use agentdash_spi::platform::auth::AuthIdentity;
 
 type McpHttpService<S> = StreamableHttpService<S, LocalSessionManager>;
+type McpServiceCache<K, S> = Arc<Mutex<HashMap<K, McpHttpService<S>>>>;
+type UserServiceKey = String;
+type ProjectScopedServiceKey = (String, Uuid);
 
 /// 创建 Relay 层的 Streamable HTTP 服务
 pub fn create_relay_http_service(
@@ -74,28 +77,6 @@ fn create_story_http_service(
     )
 }
 
-fn create_task_http_service(
-    services: Arc<McpServices>,
-    project_id: Uuid,
-    story_id: Uuid,
-    task_id: Uuid,
-    identity: AuthIdentity,
-) -> McpHttpService<TaskMcpServer> {
-    StreamableHttpService::new(
-        move || {
-            Ok(TaskMcpServer::new(
-                services.clone(),
-                project_id,
-                story_id,
-                task_id,
-                identity.clone(),
-            ))
-        },
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
-    )
-}
-
 /// 通过 stdio 服务 StoryMcpServer
 pub async fn serve_story_via_stdio(
     services: Arc<McpServices>,
@@ -111,29 +92,12 @@ pub async fn serve_story_via_stdio(
     Ok(())
 }
 
-/// 通过 stdio 服务 TaskMcpServer
-pub async fn serve_task_via_stdio(
-    services: Arc<McpServices>,
-    project_id: Uuid,
-    story_id: Uuid,
-    task_id: Uuid,
-    identity: AuthIdentity,
-) -> Result<(), rmcp::RmcpError> {
-    use rmcp::{ServiceExt, transport::stdio};
-
-    let server = TaskMcpServer::new(services, project_id, story_id, task_id, identity);
-    let service = server.serve(stdio()).await?;
-    service.waiting().await?;
-    Ok(())
-}
-
 #[derive(Clone)]
 struct McpHttpRouterState {
     services: Arc<McpServices>,
-    relay_services: Arc<Mutex<HashMap<String, McpHttpService<RelayMcpServer>>>>,
-    story_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<StoryMcpServer>>>>,
-    task_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<TaskMcpServer>>>>,
-    workflow_services: Arc<Mutex<HashMap<(String, Uuid), McpHttpService<WorkflowMcpServer>>>>,
+    relay_services: McpServiceCache<UserServiceKey, RelayMcpServer>,
+    story_services: McpServiceCache<ProjectScopedServiceKey, StoryMcpServer>,
+    workflow_services: McpServiceCache<ProjectScopedServiceKey, WorkflowMcpServer>,
 }
 
 impl McpHttpRouterState {
@@ -142,7 +106,6 @@ impl McpHttpRouterState {
             services,
             relay_services: Arc::new(Mutex::new(HashMap::new())),
             story_services: Arc::new(Mutex::new(HashMap::new())),
-            task_services: Arc::new(Mutex::new(HashMap::new())),
             workflow_services: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -182,7 +145,8 @@ impl McpHttpRouterState {
             .get_by_id(story_id)
             .await
             .map_err(|error| {
-                tracing::error!(%story_id, ?error, "加载 Story 以建立 MCP HTTP 服务失败");
+                diag!(Error, Subsystem::Mcp,
+        %story_id, ?error, "加载 Story 以建立 MCP HTTP 服务失败");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("加载 Story 失败: {error}"),
@@ -219,63 +183,6 @@ impl McpHttpRouterState {
             .story_services
             .lock()
             .expect("story service cache lock poisoned");
-
-        Ok(guard.entry(key).or_insert_with(|| service.clone()).clone())
-    }
-
-    async fn task_service(
-        &self,
-        identity: &AuthIdentity,
-        task_id: Uuid,
-    ) -> Result<McpHttpService<TaskMcpServer>, (StatusCode, String)> {
-        // M1-b：Task 查询经 Story aggregate（find_by_task_id 一步拿到 Story）
-        let story = self
-            .services
-            .story_repo
-            .find_by_task_id(task_id)
-            .await
-            .map_err(|error| {
-                tracing::error!(%task_id, ?error, "加载 Task 以建立 MCP HTTP 服务失败");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("加载 Task 失败: {error}"),
-                )
-            })?
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
-        let task = story
-            .find_task(task_id)
-            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Task 不存在: {task_id}")))?;
-        require_project_permission(
-            &self.services,
-            identity,
-            story.project_id,
-            McpProjectPermission::View,
-        )
-        .await
-        .map_err(mcp_error_response)?;
-
-        let key = (identity.user_id.clone(), task_id);
-        if let Some(service) = self
-            .task_services
-            .lock()
-            .expect("task service cache lock poisoned")
-            .get(&key)
-            .cloned()
-        {
-            return Ok(service);
-        }
-
-        let service = create_task_http_service(
-            self.services.clone(),
-            story.project_id,
-            task.story_id,
-            task.id,
-            identity.clone(),
-        );
-        let mut guard = self
-            .task_services
-            .lock()
-            .expect("task service cache lock poisoned");
 
         Ok(guard.entry(key).or_insert_with(|| service.clone()).clone())
     }
@@ -384,22 +291,6 @@ async fn handle_story_mcp(
     }
 }
 
-async fn handle_task_mcp(
-    state: Arc<McpHttpRouterState>,
-    task_id: Uuid,
-    request: Request<Body>,
-) -> impl IntoResponse {
-    let identity = match request_identity(&request) {
-        Ok(identity) => identity,
-        Err(error) => return error.into_response(),
-    };
-
-    match state.task_service(&identity, task_id).await {
-        Ok(service) => service.handle(request).await.into_response(),
-        Err(error) => error.into_response(),
-    }
-}
-
 async fn handle_workflow_mcp(
     state: Arc<McpHttpRouterState>,
     project_id: Uuid,
@@ -449,16 +340,6 @@ impl McpRouterBuilder {
                     move |Path(story_id): Path<Uuid>, request: Request<Body>| {
                         let state = state.clone();
                         async move { handle_story_mcp(state, story_id, request).await }
-                    }
-                }),
-            )
-            .route(
-                "/mcp/task/{task_id}",
-                any({
-                    let state = http_state.clone();
-                    move |Path(task_id): Path<Uuid>, request: Request<Body>| {
-                        let state = state.clone();
-                        async move { handle_task_mcp(state, task_id, request).await }
                     }
                 }),
             )

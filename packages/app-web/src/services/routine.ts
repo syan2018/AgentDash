@@ -1,23 +1,18 @@
 import { api } from "../api/client";
 import type {
+  CreateRoutineRequest,
   RegenerateTokenResponse,
-  Routine,
   RoutineCreationResponse,
-  RoutineExecution,
-} from "../types";
+  RoutineExecutionResponse,
+  RoutineResponse,
+  UpdateRoutineRequest,
+} from "../generated/routine-contracts";
 
-export interface CreateRoutinePayload {
-  name: string;
-  prompt_template: string;
-  project_agent_id: string;
-  trigger_config: Record<string, unknown>;
-  dispatch_strategy?: Record<string, unknown>;
-}
+export type CreateRoutinePayload = CreateRoutineRequest;
+export type UpdateRoutinePayload = UpdateRoutineRequest;
 
-export type UpdateRoutinePayload = Record<string, unknown>;
-
-export async function fetchProjectRoutines(projectId: string): Promise<Routine[]> {
-  return api.get<Routine[]>(`/projects/${projectId}/routines`);
+export async function fetchProjectRoutines(projectId: string): Promise<RoutineResponse[]> {
+  return api.get<RoutineResponse[]>(`/projects/${projectId}/routines`);
 }
 
 export async function createRoutine(
@@ -30,8 +25,8 @@ export async function createRoutine(
 export async function updateRoutine(
   routineId: string,
   payload: UpdateRoutinePayload,
-): Promise<Routine> {
-  return api.put<Routine>(`/routines/${routineId}`, payload);
+): Promise<RoutineResponse> {
+  return api.put<RoutineResponse>(`/routines/${routineId}`, payload);
 }
 
 export async function deleteRoutine(routineId: string): Promise<void> {
@@ -41,8 +36,8 @@ export async function deleteRoutine(routineId: string): Promise<void> {
 export async function setRoutineEnabled(
   routineId: string,
   enabled: boolean,
-): Promise<Routine> {
-  return api.patch<Routine>(`/routines/${routineId}/enable`, { enabled });
+): Promise<RoutineResponse> {
+  return api.patch<RoutineResponse>(`/routines/${routineId}/enable`, { enabled });
 }
 
 export async function regenerateRoutineToken(
@@ -55,8 +50,8 @@ export async function fetchRoutineExecutions(
   routineId: string,
   limit = 20,
   offset = 0,
-): Promise<RoutineExecution[]> {
-  return api.get<RoutineExecution[]>(
+): Promise<RoutineExecutionResponse[]> {
+  return api.get<RoutineExecutionResponse[]>(
     `/routines/${routineId}/executions?limit=${limit}&offset=${offset}`,
   );
 }

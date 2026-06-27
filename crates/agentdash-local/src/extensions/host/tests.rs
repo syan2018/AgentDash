@@ -68,7 +68,7 @@ async fn reload_updates_action_handler() {
 #[tokio::test]
 async fn protocol_channel_registers_and_self_invokes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let package_dir = write_package(temp.path(), channel_bundle(), false, false)
+    let package_dir = write_channel_echo_package(temp.path())
         .await
         .expect("package");
     let manager = test_manager(temp.path());
@@ -89,6 +89,27 @@ async fn protocol_channel_registers_and_self_invokes() {
         .await
         .expect("invoke channel");
     assert_eq!(channel_result["echoed"]["source"], "direct");
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn channel_output_schema_is_validated_by_local_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir =
+        write_channel_echo_package_with_output_schema(temp.path(), json!({ "type": "string" }))
+            .await
+            .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_channel("local-hello.api", "echo", json!({ "source": "direct" }))
+        .await
+        .expect_err("output schema should reject object output");
+    assert!(err.to_string().contains("output 不符合 JSON Schema"));
     manager.stop().await.expect("stop");
 }
 
@@ -275,6 +296,35 @@ async fn runtime_invoke_requires_cross_extension_permission() {
 }
 
 #[tokio::test]
+async fn runtime_invoke_reports_unloaded_action_without_host_api_fallback() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package_with_permissions(
+        temp.path(),
+        unloaded_runtime_invoke_bundle(),
+        json!([]),
+        json!(["runtime.invoke:provider.missing"]),
+    )
+    .await
+    .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", json!({ "source": "runtime" }))
+        .await
+        .expect_err("unloaded runtime action");
+
+    assert!(
+        err.to_string()
+            .contains("runtime action is not loaded in current extension host: provider.missing")
+    );
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn runtime_invoke_limits_recursive_calls() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), recursive_runtime_bundle(), false, false)
@@ -299,6 +349,29 @@ async fn runtime_invoke_limits_recursive_calls() {
 }
 
 #[tokio::test]
+async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_fallback() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), unloaded_channel_invoke_bundle(), false, false)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", json!({ "source": "channel" }))
+        .await
+        .expect_err("unloaded channel method");
+
+    assert!(err.to_string().contains(
+        "extension channel method is not loaded in current extension host: provider.api.echo"
+    ));
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn permission_denied_when_local_profile_is_not_declared() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), profile_bundle(), false, false)
@@ -315,6 +388,44 @@ async fn permission_denied_when_local_profile_is_not_declared() {
         .expect_err("permission denied");
     assert!(err.to_string().contains("local.profile.read"));
     manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn activation_rejects_handlers_not_declared_by_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), extra_action_bundle(), true, true)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+
+    let err = manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect_err("manifest parity");
+
+    assert!(err.to_string().contains(
+        "extension action is registered but not declared in manifest: local-hello.extra"
+    ));
+    let _ = manager.stop().await;
+}
+
+#[tokio::test]
+async fn activation_rejects_manifest_action_without_handler() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), no_action_bundle(), true, true)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+
+    let err = manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect_err("manifest parity");
+
+    assert!(err.to_string().contains(
+        "extension action is declared in manifest but not registered: local-hello.profile"
+    ));
+    let _ = manager.stop().await;
 }
 
 #[tokio::test]
@@ -371,7 +482,7 @@ async fn built_in_host_apis_use_action_permissions_and_workspace_boundary() {
             "workspace.vfs.read",
             "workspace.vfs.list",
             "env.read:PATH",
-            "process.execute"
+            "process.shell"
         ]),
     )
     .await
@@ -447,6 +558,33 @@ async fn action_exception_does_not_stop_host_process() {
     manager.stop().await.expect("stop");
 }
 
+#[tokio::test]
+async fn action_output_schema_is_validated_by_local_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package_with_action_contract(
+        temp.path(),
+        version_bundle(3),
+        json!([]),
+        json!([]),
+        json!({}),
+        json!({ "type": "string" }),
+    )
+    .await
+    .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", Value::Null)
+        .await
+        .expect_err("output schema should reject object output");
+    assert!(err.to_string().contains("output 不符合 JSON Schema"));
+    manager.stop().await.expect("stop");
+}
+
 fn test_manager(root: &Path) -> LocalExtensionHostManager {
     LocalExtensionHostManager::new(LocalTsExtensionHostConfig {
         node_command: "node".to_string(),
@@ -494,6 +632,25 @@ async fn write_package_with_permissions(
     permissions: Value,
     action_permissions: Value,
 ) -> anyhow::Result<PathBuf> {
+    write_package_with_action_contract(
+        root,
+        bundle,
+        permissions,
+        action_permissions,
+        json!({}),
+        json!({}),
+    )
+    .await
+}
+
+async fn write_package_with_action_contract(
+    root: &Path,
+    bundle: String,
+    permissions: Value,
+    action_permissions: Value,
+    input_schema: Value,
+    output_schema: Value,
+) -> anyhow::Result<PathBuf> {
     let package_dir = root.join("package");
     tokio::fs::create_dir_all(package_dir.join("dist")).await?;
     write_bundle(&package_dir, bundle.clone()).await?;
@@ -507,8 +664,8 @@ async fn write_package_with_permissions(
             "action_key": "local-hello.profile",
             "kind": "session_runtime",
             "description": "Read local profile",
-            "input_schema": {},
-            "output_schema": {},
+            "input_schema": input_schema,
+            "output_schema": output_schema,
             "permissions": action_permissions,
         }],
         "permissions": permissions,
@@ -529,6 +686,57 @@ async fn write_package_with_permissions(
 async fn write_bundle(package_dir: &Path, bundle: String) -> anyhow::Result<()> {
     tokio::fs::write(package_dir.join("dist").join("extension.js"), bundle).await?;
     Ok(())
+}
+
+async fn write_channel_echo_package(root: &Path) -> anyhow::Result<PathBuf> {
+    write_channel_echo_package_with_output_schema(root, json!(true)).await
+}
+
+async fn write_channel_echo_package_with_output_schema(
+    root: &Path,
+    output_schema: Value,
+) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("channel-echo");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = channel_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "local-hello",
+        "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
+        "asset_version": "0.1.0",
+        "runtime_actions": [{
+            "action_key": "local-hello.profile",
+            "kind": "session_runtime",
+            "description": "Read local profile",
+            "input_schema": true,
+            "output_schema": true,
+            "permissions": [],
+        }],
+        "protocol_channels": [{
+            "channel_key": "local-hello.api",
+            "version": "1.0.0",
+            "description": "Local API",
+            "methods": [{
+                "name": "echo",
+                "description": "Echo input",
+                "input_schema": true,
+                "output_schema": output_schema,
+                "permissions": [],
+            }],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
 }
 
 async fn write_channel_env_package(
@@ -820,6 +1028,41 @@ export default {
     .to_string()
 }
 
+fn extra_action_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Read local profile",
+      async invoke() {
+        return await ctx.api.local.getProfile();
+      },
+    });
+    ctx.runtime.registerAction({
+      action_key: "local-hello.extra",
+      kind: "session_runtime",
+      description: "Extra",
+      invoke() {
+        return {};
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn no_action_bundle() -> String {
+    r#"
+export default {
+  activate() {},
+};
+"#
+    .to_string()
+}
+
 fn recursive_runtime_bundle() -> String {
     r#"
 export default {
@@ -830,6 +1073,42 @@ export default {
       description: "Recursive runtime invoke",
       async invoke() {
         return await ctx.api.runtime.invoke("local-hello.profile", {});
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn unloaded_runtime_invoke_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Invoke unloaded runtime action",
+      async invoke(input) {
+        return await ctx.api.runtime.invoke("provider.missing", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn unloaded_channel_invoke_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Invoke unloaded channel method",
+      async invoke(input) {
+        return await ctx.api.channels.invoke("provider.api", "echo", input);
       },
     });
   },
@@ -1006,7 +1285,7 @@ export default {
         "workspace.vfs.read",
         "workspace.vfs.list",
         "env.read:PATH",
-        "process.execute",
+        "process.shell",
       ],
       async invoke() {
         await ctx.api.workspace.writeText("notes/hello.txt", "hello from extension");

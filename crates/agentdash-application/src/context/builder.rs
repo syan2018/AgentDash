@@ -8,15 +8,15 @@
 use agentdash_spi::{ContextFragment, FragmentScopeSet, MergeStrategy, SessionContextBundle};
 use uuid::Uuid;
 
-use crate::runtime::RuntimeMcpServer;
+use crate::runtime::McpServerSummary;
 
 // ─── 新契约（零 domain 依赖） ────────────────────────────────
 
 /// Session 上下文构建的触发 phase。
 ///
-/// 与 `SessionPlanPhase` 互补：`SessionPlanPhase` 只区分 project/task start/continue/story 四类，
+/// 与 `SessionPlanPhase` 互补：`SessionPlanPhase` 只区分 project/task/story 等 owner 场景，
 /// 新增 phase 覆盖 owner bootstrap、lifecycle node、companion、repository rehydrate 等场景。
-/// Task 执行路径的 phase 标签（`start_task` / `continue_task`）。
+/// Task StoryStep compose 的 phase 标签。
 ///
 /// 主要用于 `contribute_instruction` 在首轮/续跑时选择合适的指令模板，
 /// 以及标记 bundle 的构建来源。
@@ -70,7 +70,7 @@ pub struct SessionContextConfig {
 pub struct Contribution {
     pub fragments: Vec<ContextFragment>,
     /// application 层 MCP server 抽象 — 边界层再转换为具体协议类型。
-    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub mcp_servers: Vec<McpServerSummary>,
 }
 
 impl Contribution {
@@ -138,9 +138,9 @@ pub fn build_session_context_bundle(
 /// 产出的 Bundle 含单条 fragment：slot=`static_fragment`、scope=默认、
 /// source=`session:continuation`。
 ///
-/// **PR 5d 注记**：仅用于"完全没有 owner/task bundle"的场景（owner bootstrap /
-/// routine continuation）。Task continuation 路径改为直接把 transcript fragment
-/// 追加到原 task bundle 上，保留原有的 task/story/project slot 分区。
+/// 仅用于"完全没有 owner/task bundle"的场景（owner bootstrap / routine continuation）。
+/// Task continuation 路径直接把 transcript fragment 追加到原 task bundle 上，
+/// 保留原有的 task/story/project slot 分区。
 pub fn build_continuation_bundle_from_markdown(
     session_id: Uuid,
     markdown: String,
@@ -182,7 +182,7 @@ pub fn build_declared_source_warning_fragment(
         order,
         strategy: MergeStrategy::Append,
         scope: ContextFragment::default_scope(),
-        source: "legacy:declared_source_warning".to_string(),
+        source: "declared_source_warning".to_string(),
         content: format!(
             "## Injection Notes\n{}",
             warnings
@@ -286,10 +286,9 @@ mod bundle_tests {
         assert!(f.scope.contains(FragmentScope::TitleGen));
     }
 
-    /// 回归固化：`bce0825` 场景 —— title generator 不应看到 RuntimeAgent scope 的 agent context
-    /// fragment。换言之，所有 `legacy:session_plan` / `legacy:contributor:*` / `contribute_*`
-    /// 产出 fragment 的 scope 必须是 `RuntimeAgent | Audit`（**不含** `TitleGen`），
-    /// 从协议层防止 agent 指令泄漏到 title 生成路径。
+    /// Title generator 不应看到 RuntimeAgent scope 的 agent context fragment。
+    /// session plan 与 context contributor 产出的 fragment scope 必须是
+    /// `RuntimeAgent | Audit`（不含 `TitleGen`），从协议层防止 agent 指令泄漏到标题生成路径。
     #[test]
     fn title_gen_scope_excludes_agent_context() {
         let config = SessionContextConfig {

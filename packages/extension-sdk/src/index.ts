@@ -6,6 +6,24 @@ export type ExtensionBundleKind = "extension_host";
 export type ExtensionRuntimeActionKind = "session_runtime" | "setup";
 export type ExtensionPermissionAccess = "read" | "write" | "read_write";
 export type ExtensionProcessPermissionAccess = "execute";
+export type ExtensionRuntimePermissionKey =
+  | "local.profile.read"
+  | "http.fetch"
+  | `http.fetch:${string}`
+  | "workspace.vfs.read"
+  | "workspace.vfs.write"
+  | "workspace.vfs.list"
+  | "workspace.vfs.search"
+  | "env.read"
+  | `env.read:${string}`
+  | "process.exec"
+  | "process.shell"
+  | "process.env.set"
+  | `process.env.set:${string}`
+  | "runtime.invoke"
+  | `runtime.invoke:${string}`
+  | "extension.channel.invoke"
+  | `extension.channel.invoke:${string}`;
 
 export interface ExtensionCommandHandler {
   kind: "inject_message";
@@ -31,9 +49,9 @@ export interface ExtensionRuntimeActionDefinition<Input extends JsonValue = Json
   action_key: string;
   kind: ExtensionRuntimeActionKind;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
-  permissions?: string[];
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
+  permissions?: ExtensionRuntimePermissionKey[];
   invoke(input: Input): Output | Promise<Output>;
 }
 
@@ -59,9 +77,9 @@ export interface ExtensionProtocolChannelMethodDefinition<
 > {
   name: string;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
-  permissions?: string[];
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
+  permissions?: ExtensionRuntimePermissionKey[];
   invoke(input: Input): Output | Promise<Output>;
 }
 
@@ -99,9 +117,9 @@ export interface ExtensionProtocolChannelDefinition {
 export interface ExtensionProtocolChannelMethodManifestDefinition {
   name: string;
   description: string;
-  input_schema?: JsonObject | boolean;
-  output_schema?: JsonObject | boolean;
-  permissions?: string[];
+  input_schema: JsonObject | boolean;
+  output_schema: JsonObject | boolean;
+  permissions?: ExtensionRuntimePermissionKey[];
 }
 
 export interface ExtensionProtocolChannelManifestDefinition {

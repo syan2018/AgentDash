@@ -1,10 +1,12 @@
 //! Workspace 探测 + 目录浏览命令处理
 
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_relay::*;
 
-use super::CommandHandler;
+#[derive(Clone, Copy)]
+pub(super) struct WorkspaceCommandHandler;
 
-impl CommandHandler {
+impl WorkspaceCommandHandler {
     pub(super) async fn handle_workspace_detect(
         &self,
         id: String,
@@ -24,7 +26,8 @@ impl CommandHandler {
                 }
             };
 
-        tracing::debug!(path = %workspace_root.display(), "workspace_detect");
+        diag!(Debug, Subsystem::AgentRun,
+        path = %workspace_root.display(), "workspace_detect");
         let detected = match tokio::task::spawn_blocking(move || {
             crate::workspace_probe::detect_workspace(&workspace_root)
         })
@@ -93,6 +96,35 @@ impl CommandHandler {
                 current_branch: git.as_ref().and_then(|item| item.current_branch.clone()),
                 remote_url: git.as_ref().and_then(|item| item.remote_url.clone()),
             }),
+            error: None,
+        }
+    }
+
+    pub(super) async fn handle_workspace_discover_by_identity(
+        &self,
+        id: String,
+        payload: CommandWorkspaceDiscoverByIdentityPayload,
+    ) -> RelayMessage {
+        let discovered = match tokio::task::spawn_blocking(move || {
+            crate::workspace_identity_discovery::discover_workspaces_by_identity(payload)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "workspace_discover_by_identity 任务失败: {err}"
+                    ))),
+                };
+            }
+        };
+
+        RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+            id,
+            payload: Some(discovered),
             error: None,
         }
     }

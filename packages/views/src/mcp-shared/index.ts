@@ -3,4 +3,8 @@ export {
   KeyValueList,
   StringList,
 } from './McpTransportConfigEditor'
-export type { McpTransportConfigEditorProps } from './McpTransportConfigEditor'
+export type {
+  McpTransportConfigEditorEntry,
+  McpTransportConfigEditorProps,
+  McpTransportConfigEditorValue,
+} from './McpTransportConfigEditor'

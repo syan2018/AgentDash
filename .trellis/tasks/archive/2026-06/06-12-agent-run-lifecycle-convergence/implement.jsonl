@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-12-agent-run-lifecycle-convergence/research/current-state.md", "reason": "Current code-backed launch lifecycle and frontend workspace evidence for this convergence task"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun, AgentFrame, RuntimeSessionExecutionAnchor, orchestration and AgentRun control-plane contracts"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Session execution state, pending queue, cancelling and AgentRun workspace command semantics"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session launch and startup pipeline boundaries for connector delivery"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Runtime VFS and lifecycle_vfs mount contracts used by AgentFrame runtime surfaces"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Frontend state ownership and hydration guidance for AgentRun workspace changes"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated contract and typed frontend model requirements"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer reasoning guide for backend/frontend launch contract convergence"}

@@ -4,8 +4,7 @@ import { useRoutineExecutionsQuery } from "./model/routineQueries";
 
 const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
   pending: "border-border bg-secondary/50 text-muted-foreground",
-  running: "border-info/30 bg-info/10 text-info",
-  completed: "border-success/30 bg-success/10 text-success",
+  dispatched: "border-info/30 bg-info/10 text-info",
   failed: "border-destructive/30 bg-destructive/10 text-destructive",
   skipped: "border-warning/30 bg-warning/10 text-warning",
 };
@@ -49,19 +48,22 @@ export function ExecutionHistoryContent({ routineId }: { routineId: string }) {
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => navigate(`/run/${exec.runtime_refs!.run_ref}`)}
+                onClick={() => navigate(`/run/${exec.runtime_refs?.run_ref ?? ""}`)}
                 className="text-xs text-primary underline hover:no-underline"
               >
                 查看 Run
               </button>
               <button
                 type="button"
-                onClick={() => navigate(`/agent/${exec.runtime_refs!.agent_ref}`, {
-                  state: {
-                    run_id: exec.runtime_refs!.run_ref,
-                    frame_id: exec.runtime_refs!.frame_ref,
-                  },
-                })}
+                onClick={() => {
+                  if (!exec.runtime_refs) return;
+                  navigate(`/agent/${exec.runtime_refs.agent_ref}`, {
+                    state: {
+                      run_id: exec.runtime_refs.run_ref,
+                      frame_id: exec.runtime_refs.frame_ref,
+                    },
+                  });
+                }}
                 className="text-xs text-primary underline hover:no-underline"
               >
                 查看 Agent

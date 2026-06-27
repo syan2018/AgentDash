@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use anyhow::Result;
 
 use agentdash_integration_api::AuthMode;
@@ -20,6 +21,7 @@ pub(crate) fn validate_auth_provider_registered(
         anyhow::bail!("认证模式 `{auth_mode}` 未注册 AuthProvider，无法启动服务");
     }
 
-    tracing::info!(auth_mode = %auth_mode, "认证模式已加载");
+    diag!(Info, Subsystem::Auth,
+        auth_mode = %auth_mode, "认证模式已加载");
     Ok(auth_mode)
 }

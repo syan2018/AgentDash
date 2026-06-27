@@ -1,1 +1,1 @@
-export { isRenderableSystemEventUpdate } from "../model/systemEventVisibility";
+export { isRenderableSystemEventUpdate } from "../model/systemEventPolicy";

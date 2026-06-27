@@ -1,0 +1,9 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "packages/app-web/src/features/session/model/boundedOutput.test.ts", "reason": "前端 bounded lifecycle_path 解析测试"}
+{"file": "packages/app-web/src/features/session/model/useSessionFeed.test.ts", "reason": "前端 session feed 大输出展示回归测试"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs", "reason": "检查 ThreadItem id 与 lifecycle_path 一致性测试"}
+{"file": "crates/agentdash-application/src/session/continuation.rs", "reason": "检查 continuation 主上下文不泄漏 raw id"}
+{"file": "packages/app-web/src/features/session/ui/bodies/CommandExecutionCardBody.test.tsx", "reason": "检查命令 bounded output 短引用展示"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "检查 lifecycle VFS 分段短 path 和 cache read 回归"}
+{"file": "crates/agentdash-application/src/lifecycle/surface/journey/session_items.rs", "reason": "检查 session/items 和 tool-results readable alias 投影"}
+{"file": "packages/app-web/src/features/session/ui/bodies/ToolOutputContentViewer.tsx", "reason": "检查工具结果卡片不默认展示 raw id"}

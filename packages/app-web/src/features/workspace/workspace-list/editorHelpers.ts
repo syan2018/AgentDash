@@ -11,7 +11,7 @@ export type Feedback = { tone: "success" | "info" | "error"; text: string };
 
 export const CREATE_MODE_LABELS: Record<CreateMode, string> = {
   from_directory: "从可选目录创建",
-  logical: "先建空壳，之后补运行位置",
+  logical: "先建空壳，之后补目录绑定",
 };
 
 export function bindingDraftKey(

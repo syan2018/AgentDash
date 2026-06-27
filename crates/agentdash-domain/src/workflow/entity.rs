@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::DomainError;
 use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityTransition, AgentProcedureContract, DefinitionSource,
     EffectiveSessionContract, LifecycleContext, LifecycleExecutionEntry, LifecycleRunStatus,
+    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch,
     OrchestrationInstance, OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus,
-    ValidationIssue,
+    TaskPlanStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,35 +91,40 @@ pub struct WorkflowGraph {
     pub updated_at: DateTime<Utc>,
 }
 
+pub struct WorkflowGraphDraft {
+    pub project_id: Uuid,
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub source: DefinitionSource,
+    pub entry_activity_key: String,
+    pub activities: Vec<ActivityDefinition>,
+    pub transitions: Vec<ActivityTransition>,
+}
+
 impl WorkflowGraph {
-    pub fn new(
-        project_id: Uuid,
-        key: impl Into<String>,
-        name: impl Into<String>,
-        description: impl Into<String>,
-        source: DefinitionSource,
-        entry_activity_key: impl Into<String>,
-        activities: Vec<ActivityDefinition>,
-        transitions: Vec<ActivityTransition>,
-    ) -> Result<Self, String> {
-        let key = key.into();
-        let name = name.into();
-        let entry_activity_key = entry_activity_key.into();
-        validate_workflow_graph(&key, &name, &entry_activity_key, &activities, &transitions)?;
+    pub fn new(draft: WorkflowGraphDraft) -> Result<Self, String> {
+        validate_workflow_graph(
+            &draft.key,
+            &draft.name,
+            &draft.entry_activity_key,
+            &draft.activities,
+            &draft.transitions,
+        )?;
 
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
-            project_id,
-            key,
-            name,
-            description: description.into(),
-            source,
+            project_id: draft.project_id,
+            key: draft.key,
+            name: draft.name,
+            description: draft.description,
+            source: draft.source,
             installed_source: None,
             version: 1,
-            entry_activity_key,
-            activities,
-            transitions,
+            entry_activity_key: draft.entry_activity_key,
+            activities: draft.activities,
+            transitions: draft.transitions,
             created_at: now,
             updated_at: now,
         })
@@ -144,7 +151,7 @@ impl WorkflowGraph {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunTopology {
-    Graphless,
+    Plain,
     WorkflowGraph,
 }
 
@@ -157,6 +164,8 @@ pub struct LifecycleRun {
     pub context: LifecycleContext,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orchestrations: Vec<OrchestrationInstance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<LifecycleTaskPlanItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view_projection: Option<Value>,
     pub status: LifecycleRunStatus,
@@ -176,6 +185,7 @@ impl LifecycleRun {
             topology: LifecycleRunTopology::WorkflowGraph,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
+            tasks: Vec::new(),
             view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
@@ -185,14 +195,15 @@ impl LifecycleRun {
         }
     }
 
-    pub fn new_graphless(project_id: Uuid) -> Self {
+    pub fn new_plain(project_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
-            topology: LifecycleRunTopology::Graphless,
+            topology: LifecycleRunTopology::Plain,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
+            tasks: Vec::new(),
             view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
@@ -239,6 +250,158 @@ impl LifecycleRun {
             .find(|orchestration| orchestration.orchestration_id == orchestration_id)
     }
 
+    pub fn task_by_id(&self, task_id: Uuid) -> Option<&LifecycleTaskPlanItem> {
+        self.tasks.iter().find(|task| task.id == task_id)
+    }
+
+    pub fn create_task(
+        &mut self,
+        draft: LifecycleTaskPlanItemDraft,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        validate_task_title(&draft.title)?;
+        validate_story_ref(&draft.story_ref)?;
+
+        let task_id = draft.id.unwrap_or_else(Uuid::new_v4);
+        if self.task_by_id(task_id).is_some() {
+            return Err(DomainError::Conflict {
+                entity: "LifecycleRun",
+                constraint: "tasks.id",
+                message: format!("Task plan item {task_id} already exists in run {}", self.id),
+            });
+        }
+
+        let now = Utc::now();
+        let task = LifecycleTaskPlanItem {
+            id: task_id,
+            title: draft.title,
+            body: draft.body,
+            status: draft.status,
+            priority: draft.priority,
+            created_by_agent_id: draft.created_by_agent_id,
+            owner_agent_id: draft.owner_agent_id,
+            assigned_agent_id: draft.assigned_agent_id,
+            source_task_id: draft.source_task_id,
+            created_at: now,
+            updated_at: now,
+            archived_at: None,
+            context_refs: draft.context_refs,
+            story_ref: draft.story_ref,
+        };
+        self.tasks.push(task.clone());
+        self.touch_activity();
+        Ok(task)
+    }
+
+    pub fn update_task(
+        &mut self,
+        task_id: Uuid,
+        patch: LifecycleTaskPlanItemPatch,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        if let Some(title) = patch.title.as_deref() {
+            validate_task_title(title)?;
+        }
+        if let Some(story_ref) = &patch.story_ref {
+            validate_story_ref(story_ref)?;
+        }
+
+        let task = self.task_by_id_mut(task_id)?;
+        if let Some(title) = patch.title {
+            task.title = title;
+        }
+        if let Some(body) = patch.body {
+            task.body = body;
+        }
+        if let Some(priority) = patch.priority {
+            task.priority = priority;
+        }
+        if let Some(owner_agent_id) = patch.owner_agent_id {
+            task.owner_agent_id = owner_agent_id;
+        }
+        if let Some(assigned_agent_id) = patch.assigned_agent_id {
+            task.assigned_agent_id = assigned_agent_id;
+        }
+        if let Some(source_task_id) = patch.source_task_id {
+            task.source_task_id = source_task_id;
+        }
+        if let Some(context_refs) = patch.context_refs {
+            task.context_refs = context_refs;
+        }
+        if let Some(story_ref) = patch.story_ref {
+            task.story_ref = story_ref;
+        }
+        task.updated_at = Utc::now();
+        let updated = task.clone();
+        self.touch_activity();
+        Ok(updated)
+    }
+
+    pub fn archive_task(&mut self, task_id: Uuid) -> Result<LifecycleTaskPlanItem, DomainError> {
+        let task = self.task_by_id_mut(task_id)?;
+        let now = Utc::now();
+        if task.archived_at.is_none() {
+            task.archived_at = Some(now);
+            task.status = TaskPlanStatus::Dropped;
+            task.updated_at = now;
+        }
+        let archived = task.clone();
+        self.touch_activity();
+        Ok(archived)
+    }
+
+    pub fn transition_task_status(
+        &mut self,
+        task_id: Uuid,
+        next: TaskPlanStatus,
+    ) -> Result<LifecycleTaskPlanItem, DomainError> {
+        let task = self.task_by_id_mut(task_id)?;
+        if !task.status.can_transition_to(next) {
+            return Err(DomainError::InvalidTransition {
+                from: format!("{:?}", task.status),
+                to: format!("{next:?}"),
+            });
+        }
+        if task.status != next {
+            task.status = next;
+            task.updated_at = Utc::now();
+        }
+        let transitioned = task.clone();
+        self.touch_activity();
+        Ok(transitioned)
+    }
+
+    pub fn reorder_tasks(
+        &mut self,
+        ordered_task_ids: &[Uuid],
+    ) -> Result<Vec<LifecycleTaskPlanItem>, DomainError> {
+        for task_id in ordered_task_ids {
+            if self.task_by_id(*task_id).is_none() {
+                return Err(DomainError::NotFound {
+                    entity: "LifecycleRun.tasks",
+                    id: task_id.to_string(),
+                });
+            }
+        }
+
+        let now = Utc::now();
+        let mut reordered = Vec::with_capacity(self.tasks.len());
+        for task_id in ordered_task_ids {
+            let mut task = self
+                .task_by_id(*task_id)
+                .expect("validated task id")
+                .clone();
+            task.updated_at = now;
+            reordered.push(task);
+        }
+        for task in &self.tasks {
+            if !ordered_task_ids.contains(&task.id) {
+                reordered.push(task.clone());
+            }
+        }
+        self.tasks = reordered;
+        self.touch_activity();
+        Ok(self.tasks.clone())
+    }
+
     pub fn append_execution_log(&mut self, entries: Vec<LifecycleExecutionEntry>) {
         if entries.is_empty() {
             return;
@@ -252,12 +415,47 @@ impl LifecycleRun {
         self.last_activity_at = self.updated_at;
     }
 
-    fn refresh_status_from_orchestrations(&mut self) {
-        self.status = aggregate_orchestration_status(&self.orchestrations);
+    fn task_by_id_mut(&mut self, task_id: Uuid) -> Result<&mut LifecycleTaskPlanItem, DomainError> {
+        self.tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "LifecycleRun.tasks",
+                id: task_id.to_string(),
+            })
+    }
+
+    pub fn refresh_status_from_orchestrations(&mut self) {
+        self.status = aggregate_lifecycle_run_status(&self.orchestrations);
     }
 }
 
-fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> LifecycleRunStatus {
+fn validate_task_title(title: &str) -> Result<(), DomainError> {
+    if title.trim().is_empty() {
+        return Err(DomainError::InvalidConfig(
+            "lifecycle_run.tasks.title 不能为空".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_story_ref(
+    story_ref: &Option<super::lifecycle_subject_association::SubjectRef>,
+) -> Result<(), DomainError> {
+    if let Some(story_ref) = story_ref
+        && story_ref.kind != "story"
+    {
+        return Err(DomainError::InvalidConfig(format!(
+            "lifecycle_run.tasks.story_ref.kind 必须是 story，实际为 {}",
+            story_ref.kind
+        )));
+    }
+    Ok(())
+}
+
+pub fn aggregate_lifecycle_run_status(
+    orchestrations: &[OrchestrationInstance],
+) -> LifecycleRunStatus {
     if orchestrations.is_empty() {
         return LifecycleRunStatus::Ready;
     }
@@ -269,36 +467,44 @@ fn aggregate_orchestration_status(orchestrations: &[OrchestrationInstance]) -> L
     }
     if orchestrations
         .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Paused)
+        || orchestration_nodes(orchestrations)
+            .iter()
+            .any(|node| node.status == RuntimeNodeStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if orchestrations
+        .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Running)
+        || orchestration_nodes(orchestrations).iter().any(|node| {
+            matches!(
+                node.status,
+                RuntimeNodeStatus::Ready | RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
+            )
+        })
+    {
+        return LifecycleRunStatus::Running;
+    }
+    if orchestrations
+        .iter()
+        .any(|instance| instance.status == OrchestrationStatus::Pending)
+    {
+        return LifecycleRunStatus::Ready;
+    }
+    if orchestrations
+        .iter()
         .all(|instance| instance.status == OrchestrationStatus::Cancelled)
     {
         return LifecycleRunStatus::Cancelled;
     }
-    if orchestrations
-        .iter()
-        .all(|instance| instance.status == OrchestrationStatus::Completed)
-    {
-        return LifecycleRunStatus::Completed;
-    }
-    if orchestration_nodes(orchestrations)
-        .iter()
-        .any(|node| node.status == RuntimeNodeStatus::Blocked)
-    {
-        return LifecycleRunStatus::Blocked;
-    }
-    if orchestrations.iter().any(|instance| {
+    if orchestrations.iter().all(|instance| {
         matches!(
             instance.status,
-            OrchestrationStatus::Running | OrchestrationStatus::Paused
-        ) || orchestration_nodes(std::slice::from_ref(instance))
-            .iter()
-            .any(|node| {
-                matches!(
-                    node.status,
-                    RuntimeNodeStatus::Claiming | RuntimeNodeStatus::Running
-                )
-            })
+            OrchestrationStatus::Completed | OrchestrationStatus::Cancelled
+        )
     }) {
-        return LifecycleRunStatus::Running;
+        return LifecycleRunStatus::Completed;
     }
     LifecycleRunStatus::Ready
 }
@@ -353,6 +559,7 @@ pub fn build_effective_contract_from_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::TaskPriority;
     use crate::workflow::value_objects::{
         AgentProcedureExecutionSpec, AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
@@ -457,12 +664,128 @@ mod tests {
         let control = LifecycleRun::new_control(Uuid::new_v4());
         assert_eq!(control.context, LifecycleContext::default());
         assert!(control.orchestrations.is_empty());
+        assert!(control.tasks.is_empty());
         assert!(control.view_projection.is_none());
 
-        let graphless = LifecycleRun::new_graphless(Uuid::new_v4());
-        assert_eq!(graphless.context, LifecycleContext::default());
-        assert!(graphless.orchestrations.is_empty());
-        assert!(graphless.view_projection.is_none());
+        let plain = LifecycleRun::new_plain(Uuid::new_v4());
+        assert_eq!(plain.context, LifecycleContext::default());
+        assert!(plain.orchestrations.is_empty());
+        assert!(plain.tasks.is_empty());
+        assert!(plain.view_projection.is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_create_writes_plan_facts_only() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        let creator_agent_id = Uuid::new_v4();
+        let owner_agent_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let mut draft = LifecycleTaskPlanItemDraft::new("Implement task facts");
+        draft.body = Some("Add aggregate-owned plan item state".to_string());
+        draft.priority = Some(TaskPriority::P1);
+        draft.created_by_agent_id = Some(creator_agent_id);
+        draft.owner_agent_id = Some(owner_agent_id);
+        draft.story_ref =
+            Some(super::super::lifecycle_subject_association::SubjectRef::new("story", story_id));
+
+        let created = run.create_task(draft).expect("create task");
+
+        assert_eq!(run.tasks.len(), 1);
+        assert_eq!(created.status, TaskPlanStatus::Open);
+        assert_eq!(created.created_by_agent_id, Some(creator_agent_id));
+        assert_eq!(created.owner_agent_id, Some(owner_agent_id));
+        assert_eq!(
+            created.story_ref.as_ref().map(|subject| subject.id),
+            Some(story_id)
+        );
+
+        let value = serde_json::to_value(&created).expect("serialize task");
+        assert!(value.get("dispatch_preference").is_none());
+        assert!(value.get("artifacts").is_none());
+        assert!(value.get("execution_status").is_none());
+        assert!(value.get("runtime_status").is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_update_changes_editable_plan_fields() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        let created = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Initial title"))
+            .expect("create task");
+        let owner_agent_id = Uuid::new_v4();
+        let assigned_agent_id = Uuid::new_v4();
+
+        let updated = run
+            .update_task(
+                created.id,
+                LifecycleTaskPlanItemPatch {
+                    title: Some("Updated title".to_string()),
+                    body: Some(Some("Updated body".to_string())),
+                    priority: Some(Some(TaskPriority::P0)),
+                    owner_agent_id: Some(Some(owner_agent_id)),
+                    assigned_agent_id: Some(Some(assigned_agent_id)),
+                    ..LifecycleTaskPlanItemPatch::default()
+                },
+            )
+            .expect("update task");
+
+        assert_eq!(updated.title, "Updated title");
+        assert_eq!(updated.body.as_deref(), Some("Updated body"));
+        assert_eq!(updated.priority, Some(TaskPriority::P0));
+        assert_eq!(updated.owner_agent_id, Some(owner_agent_id));
+        assert_eq!(updated.assigned_agent_id, Some(assigned_agent_id));
+        assert_eq!(updated.status, TaskPlanStatus::Open);
+        assert!(updated.updated_at >= updated.created_at);
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_archive_marks_dropped_and_archived() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        let task = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Archive me"))
+            .expect("create task");
+
+        let archived = run.archive_task(task.id).expect("archive task");
+
+        assert_eq!(archived.status, TaskPlanStatus::Dropped);
+        assert!(archived.archived_at.is_some());
+        assert_eq!(
+            run.task_by_id(task.id).expect("task").status,
+            TaskPlanStatus::Dropped
+        );
+    }
+
+    #[test]
+    fn lifecycle_run_task_plan_status_transition_allows_flexible_plan_updates() {
+        let mut run = LifecycleRun::new_plain(Uuid::new_v4());
+        let task = run
+            .create_task(LifecycleTaskPlanItemDraft::new("Transition me"))
+            .expect("create task");
+
+        let done = run
+            .transition_task_status(task.id, TaskPlanStatus::Done)
+            .expect("open can move directly to done");
+        assert_eq!(done.status, TaskPlanStatus::Done);
+
+        let review = run
+            .transition_task_status(task.id, TaskPlanStatus::Review)
+            .expect("done can be reopened for review");
+        assert_eq!(review.status, TaskPlanStatus::Review);
+
+        let active = run
+            .transition_task_status(task.id, TaskPlanStatus::Active)
+            .expect("review can move back to active");
+        assert_eq!(active.status, TaskPlanStatus::Active);
+
+        let dropped = run
+            .transition_task_status(task.id, TaskPlanStatus::Dropped)
+            .expect("active can be dropped");
+        assert_eq!(dropped.status, TaskPlanStatus::Dropped);
+
+        let err = run
+            .transition_task_status(task.id, TaskPlanStatus::Open)
+            .expect_err("dropped remains terminal");
+        assert!(matches!(err, DomainError::InvalidTransition { .. }));
     }
 
     #[test]
@@ -530,5 +853,123 @@ mod tests {
                 .expect("human executor"),
             ExecutorSpec::Human { .. }
         ));
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_mixed_terminal_as_completed() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut completed = orchestration_instance("completed", agent_executor());
+        completed.status = OrchestrationStatus::Completed;
+        let mut cancelled = orchestration_instance("cancelled", function_executor());
+        cancelled.status = OrchestrationStatus::Cancelled;
+
+        assert!(run.add_orchestration(completed));
+        assert!(run.add_orchestration(cancelled));
+
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_failed_with_highest_precedence() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut failed = orchestration_instance("failed", agent_executor());
+        failed.status = OrchestrationStatus::Failed;
+        let mut running = orchestration_instance("running", function_executor());
+        running.status = OrchestrationStatus::Running;
+        let mut paused = orchestration_instance("paused", human_executor());
+        paused.status = OrchestrationStatus::Paused;
+
+        assert!(run.add_orchestration(running));
+        assert!(run.add_orchestration(paused));
+        assert!(run.add_orchestration(failed));
+
+        assert_eq!(run.status, LifecycleRunStatus::Failed);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_paused_as_blocked() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut paused = orchestration_instance("paused", human_executor());
+        paused.status = OrchestrationStatus::Paused;
+
+        assert!(run.add_orchestration(paused));
+
+        assert_eq!(run.status, LifecycleRunStatus::Blocked);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_blocked_runtime_node_as_blocked() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut blocked = orchestration_instance("blocked_node", human_executor());
+        blocked.node_tree.push(RuntimeNodeState {
+            node_id: "blocked_node".to_string(),
+            node_path: "blocked_node".to_string(),
+            kind: PlanNodeKind::Activity,
+            status: RuntimeNodeStatus::Blocked,
+            attempt: 1,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            executor_run_ref: None,
+            children: Vec::new(),
+            phase_path: Vec::new(),
+            started_at: None,
+            completed_at: None,
+            error: None,
+            trace_refs: Vec::new(),
+            cache: None,
+        });
+
+        assert!(run.add_orchestration(blocked));
+
+        assert_eq!(run.status, LifecycleRunStatus::Blocked);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_running_orchestration_as_running() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut running = orchestration_instance("running", agent_executor());
+        running.status = OrchestrationStatus::Running;
+
+        assert!(run.add_orchestration(running));
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_pending_orchestration_as_ready() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+
+        assert!(run.add_orchestration(orchestration_instance("pending", function_executor())));
+
+        assert_eq!(run.status, LifecycleRunStatus::Ready);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_all_cancelled_as_cancelled() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut first = orchestration_instance("cancelled_a", agent_executor());
+        first.status = OrchestrationStatus::Cancelled;
+        let mut second = orchestration_instance("cancelled_b", function_executor());
+        second.status = OrchestrationStatus::Cancelled;
+
+        assert!(run.add_orchestration(first));
+        assert!(run.add_orchestration(second));
+
+        assert_eq!(run.status, LifecycleRunStatus::Cancelled);
+    }
+
+    #[test]
+    fn lifecycle_run_status_aggregates_append_orchestration_with_running_child_graph() {
+        let mut run = LifecycleRun::new_control(Uuid::new_v4());
+        let mut root = orchestration_instance("root", agent_executor());
+        root.status = OrchestrationStatus::Completed;
+        let mut append = orchestration_instance("append_review", function_executor());
+        append.status = OrchestrationStatus::Running;
+
+        assert!(run.add_orchestration(root));
+        assert_eq!(run.status, LifecycleRunStatus::Completed);
+        assert!(run.add_orchestration(append));
+
+        assert_eq!(run.status, LifecycleRunStatus::Running);
     }
 }

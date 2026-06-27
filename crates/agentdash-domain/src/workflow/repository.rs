@@ -89,6 +89,13 @@ pub trait AgentFrameRepository: Send + Sync {
         frame_id: Uuid,
         mount_id: &str,
     ) -> Result<(), DomainError>;
+    async fn append_visible_workspace_module_ref(
+        &self,
+        _frame_id: Uuid,
+        _module_ref: &str,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -119,6 +126,9 @@ pub trait AgentLineageRepository: Send + Sync {
     async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError>;
     async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
     async fn find_parent(&self, child_agent_id: Uuid) -> Result<Option<AgentLineage>, DomainError>;
+    /// 一次取回某 run 下的全部 lineage 边，供 UI 在内存构建控制树 forest，
+    /// 避免按 agent 逐个 `list_children` 的 N 次往返。
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
 }
 
 /// RuntimeSession → 控制面锚点的 repository。
@@ -148,8 +158,10 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         &self,
         runtime_session_ids: &[String],
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 查询 agent 最新 delivery anchor。
-    async fn latest_for_agent(
+    /// 按 `updated_at DESC` 查询 agent 最新写入的 raw anchor row。
+    ///
+    /// 该方法只表达 repository order，不表达 delivery/runtime selection policy。
+    async fn latest_updated_anchor_for_agent(
         &self,
         agent_id: Uuid,
     ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;

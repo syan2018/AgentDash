@@ -5,11 +5,15 @@
  */
 
 import { memo, useEffect, useRef, useState, useCallback } from "react";
-import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
 import { useWorkspaceTabStore } from "../../../../stores/workspaceTabStore";
 import { useTerminalStore } from "../../model/useTerminalStore";
+import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
+import { CB } from "./cardBodyTokens";
 
-type CommandItem = Extract<ThreadItem, { type: "commandExecution" }>;
+type CommandItem =
+  | Extract<ThreadItem, { type: "commandExecution" }>
+  | Extract<AgentDashThreadItem, { type: "shellExec" }>;
 
 export interface CommandExecutionCardBodyProps {
   item: CommandItem;
@@ -26,18 +30,20 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   const [collapsed, setCollapsed] = useState(false);
   const status = item.status;
   const isRunning = status === "inProgress";
+  const renderedOutput = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
+  const boundedOutput = parseBoundedOutputText(renderedOutput);
 
   const handlePromote = useCallback(() => {
     const promoteId = `promote-${item.id}`;
     const store = useTerminalStore.getState();
-    if (!store.getOutput(promoteId) && outputText) {
-      store.appendOutput(promoteId, outputText);
+    if (!store.getOutput(promoteId) && renderedOutput) {
+      store.appendOutput(promoteId, renderedOutput);
     }
     if (sessionId) {
       store.registerTerminal({
         id: promoteId,
         sessionId,
-        cwd: item.cwd ?? ".",
+        cwd: item.cwd ?? "platform://",
         state: isRunning ? "running" : "exited",
         exitCode: item.exitCode ?? undefined,
         createdAt: Date.now(),
@@ -46,33 +52,31 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     useWorkspaceTabStore
       .getState()
       .openOrActivate("terminal", `terminal://${promoteId}`);
-  }, [item.id, item.cwd, item.exitCode, outputText, sessionId, isRunning]);
+  }, [item.id, item.cwd, item.exitCode, renderedOutput, sessionId, isRunning]);
 
   useEffect(() => {
     if (outputRef.current && isRunning) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [outputText, isRunning]);
+  }, [renderedOutput, isRunning]);
 
-  const lineCount = outputText ? outputText.split("\n").length - 1 : 0;
+  const lineCount = renderedOutput ? renderedOutput.split("\n").length : 0;
   const shouldCollapse = lineCount > 80;
   const maxH = collapsed ? "max-h-16" : shouldCollapse ? "max-h-96" : "max-h-64";
 
   return (
-    <div className="space-y-0">
-      {item.cwd && (
-        <div className="text-[11px] text-muted-foreground/60">
-          cwd: <span className="font-mono">{item.cwd}</span>
-        </div>
+    <div className={CB.sectionGap}>
+      {boundedOutput && (
+        <BoundedOutputNotice info={boundedOutput} />
       )}
 
-      {(outputText || isRunning) && (
-        <div className="relative mt-1.5">
+      {(renderedOutput || isRunning) && (
+        <div className="relative">
           <pre
             ref={outputRef}
-            className={`overflow-auto rounded-[6px] bg-muted/30 px-2.5 py-2 font-mono text-xs leading-relaxed text-foreground/80 transition-[max-height] ${maxH}`}
+            className={`overflow-auto ${CB.codeBlock} transition-[max-height] ${maxH}`}
           >
-            {outputText || (
+            {renderedOutput || (
               <span className="animate-pulse text-muted-foreground/40">
                 等待输出...
               </span>
@@ -86,7 +90,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
             <button
               type="button"
               onClick={() => setCollapsed(!collapsed)}
-              className="absolute bottom-1 right-2 rounded bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground shadow-sm hover:bg-muted"
+              className={`absolute bottom-1 right-2 ${CB.actionButton} bg-background/80 shadow-sm`}
             >
               {collapsed ? "展开" : "折叠"}
             </button>
@@ -94,19 +98,22 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
         </div>
       )}
 
-      <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+      <div className={`mt-1.5 flex items-center gap-2 ${CB.meta}`}>
+        <span className={statusClassName(status)}>
+          status: {status}
+        </span>
         {item.exitCode !== undefined && item.exitCode !== null && (
-          <span className={item.exitCode === 0 ? "text-success" : "text-destructive"}>
+          <span className={item.exitCode === 0 ? CB.statusSuccess : CB.statusFailed}>
             exit: {item.exitCode}
           </span>
         )}
         {lineCount > 0 && (
-          <span className="text-muted-foreground/50">{lineCount} 行</span>
+          <span>{lineCount} 行</span>
         )}
         <button
           type="button"
           onClick={handlePromote}
-          className="ml-auto rounded px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          className={`ml-auto ${CB.actionButton}`}
         >
           在终端中查看
         </button>
@@ -114,3 +121,33 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     </div>
   );
 });
+
+function BoundedOutputNotice({ info }: { info: BoundedOutputInfo }) {
+  const parts = ["输出已裁切"];
+  if (info.omittedBytes != null) {
+    parts.push(`省略 ${formatBytes(info.omittedBytes)}`);
+  }
+  if (info.policy) {
+    parts.push(`policy: ${info.policy}`);
+  }
+
+  return (
+    <div className={`rounded-[6px] border border-warning/25 bg-warning/5 px-2 py-1.5 ${CB.meta}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={CB.statusWarning}>{parts.join(" · ")}</span>
+        {info.lifecyclePath && (
+          <code className="max-w-full truncate text-[10px] text-muted-foreground/60">
+            {info.lifecyclePath}
+          </code>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function statusClassName(status: CommandItem["status"]): string {
+  if (status === "completed") return CB.statusSuccess;
+  if (status === "failed") return CB.statusFailed;
+  if (status === "inProgress") return CB.statusWarning;
+  return CB.statusNeutral;
+}

@@ -1,150 +1,121 @@
-//! relay MCP Server 配置解析——从 relay 协议 JSON 转换为 SessionMcpServer
+//! relay MCP Server typed DTO 转换。
 
-use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, SessionMcpServer};
+use agentdash_application::mcp_relay_adapter;
+use agentdash_relay::McpServerRelay;
+use agentdash_spi::RuntimeMcpServer;
+use thiserror::Error;
 
-/// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 `SessionMcpServer` 列表。
-///
-/// 仅接受三种显式传输类型:
-/// - `"type": "http"` → `McpTransportConfig::Http`
-/// - `"type": "sse"`  → `McpTransportConfig::Sse`
-/// - `"type": "stdio"` → `McpTransportConfig::Stdio`
-pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<SessionMcpServer> {
-    let mut servers = Vec::new();
+#[derive(Debug, Error)]
+pub enum RelayMcpServerParseError {
+    #[error("mcp_servers[{index}] name 字段必须是非空字符串")]
+    InvalidName { index: usize },
+}
 
-    for entry in raw {
-        let obj = match entry.as_object() {
-            Some(o) => o,
-            None => continue,
-        };
-
-        let name = obj
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let transport_type = match obj.get("type").and_then(|v| v.as_str()) {
-            Some("http") => "http",
-            Some("sse") => "sse",
-            Some("stdio") => "stdio",
-            Some(other) => {
-                tracing::warn!(name = %name, transport = %other, "relay MCP server type 非法，跳过");
-                continue;
-            }
-            None => {
-                tracing::warn!(name = %name, "relay MCP server 缺少显式 type，跳过");
-                continue;
-            }
-        };
-
-        match transport_type {
-            "http" | "sse" => {
-                let url = match obj.get("url").and_then(|v| v.as_str()) {
-                    Some(u) => u.to_string(),
-                    None => {
-                        tracing::warn!(name = %name, "relay MCP Http/SSE server 缺少 url，跳过");
-                        continue;
-                    }
-                };
-                let headers: Vec<McpHttpHeader> = obj
-                    .get("headers")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|h| {
-                                let ho = h.as_object()?;
-                                let hname = ho.get("name")?.as_str()?.to_string();
-                                let hvalue = ho.get("value")?.as_str()?.to_string();
-                                Some(McpHttpHeader {
-                                    name: hname,
-                                    value: hvalue,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let transport = if transport_type == "http" {
-                    McpTransportConfig::Http { url, headers }
-                } else {
-                    McpTransportConfig::Sse { url, headers }
-                };
-                servers.push(SessionMcpServer {
-                    name,
-                    transport,
-                    uses_relay: false,
-                });
-            }
-            "stdio" => {
-                let command = match obj.get("command").and_then(|v| v.as_str()) {
-                    Some(c) => c.to_string(),
-                    None => {
-                        tracing::warn!(name = %name, "relay MCP Stdio server 缺少 command，跳过");
-                        continue;
-                    }
-                };
-                let args: Vec<String> = obj
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|a| a.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let env: Vec<McpEnvVar> = obj
-                    .get("env")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|e| {
-                                let eo = e.as_object()?;
-                                let ename = eo.get("name")?.as_str()?.to_string();
-                                let evalue = eo.get("value")?.as_str()?.to_string();
-                                Some(McpEnvVar {
-                                    name: ename,
-                                    value: evalue,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                servers.push(SessionMcpServer {
-                    name,
-                    transport: McpTransportConfig::Stdio { command, args, env },
-                    uses_relay: false,
-                });
-            }
-            _ => {}
-        }
-    }
-
+/// 从中继 `CommandPromptPayload.mcp_servers` typed wire DTO 转换出 runtime MCP 声明。
+pub fn relay_mcp_servers_to_runtime(
+    servers: &[McpServerRelay],
+) -> Result<Vec<RuntimeMcpServer>, RelayMcpServerParseError> {
     servers
+        .iter()
+        .enumerate()
+        .map(|(index, server)| relay_mcp_server_to_runtime(index, server))
+        .collect()
+}
+
+fn relay_mcp_server_to_runtime(
+    index: usize,
+    server: &McpServerRelay,
+) -> Result<RuntimeMcpServer, RelayMcpServerParseError> {
+    if server.name.trim().is_empty() {
+        return Err(RelayMcpServerParseError::InvalidName { index });
+    }
+    Ok(mcp_relay_adapter::relay_mcp_server_to_runtime(
+        server, false,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_relay_mcp_servers;
+    use super::relay_mcp_servers_to_runtime;
+    use agentdash_application::mcp_relay_adapter::runtime_mcp_server_to_relay;
+    use agentdash_relay::{McpServerRelay, McpTransportConfigRelay};
+    use agentdash_spi::{McpEnvVar, McpTransportConfig, RuntimeMcpServer};
 
     #[test]
-    fn relay_mcp_servers_require_explicit_type() {
-        let servers = parse_relay_mcp_servers(&[serde_json::json!({
-            "name": "missing-type",
-            "url": "http://127.0.0.1:8080/mcp"
-        })]);
+    fn relay_mcp_servers_convert_application_prompt_wire_shape() {
+        let value = runtime_mcp_server_to_relay(&RuntimeMcpServer {
+            name: "application-stdio".to_string(),
+            transport: McpTransportConfig::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "server".to_string()],
+                env: vec![McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
+                cwd: Some("/workspace/demo".to_string()),
+            },
+            uses_relay: false,
+        });
 
-        assert!(servers.is_empty(), "缺少显式 type 的 MCP server 不应被接受");
+        let servers = relay_mcp_servers_to_runtime(&[value])
+            .expect("application relay prompt MCP wire shape 应被本机转换接受");
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "application-stdio");
+        assert_eq!(
+            servers[0].transport,
+            McpTransportConfig::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "server".to_string()],
+                env: vec![McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
+                cwd: Some("/workspace/demo".to_string()),
+            }
+        );
     }
 
     #[test]
-    fn relay_mcp_servers_reject_unknown_type() {
-        let servers = parse_relay_mcp_servers(&[serde_json::json!({
-            "name": "bad-type",
-            "type": "ws",
-            "url": "ws://127.0.0.1:8080/mcp"
-        })]);
+    fn relay_mcp_servers_reject_blank_name() {
+        let error = relay_mcp_servers_to_runtime(&[McpServerRelay {
+            name: " ".to_string(),
+            transport: McpTransportConfigRelay::Stdio {
+                command: "npx".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                cwd: None,
+            },
+        }])
+        .expect_err("空 name 不应进入 runtime MCP 声明");
 
-        assert!(servers.is_empty(), "未知 type 的 MCP server 不应被接受");
+        assert!(error.to_string().contains("mcp_servers[0]"));
+    }
+
+    #[test]
+    fn relay_mcp_servers_convert_valid_stdio() {
+        let servers = relay_mcp_servers_to_runtime(&[McpServerRelay {
+            name: "stdio-server".to_string(),
+            transport: McpTransportConfigRelay::Stdio {
+                command: "npx".to_string(),
+                args: vec!["-y".to_string(), "server".to_string()],
+                env: vec![agentdash_relay::McpEnvVarRelay {
+                    name: "TOKEN".to_string(),
+                    value: String::new(),
+                }],
+                cwd: Some("/workspace/demo".to_string()),
+            },
+        }])
+        .expect("合法 stdio MCP server 应被转换");
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "stdio-server");
+        assert_eq!(
+            match &servers[0].transport {
+                McpTransportConfig::Stdio { cwd, .. } => cwd.as_deref(),
+                _ => None,
+            },
+            Some("/workspace/demo")
+        );
     }
 }

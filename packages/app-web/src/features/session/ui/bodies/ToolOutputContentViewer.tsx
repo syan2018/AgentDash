@@ -7,7 +7,9 @@
 
 import { useState, type ReactNode } from "react";
 import type { ToolOutputBlock } from "./toolOutputContent";
+import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
 import { JsonTree } from "./JsonTree";
+import { CB } from "./cardBodyTokens";
 
 const PREVIEW_CHARS = 2000;
 const PREVIEW_LINES = 24;
@@ -46,6 +48,7 @@ function OutputBlock({ block }: { block: ToolOutputBlock }): ReactNode {
 function TextOutputPanel({ text }: { text: string }): ReactNode {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const boundedOutput = parseBoundedOutputText(text);
 
   const lines = text.split("\n");
   const totalLines = lines.length;
@@ -64,23 +67,27 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
   };
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground/60">
+    <div className={CB.itemGap}>
+      {boundedOutput && (
+        <BoundedOutputNotice info={boundedOutput} />
+      )}
+
+      <div className={`flex items-center justify-between ${CB.meta}`}>
         <span className="tabular-nums">
           {totalLines} 行 · {totalChars.toLocaleString()} 字符
         </span>
         <button
           type="button"
           onClick={() => void handleCopy()}
-          className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          className={CB.actionButton}
         >
           {copied ? "已复制" : "复制"}
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-[8px] border border-border bg-muted/20">
+      <div className={`overflow-hidden ${CB.inlineEntry}`}>
         <pre
-          className={`overflow-auto whitespace-pre-wrap break-words p-2.5 font-mono text-xs leading-relaxed text-foreground/85 ${
+          className={`overflow-auto whitespace-pre-wrap break-words ${CB.codeBlock} ${
             expanded ? "max-h-[60vh]" : ""
           }`}
         >
@@ -91,7 +98,7 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             展开余下 {hidden} 行
           </button>
@@ -100,10 +107,33 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             折叠
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BoundedOutputNotice({ info }: { info: BoundedOutputInfo }): ReactNode {
+  const parts = ["输出已裁切"];
+  if (info.omittedBytes != null) {
+    parts.push(`省略 ${formatBytes(info.omittedBytes)}`);
+  }
+  if (info.policy) {
+    parts.push(`policy: ${info.policy}`);
+  }
+
+  return (
+    <div className={`rounded-[6px] border border-warning/25 bg-warning/5 px-2 py-1.5 ${CB.meta}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className={CB.statusWarning}>{parts.join(" · ")}</span>
+        {info.lifecyclePath && (
+          <code className="max-w-full truncate text-[10px] text-muted-foreground/60">
+            {info.lifecyclePath}
+          </code>
         )}
       </div>
     </div>
@@ -114,20 +144,18 @@ function TextOutputPanel({ text }: { text: string }): ReactNode {
 
 function ImageOutputPanel({ imageUrl, label }: { imageUrl: string; label?: string }): ReactNode {
   return (
-    <div className="space-y-1">
+    <div className={CB.itemGap}>
       {label && (
-        <p className="text-[11px] text-muted-foreground/60">{label}</p>
+        <p className={CB.meta}>{label}</p>
       )}
       <img
         src={imageUrl}
         alt={label ?? "工具输出图片"}
-        className="max-h-80 max-w-full rounded-[8px] border border-border object-contain"
+        className="max-h-80 max-w-full rounded-[6px] border border-border/30 object-contain"
       />
     </div>
   );
 }
-
-// ─── Resource panel ────────────────────────────────────────
 
 function ResourceOutputPanel({
   uri,
@@ -141,27 +169,25 @@ function ResourceOutputPanel({
   const [showText, setShowText] = useState(false);
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-border">
+    <div className={`overflow-hidden ${CB.inlineEntry}`}>
       <button
         type="button"
         onClick={() => text && setShowText((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-secondary/35"
+        className={CB.inlineEntryButton}
       >
-        <span className="shrink-0 rounded bg-secondary px-1 py-px text-[10px] font-semibold text-muted-foreground">
-          RES
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-foreground">
+        <span className={CB.kindBadge}>RES</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80">
           {label ?? uri}
         </span>
         {text && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/40">
+          <span className={CB.expandToggle}>
             {showText ? "▲" : "▼"}
           </span>
         )}
       </button>
       {showText && text && (
-        <div className="border-t border-border p-2.5">
-          <pre className="overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground/85">
+        <div className="border-t border-border/30 p-2">
+          <pre className={`overflow-auto whitespace-pre-wrap break-words ${CB.codeBlock}`}>
             {text}
           </pre>
         </div>

@@ -47,7 +47,7 @@ function CreateAgentDialog({
 }: {
   open: boolean;
   projectId: string;
-  siblingAgents: Array<{ name: string; display_name: string }>;
+  siblingAgents: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   onClose: () => void;
 }) {
   const { createProjectAgent, fetchProjectAgents } = useProjectStore();
@@ -85,7 +85,7 @@ function CreateAgentDialog({
   };
 
   // status 字段自 migration 0013 起已废弃，后端不再维护；直接透传全部定义。
-  const activeLifecycles = lifecycles;
+  const activeWorkflows = lifecycles;
 
   return (
     <>
@@ -125,7 +125,7 @@ function CreateAgentDialog({
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {mode === "none" ? "无" : "Lifecycle"}
+                    {mode === "none" ? "Plain" : "Workflow"}
                   </button>
                 ))}
               </div>
@@ -136,8 +136,8 @@ function CreateAgentDialog({
                   onChange={(e) => setSelectedLifecycleKey(e.target.value)}
                   className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
                 >
-                  <option value="">选择 Lifecycle…</option>
-                  {activeLifecycles.map((l) => (
+                  <option value="">选择 Workflow…</option>
+                  {activeWorkflows.map((l) => (
                     <option key={l.key} value={l.key}>{l.name} ({l.key})</option>
                   ))}
                 </select>
@@ -228,15 +228,6 @@ export function ProjectAgentView({
     } finally {
       setIsEditSaving(false);
     }
-  };
-
-  const handleToggleLinkDefault = async (
-    agentId: string,
-    field: "is_default_for_story" | "is_default_for_task",
-    current: boolean,
-  ) => {
-    await updateProjectAgent(project.id, agentId, { [field]: !current });
-    await fetchProjectAgentConfigs(project.id);
   };
 
   const sortedAgents = useMemo(() => {
@@ -367,14 +358,15 @@ export function ProjectAgentView({
               const toolClusters: CapabilityKey[] = rawDirectives
                 .filter((d): d is { add: CapabilityKey } => "add" in d)
                 .map((d) => d.add);
-              const allowedCompanions = Array.isArray(config.allowed_companions)
-                ? (config.allowed_companions as string[])
+              const isDefaultCompanion = config.default_companion_enabled === true;
+              const extraCompanions = Array.isArray(config.extra_companions)
+                ? (config.extra_companions as string[])
                 : [];
-              const isCompanionTarget = projectAgentConfigs.some(
+              const isExtraCompanionTarget = projectAgentConfigs.some(
                 (otherAgent) =>
                   otherAgent.id !== agent.key &&
-                  Array.isArray(otherAgent.config?.allowed_companions) &&
-                  (otherAgent.config.allowed_companions as string[]).includes(
+                  Array.isArray(otherAgent.config?.extra_companions) &&
+                  (otherAgent.config.extra_companions as string[]).includes(
                     agent.preset_name ?? agent.display_name,
                   ),
               );
@@ -539,12 +531,20 @@ export function ProjectAgentView({
 
                       {/* 能力标签 */}
                       <div className="flex flex-wrap gap-1.5">
-                        {isCompanionTarget && (
+                        {isDefaultCompanion && (
                           <span
                             className="rounded-[8px] border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
-                            title={`可被其他 Agent 通过 companion_request(agent_key="${agent.display_name}") 调用`}
+                            title={`默认进入同项目其它 Agent 的 companion roster，agent_key="${agent.preset_name ?? agent.display_name}"`}
                           >
-                            Companion
+                            默认 Companion
+                          </span>
+                        )}
+                        {isExtraCompanionTarget && (
+                          <span
+                            className="rounded-[8px] border border-info/30 bg-info/10 px-2.5 py-0.5 text-[11px] text-info"
+                            title={`已有其它 Agent 额外加入 agent_key="${agent.preset_name ?? agent.display_name}"`}
+                          >
+                            额外 Companion
                           </span>
                         )}
                         {toolClusters.length > 0 ? toolClusters.map((capKey) => {
@@ -564,49 +564,19 @@ export function ProjectAgentView({
                         }) : (
                           <span className="rounded-[8px] border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground/40" title="未限制工具集（全部可用）">全部工具</span>
                         )}
-                        {allowedCompanions.length > 0 && (
+                        {extraCompanions.length > 0 && (
                           <span
                             className="rounded-[8px] border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] text-primary/70"
-                            title={`可调用: ${allowedCompanions.join(", ")}`}
+                            title={`额外加入: ${extraCompanions.join(", ")}`}
                           >
-                            → {allowedCompanions.length} companion{allowedCompanions.length > 1 ? "s" : ""}
+                            + {extraCompanions.length} companion{extraCompanions.length > 1 ? "s" : ""}
                           </span>
                         )}
                         {projectAgentConfig?.default_lifecycle_key && (
                           <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] text-primary">
-                            Lifecycle: {projectAgentConfig.default_lifecycle_key}
+                            Workflow: {projectAgentConfig.default_lifecycle_key}
                           </span>
                         )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_story", projectAgentConfig?.is_default_for_story ?? false);
-                          }}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            projectAgentConfig?.is_default_for_story
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                          }`}
-                          title={projectAgentConfig?.is_default_for_story ? "取消 Story 默认" : "设为 Story 默认"}
-                        >
-                          Story 默认
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleToggleLinkDefault(agent.key, "is_default_for_task", projectAgentConfig?.is_default_for_task ?? false);
-                          }}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                            projectAgentConfig?.is_default_for_task
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-border/50 bg-transparent text-muted-foreground/50 hover:border-border hover:text-muted-foreground"
-                          }`}
-                          title={projectAgentConfig?.is_default_for_task ? "取消 Task 默认" : "设为 Task 默认"}
-                        >
-                          Task 默认
-                        </button>
                       </div>
 
                       {/* 操作按钮 */}
@@ -642,7 +612,14 @@ export function ProjectAgentView({
       <CreateAgentDialog
         open={isCreateOpen}
         projectId={project.id}
-        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
+        siblingAgents={agents.map((a) => {
+          const config = projectAgentConfigs.find((item) => item.id === a.key)?.config;
+          return {
+            name: a.preset_name ?? a.display_name,
+            display_name: a.display_name,
+            default_companion_enabled: config?.default_companion_enabled === true,
+          };
+        })}
         onClose={() => setIsCreateOpen(false)}
       />
 
@@ -653,7 +630,14 @@ export function ProjectAgentView({
         onSave={handleSaveEditConfig}
         onClose={() => setEditingAgent(null)}
         isSaving={isEditSaving}
-        siblingAgents={agents.map((a) => ({ name: a.preset_name ?? a.display_name, display_name: a.display_name }))}
+        siblingAgents={agents.map((a) => {
+          const config = projectAgentConfigs.find((item) => item.id === a.key)?.config;
+          return {
+            name: a.preset_name ?? a.display_name,
+            display_name: a.display_name,
+            default_companion_enabled: config?.default_companion_enabled === true,
+          };
+        })}
         knowledgeEnabled={
           editingAgent
             ? projectAgentConfigs.find((item) => item.id === editingAgent.agentId)?.knowledge_enabled

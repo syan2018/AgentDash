@@ -36,12 +36,21 @@ import type {
   ValidationSeverity,
   WorkflowContextBinding,
   AgentProcedureContract as GeneratedAgentProcedureContract,
+  AgentProcedureResponse,
+  CapabilityCatalogEntryDto,
+  CapabilityCatalogResponse,
+  CapabilityScopeDto,
   DefinitionSource,
+  PlatformMcpScopeDto,
+  ToolClusterDto,
+  WorkflowGraphResponse,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
+  WorkflowTargetKind,
+  ToolDescriptorDto,
+  ToolSourceDto,
 } from "../generated/workflow-contracts";
-import type { InstalledAssetSourceDto } from "./shared-library";
 
 export type {
   ActivityCompletionPolicy,
@@ -77,39 +86,41 @@ export type {
   ValidationSeverity,
   WorkflowContextBinding,
   DefinitionSource,
+  CapabilityCatalogEntryDto,
+  CapabilityCatalogResponse,
+  CapabilityScopeDto,
+  PlatformMcpScopeDto,
+  ToolClusterDto,
+  ToolDescriptorDto,
+  ToolSourceDto,
+  WorkflowTargetKind,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
 };
 
-export type WorkflowTargetKind = "project" | "story";
 export type WorkflowRunStatus = LifecycleRunStatus;
 export type CapabilityDirective = ToolCapabilityDirective;
 
-export interface WorkflowCapabilityConfig extends GeneratedCapabilityConfig {
+export type WorkflowCapabilityConfig = GeneratedCapabilityConfig & {
   tool_directives: ToolCapabilityDirective[];
   mount_directives: unknown[];
-}
+};
 
 export type CapabilityConfig = WorkflowCapabilityConfig;
 
-export interface AgentProcedureContract
-  extends Omit<GeneratedAgentProcedureContract, "capability_config" | "output_ports" | "input_ports"> {
+export type AgentProcedureContract = Omit<
+  GeneratedAgentProcedureContract,
+  "capability_config" | "output_ports" | "input_ports"
+> & {
   capability_config: WorkflowCapabilityConfig;
   output_ports: OutputPortDefinition[];
   input_ports: InputPortDefinition[];
-}
+};
 
-export interface ActivityDefinition
-  extends Omit<GeneratedActivityDefinition, "input_ports" | "output_ports"> {
-  input_ports: InputPortDefinition[];
-  output_ports: OutputPortDefinition[];
-}
+export type ActivityDefinition = GeneratedActivityDefinition;
 
-export interface ActivityTransition
-  extends Omit<GeneratedActivityTransition, "artifact_bindings"> {
-  artifact_bindings: ArtifactBinding[];
-}
+export type ActivityTransition = GeneratedActivityTransition;
 
 export function isWorkflowJsonValue(value: unknown): value is JsonValue {
   if (
@@ -184,34 +195,7 @@ export function directiveKind(directive: CapabilityDirective): "add" | "remove" 
   return "add" in directive ? "add" : "remove";
 }
 
-export const WELL_KNOWN_CAPABILITY_KEYS = [
-  "file_read",
-  "file_write",
-  "shell_execute",
-  "canvas",
-  "workflow",
-  "collaboration",
-  "story_management",
-  "task_management",
-  "relay_management",
-  "workflow_management",
-] as const;
-
-// ─── Tool Descriptor（统一工具元数据）──────────────────
-
-export type ToolSourceType = "platform" | "platform_mcp" | "mcp";
-export type PlatformMcpScope = "relay" | "story" | "task" | "workflow";
-
-export interface ToolDescriptor {
-  name: string;
-  display_name: string;
-  description: string;
-  source:
-    | { type: "platform"; cluster: string }
-    | { type: "platform_mcp"; scope: PlatformMcpScope }
-    | { type: "mcp"; server_name: string };
-  capability_key: string;
-}
+export type ToolDescriptor = ToolDescriptorDto;
 
 export interface WorkflowValidationResult {
   valid: boolean;
@@ -241,42 +225,14 @@ export interface WorkflowTemplate {
   };
 }
 
-export interface AgentProcedure {
-  id: string;
-  project_id: string;
-  key: string;
-  name: string;
-  description: string;
-  target_kinds: WorkflowTargetKind[];
-  source: DefinitionSource;
-  installed_source?: InstalledAssetSourceDto | null;
-  version: number;
-  contract: AgentProcedureContract;
-  created_at: string;
-  updated_at: string;
-}
+export type AgentProcedure = AgentProcedureResponse;
 
-export interface WorkflowGraph {
-  id: string;
-  project_id: string;
-  key: string;
-  name: string;
-  description: string;
-  target_kinds: WorkflowTargetKind[];
-  source: DefinitionSource;
-  installed_source?: InstalledAssetSourceDto | null;
-  version: number;
-  entry_activity_key: string;
-  activities: ActivityDefinition[];
-  transitions: ActivityTransition[];
-  created_at: string;
-  updated_at: string;
-}
+export type WorkflowGraph = WorkflowGraphResponse;
 
 export interface WorkflowRun {
   id: string;
   project_id: string;
-  topology: "graphless" | "workflow_graph";
+  topology: "plain" | "workflow_graph";
   status: WorkflowRunStatus;
   execution_log: LifecycleExecutionEntry[];
   created_at: string;

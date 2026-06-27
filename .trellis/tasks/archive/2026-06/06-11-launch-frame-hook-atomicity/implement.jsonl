@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "accepted boundary"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "AgentFrame 是 runtime surface 事实源"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "HookRuntime frame-scoped target"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "InvalidConfig 缺模型选择失败路径"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/review.md", "reason": "live review frame/hook 证据"}

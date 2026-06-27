@@ -1,0 +1,21 @@
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/prd.md", "reason": "本任务目标、范围与验收标准"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/design.md", "reason": "AgentRun lifecycle、companion payload、embedded skill projection 的目标设计"}
+{"file": ".trellis/tasks/06-15-agentrun-lifecycle-companion-convergence/implement.md", "reason": "后续实现步骤、验证命令与风险点"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "内嵌 SkillAsset bundle 同步与 lifecycle VFS projection 现有契约"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun workspace、RuntimeSession delivery trace、frame/runtime surface 边界"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "前后端 runtime command、session/AgentRun projection 跨层契约"}
+{"file": "crates/agentdash-application/src/companion/tools.rs", "reason": "companion_request/companion_respond 工具执行逻辑与参数 schema"}
+{"file": "crates/agentdash-application/src/companion/payload_types.rs", "reason": "companion payload type registry、required fields 与 response hint"}
+{"file": "crates/agentdash-domain/src/companion/skills/companion-system/SKILL.md", "reason": "companion-system 入口 skill 文档"}
+{"file": "crates/agentdash-domain/src/companion/skills/companion-system/references/payload-envelope.md", "reason": "companion payload envelope 与 payload type 示例"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle/mount.rs", "reason": "AgentRun lifecycle VFS helper 与 active workflow lifecycle mount 入口"}
+{"file": "crates/agentdash-application/src/vfs/mount.rs", "reason": "lifecycle mount 构造与 skill projection metadata 写入函数"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "lifecycle_vfs provider 对 agent_run_session、node_runtime、skills 路径的读取/列举实现"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/owner_bootstrap.rs", "reason": "ProjectAgent owner bootstrap VFS、capability、builtin skill projection 主路径"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/composer_companion.rs", "reason": "companion launch frame construction 路径"}
+{"file": "crates/agentdash-application/src/workflow/frame_construction/composer_lifecycle_node.rs", "reason": "workflow node frame construction 路径"}
+{"file": "crates/agentdash-application/src/session/assembler.rs", "reason": "companion/lifecycle compose helper 与 SessionAssemblyBuilder 输出"}
+{"file": "crates/agentdash-application/src/session/assembly_builder.rs", "reason": "runtime surface draft、VFS、capability、context bundle 的 assembly 组合点"}
+{"file": "crates/agentdash-application/src/workflow/agent_run_workspace/query.rs", "reason": "AgentRun workspace resource/capability surface 查询路径"}
+{"file": "packages/app-web/src/features/session/model/sessionCapabilitiesBlock.ts", "reason": "前端 session capability block 解析与 skill 可见性过滤"}
+{"file": "packages/app-web/src/features/session/ui/SessionCapabilityCard.tsx", "reason": "前端 capability card 展示 projected skill 的 UI"}

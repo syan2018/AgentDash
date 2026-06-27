@@ -22,6 +22,7 @@
  */
 
 import { useState } from "react";
+import { CB } from "./bodies/cardBodyTokens";
 
 // ─── 共用 badge class 常量（导出供调用方使用）────────────────────────────────
 
@@ -77,51 +78,49 @@ export function EventStripCard({
   );
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
-      {/* header 行 */}
+    <div>
       <button
         type="button"
         onClick={() => hasExpand && setExpanded((v) => !v)}
-        className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${hasExpand ? "cursor-pointer hover:bg-secondary/35" : "cursor-default"}`}
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors ${hasExpand ? "cursor-pointer hover:bg-secondary/30" : "cursor-default"}`}
       >
-        <span className={`inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${badgeClass}`}>
+        <span className={`inline-flex shrink-0 rounded-[4px] border px-1 py-px text-[9px] font-semibold uppercase tracking-[0.08em] ${badgeClass}`}>
           {badgeToken}
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm text-foreground/80">
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/60">
           {label}
         </span>
         {headerExtra}
         {rightHint && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/50">
+          <span className="shrink-0 text-[10px] text-muted-foreground/40">
             {rightHint}
           </span>
         )}
         {hasExpand && (
-          <span className="shrink-0 text-[10px] text-muted-foreground/40">
+          <span className="shrink-0 text-[10px] text-muted-foreground/30">
             {expanded ? "▲" : "▼"}
           </span>
         )}
       </button>
 
-      {/* 展开区 */}
       {expanded && hasExpand && (
-        <div className="border-t border-border px-3 py-2.5 space-y-2.5">
+        <div className={`${CB.sectionGap} px-2 py-2`}>
           {expandContent?.sections?.map((section, i) =>
             section.lines.length > 0 ? (
-              <div key={i} className="space-y-1">
+              <div key={i} className={CB.itemGap}>
                 {section.title && (
-                  <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
+                  <p className={CB.sectionTitle}>
                     {section.title}
                   </p>
                 )}
                 {section.lines.map((line, j) => (
-                  <p key={j} className="text-xs leading-5 text-foreground/75">{line}</p>
+                  <p key={j} className="text-xs leading-5 text-foreground/80">{line}</p>
                 ))}
               </div>
             ) : null
           )}
           {expandContent?.raw && (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-foreground/75">
+            <pre className={`max-h-48 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
               {expandContent.raw}
             </pre>
           )}
@@ -168,63 +167,51 @@ export function EventFullCard({
   const [showDebug, setShowDebug] = useState(false);
   const hasDebug = debugChips.length > 0 || debugLines.length > 0 || Boolean(debugRaw) || Boolean(debugBody);
   const hasSubRow = subtitle || headerExtra;
+  const hasBody = detailLines.length > 0 || bodyExtra;
+
+  const headerContent = hasSubRow ? (
+    <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-center gap-2 mb-0.5">
+        {subtitle && <span className="text-[10px] text-muted-foreground/60">{subtitle}</span>}
+        {headerExtra}
+      </div>
+      <p className="text-xs leading-5 text-foreground/70">{message}</p>
+    </div>
+  ) : (
+    <p className="min-w-0 flex-1 text-xs leading-5 text-foreground/70">{message}</p>
+  );
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
-      {/*
-        header 行：与 StripCard 骨架完全对齐。
-        有 debug 内容时整行可点击，右侧显示 ▲▼；否则为普通 div。
-      */}
+    <div>
       {hasDebug ? (
         <button
           type="button"
           onClick={() => setShowDebug((v) => !v)}
-          className={`flex w-full gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35 ${hasSubRow ? "items-start" : "items-center"}`}
+          className={`flex w-full gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/30 ${hasSubRow ? "items-start" : "items-center"}`}
         >
-          <span className={`${hasSubRow ? "mt-px" : ""} inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${badgeClass}`}>
+          <span className={`${hasSubRow ? "mt-px" : ""} inline-flex shrink-0 rounded-[4px] border px-1 py-px text-[9px] font-semibold uppercase tracking-[0.08em] ${badgeClass}`}>
             {badgeToken}
           </span>
-          {hasSubRow ? (
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                {subtitle && <span className="text-xs text-muted-foreground">{subtitle}</span>}
-                {headerExtra}
-              </div>
-              <p className="text-sm leading-6 text-foreground/90">{message}</p>
-            </div>
-          ) : (
-            <p className="min-w-0 flex-1 text-sm leading-6 text-foreground/90">{message}</p>
-          )}
-          <span className="shrink-0 self-center text-[10px] text-muted-foreground/40">
+          {headerContent}
+          <span className="shrink-0 self-center text-[10px] text-muted-foreground/30">
             {showDebug ? "▲" : "▼"}
           </span>
         </button>
       ) : (
-        <div className={`flex gap-2.5 px-3 py-2.5 ${hasSubRow ? "items-start" : "items-center"}`}>
-          <span className={`${hasSubRow ? "mt-px" : ""} inline-flex shrink-0 rounded-[6px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${badgeClass}`}>
+        <div className={`flex gap-2 px-2 py-1 ${hasSubRow ? "items-start" : "items-center"}`}>
+          <span className={`${hasSubRow ? "mt-px" : ""} inline-flex shrink-0 rounded-[4px] border px-1 py-px text-[9px] font-semibold uppercase tracking-[0.08em] ${badgeClass}`}>
             {badgeToken}
           </span>
-          {hasSubRow ? (
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                {subtitle && <span className="text-xs text-muted-foreground">{subtitle}</span>}
-                {headerExtra}
-              </div>
-              <p className="text-sm leading-6 text-foreground/90">{message}</p>
-            </div>
-          ) : (
-            <p className="min-w-0 flex-1 text-sm leading-6 text-foreground/90">{message}</p>
-          )}
+          {headerContent}
         </div>
       )}
 
-      {/* body 区：detailLines + bodyExtra，始终可见（border-t 仅在有内容时出现） */}
-      {(detailLines.length > 0 || bodyExtra) && (
-        <div className="border-t border-border px-3 py-2.5 space-y-2.5">
+      {hasBody && (
+        <div className={`${CB.itemGap} px-2 py-1`}>
           {detailLines.length > 0 && (
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {detailLines.map((line) => (
-                <p key={line} className="text-xs leading-5 text-muted-foreground">{line}</p>
+                <p key={line} className={CB.meta}>{line}</p>
               ))}
             </div>
           )}
@@ -232,30 +219,26 @@ export function EventFullCard({
         </div>
       )}
 
-      {/* 折叠详情区：与 StripCard 展开区完全一致的结构 */}
       {hasDebug && showDebug && (
-        <div className="border-t border-border px-3 py-2.5 space-y-2.5">
+        <div className={`${CB.sectionGap} px-2 py-2`}>
           {debugChips.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1">
               {debugChips.map((chip) => (
-                <span
-                  key={chip}
-                  className="rounded-[6px] border border-border bg-secondary/35 px-1.5 py-0.5 text-[10px] text-muted-foreground/60"
-                >
+                <span key={chip} className={CB.kindBadge}>
                   {chip}
                 </span>
               ))}
             </div>
           )}
           {debugLines.length > 0 && (
-            <div className="space-y-1 rounded-[8px] border border-border/70 bg-secondary/20 px-3 py-2.5">
+            <div className={CB.itemGap}>
               {debugLines.map((line) => (
-                <p key={line} className="text-xs leading-5 text-muted-foreground">{line}</p>
+                <p key={line} className="text-xs leading-5 text-foreground/80">{line}</p>
               ))}
             </div>
           )}
           {debugRaw && (
-            <pre className="overflow-auto rounded-[8px] border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground">
+            <pre className={`overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
               {debugRaw}
             </pre>
           )}

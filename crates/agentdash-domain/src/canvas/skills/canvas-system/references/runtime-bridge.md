@@ -1,8 +1,8 @@
 # Canvas Runtime Bridge Reference
 
-Use this reference when writing Canvas source that calls AgentDashboard session runtime actions.
+Use this reference as the routing guide for Canvas source that needs the AgentDashboard runtime SDK.
 
-## Runtime SDK
+## Runtime SDK Map
 
 Canvas preview iframe exposes one SDK object:
 
@@ -10,168 +10,33 @@ Canvas preview iframe exposes one SDK object:
 window.agentdash.invoke(actionKey: string, input?: unknown): Promise<RuntimeInvocationResult>
 window.agentdash.assets.url(uri: string): Promise<string>
 window.agentdash.assets.revoke(url: string): void
+window.agentdash.interaction.setState(key: string, value: unknown): Promise<{ ok: true }>
+window.agentdash.interaction.clearState(key: string): Promise<{ ok: true }>
+window.agentdash.interaction.emit(event: CanvasInteractionEvent): Promise<{ ok: true }>
+window.agentdash.interaction.getState(): unknown
+window.agentdash.agent.submit(input: CanvasAgentSubmitInput): Promise<AgentRunMessageCommandResponse>
 ```
 
-The `invoke` API is for Session Runtime Actions. The `assets` API is for Canvas browser resource loading.
+## Choose By Use Case
 
-`invoke` rules:
+| Situation | Recommended action | Reference |
+| --- | --- | --- |
+| A Canvas button needs to call a runtime tool, MCP action, refresh command, or backend-hosted capability and render the returned data in the Canvas. | Call `window.agentdash.invoke(...)` from the user action handler; keep action keys provided by the platform/task context. | `runtime-actions.md` |
+| Canvas source needs to show an image that lives in VFS, skill assets, generated docs media, or another session mount. | Resolve a browser URL with `window.agentdash.assets.url(uri)` and revoke it when the component no longer needs it. | `vfs-assets.md` |
+| The user changes filters, selects a row/card/node, fills a form, or performs a UI action the Agent may need to inspect later. | Publish compact semantic state with `window.agentdash.interaction.setState(...)` and recent events with `emit(...)`; do not rely on DOM inference. | `interaction-state.md` |
+| Canvas UI should let the user submit structured feedback, a decision, or follow-up context from the current surface. | Call `window.agentdash.agent.submit(...)` from the user action and include interaction/render facts only when relevant. | `agent-submit.md` |
+| The Agent needs to create/copy/attach a Canvas, bind data, diagnose render state, inspect interaction state, or present a preview. | Use workspace module operations and describe output as the source of truth for available operations. | `agent-side-interfaces.md` |
+| You are unsure whether the action is a runtime tool call or a user submission. | Use `invoke` for tool/action results displayed in Canvas; use `agent.submit` when the user's feedback, decision, or request should become the AgentRun's next mailbox input. | `runtime-actions.md`, `agent-submit.md` |
 
-- Call it only from explicit user actions such as button clicks, form submits, or refresh controls.
-- Do not call it during module load, React render, or automatic polling.
-- Pass only the action key and provider input. The platform supplies actor, session context, policy, trace, and routing.
-- Do not send tokens, backend ids, MCP transports, relay commands, absolute paths, or arbitrary HTTP requests.
-- Do not build a runtime action discovery flow inside the canvas. Use action keys and input contracts provided by the platform, user request, or task context.
+## Boundary Table
 
-These `invoke` rules do not prohibit loading VFS image assets during component effects. Use `window.agentdash.assets.url(uri)` for image rendering instead of routing images through runtime actions.
+| Canvas API | Use For | Fact Produced |
+| --- | --- | --- |
+| `agentdash.invoke` | RuntimeGateway actions such as MCP calls | Runtime invocation result |
+| `agentdash.assets.url` | Browser rendering of VFS image assets | Revocable browser image URL |
+| `agentdash.interaction.*` | Agent-visible latest Canvas UI state | Interaction snapshot |
+| `agentdash.agent.submit` | Structured user feedback or follow-up context from Canvas | AgentRun mailbox user input |
 
-## Result Shape
+`agentdash.invoke` is not an Agent input channel. Use `agentdash.agent.submit(...)` when Canvas UI collects user feedback, decisions, or follow-up context that should enter the AgentRun mailbox.
 
-`invoke` resolves with:
-
-```ts
-interface RuntimeInvocationResult {
-  action_key: string;
-  trace: {
-    trace_id: string;
-    invocation_id: string;
-    parent_trace_id?: string | null;
-    created_at: string;
-  };
-  output: {
-    output: unknown;
-    metadata: Record<string, unknown>;
-  };
-}
-```
-
-Provider-specific data is under `result.output.output`.
-
-`invoke` rejects when the action is unavailable, denied by capability policy, given invalid input, or fails in the provider. Show a compact error state in the canvas UI.
-
-## VFS Image Assets
-
-Use this API to render image binary files from mounts visible in the current session runtime surface. This is the standard route for VFS images in Canvas source:
-
-```ts
-const imageUrl = await window.agentdash.assets.url("main://docs/diagram.png");
-```
-
-The URI shape is:
-
-```text
-<mount_id>://<mount_relative_path>
-```
-
-Examples:
-
-```ts
-await window.agentdash.assets.url("main://docs/diagram.png");
-await window.agentdash.assets.url("skill-assets://skills/demo/assets/logo.png");
-await window.agentdash.assets.url("docs-media://assets/doc-1/source-123.png");
-```
-
-Behavior:
-
-- Resolves only against the current Canvas/session VFS surface.
-- Returns a browser URL suitable for `<img src={imageUrl}>`.
-- Rejects non-image MIME types.
-- Rejects invalid mount URIs, unavailable mounts, missing sessions, and provider read failures.
-- Does not expose VFS `surface_ref`, backend ids, auth headers, signed provider URLs, or local paths to Canvas code.
-
-Cleanup:
-
-```ts
-const imageUrl = await window.agentdash.assets.url(uri);
-// later, when no longer needed:
-window.agentdash.assets.revoke(imageUrl);
-```
-
-The preview runtime also revokes generated URLs when the Canvas reloads or unmounts.
-
-Do not use:
-
-```tsx
-<img src="main://docs/diagram.png" />
-```
-
-Browsers cannot load VFS mount URIs directly. Always resolve them through `window.agentdash.assets.url(uri)` first.
-
-## Runtime Actions
-
-### `mcp.call_tool`
-
-Use this when the platform or task context gives you a specific MCP runtime tool to call.
-
-Input:
-
-```ts
-{
-  runtime_name: string;
-  arguments?: Record<string, unknown> | null;
-}
-```
-
-Alternative target form, only when explicitly provided:
-
-```ts
-{
-  server_name: string;
-  tool_name: string;
-  arguments?: Record<string, unknown> | null;
-}
-```
-
-Notes:
-
-- Prefer `runtime_name`.
-- Do not invent `runtime_name`, `server_name`, or `tool_name`.
-- `arguments` must be a JSON object or `null`.
-- The returned payload is the MCP tool result serialized inside `RuntimeInvocationResult.output.output`.
-
-Example:
-
-```tsx
-const invocation = await window.agentdash.invoke("mcp.call_tool", {
-  runtime_name: "provided_runtime_tool_name",
-  arguments: { limit: 10 },
-});
-
-const toolResult = invocation.output.output;
-```
-
-### `mcp.list_tools`
-
-This action exists for platform-controlled tool surface inspection. Do not build ordinary Canvas UX around tool discovery unless the platform or task explicitly asks for that diagnostic/admin behavior.
-
-Input:
-
-```ts
-{
-  server_names?: string[];
-}
-```
-
-Output:
-
-```ts
-{
-  tools: Array<{
-    runtime_name: string;
-    server_name: string;
-    tool_name: string;
-    uses_relay: boolean;
-    description: string;
-    parameters_schema: unknown;
-  }>;
-}
-```
-
-## Agent-Side Canvas Interfaces
-
-These are Agent tools, not browser runtime APIs:
-
-- `canvases_list`: inspect project canvases and mount ids.
-- `canvas_start`: attach/create a canvas and return `canvas_id`, `mount_id`, `entry_file`, and `skill_path`.
-- `bind_canvas_data`: map a VFS `source_uri` to `bindings/<alias>.json`.
-- `present_canvas`: show the canvas to the user.
-- VFS tools: edit files through `<mount_id>://...`; canvas mounts support read/write/list/search, not exec.
+The iframe does not receive tokens, backend ids, session ids, auth headers, relay commands, signed provider URLs, or local paths. The parent page and backend resolve runtime/session/project details from the current AgentRun Canvas bridge.

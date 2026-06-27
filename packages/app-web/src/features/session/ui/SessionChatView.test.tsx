@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
-import { computeProjectionRefreshKey } from "./SessionChatView";
-import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
+import { computeProjectionRefreshKey, extractTurnLifecycleEventType } from "./SessionChatViewModel";
+import {
+  collectAllPlatformEvents,
+  collectRenderableSystemEvents,
+} from "./SessionChatViewModel";
+import {
+  isSessionComposerSubmitDisabled,
+  isSessionModelRequirementSatisfied,
+} from "./SessionChatComposerState";
 
 const completedTurn: Turn = {
   id: "turn-1",
@@ -62,6 +69,13 @@ function platformMetaEvent(key: string, value: Record<string, JsonValue>): Backb
   };
 }
 
+function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | "turn_interrupted"): BackboneEvent {
+  return platformMetaEvent("turn_terminal", {
+    terminal_type: terminalType,
+    message: null,
+  });
+}
+
 describe("computeProjectionRefreshKey", () => {
   it("普通 delta event 不推进 projection refresh key", () => {
     const events = [
@@ -113,12 +127,100 @@ describe("computeProjectionRefreshKey", () => {
 
     expect(computeProjectionRefreshKey(events)).toBe(2);
   });
+
+  it("platform turn_terminal meta event 会推进 projection refresh key", () => {
+    const events = [
+      eventEnvelope(1, agentDeltaEvent("assistant-1")),
+      eventEnvelope(7, turnTerminalMetaEvent("turn_completed")),
+    ];
+
+    expect(computeProjectionRefreshKey(events)).toBe(7);
+  });
+
+  it("session_rewound meta event 会推进 projection refresh key", () => {
+    const events = [
+      eventEnvelope(1, agentDeltaEvent("assistant-1")),
+      eventEnvelope(8, platformMetaEvent("session_rewound", {
+        discarded_turn_id: "turn-1",
+        stable_event_seq: 0,
+        reason: "provider_retry",
+      })),
+    ];
+
+    expect(computeProjectionRefreshKey(events)).toBe(8);
+  });
 });
 
-describe("isSessionComposerPrimaryDisabled", () => {
-  it("primary action 不可用时即使有输入也不可提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: false,
+describe("extractTurnLifecycleEventType", () => {
+  it("从 turn_terminal platform 事件提取终态类型", () => {
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_completed"))).toBe("turn_completed");
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_failed"))).toBe("turn_failed");
+    expect(extractTurnLifecycleEventType(turnTerminalMetaEvent("turn_interrupted"))).toBe("turn_interrupted");
+  });
+});
+
+describe("collectRenderableSystemEvents", () => {
+  it("只收集可渲染 system event，同时推进 lastSeenSeq", () => {
+    const events = [
+      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
+      eventEnvelope(2, {
+        type: "platform",
+        payload: {
+          kind: "hook_trace",
+          data: {
+            eventType: "hook:before_provider_request:observed",
+            message: "Hook 已观测到 LLM API 请求即将发出",
+            data: {
+              trigger: "before_provider_request",
+              decision: "observed",
+              sequence: 1n,
+              revision: 1n,
+              severity: "info",
+              tool_name: null,
+              tool_call_id: null,
+              subagent_type: null,
+              matched_rule_keys: [],
+              refresh_snapshot: false,
+              block_reason: null,
+              completion: null,
+              diagnostic_codes: ["session_binding_found"],
+              diagnostics: [{ code: "session_binding_found", message: "命中运行时绑定" }],
+              injections: [],
+            },
+          },
+        },
+      }),
+      eventEnvelope(3, agentDeltaEvent("assistant-1")),
+    ];
+
+    const result = collectRenderableSystemEvents(events, 0);
+
+    expect(result.lastSeenSeq).toBe(3);
+    expect(result.items.map((item) => item.eventSeq)).toEqual([1]);
+    expect(result.items[0]?.eventType).toBe("system_message");
+  });
+
+  it("全量 platform 收集函数保留不可渲染事件入口", () => {
+    const events = [
+      eventEnvelope(1, platformMetaEvent("system_message", { message: "需要用户确认" })),
+      eventEnvelope(2, platformMetaEvent("unknown_meta", { message: "静默" })),
+      eventEnvelope(3, agentDeltaEvent("assistant-1")),
+    ];
+
+    const result = collectAllPlatformEvents(events, 0);
+
+    expect(result.lastSeenSeq).toBe(3);
+    expect(result.items.map((item) => item.eventType)).toEqual([
+      "system_message",
+      "unknown_meta",
+    ]);
+  });
+});
+
+describe("isSessionComposerSubmitDisabled", () => {
+  it("command 不可用时即使有输入也不可提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: false,
       requirePromptText: true,
       inputValue: "hello",
       isCancelling: false,
@@ -126,9 +228,9 @@ describe("isSessionComposerPrimaryDisabled", () => {
     })).toBe(true);
   });
 
-  it("primary action 可用但需要输入时空文本不可提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: true,
+  it("command 可用但需要输入时空文本不可提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: true,
       requirePromptText: true,
       inputValue: "",
       isCancelling: false,
@@ -136,13 +238,39 @@ describe("isSessionComposerPrimaryDisabled", () => {
     })).toBe(true);
   });
 
-  it("primary action 可用且有输入时允许提交", () => {
-    expect(isSessionComposerPrimaryDisabled({
-      primaryActionEnabled: true,
+  it("command 可用且有输入时允许提交", () => {
+    expect(isSessionComposerSubmitDisabled({
+      commandEnabled: true,
       requirePromptText: true,
       inputValue: "hello",
       isCancelling: false,
       isSending: false,
     })).toBe(false);
+  });
+});
+
+describe("isSessionModelRequirementSatisfied", () => {
+  it("keeps model_required blocked without a complete explicit override", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+    })).toBe(false);
+  });
+
+  it("allows model_required to be satisfied by explicit provider and model selection", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "gpt-5.4-mini",
+    })).toBe(true);
+  });
+
+  it("allows model_required when the selected model has reasoning even if thinking level is unset", () => {
+    expect(isSessionModelRequirementSatisfied("model_required", {
+      executor: "PI_AGENT",
+      provider_id: "openai",
+      model_id: "reasoning-model",
+      thinking_level: undefined,
+    })).toBe(true);
   });
 });

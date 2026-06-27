@@ -1,5 +1,3 @@
-import type { TaskDispatchPreference } from "./index";
-
 // ─── Session Types ─────────────────────────────────
 
 export type CapabilityScope = "project" | "story" | "task";
@@ -15,7 +13,6 @@ export interface SubjectRunContext {
 
 export interface SessionTaskContext {
   task_id: string;
-  dispatch_preference?: TaskDispatchPreference;
 }
 
 export interface HookInjection {
@@ -67,15 +64,6 @@ export interface HookPendingAction {
   resolution_note?: string | null;
   resolution_turn_id?: string | null;
   injections: HookInjection[];
-}
-
-export type SessionExecutionStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
-
-export interface SessionExecutionState {
-  session_id: string;
-  status: SessionExecutionStatus;
-  turn_id?: string | null;
-  message?: string | null;
 }
 
 export interface ActiveWorkflowHookMetadata {

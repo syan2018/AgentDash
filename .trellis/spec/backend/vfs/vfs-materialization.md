@@ -11,7 +11,7 @@
 
 - 公共资源（skill-assets、内置 skill、项目级共享资料）可跨 session 复用
 - 物化路径必须可读、稳定，不含 `plan_id / turn_id / tool_call_id / backend_id`
-- `lifecycle_vfs` 是动态投影，依赖 session，使用 session scope
+- `lifecycle_vfs` 的 AgentRun workspace 资源身份来自 `RuntimeSessionExecutionAnchor`；执行期 `node_runtime` mount 的资源身份来自 `orchestration_id + node_path + attempt`。它们被 runtime 工具物化为本地副本时使用 session cache scope，原因是 session trace、当前 node artifact / record overlay 都是 runtime session 证据面。
 
 ---
 
@@ -49,7 +49,7 @@
 | `canvas_fs` | `Public` | `ReadOnly` | 共享 canvas 资产 |
 | `relay_fs`（同 backend） | 不物化 | 直接 rewrite 为 workspace path | 不复制 |
 | `relay_fs`（跨 backend） | 按语义 | `ReadOnly` / `WritableWorkdir` | 只在跨机器时复制 |
-| `lifecycle_vfs` | `Session` | `ReadOnly` | 动态投影依赖 session |
+| `lifecycle_vfs` | `Session` | `ReadOnly` | AgentRun delivery session 与 runtime node 动态投影；本地物化副本随 runtime session 收口 |
 
 ---
 

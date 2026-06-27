@@ -1,4 +1,5 @@
 import { isRecord } from "./platformEvent";
+import type { SkillContextExposure } from "../../../types/context";
 
 export interface ContextFrame {
   id: string;
@@ -22,14 +23,16 @@ export type ContextFrameSection =
   | ToolPathDeltaSection
   | McpServerDeltaSection
   | VfsDeltaSection
-  | ToolSchemaSection
   | ToolSchemaDeltaSection
   | SkillDeltaSection
-  | HookInjectionSection
+  | CompanionAgentRosterDeltaSection
   | SystemNoticeSection
   | PendingActionSection
   | AutoResumeSection
-  | CompactionSummarySection;
+  | CompactionSummarySection
+  | UserPreferencesSection
+  | ProjectGuidelinesSection
+  | UnknownSection;
 
 export interface AssignmentContextSection {
   kind: "assignment_context";
@@ -61,6 +64,7 @@ export interface RuntimeContextFragmentEntry {
   label: string;
   source: string;
   content: string;
+  context_usage_kind?: string;
 }
 
 export interface CapabilityKeyDeltaSection {
@@ -93,11 +97,6 @@ export interface VfsDeltaSection {
   default_mount_after?: string;
 }
 
-export interface ToolSchemaSection {
-  kind: "tool_schema";
-  tools: RuntimeToolSchemaEntry[];
-}
-
 export interface ToolSchemaDeltaSection {
   kind: "tool_schema_delta";
   added_tools: RuntimeToolSchemaEntry[];
@@ -110,13 +109,7 @@ export interface RuntimeToolSchemaEntry {
   capability_key?: string;
   source?: string;
   tool_path?: string;
-}
-
-export interface HookInjectionSection {
-  kind: "hook_injection";
-  title: string;
-  summary: string;
-  injections: RuntimeHookInjectionEntry[];
+  context_usage_kind?: string;
 }
 
 export interface SystemNoticeSection {
@@ -128,9 +121,31 @@ export interface SystemNoticeSection {
 
 export interface RuntimeSkillEntry {
   name: string;
+  capability_key: string;
+  provider_key: string;
+  local_name: string;
+  display_name?: string;
   description: string;
   file_path: string;
+  base_dir?: string;
+  exposure: SkillContextExposure;
   disable_model_invocation: boolean;
+  context_usage_kind?: string;
+}
+
+export interface RuntimeCompanionAgentEntry {
+  agent_key: string;
+  executor: string;
+  display_name: string;
+  context_usage_kind?: string;
+}
+
+export interface CompanionAgentRosterDeltaSection {
+  kind: "companion_agent_roster_delta";
+  added_agents: RuntimeCompanionAgentEntry[];
+  removed_agent_keys: string[];
+  changed_agents: RuntimeCompanionAgentEntry[];
+  effective_agents: RuntimeCompanionAgentEntry[];
 }
 
 export interface SkillDeltaSection {
@@ -179,10 +194,36 @@ export interface CompactionSummarySection {
   timestamp_ms?: number;
 }
 
+export interface UserPreferencesSection {
+  kind: "user_preferences";
+  title: string;
+  summary: string;
+  items: string[];
+}
+
+export interface ProjectGuidelineEntry {
+  path: string;
+  content: string;
+}
+
+export interface ProjectGuidelinesSection {
+  kind: "project_guidelines";
+  title: string;
+  summary: string;
+  entries: ProjectGuidelineEntry[];
+}
+
+export interface UnknownSection {
+  kind: "unknown_section";
+  original_kind: string;
+  raw: Record<string, unknown>;
+}
+
 export interface RuntimeHookInjectionEntry {
   slot: string;
   source: string;
   content: string;
+  context_usage_kind?: string;
 }
 
 export function parseContextFrame(value: Record<string, unknown>): ContextFrame | null {
@@ -192,10 +233,10 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
   const delivery = readString(value.delivery_status);
   const deliveryChannel = readString(value.delivery_channel);
   const messageRole = readString(value.message_role);
-  const agentText = readString(value.rendered_text);
+  const agentText = readRenderedText(value.rendered_text);
   const createdAt = readNumber(value.created_at_ms);
   const rawSections = Array.isArray(value.sections) ? value.sections : [];
-  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || !agentText || createdAt == null) return null;
+  if (!id || !kind || !source || !delivery || !deliveryChannel || !messageRole || agentText == null || createdAt == null) return null;
 
   return {
     id,
@@ -278,13 +319,6 @@ function parseSection(value: unknown): ContextFrameSection | null {
       default_mount_after: readString(value.default_mount_after) ?? undefined,
     };
   }
-  if (kind === "tool_schema") {
-    const tools = Array.isArray(value.tools) ? value.tools : [];
-    return {
-      kind,
-      tools: tools.map(parseToolSchemaEntry).filter((item): item is RuntimeToolSchemaEntry => item != null),
-    };
-  }
   if (kind === "tool_schema_delta") {
     const addedTools = Array.isArray(value.added_tools) ? value.added_tools : [];
     return {
@@ -303,15 +337,23 @@ function parseSection(value: unknown): ContextFrameSection | null {
       changed_skills: changed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
     };
   }
-  if (kind === "hook_injection") {
-    const title = readString(value.title) ?? "Hook Injection";
-    const summary = readString(value.summary) ?? "";
-    const injections = Array.isArray(value.injections) ? value.injections : [];
+  if (kind === "companion_agent_roster_delta") {
+    const added = Array.isArray(value.added_agents) ? value.added_agents : [];
+    const removed = Array.isArray(value.removed_agent_keys) ? value.removed_agent_keys : [];
+    const changed = Array.isArray(value.changed_agents) ? value.changed_agents : [];
+    const effective = Array.isArray(value.effective_agents) ? value.effective_agents : [];
     return {
       kind,
-      title,
-      summary,
-      injections: injections.map(parseInjectionEntry).filter((item): item is RuntimeHookInjectionEntry => item != null),
+      added_agents: added
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+      removed_agent_keys: removed.map(readString).filter((item): item is string => item != null),
+      changed_agents: changed
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
+      effective_agents: effective
+        .map(parseCompanionAgentEntry)
+        .filter((item): item is RuntimeCompanionAgentEntry => item != null),
     };
   }
   if (kind === "system_notice") {
@@ -366,7 +408,31 @@ function parseSection(value: unknown): ContextFrameSection | null {
       timestamp_ms: readNumber(value.timestamp_ms) ?? undefined,
     };
   }
-  return null;
+  if (kind === "user_preferences") {
+    const items = Array.isArray(value.items) ? value.items : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "User Preferences",
+      summary: readString(value.summary) ?? "",
+      items: items.map(readString).filter((item): item is string => item != null),
+    };
+  }
+  if (kind === "project_guidelines") {
+    const entries = Array.isArray(value.entries) ? value.entries : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Project Guidelines",
+      summary: readString(value.summary) ?? "",
+      entries: entries
+        .map(parseProjectGuidelineEntry)
+        .filter((item): item is ProjectGuidelineEntry => item != null),
+    };
+  }
+  return {
+    kind: "unknown_section",
+    original_kind: kind ?? "unknown",
+    raw: value,
+  };
 }
 
 function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null {
@@ -379,6 +445,7 @@ function parseFragmentEntry(value: unknown): RuntimeContextFragmentEntry | null 
     label: readString(value.label) ?? slot ?? "context",
     source: readString(value.source) ?? "unknown",
     content,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
@@ -394,6 +461,7 @@ function parseToolSchemaEntry(value: unknown): RuntimeToolSchemaEntry | null {
     capability_key: readString(value.capability_key) ?? undefined,
     source: readString(value.source) ?? undefined,
     tool_path: readString(value.tool_path) ?? undefined,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
@@ -403,25 +471,70 @@ function parseInjectionEntry(value: unknown): RuntimeHookInjectionEntry | null {
     slot: readString(value.slot) ?? "context",
     source: readString(value.source) ?? "unknown",
     content: readString(value.content) ?? "",
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
 }
 
 function parseSkillEntry(value: unknown): RuntimeSkillEntry | null {
   if (!isRecord(value)) return null;
-  const name = readString(value.name);
+  const rawName = readString(value.name);
+  const providerKey = readString(value.provider_key) ?? "";
+  const localName = readString(value.local_name) ?? rawName ?? "";
+  const displayName = readString(value.display_name) ?? undefined;
+  const capabilityKey =
+    readString(value.capability_key)
+    ?? (providerKey && localName ? `${providerKey}/${localName}` : rawName ?? localName);
+  const name = rawName ?? displayName ?? localName ?? capabilityKey;
   if (!name) return null;
   return {
     name,
+    capability_key: capabilityKey,
+    provider_key: providerKey,
+    local_name: localName || name,
+    display_name: displayName,
     description: readString(value.description) ?? "",
     file_path: readString(value.file_path) ?? "",
+    base_dir: readString(value.base_dir) ?? undefined,
+    exposure: readSkillExposure(value.exposure),
     disable_model_invocation: value.disable_model_invocation === true,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
   };
+}
+
+function parseCompanionAgentEntry(value: unknown): RuntimeCompanionAgentEntry | null {
+  if (!isRecord(value)) return null;
+  const agentKey = readString(value.agent_key);
+  if (!agentKey) return null;
+  return {
+    agent_key: agentKey,
+    executor: readString(value.executor) ?? "",
+    display_name: readString(value.display_name) ?? agentKey,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+  };
+}
+
+function parseProjectGuidelineEntry(value: unknown): ProjectGuidelineEntry | null {
+  if (!isRecord(value)) return null;
+  const path = readString(value.path);
+  const content = readRenderedText(value.content);
+  if (!path || content == null) return null;
+  return { path, content };
+}
+
+function readSkillExposure(value: unknown): SkillContextExposure {
+  if (value === "explicit_only") return "explicit_only";
+  return "default_exposed";
 }
 
 function readString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readRenderedText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value;
 }
 
 function readNumber(value: unknown): number | null {
@@ -455,7 +568,9 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
   switch (kind) {
     case "identity":
       return { token: "IDN", variant: "primary" };
-    case "capability_state_update":
+    case "capability_state_snapshot":
+      return { token: "CAPS", variant: "primary" };
+    case "capability_state_delta":
       return { token: "CAP", variant: "neutral" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
@@ -467,6 +582,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
+    case "system_guidelines":
+      return { token: "GUID", variant: "primary" };
     default:
       return {
         token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
@@ -492,13 +609,12 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "MCP", variant: "neutral" };
     case "vfs_delta":
       return { token: "VFS", variant: "neutral" };
-    case "tool_schema":
     case "tool_schema_delta":
       return { token: "TOOL", variant: "neutral" };
     case "skill_delta":
       return { token: "SKL", variant: "neutral" };
-    case "hook_injection":
-      return { token: "HOOK", variant: "neutral" };
+    case "companion_agent_roster_delta":
+      return { token: "AGNT", variant: "primary" };
     case "system_notice":
       return { token: "SYS", variant: "neutral" };
     case "pending_action":
@@ -507,5 +623,11 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "RSM", variant: "warning" };
     case "compaction_summary":
       return { token: "CMP", variant: "warning" };
+    case "user_preferences":
+      return { token: "PREF", variant: "primary" };
+    case "project_guidelines":
+      return { token: "GUID", variant: "primary" };
+    case "unknown_section":
+      return { token: "UNK", variant: "warning" };
   }
 }

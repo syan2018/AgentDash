@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Session startup and MCP runtime binding contracts that currently define runtime surface normalization."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Execution frame and AgentFrame surface contracts relevant to moving executable surface truth into frame revisions."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Runtime gateway and RuntimeSession action boundary for adapter/control-plane separation."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Capability resolver and MCP directive contracts that feed runtime MCP declarations."}
+{"file": ".trellis/tasks/archive/2026-06/06-12-mcp-runtime-binding/design.md", "reason": "Recent MCP runtime binding design that introduced McpRuntimeBindingContext and resolved RuntimeMcpServerDeclaration output."}
+{"file": ".trellis/tasks/archive/2026-06/06-01-session-lifecycle-control-plane-refactor/target-state-blueprint.md", "reason": "Prior target-state notes for Session to AgentFrame and lifecycle control-plane convergence."}
+{"file": ".trellis/tasks/archive/2026-06/06-02-lifecycle-control-plane-frame-convergence/research/session-frame-launch-boundary.md", "reason": "Prior research on session/frame launch boundary and construction responsibilities."}
+{"file": ".trellis/tasks/06-12-agentrun-runtime-session-surface-convergence/research/phase-0-surface-fact-source-audit.md", "reason": "Phase 0 evidence refresh: surface write/read/sync and naming boundary audit"}

@@ -1,0 +1,20 @@
+{"file":".trellis/tasks/06-14-module-overdesign-review/overdesign-review.md","reason":"父级 review 基线，定义第一轮事实源和控制面收束优先级"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"Lifecycle / Workflow / Task 清理证据和后续任务候选"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/02-agentrun-session-runtime.md","reason":"AgentRun / Session / Runtime Gateway 清理证据和后续任务候选"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/04-frontend-contracts-permission.md","reason":"Permission / Contracts / Frontend capability 清理证据和后续任务候选"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/03-vfs-local-relay-extension.md","reason":"VFS / Local / Relay / Extension 第二轮装配层与 contract 清理证据"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle run / orchestration runtime 边界"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Runtime node state 由 orchestration reducer 写入的契约"}
+{"file":".trellis/spec/backend/story-task-runtime.md","reason":"Task / Story execution projection 的 association / anchor / runtime node 事实链"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"AgentRun / RuntimeSession 分层边界"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"AgentRun mailbox durable intake / scheduler / command receipt 契约"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"SessionExecutionState 和 workspace command/control projection 边界"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"PermissionGrant 作为 runtime capability grant 事实源"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"跨层 generated contract 单源规则"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端 generated DTO 消费和禁止手写跨层 union 的规则"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"VFS surface / mount / provider 分层边界"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"VFS access 与 mount-root-bounded 工具执行边界"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"VFS materialization 与 local/cloud 两段式边界"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"Local runtime / Tauri thin shell / extension trusted runtime 边界"}
+{"file":".trellis/spec/cross-layer/project-backend-workspace-routing.md","reason":"Backend workspace routing 与 local workspace binding 事实源"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway actor/context/action invocation 与 provider validation 边界"}

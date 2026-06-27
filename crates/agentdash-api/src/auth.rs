@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -7,10 +8,9 @@ use agentdash_application::project::{
     project_authorization_context_from_identity,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::identity::{Group, User};
+use agentdash_domain::identity::{Group, User, UserProfile};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
-use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
 use agentdash_integration_api::{AuthError, AuthIdentity, AuthRequest};
 use axum::extract::{FromRef, FromRequestParts, Request, State};
@@ -105,7 +105,11 @@ pub async fn authenticate_request(
     next: Next,
 ) -> Result<Response, ApiError> {
     let Some(provider) = state.auth_provider.clone() else {
-        tracing::error!("业务 API 请求进入时缺少 AuthProvider");
+        diag!(
+            Error,
+            Subsystem::Auth,
+            "业务 API 请求进入时缺少 AuthProvider"
+        );
         return Err(ApiError::ServiceUnavailable(
             "服务端认证能力未初始化".to_string(),
         ));
@@ -124,7 +128,8 @@ pub async fn authenticate_request(
                     .await
                 {
                     Ok(Some(identity)) => {
-                        tracing::debug!(
+                        diag!(Debug, Subsystem::Auth,
+
                             method = %auth_request.method,
                             path = %auth_request.path,
                             user_id = %identity.user_id,
@@ -137,7 +142,8 @@ pub async fn authenticate_request(
                         return Err(map_auth_error(err));
                     }
                     Err(store_err) => {
-                        tracing::error!(
+                        diag!(Error, Subsystem::Auth,
+
                             method = %auth_request.method,
                             path = %auth_request.path,
                             error = %store_err,
@@ -247,7 +253,8 @@ pub async fn persist_identity_snapshot_or_service_unavailable(
     persist_identity_snapshot(state, identity)
         .await
         .map_err(|err| {
-            tracing::error!(
+            diag!(Error, Subsystem::Auth,
+
                 user_id = %identity.user_id,
                 auth_mode = %identity.auth_mode,
                 error = %err,
@@ -324,28 +331,6 @@ pub async fn load_story_and_project_with_permission(
     Ok((story, project))
 }
 
-pub async fn load_task_story_project_with_permission(
-    state: &AppState,
-    current_user: &AuthIdentity,
-    task_id: Uuid,
-    permission: ProjectPermission,
-) -> Result<(Task, Story, Project), ApiError> {
-    // M1-b：Task 查询经 Story aggregate；`find_by_task_id` 一次性拿到 Story + Task
-    let story = state
-        .repos
-        .story_repo
-        .find_by_task_id(task_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let task = story
-        .find_task(task_id)
-        .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
-    let project =
-        load_project_with_permission(state, current_user, task.project_id, permission).await?;
-    Ok((task, story, project))
-}
-
 pub async fn load_workspace_and_project_with_permission(
     state: &AppState,
     current_user: &AuthIdentity,
@@ -366,7 +351,8 @@ pub async fn load_workspace_and_project_with_permission(
 fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
     match err {
         AuthError::InvalidCredentials | AuthError::Forbidden(_) | AuthError::BadRequest(_) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::Auth,
+
                 method = %request.method,
                 path = %request.path,
                 error = %err,
@@ -374,7 +360,8 @@ fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
             );
         }
         AuthError::ServiceUnavailable(_) => {
-            tracing::error!(
+            diag!(Error, Subsystem::Auth,
+
                 method = %request.method,
                 path = %request.path,
                 error = %err,
@@ -388,16 +375,16 @@ pub async fn persist_identity_snapshot(
     state: &AppState,
     identity: &AuthIdentity,
 ) -> Result<(), DomainError> {
-    let user = User::new(
-        identity.user_id.clone(),
-        identity.subject.clone(),
-        identity.auth_mode.to_string(),
-        identity.display_name.clone(),
-        identity.email.clone(),
-        identity.avatar_url.clone(),
-        identity.is_admin,
-        identity.provider.clone(),
-    );
+    let user = User::new(UserProfile {
+        user_id: identity.user_id.clone(),
+        subject: identity.subject.clone(),
+        auth_mode: identity.auth_mode.to_string(),
+        display_name: identity.display_name.clone(),
+        email: identity.email.clone(),
+        avatar_url: identity.avatar_url.clone(),
+        is_admin: identity.is_admin,
+        provider: identity.provider.clone(),
+    });
 
     let groups = identity
         .groups

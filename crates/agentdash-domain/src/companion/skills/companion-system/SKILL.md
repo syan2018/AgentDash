@@ -20,6 +20,7 @@ Use this skill when a session has companion tools and needs structured cross-sub
 - `companion_request` is the active interaction entrypoint. It carries intent and routing metadata.
 - `companion_respond` returns a structured response to a known `request_id`.
 - `payload` is always a JSON object. Use `payload.type` for registered protocols.
+- Request message bodies use `payload.message` for `task`, `review`, `approval`, and `notification`.
 - Companion events record interaction continuity. Permission, grant, and runtime capability state remain the authority for tool access.
 
 ## Target Selection
@@ -41,13 +42,19 @@ Use registered payload types when the intent matches a known protocol:
 - `notification` expects no response.
 - `capability_grant_request` expects `capability_grant_result`.
 
-For field-level examples, read `references/payload-envelope.md`.
+For the target/type/required-field matrix and examples, read `references/payload-envelope.md`.
 
 ## Capability Grants
 
 Use `target: "platform"` with `payload.type: "capability_grant_request"` when the session needs a temporary tool or MCP capability that is not currently callable.
 
 The companion response is only a conversation receipt. The platform grant record and applied `RuntimeCapabilityTransition` are the authority. For required fields and result shape, read `references/capability-grant-request.md`.
+
+## Task Plan Tools
+
+Task tools operate on run-scoped Task plan facts. Create, update, assignment, review, and done transitions go through the LifecycleRun Task command surface because Task identity belongs to the active run plan, while Story only reads a projection of related run tasks.
+
+Task tool artifacts should be reported as `artifact_refs` or SubjectExecution-linked paths. Runtime evidence lives in Lifecycle / SubjectExecution projections, so companion completion payloads can point at files or durable execution records without turning Task plan DTOs into artifact stores.
 
 ## Workflow Script Preflight
 

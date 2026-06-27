@@ -5,13 +5,14 @@
  * section，末尾附加 "Agent 实际原文" 与 "调试信息" 两个折叠块。
  *
  * 设计原则见 PRD 「所见即所得（WYSIWYG-for-Agent）」：不排序、不跳过、
- * 不按重要性合并；section 自身不再独立折叠（唯一例外是 tool_schema 单项的
+ * 不按重要性合并；section 自身不再独立折叠（唯一例外是 tool_schema_delta 单项的
  * parameters JSON）。
  */
 
 import { useState } from "react";
 import type { ContextFrame } from "../model/contextFrame";
 import { Chip, SectionBlock } from "./contextFrame/SectionRenderers";
+import { CB } from "./bodies/cardBodyTokens";
 
 export interface ContextFrameBodyProps {
   frame: ContextFrame;
@@ -19,7 +20,7 @@ export interface ContextFrameBodyProps {
 
 export function ContextFrameBody({ frame }: ContextFrameBodyProps) {
   return (
-    <div className="space-y-2.5">
+    <div className={CB.sectionGap}>
       {frame.sections.map((section, index) => (
         <SectionBlock key={`${section.kind}:${index}`} section={section} />
       ))}
@@ -34,20 +35,20 @@ function AgentVisibleTextBlock({ text }: { text: string }) {
   const lineCount = text.length === 0 ? 0 : text.split(/\r?\n/).length;
 
   return (
-    <div className="rounded-[8px] border border-border/70 bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-secondary/35"
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
       >
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/85">
-          ▸ Agent 实际原文
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
+          Agent 实际原文
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/60">{lineCount} 行</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <span className={CB.meta}>{lineCount} 行</span>
+        <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
       </button>
       {open && (
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-border/70 bg-secondary/15 p-2.5 text-xs leading-relaxed text-foreground/80">
+        <pre className={`max-h-96 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
           {text}
         </pre>
       )}
@@ -69,25 +70,25 @@ function DebugBlock({ frame }: { frame: ContextFrame }) {
   ].filter((chip): chip is string => chip != null);
 
   return (
-    <div className="rounded-[8px] border border-border/70 bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-secondary/35"
+        className={`flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left transition-colors hover:bg-secondary/40 ${open ? "bg-secondary/30" : ""}`}
       >
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/85">
-          ▸ 调试信息
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/70">
+          调试信息
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">{open ? "▲" : "▼"}</span>
+        <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>
       </button>
       {open && (
-        <div className="space-y-2 border-t border-border/70 bg-secondary/15 px-2.5 py-2">
-          <div className="flex flex-wrap gap-1.5">
+        <div className={`${CB.sectionGap} px-2 py-2`}>
+          <div className="flex flex-wrap gap-1">
             {chips.map((chip) => (
               <Chip key={chip} label={chip} />
             ))}
           </div>
-          <pre className="max-h-96 overflow-auto rounded-[6px] border border-border/70 bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+          <pre className={`max-h-96 overflow-auto ${CB.codeBlock}`}>
             {JSON.stringify(frame, null, 2)}
           </pre>
         </div>

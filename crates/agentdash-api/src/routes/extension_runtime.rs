@@ -1,5 +1,6 @@
 //! Project Extension Runtime HTTP 路由。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use axum::Json;
@@ -10,12 +11,12 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_project_for_api;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::session_construction::resolve_session_frame_vfs;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -24,12 +25,12 @@ use agentdash_application::extension_runtime::{
     UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
     uninstall_extension_installation,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
-    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
-    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
-    attach_extension_invocation_workspace,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult, RuntimeActionKey,
+    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
+    RuntimeTrace, attach_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
@@ -39,8 +40,7 @@ use agentdash_contracts::extension_runtime::{
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
-use agentdash_integration_api::AuthIdentity;
-use agentdash_spi::Vfs;
+use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimePath {
@@ -130,16 +130,20 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 session_id".into(),
         ));
     }
-    let backend_id = req.backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension runtime invoke 缺少 backend_id".into(),
-        ));
-    }
-    ensure_project_backend_access(&state, project_id, backend_id).await?;
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
+        &state,
+        &current_user,
+        session_id,
+        project_id,
+        RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+        "Extension runtime action",
+    )
+    .await?;
+    let backend_anchor = &runtime_surface.runtime_backend_anchor;
+    let backend_id = backend_anchor.backend_id().to_string();
+    ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
-            .await?;
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -157,7 +161,7 @@ pub async fn invoke_project_extension_runtime_action(
         req.input,
     );
     request.target = Some(RuntimeTarget::Backend {
-        backend_id: backend_id.to_string(),
+        backend_id: backend_id.clone(),
     });
     attach_extension_invocation_workspace(&mut request, workspace);
 
@@ -187,12 +191,17 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 session_id".into(),
         ));
     }
-    let backend_id = req.backend_id.trim();
-    if backend_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 backend_id".into(),
-        ));
-    }
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
+        &state,
+        &current_user,
+        session_id,
+        project_id,
+        RuntimeSurfaceQueryPurpose::new("extension_runtime"),
+        "Extension runtime channel",
+    )
+    .await?;
+    let backend_anchor = &runtime_surface.runtime_backend_anchor;
+    let backend_id = backend_anchor.backend_id().to_string();
     if req.channel_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "extension channel invoke 缺少 channel_key".into(),
@@ -203,10 +212,9 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 method".into(),
         ));
     }
-    ensure_project_backend_access(&state, project_id, backend_id).await?;
+    ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
-            .await?;
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
 
     let consumer = req
         .consumer_extension_key
@@ -217,15 +225,13 @@ pub async fn invoke_project_extension_runtime_channel(
             },
         )
         .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
-    let invoker = ExtensionRuntimeChannelInvoker::new(
-        state.repos.project_extension_installation_repo.clone(),
-        state.services.backend_registry.clone(),
-    );
-    let result = invoker
+    let result = state
+        .services
+        .extension_runtime_channel_invoker
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
             session_id: session_id.to_string(),
-            backend_id: backend_id.to_string(),
+            backend_id,
             workspace,
             consumer,
             channel_key: req.channel_key,
@@ -312,42 +318,36 @@ fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
-async fn resolve_extension_invocation_workspace(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    session_id: &str,
-    backend_id: &str,
-) -> Result<Option<ExtensionInvocationWorkspaceContext>, ApiError> {
-    let result = resolve_session_frame_vfs(state, current_user, session_id).await?;
-    let Some(vfs) = result.vfs.as_ref() else {
-        return Ok(None);
-    };
-    Ok(select_extension_invocation_workspace(vfs, backend_id))
+fn resolve_extension_invocation_workspace(
+    vfs: &Vfs,
+    backend_anchor: &RuntimeBackendAnchor,
+) -> Option<ExtensionInvocationWorkspaceContext> {
+    select_extension_invocation_workspace(vfs, backend_anchor)
 }
 
 fn select_extension_invocation_workspace(
     vfs: &Vfs,
-    backend_id: &str,
+    backend_anchor: &RuntimeBackendAnchor,
 ) -> Option<ExtensionInvocationWorkspaceContext> {
-    let backend_id = backend_id.trim();
-    if backend_id.is_empty() {
-        return None;
-    }
-    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
-        && let Some(mount) = vfs.mounts.iter().find(|mount| {
-            mount.id == default_mount_id
-                && mount.backend_id == backend_id
-                && !mount.root_ref.trim().is_empty()
-        })
+    if let Some(root_ref) = backend_anchor
+        .root_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     {
-        return Some(ExtensionInvocationWorkspaceContext::new(
-            mount.id.clone(),
-            mount.root_ref.trim().to_string(),
-        ));
+        return vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.root_ref.trim() == root_ref && !mount.root_ref.trim().is_empty())
+            .map(|mount| {
+                ExtensionInvocationWorkspaceContext::new(
+                    mount.id.clone(),
+                    mount.root_ref.trim().to_string(),
+                )
+            });
     }
-    vfs.mounts
-        .iter()
-        .find(|mount| mount.backend_id == backend_id && !mount.root_ref.trim().is_empty())
+    vfs.default_mount()
+        .filter(|mount| !mount.root_ref.trim().is_empty())
         .map(|mount| {
             ExtensionInvocationWorkspaceContext::new(
                 mount.id.clone(),
@@ -359,6 +359,7 @@ fn select_extension_invocation_workspace(
 #[cfg(test)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_spi::RuntimeBackendAnchorSource;
 
     use super::*;
 
@@ -372,8 +373,11 @@ mod tests {
             links: Vec::new(),
         };
 
-        let workspace =
-            select_extension_invocation_workspace(&vfs, "backend-1").expect("workspace");
+        let workspace = select_extension_invocation_workspace(
+            &vfs,
+            &anchor("backend-1", Some("D:/Workspaces/main")),
+        )
+        .expect("workspace");
 
         assert_eq!(workspace.mount_id, "main");
         assert_eq!(workspace.root_ref, "D:/Workspaces/main");
@@ -392,15 +396,18 @@ mod tests {
             links: Vec::new(),
         };
 
-        let workspace =
-            select_extension_invocation_workspace(&vfs, "backend-1").expect("workspace");
+        let workspace = select_extension_invocation_workspace(
+            &vfs,
+            &anchor("backend-1", Some("D:/Workspaces/local")),
+        )
+        .expect("workspace");
 
         assert_eq!(workspace.mount_id, "local");
         assert_eq!(workspace.root_ref, "D:/Workspaces/local");
     }
 
     #[test]
-    fn extension_invocation_workspace_requires_backend_match() {
+    fn extension_invocation_workspace_returns_none_when_anchor_root_missing() {
         let vfs = Vfs {
             mounts: vec![mount("main", "backend-2", "D:/Workspaces/other")],
             default_mount_id: Some("main".to_string()),
@@ -409,7 +416,36 @@ mod tests {
             links: Vec::new(),
         };
 
-        assert!(select_extension_invocation_workspace(&vfs, "backend-1").is_none());
+        assert!(
+            select_extension_invocation_workspace(
+                &vfs,
+                &anchor("backend-1", Some("D:/Workspaces/missing"))
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn extension_invocation_workspace_uses_default_mount_when_anchor_has_no_root() {
+        let vfs = Vfs {
+            mounts: vec![mount("main", "backend-2", "D:/Workspaces/other")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let workspace = select_extension_invocation_workspace(&vfs, &anchor("backend-1", None))
+            .expect("workspace");
+
+        assert_eq!(workspace.mount_id, "main");
+        assert_eq!(workspace.root_ref, "D:/Workspaces/other");
+    }
+
+    fn anchor(backend_id: &str, root_ref: Option<&str>) -> RuntimeBackendAnchor {
+        RuntimeBackendAnchor::new(backend_id, RuntimeBackendAnchorSource::System)
+            .expect("anchor")
+            .with_root_ref(root_ref.map(ToString::to_string))
     }
 
     fn mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
@@ -490,7 +526,8 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            tracing::error!(error = %error, "extension package artifact storage error");
+            diag!(Error, Subsystem::Api,
+        error = %error, "extension package artifact storage error");
             ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),

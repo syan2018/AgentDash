@@ -7,11 +7,13 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_application::shared_library::{
-    InstallLibraryAssetInput, InstallLibraryAssetOptions as ApplicationInstallLibraryAssetOptions,
-    InstallLibraryAssetOutput, ProjectAssetPublishKind, ProjectAssetSourceStatus,
-    ProjectAssetSourceStatusItem, PublishLibraryAssetInput, SeedBuiltinLibraryAssetsInput,
-    SharedLibraryService, install_library_asset_to_project, list_project_asset_source_status,
+use agentdash_application_shared_library::{
+    AgentTemplateDependencyMode as ApplicationAgentTemplateDependencyMode,
+    BuiltinLibrarySeedProviderInput, InstallLibraryAssetInput,
+    InstallLibraryAssetOptions as ApplicationInstallLibraryAssetOptions, InstallLibraryAssetOutput,
+    ProjectAssetPublishKind, ProjectAssetSourceStatus, ProjectAssetSourceStatusItem,
+    PublishLibraryAssetInput, SeedBuiltinLibraryAssetsInput, SharedLibraryService,
+    install_library_asset_to_project, list_project_asset_source_status,
     publish_project_asset_to_library,
 };
 use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
@@ -111,6 +113,7 @@ pub async fn seed_builtin_library_assets(
     let input = SeedBuiltinLibraryAssetsInput {
         asset_type: parse_optional_asset_type(req.asset_type)?,
         key: req.key.filter(|value| !value.trim().is_empty()),
+        seed_provider: builtin_seed_provider_input()?,
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.seed_builtin_assets(input).await?;
@@ -138,7 +141,7 @@ pub async fn install_library_asset(
     .await?;
 
     let output = install_library_asset_to_project(
-        &state.repos,
+        &state.repos.to_shared_library_repository_set(),
         InstallLibraryAssetInput {
             project_id,
             library_asset_id: parse_library_asset_id(&req.library_asset_id)?,
@@ -158,7 +161,33 @@ fn install_options_input(
         agentdash_contracts::shared_library::InstallLibraryAssetOptions::McpServerTemplate {
             parameters,
         } => ApplicationInstallLibraryAssetOptions::McpServerTemplate { parameters },
+        agentdash_contracts::shared_library::InstallLibraryAssetOptions::AgentTemplate {
+            dependency_mode,
+            dependency_parameters,
+            overwrite_dependencies,
+        } => ApplicationInstallLibraryAssetOptions::AgentTemplate {
+            dependency_mode: match dependency_mode {
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::Required => {
+                    ApplicationAgentTemplateDependencyMode::Required
+                }
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::All => {
+                    ApplicationAgentTemplateDependencyMode::All
+                }
+                agentdash_contracts::shared_library::AgentTemplateDependencyMode::Skip => {
+                    ApplicationAgentTemplateDependencyMode::Skip
+                }
+            },
+            dependency_parameters,
+            overwrite_dependencies,
+        },
     }
+}
+
+fn builtin_seed_provider_input() -> Result<BuiltinLibrarySeedProviderInput, ApiError> {
+    Ok(BuiltinLibrarySeedProviderInput {
+        workflow_templates: agentdash_application_workflow::list_builtin_workflow_templates()
+            .map_err(ApiError::Internal)?,
+    })
 }
 
 /// POST `/api/projects/:project_id/shared-library/publish`
@@ -192,7 +221,9 @@ pub async fn publish_library_asset(
         version: req.version,
         overwrite: req.overwrite,
     };
-    let asset = publish_project_asset_to_library(&state.repos, input).await?;
+    let asset =
+        publish_project_asset_to_library(&state.repos.to_shared_library_repository_set(), input)
+            .await?;
     Ok(Json(
         library_asset_response_for_api(state.as_ref(), asset).await?,
     ))
@@ -212,7 +243,11 @@ pub async fn get_project_asset_source_status(
         ProjectPermission::View,
     )
     .await?;
-    let status = list_project_asset_source_status(&state.repos, project_id).await?;
+    let status = list_project_asset_source_status(
+        &state.repos.to_shared_library_repository_set(),
+        project_id,
+    )
+    .await?;
     Ok(Json(project_source_status_response(status)))
 }
 

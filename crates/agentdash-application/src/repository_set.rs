@@ -1,12 +1,25 @@
 use std::sync::Arc;
 
+use agentdash_application_agentrun::agent_run::ProjectAgentLifecycleLaunchPort;
+use agentdash_application_lifecycle::LifecycleDispatchFacade;
+use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::hook_workflow_projection::{
+    HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
+    HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
+};
+use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
+use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
+use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
+use agentdash_application_shared_library::SharedLibraryRepositorySet;
+use agentdash_application_workflow::WorkflowRepositorySet;
 use agentdash_domain::agent::ProjectAgentRepository;
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
-    ProjectBackendAccessRepository, RuntimeHealthRepository,
+    ProjectBackendAccessRepository, RunnerRegistrationTokenRepository, RuntimeHealthRepository,
 };
-use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
@@ -24,25 +37,25 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
+    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
-
-use crate::workflow::RuntimeSessionCreator;
+use async_trait::async_trait;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 ///
 /// 在 application 层定义，使 gateway / service 可直接持有仓储引用，
 /// 无需依赖 api 层的 `AppState`。
 ///
-/// **M1-b 更新**：Task 合入 Story aggregate（`stories.tasks` JSONB），删除独立
-/// `task_repo` / `task_command_repo`；所有 task CRUD 经 `story_repo` 整体写回。
+/// Task plan facts live in `LifecycleRun.tasks`; Story repository only owns Story topic facts.
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub canvas_repo: Arc<dyn CanvasRepository>,
+    pub canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
@@ -51,6 +64,7 @@ pub struct RepositorySet {
     pub backend_execution_lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub backend_workspace_inventory_repo: Arc<dyn BackendWorkspaceInventoryRepository>,
+    pub runner_registration_token_repo: Arc<dyn RunnerRegistrationTokenRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
@@ -73,9 +87,339 @@ pub struct RepositorySet {
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
+    pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
+    pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
+    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
+    pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+}
+
+impl RepositorySet {
+    pub fn to_agent_run_repository_set(
+        &self,
+    ) -> agentdash_application_agentrun::AgentRunRepositorySet {
+        agentdash_application_agentrun::AgentRunRepositorySet {
+            project_repo: self.project_repo.clone(),
+            canvas_repo: self.canvas_repo.clone(),
+            canvas_runtime_state_repo: self.canvas_runtime_state_repo.clone(),
+            workspace_repo: self.workspace_repo.clone(),
+            story_repo: self.story_repo.clone(),
+            state_change_repo: self.state_change_repo.clone(),
+            backend_repo: self.backend_repo.clone(),
+            runtime_health_repo: self.runtime_health_repo.clone(),
+            backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
+            project_backend_access_repo: self.project_backend_access_repo.clone(),
+            backend_workspace_inventory_repo: self.backend_workspace_inventory_repo.clone(),
+            auth_session_repo: self.auth_session_repo.clone(),
+            user_directory_repo: self.user_directory_repo.clone(),
+            settings_repo: self.settings_repo.clone(),
+            shared_library_repo: self.shared_library_repo.clone(),
+            extension_package_artifact_repo: self.extension_package_artifact_repo.clone(),
+            project_extension_installation_repo: self.project_extension_installation_repo.clone(),
+            llm_provider_repo: self.llm_provider_repo.clone(),
+            llm_provider_credential_repo: self.llm_provider_credential_repo.clone(),
+            mcp_preset_repo: self.mcp_preset_repo.clone(),
+            skill_asset_repo: self.skill_asset_repo.clone(),
+            project_agent_repo: self.project_agent_repo.clone(),
+            project_vfs_mount_repo: self.project_vfs_mount_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            workflow_template_install_repo: self.workflow_template_install_repo.clone(),
+            workflow_graph_repo: self.workflow_graph_repo.clone(),
+            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
+            agent_frame_repo: self.agent_frame_repo.clone(),
+            lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
+            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            agent_lineage_repo: self.agent_lineage_repo.clone(),
+            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
+            agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
+            runtime_session_creator: self.runtime_session_creator.clone(),
+            agent_frame_construction: self.agent_frame_construction.clone(),
+            project_agent_lifecycle_launch: self.project_agent_lifecycle_launch.clone(),
+            routine_repo: self.routine_repo.clone(),
+            routine_execution_repo: self.routine_execution_repo.clone(),
+            inline_file_repo: self.inline_file_repo.clone(),
+            permission_grant_repo: self.permission_grant_repo.clone(),
+        }
+    }
+
+    pub fn to_lifecycle_repository_set(&self) -> agentdash_application_lifecycle::RepositorySet {
+        agentdash_application_lifecycle::RepositorySet {
+            project_repo: self.project_repo.clone(),
+            canvas_repo: self.canvas_repo.clone(),
+            workspace_repo: self.workspace_repo.clone(),
+            story_repo: self.story_repo.clone(),
+            state_change_repo: self.state_change_repo.clone(),
+            backend_repo: self.backend_repo.clone(),
+            runtime_health_repo: self.runtime_health_repo.clone(),
+            backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
+            project_backend_access_repo: self.project_backend_access_repo.clone(),
+            backend_workspace_inventory_repo: self.backend_workspace_inventory_repo.clone(),
+            auth_session_repo: self.auth_session_repo.clone(),
+            user_directory_repo: self.user_directory_repo.clone(),
+            settings_repo: self.settings_repo.clone(),
+            shared_library_repo: self.shared_library_repo.clone(),
+            extension_package_artifact_repo: self.extension_package_artifact_repo.clone(),
+            project_extension_installation_repo: self.project_extension_installation_repo.clone(),
+            llm_provider_repo: self.llm_provider_repo.clone(),
+            llm_provider_credential_repo: self.llm_provider_credential_repo.clone(),
+            mcp_preset_repo: self.mcp_preset_repo.clone(),
+            skill_asset_repo: self.skill_asset_repo.clone(),
+            project_agent_repo: self.project_agent_repo.clone(),
+            project_vfs_mount_repo: self.project_vfs_mount_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            workflow_template_install_repo: self.workflow_template_install_repo.clone(),
+            workflow_graph_repo: self.workflow_graph_repo.clone(),
+            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
+            agent_frame_repo: self.agent_frame_repo.clone(),
+            lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
+            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            agent_lineage_repo: self.agent_lineage_repo.clone(),
+            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
+            agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
+            runtime_session_creator: self.runtime_session_creator.clone(),
+            agent_frame_construction: self.agent_frame_construction.clone(),
+            workflow_agent_frame_materialization: self.workflow_agent_frame_materialization.clone(),
+            routine_repo: self.routine_repo.clone(),
+            routine_execution_repo: self.routine_execution_repo.clone(),
+            inline_file_repo: self.inline_file_repo.clone(),
+            permission_grant_repo: self.permission_grant_repo.clone(),
+        }
+    }
+
+    pub fn to_workflow_repository_set(&self) -> WorkflowRepositorySet {
+        self.to_lifecycle_repository_set()
+            .to_workflow_repository_set()
+    }
+
+    pub fn to_shared_library_repository_set(&self) -> SharedLibraryRepositorySet {
+        SharedLibraryRepositorySet {
+            shared_library_repo: self.shared_library_repo.clone(),
+            extension_package_artifact_repo: self.extension_package_artifact_repo.clone(),
+            project_extension_installation_repo: self.project_extension_installation_repo.clone(),
+            mcp_preset_repo: self.mcp_preset_repo.clone(),
+            skill_asset_repo: self.skill_asset_repo.clone(),
+            project_agent_repo: self.project_agent_repo.clone(),
+            project_vfs_mount_repo: self.project_vfs_mount_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            workflow_template_install_repo: self.workflow_template_install_repo.clone(),
+            workflow_graph_repo: self.workflow_graph_repo.clone(),
+            inline_file_repo: self.inline_file_repo.clone(),
+        }
+    }
+
+    pub fn hook_workflow_projection_port(&self) -> Arc<dyn HookWorkflowProjectionPort> {
+        Arc::new(ApplicationHookWorkflowProjectionAdapter::new(self.clone()))
+    }
+}
+
+impl agentdash_workspace_module::canvas::CanvasRepositorySet for RepositorySet {
+    fn project_repo(&self) -> &dyn ProjectRepository {
+        self.project_repo.as_ref()
+    }
+
+    fn canvas_repo(&self) -> &dyn CanvasRepository {
+        self.canvas_repo.as_ref()
+    }
+}
+
+pub struct LifecycleProjectAgentLaunchAdapter {
+    run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    agent_repo: Arc<dyn LifecycleAgentRepository>,
+    frame_repo: Arc<dyn AgentFrameRepository>,
+    association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    gate_repo: Arc<dyn LifecycleGateRepository>,
+    lineage_repo: Arc<dyn AgentLineageRepository>,
+    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+}
+
+impl LifecycleProjectAgentLaunchAdapter {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+        agent_repo: Arc<dyn LifecycleAgentRepository>,
+        frame_repo: Arc<dyn AgentFrameRepository>,
+        association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+        gate_repo: Arc<dyn LifecycleGateRepository>,
+        lineage_repo: Arc<dyn AgentLineageRepository>,
+        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    ) -> Self {
+        Self {
+            run_repo,
+            workflow_graph_repo,
+            agent_repo,
+            frame_repo,
+            association_repo,
+            gate_repo,
+            lineage_repo,
+            anchor_repo,
+            runtime_session_creator,
+            frame_construction,
+        }
+    }
+}
+
+#[async_trait]
+impl ProjectAgentLifecycleLaunchPort for LifecycleProjectAgentLaunchAdapter {
+    async fn launch_project_agent(
+        &self,
+        intent: &agentdash_domain::workflow::AgentLaunchIntent,
+    ) -> Result<
+        agentdash_domain::workflow::AgentLaunchDispatchResult,
+        agentdash_application_agentrun::WorkflowApplicationError,
+    > {
+        let facade = LifecycleDispatchFacade::new(
+            self.run_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
+            self.agent_repo.as_ref(),
+            self.frame_repo.as_ref(),
+            self.association_repo.as_ref(),
+            self.gate_repo.as_ref(),
+            self.lineage_repo.as_ref(),
+            self.anchor_repo.as_ref(),
+            self.runtime_session_creator.as_ref(),
+            self.frame_construction.as_ref(),
+        );
+        facade
+            .launch_agent(intent)
+            .await
+            .map_err(workflow_error_from_lifecycle)
+    }
+}
+
+fn workflow_error_from_lifecycle(
+    error: agentdash_application_lifecycle::WorkflowApplicationError,
+) -> agentdash_application_agentrun::WorkflowApplicationError {
+    match error {
+        agentdash_application_lifecycle::WorkflowApplicationError::BadRequest(message) => {
+            agentdash_application_agentrun::WorkflowApplicationError::BadRequest(message)
+        }
+        agentdash_application_lifecycle::WorkflowApplicationError::ModelRequired(message) => {
+            agentdash_application_agentrun::WorkflowApplicationError::ModelRequired(message)
+        }
+        agentdash_application_lifecycle::WorkflowApplicationError::NotFound(message) => {
+            agentdash_application_agentrun::WorkflowApplicationError::NotFound(message)
+        }
+        agentdash_application_lifecycle::WorkflowApplicationError::Conflict(message) => {
+            agentdash_application_agentrun::WorkflowApplicationError::Conflict(message)
+        }
+        agentdash_application_lifecycle::WorkflowApplicationError::Internal(message) => {
+            agentdash_application_agentrun::WorkflowApplicationError::Internal(message)
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ApplicationHookWorkflowProjectionAdapter {
+    repos: RepositorySet,
+}
+
+impl ApplicationHookWorkflowProjectionAdapter {
+    pub fn new(repos: RepositorySet) -> Self {
+        Self { repos }
+    }
+}
+
+#[async_trait]
+impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
+    async fn load_hook_workflow_projection(
+        &self,
+        query: HookWorkflowProjectionQuery,
+    ) -> Result<HookWorkflowProjection, HookWorkflowProjectionError> {
+        let workflow =
+            agentdash_application_lifecycle::resolve_active_workflow_projection_for_target(
+                &query.target,
+                self.repos.agent_procedure_repo.as_ref(),
+                self.repos.agent_frame_repo.as_ref(),
+                self.repos.lifecycle_run_repo.as_ref(),
+            )
+            .await
+            .map_err(|message| HookWorkflowProjectionError::Projection { message })?;
+
+        let Some(workflow) = workflow else {
+            return Ok(HookWorkflowProjection {
+                run_context: None,
+                active_workflow: None,
+            });
+        };
+
+        let run_context = agentdash_application_lifecycle::SubjectRunContextResolver::new(
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            self.repos.execution_anchor_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.story_repo.as_ref(),
+        )
+        .resolve_for_run(&workflow.run)
+        .await
+        .map_err(|error| HookWorkflowProjectionError::Projection {
+            message: error.to_string(),
+        })?;
+        let artifact_scope = agentdash_application_lifecycle::RuntimeNodeArtifactScope {
+            run_id: workflow.run.id,
+            orchestration_id: workflow.orchestration_id,
+            node_path: workflow.node_path.clone(),
+            attempt: workflow.active_attempt.attempt,
+        };
+        let fulfilled_output_ports = agentdash_application_lifecycle::load_scoped_port_output_map(
+            self.repos.inline_file_repo.as_ref(),
+            &artifact_scope,
+        )
+        .await;
+
+        Ok(HookWorkflowProjection {
+            run_context: Some(run_context),
+            active_workflow: Some(HookActiveWorkflowFacts {
+                projection: convert_lifecycle_active_workflow_projection(workflow),
+                fulfilled_output_ports,
+            }),
+        })
+    }
+
+    async fn append_execution_log(
+        &self,
+        command: HookExecutionLogAppendCommand,
+    ) -> Result<(), HookWorkflowProjectionError> {
+        agentdash_application_lifecycle::lifecycle::execution_log::flush_execution_log_entries(
+            self.repos.lifecycle_run_repo.as_ref(),
+            command.entries,
+        )
+        .await
+        .map_err(|error| HookWorkflowProjectionError::Effect {
+            message: error.to_string(),
+        })
+    }
+}
+
+fn convert_lifecycle_active_workflow_projection(
+    workflow: agentdash_application_lifecycle::ActiveWorkflowProjection,
+) -> ports_lifecycle_surface::ActiveWorkflowProjection {
+    ports_lifecycle_surface::ActiveWorkflowProjection {
+        run: workflow.run,
+        orchestration_id: workflow.orchestration_id,
+        node_path: workflow.node_path,
+        lifecycle_graph_id: workflow.lifecycle_graph_id,
+        lifecycle_key: workflow.lifecycle_key,
+        lifecycle_name: workflow.lifecycle_name,
+        active_activity: workflow.active_activity,
+        active_attempt: workflow.active_attempt,
+        active_node_type: workflow.active_node_type,
+        active_procedure_key: workflow.active_procedure_key,
+        snapshot_contract: workflow.snapshot_contract,
+        primary_workflow: workflow.primary_workflow,
+    }
 }

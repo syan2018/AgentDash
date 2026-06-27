@@ -1,0 +1,19 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session / RuntimeSession boundary and launch pipeline ownership"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun Workspace actions and RuntimeSession adapter state"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "HookControlTarget, AgentFrameHookRuntime, provider and delegate contracts"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun / LifecycleAgent / AgentFrame / RuntimeSession target model"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "AgentRun Workspace action projection and SessionChatView control state"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "AgentRun command DTO and workspace projection contracts"}
+{"file": "packages/app-web/src/features/session/model/useSessionFeed.ts", "reason": "Session feed aggregation and context_frame boundary contract"}
+{"file": "packages/app-web/src/features/session/model/useSessionFeed.test.ts", "reason": "Existing tool burst/context_frame aggregation assertions to update"}
+{"file": "crates/agentdash-application/src/canvas/tools.rs", "reason": "Canvas create/present exposure and capability hot update entry"}
+{"file": "crates/agentdash-application/src/session/hub/runtime_context_transition.rs", "reason": "Capability context frame construction and diff authority"}
+{"file": "crates/agentdash-application/src/session/hooks_service.rs", "reason": "Hook runtime target validation, rebind and delivery adapter boundary"}
+{"file": "packages/app-web/src/features/workspace-panel/tab-types/canvas-tab.tsx", "reason": "Canvas tab URI parsing and empty canvas state"}
+{"file": "packages/app-web/src/stores/workspaceTabStore.ts", "reason": "Workspace panel tab initialization and open-or-activate behavior"}
+{"file": "packages/app-web/src/pages/AgentRunWorkspacePage.workspaceModulePresentation.ts", "reason": "Workspace module presentation payload to workspace tab target mapping"}
+{"file": "crates/agentdash-contracts/src/workflow.rs", "reason": "AgentRunWorkspaceView projection surface for start-time workspace presentation"}
+{"file": "packages/app-web/src/services/canvas.ts", "reason": "Project Canvas list service for user-initiated Canvas selection"}
+{"file": "packages/app-web/src/services/workspaceModule.ts", "reason": "Project WorkspaceModule projection service for selectable Canvas modules"}
+{"file": "crates/agentdash-api/src/routes/workspace_module.rs", "reason": "Existing project workspace module API and possible user-initiated session presentation endpoint"}
+{"file": "crates/agentdash-api/src/routes/canvases.rs", "reason": "Existing project Canvas APIs and possible user-initiated session attach endpoint"}

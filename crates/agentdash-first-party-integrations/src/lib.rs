@@ -2,10 +2,13 @@ use std::{env, sync::Arc};
 
 use agentdash_integration_api::{
     AgentDashIntegration, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
-    IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail, MarketplaceAssetListing,
-    MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
+    DiscoveredMemorySource, IntegrationLibraryAssetSeed, LibraryAssetType, MarketplaceAssetDetail,
+    MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery, MarketplaceFetchedAsset,
     MarketplaceFetchedAssetPayload, MarketplaceSourceDescriptor, MarketplaceSourceError,
     MarketplaceSourceProvider, MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
+    MemoryDiscoveryCluster, MemoryDiscoveryContext, MemoryDiscoveryError, MemoryDiscoveryMount,
+    MemoryDiscoveryOutput, MemoryDiscoveryProvider, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule,
+    MemoryIndexStatus, MemorySourceFormat, MemorySourceScope, MemorySourceTrustLevel,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -17,6 +20,10 @@ const PERSONAL_DISPLAY_NAME_ENV: &str = "AGENTDASH_PERSONAL_DISPLAY_NAME";
 const PERSONAL_EMAIL_ENV: &str = "AGENTDASH_PERSONAL_EMAIL";
 const PERSONAL_GROUPS_ENV: &str = "AGENTDASH_PERSONAL_GROUPS";
 const PERSONAL_IS_ADMIN_ENV: &str = "AGENTDASH_PERSONAL_IS_ADMIN";
+const PROJECT_AGENT_MEMORY_PROVIDER_KEY: &str = "builtin.project_agent_memory";
+const PROJECT_AGENT_MEMORY_MOUNT_ID: &str = "agent";
+const PROJECT_AGENT_MEMORY_INDEX_PATH: &str = "MEMORY.md";
+const PROJECT_AGENT_MEMORY_INDEX_RULE_KEY: &str = "project-agent-memory-index";
 
 /// 开源版默认个人模式认证集成。
 ///
@@ -98,6 +105,92 @@ impl AgentDashIntegration for ConnectorCatalogIntegration {
 
     fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
         vec![Arc::new(DevMarketplaceFixtureSource)]
+    }
+}
+
+/// 开源版默认 ProjectAgent memory discovery 集成。
+pub struct ProjectAgentMemoryIntegration;
+
+impl AgentDashIntegration for ProjectAgentMemoryIntegration {
+    fn name(&self) -> &str {
+        "builtin.project_agent_memory"
+    }
+
+    fn memory_discovery_providers(&self) -> Vec<Arc<dyn MemoryDiscoveryProvider>> {
+        vec![Arc::new(ProjectAgentMemoryDiscoveryProvider)]
+    }
+}
+
+struct ProjectAgentMemoryDiscoveryProvider;
+
+#[async_trait]
+impl MemoryDiscoveryProvider for ProjectAgentMemoryDiscoveryProvider {
+    fn provider_key(&self) -> &str {
+        PROJECT_AGENT_MEMORY_PROVIDER_KEY
+    }
+
+    fn vfs_discovery_rules(&self) -> Vec<MemoryDiscoveryVfsRule> {
+        let mut rule = MemoryDiscoveryVfsRule::new(PROJECT_AGENT_MEMORY_INDEX_RULE_KEY);
+        rule.exact_paths = vec![PROJECT_AGENT_MEMORY_INDEX_PATH.to_string()];
+        rule.max_size_bytes = 16 * 1024;
+        vec![rule]
+    }
+
+    async fn discover_from_vfs(
+        &self,
+        _context: MemoryDiscoveryContext,
+        mounts: Vec<MemoryDiscoveryMount>,
+        files: Vec<MemoryDiscoveryVfsFile>,
+    ) -> Result<MemoryDiscoveryOutput, MemoryDiscoveryError> {
+        let Some(agent_mount) = mounts
+            .into_iter()
+            .find(|mount| mount.mount_id == PROJECT_AGENT_MEMORY_MOUNT_ID)
+        else {
+            return Ok(MemoryDiscoveryOutput::default());
+        };
+
+        let index_file = files.into_iter().find(|file| {
+            file.mount_id == PROJECT_AGENT_MEMORY_MOUNT_ID
+                && file.path == PROJECT_AGENT_MEMORY_INDEX_PATH
+        });
+        let index_status = if index_file.is_some() {
+            MemoryIndexStatus::Present
+        } else {
+            MemoryIndexStatus::Missing
+        };
+
+        let source = DiscoveredMemorySource {
+            provider_key: PROJECT_AGENT_MEMORY_PROVIDER_KEY.to_string(),
+            source_key: "agent".to_string(),
+            display_name: agent_mount.display_name,
+            source_uri: "agent://".to_string(),
+            index_uri: "agent://MEMORY.md".to_string(),
+            mount_id: PROJECT_AGENT_MEMORY_MOUNT_ID.to_string(),
+            scope: MemorySourceScope::Agent,
+            capabilities: agent_mount.capabilities,
+            format: MemorySourceFormat::AgentDash,
+            index_status,
+            trust_level: MemorySourceTrustLevel::FirstParty,
+            summary: Some(
+                "ProjectAgent shared memory home backed by the active agent VFS mount.".to_string(),
+            ),
+            bounded_index_content: index_file.map(|file| file.content),
+        };
+
+        Ok(MemoryDiscoveryOutput {
+            clusters: vec![MemoryDiscoveryCluster {
+                provider_key: PROJECT_AGENT_MEMORY_PROVIDER_KEY.to_string(),
+                display_name: "ProjectAgent Memory".to_string(),
+                model_summary: Some(
+                    "ProjectAgent memory sources discovered from active VFS mounts.".to_string(),
+                ),
+                ui_summary: Some("ProjectAgent memory sources.".to_string()),
+                inventory_hint: Some("Default source: agent://".to_string()),
+                inventory_count: Some(1),
+                sources: vec![source],
+            }],
+            diagnostics: Vec::new(),
+        })
     }
 }
 
@@ -244,6 +337,7 @@ pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
     vec![
         Box::new(PersonalAuthIntegration),
         Box::new(ConnectorCatalogIntegration),
+        Box::new(ProjectAgentMemoryIntegration),
     ]
 }
 
@@ -355,6 +449,28 @@ fn parse_bool_env(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_integration_api::MountCapability;
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(NoopWake));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        loop {
+            match Future::poll(future.as_mut(), &mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
 
     #[test]
     fn exposes_builtin_integration_skeletons() {
@@ -367,7 +483,8 @@ mod tests {
             names,
             vec![
                 "builtin.personal_auth".to_string(),
-                "builtin.connector_catalog".to_string()
+                "builtin.connector_catalog".to_string(),
+                "builtin.project_agent_memory".to_string()
             ]
         );
     }
@@ -395,6 +512,103 @@ mod tests {
             vec![LibraryAssetType::McpServerTemplate]
         );
         assert!(descriptor.enabled);
+    }
+
+    #[test]
+    fn project_agent_memory_provider_declares_bounded_index_rule() {
+        let integration = ProjectAgentMemoryIntegration;
+        let providers = integration.memory_discovery_providers();
+
+        assert_eq!(providers.len(), 1);
+        assert_eq!(
+            providers[0].provider_key(),
+            PROJECT_AGENT_MEMORY_PROVIDER_KEY
+        );
+
+        let rules = providers[0].vfs_discovery_rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].exact_paths, vec!["MEMORY.md".to_string()]);
+        assert_eq!(rules[0].max_size_bytes, 16 * 1024);
+    }
+
+    #[test]
+    fn project_agent_memory_provider_returns_source_without_index_file() {
+        let provider = ProjectAgentMemoryDiscoveryProvider;
+
+        let output = block_on(provider.discover_from_vfs(
+            MemoryDiscoveryContext::default(),
+            vec![MemoryDiscoveryMount::new(
+                PROJECT_AGENT_MEMORY_MOUNT_ID,
+                "inline_fs",
+                "Agent Memory",
+                vec![
+                    MountCapability::Read,
+                    MountCapability::Write,
+                    MountCapability::List,
+                    MountCapability::Search,
+                ],
+            )],
+            Vec::new(),
+        ))
+        .expect("memory discovery");
+
+        let source = &output.clusters[0].sources[0];
+        assert_eq!(source.source_uri, "agent://");
+        assert_eq!(source.index_uri, "agent://MEMORY.md");
+        assert_eq!(source.index_status, MemoryIndexStatus::Missing);
+        assert_eq!(
+            source.capabilities,
+            vec![
+                MountCapability::Read,
+                MountCapability::Write,
+                MountCapability::List,
+                MountCapability::Search,
+            ]
+        );
+        assert!(source.bounded_index_content.is_none());
+    }
+
+    #[test]
+    fn project_agent_memory_provider_attaches_bounded_index_only() {
+        let provider = ProjectAgentMemoryDiscoveryProvider;
+
+        let output = block_on(provider.discover_from_vfs(
+            MemoryDiscoveryContext::default(),
+            vec![MemoryDiscoveryMount::new(
+                PROJECT_AGENT_MEMORY_MOUNT_ID,
+                "inline_fs",
+                "Agent Memory",
+                vec![MountCapability::Read],
+            )],
+            vec![
+                MemoryDiscoveryVfsFile {
+                    rule_key: PROJECT_AGENT_MEMORY_INDEX_RULE_KEY.to_string(),
+                    mount_id: PROJECT_AGENT_MEMORY_MOUNT_ID.to_string(),
+                    path: PROJECT_AGENT_MEMORY_INDEX_PATH.to_string(),
+                    content: "index body".to_string(),
+                    size_bytes: Some(10),
+                },
+                MemoryDiscoveryVfsFile {
+                    rule_key: PROJECT_AGENT_MEMORY_INDEX_RULE_KEY.to_string(),
+                    mount_id: PROJECT_AGENT_MEMORY_MOUNT_ID.to_string(),
+                    path: "topics/project.md".to_string(),
+                    content: "topic body must not be injected".to_string(),
+                    size_bytes: Some(31),
+                },
+            ],
+        ))
+        .expect("memory discovery");
+
+        let source = &output.clusters[0].sources[0];
+        assert_eq!(source.index_status, MemoryIndexStatus::Present);
+        assert_eq!(source.bounded_index_content.as_deref(), Some("index body"));
+        assert!(
+            !source
+                .bounded_index_content
+                .as_deref()
+                .unwrap_or_default()
+                .contains("topic body")
+        );
     }
 
     #[test]

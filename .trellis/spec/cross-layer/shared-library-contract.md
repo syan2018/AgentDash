@@ -98,10 +98,21 @@ DTO 层 `crates/agentdash-api/src/dto/shared_library.rs` 直接透传 `serde_jso
     "system_prompt": "string?",
     "system_prompt_mode": "SystemPromptMode?",
     "capability_directives": ["ToolCapabilityDirective"],
-    "mcp_slots": [{ "key": "string", "description": "string?", "required": "bool" }]
+    "mcp_slots": [{ "key": "string", "description": "string?", "required": "bool" }],
+    "mcp_dependencies": [{
+      "slot_key": "string",
+      "asset_key": "string?",
+      "asset_id": "string?",
+      "preset_key": "string?",
+      "parameters": "object?",
+      "required": "bool",
+      "overwrite": "bool"
+    }]
   }
 }
 ```
+
+Agent 模板的 MCP dependency 是安装期依赖计划。安装 AgentTemplate 时，后端按 dependency 定位 `mcp_server_template`，解析安装参数，生成 Project MCP Preset，并把最终 preset key 写入 ProjectAgent 的 `mcp_preset_keys`。因此 AgentTemplate 只描述 Project 资源装配关系，运行时 MCP surface 仍从 Project MCP Preset 解析为 `RuntimeMcpServer`。
 
 ### `mcp_server_template`
 
@@ -204,7 +215,7 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
 
 Extension package 中 `protocol_channels` 表达 provider 插件导出的 Project/session scoped API surface，`extension_dependencies` 表达 consumer 插件按 alias 依赖的 provider extension/channel。Projection、Gateway admission、local runner trace 都以 canonical `extension_key.channel` / method 作为事实；SDK/bridge 可以提供 self shortcut、dependency alias 或 Canvas binding alias，但不改变 manifest 中 provider/channel/dependency 的权威关系。
 
-Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.execute`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
+Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.exec`、`process.shell`、`process.env.set[:KEY]`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
 
 ExtensionTemplate 的 package requirement 由后端统一计算：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`bundles` 任一非空时需要 package artifact；仅声明 `commands`、`flags`、`message_renderers`、`capability_directives` 或 `asset_refs` 时可作为 declaration-only template 安装。
 
@@ -252,11 +263,21 @@ Update:
 - Project Assets 展示来源状态。
 - 用户手动重装/覆盖。
 
-ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
+ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 frame construction 读取。
 
 Packaged Extension 安装以平台 artifact 为事实源。`ExtensionPackageArtifact` 使用 `owner_kind + owner_id` 表达归属：本地导入保存为 Project-owned artifact，发布到 Marketplace 后保存为 LibraryAsset-owned artifact。Marketplace packaged install 写入 `installed_source + package_artifact`；本地包导入写入 Project-owned `package_artifact` 且 `installed_source = None`。Shared Library source-status 只比较 `InstalledAssetSource` 的版本与 digest，包完整性由 install/publish/runtime download contract 负责。
 
 Canvas 发布为插件时生成同款 packaged extension artifact。其 workspace tab 使用 `canvas_panel` renderer，`entry` 指向包内 Canvas runtime snapshot；安装、覆盖和 source-status 仍按 packaged extension installation 处理。
+
+Project shared Canvas publication is a Project-internal source distribution flow, not a Shared Library asset flow:
+
+| Flow | Command | Result | Editable source |
+| --- | --- | --- | --- |
+| Project shared Canvas | `POST /api/canvases/{id}/publish-to-project` | independent `scope="project"` Canvas source with `published_from_canvas_id` | read-only; copy to personal for edits |
+| Personal clone from shared Canvas | `POST /api/canvases/{id}/copy-to-personal` | new `scope="personal"` Canvas with `cloned_from_canvas_id` | editable by clone owner |
+| Canvas packaged extension | `POST /api/canvases/{id}/promote-extension` | `ExtensionPackageArtifact` + extension installation flow | package runtime artifact, not source template |
+
+This split keeps Project-internal sharing usable without introducing a Shared Library `canvas_template` asset type. A future `canvas_template` payload can reuse the Canvas authoring payload shape (`entry_file`, `sandbox_config`, `files`, `bindings`, title/description), but Shared Library install/source-status should be added as a separate asset contract.
 
 ## Publish Semantics
 

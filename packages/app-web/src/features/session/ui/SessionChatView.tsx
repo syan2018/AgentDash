@@ -4,13 +4,12 @@
  * 包含完整的会话交互能力：流式输出、富文本输入（@ 文件引用）、
  * 执行器选择、上下文用量指示、发送/取消。
  *
- * SessionPage 等 runtime trace 场景复用此组件，
+ * AgentRun workspace 等 runtime trace 场景复用此组件，
  * 由父组件管理 sessionId 生命周期和外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
-import { extractPlatformEventType } from "../model/platformEvent";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -23,11 +22,6 @@ import {
   type RichInputRef,
 } from "../../file-reference";
 import type { FileEntry } from "../../../services/filePicker";
-import {
-  fetchSessionExecutionState,
-} from "../../../services/session";
-import type { SessionExecutionState } from "../../../types";
-import { SessionProjectionView } from "./SessionProjectionView";
 import { SessionLineageView } from "./SessionLineageView";
 import {
   SessionChatComposer,
@@ -35,23 +29,16 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
-  collectNewSystemEvents,
+  collectAllPlatformEvents,
   computeProjectionRefreshKey,
+  extractTurnLifecycleEventType,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type { SessionChatViewProps } from "./SessionChatViewTypes";
+import type { SessionChatCommand, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { PendingMessageList } from "./composer/PendingMessageRow";
-
-// eslint-disable-next-line react-refresh/only-export-components
-export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
-export type {
-  PromptTemplate,
-  SessionChatControlState,
-  SessionChatPrimaryActionKind,
-  SessionChatViewProps,
-} from "./SessionChatViewTypes";
+import { SessionStatusBar } from "../../agent-run-workspace/ui";
+import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -59,20 +46,39 @@ export type {
 
 const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 
+function isSilentCommandRefreshError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === "object"
+      && (error as { silentCommandRefresh?: unknown }).silentCommandRefresh === true,
+  );
+}
+
 export function SessionChatView({
   sessionId,
   workspaceId,
   onMessageSent,
   onTurnEnd,
   onSystemEvent,
+  onTaskPlanChanged,
   executorHint,
   agentDefaults,
+  executorStateKey,
   showExecutorSelector = true,
-  controlState,
-  onPrimaryAction,
-  pendingMessages,
-  onPromotePending,
-  onDeletePending,
+  commandState,
+  onCommand,
+  onCancelAction,
+  onExecutorConfigOverrideChange,
+  mailboxSnapshot,
+  onPromoteMailboxMessage,
+  onDeleteMailboxMessage,
+  onResumeMailbox,
+  onRecallMailboxMessage,
+  onMoveMailboxMessage,
+  statusBarRunId,
+  statusBarAgentId,
+  injectedInputValue,
+  onInjectedInputConsumed,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -85,9 +91,7 @@ export function SessionChatView({
   const [inputValue, setInputValue] = useState("");
   const [optimisticRunning, setOptimisticRunning] = useState(false);
   const [stableActionRunning, setStableActionRunning] = useState(false);
-  const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [showProjectionView, setShowProjectionView] = useState(false);
   const [showLineageView, setShowLineageView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
@@ -117,31 +121,23 @@ export function SessionChatView({
     }
   }, [initialInputValue]);
 
+  // 外部注入输入值（recall 消息后填充 composer）
+  useEffect(() => {
+    if (injectedInputValue != null && injectedInputValue !== "") {
+      richInputRef.current?.setValue(injectedInputValue);
+      setInputValue(injectedInputValue);
+      onInjectedInputConsumed?.();
+    }
+  }, [injectedInputValue, onInjectedInputConsumed]);
+
   // sessionId 变更时重置内部状态
   useEffect(() => {
     setSendError(null);
-    setExecutionState(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
   }, [sessionId]);
 
-  const refreshExecutionState = useCallback(async () => {
-    if (!sessionId) {
-      setExecutionState(null);
-      return null;
-    }
-    const next = await fetchSessionExecutionState(sessionId);
-    setExecutionState(next);
-    return next;
-  }, [sessionId]);
-
   useEffect(() => {
-    if (!sessionId) return;
-    void refreshExecutionState().catch(() => {});
-  }, [sessionId, refreshExecutionState]);
-
-  useEffect(() => {
-    setShowProjectionView(false);
     setShowLineageView(false);
   }, [sessionId]);
 
@@ -150,8 +146,9 @@ export function SessionChatView({
   const discovery = useExecutorDiscovery();
 
   // 仅挂载时读一次 agentDefaults，作为 useExecutorConfig 的 initialSource
+  const snapshotExecutorDefaults = commandState.modelConfig.effective_executor_config ?? null;
   const initialExecutorSource = useMemo<ExecutorConfigSource | null>(
-    () => toExecutorConfigSource(agentDefaults),
+    () => toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -169,8 +166,9 @@ export function SessionChatView({
     [discovery.executors, executorHint],
   );
   const executorHydrationKey = useMemo(() => {
+    if (executorStateKey) return executorStateKey;
     if (sessionId) return sessionId;
-    const source = toExecutorConfigSource(agentDefaults);
+    const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     if (source) {
       return [
         "draft",
@@ -182,7 +180,7 @@ export function SessionChatView({
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
-  }, [agentDefaults, resolvedHint, sessionId]);
+  }, [agentDefaults, executorStateKey, resolvedHint, sessionId, snapshotExecutorDefaults]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。
@@ -191,14 +189,14 @@ export function SessionChatView({
     if (!executorHydrationKey) return;
     if (hydratedSessionRef.current === executorHydrationKey) return;
 
-    const source = toExecutorConfigSource(agentDefaults);
+    const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     const hasSource = source && Object.keys(source).length > 0;
     if (hasSource) {
       hydratedSessionRef.current = executorHydrationKey;
       hydrateExecutor(source);
       return;
     }
-    // 无 agentDefaults 时回退到 hint（保持旧行为）
+    // 无 snapshot/agentDefaults 时回退到 hint。
     if (resolvedHint) {
       const marker = `${executorHydrationKey}:${resolvedHint}`;
       if (appliedHintRef.current !== marker) {
@@ -207,7 +205,7 @@ export function SessionChatView({
         setExecutor(resolvedHint);
       }
     }
-  }, [executorHydrationKey, agentDefaults, resolvedHint, hydrateExecutor, setExecutor]);
+  }, [executorHydrationKey, agentDefaults, resolvedHint, hydrateExecutor, setExecutor, snapshotExecutorDefaults]);
 
   useEffect(() => {
     if (execProviderId.trim() || !execModelId.trim()) return;
@@ -243,6 +241,26 @@ export function SessionChatView({
     execConfig.permissionPolicy,
   ]);
 
+  const emitExplicitExecutorOverride = useCallback((config: {
+    providerId: string;
+    modelId: string;
+    thinkingLevel: string;
+    permissionPolicy: string;
+  }) => {
+    const executor = execConfig.executor.trim();
+    if (!executor) {
+      onExecutorConfigOverrideChange?.(null);
+      return;
+    }
+    onExecutorConfigOverrideChange?.({
+      executor,
+      provider_id: config.providerId.trim() || undefined,
+      model_id: config.modelId.trim() || undefined,
+      thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
+      permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
+    });
+  }, [execConfig.executor, onExecutorConfigOverrideChange]);
+
   // ─── 会话流 ──────────────────────────────────────────
 
   const streamSessionId = sessionId ?? "__placeholder__";
@@ -250,6 +268,7 @@ export function SessionChatView({
 
   const {
     displayItems,
+    turnSegments,
     rawEntries,
     rawEvents,
     isConnected,
@@ -266,19 +285,13 @@ export function SessionChatView({
     [rawEvents],
   );
 
-  useEffect(() => {
-    if (!hasSession || executionState?.status !== "running") return;
-    const timer = window.setInterval(() => {
-      void refreshExecutionState().catch(() => {});
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [executionState?.status, hasSession, refreshExecutionState]);
-
   // ─── Action running 检测 ──────────────────────────────
 
-  const streamRunning = executionState?.status === "running";
+  const snapshotExecutionActive = commandState.executionStatus === "starting_claimed" ||
+    commandState.executionStatus === "running_active" ||
+    commandState.executionStatus === "cancelling";
 
-  const targetActionRunning = hasSession && (streamRunning || optimisticRunning);
+  const targetActionRunning = hasSession && (snapshotExecutionActive || optimisticRunning);
 
   useEffect(() => {
     if (targetActionRunning) {
@@ -316,13 +329,23 @@ export function SessionChatView({
     return () => window.clearTimeout(timer);
   }, [optimisticRunning]);
 
+  useEffect(() => {
+    if (snapshotExecutionActive) return;
+    optimisticRunningUntilRef.current = 0;
+    setOptimisticRunning(false);
+  }, [snapshotExecutionActive]);
+
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
   const onSystemEventRef = useRef(onSystemEvent);
   const lastSystemEventSeqRef = useRef(0);
   useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
+  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
+  const lastTaskToolEventSeqRef = useRef(0);
+  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
   useEffect(() => {
     lastSystemEventSeqRef.current = 0;
+    lastTaskToolEventSeqRef.current = 0;
   }, [sessionId]);
 
   useEffect(() => {
@@ -331,33 +354,51 @@ export function SessionChatView({
       const event = rawEvents[i];
       if (!event) continue;
       const bbEvent = event.notification.event;
-      const eventType = bbEvent.type === "turn_started" ? "turn_started"
-        : bbEvent.type === "turn_completed" ? "turn_completed"
-        : bbEvent.type === "platform" ? extractPlatformEventType(bbEvent)
-        : null;
+      const eventType = extractTurnLifecycleEventType(bbEvent);
       if (eventType === "turn_started") {
         setOptimisticRunning(false);
-        void refreshExecutionState().catch(() => {});
         return;
       }
       if (eventType === "turn_completed" || eventType === "turn_failed" || eventType === "turn_interrupted") {
         optimisticRunningUntilRef.current = 0;
         setOptimisticRunning(false);
-        void refreshExecutionState().catch(() => {});
         onTurnEndRef.current?.();
         return;
       }
     }
-  }, [hasSession, rawEvents, refreshExecutionState]);
+  }, [hasSession, rawEvents]);
 
   useEffect(() => {
     if (!hasSession || rawEvents.length === 0) return;
-    const result = collectNewSystemEvents(rawEvents, lastSystemEventSeqRef.current);
+    const result = collectAllPlatformEvents(rawEvents, lastSystemEventSeqRef.current);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
       onSystemEventRef.current?.(item.eventType, item.event);
     }
+  }, [hasSession, rawEvents]);
+
+  useEffect(() => {
+    if (!hasSession || rawEvents.length === 0) return;
+    let lastSeenSeq = lastTaskToolEventSeqRef.current;
+    let changed = false;
+    for (const event of rawEvents) {
+      if (!event || event.event_seq <= lastTaskToolEventSeqRef.current) continue;
+      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+      const bbEvent = event.notification.event;
+      if (bbEvent.type !== "item_completed") continue;
+      const item = bbEvent.payload.item;
+      if (
+        item.type === "dynamicToolCall"
+        && item.tool === "task_write"
+        && item.status === "completed"
+        && item.success !== false
+      ) {
+        changed = true;
+      }
+    }
+    lastTaskToolEventSeqRef.current = lastSeenSeq;
+    if (changed) onTaskPlanChangedRef.current?.();
   }, [hasSession, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
@@ -375,102 +416,99 @@ export function SessionChatView({
 
   // ─── 控制动作 ───────────────────────────────────────
 
-  const primaryActionRef = useRef(onPrimaryAction);
-  useEffect(() => { primaryActionRef.current = onPrimaryAction; }, [onPrimaryAction]);
+  const commandActionRef = useRef(onCommand);
+  useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
 
-  /**
-   * 通用提交，actionOverride 可指定动作类型（用于键盘分流 steer 等场景）
-   */
-  const handleSubmit = useCallback(async (actionOverride?: "steer" | "enqueue") => {
+  const handleSubmit = useCallback(async (command: SessionChatCommand | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
 
-    // 确定要执行的动作
-    const targetAction = actionOverride ?? controlState.primaryAction.kind;
-    const isValidPrimary = controlState.primaryAction.enabled && targetAction === controlState.primaryAction.kind;
-    const isValidSecondary = controlState.secondaryAction?.enabled && targetAction === controlState.secondaryAction?.kind;
-    if (!isValidPrimary && !isValidSecondary) return;
-    if (targetAction === "none") return;
+    if (!command) return;
+    if (!command.enabled) {
+      setSendError(command.unavailable_reason ?? "当前 AgentRun 不可执行该命令。");
+      return;
+    }
     if (isSending) return;
-    if (!trimmed && images.length === 0) {
+    if (!isSessionModelRequirementSatisfied(commandState.modelConfig.status, executorConfig)) {
+      setSendError(commandState.modelConfig.message ?? "请选择模型配置后再发送。");
+      return;
+    }
+    if (command.requires_input && !trimmed && images.length === 0) {
       setSendError("请输入要发送的消息。");
       return;
     }
 
     setSendError(null);
-    // enqueue 不触发 optimistic running（排队不会立即执行）
-    if (targetAction !== "enqueue") {
-      setOptimisticRunning(true);
-      optimisticRunningUntilRef.current = Date.now() + 2500;
-    }
+    setOptimisticRunning(true);
+    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
-      await primaryActionRef.current(
-        targetAction,
+      await commandActionRef.current(
+        command,
         sessionId,
         trimmed,
         executorConfig,
         images.length > 0 ? images : undefined,
+        deliveryIntent,
       );
 
       execConfig.recordUsage();
       clearInput();
-      if (targetAction !== "enqueue") {
-        void refreshExecutionState().catch(() => {});
-      }
       onMessageSent?.();
     } catch (e) {
       optimisticRunningUntilRef.current = 0;
       setOptimisticRunning(false);
+      if (isSilentCommandRefreshError(e)) {
+        setSendError(null);
+        return;
+      }
       setSendError(e instanceof Error ? e.message : "发送失败，请重试。");
     } finally {
       setIsSending(false);
     }
   }, [
     clearInput,
-    controlState.primaryAction.enabled,
-    controlState.primaryAction.kind,
-    controlState.secondaryAction?.enabled,
-    controlState.secondaryAction?.kind,
+    commandState.modelConfig.message,
+    commandState.modelConfig.status,
     execConfig,
     executorConfig,
     imageAttach.attachments,
     isSending,
     onMessageSent,
-    refreshExecutionState,
     sessionId,
   ]);
 
-  const handlePrimarySubmit = useCallback(async () => handleSubmit(), [handleSubmit]);
+  const commandById = useCallback((commandId: string | undefined): SessionChatCommand | undefined => {
+    if (!commandId) return undefined;
+    if (commandState.localDraftAction?.command_id === commandId) {
+      return commandState.localDraftAction;
+    }
+    return commandState.commands.commands.find((command) => command.command_id === commandId);
+  }, [commandState.commands.commands, commandState.localDraftAction]);
 
   const handleCancel = useCallback(async () => {
-    if (!controlState.cancelAction.enabled) return;
+    const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
+    if (!cancelCommand?.enabled) return;
     if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
     cancelInFlightRef.current = true;
     setSendError(null);
     setIsCancelling(true);
     try {
-      await sendCancel();
-      // 不 await 状态刷新，避免 UI 卡在"取消中…"；
-      // 1.5s 轮询 + 流事件会自然驱动 executionState 更新。
-      void refreshExecutionState()
-        .then((next) => {
-          if (next?.status === "interrupted" || next?.status === "idle") {
-            optimisticRunningUntilRef.current = 0;
-            setOptimisticRunning(false);
-          }
-        })
-        .catch(() => {});
+      if (onCancelAction) {
+        await onCancelAction();
+      } else {
+        await sendCancel();
+      }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
     } finally {
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [controlState.cancelAction.enabled, hasSession, refreshExecutionState, sendCancel, sessionId]);
+  }, [commandState.commands.commands, hasSession, onCancelAction, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -486,20 +524,18 @@ export function SessionChatView({
       if (e.key !== "Enter") return;
       if (e.shiftKey) return; // Shift+Enter = 换行
 
+      const isSteer = e.ctrlKey || e.metaKey;
+      const keyboardCommandId = isSteer
+        ? commandState.commands.keyboard.ctrl_enter
+        : commandState.commands.keyboard.enter;
+      const command = commandById(keyboardCommandId)
+        ?? (!isSteer ? commandState.localDraftAction : undefined);
+      if (!command) return;
+
       e.preventDefault();
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        controlState.primaryAction.kind === "enqueue" &&
-        controlState.secondaryAction?.enabled
-      ) {
-        // Running+enqueue 态 Ctrl/Cmd+Enter → steer（辅助动作）
-        void handleSubmit("steer");
-      } else {
-        // 裸 Enter / Ctrl+Enter（非 steer 场景）→ 主动作
-        void handlePrimarySubmit();
-      }
+      void handleSubmit(command, isSteer ? "steer" : undefined);
     },
-    [controlState.primaryAction.kind, controlState.secondaryAction?.enabled, fileRef, handlePrimarySubmit, handleSubmit],
+    [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, commandState.localDraftAction, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）
@@ -576,6 +612,8 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+  const mailboxMessages = mailboxSnapshot?.messages ?? [];
+  const mailboxState = mailboxSnapshot?.state;
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -591,10 +629,7 @@ export function SessionChatView({
           isConnected={isConnected}
           sessionId={sessionId}
           showLineageView={showLineageView}
-          showProjectionView={showProjectionView}
-          tokenUsage={tokenUsage}
           onToggleLineage={() => setShowLineageView((value) => !value)}
-          onToggleProjection={() => setShowProjectionView((value) => !value)}
         />
       )}
 
@@ -602,14 +637,6 @@ export function SessionChatView({
         <SessionLineageView
           sessionId={sessionId}
           refreshKey={projectionRefreshKey}
-        />
-      )}
-
-      {showProjectionView && sessionId && (
-        <SessionProjectionView
-          sessionId={sessionId}
-          refreshKey={projectionRefreshKey}
-          tokenUsage={tokenUsage}
         />
       )}
 
@@ -631,6 +658,7 @@ export function SessionChatView({
       <SessionChatStream
         containerRef={containerRef}
         displayItems={displayItems}
+        turnSegments={turnSegments}
         hasSession={hasSession}
         isLoading={isLoading}
         sessionId={sessionId}
@@ -639,19 +667,29 @@ export function SessionChatView({
         onScroll={handleScroll}
       />
 
-      {/* 排队消息 + 输入区 */}
+      {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {pendingMessages && pendingMessages.length > 0 && (
-          <PendingMessageList
-            messages={pendingMessages}
-            canSteer={Boolean(controlState.secondaryAction?.enabled)}
-            onPromote={onPromotePending ?? (() => {})}
-            onDelete={onDeletePending ?? (() => {})}
-          />
-        )}
+        <SessionStatusBar
+          runId={statusBarRunId}
+          agentId={statusBarAgentId}
+          messages={mailboxMessages}
+          mailbox={mailboxSnapshot}
+          mailboxState={mailboxState}
+          promoteCommand={commandState.commands.commands.find(
+            (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
+          )}
+          deleteCommand={commandState.commands.commands.find(
+            (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
+          )}
+          onPromote={onPromoteMailboxMessage ?? (() => {})}
+          onDelete={onDeleteMailboxMessage ?? (() => {})}
+          onResume={onResumeMailbox}
+          onRecall={onRecallMailboxMessage}
+          onMove={onMoveMailboxMessage}
+        />
 
         <SessionChatComposer
-          controlState={controlState}
+          commandState={commandState}
           discovery={discovery}
           discovered={discovered}
           execConfig={execConfig}
@@ -668,13 +706,16 @@ export function SessionChatView({
           richInputRef={richInputRef}
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
+          tokenUsage={tokenUsage}
+          sessionId={sessionId}
+          projectionRefreshKey={projectionRefreshKey}
           onAtTrigger={handleAtTrigger}
           onFileSelected={handleFileSelected}
           onInputChange={setInputValue}
           onKeyDown={handleKeyDown}
           onCancelAction={() => { void handleCancel(); }}
-          onPrimaryAction={() => { void handlePrimarySubmit(); }}
-          onSteerAction={() => { void handleSubmit("steer"); }}
+          onCommandAction={(command) => { void handleSubmit(command); }}
+          onExecutorConfigExplicitChange={emitExplicitExecutorOverride}
           onPlusMenuFiles={handlePlusMenuFiles}
           onRemoveImage={imageAttach.removeAttachment}
         />

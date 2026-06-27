@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "检查 capability resolver 与 MCP runtime surface 是否一致。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 AgentFrame MCP projection 是否保持单一事实源。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 contract DTO 生成与前端类型是否同步。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查本机 runtime MCP 配置与 relay DTO 是否只通过边界适配。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 cloud/local MCP transport 类型没有隐式混用。"}
+{"file": "docs/relay-protocol.md", "reason": "检查 relay MCP command payload 与目标 wire DTO 一致。"}

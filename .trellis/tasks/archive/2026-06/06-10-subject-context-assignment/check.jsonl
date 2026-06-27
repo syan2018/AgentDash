@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check SubjectContext assignment writes AgentFrame surface without making RuntimeSession a business owner."}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Check Story/Task context remains subject/profile data rather than command runtime truth."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Check subject-scoped capability context is derived from the intended associations."}

@@ -1,7 +1,7 @@
 //! 能力状态 delta 的纯数据模型与计算。
 //!
 //! delta 描述两份 `CapabilityState` 之间的结构化差异（工具能力 / 工具路径 /
-//! MCP server / VFS / skill），是运行期能力切换通知与前端投影的共同基准。
+//! MCP server / companion roster / VFS / skill），是运行期能力切换通知与前端投影的共同基准。
 //! 类型与计算都只依赖 spi `CapabilityState` 与 domain `Vfs`/`MountLink`，
 //! 因此放在 spi 层，供 application 的 transition / projection / 渲染各阶段消费。
 
@@ -75,6 +75,7 @@ pub struct CapabilityStateDelta {
     pub excluded_tool_paths: SetDelta,
     pub included_tool_paths: SetDelta,
     pub mcp_servers: NamedEntityDelta,
+    pub companion_agents: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
     pub skills: NamedEntityDelta,
 }
@@ -86,6 +87,7 @@ impl CapabilityStateDelta {
             && self.excluded_tool_paths.is_empty()
             && self.included_tool_paths.is_empty()
             && self.mcp_servers.is_empty()
+            && self.companion_agents.is_empty()
             && self.vfs.is_empty()
             && self.skills.is_empty()
     }
@@ -138,6 +140,13 @@ pub fn compute_capability_state_delta(
             after.tool.mcp_servers.as_slice(),
             |server| server.name.clone(),
         ),
+        companion_agents: named_entity_delta(
+            before
+                .map(|surface| surface.companion.agents.as_slice())
+                .unwrap_or(&[]),
+            after.companion.agents.as_slice(),
+            |agent| agent.name.clone(),
+        ),
         vfs: vfs_surface_delta(
             before.and_then(|surface| surface.vfs.active.as_ref()),
             after.vfs.active.as_ref(),
@@ -147,7 +156,7 @@ pub fn compute_capability_state_delta(
                 .map(|surface| surface.skill.skills.as_slice())
                 .unwrap_or(&[]),
             after.skill.skills.as_slice(),
-            |skill| skill.name.clone(),
+            |skill| skill.capability_key_or_name().to_string(),
         ),
     }
 }

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "registration token 持久化需要迁移与索引。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "新增 token repository 需要遵守聚合仓储边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "新增 API DTO 需要生成并检查前端契约。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "token claim 授权错误需要稳定 HTTP 映射。"}

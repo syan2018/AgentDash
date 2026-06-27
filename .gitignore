@@ -36,6 +36,7 @@ Thumbs.db
 .codex/tmp/
 
 # 日志文件
+/logs/
 *.out.log
 *.err.log
 npm-debug.log*

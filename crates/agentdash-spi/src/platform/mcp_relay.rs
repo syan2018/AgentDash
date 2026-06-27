@@ -1,14 +1,16 @@
 //! MCP Relay Provider SPI — 云端通过 relay 信道调用本机 MCP 工具的抽象层
 
+use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthIdentity, ConnectorError, Vfs};
+use crate::{AuthIdentity, ConnectorError, RuntimeMcpServer, Vfs};
 
 /// relay MCP 工具描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayMcpToolInfo {
     pub server_name: String,
+    pub server: RuntimeMcpServer,
     pub tool_name: String,
     pub description: String,
     #[serde(default)]
@@ -28,8 +30,24 @@ pub struct RelayMcpCallContext {
     pub session_id: String,
     pub turn_id: Option<String>,
     pub tool_call_id: Option<String>,
+    pub backend_anchor: Option<RuntimeBackendAnchor>,
     pub vfs: Option<Vfs>,
     pub identity: Option<AuthIdentity>,
+}
+
+impl RelayMcpCallContext {
+    pub fn require_backend_anchor(
+        &self,
+        component: impl Into<String>,
+    ) -> Result<&RuntimeBackendAnchor, RuntimeBackendAnchorError> {
+        self.backend_anchor
+            .as_ref()
+            .ok_or_else(|| RuntimeBackendAnchorError::Missing {
+                component: component.into(),
+                session_id: Some(self.session_id.clone()),
+                turn_id: self.turn_id.clone(),
+            })
+    }
 }
 
 /// relay probe 结果
@@ -54,12 +72,16 @@ pub struct RelayProbeTool {
 #[async_trait]
 pub trait McpRelayProvider: Send + Sync {
     /// 列出指定 server 的 MCP 工具（通过 relay 信道）
-    async fn list_relay_tools(&self, requested_servers: &[String]) -> Vec<RelayMcpToolInfo>;
+    async fn list_relay_tools(
+        &self,
+        requested_servers: &[RuntimeMcpServer],
+        context: Option<RelayMcpCallContext>,
+    ) -> Vec<RelayMcpToolInfo>;
 
     /// 调用指定 MCP server 上的工具
     async fn call_relay_tool(
         &self,
-        server_name: &str,
+        server: &RuntimeMcpServer,
         tool_name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         context: Option<RelayMcpCallContext>,
@@ -71,4 +93,55 @@ pub trait McpRelayProvider: Send + Sync {
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
     ) -> Result<RelayProbeResult, ConnectorError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
+
+    use super::*;
+
+    fn context(anchor: Option<RuntimeBackendAnchor>) -> RelayMcpCallContext {
+        RelayMcpCallContext {
+            session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            tool_call_id: None,
+            backend_anchor: anchor,
+            vfs: None,
+            identity: None,
+        }
+    }
+
+    #[test]
+    fn require_backend_anchor_returns_structured_missing_error() {
+        let error = context(None)
+            .require_backend_anchor("relay_mcp")
+            .expect_err("missing anchor should fail");
+
+        assert!(matches!(
+            error,
+            RuntimeBackendAnchorError::Missing {
+                component,
+                session_id,
+                turn_id
+            } if component == "relay_mcp"
+                && session_id.as_deref() == Some("session-1")
+                && turn_id.as_deref() == Some("turn-1")
+        ));
+    }
+
+    #[test]
+    fn require_backend_anchor_returns_anchor_backend() {
+        let anchor = RuntimeBackendAnchor::new("backend-a", RuntimeBackendAnchorSource::System)
+            .expect("anchor");
+        let context = context(Some(anchor));
+
+        assert_eq!(
+            context
+                .require_backend_anchor("relay_mcp")
+                .expect("anchor")
+                .backend_id(),
+            "backend-a"
+        );
+    }
 }

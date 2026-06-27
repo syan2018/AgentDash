@@ -1,0 +1,6 @@
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"检查最终 runtime surface 事实源是否跨前后端一致。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 migration 与 repository/domain 字段模型是否一致。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"检查 WorkspacePanel 是否仍以 runtime_surface 为唯一 UI 输入，并避免 Canvas 打开路径分叉。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端测试与状态流改动质量。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端测试覆盖和架构边界。"}
+{"file":"verification","reason":"2026-06-23 13:25 已验证：session-facing frame 解析统一通过 RuntimeSessionExecutionAnchor -> resolve_current_frame_from_delivery_trace_ref；AgentFrameRepository.get_current 仅作为 resolver 内部 current revision 查询。通过 cargo check、聚焦 cargo test、contracts:check、app-web check、migration:guard。"}

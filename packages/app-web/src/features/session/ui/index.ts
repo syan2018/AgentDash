@@ -4,11 +4,17 @@
 
 export {
   SessionChatView,
-  type PromptTemplate,
-  type SessionChatControlState,
-  type SessionChatPrimaryActionKind,
-  type SessionChatViewProps,
 } from "./SessionChatView";
+export {
+  isLocalDraftStartAction,
+} from "./SessionChatViewTypes";
+export type {
+  LocalDraftStartAction,
+  PromptTemplate,
+  SessionChatCommand,
+  SessionChatCommandState,
+  SessionChatViewProps,
+} from "./SessionChatViewTypes";
 export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {
@@ -29,10 +35,6 @@ export {
   SessionSystemEventCard as SessionSystemEventCard,
   type SessionSystemEventCardProps as SessionSystemEventCardProps,
 } from "./SessionSystemEventCard";
-export {
-  SessionUsageCard as SessionUsageCard,
-  type SessionUsageCardProps as SessionUsageCardProps,
-} from "./SessionUsageCard";
 export {
   SessionProjectionView,
   SessionProjectionViewPanel,

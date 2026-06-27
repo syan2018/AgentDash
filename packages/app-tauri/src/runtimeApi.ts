@@ -9,12 +9,7 @@ import type {
   RuntimeStartRequest,
 } from '@agentdash/core/local-runtime'
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser'
-
-declare global {
-  interface Window {
-    __TAURI_INTERNALS__?: unknown
-  }
-}
+import { ensureTauriHost, isTauriHost } from './tauriHost'
 
 export function createTauriLocalRuntimeClient(): LocalRuntimeClient {
   return {
@@ -96,14 +91,4 @@ async function mcpServerProbe(server: McpLocalServerEntry): Promise<McpProbeResu
 export async function tauriBrowseDirectory(path?: string): Promise<BrowseDirectoryResult> {
   ensureTauriHost()
   return invoke('desktop_browse_directory', { path: path ?? null })
-}
-
-function isTauriHost() {
-  return typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined
-}
-
-function ensureTauriHost() {
-  if (!isTauriHost()) {
-    throw new Error('当前页面未运行在 Tauri 宿主中')
-  }
 }

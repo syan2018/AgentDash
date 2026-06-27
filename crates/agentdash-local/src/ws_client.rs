@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,13 +11,17 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use std::sync::Arc;
 
 use agentdash_relay::*;
+use chrono::Utc;
+use serde::Serialize;
 
 use crate::LocalExtensionHostManager;
-use crate::handlers::CommandHandler;
+use crate::handlers::LocalCommandRouter;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
+use crate::runner_redaction::redact_secret;
+use crate::runner_status::RunnerStatusReporter;
 use crate::tool_executor::ToolExecutor;
-use agentdash_application::session::SessionRuntimeServices;
+use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 use agentdash_spi::AgentConnector;
 
@@ -36,12 +41,96 @@ pub struct Config {
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
     pub extension_host: LocalExtensionHostManager,
     pub extension_artifact_cache_root: PathBuf,
+    pub runner_status: Option<RunnerStatusReporter>,
+    pub relay_status_tx: Option<watch::Sender<RelayConnectionStatus>>,
 }
 
-/// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
-pub async fn run(config: Config) -> anyhow::Result<()> {
-    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
-    run_until_shutdown(config, shutdown_rx).await
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayConnectionState {
+    NotConfigured,
+    Connecting,
+    Registered,
+    Reconnecting,
+    Disconnected,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RelayConnectionStatus {
+    pub state: RelayConnectionState,
+    pub target: Option<String>,
+    pub last_connected_at: Option<String>,
+    pub last_disconnected_at: Option<String>,
+    pub last_error: Option<String>,
+    pub retry_count: Option<u32>,
+    pub next_retry_at: Option<String>,
+    pub registered_backend_id: Option<String>,
+}
+
+impl RelayConnectionStatus {
+    pub fn not_configured(target: Option<String>) -> Self {
+        Self {
+            state: RelayConnectionState::NotConfigured,
+            target,
+            last_connected_at: None,
+            last_disconnected_at: None,
+            last_error: None,
+            retry_count: None,
+            next_retry_at: None,
+            registered_backend_id: None,
+        }
+    }
+
+    fn for_config(config: &Config, state: RelayConnectionState) -> Self {
+        Self {
+            state,
+            target: Some(redact_secret(&config.cloud_url)),
+            ..Self::not_configured(Some(redact_secret(&config.cloud_url)))
+        }
+    }
+
+    fn connecting(config: &Config, retry_count: u32) -> Self {
+        Self {
+            retry_count: Some(retry_count),
+            ..Self::for_config(config, RelayConnectionState::Connecting)
+        }
+    }
+
+    fn registered(config: &Config) -> Self {
+        Self {
+            last_connected_at: Some(Utc::now().to_rfc3339()),
+            registered_backend_id: Some(config.backend_id.clone()),
+            ..Self::for_config(config, RelayConnectionState::Registered)
+        }
+    }
+
+    fn reconnecting(config: &Config, retry_count: u32, error: impl AsRef<str>) -> Self {
+        Self {
+            last_disconnected_at: Some(Utc::now().to_rfc3339()),
+            last_error: Some(redact_secret(error.as_ref())),
+            retry_count: Some(retry_count),
+            ..Self::for_config(config, RelayConnectionState::Reconnecting)
+        }
+    }
+
+    fn disconnected(config: &Config, message: impl AsRef<str>) -> Self {
+        Self {
+            last_disconnected_at: Some(Utc::now().to_rfc3339()),
+            last_error: Some(redact_secret(message.as_ref())),
+            ..Self::for_config(config, RelayConnectionState::Disconnected)
+        }
+    }
+
+    fn with_previous_connection(mut self, previous: &Self) -> Self {
+        if self.last_connected_at.is_none() {
+            self.last_connected_at = previous.last_connected_at.clone();
+        }
+        if self.registered_backend_id.is_none() {
+            self.registered_backend_id = previous.registered_backend_id.clone();
+        }
+        self
+    }
 }
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连，直到收到 shutdown 信号。
@@ -53,35 +142,117 @@ pub async fn run_until_shutdown(
 
     loop {
         if *shutdown_rx.borrow() {
-            tracing::info!("收到 shutdown 信号，本机 relay 主循环停止");
+            diag!(
+                Info,
+                Subsystem::Relay,
+                "收到 shutdown 信号，本机 relay 主循环停止"
+            );
+            report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
+            report_relay_status(
+                &config,
+                RelayConnectionStatus::disconnected(&config, "runner 已停止"),
+            );
             return Ok(());
         }
 
         let url = format!("{}?token={}", config.cloud_url, config.token);
+        report_relay_status(
+            &config,
+            RelayConnectionStatus::connecting(&config, retry_count),
+        );
+        report_status(
+            &config.runner_status,
+            "connecting",
+            None,
+            "连接云端 WebSocket",
+        )
+        .await;
 
-        tracing::info!(retry = retry_count, "连接云端 WebSocket...");
+        diag!(
+            Info,
+            Subsystem::Relay,
+            retry = retry_count,
+            "连接云端 WebSocket..."
+        );
 
         match connect_async(&url).await {
             Ok((ws_stream, _response)) => {
                 retry_count = 0;
-                tracing::info!("WebSocket 连接成功");
+                diag!(Info, Subsystem::Relay, "WebSocket 连接成功");
 
                 if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
-                    tracing::error!(error = %e, "会话异常终止");
+                    report_relay_status(
+                        &config,
+                        RelayConnectionStatus::reconnecting(&config, retry_count, e.to_string()),
+                    );
+                    report_status(
+                        &config.runner_status,
+                        "retrying",
+                        Some("session_error"),
+                        &e.to_string(),
+                    )
+                    .await;
+                    diag!(Error, Subsystem::Relay,
+        error = %redact_secret(&e.to_string()), "会话异常终止");
+                } else if *shutdown_rx.borrow() {
+                    report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
+                    report_relay_status(
+                        &config,
+                        RelayConnectionStatus::disconnected(&config, "runner 已停止"),
+                    );
+                } else {
+                    report_relay_status(
+                        &config,
+                        RelayConnectionStatus::reconnecting(
+                            &config,
+                            retry_count,
+                            "WebSocket 连接关闭",
+                        ),
+                    );
+                    report_status(
+                        &config.runner_status,
+                        "retrying",
+                        Some("disconnected"),
+                        "WebSocket 连接关闭",
+                    )
+                    .await;
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "WebSocket 连接失败");
+                report_relay_status(
+                    &config,
+                    RelayConnectionStatus::reconnecting(&config, retry_count, e.to_string()),
+                );
+                report_status(
+                    &config.runner_status,
+                    "retrying",
+                    Some("connect_failed"),
+                    &e.to_string(),
+                )
+                .await;
+                diag!(Error, Subsystem::Relay,
+        error = %redact_secret(&e.to_string()), "WebSocket 连接失败");
             }
         }
 
         let delay = reconnect_delay(retry_count);
-        tracing::info!(delay_secs = delay.as_secs(), "等待重连...");
+        diag!(
+            Info,
+            Subsystem::Relay,
+            delay_secs = delay.as_secs(),
+            "等待重连..."
+        );
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("等待重连时收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "等待重连时收到 shutdown 信号");
+                    report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
+                    report_relay_status(
+                        &config,
+                        RelayConnectionStatus::disconnected(&config, "runner 已停止"),
+                    );
                     return Ok(());
                 }
             }
@@ -98,23 +269,23 @@ async fn run_session(
 ) -> anyhow::Result<()> {
     let (mut write, mut read) = ws_stream.split();
 
-    // 创建事件通道（CommandHandler 通过此通道推送异步事件）
+    // 创建事件通道（domain handlers 通过此通道推送异步事件）
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<RelayMessage>();
 
-    let handler = CommandHandler::new(
-        config.backend_id.clone(),
-        config.workspace_roots.clone(),
-        config.tool_executor.clone(),
-        config.session_runtime.clone(),
-        config.connector.clone(),
-        config.mcp_manager.clone(),
-        config.workspace_contract_config.clone(),
-        config.extension_host.clone(),
-        config.api_base_url.clone(),
-        config.token.clone(),
-        config.extension_artifact_cache_root.clone(),
+    let handler = LocalCommandRouter::new(crate::handlers::LocalCommandRouterConfig {
+        backend_id: config.backend_id.clone(),
+        workspace_roots: config.workspace_roots.clone(),
+        tool_executor: config.tool_executor.clone(),
+        session_runtime: config.session_runtime.clone(),
+        connector: config.connector.clone(),
+        mcp_manager: config.mcp_manager.clone(),
+        workspace_contract_config: config.workspace_contract_config.clone(),
+        extension_host: config.extension_host.clone(),
+        extension_artifact_api_base_url: config.api_base_url.clone(),
+        extension_artifact_access_token: config.token.clone(),
+        extension_artifact_cache_root: config.extension_artifact_cache_root.clone(),
         event_tx,
-    );
+    });
 
     // 第一步：发送注册消息
     let register_msg = RelayMessage::Register {
@@ -124,16 +295,11 @@ async fn run_session(
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: build_capabilities(&handler, &config.mcp_manager),
-            workspace_roots: config
-                .workspace_roots
-                .iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect(),
         },
     };
 
     send_message(&mut write, &register_msg).await?;
-    tracing::info!("已发送注册消息");
+    diag!(Info, Subsystem::Relay, "已发送注册消息");
 
     // 等待 register_ack
     let ack_timeout = loop {
@@ -141,7 +307,8 @@ async fn run_session(
             result = tokio::time::timeout(Duration::from_secs(10), read.next()) => break result,
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("等待注册响应时收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "等待注册响应时收到 shutdown 信号");
                     return Ok(());
                 }
             }
@@ -152,7 +319,10 @@ async fn run_session(
             if let Some(relay_msg) = parse_ws_message(&msg) {
                 match &relay_msg {
                     RelayMessage::RegisterAck { payload, .. } => {
-                        tracing::info!(
+                        report_relay_status(config, RelayConnectionStatus::registered(config));
+                        report_status(&config.runner_status, "registered", None, "注册成功").await;
+                        diag!(Info, Subsystem::Relay,
+
                             backend_id = %payload.backend_id,
                             status = %payload.status,
                             "注册成功"
@@ -162,7 +332,12 @@ async fn run_session(
                         anyhow::bail!("注册失败: {}", error);
                     }
                     other => {
-                        tracing::warn!("期望 register_ack，收到: {:?}", other.id());
+                        diag!(
+                            Warn,
+                            Subsystem::Relay,
+                            "期望 register_ack，收到: {:?}",
+                            other.id()
+                        );
                     }
                 }
             }
@@ -172,7 +347,15 @@ async fn run_session(
         Err(_) => anyhow::bail!("等待注册响应超时"),
     }
 
-    // 进入消息循环（三路复用：WS 读取、事件通道、心跳检测）
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<RelayMessage>();
+    let mut writer_task = tokio::spawn(async move {
+        while let Some(relay_msg) = outbound_rx.recv().await {
+            send_message(&mut write, &relay_msg).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    // 进入消息循环：WS 读取不直接执行命令，避免长耗时工具调用阻塞后续命令和事件写出。
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
@@ -183,18 +366,43 @@ async fn run_session(
                 match msg {
                     Some(Ok(ws_msg)) => {
                         if let Some(relay_msg) = parse_ws_message(&ws_msg) {
-                            let responses = handler.handle(relay_msg).await;
-                            for resp in responses {
-                                send_message(&mut write, &resp).await?;
+                            if should_handle_in_background(&relay_msg) {
+                                let handler = handler.clone();
+                                let outbound_tx = outbound_tx.clone();
+                                tokio::spawn(async move {
+                                    let msg_id = relay_msg.id().to_string();
+                                    let responses = handler.handle(relay_msg).await;
+                                    for resp in responses {
+                                        if outbound_tx.send(resp).is_err() {
+                                            diag!(Debug, Subsystem::Relay,
+
+                                                msg_id = %msg_id,
+                                                "relay response 写出通道已关闭"
+                                            );
+                                            break;
+                                        }
+                                    }
+                                });
+                            } else {
+                                let responses = handler.handle(relay_msg).await;
+                                for resp in responses {
+                                    if outbound_tx.send(resp).is_err() {
+                                        diag!(Debug, Subsystem::Relay,
+        "relay response 写出通道已关闭");
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
                     Some(Err(e)) => {
-                        tracing::error!(error = %e, "WebSocket 读取错误");
+                        diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 读取错误");
                         break;
                     }
                     None => {
-                        tracing::info!("WebSocket 连接关闭");
+                        diag!(Info, Subsystem::Relay,
+        "WebSocket 连接关闭");
                         break;
                     }
                 }
@@ -202,10 +410,15 @@ async fn run_session(
             event = event_rx.recv() => {
                 match event {
                     Some(relay_msg) => {
-                        send_message(&mut write, &relay_msg).await?;
+                        if outbound_tx.send(relay_msg).is_err() {
+                            diag!(Warn, Subsystem::Relay,
+        "relay event 写出通道已关闭");
+                            break;
+                        }
                     }
                     None => {
-                        tracing::warn!("事件通道关闭");
+                        diag!(Warn, Subsystem::Relay,
+        "事件通道关闭");
                         break;
                     }
                 }
@@ -215,18 +428,81 @@ async fn run_session(
             }
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
-                    tracing::info!("消息循环收到 shutdown 信号");
+                    diag!(Info, Subsystem::Relay,
+        "消息循环收到 shutdown 信号");
                     break;
                 }
             }
+            writer_result = &mut writer_task => {
+                match writer_result {
+                    Ok(Ok(())) => diag!(Info, Subsystem::Relay,
+        "WebSocket 写出任务结束"),
+                    Ok(Err(e)) => diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 写出错误"),
+                    Err(e) => diag!(Error, Subsystem::Relay,
+        error = %e, "WebSocket 写出任务异常结束"),
+                }
+                break;
+            }
         }
+    }
+
+    if !writer_task.is_finished() {
+        writer_task.abort();
+        let _ = writer_task.await;
     }
 
     Ok(())
 }
 
+async fn report_status(
+    reporter: &Option<RunnerStatusReporter>,
+    state: &str,
+    code: Option<&str>,
+    message: &str,
+) {
+    let Some(reporter) = reporter else {
+        return;
+    };
+    let result = match state {
+        "connecting" => reporter.mark_connecting().await,
+        "registered" => reporter.mark_registered().await,
+        "retrying" => {
+            reporter
+                .mark_retrying(code.unwrap_or("relay_retrying"), message)
+                .await
+        }
+        "disconnected" => reporter.mark_disconnected(message).await,
+        "stopped" => reporter.mark_stopped().await,
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        diag!(Warn, Subsystem::Relay,
+            error = %redact_secret(&error.to_string()),
+            "写入 runner status snapshot 失败"
+        );
+    }
+}
+
+fn report_relay_status(config: &Config, status: RelayConnectionStatus) {
+    if let Some(tx) = &config.relay_status_tx {
+        let status = status.with_previous_connection(&tx.borrow());
+        let _ = tx.send(status);
+    }
+}
+
+fn should_handle_in_background(msg: &RelayMessage) -> bool {
+    matches!(
+        msg,
+        RelayMessage::CommandToolShellExec { .. }
+            | RelayMessage::CommandToolShellRead { .. }
+            | RelayMessage::CommandToolShellInput { .. }
+            | RelayMessage::CommandToolShellTerminate { .. }
+    )
+}
+
 fn build_capabilities(
-    handler: &CommandHandler,
+    handler: &LocalCommandRouter,
     mcp_manager: &Option<Arc<McpClientManager>>,
 ) -> CapabilitiesPayload {
     let executors = handler.list_executors();
@@ -247,12 +523,13 @@ fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
         Message::Text(text) => match serde_json::from_str::<RelayMessage>(text.as_ref()) {
             Ok(relay_msg) => Some(relay_msg),
             Err(e) => {
-                tracing::warn!(error = %e, "无法解析 WebSocket 消息");
+                diag!(Warn, Subsystem::Relay,
+        error = %e, "无法解析 WebSocket 消息");
                 None
             }
         },
         Message::Close(_) => {
-            tracing::info!("收到关闭帧");
+            diag!(Info, Subsystem::Relay, "收到关闭帧");
             None
         }
         _ => None,
@@ -272,4 +549,72 @@ async fn send_message(
 fn reconnect_delay(retry_count: u32) -> Duration {
     let secs = (1u64 << retry_count.min(6)).min(60);
     Duration::from_secs(secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_exec_is_handled_in_background() {
+        let msg = RelayMessage::CommandToolShellExec {
+            id: "shell-1".to_string(),
+            payload: ToolShellExecPayload {
+                call_id: "call-1".to_string(),
+                command: "cargo check".to_string(),
+                mount_root_ref: "D:/workspace".to_string(),
+                cwd: None,
+                timeout_ms: Some(30_000),
+                yield_time_ms: Some(1_000),
+                max_output_bytes: None,
+                tty: false,
+            },
+        };
+
+        assert!(should_handle_in_background(&msg));
+    }
+
+    #[test]
+    fn ordinary_relay_messages_keep_inline_ordering() {
+        let msg = RelayMessage::Ping {
+            id: "ping-1".to_string(),
+            payload: PingPayload { server_time: 1 },
+        };
+
+        assert!(!should_handle_in_background(&msg));
+    }
+
+    #[test]
+    fn relay_status_preserves_registered_connection_facts() {
+        let previous = RelayConnectionStatus {
+            state: RelayConnectionState::Registered,
+            target: Some("wss://example.test/ws/backend".to_string()),
+            last_connected_at: Some("2026-06-26T00:00:00Z".to_string()),
+            last_disconnected_at: None,
+            last_error: None,
+            retry_count: Some(0),
+            next_retry_at: None,
+            registered_backend_id: Some("backend-1".to_string()),
+        };
+        let reconnecting = RelayConnectionStatus {
+            state: RelayConnectionState::Reconnecting,
+            target: Some("wss://example.test/ws/backend".to_string()),
+            last_connected_at: None,
+            last_disconnected_at: Some("2026-06-26T00:01:00Z".to_string()),
+            last_error: Some("WebSocket 连接关闭".to_string()),
+            retry_count: Some(1),
+            next_retry_at: None,
+            registered_backend_id: None,
+        }
+        .with_previous_connection(&previous);
+
+        assert_eq!(
+            reconnecting.last_connected_at.as_deref(),
+            Some("2026-06-26T00:00:00Z")
+        );
+        assert_eq!(
+            reconnecting.registered_backend_id.as_deref(),
+            Some("backend-1")
+        );
+    }
 }

@@ -1,0 +1,21 @@
+{"file":".trellis/tasks/06-24-release-crate-split-draft/prd.md","reason":"Acceptance criteria and branch execution policy."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/design.md","reason":"Expected dependency graph and boundary invariants."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/implement.md","reason":"Validation commands and staged gate expectations."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/physical-dependency-contract.md","reason":"Authoritative forbidden-edge contract for crates-first split checks."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/import-graph-crate-review.md","reason":"Static import blockers to verify."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/api-gateway-vfs-consumer-review.md","reason":"API/Gateway/VFS route cleanup risks."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/session-runtime-crate-review.md","reason":"RuntimeSession facade and extraction risks."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/research/agentrun-lifecycle-crate-review.md","reason":"AgentRun/Lifecycle port boundary risks."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Clean architecture review baseline."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Crate/layer dependency review baseline."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeGateway review baseline."}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession review baseline."}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle review baseline."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-check-prompts.md","reason":"Checkpoint check agent prompt templates and static gate focus."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-1.md","reason":"Wave checkpoint verdicts and remaining extraction blockers to verify."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-2.md","reason":"RuntimeGateway extraction checkpoint and remaining RuntimeSession/AgentRun/Lifecycle/VFS blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-3.md","reason":"Round 3 checkpoint check focus, stale-path policy and readiness classification rules."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-3.md","reason":"Round 3 checkpoint verdicts and next extraction readiness blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-4.md","reason":"Round 4 checkpoint focus and readiness gates for RuntimeSession, Gateway visibility and VFS owner split."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/checkpoint-wave-4.md","reason":"Round 4 checkpoint verdicts, passed gates and remaining extraction blockers."}
+{"file":".trellis/tasks/06-24-release-crate-split-draft/dispatch-round-5.md","reason":"Round 5 crates-first checkpoint focus, shared ownership locks and red-checkpoint criteria."}

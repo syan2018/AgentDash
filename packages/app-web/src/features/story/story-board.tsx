@@ -41,7 +41,6 @@ const boardColumns: BoardColumn[] = storyStatusOrder.map((status) => ({ status }
 
 interface StoryBoardProps {
   stories: Story[];
-  taskCountByStoryId: Record<string, number>;
   projectId: string;
   onOpenStory: (story: Story) => void;
   onOpenFullCreate?: (status: StoryStatus) => void;
@@ -49,7 +48,6 @@ interface StoryBoardProps {
 
 export function StoryBoard({
   stories,
-  taskCountByStoryId,
   projectId,
   onOpenStory,
   onOpenFullCreate,
@@ -157,7 +155,6 @@ export function StoryBoard({
             key={column.status}
             column={column}
             stories={storiesByColumn[column.status]}
-            taskCountByStoryId={taskCountByStoryId}
             projectId={projectId}
             onOpenStory={onOpenStory}
             onOpenFullCreate={onOpenFullCreate}
@@ -170,7 +167,6 @@ export function StoryBoard({
           <div className="w-[280px] rotate-2 scale-105 cursor-grabbing opacity-90 shadow-lg shadow-foreground/10">
             <StoryCard
               story={activeStory}
-              taskCount={taskCountByStoryId[activeStory.id] ?? 0}
               onClick={() => {}}
               isDragging
               inert
@@ -185,7 +181,6 @@ export function StoryBoard({
 interface StoryColumnProps {
   column: BoardColumn;
   stories: Story[];
-  taskCountByStoryId: Record<string, number>;
   projectId: string;
   onOpenStory: (story: Story) => void;
   onOpenFullCreate?: (status: StoryStatus) => void;
@@ -194,7 +189,6 @@ interface StoryColumnProps {
 function StoryColumn({
   column,
   stories,
-  taskCountByStoryId,
   projectId,
   onOpenStory,
   onOpenFullCreate,
@@ -258,7 +252,6 @@ function StoryColumn({
               <SortableStoryCard
                 key={story.id}
                 story={story}
-                taskCount={taskCountByStoryId[story.id] ?? 0}
                 onClick={() => onOpenStory(story)}
                 showHoverDescription
                 selectable

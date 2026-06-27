@@ -39,7 +39,6 @@ export async function invokeExtensionChannelFromCanvas({
   }
   const result = await invokeChannel(workspaceData.projectId, {
     session_id: workspaceData.sessionId,
-    backend_id: backend.backend_id,
     channel_key: request.channel_key,
     method: request.method,
     input: toJsonValue(request.input),

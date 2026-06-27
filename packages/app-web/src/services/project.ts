@@ -2,20 +2,18 @@
  * Project service 层。
  *
  * 收口 project / project-agent / grant 相关的 api.client 调用，
- * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / ProjectAgentLaunch）
+ * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary）
  * 集中于此。projectStore 只消费此层导出的函数，不直连 api。
  */
 
 import { api } from "../api/client";
-import { requireStringField } from "../api/mappers";
 import type {
   ContextContainerDefinition,
   Project,
   ProjectAgent,
-  ProjectAgentLaunchResult,
-  ProjectAgentSessionStartResult,
+  ProjectAgentRunStartResult,
   ProjectAgentSummary,
-  CreateProjectAgentSessionRequest,
+  CreateProjectAgentRunRequest,
   ProjectConfig,
   ProjectRole,
   ProjectSubjectGrant,
@@ -42,50 +40,12 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
       permission_policy:
         rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
     },
+    effective_executor_config:
+      raw.effective_executor_config && typeof raw.effective_executor_config === "object"
+        ? raw.effective_executor_config as ProjectAgentSummary["effective_executor_config"]
+        : undefined,
     preset_name: raw.preset_name != null ? String(raw.preset_name) : null,
     source: String(raw.source ?? ""),
-  };
-}
-
-function requireRecordField(raw: Record<string, unknown>, field: string): Record<string, unknown> {
-  const value = raw[field];
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  throw new Error(`字段 ${field} 必须是对象`);
-}
-
-function mapProjectAgentLaunchResult(raw: Record<string, unknown>): ProjectAgentLaunchResult {
-  const rawAgent =
-    raw.agent && typeof raw.agent === "object" ? (raw.agent as Record<string, unknown>) : {};
-  const runRef = requireRecordField(raw, "run_ref");
-  const agentRef = requireRecordField(raw, "agent_ref");
-  const frameRef = requireRecordField(raw, "frame_ref");
-  const runtimeRef = raw.delivery_runtime_ref == null ? null : requireRecordField(raw, "delivery_runtime_ref");
-  const subjectRef = raw.subject_ref == null ? null : requireRecordField(raw, "subject_ref");
-
-  return {
-    created: Boolean(raw.created),
-    run_ref: { run_id: requireStringField(runRef, "run_id") },
-    agent_ref: {
-      run_id: requireStringField(agentRef, "run_id"),
-      agent_id: requireStringField(agentRef, "agent_id"),
-    },
-    frame_ref: {
-      agent_id: requireStringField(frameRef, "agent_id"),
-      frame_id: requireStringField(frameRef, "frame_id"),
-      revision: typeof frameRef.revision === "number" ? frameRef.revision : undefined,
-    },
-    delivery_runtime_ref: runtimeRef
-      ? { runtime_session_id: requireStringField(runtimeRef, "runtime_session_id") }
-      : undefined,
-    subject_ref: subjectRef
-      ? {
-          kind: requireStringField(subjectRef, "kind"),
-          id: requireStringField(subjectRef, "id"),
-        }
-      : undefined,
-    agent: mapProjectAgentSummary(rawAgent),
   };
 }
 
@@ -148,8 +108,6 @@ export interface CreateProjectAgentPayload {
   agent_type: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  is_default_for_story?: boolean;
-  is_default_for_task?: boolean;
 }
 
 export interface UpdateProjectAgentPayload {
@@ -157,8 +115,6 @@ export interface UpdateProjectAgentPayload {
   agent_type?: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  is_default_for_story?: boolean;
-  is_default_for_task?: boolean;
   knowledge_enabled?: boolean;
 }
 
@@ -185,31 +141,20 @@ export async function deleteProjectAgent(projectId: string, agentId: string): Pr
   await api.delete(`/projects/${projectId}/agents/${agentId}`);
 }
 
-// ─── Project Agent Summary / Session API ─────────────────
+// ─── Project Agent Summary / AgentRun API ─────────────────
 
 export async function fetchProjectAgents(projectId: string): Promise<ProjectAgentSummary[]> {
   const response = await api.get<Record<string, unknown>[]>(`/projects/${projectId}/agents/summary`);
   return response.map(mapProjectAgentSummary);
 }
 
-export async function launchProjectAgent(
+export async function createProjectAgentRun(
   projectId: string,
   agentKey: string,
-): Promise<ProjectAgentLaunchResult> {
-  const response = await api.post<Record<string, unknown>>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/launch`,
-    {},
-  );
-  return mapProjectAgentLaunchResult(response);
-}
-
-export async function createProjectAgentRuntimeSession(
-  projectId: string,
-  agentKey: string,
-  payload: CreateProjectAgentSessionRequest,
-): Promise<ProjectAgentSessionStartResult> {
-  return api.post<ProjectAgentSessionStartResult>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+  payload: CreateProjectAgentRunRequest,
+): Promise<ProjectAgentRunStartResult> {
+  return api.post<ProjectAgentRunStartResult>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/agent-runs`,
     payload,
   );
 }

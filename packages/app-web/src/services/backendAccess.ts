@@ -1,28 +1,24 @@
 import { api } from "../api/client";
 import type {
-  BackendWorkspaceInventory,
-  InventoryRefreshResult,
-  ProjectBackendAccess,
-  ProjectBackendAccessStatus,
+  BackendWorkspaceInventoryResponse,
+  CreateProjectBackendAccessRequest,
+  ProjectBackendAccessResponse,
+  RegisterBackendWorkspaceInventoryRequest,
+  UpdateProjectBackendAccessRequest,
+} from "../generated/backend-contracts";
+import type {
+  BindDiscoveredWorkspaceBindingsRequest,
+  BindDiscoveredWorkspaceBindingsResponse,
+  DiscoverLocalWorkspaceBindingsRequest,
+  DiscoverLocalWorkspaceBindingsResponse,
   WorkspaceBindingSyncResult,
   WorkspaceInventoryCandidate,
-} from "../types";
+} from "../generated/workspace-contracts";
 
-export interface CreateProjectBackendAccessPayload {
-  backend_id: string;
-  priority?: number;
-  root_policy?: Record<string, unknown>;
-  capability_policy?: Record<string, unknown>;
-  note?: string | null;
-}
-
-export interface UpdateProjectBackendAccessPayload {
-  status?: ProjectBackendAccessStatus;
-  priority?: number;
-  root_policy?: Record<string, unknown>;
-  capability_policy?: Record<string, unknown>;
-  note?: string | null;
-}
+export type ProjectBackendAccess = ProjectBackendAccessResponse;
+export type BackendWorkspaceInventory = BackendWorkspaceInventoryResponse;
+export type CreateProjectBackendAccessPayload = CreateProjectBackendAccessRequest;
+export type UpdateProjectBackendAccessPayload = UpdateProjectBackendAccessRequest;
 
 export function listProjectBackendAccess(projectId: string): Promise<ProjectBackendAccess[]> {
   return api.get<ProjectBackendAccess[]>(`/projects/${projectId}/backend-access`);
@@ -59,20 +55,10 @@ export function listBackendWorkspaceInventory(
   );
 }
 
-export function refreshBackendWorkspaceInventory(
-  projectId: string,
-  accessId: string,
-): Promise<InventoryRefreshResult> {
-  return api.post<InventoryRefreshResult>(
-    `/projects/${projectId}/backend-access/${accessId}/inventory/refresh`,
-    {},
-  );
-}
-
 export function registerBackendWorkspaceInventory(
   projectId: string,
   accessId: string,
-  payload: { root_ref: string },
+  payload: RegisterBackendWorkspaceInventoryRequest,
 ): Promise<BackendWorkspaceInventory> {
   return api.post<BackendWorkspaceInventory>(
     `/projects/${projectId}/backend-access/${accessId}/inventory/register`,
@@ -92,5 +78,25 @@ export function syncWorkspaceBackendBindings(
   return api.post<WorkspaceBindingSyncResult>(
     `/projects/${projectId}/workspaces/sync-backend-bindings`,
     {},
+  );
+}
+
+export function discoverLocalWorkspaceBindings(
+  projectId: string,
+  payload: DiscoverLocalWorkspaceBindingsRequest,
+): Promise<DiscoverLocalWorkspaceBindingsResponse> {
+  return api.post<DiscoverLocalWorkspaceBindingsResponse>(
+    `/projects/${projectId}/workspaces/discover-local-bindings`,
+    payload,
+  );
+}
+
+export function bindDiscoveredWorkspaceBindings(
+  projectId: string,
+  payload: BindDiscoveredWorkspaceBindingsRequest,
+): Promise<BindDiscoveredWorkspaceBindingsResponse> {
+  return api.post<BindDiscoveredWorkspaceBindingsResponse>(
+    `/projects/${projectId}/workspaces/bind-discovered`,
+    payload,
   );
 }

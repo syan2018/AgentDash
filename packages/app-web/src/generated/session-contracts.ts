@@ -4,15 +4,13 @@
 import type { JsonValue } from "./common-contracts";
 import type { BackboneEnvelope } from "./backbone-protocol";
 
-export type ApproveToolCallResponse = { approved: boolean, sessionId: string, toolCallId: string, };
-
-export type CancelSessionResponse = { cancelled: boolean, sessionId: string, state: SessionCommandStateResponse, };
+export type ApproveToolCallResponse = { approved: boolean, session_id: string, tool_call_id: string, };
 
 export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
 
-export type DeleteSessionResponse = { deleted: boolean, sessionId: string, };
+export type DeleteSessionResponse = { deleted: boolean, session_id: string, };
 
-export type RejectToolCallResponse = { rejected: boolean, sessionId: string, toolCallId: string, };
+export type RejectToolCallResponse = { rejected: boolean, session_id: string, tool_call_id: string, };
 
 export type RollbackSessionProjectionRequest = { target_event_seq: number, active_compaction_id?: string, reason?: string, };
 
@@ -20,9 +18,11 @@ export type SessionAttachmentContextContributionResponse = { name: string, token
 
 export type SessionCommandStateResponse = { status: string, turn_id?: string, message?: string, };
 
-export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
+export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, items: Array<SessionContextUsageItemResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
 
 export type SessionContextUsageCategoryResponse = { kind: string, label: string, token_estimate: number, source: string, deferred: boolean, };
+
+export type SessionContextUsageItemResponse = { kind: string, label: string, name: string, token_estimate: number, source: string, deferred: boolean, source_event_seq?: number, turn_id?: string, };
 
 export type SessionEventResponse = { session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, };
 
@@ -44,7 +44,12 @@ export type SessionMessageContextBreakdownResponse = { user_message_tokens: numb
 
 export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
 
-export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
+export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number,
+/**
+ * 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——
+ * epoch 变化时重置 `lastEphemeralSeq`（旧 cursor 失效），同 epoch 重连则保留。
+ */
+ephemeral_epoch: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
 
 export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
 

@@ -13,15 +13,26 @@ use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
     UpdateMcpPresetInput,
 };
-use agentdash_application::runtime_gateway::{
-    MCP_PROBE_TRANSPORT_ACTION, RuntimeActionKey, RuntimeActor, RuntimeContext,
-    RuntimeInvocationRequest,
+use agentdash_application_runtime_gateway::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, RuntimeActionKey, RuntimeActor,
+    RuntimeContext, RuntimeInvocationRequest,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
-    McpPresetResponse, McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    McpEnvVar, McpHttpHeader, McpPresetResponse, McpPresetSourceTag, McpRoutePolicy,
+    McpRuntimeBindingConfigDto, McpRuntimeBindingRuleDto, McpRuntimeBindingSourceDto,
+    McpRuntimeBindingTargetDto, McpTransportConfigDto, ProbeMcpPresetRequest,
+    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
-use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
+use agentdash_domain::mcp_preset::{
+    McpEnvVar as DomainMcpEnvVar, McpHttpHeader as DomainMcpHttpHeader, McpPreset,
+    McpRoutePolicy as DomainMcpRoutePolicy,
+    McpRuntimeBindingConfig as DomainMcpRuntimeBindingConfig,
+    McpRuntimeBindingRule as DomainMcpRuntimeBindingRule,
+    McpRuntimeBindingSource as DomainMcpRuntimeBindingSource,
+    McpRuntimeBindingTarget as DomainMcpRuntimeBindingTarget,
+    McpTransportConfig as DomainMcpTransportConfig,
+};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -111,14 +122,7 @@ pub async fn create_mcp_preset(
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     let preset = service
-        .create(CreateMcpPresetInput {
-            project_id,
-            key: req.key,
-            display_name: req.display_name,
-            description: req.description,
-            transport: req.transport.into(),
-            route_policy: req.route_policy.into(),
-        })
+        .create(create_mcp_preset_input(project_id, req))
         .await?;
     Ok(Json(preset.into()))
 }
@@ -159,16 +163,7 @@ pub async fn update_mcp_preset(
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     let updated = service
-        .update(
-            preset.id,
-            UpdateMcpPresetInput {
-                key: req.key,
-                display_name: req.display_name,
-                description: req.description,
-                transport: req.transport.map(Into::into),
-                route_policy: req.route_policy.map(Into::into),
-            },
-        )
+        .update(preset.id, update_mcp_preset_input(req))
         .await?;
     Ok(Json(updated.into()))
 }
@@ -259,7 +254,7 @@ pub async fn probe_mcp_transport_handler(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectMcpPresetsPath>,
-    Json(transport): Json<McpTransportConfig>,
+    Json(req): Json<ProbeMcpPresetRequest>,
 ) -> Result<Json<ProbeMcpPresetResponse>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
@@ -270,8 +265,8 @@ pub async fn probe_mcp_transport_handler(
     )
     .await?;
 
-    let input = serde_json::to_value(transport)
-        .map_err(|error| ApiError::BadRequest(format!("MCP transport 配置非法: {error}")))?;
+    let input = serde_json::to_value(probe_mcp_transport_input(req))
+        .map_err(|error| ApiError::BadRequest(format!("MCP probe 请求非法: {error}")))?;
     let request = RuntimeInvocationRequest::new(
         RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).map_err(|error| {
             ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
@@ -328,6 +323,137 @@ fn parse_preset_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 mcp_preset ID".into()))
 }
 
+fn create_mcp_preset_input(project_id: Uuid, req: CreateMcpPresetRequest) -> CreateMcpPresetInput {
+    CreateMcpPresetInput {
+        project_id,
+        key: req.key,
+        display_name: req.display_name,
+        description: req.description,
+        transport: mcp_transport_config(req.transport),
+        route_policy: mcp_route_policy(req.route_policy),
+        runtime_binding: req.runtime_binding.map(mcp_runtime_binding_config),
+    }
+}
+
+fn update_mcp_preset_input(req: UpdateMcpPresetRequest) -> UpdateMcpPresetInput {
+    UpdateMcpPresetInput {
+        key: req.key,
+        display_name: req.display_name,
+        description: req.description,
+        transport: req.transport.map(mcp_transport_config),
+        route_policy: req.route_policy.map(mcp_route_policy),
+        runtime_binding: req
+            .runtime_binding
+            .map(|runtime_binding| runtime_binding.map(mcp_runtime_binding_config)),
+    }
+}
+
+fn probe_mcp_transport_input(req: ProbeMcpPresetRequest) -> McpProbeTransportInput {
+    McpProbeTransportInput {
+        transport: mcp_transport_config(req.transport),
+        runtime_binding: req.runtime_binding.map(mcp_runtime_binding_config),
+    }
+}
+
+fn mcp_transport_config(config: McpTransportConfigDto) -> DomainMcpTransportConfig {
+    match config {
+        McpTransportConfigDto::Http { url, headers } => DomainMcpTransportConfig::Http {
+            url,
+            headers: headers.into_iter().map(mcp_http_header).collect(),
+        },
+        McpTransportConfigDto::Sse { url, headers } => DomainMcpTransportConfig::Sse {
+            url,
+            headers: headers.into_iter().map(mcp_http_header).collect(),
+        },
+        McpTransportConfigDto::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+        } => DomainMcpTransportConfig::Stdio {
+            command,
+            args,
+            env: env.into_iter().map(mcp_env_var).collect(),
+            cwd,
+        },
+    }
+}
+
+fn mcp_http_header(header: McpHttpHeader) -> DomainMcpHttpHeader {
+    DomainMcpHttpHeader {
+        name: header.name,
+        value: header.value,
+    }
+}
+
+fn mcp_env_var(env: McpEnvVar) -> DomainMcpEnvVar {
+    DomainMcpEnvVar {
+        name: env.name,
+        value: env.value,
+    }
+}
+
+fn mcp_runtime_binding_config(config: McpRuntimeBindingConfigDto) -> DomainMcpRuntimeBindingConfig {
+    DomainMcpRuntimeBindingConfig {
+        mount_id: config.mount_id,
+        bindings: config
+            .bindings
+            .into_iter()
+            .map(mcp_runtime_binding_rule)
+            .collect(),
+    }
+}
+
+fn mcp_runtime_binding_rule(rule: McpRuntimeBindingRuleDto) -> DomainMcpRuntimeBindingRule {
+    DomainMcpRuntimeBindingRule {
+        source: mcp_runtime_binding_source(rule.source),
+        target: mcp_runtime_binding_target(rule.target),
+        required: rule.required,
+    }
+}
+
+fn mcp_runtime_binding_source(source: McpRuntimeBindingSourceDto) -> DomainMcpRuntimeBindingSource {
+    match source {
+        McpRuntimeBindingSourceDto::VfsRootRef => DomainMcpRuntimeBindingSource::VfsRootRef,
+        McpRuntimeBindingSourceDto::RuntimeBackendAnchorBackendId => {
+            DomainMcpRuntimeBindingSource::RuntimeBackendAnchorBackendId
+        }
+        McpRuntimeBindingSourceDto::WorkspaceId => DomainMcpRuntimeBindingSource::WorkspaceId,
+        McpRuntimeBindingSourceDto::WorkspaceBindingId => {
+            DomainMcpRuntimeBindingSource::WorkspaceBindingId
+        }
+        McpRuntimeBindingSourceDto::WorkspaceIdentity { path } => {
+            DomainMcpRuntimeBindingSource::WorkspaceIdentity { path }
+        }
+        McpRuntimeBindingSourceDto::WorkspaceDetectedFact { path } => {
+            DomainMcpRuntimeBindingSource::WorkspaceDetectedFact { path }
+        }
+    }
+}
+
+fn mcp_runtime_binding_target(target: McpRuntimeBindingTargetDto) -> DomainMcpRuntimeBindingTarget {
+    match target {
+        McpRuntimeBindingTargetDto::HttpQuery { name } => {
+            DomainMcpRuntimeBindingTarget::HttpQuery { name }
+        }
+        McpRuntimeBindingTargetDto::HttpHeader { name } => {
+            DomainMcpRuntimeBindingTarget::HttpHeader { name }
+        }
+        McpRuntimeBindingTargetDto::StdioEnv { name } => {
+            DomainMcpRuntimeBindingTarget::StdioEnv { name }
+        }
+        McpRuntimeBindingTargetDto::StdioCwd => DomainMcpRuntimeBindingTarget::StdioCwd,
+    }
+}
+
+fn mcp_route_policy(policy: McpRoutePolicy) -> DomainMcpRoutePolicy {
+    match policy {
+        McpRoutePolicy::Auto => DomainMcpRoutePolicy::Auto,
+        McpRoutePolicy::Relay => DomainMcpRoutePolicy::Relay,
+        McpRoutePolicy::Direct => DomainMcpRoutePolicy::Direct,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! 路由层纯函数测试——涵盖 path / query 参数解析和错误映射边界。
@@ -355,6 +481,110 @@ mod tests {
     fn parse_preset_id_rejects_invalid() {
         let err = parse_preset_id("abc").expect_err("invalid uuid");
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn create_request_mapping_preserves_transport_runtime_binding_and_route_policy() {
+        let project_id = Uuid::new_v4();
+        let input = create_mcp_preset_input(
+            project_id,
+            CreateMcpPresetRequest {
+                key: "perforce".to_string(),
+                display_name: "Perforce".to_string(),
+                description: Some("demo".to_string()),
+                transport: McpTransportConfigDto::Stdio {
+                    command: "p4-mcp".to_string(),
+                    args: vec!["serve".to_string()],
+                    env: vec![McpEnvVar {
+                        name: "P4PORT".to_string(),
+                        value: "ssl:p4:1666".to_string(),
+                    }],
+                    cwd: Some("C:/workspace".to_string()),
+                },
+                route_policy: McpRoutePolicy::Relay,
+                runtime_binding: Some(sample_runtime_binding_dto(true)),
+            },
+        );
+
+        assert_eq!(input.project_id, project_id);
+        assert_eq!(input.route_policy, DomainMcpRoutePolicy::Relay);
+        assert_eq!(
+            input.transport,
+            DomainMcpTransportConfig::Stdio {
+                command: "p4-mcp".to_string(),
+                args: vec!["serve".to_string()],
+                env: vec![DomainMcpEnvVar {
+                    name: "P4PORT".to_string(),
+                    value: "ssl:p4:1666".to_string(),
+                }],
+                cwd: Some("C:/workspace".to_string()),
+            }
+        );
+        assert!(input.runtime_binding.expect("binding").bindings[0].required);
+    }
+
+    #[test]
+    fn update_request_mapping_preserves_runtime_binding_tri_state() {
+        let missing = update_mcp_preset_input(UpdateMcpPresetRequest::default());
+        assert!(missing.runtime_binding.is_none());
+
+        let clear = update_mcp_preset_input(UpdateMcpPresetRequest {
+            runtime_binding: Some(None),
+            ..Default::default()
+        });
+        assert_eq!(clear.runtime_binding, Some(None));
+
+        let replace = update_mcp_preset_input(UpdateMcpPresetRequest {
+            runtime_binding: Some(Some(sample_runtime_binding_dto(false))),
+            ..Default::default()
+        });
+        let binding = replace
+            .runtime_binding
+            .expect("field should be present")
+            .expect("binding should replace");
+        assert_eq!(binding.mount_id.as_deref(), Some("main"));
+        assert!(!binding.bindings[0].required);
+    }
+
+    #[test]
+    fn probe_request_mapping_preserves_optional_runtime_binding() {
+        let input = probe_mcp_transport_input(ProbeMcpPresetRequest {
+            transport: McpTransportConfigDto::Http {
+                url: "http://127.0.0.1:1/mcp".to_string(),
+                headers: vec![McpHttpHeader {
+                    name: "x-demo".to_string(),
+                    value: "1".to_string(),
+                }],
+            },
+            runtime_binding: Some(sample_runtime_binding_dto(true)),
+        });
+
+        assert_eq!(
+            input.transport,
+            DomainMcpTransportConfig::Http {
+                url: "http://127.0.0.1:1/mcp".to_string(),
+                headers: vec![DomainMcpHttpHeader {
+                    name: "x-demo".to_string(),
+                    value: "1".to_string(),
+                }],
+            }
+        );
+        assert!(input.runtime_binding.expect("binding").bindings[0].required);
+    }
+
+    fn sample_runtime_binding_dto(required: bool) -> McpRuntimeBindingConfigDto {
+        McpRuntimeBindingConfigDto {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRuleDto {
+                source: McpRuntimeBindingSourceDto::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTargetDto::HttpQuery {
+                    name: "p4_client".to_string(),
+                },
+                required,
+            }],
+        }
     }
 
     #[test]

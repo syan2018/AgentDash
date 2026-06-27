@@ -6,6 +6,7 @@ import { useState, useMemo } from "react";
 import type { ThreadItem } from "../../../../generated/backbone-protocol";
 import { DiffCardBody } from "./DiffCardBody";
 import { parseUnifiedDiff } from "./diffPayload";
+import { CB } from "./cardBodyTokens";
 
 type FileChangeItem = Extract<ThreadItem, { type: "fileChange" }>;
 
@@ -15,7 +16,7 @@ export function FileChangeCardBody({ item }: { item: FileChangeItem }) {
   }
 
   return (
-    <div className="space-y-1.5">
+    <div className={CB.itemGap}>
       {item.changes.map((change) => (
         <FileChangeBlock key={change.path} change={change} />
       ))}
@@ -33,41 +34,41 @@ function FileChangeBlock({
   const kindLabel = getChangeKindLabel(change.kind);
 
   return (
-    <div className="overflow-hidden rounded-[8px] border border-border">
+    <div className={`overflow-hidden ${CB.inlineEntry}`}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/35"
+        className={CB.inlineEntryButton}
       >
         {kindLabel && (
-          <span className="shrink-0 rounded bg-secondary px-1 py-px text-[10px] font-semibold text-muted-foreground">
+          <span className={CB.kindBadge}>
             {kindLabel}
           </span>
         )}
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80">
           {change.path}
         </span>
         {change.kind.type === "update" && change.kind.move_path && (
-          <span className="truncate text-[10px] text-muted-foreground">
+          <span className={CB.meta}>
             → {change.kind.move_path}
           </span>
         )}
         {(payload.added > 0 || payload.removed > 0) && (
-          <span className="flex shrink-0 gap-1.5 text-xs">
+          <span className="flex shrink-0 gap-1.5 text-[10px]">
             {payload.added > 0 && (
-              <span className="text-success">+{payload.added}</span>
+              <span className={CB.diffAdded}>+{payload.added}</span>
             )}
             {payload.removed > 0 && (
-              <span className="text-destructive">-{payload.removed}</span>
+              <span className={CB.diffRemoved}>-{payload.removed}</span>
             )}
           </span>
         )}
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
+        <span className={CB.expandToggle}>
           {expanded ? "▲" : "▼"}
         </span>
       </button>
       {expanded && change.diff && (
-        <div className="border-t border-border p-2.5">
+        <div className="border-t border-border/30 p-2">
           <DiffCardBody payload={payload} />
         </div>
       )}

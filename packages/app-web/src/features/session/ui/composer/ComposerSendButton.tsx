@@ -1,24 +1,32 @@
-/**
- * Morphing 发送/停止按钮 — 常驻显示
- *
- * 状态机:
- * - running + 无内容 → stop 按钮
- * - running + 有内容 + enqueue → 排队按钮 + 可选 steer
- * - 其它 → 发送按钮（无内容时 disabled 半透明）
- */
+import type { SessionChatCommand } from "../SessionChatViewTypes";
 
 interface ComposerSendButtonProps {
   isRunning: boolean;
   hasInput: boolean;
   isSending: boolean;
   isCancelling: boolean;
-  sendDisabled: boolean;
   cancelDisabled: boolean;
-  primaryKind?: string;
-  canSteer?: boolean;
-  onSend: () => void;
-  onSteer?: () => void;
+  submitCommand?: SessionChatCommand;
+  onSubmit: (command: SessionChatCommand) => void;
   onCancel: () => void;
+}
+
+function commandTitle(command: SessionChatCommand, fallback: string): string {
+  if (!command.enabled) return command.unavailable_reason ?? fallback;
+  switch (command.kind) {
+    case "submit_message":
+    case "draft_start_local":
+      return "发送";
+    default:
+      return fallback;
+  }
+}
+
+function optionalCommandTitle(
+  command: SessionChatCommand | undefined,
+  fallback: string,
+): string {
+  return command ? commandTitle(command, fallback) : fallback;
 }
 
 export function ComposerSendButton({
@@ -26,16 +34,13 @@ export function ComposerSendButton({
   hasInput,
   isSending,
   isCancelling,
-  sendDisabled,
   cancelDisabled,
-  primaryKind,
-  canSteer,
-  onSend,
-  onSteer,
+  submitCommand,
+  onSubmit,
   onCancel,
 }: ComposerSendButtonProps) {
   const showStop = isRunning && !hasInput;
-  const isEnqueueMode = primaryKind === "enqueue";
+  const submitDisabled = isSending || !submitCommand?.enabled;
 
   // Running + 无内容 → Stop
   if (showStop) {
@@ -52,42 +57,13 @@ export function ComposerSendButton({
     );
   }
 
-  // Running + 有内容 + enqueue → 排队 + 可选 steer
-  if (isEnqueueMode && isRunning && hasInput) {
-    return (
-      <div className="flex items-center gap-1.5">
-        {canSteer && onSteer && (
-          <button
-            type="button"
-            disabled={isSending}
-            onClick={onSteer}
-            title="立即 Steer (Ctrl+Enter)"
-            className="flex h-7 items-center gap-1 rounded-[12px] bg-primary/10 px-2.5 text-xs text-primary transition-colors hover:bg-primary/20 disabled:opacity-40"
-          >
-            <SteerIcon />
-            <span>Steer</span>
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={sendDisabled}
-          onClick={onSend}
-          title={isSending ? "排队中…" : "排队 (Enter)"}
-          className="flex h-8 w-8 items-center justify-center rounded-[50%] bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-30"
-        >
-          {isSending ? <Spinner /> : <QueueIcon />}
-        </button>
-      </div>
-    );
-  }
-
   // 默认：发送按钮常驻（无内容时 disabled 半透明）
   return (
     <button
       type="button"
-      disabled={sendDisabled}
-      onClick={onSend}
-      title={isSending ? "发送中…" : "发送"}
+      disabled={submitDisabled}
+      onClick={() => { if (submitCommand) onSubmit(submitCommand); }}
+      title={isSending ? "发送中…" : optionalCommandTitle(submitCommand, "发送")}
       className="flex h-8 w-8 items-center justify-center rounded-[50%] bg-foreground text-background transition-opacity hover:opacity-80 disabled:opacity-30"
     >
       {isSending ? <Spinner /> : <ArrowUpIcon />}
@@ -109,27 +85,10 @@ function ArrowUpIcon() {
   );
 }
 
-function QueueIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 13V3M8 3L3.5 7.5M8 3L12.5 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.3" />
-    </svg>
-  );
-}
-
 function StopIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <rect x="2" y="2" width="10" height="10" rx="2" fill="currentColor" />
-    </svg>
-  );
-}
-
-function SteerIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path d="M6.5 1L2.5 7H6L5.5 11L9.5 5H6L6.5 1Z" fill="currentColor" />
     </svg>
   );
 }

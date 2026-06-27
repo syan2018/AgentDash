@@ -10,8 +10,9 @@
 
 #![cfg(test)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::SetDelta;
@@ -19,7 +20,7 @@ use agentdash_spi::ToolCluster;
 use uuid::Uuid;
 
 use crate::capability::{
-    AgentMcpServerEntry, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
+    AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, build_capability_delta_markdown,
 };
 use crate::platform_config::PlatformConfig;
@@ -30,18 +31,23 @@ fn platform() -> PlatformConfig {
     }
 }
 
-fn mcp_entry(name: &str, url: &str) -> AgentMcpServerEntry {
-    AgentMcpServerEntry {
-        name: name.to_string(),
-        server: agentdash_spi::SessionMcpServer {
-            name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+fn mcp_candidates(name: &str, url: &str) -> McpCandidates {
+    let mut presets = BTreeMap::new();
+    presets.insert(
+        name.to_string(),
+        McpPreset::new_user(
+            Uuid::new_v4(),
+            name,
+            name,
+            None,
+            McpTransportConfig::Http {
                 url: url.to_string(),
                 headers: vec![],
             },
-            uses_relay: false,
-        },
-    }
+            McpRoutePolicy::Direct,
+        ),
+    );
+    McpCandidates { presets }
 }
 
 fn state_has_mcp_url(output: &crate::capability::CapabilityResolverOutput, needle: &str) -> bool {
@@ -74,11 +80,10 @@ fn agent_node_step_directives_produce_expected_session_tools() {
             }),
             companion: None,
         }],
-        mcp_candidates: McpCandidates {
-            presets: Default::default(),
-            agent_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
-        },
+        mcp_candidates: mcp_candidates("code_analyzer", "http://external:8080/mcp"),
+        mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -110,7 +115,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     let directives = vec![
         ToolCapabilityDirective::add_simple("workflow_management"),
         ToolCapabilityDirective::add_simple("mcp:external_analyzer"),
-        ToolCapabilityDirective::remove_simple("canvas"),
+        ToolCapabilityDirective::remove_simple("workspace_module"),
     ];
 
     let input = CapabilityResolverInput {
@@ -125,15 +130,14 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
             }),
             companion: None,
         }],
-        mcp_candidates: McpCandidates {
-            presets: Default::default(),
-            agent_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
-        },
+        mcp_candidates: mcp_candidates("external_analyzer", "http://external:9000/mcp"),
+        mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
-    assert!(!output.has(ToolCluster::Canvas));
+    assert!(!output.has(ToolCluster::WorkspaceModule));
     assert!(output.has(ToolCluster::Read));
     assert!(state_has_mcp_url(&output, "/mcp/workflow/"));
     assert!(
@@ -149,7 +153,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         "file_read",
         "file_write",
         "shell_execute",
-        "canvas",
+        "workspace_module",
         "collaboration",
         "relay_management",
     ]
@@ -170,7 +174,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     assert!(md.contains("**workflow_management**"));
     assert!(md.contains("**mcp:external_analyzer**"));
     assert!(md.contains("### Removed Capabilities"));
-    assert!(md.contains("**canvas**"));
+    assert!(md.contains("**workspace_module**"));
     assert!(md.contains("（不再可用）"));
     assert!(md.contains("Workflow / Lifecycle 定义的查看、创建与编辑"));
 }
@@ -184,14 +188,16 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
         },
         contributions: Vec::new(),
         mcp_candidates: McpCandidates::default(),
+        mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
     // baseline 自带的能力
     assert!(output.has(ToolCluster::Read));
     assert!(output.has(ToolCluster::Write));
-    assert!(output.has(ToolCluster::Canvas));
+    assert!(output.has(ToolCluster::WorkspaceModule));
 
     let effective_set: BTreeSet<String> = output
         .tool
@@ -224,7 +230,9 @@ fn phase_node_invalid_directives_are_tolerated() {
             companion: None,
         }],
         mcp_candidates: McpCandidates::default(),
+        mcp_runtime_context: None,
         capability_context: None,
+        authority_state: AuthorityState::main_project_agent(),
     };
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(

@@ -162,7 +162,7 @@ async fn resolve_scope(
 ) -> Result<SettingScope, ApiError> {
     match query
         .scope
-        .map(DomainSettingScopeKind::from)
+        .map(settings_scope_kind_into_domain)
         .unwrap_or(DomainSettingScopeKind::System)
     {
         DomainSettingScopeKind::System => {
@@ -190,6 +190,14 @@ async fn resolve_scope(
             .await?;
             Ok(SettingScope::project(raw_project_id.to_string()))
         }
+    }
+}
+
+fn settings_scope_kind_into_domain(scope: SettingsScopeKind) -> DomainSettingScopeKind {
+    match scope {
+        SettingsScopeKind::System => DomainSettingScopeKind::System,
+        SettingsScopeKind::User => DomainSettingScopeKind::User,
+        SettingsScopeKind::Project => DomainSettingScopeKind::Project,
     }
 }
 
@@ -242,5 +250,21 @@ mod tests {
     fn enterprise_admin_can_access_system_scope() {
         let result = require_system_settings_access(&user(AuthMode::Enterprise, true));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn maps_settings_scope_request_to_domain() {
+        assert_eq!(
+            settings_scope_kind_into_domain(SettingsScopeKind::System),
+            DomainSettingScopeKind::System
+        );
+        assert_eq!(
+            settings_scope_kind_into_domain(SettingsScopeKind::User),
+            DomainSettingScopeKind::User
+        );
+        assert_eq!(
+            settings_scope_kind_into_domain(SettingsScopeKind::Project),
+            DomainSettingScopeKind::Project
+        );
     }
 }

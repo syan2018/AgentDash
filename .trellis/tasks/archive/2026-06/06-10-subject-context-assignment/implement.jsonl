@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/project-overview.md", "reason": "SubjectRef and AgentFrame vocabulary for the dynamic context assignment model."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "AgentFrame surface and RuntimeSession trace-substrate constraints."}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Story/Task subject and projection boundaries for context assignment."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "CapabilityScope derivation and visibility rules for subject-scoped context."}

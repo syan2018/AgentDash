@@ -5,6 +5,7 @@
 //!
 //! 每个 StoryMcpServer 实例绑定到一个具体的 Story，工具操作范围受限于该 Story。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -25,6 +26,9 @@ use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
 use agentdash_domain::session_composition::validate_session_composition;
+use agentdash_domain::workflow::{
+    LifecycleRun, LifecycleTaskPlanItemDraft, SubjectRef, TaskPriority,
+};
 use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
@@ -68,22 +72,22 @@ pub struct ContextSourceRefInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTaskParams {
+    #[schemars(description = "Story-bound LifecycleRun UUID，Task 将创建到该 run 的计划项集合中")]
+    pub run_id: String,
     #[schemars(description = "Task 标题")]
     pub title: String,
     #[schemars(description = "Task 描述（包含执行指令和上下文）")]
     pub description: String,
-    #[schemars(description = "关联的 Workspace UUID（可选）")]
-    pub workspace_id: Option<String>,
-    #[schemars(description = "Agent 类型提示（如 claude-code / codex）")]
-    pub agent_type: Option<String>,
-    #[schemars(description = "初始上下文（拼接在提示词前的额外信息）")]
-    pub initial_context: Option<String>,
+    #[schemars(description = "Task 优先级：p0 / p1 / p2 / p3（可选）")]
+    pub priority: Option<String>,
     #[schemars(description = "Task 专属声明式上下文来源")]
     pub context_sources: Option<Vec<ContextSourceRefInput>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct BatchCreateTasksParams {
+    #[schemars(description = "Story-bound LifecycleRun UUID，Task 将创建到该 run 的计划项集合中")]
+    pub run_id: String,
     #[schemars(description = "批量创建的 Task 列表")]
     pub tasks: Vec<TaskInput>,
 }
@@ -92,9 +96,7 @@ pub struct BatchCreateTasksParams {
 pub struct TaskInput {
     pub title: String,
     pub description: String,
-    pub workspace_id: Option<String>,
-    pub agent_type: Option<String>,
-    pub initial_context: Option<String>,
+    pub priority: Option<String>,
     pub context_sources: Option<Vec<ContextSourceRefInput>>,
 }
 
@@ -215,6 +217,72 @@ impl StoryMcpServer {
             .map(|item| item.trim().to_string())
             .filter(|item| !item.is_empty())
             .collect()
+    }
+
+    fn parse_uuid(field: &'static str, value: &str) -> Result<Uuid, McpError> {
+        Uuid::parse_str(value)
+            .map_err(|_| McpError::invalid_param(field, format!("无效的 UUID: {value}")))
+    }
+
+    fn parse_priority(value: Option<String>) -> Result<Option<TaskPriority>, McpError> {
+        value
+            .map(|priority| {
+                serde_json::from_value(serde_json::Value::String(priority.clone())).map_err(|_| {
+                    McpError::invalid_param("priority", format!("无效的 Task 优先级: {priority}"))
+                })
+            })
+            .transpose()
+    }
+
+    async fn load_story_bound_run(&self, run_id: Uuid) -> Result<LifecycleRun, McpError> {
+        let run = self
+            .services
+            .lifecycle_run_repo
+            .get_by_id(run_id)
+            .await
+            .map_err(McpError::from)?
+            .ok_or_else(|| McpError::not_found("LifecycleRun", run_id))?;
+        if run.project_id != self.project_id {
+            return Err(McpError::invalid_param(
+                "run_id",
+                "LifecycleRun 不属于当前 Project",
+            ));
+        }
+        let story_subject = SubjectRef::new("story", self.story_id);
+        let is_story_bound = self
+            .services
+            .lifecycle_subject_association_repo
+            .list_by_subject(&story_subject)
+            .await
+            .map_err(McpError::from)?
+            .into_iter()
+            .any(|association| association.anchor_run_id == run_id);
+        if !is_story_bound {
+            return Err(McpError::invalid_param(
+                "run_id",
+                "Task 只能通过 Story-bound LifecycleRun 创建",
+            ));
+        }
+        Ok(run)
+    }
+
+    fn build_task_draft(
+        &self,
+        title: String,
+        description: String,
+        priority: Option<String>,
+        context_sources: Option<Vec<ContextSourceRefInput>>,
+    ) -> Result<LifecycleTaskPlanItemDraft, McpError> {
+        let mut draft = LifecycleTaskPlanItemDraft::new(title);
+        draft.body = Some(description);
+        draft.priority = Self::parse_priority(priority)?;
+        draft.story_ref = Some(SubjectRef::new("story", self.story_id));
+        draft.context_refs = context_sources
+            .unwrap_or_default()
+            .into_iter()
+            .map(Self::into_context_source)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(draft)
     }
 }
 
@@ -380,148 +448,88 @@ impl StoryMcpServer {
         ))]))
     }
 
-    #[tool(description = "在当前 Story 下创建一个新的 Task（执行单元）")]
+    #[tool(description = "通过 Story-bound LifecycleRun 创建一个 run-scoped Task 计划项")]
     async fn create_task(
         &self,
         Parameters(params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{Task, TaskDispatchPreference};
-
         self.require_project(McpProjectPermission::Edit).await?;
-        let workspace_id = params
-            .workspace_id
-            .as_deref()
-            .map(|s| {
-                Uuid::parse_str(s)
-                    .map_err(|_| McpError::invalid_param("workspace_id", "无效的 UUID"))
-            })
-            .transpose()?;
-
-        let mut task = Task::new(
-            self.project_id,
-            self.story_id,
+        let run_id = Self::parse_uuid("run_id", &params.run_id)?;
+        let run = self.load_story_bound_run(run_id).await?;
+        let draft = self.build_task_draft(
             params.title,
             params.description,
-        );
-        task.workspace_id = workspace_id;
-        task.dispatch_preference = TaskDispatchPreference {
-            agent_type: params.agent_type,
-            initial_context: params.initial_context,
-            context_sources: params
-                .context_sources
-                .unwrap_or_default()
-                .into_iter()
-                .map(Self::into_context_source)
-                .collect::<Result<Vec<_>, _>>()?,
-            ..Default::default()
-        };
-
-        // M1-b：task create 走 Story aggregate 命令路径，保证 TaskCreated 事件与
-        // stories.tasks 写入在同一事务内落地。
-        let task_id = task.id;
-        self.services
-            .story_repo
-            .add_task_to_story(self.story_id, &task)
-            .await
-            .map_err(McpError::from)?;
+            params.priority,
+            params.context_sources,
+        )?;
+        let created = agentdash_application::task::plan::create_run_task(
+            self.services.lifecycle_run_repo.as_ref(),
+            run.id,
+            draft,
+        )
+        .await
+        .map_err(McpError::from)?;
 
         let result = serde_json::json!({
-            "task_id": task_id.to_string(),
-            "story_id": self.story_id.to_string(),
-            "status": "pending",
-            "message": "Task 已创建",
+            "project_id": created.project_id.to_string(),
+            "run_id": created.run_id.to_string(),
+            "task": created.task,
         });
-
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default(),
         )]))
     }
 
-    #[tool(description = "在当前 Story 下批量创建多个 Task（通常用于 Story 拆解完成后一次性创建）")]
+    #[tool(description = "通过 Story-bound LifecycleRun 批量创建 run-scoped Task 计划项")]
     async fn batch_create_tasks(
         &self,
         Parameters(params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{Task, TaskDispatchPreference};
-
         self.require_project(McpProjectPermission::Edit).await?;
-        let mut created_ids = Vec::new();
-        let mut tasks_to_create = Vec::new();
-
-        for input in &params.tasks {
-            let workspace_id = input
-                .workspace_id
-                .as_deref()
-                .map(|s| {
-                    Uuid::parse_str(s)
-                        .map_err(|_| McpError::invalid_param("workspace_id", "无效的 UUID"))
-                })
-                .transpose()?;
-
-            let mut task = Task::new(
-                self.project_id,
-                self.story_id,
-                input.title.clone(),
-                input.description.clone(),
-            );
-            task.workspace_id = workspace_id;
-            task.dispatch_preference = TaskDispatchPreference {
-                agent_type: input.agent_type.clone(),
-                initial_context: input.initial_context.clone(),
-                context_sources: input
-                    .context_sources
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(Self::into_context_source)
-                    .collect::<Result<Vec<_>, _>>()?,
-                ..Default::default()
-            };
-
-            let task_id = task.id;
-            tasks_to_create.push(task);
-            created_ids.push(task_id.to_string());
-        }
-
-        self.services
-            .story_repo
-            .add_tasks_to_story(self.story_id, &tasks_to_create)
+        let run_id = Self::parse_uuid("run_id", &params.run_id)?;
+        let run = self.load_story_bound_run(run_id).await?;
+        let mut created = Vec::new();
+        for task in params.tasks {
+            let draft = self.build_task_draft(
+                task.title,
+                task.description,
+                task.priority,
+                task.context_sources,
+            )?;
+            let result = agentdash_application::task::plan::create_run_task(
+                self.services.lifecycle_run_repo.as_ref(),
+                run.id,
+                draft,
+            )
             .await
             .map_err(McpError::from)?;
+            created.push(result.task);
+        }
 
         let result = serde_json::json!({
-            "story_id": self.story_id.to_string(),
-            "created_count": created_ids.len(),
-            "task_ids": created_ids,
+            "project_id": self.project_id.to_string(),
+            "run_id": run.id.to_string(),
+            "tasks": created,
         });
-
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default(),
         )]))
     }
 
-    #[tool(description = "列出当前 Story 下的所有 Task 及其状态")]
+    #[tool(description = "查询当前 Story 的 Task projection")]
     async fn list_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::View).await?;
-        let story = self.load_story().await?;
-        let tasks = &story.tasks;
-
-        let result: Vec<serde_json::Value> = tasks
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "id": t.id.to_string(),
-                    "title": t.title,
-                    "description": t.description,
-                    "status": t.status(),
-                    "workspace_id": t.workspace_id.map(|w| w.to_string()),
-                    "agent_type": t.dispatch_preference.agent_type,
-                })
-            })
-            .collect();
+        let projection = agentdash_application::task::plan::build_story_task_projection(
+            self.services.lifecycle_run_repo.as_ref(),
+            self.services.lifecycle_subject_association_repo.as_ref(),
+            self.project_id,
+            self.story_id,
+        )
+        .await
+        .map_err(McpError::from)?;
 
         Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&result).unwrap_or_default(),
+            serde_json::to_string_pretty(&projection_to_json(projection)).unwrap_or_default(),
         )]))
     }
 
@@ -544,7 +552,8 @@ impl StoryMcpServer {
                     )
                 })?;
 
-        tracing::info!(
+        diag!(Info, Subsystem::Mcp,
+
             story_id = %self.story_id,
             from = ?story.status,
             to = ?new_status,
@@ -579,6 +588,40 @@ impl ServerHandler for StoryMcpServer {
                 self.story_id
             ),
         )
+    }
+}
+
+fn projection_to_json(
+    projection: agentdash_application::task::plan::StoryTaskProjectionView,
+) -> serde_json::Value {
+    serde_json::json!({
+        "story_id": projection.story_id.to_string(),
+        "tasks": projection.tasks.into_iter().map(|item| {
+            serde_json::json!({
+                "project_id": item.project_id.to_string(),
+                "owning_run_id": item.owning_run_id.to_string(),
+                "task": item.task,
+                "sources": item.sources.into_iter().map(|source| {
+                    serde_json::json!({
+                        "kind": story_projection_source_kind(source.kind),
+                        "run_id": source.run_id.to_string(),
+                        "agent_id": source.agent_id.map(|id| id.to_string()),
+                        "story_ref": source.story_ref,
+                        "reason": source.reason,
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn story_projection_source_kind(
+    kind: agentdash_application::task::plan::StoryTaskProjectionSourceKind,
+) -> &'static str {
+    match kind {
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::OwningRun => "owning_run",
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::LinkedRun => "linked_run",
+        agentdash_application::task::plan::StoryTaskProjectionSourceKind::StoryRef => "story_ref",
     }
 }
 

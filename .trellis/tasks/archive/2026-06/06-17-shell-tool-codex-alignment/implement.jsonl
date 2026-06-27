@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端分层、runtime 边界与服务归属基线"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "runtime action 与本机能力调用边界"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "relay/tool/runtime 错误类型和映射约束"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "长命令、relay 与本机 runtime 日志字段约束"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS exec adapter 与 mount provider 归属"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "cloud/local/frontend 跨层事实源和数据流基线"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Rust DTO、TS generated types 和 drift check 契约"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "桌面本机 runtime、relay 和前端 shell/terminal 边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 DTO mapper 与字段收束约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "terminal store 与 session projection 状态归属"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 API/backend/local/frontend 改动前的检查框架"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用轻量依赖并删除重复自维护实现的检查框架"}

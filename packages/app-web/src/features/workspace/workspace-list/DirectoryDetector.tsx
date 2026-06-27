@@ -7,8 +7,7 @@ import type {
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import { registerBackendWorkspaceInventory } from "../../../services/backendAccess";
 import { DirectoryBrowserDialog } from "../directory-browser-dialog";
-import { identityKindLabels } from "../model/workspaceRouting";
-import { TERMS } from "../model/workspaceTerms";
+import { IDENTITY_KIND_LABELS, TERMS } from "../model/workspaceTerms";
 import { detectionPrimaryText, type Feedback } from "./editorHelpers";
 
 type DetectorMode = "fill-binding" | "register-inventory";
@@ -111,7 +110,7 @@ export function DirectoryDetector({
     try {
       await registerBackendWorkspaceInventory(projectId, access.id, { root_ref: rootRef });
       await onInventoryRegistered?.();
-      onFeedback({ tone: "success", text: "已登记为可选目录，可在上方确认为运行位置" });
+      onFeedback({ tone: "success", text: "已登记为可选目录，可在上方确认为目录绑定" });
     } catch (registerError) {
       onFeedback({ tone: "error", text: (registerError as Error).message });
     } finally {
@@ -173,7 +172,7 @@ export function DirectoryDetector({
         <div className="flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3 text-xs text-muted-foreground">
           <div className="min-w-0 flex-1">
             <p>
-              识别结果：{identityKindLabels[detectionResult.identity_kind]}
+              识别结果：{IDENTITY_KIND_LABELS[detectionResult.identity_kind]}
               <span className="text-muted-foreground/60"> · </span>
               <span className="font-mono text-foreground">
                 {detectionPrimaryText(detectionResult)}

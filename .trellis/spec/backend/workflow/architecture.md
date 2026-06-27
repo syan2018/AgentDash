@@ -14,7 +14,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `LifecycleContext` | `LifecycleRun` 内的上下文快照，保存主 AgentRun、AgentRun refs、AgentFrame refs、权限和预算摘要 |
 | `OrchestrationInstance` | `LifecycleRun` 内部 0..N 个编排状态容器，保存 plan snapshot、runtime node state、dispatch 摘要和 state exchange snapshot；`orchestration_id` 是运行实例身份 |
 | `OrchestrationPlanSnapshot` | 静态 graph、workflow script 或 run artifact 编译后的不可变 runtime plan |
-| `LifecycleRunTopology` | run 的控制面拓扑：`graphless` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
+| `LifecycleRunTopology` | run 的控制面拓扑：`plain` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
 | `RuntimeNodeState` | `orchestration_id + node_path + attempt` 定位的运行节点状态 |
 | `NodeDispatchLease` | scheduler 对 runtime node 的 operational lease |
 | `LifecycleAgent` | run-scoped Agent runtime identity |
@@ -37,7 +37,12 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - Scheduler 负责 durable claim 和 executor 启动；executor 只通过 runtime node terminal event 把结果交还给 orchestration runtime。
 - Function executor 即使立即完成，也必须产出 runtime node terminal event，而不是直接修改 run state。
 - Agent node execution identity 使用 `AgentInvocation(lifecycle_run_id, orchestration_id, node_path, attempt, agent_run_id, frame_id)` 定位当前 work；RuntimeSession 只作为 terminal/runtime evidence。
+- AgentRun lifecycle surface 的 node projection 必须由 `orchestration_id + node_path + attempt`
+  显式构造。`RuntimeSessionExecutionAnchor` 可以作为 message stream / launch evidence ref，但
+  不拥有 node runtime；原因是 artifacts、records 和 runtime reducer 都以 orchestration node
+  coordinate 为写入与推进事实源。
 - 通过 `RuntimeSession` 反查 Lifecycle node 时，必须使用 runtime trace anchor，再进入 `LifecycleRun -> OrchestrationInstance -> RuntimeNodeState` 的证据链。
+- `AgentFrame` revision 分为 dispatch launch evidence 与 runtime surface 两类生产角色。dispatch launch evidence 记录 run / agent / frame / runtime session anchor；capability、context、VFS、MCP 和 execution profile 的生效 surface 由 frame construction / lifecycle node composer 写入后续 runtime surface revision。读取 workspace/VFS 时从 runtime session anchor 进入 agent current frame，再消费 frame 上的 typed surface。
 - `LifecycleSubjectAssociation` 是 Task / Story / Routine / Project 等业务 subject 的归属入口；业务状态不能由 `RuntimeSession` title、存在性或 trace 内容推断。
 - Lifecycle edge 只有 `flow` 和 `artifact` 两类；artifact edge 隐含 node-level flow dependency。
 - 多 activity lifecycle 必须显式声明 edges；运行时不按数组顺序推断推进路径。
@@ -53,7 +58,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `../story-task-runtime.md` | Story / Task / Session / LifecycleRun 关系拓扑 |
 | `../../frontend/workflow-activity-lifecycle.md` | 前端 Activity lifecycle 编辑与运行观察契约 |
 
-`LifecycleRun.topology=graphless` 是普通 Agent runtime 的当前默认形态，只创建 run / agent / frame / runtime session anchor 与 subject association。`LifecycleRun.topology=workflow_graph` 表示显式 workflow runtime，拥有 root definition refs 与 `OrchestrationInstance`。
+`LifecycleRun.topology=plain` 是普通 Agent runtime 的当前默认形态，只创建 run / agent / frame / runtime session anchor 与 subject association。`LifecycleRun.topology=workflow_graph` 表示显式 workflow runtime，拥有 root definition refs 与 `OrchestrationInstance`。
 
 跨业务 dispatch / cancel / routine response 使用 `AgentRuntimeRefs` 作为统一控制面 envelope。显式 workflow runtime 的节点绑定使用 orchestration/node refs，原因是同一 Lifecycle 内可以同时存在多个 orchestration。
 
@@ -73,17 +78,37 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `workflow/value_objects/run_state.rs` | Lifecycle execution ledger 与 executor refs |
 | `workflow/value_objects/orchestration.rs` | Lifecycle-owned orchestration contract、plan snapshot、runtime node state、dispatch/state exchange/journal fact value types |
 | `workflow/validation.rs` | Workflow contract validation、Lifecycle DAG validation、Activity lifecycle transition/port/policy validation |
+| `workflow/frame_construction/owner_bootstrap.rs` | Project / Story / Routine owner surface composition，产出写入 `AgentFrame` 的 VFS、MCP、capability、context bundle 与 execution profile |
 | `agentdash-spi::workflow::script` | Workflow script evaluator port；application 只消费脚本校验与 builder document 输出，不依赖具体脚本引擎 |
 | `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
-| `agentdash-application::workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
-| `agentdash-application::workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
+| `agentdash-application-workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
+| `agentdash-application-workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
 
 ## Local Decisions
 
-- 普通 Agent runtime 默认使用 graphless 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
+- 普通 Agent runtime 默认使用 plain 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
 - 业务 result 不平铺 run / graph / agent / frame / node refs，原因是 run / agent / frame 是通用控制面，而 orchestration/node refs 是显式 workflow binding；统一 envelope 可以让调用方先处理 Agent runtime，再按拓扑决定是否进入 workflow 节点细节。
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
 - `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的索引和 read model projection 来源，原因是运行时 trace 反查需要稳定索引，且不应随 frame revision surface 变化。
+- AgentRun conversation snapshot 以 run / agent / current frame / delivery anchor / runtime execution state /
+  mailbox projection / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
+  lifecycle 控制面、active AgentRunTurn、mailbox envelope、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /
+  trace evidence，被 snapshot 引用但不拥有 AgentRun command surface。
+- AgentRun workspace resource surface 从当前 `AgentFrame` typed VFS surface 投影，原因是 frame revision
+  是 capability、context、VFS 与 MCP 的生效 surface；workspace panel 和 connector launch 需要消费同一
+  个 surface 事实。
+- `AgentRunLifecycleSurfaceProjector` 是 application 层构造 AgentRun lifecycle VFS surface 的标准入口。
+  projector input 使用 AgentRun runtime address、optional message stream ref、optional
+  orchestration node projection 和 typed builtin skill policy；原因是 owner bootstrap、companion、
+  workflow node 和 workspace query 需要共享同一个 `lifecycle` aggregate mount 与 SkillAsset
+  projection 事实源。
+- Task runtime projection 使用显式 `run_id + agent_id + frame_id + orchestration_id + node_path + attempt`
+  coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
+  runtime node identity，同时保留 RuntimeSession trace 下钻能力。
+- Workflow AgentCall node materialization 归属 `LifecycleDispatchService::materialize_workflow_agent_node`。
+  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeStarted` reducer event
+  和返回 executor refs；原因是 LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和
+  plain / ProjectAgent dispatch 共享同一套控制面事实闭包。
 
 ## Scenario: Lifecycle Orchestration Contract
 
@@ -134,7 +159,7 @@ view_projection text
 
 | 条件 | 结果 |
 | --- | --- |
-| `LifecycleRun` constructor 创建 graphless / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
+| `LifecycleRun` constructor 创建 plain / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
 | `add_orchestration` 收到重复 `orchestration_id` | 返回 `false`，不修改 aggregate |
 | `replace_orchestration` 找不到 `orchestration_id` | 返回 `None` |
 | repository 读取无效 `orchestrations` JSON 文本 | 返回带 `lifecycle_runs.orchestrations` 上下文的 `DomainError` |
@@ -144,7 +169,7 @@ view_projection text
 ### 5. Good/Base/Bad Cases
 
 - Good: `LifecycleRunRepository` create/update/select 对 `context`、`orchestrations`、`view_projection` 做整体 roundtrip。
-- Base: graphless run 没有 orchestration instance，但仍能保存空 context 和空数组。
+- Base: plain run 没有 orchestration instance，但仍能保存空 context 和空数组。
 - Good: 同一 run 内 root workflow、append workflow、review flow 或 dynamic script 分别拥有独立 `orchestration_id`，从而共享 Lifecycle 容器但隔离 runtime node state。
 
 ### 6. Tests Required
@@ -274,7 +299,7 @@ RuntimeSession terminal -> RuntimeTraceAnchor -> OrchestrationRuntimeEvent -> re
 ### 1. Scope / Trigger
 
 - Trigger: `LifecycleDispatchService::dispatch_common` 已为 graph-backed dispatch 创建 runtime session、AgentFrame、current agent frame 和 `RuntimeSessionExecutionAnchor`。
-- Scope: graph-backed entry `AgentCall` 的 launch evidence materialization；不包含完整 scheduler / executor launcher。
+- Scope: graph-backed entry `AgentCall` 的 launch evidence materialization，以及 scheduler ready `AgentCall` node 通过 `LifecycleDispatchService` materialize 相同 evidence；不包含 connector turn launch。
 
 ### 2. Signatures
 
@@ -289,6 +314,20 @@ OrchestrationRuntimeEvent::NodeStarted {
 }
 ```
 
+Scheduler ready AgentCall materialization entry:
+
+```rust
+LifecycleDispatchService::materialize_workflow_agent_node(
+    WorkflowAgentNodeMaterializationRequest {
+        run_id,
+        orchestration_binding,
+        runtime_policy,
+        frame_created_by_id,
+    },
+    frame_composer,
+) -> WorkflowAgentNodeMaterializationResult
+```
+
 ### 3. Contracts
 
 - Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Running`。
@@ -296,6 +335,12 @@ OrchestrationRuntimeEvent::NodeStarted {
 - 更新后的 `LifecycleRun` 必须回写 repository，且 dispatch result 的 `runtime_refs` 仍使用同一个 `orchestration_id + node_path + attempt`。
 - `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍为 `Ready`。
 - 如果 graph-backed dispatch 无法取得 runtime session id，不能伪造 `NodeStarted`；应返回内部错误并保持事实一致。
+- Scheduler ready `AgentCall` node materialization 必须通过 `LifecycleDispatchService` 创建 `LifecycleAgent`、
+  `AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`，并返回同一组 `AgentRuntimeRefs`。
+  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeStarted`，原因是 node state transition
+  属于 orchestration reducer，而 runtime identity materialization 属于 lifecycle dispatch use case。
+- `WorkflowAgentNodeMaterializationResult.runtime_refs` 必须携带 `orchestration_id + node_path + attempt`，
+  并与 anchor 的 orchestration binding 一致。
 
 ### 4. Validation & Error Matrix
 
@@ -304,16 +349,19 @@ OrchestrationRuntimeEvent::NodeStarted {
 | graph-backed dispatch 成功创建 runtime session | entry node `Running`，ready queues 为空 |
 | `RuntimePolicy` 未提供 session id | 返回 internal error，不写 fake executor ref |
 | `start_lifecycle_run` | entry node `Ready`，无 executor ref |
+| scheduler ready `AgentCall` materialization 成功 | node `Running`，executor ref 指向创建的 runtime session，anchor refs 与 node coordinate 一致 |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: subject execution with workflow graph creates one runtime session anchor and the root node has matching `ExecutorRunRef::RuntimeSession` plus trace ref.
+- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeStarted` with the same runtime session ref.
 - Base: lifecycle start API creates orchestration only; no agent/frame/session side effect.
 - Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` with no executor ref.
 
 ### 6. Tests Required
 
 - Dispatch service graph-backed subject execution asserts node `Running`、empty ready queues、executor ref、trace ref、anchor refs。
+- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and only applies `NodeStarted` after materialization result is available。
 - Project agent graph dispatch by key asserts the same started materialization。
 - Lifecycle run start test asserts entry remains `Ready`。
 
@@ -336,7 +384,7 @@ dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun w
 ### 1. Scope / Trigger
 
 - Trigger: 新增或修改 workflow script builder helper、`WorkflowScriptEvaluator` SPI、typed builder document、preflight API，或 workflow script 到 OrchestrationPlan compiler 的映射。
-- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application::workflow::script`、`agentdash-application::workflow::orchestration::ScriptCompiler`、`/api/workflow-scripts/preflight`。
+- Scope: `agentdash-spi::workflow::script`、`agentdash-infrastructure::workflow_scripts`、`agentdash-application-workflow::script`、`agentdash-application-workflow::orchestration::ScriptCompiler`、`/api/workflow-scripts/preflight`。
 
 ### 2. Signatures
 
@@ -443,7 +491,7 @@ RhaiWorkflowScriptEvaluator -> OrchestrationPlanSnapshot
 
 ```text
 RhaiWorkflowScriptEvaluator -> builder document JSON
-  -> agentdash-application::workflow::script typed builder document
+  -> agentdash-application-workflow::script typed builder document
   -> ScriptCompiler -> OrchestrationPlanSnapshot
 ```
 

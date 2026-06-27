@@ -106,6 +106,54 @@ Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Pla
 
 前端模型上下文面板的 refresh key 来自 `turn_completed`、内部 platform `context_compacted` 和 `ContextFrame(kind="compaction_summary")`。`executor_context_compacted` 只影响时间线/状态展示语义，因为内部 projection store 没有发生 commit。
 
+Provider retry/reconnect 与失败轮次恢复使用一等 `PlatformEvent` variants，而不是
+`SessionMetaUpdate` 自由 key：
+
+```rust
+PlatformEvent::ProviderAttemptStatus(ProviderAttemptStatus)
+PlatformEvent::SessionRewound(SessionRewound)
+```
+
+`ProviderAttemptStatus` 字段：
+
+- `turn_id: String`
+- `phase: connecting | connected_waiting_first_delta | streaming | retry_scheduled | retrying | failed | succeeded`
+- `attempt: u32`
+- `max_attempts: u32`
+- `will_retry: bool`
+- `delay_ms?: u64`
+- `reason_code?: String`
+- `message?: String`
+- `provider?: String`
+- `model?: String`
+
+`SessionRewound` 字段：
+
+- `discarded_turn_id: String`
+- `discarded_entry_index?: u32`
+- `stable_event_seq: u64`
+- `stable_turn_id?: String`
+- `reason: provider_retry | provider_failure | runtime_failure`
+- `replacement_turn_id?: String`
+- `message?: String`
+
+消费规则：
+
+- `ProviderAttemptStatus` 是运行状态，不是 assistant message。前端可以渲染 Thinking /
+  Reconnecting / retry exhausted，但不能把该文案写入模型上下文。
+- `ErrorNotification { will_retry: true }` 是 Codex-style intermediate state；它不是 terminal
+  failed，也不更新 turn summary。attempt/max/delay/provider 等细节来自
+  `ProviderAttemptStatus`。
+- `SessionRewound` 是 append-only agent-context rewind marker。事件流不物理删除尾部事件；
+  前端 reducer 不能按该事件裁剪 timeline/rawEvents；model context projection 只按
+  `discarded_turn_id + discarded_entry_index` 排除失败 AgentLoop 子轮次中的 agent 产物。
+- `stable_event_seq` 只保留为诊断/旧稳定边界信息，不表达前端或上下文应裁到该事件序号。
+- 新增或修改 `PlatformEvent` 一等 variant 后必须重新生成 TypeScript binding：
+
+```powershell
+cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
+```
+
 ## TypeScript Binding
 
 生成命令：
@@ -123,6 +171,25 @@ cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
 定义在 `agentdash-application/src/session/persistence.rs`。
 
 `PersistedSessionEvent.notification` 字段即 `BackboneEnvelope`。`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是从 envelope 提取的便利索引字段。
+
+Persisted `BackboneEnvelope` 必须表达模型和前端实际消费的 bounded fact。工具、MCP、shell、
+terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingService` 在 append/broadcast 前
+仍测量 envelope size，并对已知 oversized output 字段写入小型
+`session_eventing_append_guard` diagnostic。该 guard 保留 `session_id`、`turn_id`、
+`entry_index`、item id、event kind 等索引事实，原因是 Postgres、NDJSON backlog、frontend
+`rawEvents` 和后续 projection 都共享这条持久化事实流。
+
+工具大结果的正文读取不属于 Backbone 事件合同。事件中只保留 bounded preview、
+`details.truncation` 与 `lifecycle_path`；读取 `lifecycle_path` 必须通过 lifecycle VFS + `fs_read`
+的受控路径完成，读取失败返回有界状态，而不是把原始 body 写回 `SessionEvent`。
+
+PiAgent 工具结果的 ThreadItem id 与 `lifecycle_path` item id 必须同源，形状为
+`{turn_alias}:{body_alias}`，例如 `turn_001:tool_001` 或 `turn_001:cmd_001`。`lifecycle_path`
+使用同一坐标的分段地址：
+`lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt`。`entry_index` 可以继续作为
+envelope trace / ordering 字段存在，但不能参与 tool result body ref，原因是 producer 在进入模型
+上下文前需要生成与 Backbone ThreadItem、`SessionToolResultCache` 和 lifecycle VFS 一致的可读地址。
+raw `turn_id`、raw `tool_call_id` 和 provider trace 留在结构化 metadata / trace 中，前端和模型主上下文默认消费 readable address。
 
 ## NDJSON Session Stream
 
@@ -195,3 +262,5 @@ AgentDashThreadItem
 - `threadItemKind.ts`：kind 元数据（badge/label/summaryVerb）的单一来源。
 - Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的走 `GenericJsonBody` 兜底。
 - Codex 已有 item 直接使用 Codex Protocol type；AgentDash 仅在 Codex 不足时通过 `AgentDashNativeThreadItem` 做加法扩展。
+- Tool / command body 展示裁切摘要时优先消费 bounded preview、`details.truncation`、shell truncation
+  details 或文本中的 `lifecycle_path` marker；完整输出展开需要走 lifecycle VFS 读取面。

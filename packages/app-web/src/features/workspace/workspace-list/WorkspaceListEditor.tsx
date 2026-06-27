@@ -24,11 +24,12 @@ interface WorkspaceEditorDrawerProps {
   projectId: string;
   mode: "create" | "detail";
   workspace: Workspace | null;
+  defaultWorkspaceId?: string | null;
   candidates: WorkspaceInventoryCandidate[];
   accesses: ProjectBackendAccess[];
   canManageBindings: boolean;
   onClose: () => void;
-  onSetDefault?: (workspaceId: string | null) => void;
+  onSetDefault?: (workspaceId: string | null) => void | Promise<void>;
   onCandidatesChanged: () => void | Promise<void>;
   onInventoryChanged?: () => void | Promise<void>;
 }
@@ -38,6 +39,7 @@ export function WorkspaceEditorDrawer({
   projectId,
   mode,
   workspace,
+  defaultWorkspaceId,
   candidates,
   accesses,
   canManageBindings,
@@ -51,6 +53,7 @@ export function WorkspaceEditorDrawer({
       <WorkspaceCreateDrawer
         open={open}
         projectId={projectId}
+        defaultWorkspaceId={defaultWorkspaceId}
         candidates={candidates}
         accesses={accesses}
         canManageBindings={canManageBindings}

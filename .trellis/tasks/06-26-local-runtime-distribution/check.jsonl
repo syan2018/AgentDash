@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "最终检查云端、桌面、本机 runner、前端状态流是否保持事实源清晰。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端与 runner 实现质量检查。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端设置与诊断 UI 质量检查。"}
+{"file": ".trellis/tasks/archive/2026-06/06-26-runner-enrollment-token/research/planning-review-runner-enrollment-token.md", "reason": "父任务最终集成检查需确认 runner enrollment handoff。"}
+{"file": ".trellis/tasks/06-26-local-runner-daemon/research/planning-review-local-runner-daemon.md", "reason": "父任务最终集成检查需确认 daemon/service handoff。"}
+{"file": ".trellis/tasks/06-26-windows-desktop-installer-background/research/planning-review.md", "reason": "父任务最终集成检查需确认桌面安装与后台运行 handoff。"}
+{"file": ".trellis/tasks/06-26-runtime-diagnostics-settings/research/runtime-diagnostics-settings-planning-review.md", "reason": "父任务最终集成检查需确认诊断状态事实源和 UI handoff。"}
+{"file": ".trellis/tasks/06-26-distribution-release-validation/research/release-validation-planning-review.md", "reason": "父任务最终集成检查需确认发布验收矩阵和 release gate。"}

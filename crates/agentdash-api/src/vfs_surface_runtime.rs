@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_application::vfs::{
-    MountProviderRegistry, ResolvedMountEditCapabilities, VfsSurfaceRuntimeProjection,
+use agentdash_application_ports::vfs_surface_runtime::{
+    ResolvedMountEditCapabilities, VfsSurfaceRuntimeProjection,
 };
+use agentdash_application_vfs::MountProviderRegistry;
 use async_trait::async_trait;
 
 use crate::relay::registry::BackendRegistry;

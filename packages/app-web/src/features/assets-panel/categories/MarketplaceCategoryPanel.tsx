@@ -21,6 +21,7 @@ import {
 import type {
   LibraryAssetDto,
   LibraryAssetType,
+  InstallLibraryAssetOptions,
   ProjectAssetSourceStatusDto,
   PublishLibraryAssetKind,
   SharedLibrarySourceStatus,
@@ -192,6 +193,7 @@ export function MarketplaceCategoryPanel() {
         await installLibraryAsset(currentProjectId, {
           library_asset_id: asset.id,
           overwrite: doOverwrite,
+          install_options: defaultInstallOptionsForAsset(asset),
         });
         showSuccess(doOverwrite ? `已更新 ${asset.display_name}` : `已安装 ${asset.display_name}`);
         setOverwrite({ kind: "closed" });
@@ -386,6 +388,28 @@ export function MarketplaceCategoryPanel() {
       )}
     </div>
   );
+}
+
+function defaultInstallOptionsForAsset(asset: LibraryAssetDto): InstallLibraryAssetOptions | undefined {
+  if (asset.asset_type !== "agent_template" || !agentTemplateHasMcpDependencies(asset.payload)) {
+    return undefined;
+  }
+  return {
+    asset_type: "agent_template",
+    dependency_mode: "required",
+    dependency_parameters: {},
+    overwrite_dependencies: true,
+  };
+}
+
+function agentTemplateHasMcpDependencies(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const config = isRecord(payload.config) ? payload.config : null;
+  return Array.isArray(config?.mcp_dependencies) && config.mcp_dependencies.length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function ViewModeButton({

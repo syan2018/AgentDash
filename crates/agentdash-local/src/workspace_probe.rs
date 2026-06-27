@@ -8,11 +8,24 @@ use agentdash_relay::{
 use gix::bstr::ByteSlice;
 
 pub fn detect_workspace(path: &Path) -> ResponseWorkspaceDetectPayload {
+    detect_workspace_with_p4_context(path, None)
+}
+
+pub fn detect_workspace_with_p4_context(
+    path: &Path,
+    p4_context: Option<&P4ProbeContext>,
+) -> ResponseWorkspaceDetectPayload {
     let mut warnings = Vec::new();
     let git = detect_git_workspace(path, &mut warnings);
-    let p4 = detect_p4_workspace(path, &mut warnings);
+    let p4 = detect_p4_workspace(path, p4_context, &mut warnings);
 
     ResponseWorkspaceDetectPayload { git, p4, warnings }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct P4ProbeContext {
+    pub server_address: Option<String>,
+    pub client_name: Option<String>,
 }
 
 fn detect_git_workspace(
@@ -119,11 +132,15 @@ fn strip_remote_name(short_name: &str) -> &str {
         .unwrap_or(short_name)
 }
 
-fn detect_p4_workspace(path: &Path, warnings: &mut Vec<String>) -> Option<WorkspaceP4ProbePayload> {
+fn detect_p4_workspace(
+    path: &Path,
+    context: Option<&P4ProbeContext>,
+    warnings: &mut Vec<String>,
+) -> Option<WorkspaceP4ProbePayload> {
     let p4_executable = detect_p4_executable()?;
 
     let workspace_probe = build_p4_path_probe(path);
-    let where_result = run_p4_tagged(&p4_executable, path, &["where", &workspace_probe]);
+    let where_result = run_p4_tagged(&p4_executable, path, &["where", &workspace_probe], context);
     let where_fields = match where_result {
         Ok(fields) if has_p4_mapping(&fields) => fields,
         Ok(_) => return None,
@@ -135,7 +152,7 @@ fn detect_p4_workspace(path: &Path, warnings: &mut Vec<String>) -> Option<Worksp
         }
     };
 
-    let info_fields = match run_p4_tagged(&p4_executable, path, &["info"]) {
+    let info_fields = match run_p4_tagged(&p4_executable, path, &["info"], context) {
         Ok(fields) => fields,
         Err(err) => {
             warnings.push(format!("P4 info 读取失败: {err}"));
@@ -168,7 +185,7 @@ fn detect_p4_workspace(path: &Path, warnings: &mut Vec<String>) -> Option<Worksp
     );
 
     let stream = client_name.as_deref().and_then(|client| {
-        run_p4_tagged(&p4_executable, path, &["client", "-o", client])
+        run_p4_tagged(&p4_executable, path, &["client", "-o", client], context)
             .ok()
             .and_then(|fields| pick_tagged(&fields, &["Stream", "stream"]))
     });
@@ -182,7 +199,7 @@ fn detect_p4_workspace(path: &Path, warnings: &mut Vec<String>) -> Option<Worksp
     })
 }
 
-fn detect_p4_executable() -> Option<String> {
+pub(crate) fn detect_p4_executable() -> Option<String> {
     let lookup = if cfg!(windows) { "where" } else { "which" };
     let candidate = if cfg!(windows) { "p4.exe" } else { "p4" };
     let output = Command::new(lookup).arg(candidate).output().ok()?;
@@ -217,11 +234,19 @@ fn run_p4_tagged(
     executable: &str,
     cwd: &Path,
     args: &[&str],
+    context: Option<&P4ProbeContext>,
 ) -> Result<HashMap<String, String>, String> {
-    let output = Command::new(executable)
-        .current_dir(cwd)
-        .arg("-ztag")
-        .args(args)
+    let mut command = Command::new(executable);
+    command.current_dir(cwd).arg("-ztag").args(args);
+    if let Some(context) = context {
+        if let Some(server_address) = context.server_address.as_deref() {
+            command.env("P4PORT", server_address);
+        }
+        if let Some(client_name) = context.client_name.as_deref() {
+            command.env("P4CLIENT", client_name);
+        }
+    }
+    let output = command
         .output()
         .map_err(|err| format!("启动 p4 失败: {err}"))?;
 
@@ -274,7 +299,7 @@ fn should_surface_p4_warning(path: &Path) -> bool {
         || std::env::var_os("P4CLIENT").is_some()
 }
 
-fn normalize_display_path(path: &Path) -> String {
+pub(crate) fn normalize_display_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     #[cfg(windows)]
     {

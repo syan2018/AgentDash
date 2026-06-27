@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/project-overview.md", "reason": "发布产物需要符合项目整体交付定位。"}
+{"file": ".trellis/spec/tech-stack.md", "reason": "确认 Rust、Tauri、pnpm 构建链路。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "发布验收覆盖桌面与本机 runtime 边界。"}

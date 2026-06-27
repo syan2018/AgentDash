@@ -136,14 +136,15 @@ async function maybeStartLocalRuntime() {
 
   const backend = await ensureDevLocalRuntimeClaim(config.serverPort, config);
   const localArgs = [
-    '--cloud-url', backend.relay_ws_url,
-    '--token', backend.auth_token,
-    '--name', backend.name || config.backendName,
+    'run',
+    '--relay-ws-url', backend.relay_ws_url,
+    '--auth-token', backend.auth_token,
+    '--runner-name', backend.name || config.backendName,
     '--backend-id', backend.backend_id,
   ];
   const workspaceRoots = splitWorkspaceRoots(config.workspaceRoots);
   if (workspaceRoots.length > 0) {
-    localArgs.push('--workspace-roots', workspaceRoots.join(','));
+    localArgs.push('--workspace-root', workspaceRoots.join(','));
   }
   if (config.noExecutor) {
     localArgs.push('--no-executor');
@@ -769,7 +770,6 @@ async function ensureDevLocalRuntimeClaim(port, options) {
   const backend = await requestJson(port, 'POST', '/api/local-runtime/ensure', {
     machine_id: profile.machine_id,
     machine_label: profile.machine_label,
-    legacy_machine_ids: devMachineLegacyIds(profile),
     profile_id: formatDevRuntimeProfileId(options),
     scope: { kind: 'user' },
     capability_slot: 'default',
@@ -832,9 +832,6 @@ function loadLocalMachineIdentity() {
     return {
       machine_id: identity.machine_id.trim(),
       machine_label: identity.machine_label.trim(),
-      legacy_machine_ids: Array.isArray(identity.legacy_machine_ids)
-        ? identity.legacy_machine_ids.map((value) => String(value)).filter(Boolean)
-        : [],
     };
   } catch (error) {
     throw new Error(`agentdash-local machine-identity 输出不是合法身份 JSON: ${error.message}`);
@@ -843,10 +840,6 @@ function loadLocalMachineIdentity() {
 
 function localBinaryPath() {
   return path.join(root, 'target', 'debug', isWindows ? 'agentdash-local.exe' : 'agentdash-local');
-}
-
-function devMachineLegacyIds(profile) {
-  return profile.legacy_machine_ids.filter((value) => value !== profile.machine_id);
 }
 
 function splitWorkspaceRoots(value) {

@@ -1,0 +1,12 @@
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"验证 contract 生成与 drift check 要求"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端 DTO、错误处理与检查命令约束"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"验证前端类型消费不重声明后端 contract"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"验证 context_usage 仍解释模型可见 projection 构成"}
+{"file":".trellis/tasks/06-17-model-context-usage-breakdown/research.md","reason":"验证实现是否吸收 Claude Code 的真实 API 视图、deferred 与 provider usage 分层"}
+{"command":"cargo test -p agentdash-contracts projection_tests","result":"passed","reason":"覆盖 projection segments、附件拆分、ContextFrame usage items 分桶与顶部 token estimate 合并"}
+{"command":"pnpm run contracts:generate","result":"passed","reason":"同步 Rust contract 到 generated TypeScript"}
+{"command":"pnpm run contracts:check","result":"passed","reason":"确认 generated contracts 无 drift"}
+{"command":"cargo check -p agentdash-application -p agentdash-api","result":"passed","reason":"确认 SessionEventingService 与 context projection route 编译通过"}
+{"command":"pnpm --filter app-web test SessionProjectionView","result":"passed","reason":"确认 context usage categories 展示仍正常"}
+{"command":"pnpm run frontend:check","result":"passed","reason":"确认 generated DTO 更新后前端类型通过"}
+{"command":"pnpm --filter app-web test sessionStreamReducer","result":"passed","reason":"确认 backbone protocol 生成更新后 stream reducer fixture 仍通过"}

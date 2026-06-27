@@ -14,6 +14,7 @@
 //! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
 //! `None`，只记录 `tracing::warn!`，不中断 session 创建。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -86,7 +87,8 @@ async fn resolve_for_project_agent(
         Ok(Some(agent)) => agent,
         Ok(None) => return None,
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 project_agent_id = %project_agent_id,
                 error = %error,
@@ -114,7 +116,8 @@ async fn resolve_for_story(
     let agents = match repos.project_agent.list_by_project(project_id).await {
         Ok(agents) => agents,
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 error = %error,
                 "resolve_session_workflow_context: Story - 读取 ProjectAgent 列表失败"
@@ -148,7 +151,8 @@ async fn resolve_from_lifecycle_key(
     {
         Ok(Some(def)) => def,
         Ok(None) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 "resolve_session_workflow_context: ProjectAgent 绑定的 lifecycle 不存在"
@@ -156,7 +160,8 @@ async fn resolve_from_lifecycle_key(
             return None;
         }
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 error = %error,
@@ -167,7 +172,8 @@ async fn resolve_from_lifecycle_key(
     };
 
     let Some(entry_activity) = find_entry_activity(&lifecycle) else {
-        tracing::warn!(
+        diag!(Warn, Subsystem::AgentRun,
+
             project_id = %project_id,
             lifecycle_key = %lifecycle_key,
             entry_activity_key = %lifecycle.entry_activity_key,
@@ -189,7 +195,8 @@ async fn resolve_from_lifecycle_key(
     {
         Ok(Some(workflow)) => workflow,
         Ok(None) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 procedure_key = %procedure_key,
@@ -198,7 +205,8 @@ async fn resolve_from_lifecycle_key(
             return None;
         }
         Err(error) => {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 procedure_key = %procedure_key,
@@ -247,7 +255,7 @@ pub fn tool_directives_from_active_workflow(
 }
 
 pub fn tool_directives_from_active_workflow_projection(
-    workflow: &crate::workflow::ActiveWorkflowProjection,
+    workflow: &crate::lifecycle::ActiveWorkflowProjection,
 ) -> Vec<ToolCapabilityDirective> {
     workflow
         .active_contract()
@@ -267,8 +275,10 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
         AgentProcedureContract, AgentProcedureRepository, DefinitionSource,
-        ToolCapabilityDirective, WorkflowGraph, WorkflowGraphRepository,
+        ToolCapabilityDirective, WorkflowGraph, WorkflowGraphDraft, WorkflowGraphRepository,
     };
+
+    use crate::capability::AuthorityState;
 
     use super::*;
 
@@ -524,16 +534,16 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        WorkflowGraph::new(
+        WorkflowGraph::new(WorkflowGraphDraft {
             project_id,
-            "builtin_workflow_admin",
-            "Workflow Admin",
-            "",
-            DefinitionSource::BuiltinSeed,
-            "plan",
-            vec![plan],
-            vec![],
-        )
+            key: "builtin_workflow_admin".to_string(),
+            name: "Workflow Admin".to_string(),
+            description: String::new(),
+            source: DefinitionSource::BuiltinSeed,
+            entry_activity_key: "plan".to_string(),
+            activities: vec![plan],
+            transitions: vec![],
+        })
         .expect("build lifecycle")
     }
 
@@ -790,7 +800,9 @@ mod tests {
                 owner_ctx: agentdash_spi::CapabilityScopeCtx::Project { project_id },
                 contributions,
                 mcp_candidates: Default::default(),
+                mcp_runtime_context: None,
                 capability_context: None,
+                authority_state: AuthorityState::main_project_agent(),
             },
             &platform,
         );

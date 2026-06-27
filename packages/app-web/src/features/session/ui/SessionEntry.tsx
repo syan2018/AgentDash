@@ -4,7 +4,7 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
+ * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
  *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
@@ -14,13 +14,14 @@
  */
 
 import { memo, useState } from "react";
+import { ST } from "./bodies/cardBodyTokens";
 import { ContextFrameStream } from "./ContextFrameStream";
 import {
   isAggregatedGroup,
   isAggregatedContextFrameGroup,
   isAggregatedThinkingGroup,
   isDisplayEntry,
-  extractTextFromUserInputs,
+  partitionUserInputs,
   getThreadItemStatus,
 } from "../model/types";
 import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
@@ -31,8 +32,6 @@ import type {
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
 } from "../model/types";
-import { extractPlatformEventData } from "../model/platformEvent";
-import { parseContextFrame } from "../model/contextFrame";
 import { ToolCallCardShell } from "./ToolCallCardShell";
 import { renderToolCallCard } from "./toolCardRegistry";
 import { SessionMessageCard } from "./SessionMessageCard";
@@ -41,16 +40,19 @@ import { SessionTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
+import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 
 export interface SessionEntryProps {
   item: SessionDisplayItem;
   isStreaming?: boolean;
   sessionId?: string | null;
+  /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
+  followedByMessage?: boolean;
 }
 
-export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId }: SessionEntryProps) {
+export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId, followedByMessage }: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
-    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} />;
+    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} followedByMessage={followedByMessage} />;
   }
 
   if (isAggregatedThinkingGroup(item)) {
@@ -78,6 +80,7 @@ export function SingleEntry({
   sessionId?: string | null;
 }) {
   const { event, isPendingApproval, accumulatedText } = entry;
+  const { prefs } = useDebugPrefs();
 
   switch (event.type) {
     case "agent_message_delta": {
@@ -101,6 +104,7 @@ export function SingleEntry({
     }
 
     case "item_started":
+    case "item_updated":
     case "item_completed": {
       const threadItem = event.payload.item;
       const card = renderToolCallCard(threadItem, {
@@ -128,36 +132,29 @@ export function SingleEntry({
 
     case "approval_request": {
       return (
-        <div className="rounded-[12px] border border-warning/30 bg-warning/5 px-3 py-2.5 text-sm text-warning">
-          <span className="inline-flex rounded-[6px] border border-warning/25 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em]">
+        <div className="flex items-center gap-2 px-2 py-1 text-xs text-warning">
+          <span className="inline-flex rounded-[4px] border border-warning/25 bg-warning/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em]">
             审批
           </span>
-          <span className="ml-2">等待审批</span>
+          <span>等待审批</span>
         </div>
       );
     }
 
     case "error": {
       return (
-        <div className="rounded-[12px] border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
-          <span className="inline-flex rounded-[6px] border border-destructive/25 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-destructive">
+        <div className="flex items-center gap-2 px-2 py-1 text-xs">
+          <span className="inline-flex rounded-[4px] border border-destructive/25 bg-destructive/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em] text-destructive">
             错误
           </span>
-          <span className="ml-2 text-destructive">{event.payload.error.message}</span>
+          <span className="text-destructive">{event.payload.error.message}</span>
         </div>
       );
     }
 
     case "user_input_submitted": {
-      const isSteer = event.payload.submissionKind === "steer";
-      return (
-        <SessionMessageCard
-          type="user"
-          content={accumulatedText ?? extractTextFromUserInputs(event.payload.content)}
-          badgeOverride={isSteer ? "ST" : undefined}
-          labelOverride={isSteer ? "Steer" : undefined}
-        />
-      );
+      const { text, images } = partitionUserInputs(event.payload.content);
+      return <SessionMessageCard type="user" content={text} images={images} />;
     }
 
     case "platform": {
@@ -165,8 +162,14 @@ export function SingleEntry({
         return <SessionTaskEventCard event={event} />;
       }
 
-      if (isRenderableSystemEventUpdate(event)) {
-        return <SessionSystemEventCard event={event} sessionId={sessionId ?? undefined} />;
+      if (isRenderableSystemEventUpdate(event, { includeVerboseEvents: prefs.hookVerbose })) {
+        return (
+          <SessionSystemEventCard
+            event={event}
+            sessionId={sessionId ?? undefined}
+            contextFrame={entry.contextFrame}
+          />
+        );
       }
 
       return null;
@@ -183,10 +186,8 @@ function AggregatedContextFrameGroupEntry({
   group: AggregatedContextFrameGroup;
 }) {
   const frames = group.entries
-    .map((entry) => extractPlatformEventData(entry.event))
-    .filter((data): data is Record<string, unknown> => data != null)
-    .map((data) => parseContextFrame(data))
-    .filter((frame): frame is NonNullable<ReturnType<typeof parseContextFrame>> => frame != null);
+    .map((entry) => entry.contextFrame)
+    .filter((frame): frame is NonNullable<typeof frame> => frame != null);
 
   if (frames.length === 0) {
     return null;
@@ -198,38 +199,52 @@ function AggregatedContextFrameGroupEntry({
 function AggregatedToolGroupEntry({
   group,
   sessionId,
+  followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
   sessionId?: string | null;
+  /** 后续有 agent message 时自动折叠 */
+  followedByMessage?: boolean;
 }) {
   const { entries } = group;
   const hasPendingApproval = entries.some((e) => e.isPendingApproval);
-  const [expanded, setExpanded] = useState(hasPendingApproval);
+  const hasRunningTool = entries.some((entry) => {
+    const item = extractThreadItem(entry);
+    return item ? getThreadItemStatus(item) === "inProgress" : false;
+  });
+  // 默认展开；有后续 agent 消息后才折叠
+  const [expanded, setExpanded] = useState(!followedByMessage || hasPendingApproval || hasRunningTool);
+  const [prevFollowed, setPrevFollowed] = useState(followedByMessage);
   const [prevPending, setPrevPending] = useState(hasPendingApproval);
+  const [prevRunning, setPrevRunning] = useState(hasRunningTool);
+
   if (hasPendingApproval !== prevPending) {
     setPrevPending(hasPendingApproval);
     if (hasPendingApproval) setExpanded(true);
   }
+  if (hasRunningTool !== prevRunning) {
+    setPrevRunning(hasRunningTool);
+    if (hasRunningTool) setExpanded(true);
+  }
+  if (followedByMessage !== prevFollowed) {
+    setPrevFollowed(followedByMessage);
+    if (followedByMessage && !hasPendingApproval && !hasRunningTool) setExpanded(false);
+  }
   const summary = buildKindSummary(entries);
 
   return (
-    <div className="rounded-[12px] border border-border bg-background overflow-hidden">
+    <div>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
+        className={ST.groupRow}
       >
-        <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-secondary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          TOOLS
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">工具调用</p>
-          <p className="text-xs text-muted-foreground">{summary}</p>
-        </div>
-        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
+        <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
+        <span className={ST.badge}>TOOLS</span>
+        <span className={ST.hint}>{summary}</span>
       </button>
       {expanded && (
-        <div className="space-y-1.5 border-t border-border px-3 py-2.5">
+        <div className={ST.itemList}>
           {entries.map((entry) => (
             <SingleEntry key={entry.id} entry={entry} sessionId={sessionId} />
           ))}
@@ -240,45 +255,22 @@ function AggregatedToolGroupEntry({
 }
 
 function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGroup }) {
-  const [expanded, setExpanded] = useState(false);
-  const { entries } = group;
-
-  const combinedContent = entries
+  const combinedContent = group.entries
     .map((entry) => entry.accumulatedText ?? "")
     .join("");
 
   return (
-    <div className="overflow-hidden rounded-[12px] border border-dashed border-border bg-secondary/45">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary/60"
-      >
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="inline-flex min-w-10 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            THINK
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">思考摘录</p>
-            <p className="text-xs text-muted-foreground">{entries.length} 条思考已折叠聚合</p>
-          </div>
-        </div>
-        <span className="text-xs text-muted-foreground/70">{expanded ? "收起" : "展开"}</span>
-      </button>
-      {expanded && (
-        <div className="border-t border-border/80 px-3 py-2.5">
-          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground/85">
-            {combinedContent}
-          </pre>
-        </div>
-      )}
-    </div>
+    <SessionMessageCard
+      type="thinking"
+      content={combinedContent}
+      isStreaming={group.isStreamingThinking}
+    />
   );
 }
 
 function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").AgentDashThreadItem | null {
   const evt = entry.event;
-  if (evt.type === "item_started" || evt.type === "item_completed") {
+  if (evt.type === "item_started" || evt.type === "item_updated" || evt.type === "item_completed") {
     return evt.payload.item;
   }
   return null;
@@ -287,6 +279,7 @@ function extractThreadItem(entry: SessionDisplayEntry): import("../../../generat
 function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   const counts = new Map<ThreadItemKind, number>();
   let pending = 0;
+  let running = 0;
   let failed = 0;
 
   for (const entry of entries) {
@@ -296,7 +289,9 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
       counts.set("other", (counts.get("other") ?? 0) + 1);
       continue;
     }
-    if (getThreadItemStatus(item) === "failed") failed += 1;
+    const status = getThreadItemStatus(item);
+    if (status === "inProgress") running += 1;
+    if (status === "failed") failed += 1;
     const meta = resolveKind(item);
     counts.set(meta.kind, (counts.get(meta.kind) ?? 0) + 1);
   }
@@ -309,6 +304,7 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
     const meta = KIND_REGISTRY[kind];
     parts.push(`${meta.summaryVerb} ${n} ${meta.summaryUnit}`);
   }
+  if (running > 0) parts.push(`${running} 运行中`);
   if (pending > 0) parts.push(`${pending} 待审批`);
   if (failed > 0) parts.push(`${failed} 失败`);
 

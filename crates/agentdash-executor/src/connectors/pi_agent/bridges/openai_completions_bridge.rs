@@ -7,7 +7,8 @@ use std::pin::Pin;
 use async_trait::async_trait;
 
 use agentdash_agent::bridge::{
-    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
+    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, ProviderErrorClassification,
+    StreamChunk, ToolCallDeltaContent,
 };
 use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
 
@@ -76,7 +77,7 @@ async fn run_stream(
         )
         .send()
         .await
-        .map_err(|e| BridgeError::CompletionFailed(format!("HTTP 请求失败: {e}")))?;
+        .map_err(|error| super::provider_transport_error("HTTP 请求失败", error))?;
 
     let response = super::check_http_response(response, "API").await?;
 
@@ -87,7 +88,7 @@ async fn run_stream(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|e| BridgeError::CompletionFailed(format!("读取响应流失败: {e}")))?
+        .map_err(|error| super::provider_stream_read_error("读取响应流失败", error))?
     {
         let text = String::from_utf8_lossy(&chunk);
         for event in parser.feed(&text) {
@@ -98,10 +99,17 @@ async fn run_stream(
         }
     }
 
-    if let Some(trailing) = parser.flush() {
-        if trailing.data != "[DONE]" {
-            process_chunk_event(&trailing.data, &mut state, tx).await?;
-        }
+    if let Some(trailing) = parser.flush()
+        && trailing.data != "[DONE]"
+    {
+        process_chunk_event(&trailing.data, &mut state, tx).await?;
+    }
+
+    if !state.has_visible_output() {
+        return Err(BridgeError::provider(
+            "Chat completions stream ended before any visible output",
+            ProviderErrorClassification::retryable().with_provider_code("empty_stream"),
+        ));
     }
 
     let message = state.into_agent_message();
@@ -162,10 +170,10 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
 
     let mut messages = Vec::new();
 
-    if let Some(ref sp) = request.system_prompt {
-        if !sp.is_empty() {
-            messages.push(serde_json::json!({ "role": "system", "content": sp }));
-        }
+    if let Some(ref sp) = request.system_prompt
+        && !sp.is_empty()
+    {
+        messages.push(serde_json::json!({ "role": "system", "content": sp }));
     }
 
     for msg in &request.messages {
@@ -273,6 +281,12 @@ struct PendingToolCall {
 }
 
 impl StreamState {
+    fn has_visible_output(&self) -> bool {
+        !self.content_parts.is_empty()
+            || !self.tool_calls.is_empty()
+            || !self.pending_tool_calls.is_empty()
+    }
+
     fn into_agent_message(mut self) -> AgentMessage {
         self.finalize_pending_tool_calls();
         AgentMessage::Assistant {
@@ -329,29 +343,29 @@ async fn process_chunk_event(
     };
 
     // 文本内容
-    if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
-            state.content_parts.push(ContentPart::text(text));
-            let _ = tx.send(StreamChunk::TextDelta(text.to_string())).await;
-        }
+    if let Some(text) = delta.get("content").and_then(|v| v.as_str())
+        && !text.is_empty()
+    {
+        state.content_parts.push(ContentPart::text(text));
+        let _ = tx.send(StreamChunk::TextDelta(text.to_string())).await;
     }
 
     // 推理内容 — 兼容 reasoning_content / reasoning 两种字段名
     for field in &["reasoning_content", "reasoning"] {
-        if let Some(reasoning) = delta.get(*field).and_then(|v| v.as_str()) {
-            if !reasoning.is_empty() {
-                state
-                    .content_parts
-                    .push(ContentPart::reasoning(reasoning, None, None));
-                let _ = tx
-                    .send(StreamChunk::ReasoningDelta {
-                        id: None,
-                        text: reasoning.to_string(),
-                        signature: None,
-                    })
-                    .await;
-                break;
-            }
+        if let Some(reasoning) = delta.get(*field).and_then(|v| v.as_str())
+            && !reasoning.is_empty()
+        {
+            state
+                .content_parts
+                .push(ContentPart::reasoning(reasoning, None, None));
+            let _ = tx
+                .send(StreamChunk::ReasoningDelta {
+                    id: None,
+                    text: reasoning.to_string(),
+                    signature: None,
+                })
+                .await;
+            break;
         }
     }
 

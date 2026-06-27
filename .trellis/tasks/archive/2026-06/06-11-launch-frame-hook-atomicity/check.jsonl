@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 connector accepted 后提交"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 current frame 事实源"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "检查 HookRuntime target"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "检查模型缺失失败不推进 frame"}
+{"file": ".trellis/tasks/06-11-launch-frame-hook-atomicity/prd.md", "reason": "检查本 child 验收"}

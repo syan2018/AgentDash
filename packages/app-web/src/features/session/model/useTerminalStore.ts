@@ -1,11 +1,15 @@
 import { create } from "zustand";
 import type { TerminalInfo, TerminalProcessState } from "../../../types/terminal";
 
+export const TERMINAL_OUTPUT_BUFFER_MAX_CHARS = 256 * 1024;
+
 interface TerminalStoreState {
   /** session_id → { terminal_id → TerminalInfo } */
   terminals: Map<string, Map<string, TerminalInfo>>;
-  /** terminal_id → 累积输出 buffer */
+  /** terminal_id → 有界最近输出 buffer */
   outputBuffers: Map<string, string>;
+  /** terminal_id → 当前 buffer 前方已裁掉的字符数 */
+  outputBufferBaseOffsets: Map<string, number>;
 
   registerTerminal: (info: TerminalInfo) => void;
   updateTerminalState: (
@@ -17,11 +21,13 @@ interface TerminalStoreState {
   removeTerminal: (terminalId: string) => void;
   getTerminalsForSession: (sessionId: string) => TerminalInfo[];
   getOutput: (terminalId: string) => string;
+  getOutputBaseOffset: (terminalId: string) => number;
 }
 
 export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
   terminals: new Map(),
   outputBuffers: new Map(),
+  outputBufferBaseOffsets: new Map(),
 
   registerTerminal: (info) =>
     set((state) => {
@@ -58,9 +64,23 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
   appendOutput: (terminalId, data) =>
     set((state) => {
       const newBuffers = new Map(state.outputBuffers);
+      const newBaseOffsets = new Map(state.outputBufferBaseOffsets);
       const prev = newBuffers.get(terminalId) ?? "";
-      newBuffers.set(terminalId, prev + data);
-      return { outputBuffers: newBuffers };
+      const prevBaseOffset = newBaseOffsets.get(terminalId) ?? 0;
+
+      if (data.length >= TERMINAL_OUTPUT_BUFFER_MAX_CHARS) {
+        const droppedFromData = data.length - TERMINAL_OUTPUT_BUFFER_MAX_CHARS;
+        newBuffers.set(terminalId, data.slice(droppedFromData));
+        newBaseOffsets.set(terminalId, prevBaseOffset + prev.length + droppedFromData);
+        return { outputBuffers: newBuffers, outputBufferBaseOffsets: newBaseOffsets };
+      }
+
+      const retainedPrevLength = TERMINAL_OUTPUT_BUFFER_MAX_CHARS - data.length;
+      const droppedFromPrev = Math.max(0, prev.length - retainedPrevLength);
+      const next = prev.slice(droppedFromPrev) + data;
+      newBuffers.set(terminalId, next);
+      newBaseOffsets.set(terminalId, prevBaseOffset + droppedFromPrev);
+      return { outputBuffers: newBuffers, outputBufferBaseOffsets: newBaseOffsets };
     }),
 
   removeTerminal: (terminalId) =>
@@ -76,7 +96,13 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       }
       const newBuffers = new Map(state.outputBuffers);
       newBuffers.delete(terminalId);
-      return { terminals: newTerminals, outputBuffers: newBuffers };
+      const newBaseOffsets = new Map(state.outputBufferBaseOffsets);
+      newBaseOffsets.delete(terminalId);
+      return {
+        terminals: newTerminals,
+        outputBuffers: newBuffers,
+        outputBufferBaseOffsets: newBaseOffsets,
+      };
     }),
 
   getTerminalsForSession: (sessionId) => {
@@ -86,5 +112,9 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
 
   getOutput: (terminalId) => {
     return get().outputBuffers.get(terminalId) ?? "";
+  },
+
+  getOutputBaseOffset: (terminalId) => {
+    return get().outputBufferBaseOffsets.get(terminalId) ?? 0;
   },
 }));

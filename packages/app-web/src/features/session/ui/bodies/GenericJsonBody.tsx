@@ -10,6 +10,7 @@ import type { DynamicToolCallOutputContentItem } from "../../../../generated/bac
 import { JsonTree, CopyJsonButton } from "./JsonTree";
 import { normalizeDynamicOutput, type ToolOutputBlock } from "./toolOutputContent";
 import { ToolOutputContentViewer } from "./ToolOutputContentViewer";
+import { CB } from "./cardBodyTokens";
 
 export interface GenericJsonBodyProps {
   arguments?: unknown;
@@ -31,7 +32,7 @@ export function GenericJsonBody({ arguments: args, contentItems }: GenericJsonBo
   if (!hasArgs && outputBlocks.length === 0) return null;
 
   return (
-    <div className="space-y-3">
+    <div className={CB.sectionGap}>
       {hasArgs && (
         <Section label="入参" data={args}>
           <JsonTree data={args} defaultDepth={2} />
@@ -39,7 +40,7 @@ export function GenericJsonBody({ arguments: args, contentItems }: GenericJsonBo
       )}
       {outputBlocks.length > 0 && (
         <div>
-          <p className="mb-1 text-xs font-medium text-muted-foreground/60">出参</p>
+          <p className={`mb-1 ${CB.sectionTitle}`}>出参</p>
           <ToolOutputContentViewer blocks={outputBlocks} />
         </div>
       )}
@@ -59,7 +60,7 @@ function Section({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <p className="text-xs font-medium text-muted-foreground/60">{label}</p>
+        <p className={CB.sectionTitle}>{label}</p>
         <CopyJsonButton data={data} />
       </div>
       {children}

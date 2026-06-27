@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/research/api-contract.md", "reason": "SessionMeta responsibility split, AgentRunView.last_delivery_status gap, API/list contract risks"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/research/delivery-launch-hook.md", "reason": "SessionMeta trace-head projection assessment and command receipt boundary"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession is delivery/trace substrate; AgentFrame is runtime surface authority"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "SessionMeta, execution state fallback, runtime command store, and specs to update"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated DTO ownership and AgentRun command naming"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Frontend must not derive lifecycle/workspace facts from RuntimeSession trace metadata"}

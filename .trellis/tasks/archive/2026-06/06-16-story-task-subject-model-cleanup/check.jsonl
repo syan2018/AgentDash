@@ -1,0 +1,16 @@
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/prd.md","reason":"检查目标语义、需求和验收标准是否覆盖本轮讨论"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/design.md","reason":"检查 Story subject AgentRun、Task plan facts、Lifecycle 事实源边界是否一致"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/implement.md","reason":"检查后续执行顺序、验证命令和风险文件是否可操作"}
+{"file":".trellis/spec/backend/story-task-runtime.md","reason":"检查规划是否与现有 Story / Task runtime spec 的演进方向相容"}
+{"file":".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md","reason":"检查 Task execution read model 收口是否承接既有证据"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 dynamic orchestration fanout 是否不混淆计划创建和 runtime dispatch"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查 AgentRun 自执行和 companion follow-up 是否保持 mailbox/control 事实源边界"}
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"检查 fanout 审批门默认开放但可接入 PermissionGrant 的边界是否合理"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 migration、JSON 文本列命名、删除旧列和 migration guard 是否符合规范"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"检查 LifecycleRun aggregate / StoryRepository / 跨聚合 command 边界是否一致"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查 generated DTO、TaskStatus、无旧字段兼容和前端类型边界"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"检查 Story projection cache、Run-scoped Task plan state 与 lifecycleStore 执行投影边界"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 Rust contract、generated TS、Run-scoped Task API 与 SubjectExecutionView 契约"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/backend-data-review.md","reason":"检查后端、数据库、MCP 迁移风险是否被设计和实现计划覆盖"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/frontend-api-surface-review.md","reason":"检查前端 API surface、store、UI 和测试迁移风险是否被计划覆盖"}
+{"file":".trellis/tasks/06-16-story-task-subject-model-cleanup/research/planning-consistency-review.md","reason":"检查本任务是否已从概念规划收敛为可执行迁移包"}

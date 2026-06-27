@@ -164,7 +164,7 @@ mod tests {
     fn auto_approve_when_fully_covered() {
         let result = PermissionPolicyService::evaluate(
             &[path("story_management")],
-            &[path("story_management"), path("task_management")],
+            &[path("story_management"), path("task")],
             &[path("story_management")],
         );
         assert_eq!(result.outcome, PolicyOutcome::AutoApproved);
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn extract_agent_grantable_from_json() {
         let config = serde_json::json!({
-            "auto_grantable_capabilities": ["story_management", "task_management::start"]
+            "auto_grantable_capabilities": ["story_management", "task::write"]
         });
         let result = PermissionPolicyService::extract_agent_grantable(&config);
         assert_eq!(result.len(), 2);

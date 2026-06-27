@@ -5,7 +5,21 @@
  * 在 views 包中定义以便 local-runtime / app-web 等消费方共享。
  */
 
-import type { McpEnvVar, McpHttpHeader, McpTransportConfig } from '@agentdash/core/local-runtime'
+export interface McpTransportConfigEditorEntry {
+  name: string
+  value: string
+}
+
+export type McpTransportConfigEditorValue =
+  | { type: 'http'; url: string; headers?: McpTransportConfigEditorEntry[] }
+  | { type: 'sse'; url: string; headers?: McpTransportConfigEditorEntry[] }
+  | {
+      type: 'stdio'
+      command: string
+      args?: string[]
+      env?: McpTransportConfigEditorEntry[]
+      cwd?: string
+    }
 
 // ── Key-Value 列表 ──
 
@@ -16,8 +30,8 @@ export function KeyValueList({
   valuePlaceholder,
   disabled,
 }: {
-  items: McpHttpHeader[] | McpEnvVar[]
-  onChange: (items: McpHttpHeader[]) => void
+  items: McpTransportConfigEditorEntry[]
+  onChange: (items: McpTransportConfigEditorEntry[]) => void
   keyPlaceholder: string
   valuePlaceholder: string
   disabled?: boolean
@@ -29,7 +43,7 @@ export function KeyValueList({
           <input
             value={item.name}
             onChange={(e) => {
-              const next = [...items] as McpHttpHeader[]
+              const next = [...items]
               next[i] = { ...next[i], name: e.target.value }
               onChange(next)
             }}
@@ -40,7 +54,7 @@ export function KeyValueList({
           <input
             value={item.value}
             onChange={(e) => {
-              const next = [...items] as McpHttpHeader[]
+              const next = [...items]
               next[i] = { ...next[i], value: e.target.value }
               onChange(next)
             }}
@@ -52,7 +66,7 @@ export function KeyValueList({
             <button
               type="button"
               onClick={() => {
-                const next = items.filter((_, j) => j !== i) as McpHttpHeader[]
+                const next = items.filter((_, j) => j !== i)
                 onChange(next)
               }}
               className="shrink-0 rounded-[6px] border border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10"
@@ -65,7 +79,7 @@ export function KeyValueList({
       {!disabled && (
         <button
           type="button"
-          onClick={() => onChange([...(items as McpHttpHeader[]), { name: '', value: '' }])}
+          onClick={() => onChange([...items, { name: '', value: '' }])}
           className="text-[10px] text-muted-foreground hover:text-foreground"
         >
           + 添加
@@ -130,8 +144,8 @@ export function StringList({
 // ── Transport 编辑器 ──
 
 export interface McpTransportConfigEditorProps {
-  value: McpTransportConfig
-  onChange: (next: McpTransportConfig) => void
+  value: McpTransportConfigEditorValue
+  onChange: (next: McpTransportConfigEditorValue) => void
   disabled?: boolean
 }
 
@@ -147,11 +161,11 @@ export function McpTransportConfigEditor({
         <select
           value={value.type}
           onChange={(e) => {
-            const t = e.target.value as McpTransportConfig['type']
-            if (t === 'stdio') {
-              onChange({ type: 'stdio', command: '', args: [], env: [] })
-            } else {
-              onChange({ type: t, url: '', headers: [] })
+            const nextType = e.target.value
+            if (nextType === 'stdio') {
+              onChange({ type: 'stdio', command: '', args: [], env: [], cwd: '' })
+            } else if (nextType === 'http' || nextType === 'sse') {
+              onChange({ type: nextType, url: '', headers: [] })
             }
           }}
           disabled={disabled}
@@ -201,6 +215,16 @@ export function McpTransportConfigEditor({
             />
           </div>
           <div>
+            <label className="agentdash-form-label">CWD</label>
+            <input
+              value={value.cwd ?? ''}
+              onChange={(e) => onChange({ ...value, cwd: e.target.value })}
+              placeholder="/workspace/project"
+              disabled={disabled}
+              className="agentdash-form-input"
+            />
+          </div>
+          <div>
             <label className="agentdash-form-label">Args</label>
             <StringList
               items={value.args ?? []}
@@ -212,8 +236,8 @@ export function McpTransportConfigEditor({
           <div>
             <label className="agentdash-form-label">Env</label>
             <KeyValueList
-              items={(value.env ?? []) as McpHttpHeader[]}
-              onChange={(e) => onChange({ ...value, env: e as McpEnvVar[] })}
+              items={value.env ?? []}
+              onChange={(env) => onChange({ ...value, env })}
               keyPlaceholder="变量名"
               valuePlaceholder="值"
               disabled={disabled}

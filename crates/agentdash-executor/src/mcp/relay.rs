@@ -1,18 +1,20 @@
 //! Relay MCP 工具适配器 — 将远程 backend 上报的 MCP 工具包装为 AgentTool
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
-use agentdash_agent::{
-    AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
-    tools::sanitize_tool_schema,
-};
-use agentdash_spi::CapabilityState;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpCallContext, RelayMcpToolInfo};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
+    RuntimeMcpServer, ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::DiscoveredMcpTool;
-use super::direct::{capability_key_for_mcp_server_name, namespaced_tool_name};
+use super::{
+    DiscoveredMcpTool,
+    common::{McpToolSurface, build_discovered_entry, normalize_args_object},
+    naming::capability_key_for_mcp_server_name,
+};
 
 /// 将 relay MCP 工具适配为 Pi Agent 可调用的 AgentTool。
 ///
@@ -20,11 +22,8 @@ use super::direct::{capability_key_for_mcp_server_name, namespaced_tool_name};
 /// 调用时通过 `McpRelayProvider` 走 relay 信道转发到本机执行。
 #[derive(Clone)]
 pub struct RelayMcpToolAdapter {
-    runtime_name: String,
-    original_tool_name: String,
-    server_name: String,
-    description: String,
-    parameters_schema: serde_json::Value,
+    surface: McpToolSurface,
+    server: RuntimeMcpServer,
     provider: Arc<dyn McpRelayProvider>,
     call_context: Option<RelayMcpCallContext>,
 }
@@ -35,20 +34,15 @@ impl RelayMcpToolAdapter {
         provider: Arc<dyn McpRelayProvider>,
         call_context: Option<RelayMcpCallContext>,
     ) -> Self {
-        let runtime_name = namespaced_tool_name(&info.server_name, &info.tool_name);
-        let description = info.description.trim();
-        let description = if description.is_empty() {
-            "MCP 工具".to_string()
-        } else {
-            description.to_string()
-        };
-        let parameters_schema = sanitize_tool_schema(info.parameters_schema.clone());
+        let surface = McpToolSurface::new(
+            info.server_name.clone(),
+            info.tool_name.clone(),
+            Some(&info.description),
+            info.parameters_schema.clone(),
+        );
         Self {
-            runtime_name,
-            original_tool_name: info.tool_name.clone(),
-            server_name: info.server_name.clone(),
-            description,
-            parameters_schema,
+            surface,
+            server: info.server.clone(),
             provider,
             call_context,
         }
@@ -58,15 +52,15 @@ impl RelayMcpToolAdapter {
 #[async_trait]
 impl AgentTool for RelayMcpToolAdapter {
     fn name(&self) -> &str {
-        &self.runtime_name
+        &self.surface.runtime_name
     }
 
     fn description(&self) -> &str {
-        &self.description
+        &self.surface.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        self.parameters_schema.clone()
+        self.surface.parameters_schema.clone()
     }
 
     async fn execute(
@@ -76,22 +70,13 @@ impl AgentTool for RelayMcpToolAdapter {
         _cancel: CancellationToken,
         _on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let arguments = match args {
-            serde_json::Value::Null => None,
-            serde_json::Value::Object(map) => Some(map),
-            other => {
-                return Err(AgentToolError::InvalidArguments(format!(
-                    "MCP 工具参数必须是 JSON object，实际为: {}",
-                    other
-                )));
-            }
-        };
+        let arguments = normalize_args_object(args)?;
 
         let result = self
             .provider
             .call_relay_tool(
-                &self.server_name,
-                &self.original_tool_name,
+                &self.server,
+                &self.surface.tool_name,
                 arguments,
                 self.call_context.clone().map(|mut context| {
                     context.tool_call_id = Some(tool_call_id.to_string());
@@ -110,14 +95,14 @@ impl AgentTool for RelayMcpToolAdapter {
 }
 
 /// 从 relay provider 发现指定 server 的 MCP 工具并包装为 AgentTool。
-/// `server_names` 是 Agent 配置中声明且匹配 backend 能力的 server name 列表。
+/// `servers` 是 Agent 配置中声明且匹配 backend 能力的 resolved server 列表。
 pub async fn discover_relay_mcp_tools(
     provider: Arc<dyn McpRelayProvider>,
-    server_names: &[String],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DynAgentTool> {
-    discover_relay_mcp_tool_entries(provider, server_names, capability_state, call_context)
+    discover_relay_mcp_tool_entries(provider, servers, capability_state, call_context)
         .await
         .into_iter()
         .map(|entry| entry.tool)
@@ -126,17 +111,26 @@ pub async fn discover_relay_mcp_tools(
 
 pub async fn discover_relay_mcp_tool_entries(
     provider: Arc<dyn McpRelayProvider>,
-    server_names: &[String],
+    servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DiscoveredMcpTool> {
-    if server_names.is_empty() {
+    if servers.is_empty() {
         return Vec::new();
     }
-    let tools = provider.list_relay_tools(server_names).await;
+    let requested_names = servers
+        .iter()
+        .map(|server| server.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let tools = provider
+        .list_relay_tools(servers, call_context.clone())
+        .await;
     tools
         .iter()
         .filter(|info| {
+            if !requested_names.contains(info.server_name.as_str()) {
+                return false;
+            }
             let capability_key = capability_key_for_mcp_server_name(&info.server_name);
             capability_state.is_capability_tool_enabled(&capability_key, &info.tool_name, None)
         })
@@ -147,15 +141,7 @@ pub async fn discover_relay_mcp_tool_entries(
                 call_context.clone(),
             ));
             let tool = adapter.clone() as DynAgentTool;
-            DiscoveredMcpTool {
-                runtime_name: adapter.runtime_name.clone(),
-                server_name: adapter.server_name.clone(),
-                tool_name: adapter.original_tool_name.clone(),
-                uses_relay: true,
-                description: adapter.description.clone(),
-                parameters_schema: adapter.parameters_schema.clone(),
-                tool,
-            }
+            build_discovered_entry(&adapter.surface, true, tool)
         })
         .collect()
 }
@@ -164,7 +150,7 @@ pub async fn discover_relay_mcp_tool_entries(
 mod tests {
     use super::*;
     use agentdash_spi::platform::mcp_relay::{RelayMcpCallResult, RelayProbeResult};
-    use agentdash_spi::{ConnectorError, ToolCapabilityFilter};
+    use agentdash_spi::{ConnectorError, ToolCapability, ToolCapabilityFilter};
     use async_trait::async_trait;
 
     #[derive(Debug)]
@@ -174,13 +160,17 @@ mod tests {
 
     #[async_trait]
     impl McpRelayProvider for FakeRelayProvider {
-        async fn list_relay_tools(&self, _requested_servers: &[String]) -> Vec<RelayMcpToolInfo> {
+        async fn list_relay_tools(
+            &self,
+            _requested_servers: &[RuntimeMcpServer],
+            _context: Option<RelayMcpCallContext>,
+        ) -> Vec<RelayMcpToolInfo> {
             self.tools.clone()
         }
 
         async fn call_relay_tool(
             &self,
-            _server_name: &str,
+            _server: &RuntimeMcpServer,
             _tool_name: &str,
             _arguments: Option<serde_json::Map<String, serde_json::Value>>,
             _context: Option<RelayMcpCallContext>,
@@ -204,18 +194,31 @@ mod tests {
         }
     }
 
+    fn relay_server(name: &str) -> RuntimeMcpServer {
+        RuntimeMcpServer {
+            name: name.to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: format!("http://localhost/{name}"),
+                headers: vec![],
+            },
+            uses_relay: true,
+        }
+    }
+
     #[tokio::test]
     async fn relay_discovery_filters_tools_by_capability_policy() {
         let provider = Arc::new(FakeRelayProvider {
             tools: vec![
                 RelayMcpToolInfo {
                     server_name: "agentdash-workflow-tools-123".to_string(),
+                    server: relay_server("agentdash-workflow-tools-123"),
                     tool_name: "get_workflow".to_string(),
                     description: String::new(),
                     parameters_schema: serde_json::json!({ "type": "object" }),
                 },
                 RelayMcpToolInfo {
                     server_name: "agentdash-workflow-tools-123".to_string(),
+                    server: relay_server("agentdash-workflow-tools-123"),
                     tool_name: "upsert_workflow_tool".to_string(),
                     description: String::new(),
                     parameters_schema: serde_json::json!({ "type": "object" }),
@@ -236,7 +239,7 @@ mod tests {
 
         let tools = discover_relay_mcp_tools(
             provider,
-            &["agentdash-workflow-tools-123".to_string()],
+            &[relay_server("agentdash-workflow-tools-123")],
             &flow,
             None,
         )
@@ -247,10 +250,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn relay_discovery_filters_custom_mcp_raw_tool_policy_from_entries_and_callables() {
+        let provider = Arc::new(FakeRelayProvider {
+            tools: vec![
+                RelayMcpToolInfo {
+                    server_name: "code-analyzer".to_string(),
+                    server: relay_server("code-analyzer"),
+                    tool_name: "allowed_tool".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+                RelayMcpToolInfo {
+                    server_name: "code-analyzer".to_string(),
+                    server: relay_server("code-analyzer"),
+                    tool_name: "blocked_tool".to_string(),
+                    description: String::new(),
+                    parameters_schema: serde_json::json!({ "type": "object" }),
+                },
+            ],
+        });
+        let mut flow = CapabilityState::default();
+        flow.tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("code-analyzer"));
+        flow.tool.tool_policy.insert(
+            "mcp:code-analyzer".to_string(),
+            ToolCapabilityFilter {
+                include_only: Default::default(),
+                exclude: ["blocked_tool".to_string()].into_iter().collect(),
+            },
+        );
+
+        let entries = discover_relay_mcp_tool_entries(
+            provider.clone(),
+            &[relay_server("code-analyzer")],
+            &flow,
+            None,
+        )
+        .await;
+        let raw_tool_names = entries
+            .iter()
+            .map(|entry| entry.tool_name.as_str())
+            .collect::<Vec<_>>();
+        let callable_names =
+            discover_relay_mcp_tools(provider, &[relay_server("code-analyzer")], &flow, None)
+                .await
+                .iter()
+                .map(|tool| tool.name().to_string())
+                .collect::<Vec<_>>();
+
+        assert_eq!(raw_tool_names, vec!["allowed_tool"]);
+        assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
+    }
+
+    #[tokio::test]
     async fn relay_discovery_denies_mcp_tools_when_capability_state_is_empty() {
         let provider = Arc::new(FakeRelayProvider {
             tools: vec![RelayMcpToolInfo {
                 server_name: "agentdash-workflow-tools-123".to_string(),
+                server: relay_server("agentdash-workflow-tools-123"),
                 tool_name: "upsert_workflow_tool".to_string(),
                 description: String::new(),
                 parameters_schema: serde_json::json!({ "type": "object" }),
@@ -259,7 +317,7 @@ mod tests {
 
         let tools = discover_relay_mcp_tools(
             provider,
-            &["agentdash-workflow-tools-123".to_string()],
+            &[relay_server("agentdash-workflow-tools-123")],
             &CapabilityState::default(),
             None,
         )
@@ -269,5 +327,28 @@ mod tests {
             tools.is_empty(),
             "空 CapabilityState 不得因为 MCP server 已挂载而暴露 workflow 写入工具"
         );
+    }
+
+    #[tokio::test]
+    async fn relay_discovery_ignores_unrequested_provider_tools() {
+        let provider = Arc::new(FakeRelayProvider {
+            tools: vec![RelayMcpToolInfo {
+                server_name: "other-tools".to_string(),
+                server: relay_server("other-tools"),
+                tool_name: "read".to_string(),
+                description: String::new(),
+                parameters_schema: serde_json::json!({ "type": "object" }),
+            }],
+        });
+        let mut flow = CapabilityState::default();
+        flow.tool
+            .capabilities
+            .insert(agentdash_spi::ToolCapability::new("mcp:other-tools"));
+
+        let tools =
+            discover_relay_mcp_tools(provider, &[relay_server("requested-tools")], &flow, None)
+                .await;
+
+        assert!(tools.is_empty());
     }
 }

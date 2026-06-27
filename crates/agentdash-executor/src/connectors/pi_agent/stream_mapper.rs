@@ -1,11 +1,21 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
+use std::{iter::Peekable, str::Chars, sync::Arc};
 
-use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
+use agentdash_agent::{
+    AgentEvent, AgentMessage, AgentToolResult, ContentPart, ReadableIdRegistry, TokenUsage,
+    stable_tool_result_item_id,
+};
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent, SourceInfo, TraceInfo, backbone::thread_item,
+    ItemUpdatedNotification, PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
+    ProviderAttemptStatus as ProtocolProviderAttemptStatus, SourceInfo, ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
 };
-use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem};
+use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
+use agentdash_agent_types::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, ShellExecExecutionMode,
+};
 use codex_app_server_protocol as codex;
 
 fn make_envelope(
@@ -21,7 +31,7 @@ fn make_envelope(
     })
 }
 
-/// 合成 item_id — pi_agent 没有原生 item id，用 turn + entry 合成。
+/// 合成非工具 chunk item_id。工具结果优先使用 session scoped readable ref。
 fn synth_item_id(turn_id: &str, entry_index: u32, suffix: &str) -> String {
     format!("{turn_id}:{entry_index}:{suffix}")
 }
@@ -37,6 +47,13 @@ pub(super) struct ToolCallEmitState {
     entry_index: u32,
     tool_name: String,
     raw_input: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct StreamMapperRuntimeContext {
+    pub model_context_window: Option<u64>,
+    pub reserve_tokens: u64,
+    pub readable_ids: Option<Arc<ReadableIdRegistry>>,
 }
 
 fn chunk_stream_key(turn_id: &str, entry_index: u32, chunk_kind: &str) -> String {
@@ -122,25 +139,99 @@ fn upsert_state_from_message(
     )
 }
 
-/// 判断是否为 shell_exec 工具调用（应映射为 CommandExecution 而非 DynamicToolCall）
+/// 判断是否为 shell_exec 工具调用（映射为 AgentDash native shellExec）。
 fn is_shell_exec(tool_name: &str) -> bool {
     tool_name == "shell_exec"
 }
 
+fn tool_result_item_id(
+    runtime_context: &StreamMapperRuntimeContext,
+    turn_id: &str,
+    tool_call_id: &str,
+    tool_name: &str,
+) -> String {
+    runtime_context
+        .readable_ids
+        .as_ref()
+        .map(|registry| {
+            registry
+                .tool_result_ref(turn_id, tool_call_id, tool_name)
+                .item_id
+        })
+        .unwrap_or_else(|| stable_tool_result_item_id(turn_id, tool_call_id))
+}
+
+fn provider_attempt_phase_to_protocol(
+    phase: agentdash_agent::ProviderAttemptPhase,
+) -> ProtocolProviderAttemptPhase {
+    match phase {
+        agentdash_agent::ProviderAttemptPhase::Connecting => {
+            ProtocolProviderAttemptPhase::Connecting
+        }
+        agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta => {
+            ProtocolProviderAttemptPhase::ConnectedWaitingFirstDelta
+        }
+        agentdash_agent::ProviderAttemptPhase::Streaming => ProtocolProviderAttemptPhase::Streaming,
+        agentdash_agent::ProviderAttemptPhase::RetryScheduled => {
+            ProtocolProviderAttemptPhase::RetryScheduled
+        }
+        agentdash_agent::ProviderAttemptPhase::Retrying => ProtocolProviderAttemptPhase::Retrying,
+        agentdash_agent::ProviderAttemptPhase::Failed => ProtocolProviderAttemptPhase::Failed,
+        agentdash_agent::ProviderAttemptPhase::Succeeded => ProtocolProviderAttemptPhase::Succeeded,
+    }
+}
+
+fn provider_attempt_status_to_protocol(
+    status: &agentdash_agent::ProviderAttemptStatus,
+    turn_id: &str,
+) -> ProtocolProviderAttemptStatus {
+    ProtocolProviderAttemptStatus {
+        turn_id: turn_id.to_string(),
+        phase: provider_attempt_phase_to_protocol(status.phase),
+        attempt: status.attempt,
+        max_attempts: status.max_attempts,
+        will_retry: status.will_retry,
+        delay_ms: status.delay_ms,
+        reason_code: status.reason_code.clone(),
+        message: status.message.clone(),
+        provider: status.provider.clone(),
+        model: status.model.clone(),
+    }
+}
+
 /// 从 shell_exec 的 args JSON 中提取 command / cwd。
-/// cwd 的绝对路径解析交给 `agentdash_agent_protocol::backbone::thread_item::command_execution` 处理。
-fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
+/// cwd 保持 Agent-facing 语义：缺省/空值表示 platform shell，非空值必须由执行层校验为
+/// platform:// 或 mount_id://relative/path。
+fn extract_shell_args(
+    args: &serde_json::Value,
+) -> (String, Option<String>, ShellExecExecutionMode) {
     let command = args
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("(unknown)")
         .to_string();
-    let cwd = args
+    let raw_cwd = args
         .get("cwd")
         .and_then(|v| v.as_str())
-        .unwrap_or(".")
-        .to_string();
-    (command, cwd)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match raw_cwd {
+        None => (
+            command,
+            Some("platform://".to_string()),
+            ShellExecExecutionMode::Platform,
+        ),
+        Some(cwd) if cwd.starts_with("platform://") => (
+            command,
+            Some(cwd.to_string()),
+            ShellExecExecutionMode::Platform,
+        ),
+        Some(cwd) => (
+            command,
+            Some(cwd.to_string()),
+            ShellExecExecutionMode::MountExec,
+        ),
+    }
 }
 
 fn partial_result_details_type(partial_result: &serde_json::Value) -> Option<&str> {
@@ -151,19 +242,72 @@ fn partial_result_details_type(partial_result: &serde_json::Value) -> Option<&st
 }
 
 fn partial_result_text(partial_result: &serde_json::Value) -> String {
-    partial_result
-        .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|a| a.first())
-        .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .to_string()
+    tool_result_text(partial_result).unwrap_or_default()
 }
 
-/// 通过共享 builder 构造 CommandExecution ThreadItem。
-/// AbsolutePathBuf 限制（cwd 必须绝对）由 builder 内部处理。
-fn make_command_execution_item(
+fn decode_tool_result(value: &serde_json::Value) -> Option<AgentToolResult> {
+    serde_json::from_value(value.clone()).ok()
+}
+
+fn tool_result_text(value: &serde_json::Value) -> Option<String> {
+    let result = decode_tool_result(value)?;
+    let text = result
+        .content
+        .iter()
+        .filter_map(ContentPart::extract_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn tool_result_details(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    value.get("details").filter(|details| !details.is_null())
+}
+
+fn shell_exit_code_from_result(value: &serde_json::Value) -> Option<i32> {
+    tool_result_details(value)
+        .and_then(|details| details.get("exit_code"))
+        .and_then(|exit_code| exit_code.as_i64())
+        .and_then(|exit_code| i32::try_from(exit_code).ok())
+        .or_else(|| {
+            tool_result_text(value).and_then(|text| {
+                // exit code 可能被保留在 shell result 文本里；bounded preview 裁掉尾部时，
+                // 上面的 details 路径仍能保留结构化状态。
+                text.lines().rev().find_map(|line| {
+                    let trimmed = line.trim();
+                    trimmed
+                        .strip_prefix("exit_code: ")
+                        .or_else(|| trimmed.strip_prefix("Exit code: "))
+                        .and_then(|s| s.parse::<i32>().ok())
+                })
+            })
+        })
+}
+
+fn shell_command_status_from_result(
+    value: &serde_json::Value,
+    is_error: bool,
+) -> codex::CommandExecutionStatus {
+    if is_error || shell_exit_code_from_result(value).is_some_and(|exit_code| exit_code != 0) {
+        codex::CommandExecutionStatus::Failed
+    } else {
+        codex::CommandExecutionStatus::Completed
+    }
+}
+
+fn command_status_to_dynamic(
+    status: &codex::CommandExecutionStatus,
+) -> codex::DynamicToolCallStatus {
+    match status {
+        codex::CommandExecutionStatus::InProgress => codex::DynamicToolCallStatus::InProgress,
+        codex::CommandExecutionStatus::Completed => codex::DynamicToolCallStatus::Completed,
+        codex::CommandExecutionStatus::Failed | codex::CommandExecutionStatus::Declined => {
+            codex::DynamicToolCallStatus::Failed
+        }
+    }
+}
+
+fn make_shell_exec_item(
     item_id: &str,
     state: &ToolCallEmitState,
     status: codex::CommandExecutionStatus,
@@ -174,30 +318,22 @@ fn make_command_execution_item(
         .raw_input
         .clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
-    let (command, cwd) = extract_shell_args(&args);
-    let item = agentdash_agent_protocol::backbone::thread_item::command_execution(
-        item_id,
+    let (command, cwd, execution_mode) = extract_shell_args(&args);
+    AgentDashNativeThreadItem::ShellExec {
+        id: item_id.to_string(),
         command,
         cwd,
-        status,
+        execution_mode,
+        arguments: args,
+        status: command_status_to_dynamic(&status),
         aggregated_output,
         exit_code,
-    )
-    .unwrap_or_else(|e| {
-        tracing::warn!("Failed to build CommandExecution: {e}; falling back to dynamic_tool_call");
-        thread_item::dynamic_tool_call(
-            item_id,
-            state.tool_name.clone(),
-            state
-                .raw_input
-                .clone()
-                .unwrap_or(serde_json::Value::Object(Default::default())),
-            codex::DynamicToolCallStatus::InProgress,
-            None,
-            None,
-        )
-    });
-    item.into()
+        success: Some(!matches!(
+            status,
+            codex::CommandExecutionStatus::Failed | codex::CommandExecutionStatus::Declined
+        )),
+    }
+    .into()
 }
 
 /// 构造通用工具 ThreadItem。Codex 已有的语义用 Codex variant；AgentDash 自有
@@ -295,10 +431,143 @@ fn make_apply_patch_file_change_item(
     match thread_item::file_change(item_id, changes, status) {
         Ok(item) => Some(item.into()),
         Err(error) => {
-            tracing::warn!("Failed to build FileChange from fs_apply_patch: {error}");
+            diag!(
+                Warn,
+                Subsystem::AgentRun,
+                "Failed to build FileChange from fs_apply_patch: {error}"
+            );
             None
         }
     }
+}
+
+fn apply_patch_preview_args_from_draft(
+    draft: &str,
+    is_parseable: bool,
+) -> Option<serde_json::Value> {
+    let patch = extract_patch_string_from_tool_call_draft(draft, is_parseable)?;
+    let specs = parse_apply_patch_specs(&patch).ok()?;
+    if specs.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "patch": patch }))
+}
+
+fn extract_patch_string_from_tool_call_draft(draft: &str, is_parseable: bool) -> Option<String> {
+    if is_parseable {
+        let value = serde_json::from_str::<serde_json::Value>(draft).ok()?;
+        return string_arg(&value, "patch");
+    }
+    extract_json_string_field_prefix(draft, "patch")
+}
+
+fn parse_tool_call_args_from_draft(draft: &str, is_parseable: bool) -> Option<serde_json::Value> {
+    if !is_parseable {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(draft).ok()
+}
+
+fn extract_json_string_field_prefix(draft: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let bytes = draft.as_bytes();
+    let mut search_from = 0;
+
+    while let Some(relative_index) = draft[search_from..].find(&needle) {
+        let mut index = search_from + relative_index + needle.len();
+        index = skip_json_whitespace(bytes, index);
+        if bytes.get(index) != Some(&b':') {
+            search_from += relative_index + needle.len();
+            continue;
+        }
+        index = skip_json_whitespace(bytes, index + 1);
+        if bytes.get(index) != Some(&b'"') {
+            return None;
+        }
+        return decode_json_string_prefix(&draft[index + 1..]);
+    }
+
+    None
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut index: usize) -> usize {
+    while matches!(bytes.get(index), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        index += 1;
+    }
+    index
+}
+
+fn decode_json_string_prefix(input: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Some(output),
+            '\\' => match chars.next() {
+                Some('"') => output.push('"'),
+                Some('\\') => output.push('\\'),
+                Some('n') => output.push('\n'),
+                Some('r') => output.push('\r'),
+                Some('t') => output.push('\t'),
+                Some('/') => output.push('/'),
+                Some('b') => output.push('\u{0008}'),
+                Some('f') => output.push('\u{000c}'),
+                Some('u') => match decode_json_unicode_escape(&mut chars) {
+                    Some(decoded) => output.push(decoded),
+                    None => {
+                        return if output.is_empty() {
+                            None
+                        } else {
+                            Some(output)
+                        };
+                    }
+                },
+                Some(other) => output.push(other),
+                None => {
+                    return if output.is_empty() {
+                        None
+                    } else {
+                        Some(output)
+                    };
+                }
+            },
+            other => output.push(other),
+        }
+    }
+
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
+}
+
+fn decode_json_unicode_escape(chars: &mut Peekable<Chars<'_>>) -> Option<char> {
+    let value = decode_json_hex_code_unit(chars)?;
+    if (0xD800..=0xDBFF).contains(&value) {
+        if chars.next()? != '\\' || chars.next()? != 'u' {
+            return None;
+        }
+        let low = decode_json_hex_code_unit(chars)?;
+        if !(0xDC00..=0xDFFF).contains(&low) {
+            return None;
+        }
+        let scalar = 0x10000 + (((value - 0xD800) << 10) | (low - 0xDC00));
+        return char::from_u32(scalar);
+    }
+    if (0xDC00..=0xDFFF).contains(&value) {
+        return None;
+    }
+    char::from_u32(value)
+}
+
+fn decode_json_hex_code_unit(chars: &mut Peekable<Chars<'_>>) -> Option<u32> {
+    let mut value = 0_u32;
+    for _ in 0..4 {
+        value = (value << 4) | chars.next()?.to_digit(16)?;
+    }
+    Some(value)
 }
 
 fn patch_apply_status_from_dynamic(
@@ -408,6 +677,54 @@ fn usize_arg(args: &serde_json::Value, key: &str) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+fn usage_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn token_usage_notification_from_usage(
+    session_id: &str,
+    turn_id: &str,
+    usage: &TokenUsage,
+    runtime_context: StreamMapperRuntimeContext,
+) -> ThreadTokenUsageUpdatedNotification {
+    let provider_context_tokens = usage.context_input_tokens();
+    let total_tokens = provider_context_tokens.saturating_add(usage.output);
+    let cached_input_tokens = usage
+        .cache_read_input
+        .saturating_add(usage.cache_creation_input);
+    let breakdown = TokenUsageBreakdown {
+        total_tokens: usage_to_i64(total_tokens),
+        input_tokens: usage_to_i64(usage.input),
+        cached_input_tokens: usage_to_i64(cached_input_tokens),
+        output_tokens: usage_to_i64(usage.output),
+        reasoning_output_tokens: 0,
+    };
+    let model_context_window = runtime_context.model_context_window.map(usage_to_i64);
+    let reserve_tokens = usage_to_i64(runtime_context.reserve_tokens);
+    let current_context_tokens = usage_to_i64(provider_context_tokens);
+
+    ThreadTokenUsageUpdatedNotification {
+        thread_id: session_id.to_string(),
+        turn_id: turn_id.to_string(),
+        token_usage: ThreadTokenUsage {
+            total: breakdown.clone(),
+            last: breakdown,
+            model_context_window,
+            context: NormalizedContextUsage {
+                provider_context_tokens: current_context_tokens,
+                pending_estimate_tokens: 0,
+                current_context_tokens,
+                cumulative_total_tokens: usage_to_i64(total_tokens),
+                model_context_window,
+                effective_context_window: model_context_window,
+                reserve_tokens,
+                source: ContextUsageSource::Provider,
+            },
+        },
+    }
+}
+
+#[cfg(test)]
 pub(super) fn convert_event_to_envelopes(
     event: &AgentEvent,
     session_id: &str,
@@ -417,10 +734,41 @@ pub(super) fn convert_event_to_envelopes(
     chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
     tool_call_states: &mut HashMap<String, ToolCallEmitState>,
 ) -> Vec<BackboneEnvelope> {
+    convert_event_to_envelopes_with_runtime_context(
+        event,
+        session_id,
+        source,
+        turn_id,
+        entry_index,
+        chunk_emit_states,
+        tool_call_states,
+        StreamMapperRuntimeContext::default(),
+    )
+}
+
+pub(super) fn convert_event_to_envelopes_with_runtime_context(
+    event: &AgentEvent,
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    entry_index: &mut u32,
+    chunk_emit_states: &mut HashMap<String, ChunkEmitState>,
+    tool_call_states: &mut HashMap<String, ToolCallEmitState>,
+    runtime_context: StreamMapperRuntimeContext,
+) -> Vec<BackboneEnvelope> {
     let wrap =
         |event: BackboneEvent, idx: u32| make_envelope(event, session_id, source, turn_id, idx);
 
     match event {
+        AgentEvent::ProviderAttemptStatus { status } => {
+            vec![wrap(
+                BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(
+                    provider_attempt_status_to_protocol(status, turn_id),
+                )),
+                *entry_index,
+            )]
+        }
+
         AgentEvent::MessageUpdate {
             message,
             event: stream_event,
@@ -440,9 +788,10 @@ pub(super) fn convert_event_to_envelopes(
                 if !created {
                     return Vec::new();
                 }
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, &state.tool_name);
                 let item = if is_shell_exec(&state.tool_name) {
-                    make_command_execution_item(
+                    make_shell_exec_item(
                         &item_id,
                         &state,
                         codex::CommandExecutionStatus::InProgress,
@@ -470,17 +819,59 @@ pub(super) fn convert_event_to_envelopes(
             agentdash_agent::types::AssistantStreamEvent::ToolCallDelta {
                 tool_call_id,
                 name,
+                draft,
+                is_parseable,
                 ..
             } => {
-                let (_state, _) = upsert_state_from_message(
+                let (state, _) = upsert_state_from_message(
                     tool_call_states,
                     entry_index,
                     message,
                     tool_call_id,
                     name,
                 );
-                // 参数增量在 Codex 协议中没有对应的独立通知，仅影响最终 ItemCompleted。
-                Vec::new()
+                let args = if state.tool_name == "fs_apply_patch" {
+                    apply_patch_preview_args_from_draft(draft, *is_parseable)
+                } else {
+                    parse_tool_call_args_from_draft(draft, *is_parseable)
+                };
+                let Some(args) = args else {
+                    return Vec::new();
+                };
+                let (state, _) = upsert_tool_call_state(
+                    tool_call_states,
+                    entry_index,
+                    tool_call_id,
+                    state.tool_name,
+                    Some(args),
+                );
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, &state.tool_name);
+                let item = if is_shell_exec(&state.tool_name) {
+                    make_shell_exec_item(
+                        &item_id,
+                        &state,
+                        codex::CommandExecutionStatus::InProgress,
+                        None,
+                        None,
+                    )
+                } else {
+                    make_dynamic_tool_item(
+                        &item_id,
+                        &state,
+                        codex::DynamicToolCallStatus::InProgress,
+                        None,
+                        None,
+                    )
+                };
+                vec![wrap(
+                    BackboneEvent::ItemUpdated(ItemUpdatedNotification::new(
+                        item,
+                        session_id.to_string(),
+                        turn_id.to_string(),
+                    )),
+                    state.entry_index,
+                )]
             }
             agentdash_agent::types::AssistantStreamEvent::ToolCallEnd { tool_call, .. } => {
                 let (_state, _) = upsert_tool_call_state(
@@ -539,6 +930,8 @@ pub(super) fn convert_event_to_envelopes(
                 content,
                 error_message,
                 tool_calls,
+                stop_reason,
+                usage,
                 ..
             } = message
             {
@@ -617,14 +1010,29 @@ pub(super) fn convert_event_to_envelopes(
                         Some(tool_call.arguments.clone()),
                     );
                     if created {
-                        let item_id = synth_item_id(turn_id, _state.entry_index, &tool_call.id);
-                        let item = make_dynamic_tool_item(
-                            &item_id,
-                            &_state,
-                            codex::DynamicToolCallStatus::InProgress,
-                            None,
-                            None,
+                        let item_id = tool_result_item_id(
+                            &runtime_context,
+                            turn_id,
+                            &tool_call.id,
+                            &_state.tool_name,
                         );
+                        let item = if is_shell_exec(&_state.tool_name) {
+                            make_shell_exec_item(
+                                &item_id,
+                                &_state,
+                                codex::CommandExecutionStatus::InProgress,
+                                None,
+                                None,
+                            )
+                        } else {
+                            make_dynamic_tool_item(
+                                &item_id,
+                                &_state,
+                                codex::DynamicToolCallStatus::InProgress,
+                                None,
+                                None,
+                            )
+                        };
                         envelopes.push(wrap(
                             BackboneEvent::ItemStarted(ItemStartedNotification::new(
                                 item,
@@ -639,8 +1047,64 @@ pub(super) fn convert_event_to_envelopes(
                 let has_streamable_content = content.iter().any(|part| {
                     part.extract_text().is_some() || part.extract_reasoning().is_some()
                 });
+                let message_entry_index = *entry_index;
+
+                // 终态承载助手正文 / reasoning：turn 收尾落 durable ItemCompleted，
+                // 使重放不再依赖逐条 text delta（delta 仍保留作 live UI + fallback）。
+                // 复用与 delta 相同的 item_id 与 message_entry_index，让前端能并入同一气泡。
+                if !text.is_empty() {
+                    let item_id = synth_item_id(turn_id, message_entry_index, "msg");
+                    let item: AgentDashThreadItem = codex::ThreadItem::AgentMessage {
+                        id: item_id,
+                        text: text.clone(),
+                        phase: None,
+                        memory_citation: None,
+                    }
+                    .into();
+                    envelopes.push(wrap(
+                        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                            item,
+                            session_id.to_string(),
+                            turn_id.to_string(),
+                        )),
+                        message_entry_index,
+                    ));
+                }
+                if !reasoning_text.is_empty() {
+                    let item_id = synth_item_id(turn_id, message_entry_index, "reason");
+                    let item: AgentDashThreadItem = codex::ThreadItem::Reasoning {
+                        id: item_id,
+                        summary: vec![],
+                        content: vec![reasoning_text.clone()],
+                    }
+                    .into();
+                    envelopes.push(wrap(
+                        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                            item,
+                            session_id.to_string(),
+                            turn_id.to_string(),
+                        )),
+                        message_entry_index,
+                    ));
+                }
+
                 if has_streamable_content || error_message.is_some() || !tool_calls.is_empty() {
                     *entry_index += 1;
+                }
+                if !matches!(
+                    stop_reason,
+                    Some(agentdash_agent::StopReason::Error | agentdash_agent::StopReason::Aborted)
+                ) && let Some(usage) = usage.as_ref()
+                {
+                    envelopes.push(wrap(
+                        BackboneEvent::TokenUsageUpdated(token_usage_notification_from_usage(
+                            session_id,
+                            turn_id,
+                            usage,
+                            runtime_context,
+                        )),
+                        message_entry_index,
+                    ));
                 }
                 return envelopes;
             }
@@ -748,9 +1212,9 @@ pub(super) fn convert_event_to_envelopes(
                 tool_name,
                 Some(args.clone()),
             );
-            let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+            let item_id = tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
             let item = if is_shell_exec(tool_name) {
-                make_command_execution_item(
+                make_shell_exec_item(
                     &item_id,
                     &state,
                     codex::CommandExecutionStatus::InProgress,
@@ -797,7 +1261,8 @@ pub(super) fn convert_event_to_envelopes(
             );
 
             if is_shell_output || is_vfs_uri_rewrite {
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
                 let delta = partial_result_text(partial_result);
                 vec![wrap(
                     BackboneEvent::CommandOutputDelta(
@@ -812,7 +1277,8 @@ pub(super) fn convert_event_to_envelopes(
                 )]
             } else {
                 let content_items = decode_tool_result_to_content_items(partial_result);
-                let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+                let item_id =
+                    tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
                 let item = make_dynamic_tool_item(
                     &item_id,
                     &state,
@@ -821,7 +1287,7 @@ pub(super) fn convert_event_to_envelopes(
                     None,
                 );
                 vec![wrap(
-                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                    BackboneEvent::ItemUpdated(ItemUpdatedNotification::new(
                         item,
                         session_id.to_string(),
                         turn_id.to_string(),
@@ -906,36 +1372,13 @@ pub(super) fn convert_event_to_envelopes(
                 tool_name,
                 None,
             );
-            let item_id = synth_item_id(turn_id, state.entry_index, tool_call_id);
+            let item_id = tool_result_item_id(&runtime_context, turn_id, tool_call_id, tool_name);
 
             let item = if is_shell_exec(tool_name) {
-                let exit_code = result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .and_then(|text| {
-                        // exit code 通常作为 "Exit code: N" 出现在输出末尾
-                        text.lines().rev().find_map(|line| {
-                            line.trim()
-                                .strip_prefix("Exit code: ")
-                                .and_then(|s| s.parse::<i32>().ok())
-                        })
-                    });
-                let aggregated_output = result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .map(|s| s.to_string());
-                let status = if *is_error {
-                    codex::CommandExecutionStatus::Failed
-                } else {
-                    codex::CommandExecutionStatus::Completed
-                };
-                make_command_execution_item(&item_id, &state, status, aggregated_output, exit_code)
+                let exit_code = shell_exit_code_from_result(result);
+                let aggregated_output = tool_result_text(result);
+                let status = shell_command_status_from_result(result, *is_error);
+                make_shell_exec_item(&item_id, &state, status, aggregated_output, exit_code)
             } else {
                 let content_items = decode_tool_result_to_content_items(result);
                 let success = Some(!is_error);
@@ -980,7 +1423,8 @@ fn reconcile_chunk(
                 Some(suffix.to_string())
             }
         } else {
-            tracing::warn!(
+            diag!(Warn, Subsystem::AgentRun,
+
                 turn_id = %turn_id,
                 entry_index = entry_index,
                 kind = kind,
@@ -996,7 +1440,7 @@ fn reconcile_chunk(
 fn decode_tool_result_to_content_items(
     value: &serde_json::Value,
 ) -> Option<Vec<codex::DynamicToolCallOutputContentItem>> {
-    let result: AgentToolResult = serde_json::from_value(value.clone()).ok()?;
+    let result = decode_tool_result(value)?;
     let items: Vec<codex::DynamicToolCallOutputContentItem> = result
         .content
         .iter()

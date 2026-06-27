@@ -1,0 +1,14 @@
+[package]
+name = "agentdash-diagnostics"
+description = "AgentDash 统一诊断 facade — diag! 宏 + 结构化诊断记录 + 环形缓冲查询层"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

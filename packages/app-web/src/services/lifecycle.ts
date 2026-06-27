@@ -7,29 +7,21 @@
 import { api } from "../api/client";
 import type {
   AgentFrameRuntimeView,
+  AgentRunWorkspaceListView,
   LifecycleRunView,
   ProjectActiveAgentsView,
-  ProjectSessionListView,
   RuntimeSessionTraceView,
   SessionRuntimeControlView,
   SubjectExecutionView,
 } from "../types";
-import type {
-  EnqueuePendingMessageRequest,
-  EnqueuePendingMessageResponse,
-  PendingMessageView,
-  AgentRunMessageRequest,
-  AgentRunMessageResponse,
-  AgentRunSteeringRequest,
-  AgentRunSteeringResponse,
-} from "../generated/workflow-contracts";
+import type { AgentRunWorkspaceView } from "../generated/workflow-contracts";
 
-function sessionCommandPath(runtimeSessionId: string, route: string): string {
-  return `/sessions/${encodeURIComponent(runtimeSessionId)}${route}`;
+function agentRunCommandPath(runId: string, agentId: string, route: string): string {
+  return `/agent-runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}${route}`;
 }
 
 export async function fetchLifecycleRun(runId: string): Promise<LifecycleRunView> {
-  return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}/view`);
+  return api.get<LifecycleRunView>(`/lifecycle-runs/${encodeURIComponent(runId)}`);
 }
 
 export async function fetchSubjectExecution(
@@ -47,9 +39,23 @@ export async function fetchProjectActiveAgents(projectId: string): Promise<Proje
   );
 }
 
-export async function fetchProjectSessionList(projectId: string): Promise<ProjectSessionListView> {
-  return api.get<ProjectSessionListView>(
-    `/projects/${encodeURIComponent(projectId)}/sessions`,
+export interface FetchProjectAgentRunsOptions {
+  /** 单页大小（后端默认 30，上限 100）。 */
+  limit?: number;
+  /** keyset 游标，续拉下一页；省略则取首页。 */
+  cursor?: string;
+}
+
+export async function fetchProjectAgentRuns(
+  projectId: string,
+  opts: FetchProjectAgentRunsOptions = {},
+): Promise<AgentRunWorkspaceListView> {
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  const query = params.toString();
+  return api.get<AgentRunWorkspaceListView>(
+    `/projects/${encodeURIComponent(projectId)}/agent-runs${query ? `?${query}` : ""}`,
   );
 }
 
@@ -71,65 +77,9 @@ export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<Runti
   );
 }
 
-export async function sendAgentRunMessageByRuntimeSession(
-  runtimeSessionId: string,
-  request: AgentRunMessageRequest,
-): Promise<AgentRunMessageResponse> {
-  return api.post<AgentRunMessageResponse>(
-    sessionCommandPath(runtimeSessionId, "/messages"),
-    request,
-  );
-}
-
-export async function steerAgentRunByRuntimeSession(
-  runtimeSessionId: string,
-  request: AgentRunSteeringRequest,
-): Promise<AgentRunSteeringResponse> {
-  return api.post<AgentRunSteeringResponse>(
-    sessionCommandPath(runtimeSessionId, "/steering"),
-    request,
-  );
-}
-
-export async function listPendingMessages(
-  runtimeSessionId: string,
-): Promise<PendingMessageView[]> {
-  return api.get<PendingMessageView[]>(
-    sessionCommandPath(runtimeSessionId, "/pending-messages"),
-  );
-}
-
-export async function enqueuePendingMessage(
-  runtimeSessionId: string,
-  body: EnqueuePendingMessageRequest,
-): Promise<EnqueuePendingMessageResponse> {
-  return api.post<EnqueuePendingMessageResponse>(
-    sessionCommandPath(runtimeSessionId, "/pending-messages"),
-    body,
-  );
-}
-
-export async function deletePendingMessage(
-  runtimeSessionId: string,
-  messageId: string,
-): Promise<void> {
-  await api.delete<void>(
-    sessionCommandPath(
-      runtimeSessionId,
-      `/pending-messages/${encodeURIComponent(messageId)}`,
-    ),
-  );
-}
-
-export async function promotePendingMessage(
-  runtimeSessionId: string,
-  messageId: string,
-): Promise<void> {
-  await api.post<void>(
-    sessionCommandPath(
-      runtimeSessionId,
-      `/pending-messages/${encodeURIComponent(messageId)}/promote`,
-    ),
-    {},
-  );
+export async function fetchAgentRunWorkspace(
+  runId: string,
+  agentId: string,
+): Promise<AgentRunWorkspaceView> {
+  return api.get<AgentRunWorkspaceView>(agentRunCommandPath(runId, agentId, "/workspace"));
 }

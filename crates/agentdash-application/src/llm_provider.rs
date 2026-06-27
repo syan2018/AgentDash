@@ -155,10 +155,10 @@ pub async fn update_llm_provider(
     if let Some(mode) = credential_mode {
         provider.credential_mode = mode;
     }
-    if let Some(api_key) = global_api_key {
-        if !is_masked_placeholder(&api_key) {
-            provider.global_api_key_ciphertext = encrypt_optional_secret(secret_codec, &api_key)?;
-        }
+    if let Some(api_key) = global_api_key
+        && !is_masked_placeholder(&api_key)
+    {
+        provider.global_api_key_ciphertext = encrypt_optional_secret(secret_codec, &api_key)?;
     }
     apply_optional_provider_fields(
         &mut provider,

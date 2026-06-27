@@ -10,6 +10,8 @@ export interface SessionProjectionViewProps {
   sessionId: string | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
+  /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
+  embedded?: boolean;
 }
 
 export interface SessionProjectionViewPanelProps {
@@ -18,6 +20,8 @@ export interface SessionProjectionViewPanelProps {
   isLoading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
+  /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
+  embedded?: boolean;
 }
 
 interface ContextCategoryRow {
@@ -181,14 +185,20 @@ export function SessionProjectionViewPanel({
   isLoading = false,
   error = null,
   onRefresh,
+  embedded = false,
 }: SessionProjectionViewPanelProps) {
   const categories = buildContextCategories(projection, tokenUsage);
   const messageBreakdown = projection?.context_usage.messages;
   const topTools = projection?.context_usage.top_tools ?? [];
   const topAttachments = projection?.context_usage.top_attachments ?? [];
-  return (
-    <div className="border-b border-border bg-background px-5 py-3">
-      <div className="mx-auto w-full max-w-4xl rounded-[8px] border border-border bg-secondary/20">
+  const card = (
+      <div
+        className={
+          embedded
+            ? "w-full overflow-hidden rounded-[10px] border border-border bg-popover shadow-lg"
+            : "mx-auto w-full max-w-4xl rounded-[8px] border border-border bg-secondary/20"
+        }
+      >
         <div className="flex flex-wrap items-center gap-2 px-3 py-2">
           <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
             CONTEXT
@@ -314,14 +324,16 @@ export function SessionProjectionViewPanel({
           </div>
         )}
       </div>
-    </div>
   );
+  if (embedded) return card;
+  return <div className="border-b border-border bg-background px-5 py-3">{card}</div>;
 }
 
 export function SessionProjectionView({
   sessionId,
   refreshKey = 0,
   tokenUsage = null,
+  embedded = false,
 }: SessionProjectionViewProps) {
   const [projection, setProjection] = useState<SessionProjectionViewResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -355,6 +367,7 @@ export function SessionProjectionView({
       isLoading={isLoading}
       error={error}
       onRefresh={() => void refresh()}
+      embedded={embedded}
     />
   );
 }

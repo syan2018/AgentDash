@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "跨层 contract 和 projection 验证"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端 Task plan store 与 Story projection cache 验证"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "后端 Task 事实源和 runtime truth 边界验证"}
+{"file": ".trellis/tasks/06-17-universal-task-toolset/research/embedded-task-list-tool-review.md", "reason": "参考实现映射和工具数量最小化原则验证"}

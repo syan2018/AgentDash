@@ -1,8 +1,10 @@
+mod agent_run_mailbox_contracts;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
 pub mod canvases;
 pub mod companion_gates;
+pub mod diagnostics;
 pub mod discovered_options;
 pub mod discovery;
 pub mod extension_package_artifacts;
@@ -11,6 +13,7 @@ pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
 pub mod lifecycle_agents;
+mod lifecycle_contracts;
 pub mod lifecycle_views;
 pub mod llm_providers;
 pub mod marketplace;
@@ -23,13 +26,14 @@ pub mod project_vfs_mounts;
 pub mod projects;
 pub mod release_info;
 pub mod routines;
+pub mod runner_registration_tokens;
 pub mod sessions;
 pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_runs;
-pub mod task_execution;
+pub mod task_plan;
 pub mod terminals;
 pub mod vfs;
 pub mod vfs_surfaces;
@@ -39,6 +43,7 @@ pub mod workspaces;
 
 use std::{path::PathBuf, sync::Arc};
 
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{Router, middleware, routing::get};
 use tower_http::cors::CorsLayer;
@@ -56,6 +61,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         workspace_repo: state.repos.workspace_repo.clone(),
         agent_procedure_repo: state.repos.agent_procedure_repo.clone(),
         workflow_graph_repo: state.repos.workflow_graph_repo.clone(),
+        lifecycle_run_repo: state.repos.lifecycle_run_repo.clone(),
+        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services)
@@ -75,6 +82,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
+        .merge(runner_registration_tokens::router())
         .merge(canvases::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())
@@ -83,7 +91,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(backend_access::router())
         .merge(stories::router())
         .merge(story_runs::router())
-        .merge(task_execution::router())
+        .merge(task_plan::router())
         .merge(lifecycle_agents::router())
         .merge(lifecycle_views::router())
         .merge(workflows::router())
@@ -103,6 +111,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(file_picker::router())
         .merge(discovery::router())
         .merge(discovered_options::router())
+        .merge(diagnostics::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::authenticate_request,
@@ -113,6 +122,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(health::router())
         .merge(auth_routes::public_router())
         .merge(routines::public_router())
+        .merge(runner_registration_tokens::public_router())
         .merge(extension_package_artifacts::public_router())
         .merge(secured_api)
         .with_state(state.clone());
@@ -145,7 +155,9 @@ fn with_web_static_fallback(router: Router) -> Router {
     };
 
     if !web_dist_dir.is_dir() {
-        tracing::warn!(
+        diag!(
+            Warn,
+            Subsystem::Api,
             path = %web_dist_dir.display(),
             "AGENTDASH_WEB_DIST_DIR 不存在，跳过 Web Dashboard 静态托管"
         );
@@ -153,7 +165,9 @@ fn with_web_static_fallback(router: Router) -> Router {
     }
 
     let index_file = web_dist_dir.join("index.html");
-    tracing::info!(
+    diag!(
+        Info,
+        Subsystem::Api,
         path = %web_dist_dir.display(),
         "启用 Web Dashboard 静态托管"
     );

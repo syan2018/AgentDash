@@ -6,7 +6,7 @@
 use std::path::{Component, Path};
 use std::sync::Arc;
 
-use agentdash_application::vfs::selected_workspace_binding;
+use agentdash_application_vfs::selected_workspace_binding;
 use axum::Json;
 use axum::extract::{Query, State};
 use uuid::Uuid;
@@ -18,7 +18,7 @@ use crate::dto::{
     ReadFileRequest, ReadFileResponse, ReadFileResult,
 };
 use crate::rpc::ApiError;
-use agentdash_application::vfs::{ListOptions, ResourceRef};
+use agentdash_application_vfs::{ListOptions, ResourceRef};
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
@@ -414,10 +414,12 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ApiError::BadRequest(msg) => write!(f, "{}", msg),
+            ApiError::BadRequestWithCode { message, .. } => write!(f, "{}", message),
             ApiError::Unauthorized(msg) => write!(f, "{}", msg),
             ApiError::Forbidden(msg) => write!(f, "{}", msg),
             ApiError::NotFound(msg) => write!(f, "{}", msg),
             ApiError::Conflict(msg) => write!(f, "{}", msg),
+            ApiError::ConflictWithCode(payload) => write!(f, "{}", payload.message),
             ApiError::UnprocessableEntity(msg) => write!(f, "{}", msg),
             ApiError::ServiceUnavailable(msg) => write!(f, "{}", msg),
             ApiError::Internal(msg) => write!(f, "{}", msg),

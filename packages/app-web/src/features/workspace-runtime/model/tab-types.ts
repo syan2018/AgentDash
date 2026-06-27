@@ -7,6 +7,7 @@ export interface TabContentRenderProps {
   tabId: string;
   sessionId: string | null;
   isActive: boolean;
+  refreshRevision: number;
 }
 
 export interface TabTypeDescriptor {
@@ -19,6 +20,7 @@ export interface TabTypeDescriptor {
   resolveTitle: (uri: string) => string;
   parseUri: (uri: string) => Record<string, string> | null;
   buildUri: (params: Record<string, string>) => string;
+  canCreateUri?: (uri: string) => boolean;
   defaultUri?: string;
   menuOrder?: number;
 }
@@ -29,6 +31,7 @@ export interface TabInstance {
   uri: string;
   title: string;
   pinned: boolean;
+  refreshRevision: number;
 }
 
 export interface SessionTabLayout {

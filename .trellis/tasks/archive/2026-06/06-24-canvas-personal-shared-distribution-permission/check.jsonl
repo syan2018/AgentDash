@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration、索引、既有数据迁移符合数据库规范"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查 Canvas repository 查询和 mutation 未越过 aggregate 边界"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "检查 project shared Canvas 的只读 runtime mount 与 provider 写路径裁切"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 Canvas scope/access/lineage DTO 与 generated TS 无 drift"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "检查项目共用发布与发布为插件语义区分清楚"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 Canvas access 字段消费、DTO facade 和 fixtures 同步"}
+{"file": ".trellis/tasks/06-23-canvas-vfs-runtime-binding-convergence/prd.md", "reason": "检查新任务未重新引入 canvas_id/mount_id 双义字段"}
+{"file": ".trellis/tasks/06-23-agentframe-canvas-projection-convergence/prd.md", "reason": "检查只读 Canvas runtime surface 接入 canonical AgentFrame projection 路径"}

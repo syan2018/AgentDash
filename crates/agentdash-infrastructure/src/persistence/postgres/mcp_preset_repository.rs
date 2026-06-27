@@ -2,7 +2,8 @@ use sqlx::PgPool;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::mcp_preset::{
-    McpPreset, McpPresetRepository, McpPresetSource, McpRoutePolicy, McpTransportConfig,
+    McpPreset, McpPresetRepository, McpPresetSource, McpRoutePolicy, McpRuntimeBindingConfig,
+    McpTransportConfig,
 };
 use agentdash_domain::shared_library::InstalledAssetSource;
 
@@ -20,13 +21,13 @@ impl PostgresMcpPresetRepository {
     }
 }
 
-const COLS: &str = "id,project_id,key,display_name,description,transport,route_policy,source,builtin_key,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
+const COLS: &str = "id,project_id,key,display_name,description,transport,route_policy,runtime_binding,source,builtin_key,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl McpPresetRepository for PostgresMcpPresetRepository {
     async fn create(&self, preset: &McpPreset) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"
+            "INSERT INTO mcp_presets ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"
         ))
         .bind(preset.id.to_string())
         .bind(preset.project_id.to_string())
@@ -35,6 +36,7 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(preset.description.as_deref())
         .bind(serde_json::to_string(&preset.transport)?)
         .bind(serde_json::to_string(&preset.route_policy)?)
+        .bind(runtime_binding_json(&preset.runtime_binding)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(installed_library_asset_id(&preset.installed_source))
@@ -92,13 +94,14 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
 
     async fn update(&self, preset: &McpPreset) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "UPDATE mcp_presets SET key=$1, display_name=$2, description=$3, transport=$4, route_policy=$5, source=$6, builtin_key=$7, library_asset_id=$8, source_ref=$9, source_version=$10, source_digest=$11, installed_at=$12, updated_at=$13 WHERE id=$14",
+            "UPDATE mcp_presets SET key=$1, display_name=$2, description=$3, transport=$4, route_policy=$5, runtime_binding=$6, source=$7, builtin_key=$8, library_asset_id=$9, source_ref=$10, source_version=$11, source_digest=$12, installed_at=$13, updated_at=$14 WHERE id=$15",
         )
         .bind(&preset.key)
         .bind(&preset.display_name)
         .bind(preset.description.as_deref())
         .bind(serde_json::to_string(&preset.transport)?)
         .bind(serde_json::to_string(&preset.route_policy)?)
+        .bind(runtime_binding_json(&preset.runtime_binding)?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(installed_library_asset_id(&preset.installed_source))
@@ -196,6 +199,16 @@ fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTim
     source.as_ref().map(|source| source.installed_at)
 }
 
+fn runtime_binding_json(
+    runtime_binding: &Option<McpRuntimeBindingConfig>,
+) -> Result<Option<String>, DomainError> {
+    runtime_binding
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Into::into)
+}
+
 fn parse_installed_source(
     library_asset_id: Option<String>,
     source_ref: Option<String>,
@@ -234,6 +247,7 @@ struct McpPresetRow {
     description: Option<String>,
     transport: String,
     route_policy: String,
+    runtime_binding: Option<String>,
     source: String,
     builtin_key: Option<String>,
     library_asset_id: Option<String>,
@@ -257,6 +271,15 @@ impl TryFrom<McpPresetRow> for McpPreset {
             serde_json::from_str(&row.route_policy).map_err(|error| {
                 DomainError::InvalidConfig(format!("mcp_presets.route_policy: {error}"))
             })?;
+        let runtime_binding: Option<McpRuntimeBindingConfig> = row
+            .runtime_binding
+            .as_deref()
+            .map(|raw| {
+                serde_json::from_str(raw).map_err(|error| {
+                    DomainError::InvalidConfig(format!("mcp_presets.runtime_binding: {error}"))
+                })
+            })
+            .transpose()?;
 
         let source = match row.source.as_str() {
             "builtin" => {
@@ -291,6 +314,7 @@ impl TryFrom<McpPresetRow> for McpPreset {
             description: row.description,
             transport,
             route_policy,
+            runtime_binding,
             source,
             installed_source: parse_installed_source(
                 row.library_asset_id,
@@ -309,7 +333,10 @@ impl TryFrom<McpPresetRow> for McpPreset {
 mod tests {
     use uuid::Uuid;
 
-    use agentdash_domain::mcp_preset::{McpPresetRepository, McpRoutePolicy, McpTransportConfig};
+    use agentdash_domain::mcp_preset::{
+        McpPresetRepository, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingRule,
+        McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
+    };
 
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
@@ -336,6 +363,18 @@ mod tests {
             return;
         };
         let project_id = Uuid::new_v4();
+        let runtime_binding = McpRuntimeBindingConfig {
+            mount_id: Some("main".to_string()),
+            bindings: vec![McpRuntimeBindingRule {
+                source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                    path: vec!["p4".to_string(), "client_name".to_string()],
+                },
+                target: McpRuntimeBindingTarget::HttpHeader {
+                    name: "x-p4-client".to_string(),
+                },
+                required: true,
+            }],
+        };
         let preset = McpPreset::new_user(
             project_id,
             "fetch-preset",
@@ -343,7 +382,8 @@ mod tests {
             Some("demo".to_string()),
             sample_http_transport(),
             McpRoutePolicy::Direct,
-        );
+        )
+        .with_runtime_binding(Some(runtime_binding.clone()));
 
         repo.create(&preset).await.expect("create preset");
 
@@ -354,6 +394,7 @@ mod tests {
         assert_eq!(loaded.source, McpPresetSource::User);
         assert_eq!(loaded.transport, preset.transport);
         assert_eq!(loaded.route_policy, McpRoutePolicy::Direct);
+        assert_eq!(loaded.runtime_binding, Some(runtime_binding));
     }
 
     #[tokio::test]

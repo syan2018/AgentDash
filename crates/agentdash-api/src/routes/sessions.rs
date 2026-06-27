@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use agentdash_diagnostics::{Subsystem, diag};
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -15,27 +15,32 @@ use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::routes::lifecycle_views::{
-    agent_frame_ref, agent_frame_runtime_to_view, runtime_refs_for_agent,
+    agent_frame_runtime_to_view, presentation_read_model_error_to_api,
+    session_runtime_control_status_to_contract,
 };
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::session::{
-    ExecutionStatus, SessionExecutionState, SessionForkRequest, SessionMeta,
+use agentdash_agent::MessageRef;
+use agentdash_application_agentrun::agent_run as agentrun_read;
+use agentdash_application_runtime_session::session::{
+    SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
-use agentdash_application::workflow::lifecycle_run_view_builder;
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
-    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
-    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
-    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageViewResponse,
-    SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
+    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
+    RejectToolCallResponse, RollbackSessionProjectionRequest,
+    SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
+    SessionContextUsageCategoryResponse, SessionContextUsageItemResponse, SessionEventResponse,
+    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
+    SessionLineageViewResponse, SessionMessageContextBreakdownResponse, SessionMessageRefDto,
+    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
+    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
+    SessionToolContextContributionResponse,
 };
+use agentdash_contracts::workflow as workflow_contract;
 use agentdash_contracts::workflow::{
-    AgentRunRefDto, LifecycleRunRefDto, PendingMessageView, ProjectSessionListEntry,
-    ProjectSessionListView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
-    SessionRuntimeActionAvailabilityView, SessionRuntimeActionSetView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectRefDto,
+    RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto, SessionRuntimeControlPlaneView,
+    SessionRuntimeControlView, SessionShellDto,
 };
 use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
@@ -89,10 +94,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_session_runtime_control),
         )
         .route(
-            "/projects/{id}/sessions",
-            axum::routing::get(get_project_sessions),
-        )
-        .route(
             "/sessions/{id}/meta",
             axum::routing::get(get_session_meta).patch(update_session_meta),
         )
@@ -121,7 +122,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             "/sessions/{id}/context/audit",
             axum::routing::get(get_session_context_audit),
         )
-        .route("/sessions/{id}/cancel", axum::routing::post(cancel_session))
         .route(
             "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
             axum::routing::post(approve_tool_call),
@@ -155,293 +155,270 @@ pub async fn get_session_runtime_control(
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<SessionRuntimeControlView>, ApiError> {
-    let meta = state
+    let view = state
         .services
-        .session_core
-        .get_session_meta(&runtime_session_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", runtime_session_id)))?;
-    let Some(anchor) = state
-        .repos
-        .execution_anchor_repo
-        .find_by_session(&runtime_session_id)
-        .await?
-    else {
-        return Ok(Json(SessionRuntimeControlView {
-            runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-            session_meta: session_shell_dto(&meta),
-            control_plane: SessionRuntimeControlPlaneView {
-                status: SessionRuntimeControlPlaneStatus::UnboundTrace,
-                reason: Some(
-                    "当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string(),
-                ),
-            },
-            anchor: None,
-            run: None,
-            agent: None,
-            frame_runtime: None,
-            subject_associations: Vec::new(),
-            actions: SessionRuntimeActionSetView {
-                send_next: disabled_action(
-                    "当前 Session 没有绑定 Agent 控制面，不能继续发送消息。",
-                ),
-                enqueue: disabled_action("当前 Session 没有绑定 Agent 控制面。"),
-                steer: disabled_action("当前 Session 没有绑定 Agent 控制面，不能运行中 steer。"),
-                cancel: disabled_action("当前 Session 没有正在执行的 turn。"),
-            },
-            pending_messages: Vec::new(),
-        }));
-    };
-
-    let run = load_lifecycle_run_for_session(state.as_ref(), anchor.run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(anchor.agent_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
-        })?;
-    if agent.run_id != run.id || agent.project_id != run.project_id {
-        return Err(ApiError::BadRequest(format!(
-            "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
-        )));
-    }
-    let frame = state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await?
-        .or(state
-            .repos
-            .agent_frame_repo
-            .get(anchor.launch_frame_id)
-            .await?);
-    let frame_runtime = match frame {
-        Some(frame) => {
-            let runtime_refs = runtime_refs_for_agent(state.as_ref(), agent.id).await?;
-            Some(agent_frame_runtime_to_view(&frame, runtime_refs))
-        }
-        None => None,
-    };
-    let run_view = lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &run).await?;
-    let agent_view = run_view
-        .agents
-        .iter()
-        .find(|view| view.agent_ref.agent_id == agent.id.to_string())
-        .cloned();
-    let agent_id_string = agent.id.to_string();
-    let subject_associations = run_view
-        .subject_associations
-        .iter()
-        .filter(|assoc| {
-            assoc.anchor_agent_id.as_deref() == Some(agent_id_string.as_str())
-                || assoc.anchor_agent_id.is_none()
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&runtime_session_id)
+        .presentation_read_model_query
+        .session_runtime_control(&runtime_session_id)
+        .await
+        .map_err(presentation_read_model_error_to_api)?;
+    if let Some(project_id) = view.project_id {
+        load_project_with_permission(
+            state.as_ref(),
+            &current_user,
+            project_id,
+            ProjectPermission::View,
+        )
         .await?;
-    let delivery_running = meta.last_delivery_status == ExecutionStatus::Running
-        || matches!(execution_state, SessionExecutionState::Running { .. });
-    let terminal_agent = is_terminal_agent_status(&agent.status);
-    let has_frame = frame_runtime.is_some();
-    let supports_steering = if delivery_running {
-        state
-            .services
-            .session_control
-            .supports_session_steering(&runtime_session_id)
-            .await
-    } else {
-        false
-    };
-    let control_plane = if terminal_agent {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::Terminal,
-            reason: Some("当前 Agent 已结束。".to_string()),
-        }
-    } else if !has_frame {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::FrameMissing,
-            reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
-        }
-    } else if delivery_running {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredRunning,
-            reason: Some("当前 Session 正在执行中。".to_string()),
-        }
-    } else {
-        SessionRuntimeControlPlaneView {
-            status: SessionRuntimeControlPlaneStatus::AnchoredIdle,
-            reason: None,
-        }
-    };
-    let send_next = if has_frame && !terminal_agent && !delivery_running {
-        enabled_action()
-    } else if delivery_running {
-        disabled_action("当前 Session 正在执行中，不能并发发送下一轮消息。")
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束，不能继续发送消息。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
-    let steer = if has_frame && !terminal_agent && delivery_running && supports_steering {
-        enabled_action()
-    } else if !delivery_running {
-        disabled_action("当前 Session 未在执行中，不需要运行中 steer。")
-    } else if !supports_steering {
-        disabled_action("当前执行器不支持对该运行中 Session steer。")
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束，不能运行中 steer。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
-    let cancel = if delivery_running {
-        enabled_action()
-    } else {
-        disabled_action("当前 Session 没有正在执行的 turn。")
-    };
-    // enqueue: running 且有 frame 且未终止时可排队
-    let enqueue = if has_frame && !terminal_agent && delivery_running {
-        enabled_action()
-    } else if !delivery_running {
-        disabled_action("当前 Session 未在执行中，直接发送即可。")
-    } else if terminal_agent {
-        disabled_action("当前 Agent 已结束。")
-    } else {
-        disabled_action("当前 Agent 没有可投递的 runtime frame。")
-    };
-
-    let pending_previews = state.services.pending_queue.list(&runtime_session_id).await;
-    let pending_messages: Vec<PendingMessageView> = pending_previews
-        .into_iter()
-        .map(|p| PendingMessageView {
-            id: p.id,
-            preview: p.preview,
-            has_images: p.has_images,
-            created_at: p.created_at.to_rfc3339(),
-        })
-        .collect();
-
+    }
     Ok(Json(SessionRuntimeControlView {
-        runtime_session_ref: RuntimeSessionRefDto { runtime_session_id },
-        session_meta: session_shell_dto(&meta),
-        control_plane,
-        anchor: Some(anchor_dto(&anchor)),
-        run: Some(run_view),
-        agent: agent_view,
-        frame_runtime,
-        subject_associations,
-        actions: SessionRuntimeActionSetView {
-            send_next,
-            enqueue,
-            steer,
-            cancel,
+        runtime_session_ref: RuntimeSessionRefDto {
+            runtime_session_id: view.runtime_session_id,
         },
-        pending_messages,
+        session_meta: session_shell_dto(&view.session_meta),
+        control_plane: SessionRuntimeControlPlaneView {
+            status: session_runtime_control_status_to_contract(view.control_plane.status),
+            reason: view.control_plane.reason,
+        },
+        anchor: view.anchor.as_ref().map(anchor_dto),
+        run: view.run.map(presentation_lifecycle_run_to_contract),
+        agent: view.agent.map(presentation_agent_run_to_contract),
+        frame_runtime: view.frame_runtime.map(agent_frame_runtime_to_view),
+        subject_associations: view
+            .subject_associations
+            .into_iter()
+            .map(presentation_subject_association_to_contract)
+            .collect(),
     }))
 }
 
-fn enabled_action() -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
-        enabled: true,
-        unavailable_reason: None,
+fn presentation_lifecycle_run_to_contract(
+    view: agentrun_read::PresentationLifecycleRunView,
+) -> workflow_contract::LifecycleRunView {
+    workflow_contract::LifecycleRunView {
+        run_ref: workflow_contract::LifecycleRunRefDto {
+            run_id: view.run_ref.run_id,
+        },
+        project_id: view.project_id,
+        topology: match view.topology {
+            agentrun_read::PresentationLifecycleRunTopologyView::Plain => {
+                workflow_contract::LifecycleRunTopology::Plain
+            }
+            agentrun_read::PresentationLifecycleRunTopologyView::WorkflowGraph => {
+                workflow_contract::LifecycleRunTopology::WorkflowGraph
+            }
+        },
+        status: presentation_lifecycle_status_to_contract(view.status),
+        orchestrations: view
+            .orchestrations
+            .into_iter()
+            .map(presentation_orchestration_to_contract)
+            .collect(),
+        active_runtime_node_refs: view
+            .active_runtime_node_refs
+            .into_iter()
+            .map(|item| workflow_contract::ActiveRuntimeNodeRefDto {
+                run_id: item.run_id,
+                orchestration_id: item.orchestration_id,
+                node_path: item.node_path,
+                attempt: item.attempt,
+                status: item.status,
+            })
+            .collect(),
+        agents: view
+            .agents
+            .into_iter()
+            .map(presentation_agent_run_to_contract)
+            .collect(),
+        subject_associations: view
+            .subject_associations
+            .into_iter()
+            .map(presentation_subject_association_to_contract)
+            .collect(),
+        runtime_trace_refs: view
+            .runtime_trace_refs
+            .into_iter()
+            .map(presentation_runtime_ref_to_contract)
+            .collect(),
+        execution_log: view
+            .execution_log
+            .into_iter()
+            .map(presentation_execution_entry_to_contract)
+            .collect(),
+        created_at: view.created_at,
+        updated_at: view.updated_at,
+        last_activity_at: view.last_activity_at,
     }
 }
 
-fn disabled_action(reason: impl Into<String>) -> SessionRuntimeActionAvailabilityView {
-    SessionRuntimeActionAvailabilityView {
-        enabled: false,
-        unavailable_reason: Some(reason.into()),
-    }
-}
-
-pub async fn get_project_sessions(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(project_id): Path<String>,
-) -> Result<Json<ProjectSessionListView>, ApiError> {
-    let project_id = parse_uuid_param(&project_id, "project_id")?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let metas = state.services.session_core.list_sessions().await?;
-
-    let session_ids = metas.iter().map(|meta| meta.id.clone()).collect::<Vec<_>>();
-    let anchors = state
-        .repos
-        .execution_anchor_repo
-        .list_by_project_session_ids(&session_ids)
-        .await?;
-    let anchors_by_session = anchors
-        .into_iter()
-        .map(|anchor| (anchor.runtime_session_id.clone(), anchor))
-        .collect::<HashMap<_, _>>();
-    let run_ids = anchors_by_session
-        .values()
-        .map(|anchor| anchor.run_id)
-        .collect::<Vec<_>>();
-    let runs_by_id = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_ids(&run_ids)
-        .await?
-        .into_iter()
-        .map(|run| (run.id, run))
-        .collect::<HashMap<_, _>>();
-
-    let metas_by_id = metas
-        .into_iter()
-        .map(|meta| (meta.id.clone(), meta))
-        .collect::<HashMap<_, _>>();
-    let mut sessions = Vec::new();
-    for anchor in anchors_by_session.values() {
-        let Some(run) = runs_by_id.get(&anchor.run_id) else {
-            return Err(ApiError::NotFound(format!(
-                "lifecycle_run 不存在: {}",
-                anchor.run_id
-            )));
-        };
-        if run.project_id != project_id {
-            continue;
+fn presentation_lifecycle_status_to_contract(
+    status: agentrun_read::PresentationLifecycleRunStatusView,
+) -> workflow_contract::LifecycleRunStatus {
+    match status {
+        agentrun_read::PresentationLifecycleRunStatusView::Draft => {
+            workflow_contract::LifecycleRunStatus::Draft
         }
-        let Some(meta) = metas_by_id.get(&anchor.runtime_session_id) else {
-            continue;
-        };
-        let entry = project_session_entry(state.as_ref(), meta, Some(anchor), &runs_by_id).await?;
-        sessions.push(entry);
+        agentrun_read::PresentationLifecycleRunStatusView::Ready => {
+            workflow_contract::LifecycleRunStatus::Ready
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Running => {
+            workflow_contract::LifecycleRunStatus::Running
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Blocked => {
+            workflow_contract::LifecycleRunStatus::Blocked
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Completed => {
+            workflow_contract::LifecycleRunStatus::Completed
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Failed => {
+            workflow_contract::LifecycleRunStatus::Failed
+        }
+        agentrun_read::PresentationLifecycleRunStatusView::Cancelled => {
+            workflow_contract::LifecycleRunStatus::Cancelled
+        }
     }
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+}
 
-    Ok(Json(ProjectSessionListView {
-        project_id: project_id.to_string(),
-        sessions,
-    }))
+fn presentation_subject_ref_to_contract(
+    subject: agentrun_read::PresentationSubjectRefView,
+) -> workflow_contract::SubjectRefDto {
+    workflow_contract::SubjectRefDto {
+        kind: subject.kind,
+        id: subject.id,
+    }
+}
+
+fn presentation_runtime_ref_to_contract(
+    runtime_ref: agentrun_read::PresentationRuntimeSessionRefView,
+) -> workflow_contract::RuntimeSessionRefDto {
+    workflow_contract::RuntimeSessionRefDto {
+        runtime_session_id: runtime_ref.runtime_session_id,
+    }
+}
+
+fn presentation_subject_association_to_contract(
+    association: agentrun_read::PresentationLifecycleSubjectAssociationView,
+) -> workflow_contract::LifecycleSubjectAssociationDto {
+    workflow_contract::LifecycleSubjectAssociationDto {
+        id: association.id,
+        anchor_run_id: association.anchor_run_id,
+        anchor_agent_id: association.anchor_agent_id,
+        subject_ref: presentation_subject_ref_to_contract(association.subject_ref),
+        role: association.role,
+        metadata: association.metadata,
+        created_at: association.created_at,
+    }
+}
+
+fn presentation_agent_run_to_contract(
+    agent: agentrun_read::PresentationAgentRunView,
+) -> workflow_contract::AgentRunView {
+    workflow_contract::AgentRunView {
+        agent_ref: workflow_contract::AgentRunRefDto {
+            run_id: agent.agent_ref.run_id,
+            agent_id: agent.agent_ref.agent_id,
+        },
+        project_id: agent.project_id,
+        source: agent.source,
+        project_agent_id: agent.project_agent_id,
+        status: agent.status,
+        delivery_runtime_ref: agent
+            .delivery_runtime_ref
+            .map(presentation_runtime_ref_to_contract),
+        last_delivery_status: agent.last_delivery_status,
+        created_at: agent.created_at,
+        updated_at: agent.updated_at,
+    }
+}
+
+fn presentation_orchestration_to_contract(
+    orchestration: agentrun_read::PresentationOrchestrationInstanceView,
+) -> workflow_contract::OrchestrationInstanceView {
+    workflow_contract::OrchestrationInstanceView {
+        orchestration_id: orchestration.orchestration_id,
+        role: orchestration.role,
+        status: orchestration.status,
+        plan_digest: orchestration.plan_digest,
+        source_ref: orchestration.source_ref,
+        ready_node_ids: orchestration.ready_node_ids,
+        nodes: orchestration
+            .nodes
+            .into_iter()
+            .map(presentation_runtime_node_to_contract)
+            .collect(),
+        created_at: orchestration.created_at,
+        updated_at: orchestration.updated_at,
+    }
+}
+
+fn presentation_runtime_node_to_contract(
+    node: agentrun_read::PresentationRuntimeNodeView,
+) -> workflow_contract::RuntimeNodeView {
+    workflow_contract::RuntimeNodeView {
+        node_id: node.node_id,
+        node_path: node.node_path,
+        kind: node.kind,
+        status: node.status,
+        attempt: node.attempt,
+        executor_run_ref: node.executor_run_ref.map(|run_ref| match run_ref {
+            agentrun_read::PresentationExecutorRunRefView::RuntimeSession { session_id } => {
+                workflow_contract::ExecutorRunRef::RuntimeSession { session_id }
+            }
+            agentrun_read::PresentationExecutorRunRefView::FunctionRun { run_id } => {
+                workflow_contract::ExecutorRunRef::FunctionRun { run_id }
+            }
+            agentrun_read::PresentationExecutorRunRefView::HumanDecision { decision_id } => {
+                workflow_contract::ExecutorRunRef::HumanDecision { decision_id }
+            }
+        }),
+        started_at: node.started_at,
+        completed_at: node.completed_at,
+        children: node
+            .children
+            .into_iter()
+            .map(presentation_runtime_node_to_contract)
+            .collect(),
+    }
+}
+
+fn presentation_execution_entry_to_contract(
+    entry: agentrun_read::PresentationLifecycleExecutionEntryView,
+) -> workflow_contract::LifecycleExecutionEntry {
+    workflow_contract::LifecycleExecutionEntry {
+        timestamp: entry.timestamp,
+        activity_key: entry.activity_key,
+        event_kind: match entry.event_kind {
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ActivityActivated => {
+                workflow_contract::LifecycleExecutionEventKind::ActivityActivated
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ActivityCompleted => {
+                workflow_contract::LifecycleExecutionEventKind::ActivityCompleted
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ConstraintBlocked => {
+                workflow_contract::LifecycleExecutionEventKind::ConstraintBlocked
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::CompletionEvaluated => {
+                workflow_contract::LifecycleExecutionEventKind::CompletionEvaluated
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ArtifactAppended => {
+                workflow_contract::LifecycleExecutionEventKind::ArtifactAppended
+            }
+            agentrun_read::PresentationLifecycleExecutionEventKindView::ContextInjected => {
+                workflow_contract::LifecycleExecutionEventKind::ContextInjected
+            }
+        },
+        summary: entry.summary,
+        detail: entry.detail,
+    }
 }
 
 fn map_session_event(
-    event: agentdash_application::session::PersistedSessionEvent,
+    event: agentdash_application_runtime_session::session::PersistedSessionEvent,
 ) -> SessionEventResponse {
     event.into()
 }
 
 fn stream_event_payload(
-    event: agentdash_application::session::PersistedSessionEvent,
+    event: agentdash_application_runtime_session::session::PersistedSessionEvent,
 ) -> SessionNdjsonEnvelope {
     SessionNdjsonEnvelope::event(event)
 }
@@ -477,6 +454,12 @@ pub async fn get_session_state(
             turn_id,
             message: None,
         },
+        SessionExecutionState::Cancelling { turn_id } => SessionExecutionStateResponse {
+            session_id,
+            status: "cancelling".to_string(),
+            turn_id,
+            message: Some("当前执行正在取消中。".to_string()),
+        },
         SessionExecutionState::Completed { turn_id } => SessionExecutionStateResponse {
             session_id,
             status: "completed".to_string(),
@@ -495,41 +478,15 @@ pub async fn get_session_state(
             turn_id,
             message,
         },
+        SessionExecutionState::Lost { turn_id, message } => SessionExecutionStateResponse {
+            session_id,
+            status: "lost".to_string(),
+            turn_id,
+            message,
+        },
     };
 
     Ok(Json(response))
-}
-
-fn session_command_state_response(
-    execution_state: SessionExecutionState,
-) -> SessionCommandStateResponse {
-    match execution_state {
-        SessionExecutionState::Idle => SessionCommandStateResponse {
-            status: "idle".to_string(),
-            turn_id: None,
-            message: None,
-        },
-        SessionExecutionState::Running { turn_id } => SessionCommandStateResponse {
-            status: "running".to_string(),
-            turn_id,
-            message: None,
-        },
-        SessionExecutionState::Completed { turn_id } => SessionCommandStateResponse {
-            status: "completed".to_string(),
-            turn_id: Some(turn_id),
-            message: None,
-        },
-        SessionExecutionState::Failed { turn_id, message } => SessionCommandStateResponse {
-            status: "failed".to_string(),
-            turn_id: Some(turn_id),
-            message,
-        },
-        SessionExecutionState::Interrupted { turn_id, message } => SessionCommandStateResponse {
-            status: "interrupted".to_string(),
-            turn_id,
-            message,
-        },
-    }
 }
 
 async fn load_lifecycle_run_for_session(
@@ -542,73 +499,6 @@ async fn load_lifecycle_run_for_session(
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
-}
-
-async fn project_session_entry(
-    state: &AppState,
-    meta: &SessionMeta,
-    anchor: Option<&RuntimeSessionExecutionAnchor>,
-    runs_by_id: &HashMap<Uuid, LifecycleRun>,
-) -> Result<ProjectSessionListEntry, ApiError> {
-    let Some(anchor) = anchor else {
-        return Ok(ProjectSessionListEntry {
-            runtime_session_id: meta.id.clone(),
-            title: session_list_title(meta),
-            delivery_status: serialized_string(&meta.last_delivery_status),
-            run_status: None,
-            run_ref: None,
-            agent_ref: None,
-            frame_ref: None,
-            subject_ref: None,
-            subject_label: None,
-            updated_at: meta.updated_at.to_string(),
-        });
-    };
-
-    let run = runs_by_id
-        .get(&anchor.run_id)
-        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {}", anchor.run_id)))?;
-    let agent = state
-        .repos
-        .lifecycle_agent_repo
-        .get(anchor.agent_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!("lifecycle_agent 不存在: {}", anchor.agent_id))
-        })?;
-    let frame_ref = state
-        .repos
-        .agent_frame_repo
-        .get_current(agent.id)
-        .await?
-        .map(|frame| agent_frame_ref(&frame));
-    let associations = state
-        .repos
-        .lifecycle_subject_association_repo
-        .list_by_anchor(run.id, Some(agent.id))
-        .await?;
-    let subject = associations.first();
-
-    Ok(ProjectSessionListEntry {
-        runtime_session_id: meta.id.clone(),
-        title: session_list_title(meta),
-        delivery_status: serialized_string(&meta.last_delivery_status),
-        run_status: Some(lifecycle_run_status_to_contract(run.status)),
-        run_ref: Some(LifecycleRunRefDto {
-            run_id: run.id.to_string(),
-        }),
-        agent_ref: Some(AgentRunRefDto {
-            run_id: agent.run_id.to_string(),
-            agent_id: agent.id.to_string(),
-        }),
-        frame_ref,
-        subject_ref: subject.map(|association| SubjectRefDto {
-            kind: association.subject_kind.clone(),
-            id: association.subject_id.to_string(),
-        }),
-        subject_label: subject.and_then(subject_label_from_metadata),
-        updated_at: meta.updated_at.to_string(),
-    })
 }
 
 fn session_shell_dto(meta: &SessionMeta) -> SessionShellDto {
@@ -639,68 +529,11 @@ fn anchor_dto(anchor: &RuntimeSessionExecutionAnchor) -> RuntimeSessionExecution
     }
 }
 
-fn lifecycle_run_status_to_contract(
-    status: agentdash_domain::workflow::LifecycleRunStatus,
-) -> agentdash_contracts::workflow::LifecycleRunStatus {
-    match status {
-        agentdash_domain::workflow::LifecycleRunStatus::Draft => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Draft
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Ready => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Ready
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Running => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Running
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Blocked => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Blocked
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Completed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Completed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Failed => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Failed
-        }
-        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => {
-            agentdash_contracts::workflow::LifecycleRunStatus::Cancelled
-        }
-    }
-}
-
-fn session_list_title(meta: &SessionMeta) -> String {
-    let title = meta.title.trim();
-    if title.is_empty() {
-        "会话加载中...".to_string()
-    } else {
-        title.to_string()
-    }
-}
-
-fn subject_label_from_metadata(
-    association: &agentdash_domain::workflow::LifecycleSubjectAssociation,
-) -> Option<String> {
-    let metadata = association.metadata_json.as_ref()?;
-    ["label", "title", "name"]
-        .iter()
-        .find_map(|key| metadata.get(key).and_then(|value| value.as_str()))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn is_terminal_agent_status(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "cancelled")
-}
-
 fn serialized_string<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn parse_uuid_param(raw: &str, field: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
 }
 
 pub async fn list_session_events(
@@ -729,9 +562,14 @@ pub async fn list_session_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_application::session::{
-        ExecutionStatus, RuntimeTraceLaunchState, SessionPromptLifecycle,
-        SessionRepositoryRehydrateMode, TitleSource, resolve_session_prompt_lifecycle,
+    use agentdash_application_runtime_session::session::{
+        ExecutionStatus, PromptLaunchPath, RuntimeTraceLaunchState,
+        SessionAttachmentContextContribution, SessionContextUsageCategory, SessionContextUsageItem,
+        SessionContextUsageReadModel, SessionMessageContextBreakdown,
+        SessionProjectionMessageRefReadModel, SessionProjectionSegmentProvenanceReadModel,
+        SessionProjectionSegmentReadModel, SessionProjectionSourceRangeReadModel,
+        SessionRepositoryRehydrateMode, SessionToolContextContribution, TitleSource,
+        resolve_prompt_launch_path,
     };
 
     fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {
@@ -762,47 +600,159 @@ mod tests {
     }
 
     #[test]
-    fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
+    fn prompt_launch_path_marks_pending_as_owner_bootstrap() {
         let meta = test_meta("sess-1", 0, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, true),
-            SessionPromptLifecycle::OwnerBootstrap
+            resolve_prompt_launch_path(&trace_state(&meta), false, false, true),
+            PromptLaunchPath::OwnerBootstrap
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_kind_requires_repository_rehydrate_after_cold_restart() {
+    fn prompt_launch_path_requires_repository_rehydrate_after_cold_restart() {
         let meta = test_meta("sess-2", 12, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, false, false),
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::SystemContext,
-            )
+            resolve_prompt_launch_path(&trace_state(&meta), false, false, false),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext,)
         );
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), true, false, false),
-            SessionPromptLifecycle::Plain
+            resolve_prompt_launch_path(&trace_state(&meta), true, false, false),
+            PromptLaunchPath::Plain
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_prefers_executor_follow_up_when_available() {
+    fn prompt_launch_path_prefers_executor_follow_up_when_available() {
         let meta = test_meta("sess-3", 5, Some("exec-1"));
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
-            SessionPromptLifecycle::Plain
+            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            PromptLaunchPath::Plain
         );
     }
 
     #[test]
-    fn session_prompt_lifecycle_uses_executor_state_restore_when_supported() {
+    fn prompt_launch_path_uses_executor_state_restore_when_supported() {
         let meta = test_meta("sess-4", 7, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&trace_state(&meta), false, true, false),
-            SessionPromptLifecycle::RepositoryRehydrate(
-                SessionRepositoryRehydrateMode::ExecutorState,
-            )
+            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState,)
         );
+    }
+
+    #[test]
+    fn context_projection_mapper_preserves_usage_read_facts() {
+        let response = session_context_projection_to_response(SessionContextProjectionReadModel {
+            session_id: "sess-1".to_string(),
+            projection_kind: "model_context".to_string(),
+            projection_version: 2,
+            head_event_seq: 42,
+            active_compaction_id: Some("compaction-1".to_string()),
+            token_estimate: Some(128),
+            message_count: 1,
+            segments: vec![SessionProjectionSegmentReadModel {
+                id: "segment-1".to_string(),
+                sort_order: 0,
+                segment_type: "summary_chunk".to_string(),
+                role: "compaction_summary".to_string(),
+                origin: "projection".to_string(),
+                synthetic: true,
+                projection_kind: "compaction_summary".to_string(),
+                message_ref: SessionProjectionMessageRefReadModel {
+                    turn_id: "_projection:summary".to_string(),
+                    entry_index: 0,
+                },
+                source_event_seq: None,
+                source_range: Some(SessionProjectionSourceRangeReadModel {
+                    start_event_seq: 1,
+                    end_event_seq: 30,
+                }),
+                projection_segment_id: Some("segment-1".to_string()),
+                preview: "summary".to_string(),
+                token_estimate: Some(20),
+                attachment_tokens: 0,
+                attachment_names: Vec::new(),
+                tool_names: vec!["read_file".to_string()],
+                provenance: SessionProjectionSegmentProvenanceReadModel {
+                    compaction_id: Some("compaction-1".to_string()),
+                    projection_version: Some(2),
+                    segment_type: Some("summary_chunk".to_string()),
+                    strategy: Some("summary_prefix".to_string()),
+                    trigger: Some("auto".to_string()),
+                    phase: Some("pre_provider".to_string()),
+                },
+            }],
+            context_usage: SessionContextUsageReadModel {
+                categories: vec![SessionContextUsageCategory {
+                    kind: "system_developer".to_string(),
+                    label: "System / Developer".to_string(),
+                    token_estimate: 12,
+                    source: "context_frame".to_string(),
+                    deferred: false,
+                }],
+                items: vec![SessionContextUsageItem {
+                    kind: "system_developer".to_string(),
+                    label: "System / Developer".to_string(),
+                    name: "Identity".to_string(),
+                    token_estimate: 12,
+                    source: "context_frame".to_string(),
+                    deferred: false,
+                    source_event_seq: Some(8),
+                    turn_id: Some("turn-1".to_string()),
+                }],
+                messages: SessionMessageContextBreakdown {
+                    user_message_tokens: 1,
+                    assistant_message_tokens: 2,
+                    tool_call_tokens: 3,
+                    tool_result_tokens: 4,
+                    attachment_tokens: 5,
+                },
+                top_tools: vec![SessionToolContextContribution {
+                    name: "read_file".to_string(),
+                    call_tokens: 3,
+                    result_tokens: 0,
+                }],
+                top_attachments: vec![SessionAttachmentContextContribution {
+                    name: "image/png image #0".to_string(),
+                    tokens: 5,
+                }],
+            },
+        });
+
+        assert_eq!(response.session_id, "sess-1");
+        assert_eq!(
+            response.segments[0]
+                .source_range
+                .as_ref()
+                .unwrap()
+                .end_event_seq,
+            30
+        );
+        assert_eq!(
+            response.segments[0].provenance.compaction_id.as_deref(),
+            Some("compaction-1")
+        );
+        assert_eq!(
+            response.context_usage.categories[0].kind,
+            "system_developer"
+        );
+        assert_eq!(response.context_usage.items[0].source_event_seq, Some(8));
+        assert_eq!(response.context_usage.messages.attachment_tokens, 5);
+        assert_eq!(response.context_usage.top_tools[0].name, "read_file");
+        assert_eq!(
+            response.context_usage.top_attachments[0].name,
+            "image/png image #0"
+        );
+    }
+
+    #[test]
+    fn session_message_ref_mapper_preserves_fork_point_coordinate() {
+        let message_ref = session_message_ref_to_application(SessionMessageRefDto {
+            turn_id: "turn-1".to_string(),
+            entry_index: 7,
+        });
+
+        assert_eq!(message_ref.turn_id, "turn-1");
+        assert_eq!(message_ref.entry_index, 7);
     }
 }
 
@@ -812,14 +762,131 @@ pub async fn get_session_context_projection(
     CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionProjectionViewResponse>, ApiError> {
-    let envelope = state
+    let projection = state
         .services
         .session_eventing
-        .build_agent_context_envelope(&session_id)
+        .build_context_projection_read_model(&session_id)
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(SessionProjectionViewResponse::from(envelope)))
+    Ok(Json(session_context_projection_to_response(projection)))
+}
+
+fn session_context_projection_to_response(
+    projection: SessionContextProjectionReadModel,
+) -> SessionProjectionViewResponse {
+    SessionProjectionViewResponse {
+        session_id: projection.session_id,
+        projection_kind: projection.projection_kind,
+        projection_version: projection.projection_version,
+        head_event_seq: projection.head_event_seq,
+        active_compaction_id: projection.active_compaction_id,
+        token_estimate: projection.token_estimate,
+        message_count: projection.message_count,
+        segments: projection
+            .segments
+            .into_iter()
+            .map(|segment| SessionProjectionSegmentViewResponse {
+                id: segment.id,
+                sort_order: segment.sort_order,
+                segment_type: segment.segment_type,
+                role: segment.role,
+                origin: segment.origin,
+                synthetic: segment.synthetic,
+                projection_kind: segment.projection_kind,
+                message_ref: SessionProjectionMessageRefResponse {
+                    turn_id: segment.message_ref.turn_id,
+                    entry_index: segment.message_ref.entry_index,
+                },
+                source_event_seq: segment.source_event_seq,
+                source_range: segment.source_range.map(|range| {
+                    SessionProjectionSourceRangeResponse {
+                        start_event_seq: range.start_event_seq,
+                        end_event_seq: range.end_event_seq,
+                    }
+                }),
+                projection_segment_id: segment.projection_segment_id,
+                preview: segment.preview,
+                token_estimate: segment.token_estimate,
+                attachment_tokens: segment.attachment_tokens,
+                attachment_names: segment.attachment_names,
+                tool_names: segment.tool_names,
+                provenance: SessionProjectionSegmentProvenanceResponse {
+                    compaction_id: segment.provenance.compaction_id,
+                    projection_version: segment.provenance.projection_version,
+                    segment_type: segment.provenance.segment_type,
+                    strategy: segment.provenance.strategy,
+                    trigger: segment.provenance.trigger,
+                    phase: segment.provenance.phase,
+                },
+            })
+            .collect(),
+        context_usage: SessionContextUsageAnalysisResponse {
+            categories: projection
+                .context_usage
+                .categories
+                .into_iter()
+                .map(|category| SessionContextUsageCategoryResponse {
+                    kind: category.kind,
+                    label: category.label,
+                    token_estimate: category.token_estimate,
+                    source: category.source,
+                    deferred: category.deferred,
+                })
+                .collect(),
+            items: projection
+                .context_usage
+                .items
+                .into_iter()
+                .map(|item| SessionContextUsageItemResponse {
+                    kind: item.kind,
+                    label: item.label,
+                    name: item.name,
+                    token_estimate: item.token_estimate,
+                    source: item.source,
+                    deferred: item.deferred,
+                    source_event_seq: item.source_event_seq,
+                    turn_id: item.turn_id,
+                })
+                .collect(),
+            messages: SessionMessageContextBreakdownResponse {
+                user_message_tokens: projection.context_usage.messages.user_message_tokens,
+                assistant_message_tokens: projection
+                    .context_usage
+                    .messages
+                    .assistant_message_tokens,
+                tool_call_tokens: projection.context_usage.messages.tool_call_tokens,
+                tool_result_tokens: projection.context_usage.messages.tool_result_tokens,
+                attachment_tokens: projection.context_usage.messages.attachment_tokens,
+            },
+            top_tools: projection
+                .context_usage
+                .top_tools
+                .into_iter()
+                .map(|tool| SessionToolContextContributionResponse {
+                    name: tool.name,
+                    call_tokens: tool.call_tokens,
+                    result_tokens: tool.result_tokens,
+                })
+                .collect(),
+            top_attachments: projection
+                .context_usage
+                .top_attachments
+                .into_iter()
+                .map(|attachment| SessionAttachmentContextContributionResponse {
+                    name: attachment.name,
+                    tokens: attachment.tokens,
+                })
+                .collect(),
+        },
+    }
+}
+
+fn session_message_ref_to_application(value: SessionMessageRefDto) -> MessageRef {
+    MessageRef {
+        turn_id: value.turn_id,
+        entry_index: value.entry_index,
+    }
 }
 
 /// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
@@ -835,7 +902,7 @@ pub async fn fork_session(
         .fork_session(SessionForkRequest {
             parent_session_id: session_id.clone(),
             title: req.title,
-            fork_point_ref: req.fork_point_ref.map(Into::into),
+            fork_point_ref: req.fork_point_ref.map(session_message_ref_to_application),
             fork_point_compaction_id: req.fork_point_compaction_id,
             metadata_json: req.metadata_json.unwrap_or_else(|| serde_json::json!({})),
         })
@@ -975,38 +1042,6 @@ pub async fn delete_session(
     }))
 }
 
-pub async fn cancel_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<CancelSessionResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    state
-        .services
-        .session_runtime
-        .cancel(&session_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&session_id)
-        .await?;
-
-    Ok(Json(CancelSessionResponse {
-        cancelled: true,
-        session_id,
-        state: session_command_state_response(execution_state),
-    }))
-}
-
 pub async fn approve_tool_call(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1071,7 +1106,8 @@ pub async fn session_stream_ndjson(
     let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
         .or(query.since_id)
         .unwrap_or(0);
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+
         session_id = %session_id,
         resume_from = resume_from,
         "Session trace stream 连接建立（NDJSON）"
@@ -1084,12 +1120,15 @@ pub async fn session_stream_ndjson(
         .await
         .map_err(ApiError::from)?;
     let replayed = subscription.backlog.len();
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+
         session_id = %session_id,
         replayed_count = replayed,
         snapshot_seq = subscription.snapshot_seq,
         "Session trace stream 历史补发完成（NDJSON）"
     );
+
+    let ephemeral_epoch = state.services.session_eventing.ephemeral_epoch();
 
     let stream = async_stream::stream! {
         let mut seq = resume_from;
@@ -1100,8 +1139,17 @@ pub async fn session_stream_ndjson(
             }
         }
 
-        if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::connected(seq)) {
+        if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::connected(seq, ephemeral_epoch)) {
             yield Ok::<Bytes, Infallible>(line);
+        }
+
+        // durable backlog + connected 之后、live loop 之前补发 ephemeral 快照（in-flight 进度态）。
+        // 这些事件 event_seq 承载 ephemeral_seq，不影响 durable `seq` 游标；前端按 ephemeral_seq 去重，
+        // 与后续 live ephemeral 广播的重叠由去重消解。
+        for event in subscription.ephemeral_backlog {
+            if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(event)) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
         }
 
         let mut heartbeat_tick = tokio::time::interval(RUNTIME_TRACE_HEARTBEAT_INTERVAL);
@@ -1113,6 +1161,16 @@ pub async fn session_stream_ndjson(
                 next = rx.recv() => {
                     match next {
                         Ok(event) => {
+                            if event.ephemeral {
+                                // ephemeral 事件 event_seq=0，不参与 snapshot_seq 去重、不推进游标；
+                                // 直接 emit 为 ephemeral envelope（live-only）。
+                                if let Some(line) =
+                                    to_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(event))
+                                {
+                                    yield Ok::<Bytes, Infallible>(line);
+                                }
+                                continue;
+                            }
                             if event.event_seq <= subscription.snapshot_seq {
                                 continue;
                             }
@@ -1122,7 +1180,8 @@ pub async fn session_stream_ndjson(
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!(
+                            diag!(Warn, Subsystem::Api,
+
                                 session_id = %session_id,
                                 lagged = n,
                                 "Session trace stream 订阅落后，部分消息被跳过（NDJSON）"
@@ -1130,7 +1189,8 @@ pub async fn session_stream_ndjson(
                             continue;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            tracing::info!(
+                            diag!(Info, Subsystem::Api,
+
                                 session_id = %session_id,
                                 last_seq = seq,
                                 "Session trace stream 连接关闭：广播通道关闭（NDJSON）"
@@ -1188,7 +1248,8 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            tracing::error!(error = %err, "序列化 Session NDJSON 消息失败");
+            diag!(Error, Subsystem::Api,
+        error = %err, "序列化 Session NDJSON 消息失败");
             None
         }
     }
@@ -1300,5 +1361,3 @@ pub async fn get_session_context_audit(
 
     Ok(Json(dtos))
 }
-
-// ─── Pending Message Queue ──────────────────────────────

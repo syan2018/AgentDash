@@ -4,11 +4,14 @@ use std::sync::Arc;
 use agentdash_domain::context_source::ContextSourceKind;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::MarketplaceSourceProvider;
+use agentdash_spi::MemoryDiscoveryProvider;
 use agentdash_spi::RoutineTriggerProvider;
+use agentdash_spi::SkillDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
 use crate::auth::AuthProvider;
+use crate::directory::IdentityDirectoryProvider;
 use crate::external::ExternalServiceClient;
 pub use agentdash_domain::shared_library::{IntegrationLibraryAssetSeed, LibraryAssetType};
 
@@ -81,6 +84,14 @@ pub trait AgentDashIntegration: Send + Sync {
         None
     }
 
+    /// 注册身份目录 Provider。
+    ///
+    /// 目录 Provider 只负责把外部企业目录适配成通用 user/group/tree/resolve 能力。
+    /// Project grants、业务权限判断和 projection 持久化仍由宿主负责。
+    fn identity_directory_provider(&self) -> Option<Box<dyn IdentityDirectoryProvider>> {
+        None
+    }
+
     /// 注册外部服务客户端（企业 KM、文档中心等只读内容源）。
     ///
     /// 当前该扩展点仍处于实验阶段，尚未接入稳定宿主链路。
@@ -109,6 +120,22 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 宿主启动时统一收集并校验 `source_key` 与支持的 Shared Library 资产类型。
     /// Provider 只负责外部目录发现、分页、详情和拉取候选 payload，不直接写数据库。
     fn marketplace_source_providers(&self) -> Vec<Arc<dyn MarketplaceSourceProvider>> {
+        vec![]
+    }
+
+    /// 注册动态 Skill Discovery provider。
+    ///
+    /// Provider 可基于 session/workspace/user 等通用上下文贡献 skill inventory 与
+    /// 默认上下文暴露列表。该扩展点只描述 context exposure，不表达权限控制。
+    fn skill_discovery_providers(&self) -> Vec<Arc<dyn SkillDiscoveryProvider>> {
+        vec![]
+    }
+
+    /// 注册动态 Memory Discovery provider。
+    ///
+    /// Provider 只贡献 active VFS 上可发现的 memory source inventory 与索引指针；
+    /// 真实读写权限仍由对应 mount capability 决定。
+    fn memory_discovery_providers(&self) -> Vec<Arc<dyn MemoryDiscoveryProvider>> {
         vec![]
     }
 

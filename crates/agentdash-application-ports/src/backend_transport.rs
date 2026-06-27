@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock};
 use agentdash_domain::workspace::WorkspaceIdentityKind;
+use agentdash_relay::McpServerRelay;
 use async_trait::async_trait;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -46,6 +48,17 @@ pub trait BackendTransport: Send + Sync {
     ) -> Result<DirectoryBrowseInfo, TransportError> {
         Err(TransportError::OperationFailed(
             "backend transport 未实现 browse_directory".to_string(),
+        ))
+    }
+
+    /// 按 Workspace identity 在目标本机 backend 上反向发现候选目录。
+    async fn discover_workspace_by_identity(
+        &self,
+        _backend_id: &str,
+        _workspaces: Vec<WorkspaceIdentityDiscoveryRequest>,
+    ) -> Result<WorkspaceIdentityDiscoveryInfo, TransportError> {
+        Err(TransportError::OperationFailed(
+            "backend transport 未实现 workspace identity discovery".to_string(),
         ))
     }
 }
@@ -117,7 +130,7 @@ pub struct RelayPromptRequest {
     ///
     /// Relay/remote agent 的 MCP 建联由远端第三方 agent 自行处理；
     /// cloud 侧不区分 direct / relay，也不在 relay connector 内私有缓存。
-    pub mcp_servers: Vec<serde_json::Value>,
+    pub mcp_servers: Vec<McpServerRelay>,
 }
 
 /// relay steer 命令 payload — 只影响已有运行中 session，不创建新 turn。
@@ -163,6 +176,7 @@ pub struct RelaySessionRoute {
     pub session_id: String,
     pub backend_id: String,
     pub lease_id: Uuid,
+    pub turn_id: String,
     pub tx: mpsc::UnboundedSender<RelaySessionEvent>,
 }
 
@@ -171,6 +185,7 @@ pub struct RelaySessionRouteInfo {
     pub session_id: String,
     pub backend_id: String,
     pub lease_id: Uuid,
+    pub turn_id: String,
 }
 
 /// relay session 终态类型。
@@ -179,6 +194,7 @@ pub enum RelayTerminalKind {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -219,6 +235,43 @@ pub struct DirectoryEntryInfo {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceIdentityDiscoveryRequest {
+    pub workspace_id: Uuid,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: Value,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceIdentityDiscoveryInfo {
+    pub candidates: Vec<WorkspaceIdentityDiscoveryCandidate>,
+    pub skipped: Vec<WorkspaceIdentityDiscoverySkipped>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceIdentityDiscoveryCandidate {
+    pub workspace_id: Uuid,
+    pub root_ref: String,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub identity_payload: Value,
+    pub detected_facts: Value,
+    pub confidence: String,
+    pub display_name: Option<String>,
+    pub client_name: Option<String>,
+    pub server_address: Option<String>,
+    pub stream: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceIdentityDiscoverySkipped {
+    pub workspace_id: Uuid,
+    pub identity_kind: WorkspaceIdentityKind,
+    pub reason: String,
+    pub message: String,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -3,9 +3,11 @@
 //! 定义 `MountProvider` trait 及其关联类型，
 //! 供企业插件直接实现外部服务的文件系统级操作。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
+use std::sync::Arc;
 
-use crate::Mount;
+use crate::{Mount, Vfs};
 
 // ============================================================================
 // Error
@@ -322,9 +324,16 @@ pub struct ExecRequest {
 
 #[derive(Debug, Clone)]
 pub struct ExecResult {
-    pub exit_code: i32,
+    pub state: String,
+    pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    pub pty: String,
+    pub session_id: Option<String>,
+    pub terminal_id: Option<String>,
+    pub next_seq: Option<u64>,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
 }
 
 // ============================================================================
@@ -336,13 +345,38 @@ pub struct ExecResult {
 /// Providers that need infrastructure references (e.g. `BackendRegistry`,
 /// overlay) hold them via constructor injection. This struct carries
 /// cross-cutting per-request concerns like the authenticated user.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MountOperationContext {
     /// The authenticated identity of the user who initiated this operation.
     /// Injected by the framework from the HTTP session; providers consume
     /// it on demand (e.g. external docs provider maps `user_id` to an
     /// upstream owner identity).
     pub identity: Option<crate::platform::auth::AuthIdentity>,
+    pub runtime_vfs: Option<Arc<Vfs>>,
+    pub runtime_text_resolver: Option<Arc<dyn MountRuntimeTextResolver>>,
+}
+
+impl std::fmt::Debug for MountOperationContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MountOperationContext")
+            .field("identity", &self.identity)
+            .field("runtime_vfs", &self.runtime_vfs.as_ref().map(|_| "<vfs>"))
+            .field(
+                "runtime_text_resolver",
+                &self.runtime_text_resolver.as_ref().map(|_| "<resolver>"),
+            )
+            .finish()
+    }
+}
+
+#[async_trait]
+pub trait MountRuntimeTextResolver: Send + Sync {
+    async fn read_runtime_text(
+        &self,
+        vfs: &Vfs,
+        uri: &str,
+        identity: Option<&crate::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError>;
 }
 
 // ============================================================================
@@ -678,7 +712,8 @@ pub trait MountProvider: Send + Sync {
             let read = match self.read_text(mount, &entry.path, ctx).await {
                 Ok(r) => r,
                 Err(MountError::NotFound(_)) | Err(MountError::NotSupported(_)) => {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::Infra,
+
                         provider = self.provider_id(),
                         path = %entry.path,
                         "grep_text: skipping unreadable entry"

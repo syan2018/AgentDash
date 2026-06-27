@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { LoginCredentials, LoginMetadata } from '../types';
+import type { LoginCredentials, LoginMetadata } from '../generated/auth-contracts';
 import { fetchLoginMetadata, postLogin, postLogout, startRedirectLogin } from '../api/auth';
 import { setStoredToken, clearStoredToken } from '../api/client';
 import { closeAllStreamConnections } from '../api/streamRegistry';

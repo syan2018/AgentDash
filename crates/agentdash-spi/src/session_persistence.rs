@@ -8,7 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::context::capability::CompanionAgentEntry;
-use crate::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
+use crate::{RuntimeMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SessionStoreError {
@@ -221,7 +221,7 @@ pub struct SetToolAccessEffect {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetMcpServerSetEffect {
-    pub servers: Vec<SessionMcpServer>,
+    pub servers: Vec<RuntimeMcpServer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,11 +329,15 @@ pub enum ExecutionStatus {
     Completed,
     Failed,
     Interrupted,
+    Lost,
 }
 
 impl ExecutionStatus {
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Interrupted)
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Interrupted | Self::Lost
+        )
     }
 }
 
@@ -345,6 +349,7 @@ impl std::fmt::Display for ExecutionStatus {
             Self::Completed => write!(f, "completed"),
             Self::Failed => write!(f, "failed"),
             Self::Interrupted => write!(f, "interrupted"),
+            Self::Lost => write!(f, "lost"),
         }
     }
 }
@@ -535,6 +540,10 @@ pub struct PersistedSessionEvent {
     pub entry_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 纯内存语义：标记该事件为 ephemeral（仅 live 广播，不入 durable session_events、
+    /// 不推进 projection head）。不序列化、不上 wire、不写 DB；反序列化默认 false。
+    #[serde(default, skip)]
+    pub ephemeral: bool,
     pub notification: BackboneEnvelope,
 }
 
@@ -809,6 +818,12 @@ pub trait SessionEventStore: Send + Sync {
     async fn list_all_events(
         &self,
         session_id: &str,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>>;
+    /// 读取 event_seq >= from_seq 的事件（升序）。from_seq=0 等价全量。
+    async fn list_events_from(
+        &self,
+        session_id: &str,
+        from_seq: u64,
     ) -> SessionStoreResult<Vec<PersistedSessionEvent>>;
 }
 

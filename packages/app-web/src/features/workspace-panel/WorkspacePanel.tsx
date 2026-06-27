@@ -7,7 +7,7 @@
  * 内容区根据 TabTypeDescriptor 渲染对应组件。
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
 import {
   tabTypeRegistry,
@@ -19,27 +19,88 @@ import { WorkspaceDataProvider, type WorkspaceData } from "./workspace-data-cont
 import { TabBar } from "./TabBar";
 import { AddressBar } from "./AddressBar";
 import type { WorkspacePanelHandle, WorkspacePanelProps } from "./workspace-panel-types";
+import type { WorkspaceTabLayoutOptions } from "../../stores/workspaceTabStore";
+import {
+  activeCanvasMountIdsFromRuntimeSurface,
+  canvasMountIdFromPresentationUri,
+  selectCanvasModuleOpenOptions,
+  openUserCanvasModule,
+  type CanvasModuleOpenOption,
+} from "./model/canvasModuleOpen";
+import {
+  useWorkspaceModuleStore,
+} from "../workspace-module/model/workspaceModuleStore";
+import { idleProjectWorkspaceModulesState } from "../workspace-module/model/types";
 
 registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
-    const { runtimeData } = props;
-    const { projectId, sessionId, activeCanvasId, extensionRuntime } = runtimeData;
+    const { runtimeData, onWorkspaceModuleOpened } = props;
+    const { projectId, sessionId, extensionRuntime } = runtimeData;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
     const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
     const registrySnapshot = useTabTypeRegistrySnapshot();
+    const fetchWorkspaceModules = useWorkspaceModuleStore((s) => s.fetchProject);
+    const storedWorkspaceModuleState = useWorkspaceModuleStore(
+      useCallback((s) => projectId ? s.byProjectId[projectId] ?? null : null, [projectId]),
+    );
+    const [canvasOpenBusyKey, setCanvasOpenBusyKey] = useState<string | null>(null);
+    const [canvasOpenError, setCanvasOpenError] = useState<string | null>(null);
 
-    const prevCanvasIdRef = useRef<string | null>(null);
+    const activeCanvasMountIds = useMemo(
+      () => activeCanvasMountIdsFromRuntimeSurface(runtimeData.runtimeSurface),
+      [runtimeData.runtimeSurface],
+    );
+    const runtimeCanvasSurfaceReady = runtimeData.runtimeStatus === "ready";
+
+    const tabLayoutOptions: WorkspaceTabLayoutOptions = useMemo(() => ({
+      tabTypes: registrySnapshot.map((type) => ({
+        typeId: type.typeId,
+        label: type.label,
+        allowMultiple: type.allowMultiple,
+        pinned: type.pinned,
+        defaultUri: type.defaultUri ?? type.buildUri({}),
+        canCreateUri: type.typeId === "canvas"
+          ? (uri) => canvasMountIdFromPresentationUri(uri) !== null
+          : type.canCreateUri,
+      })),
+      resolveTitle: (typeId, uri) => {
+        const type = registrySnapshot.find((descriptor) => descriptor.typeId === typeId);
+        return type?.resolveTitle(uri) ?? uri;
+      },
+    }), [registrySnapshot]);
 
     // 首次挂载或 session 切换时初始化 Tab 状态
     useEffect(() => {
       if (storeSessionId !== sessionId) {
-        useWorkspaceTabStore.getState().initialize(sessionId);
+        useWorkspaceTabStore.getState().initialize(sessionId, null, tabLayoutOptions);
       }
-    }, [sessionId, storeSessionId]);
+    }, [sessionId, storeSessionId, tabLayoutOptions]);
+
+    useEffect(() => {
+      if (!runtimeCanvasSurfaceReady || storeSessionId !== sessionId) return;
+      useWorkspaceTabStore.getState().pruneInvalidTabs(tabLayoutOptions);
+    }, [runtimeCanvasSurfaceReady, sessionId, storeSessionId, tabLayoutOptions]);
+
+    const workspaceModuleState = useMemo(() => {
+      if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
+      if (!projectId) return idleProjectWorkspaceModulesState();
+      return {
+        project_id: projectId,
+        status: "idle" as const,
+        modules: [],
+        error: null,
+      };
+    }, [projectId, storedWorkspaceModuleState]);
+
+    useEffect(() => {
+      if (!projectId) return;
+      if (workspaceModuleState.status !== "idle") return;
+      void fetchWorkspaceModules(projectId);
+    }, [fetchWorkspaceModules, projectId, workspaceModuleState.status]);
 
     useEffect(() => {
       if (
@@ -58,31 +119,65 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
 
     // 外部命令式 API：按类型打开或激活 Tab
     useImperativeHandle(ref, () => ({
-      openTab: (typeId: string, uri?: string) => {
+      openTab: (typeId: string, uri?: string, options?: { refreshContent?: boolean }) => {
         const s = useWorkspaceTabStore.getState();
+        let tabId = "";
         if (uri) {
-          s.openOrActivate(typeId, uri);
+          tabId = s.openOrActivate(typeId, uri, tabLayoutOptions);
         } else {
           const type = tabTypeRegistry.getType(typeId);
           if (type) {
             const defaultUri = type.defaultUri ?? type.buildUri({});
-            s.openOrActivate(typeId, defaultUri);
+            tabId = s.openOrActivate(typeId, defaultUri, tabLayoutOptions);
           }
         }
+        if (tabId && options?.refreshContent) {
+          useWorkspaceTabStore.getState().refreshTab(tabId);
+        }
       },
-    }), []);
-
-    // activeCanvasId 变化时，自动打开/激活 Canvas Tab
-    useEffect(() => {
-      if (!activeCanvasId || activeCanvasId === prevCanvasIdRef.current) return;
-      prevCanvasIdRef.current = activeCanvasId;
-      const uri = `canvas://${activeCanvasId}`;
-      useWorkspaceTabStore.getState().openOrActivate("canvas", uri);
-    }, [activeCanvasId]);
+    }), [tabLayoutOptions]);
 
     const handleAddTab = useCallback((typeId: string) => {
-      useWorkspaceTabStore.getState().addTab(typeId);
-    }, []);
+      useWorkspaceTabStore.getState().addTab(typeId, undefined, true, tabLayoutOptions);
+    }, [tabLayoutOptions]);
+
+    const canvasOptions = useMemo(
+      () => runtimeCanvasSurfaceReady
+        ? selectCanvasModuleOpenOptions(workspaceModuleState.modules, activeCanvasMountIds)
+        : [],
+      [activeCanvasMountIds, runtimeCanvasSurfaceReady, workspaceModuleState.modules],
+    );
+
+    const handleOpenCanvasModule = useCallback(async (option: CanvasModuleOpenOption) => {
+      const busyKey = `${option.module_id}:${option.view_key}`;
+      setCanvasOpenBusyKey(busyKey);
+      setCanvasOpenError(null);
+      try {
+        await openUserCanvasModule({
+          runtimeSessionId: sessionId,
+          option,
+          openOrActivate: (typeId, uri, refreshContent) => {
+            const tabId = useWorkspaceTabStore
+              .getState()
+              .openOrActivate(typeId, uri, tabLayoutOptions);
+            if (tabId && refreshContent) {
+              useWorkspaceTabStore.getState().refreshTab(tabId);
+            }
+          },
+        });
+        onWorkspaceModuleOpened?.();
+        return true;
+      } catch (error: unknown) {
+        setCanvasOpenError(error instanceof Error ? error.message : "Canvas 打开失败。");
+        return false;
+      } finally {
+        setCanvasOpenBusyKey(null);
+      }
+    }, [
+      onWorkspaceModuleOpened,
+      sessionId,
+      tabLayoutOptions,
+    ]);
 
     const handleActivate = useCallback((tabId: string) => {
       useWorkspaceTabStore.getState().activateTab(tabId);
@@ -101,7 +196,24 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       [tabs, activeTabId],
     );
 
-    const workspaceData: WorkspaceData = useMemo(() => runtimeData, [runtimeData]);
+    const workspaceData: WorkspaceData = useMemo(() => {
+      const agentRef = runtimeData.lifecycleAgent?.agent_ref ?? null;
+      return {
+        ...runtimeData,
+        agentRunCanvasBridgeBase: agentRef && runtimeData.projectId
+          ? {
+              run_id: agentRef.run_id,
+              agent_id: agentRef.agent_id,
+              project_id: runtimeData.projectId,
+            }
+          : null,
+        refreshAgentRunWorkspace: onWorkspaceModuleOpened
+          ? async () => {
+              onWorkspaceModuleOpened();
+            }
+          : null,
+      };
+    }, [onWorkspaceModuleOpened, runtimeData]);
 
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {
@@ -120,6 +232,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         tabId: activeTab.id,
         sessionId,
         isActive: true,
+        refreshRevision: activeTab.refreshRevision,
       });
     }, [activeTab, registrySnapshot, sessionId]);
 
@@ -128,13 +241,19 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         <div className="flex h-full flex-col bg-background">
           <TabBar
             tabs={tabs}
+            tabTypes={registrySnapshot}
             activeTabId={activeTabId}
             onActivate={handleActivate}
             onClose={handleClose}
             onReorder={handleReorder}
             onAddTab={handleAddTab}
+            canvasOptions={canvasOptions}
+            canvasOptionsStatus={workspaceModuleState.status}
+            canvasOpenBusyKey={canvasOpenBusyKey}
+            canvasOpenError={canvasOpenError}
+            onOpenCanvasModule={handleOpenCanvasModule}
           />
-          <AddressBar tab={activeTab} />
+          <AddressBar tab={activeTab} tabTypes={registrySnapshot} />
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {activeContent}
           </div>

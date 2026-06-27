@@ -80,11 +80,12 @@ AGENTDASH_PORT=3001
 
 DATABASE_URL=postgres://agentdash:change-me@postgres:5432/agentdash
 
-AGENTDASH_SECRET_KEY=change-me
-AGENTDASH_ENCRYPTION_KEY=change-me
+AGENTDASH_SECRET_KEY=0123456789abcdef0123456789abcdef
 
 RUST_LOG=info
 ```
+
+`AGENTDASH_SECRET_KEY` 是服务端 LLM Provider secret 加密主密钥，必须是 32 字节原文或 32 字节 key 的 base64 表示。
 
 `AGENTDASH_PUBLIC_ORIGIN` 是部署入口的核心配置。API base URL、Relay WebSocket URL、桌面端 discovery 返回值和外部访问地址都应优先围绕它推导，避免在多个位置重复维护 origin。
 

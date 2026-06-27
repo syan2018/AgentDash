@@ -6,7 +6,17 @@ license.workspace = true
 
 [dependencies]
 agentdash-agent-types = { workspace = true }
+agentdash-application-agentrun = { workspace = true }
+agentdash-application-lifecycle = { workspace = true }
 agentdash-application-ports = { workspace = true }
+agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-runtime-session = { workspace = true }
+agentdash-application-skill = { workspace = true }
+agentdash-application-vfs = { workspace = true }
+agentdash-application-workflow = { workspace = true }
+agentdash-application-hooks = { workspace = true }
+agentdash-application-shared-library = { workspace = true }
+agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-relay = { workspace = true }
@@ -16,6 +26,7 @@ agentdash-agent-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
@@ -24,6 +35,7 @@ tokio = { workspace = true, features = ["sync"] }
 futures = { workspace = true }
 async-trait = "0.1"
 regex = "1"
+shell-words = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 base64 = "0.22"
 flate2 = { workspace = true }
@@ -36,10 +48,7 @@ tar = { workspace = true }
 cron = "0.15"
 chrono-tz = "0.10"
 tera = "1"
-
-[dependencies.agentdash-executor]
-workspace = true
-features = ["pi-agent"]
+url = "2"
 
 [dev-dependencies]
 tempfile = "3.18"

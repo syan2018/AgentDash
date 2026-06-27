@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 workspace state 作为事实源"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 DTO 和 mapper"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "检查模型字段映射"}
+{"file": ".trellis/tasks/06-11-agentrun-workspace-api-contract/prd.md", "reason": "检查 API 依赖已满足"}
+{"file": ".trellis/tasks/06-11-agentrun-workspace-frontend-route-state/prd.md", "reason": "检查本 child 验收"}

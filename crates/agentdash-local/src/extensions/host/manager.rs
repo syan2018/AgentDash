@@ -7,11 +7,13 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use super::process::{ActiveExtension, ExtensionHostProcess};
+use super::schema::validate_json_schema_subset;
 use super::{
     LocalExtensionHostActivation, LocalExtensionHostError, LocalExtensionHostHealth,
     LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot,
 };
 use crate::extensions::artifact_cache::ExtensionArtifactCacheEntry;
+use crate::tool_executor::ToolExecutor;
 
 #[derive(Debug, Clone)]
 pub struct LocalTsExtensionHostConfig {
@@ -119,6 +121,7 @@ impl LocalExtensionHostManager {
         let process = guard
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
+        let output_schema = action_output_schema(process, action_key)?;
         let result = process
             .call(
                 "invoke_action",
@@ -129,6 +132,13 @@ impl LocalExtensionHostManager {
             )
             .await;
         reset_after_process_exit(&mut guard, &result);
+        if let Ok(output) = &result {
+            validate_json_schema_subset(
+                &output_schema,
+                output,
+                &format!("extension action `{action_key}` output"),
+            )?;
+        }
         result
     }
 
@@ -142,6 +152,7 @@ impl LocalExtensionHostManager {
         let process = guard
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
+        let output_schema = channel_output_schema(process, channel_key, method)?;
         let result = process
             .call(
                 "invoke_channel",
@@ -153,6 +164,13 @@ impl LocalExtensionHostManager {
             )
             .await;
         reset_after_process_exit(&mut guard, &result);
+        if let Ok(output) = &result {
+            validate_json_schema_subset(
+                &output_schema,
+                output,
+                &format!("extension channel `{channel_key}.{method}` output"),
+            )?;
+        }
         result
     }
 
@@ -177,12 +195,13 @@ impl LocalExtensionHostManager {
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
         let profile = profile_from_activation(&activation);
+        let tool_executor = tool_executor_for_activation(&activation);
         let active = ActiveExtension {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
             default_workspace_root: activation.default_workspace_root.clone(),
-            workspace_roots: activation.workspace_roots.clone(),
+            tool_executor,
         };
         process
             .active_extensions
@@ -215,12 +234,13 @@ impl LocalExtensionHostManager {
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
         let profile = profile_from_activation(&activation);
+        let tool_executor = tool_executor_for_activation(&activation);
         let active = ActiveExtension {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
             default_workspace_root: activation.default_workspace_root.clone(),
-            workspace_roots: activation.workspace_roots.clone(),
+            tool_executor,
         };
         process
             .active_extensions
@@ -344,6 +364,16 @@ fn profile_from_activation(activation: &LocalExtensionHostActivation) -> LocalEx
     }
 }
 
+fn tool_executor_for_activation(activation: &LocalExtensionHostActivation) -> ToolExecutor {
+    let mut roots = activation.workspace_roots.clone();
+    if let Some(default_root) = activation.default_workspace_root.as_ref()
+        && !roots.iter().any(|root| root == default_root)
+    {
+        roots.push(default_root.clone());
+    }
+    ToolExecutor::new(roots)
+}
+
 fn workspace_root_summary(index: usize, root: &Path) -> LocalExtensionHostWorkspaceRoot {
     let name = root
         .file_name()
@@ -356,6 +386,62 @@ fn workspace_root_summary(index: usize, root: &Path) -> LocalExtensionHostWorksp
         name: name.clone(),
         display_path: name,
     }
+}
+
+fn action_output_schema(
+    process: &ExtensionHostProcess,
+    action_key: &str,
+) -> Result<Value, LocalExtensionHostError> {
+    process
+        .active_extensions
+        .values()
+        .find_map(|active| {
+            active
+                .manifest
+                .runtime_actions
+                .iter()
+                .find(|action| action.action_key == action_key)
+                .map(|action| action.output_schema.clone())
+        })
+        .ok_or_else(|| {
+            LocalExtensionHostError::Host(format!(
+                "extension action 未声明 output schema: {action_key}"
+            ))
+        })
+}
+
+fn channel_output_schema(
+    process: &ExtensionHostProcess,
+    channel_key: &str,
+    method: &str,
+) -> Result<Value, LocalExtensionHostError> {
+    process
+        .active_extensions
+        .values()
+        .find_map(|active| {
+            let canonical_channel_key = if channel_key.contains('.') {
+                channel_key.to_string()
+            } else {
+                format!("{}.{}", active.extension_key, channel_key)
+            };
+            active
+                .manifest
+                .protocol_channels
+                .iter()
+                .find(|channel| channel.channel_key == canonical_channel_key)
+                .and_then(|channel| {
+                    channel
+                        .methods
+                        .iter()
+                        .find(|candidate| candidate.name == method)
+                })
+                .map(|method| method.output_schema.clone())
+        })
+        .ok_or_else(|| {
+            LocalExtensionHostError::Host(format!(
+                "extension channel 未声明 output schema: {channel_key}.{method}"
+            ))
+        })
 }
 
 fn local_username() -> String {

@@ -60,8 +60,18 @@ test("ExtensionDevRuntime reloads extension source before dispatch", async () =>
   assert.deepEqual(second, { message: "Hi Reload", source: "action" });
 });
 
+test("ExtensionDevRuntime rejects TS runtime surface not declared by manifest", async () => {
+  const root = await fixtureProject({ omitManifestAction: "demo.alias" });
+  const runtime = createDevRuntime(root);
+
+  await assert.rejects(
+    runtime.load(),
+    /TS 注册了 manifest 未声明的 runtime action: demo\.alias/,
+  );
+});
+
 /**
- * @param {{ greeting?: string }} [options]
+ * @param {{ greeting?: string, omitManifestAction?: string }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -72,6 +82,25 @@ async function fixtureProject(options = {}) {
     version: "0.1.0",
     type: "module",
   }));
+  const runtimeActions = [{
+    action_key: "demo.greet",
+    kind: "session_runtime",
+    description: "Greet through action",
+    input_schema: true,
+    output_schema: true,
+  }, {
+    action_key: "demo.self",
+    kind: "session_runtime",
+    description: "Greet through self channel",
+    input_schema: true,
+    output_schema: true,
+  }, {
+    action_key: "demo.alias",
+    kind: "session_runtime",
+    description: "Greet through dependency alias",
+    input_schema: true,
+    output_schema: true,
+  }].filter((action) => action.action_key !== options.omitManifestAction);
   await writeFile(path.join(root, "agentdash.extension.json"), JSON.stringify({
     manifest_version: "2",
     extension_id: "demo",
@@ -88,6 +117,18 @@ async function fixtureProject(options = {}) {
       extension_id: "demo",
       version: "^1.0.0",
       channels: ["demo.api"],
+    }],
+    runtime_actions: runtimeActions,
+    protocol_channels: [{
+      channel_key: "demo.api",
+      version: "1.0.0",
+      description: "Demo channel",
+      methods: [{
+        name: "greet",
+        description: "Greet through channel",
+        input_schema: true,
+        output_schema: true,
+      }],
     }],
     bundles: [{
       kind: "extension_host",
@@ -128,6 +169,8 @@ export default defineExtension({
       methods: {
         greet: {
           description: "Greet through channel",
+          input_schema: true,
+          output_schema: true,
           invoke(input: JsonValue): JsonObject {
             return { message: ${JSON.stringify(`${greeting} `)} + nameFrom(input), source: "channel" };
           },
@@ -138,6 +181,8 @@ export default defineExtension({
       action_key: "demo.greet",
       kind: "session_runtime",
       description: "Greet through action",
+      input_schema: true,
+      output_schema: true,
       invoke(input: JsonValue): JsonObject {
         return { message: ${JSON.stringify(`${greeting} `)} + nameFrom(input), source: "action" };
       },
@@ -146,6 +191,8 @@ export default defineExtension({
       action_key: "demo.self",
       kind: "session_runtime",
       description: "Greet through self channel",
+      input_schema: true,
+      output_schema: true,
       async invoke(input: JsonValue): Promise<JsonObject> {
         return await ctx.api.channels.self("api").invoke<JsonValue, JsonObject>("greet", input);
       },
@@ -154,6 +201,8 @@ export default defineExtension({
       action_key: "demo.alias",
       kind: "session_runtime",
       description: "Greet through dependency alias",
+      input_schema: true,
+      output_schema: true,
       async invoke(input: JsonValue): Promise<JsonObject> {
         return await ctx.api.channels.from("demo", "api").invoke<JsonValue, JsonObject>("greet", input);
       },

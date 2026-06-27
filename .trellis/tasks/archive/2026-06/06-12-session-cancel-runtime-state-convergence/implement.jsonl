@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "统一 runtime execution state 与 AgentRun workspace action 的现行契约"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "launch claim、connector accepted、terminal 收口阶段契约"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "AgentRun command DTO 与前后端 generated contract 约束"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/design.md", "reason": "上一轮 AgentRun Workspace 与 RuntimeSession trace 分层目标"}

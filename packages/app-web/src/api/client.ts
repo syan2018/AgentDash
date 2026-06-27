@@ -43,6 +43,11 @@ async function request<T>(
     const body = await res.json().catch(() => ({ error: res.statusText }));
     const error = new Error(body.error || `HTTP ${res.status}`);
     (error as ApiHttpError).status = res.status;
+    (error as ApiHttpError).errorCode = typeof body.error_code === "string" ? body.error_code : undefined;
+    (error as ApiHttpError).replacementCommand = typeof body.replacement_command === "string"
+      ? body.replacement_command
+      : undefined;
+    (error as ApiHttpError).detail = body.detail;
     throw error;
   }
 
@@ -54,6 +59,9 @@ async function request<T>(
 
 export interface ApiHttpError extends Error {
   status?: number;
+  errorCode?: string;
+  replacementCommand?: string;
+  detail?: unknown;
 }
 
 export const api = {
@@ -64,7 +72,11 @@ export const api = {
     request<T>(path, { method: 'PUT', body: JSON.stringify(data) }),
   patch: <T>(path: string, data: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
-  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  delete: <T>(path: string, data?: unknown) =>
+    request<T>(path, {
+      method: 'DELETE',
+      body: data === undefined ? undefined : JSON.stringify(data),
+    }),
 };
 
 /**

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { authenticatedFetch } from "../../../api/client";
-import { mapCanvasRuntimeSnapshot } from "../../../services/canvas";
 import { invokeProjectExtensionRuntimeChannel } from "../../../services/extensionRuntime";
 import type {
   CanvasRuntimeSnapshot,
@@ -42,11 +41,10 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
         if (!response.ok) {
           throw new Error(`Canvas package snapshot 加载失败: HTTP ${response.status}`);
         }
-        return response.json() as Promise<Record<string, unknown>>;
+        return response.json();
       })
-      .then((raw) => {
+      .then((snapshot: CanvasRuntimeSnapshot) => {
         if (cancelled) return;
-        const snapshot = mapCanvasRuntimeSnapshot(raw);
         setSnapshotState({
           status: "ready",
           assetUrl,
@@ -94,14 +92,19 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
   }
 
   if (snapshotState.status === "ready") {
-    const snapshot = {
-      ...snapshotState.snapshot,
-      session_id: workspaceData.sessionId ?? snapshotState.snapshot.session_id ?? null,
-    };
+    const bridge = workspaceData.agentRunCanvasBridgeBase
+      ? {
+          ...workspaceData.agentRunCanvasBridgeBase,
+          canvas_mount_id: snapshotState.snapshot.canvas_mount_id,
+        }
+      : null;
     return (
       <div className="flex h-full min-h-0 bg-background">
         <CanvasRuntimePreview
-          snapshot={snapshot}
+          snapshot={snapshotState.snapshot}
+          agentRunBridge={bridge}
+          showBridgeUnavailable
+          onAgentRunWorkspaceRefresh={workspaceData.refreshAgentRunWorkspace}
           extensionChannelBridge={(request) =>
             invokeExtensionChannelFromCanvas({
               workspaceData,

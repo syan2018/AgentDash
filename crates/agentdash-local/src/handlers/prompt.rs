@@ -1,16 +1,68 @@
 //! Agent prompt / cancel / discover 命令处理
 
-use agentdash_relay::*;
-use tokio::sync::mpsc;
+use agentdash_diagnostics::{Subsystem, diag};
+use std::collections::HashSet;
+use std::sync::Arc;
 
-use agentdash_application::session::{
+use agentdash_relay::*;
+use tokio::sync::{Mutex, mpsc};
+
+use agentdash_application_runtime_session::session::{
     LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
 };
+use agentdash_spi::AgentConnector;
 
-use super::CommandHandler;
-use super::relay_mcp_servers::parse_relay_mcp_servers;
+use super::relay_mcp_servers::relay_mcp_servers_to_runtime;
+use crate::local_backend_config::WorkspaceContractRuntimeConfig;
+use crate::tool_executor::ToolExecutor;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct PromptCommandHandler {
+    session_runtime: Option<SessionRuntimeServices>,
+    connector: Option<Arc<dyn AgentConnector>>,
+    tool_executor: ToolExecutor,
+    workspace_contract_config: WorkspaceContractRuntimeConfig,
+    event_tx: mpsc::UnboundedSender<RelayMessage>,
+    session_forwarders: Arc<Mutex<HashSet<String>>>,
+}
+
+pub(super) struct PromptCommandHandlerConfig {
+    pub session_runtime: Option<SessionRuntimeServices>,
+    pub connector: Option<Arc<dyn AgentConnector>>,
+    pub tool_executor: ToolExecutor,
+    pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub event_tx: mpsc::UnboundedSender<RelayMessage>,
+    pub session_forwarders: Arc<Mutex<HashSet<String>>>,
+}
+
+impl PromptCommandHandler {
+    pub(super) fn new(config: PromptCommandHandlerConfig) -> Self {
+        Self {
+            session_runtime: config.session_runtime,
+            connector: config.connector,
+            tool_executor: config.tool_executor,
+            workspace_contract_config: config.workspace_contract_config,
+            event_tx: config.event_tx,
+            session_forwarders: config.session_forwarders,
+        }
+    }
+
+    pub(super) fn list_executors(&self) -> Vec<AgentInfoRelay> {
+        match &self.connector {
+            Some(connector) => connector
+                .list_executors()
+                .into_iter()
+                .map(|info| AgentInfoRelay {
+                    id: info.id,
+                    name: info.name,
+                    variants: info.variants,
+                    available: info.available,
+                })
+                .collect(),
+            None => vec![],
+        }
+    }
+
     pub(super) async fn handle_prompt(
         &self,
         id: String,
@@ -51,6 +103,19 @@ impl CommandHandler {
             cfg.permission_policy = c.permission_policy;
             cfg
         });
+
+        let mcp_servers = match relay_mcp_servers_to_runtime(&payload.mcp_servers) {
+            Ok(servers) => servers,
+            Err(error) => {
+                return RelayMessage::ResponsePrompt {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::invalid_message(format!(
+                        "mcp_servers 配置非法: {error}"
+                    ))),
+                };
+            }
+        };
 
         let workspace_root = match self.tool_executor.validate_workspace_root(mount_root_ref) {
             Ok(path) => path,
@@ -131,12 +196,13 @@ impl CommandHandler {
                 executor_config,
                 backend_selection: None,
             },
-            parse_relay_mcp_servers(&payload.mcp_servers),
+            mcp_servers,
             workspace_root,
         )
         .with_follow_up(follow_up.clone());
 
-        tracing::info!(
+        diag!(Info, Subsystem::AgentRun,
+
             session_id = %session_id,
             mount_root_ref = mount_root_ref,
             "收到 command.prompt，启动 Agent 执行"
@@ -161,7 +227,8 @@ impl CommandHandler {
                         release_session_forwarder(&session_forwarders, &sid).await;
                     });
                 } else {
-                    tracing::debug!(
+                    diag!(Debug, Subsystem::AgentRun,
+
                         session_id = %session_id,
                         "relay session notification forwarder 已存在，复用现有转发任务"
                     );
@@ -177,7 +244,8 @@ impl CommandHandler {
                 }
             }
             Err(e) => {
-                tracing::error!(session_id = %session_id, error = %e, "Agent 启动失败");
+                diag!(Error, Subsystem::AgentRun,
+        session_id = %session_id, error = %e, "Agent 启动失败");
                 RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
@@ -203,7 +271,8 @@ impl CommandHandler {
             }
         };
 
-        tracing::info!(session_id = %payload.session_id, "收到 command.cancel");
+        diag!(Info, Subsystem::AgentRun,
+        session_id = %payload.session_id, "收到 command.cancel");
         match session_runtime.runtime.cancel(&payload.session_id).await {
             Ok(()) => RelayMessage::ResponseCancel {
                 id,
@@ -236,7 +305,8 @@ impl CommandHandler {
             }
         };
 
-        tracing::info!(session_id = %payload.session_id, "收到 command.steer");
+        diag!(Info, Subsystem::AgentRun,
+        session_id = %payload.session_id, "收到 command.steer");
         match session_runtime
             .control
             .steer_session(SessionTurnSteerCommand {
@@ -275,7 +345,8 @@ impl CommandHandler {
         id: String,
         payload: CommandDiscoverOptionsPayload,
     ) -> RelayMessage {
-        tracing::debug!(
+        diag!(Debug, Subsystem::AgentRun,
+
             executor = %payload.executor,
             "收到 command.discover_options，但本机 relay 尚未实现该流式能力"
         );
@@ -312,7 +383,7 @@ fn relay_prompt_blocks_to_user_input(
 }
 
 async fn claim_session_forwarder(
-    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_forwarders: &Arc<Mutex<HashSet<String>>>,
     session_id: &str,
 ) -> bool {
     session_forwarders
@@ -322,7 +393,7 @@ async fn claim_session_forwarder(
 }
 
 async fn release_session_forwarder(
-    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_forwarders: &Arc<Mutex<HashSet<String>>>,
     session_id: &str,
 ) {
     session_forwarders.lock().await.remove(session_id);
@@ -352,7 +423,8 @@ async fn forward_session_notifications(
                 };
 
                 if event_tx.send(relay_msg).is_err() {
-                    tracing::warn!(
+                    diag!(Warn, Subsystem::AgentRun,
+
                         session_id = %session_id,
                         "事件通道已关闭，停止通知转发"
                     );
@@ -360,14 +432,16 @@ async fn forward_session_notifications(
                 }
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!(
+                diag!(Warn, Subsystem::AgentRun,
+
                     session_id = %session_id,
                     skipped = n,
                     "通知流落后，跳过部分消息"
                 );
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                tracing::debug!(session_id = %session_id, "通知流关闭");
+                diag!(Debug, Subsystem::AgentRun,
+        session_id = %session_id, "通知流关闭");
                 break;
             }
         }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::MountCapability;
 use crate::common::error::DomainError;
-use crate::workflow::ToolCapabilityDirective;
+use crate::workflow::{ToolCapabilityDirective, mcp_capability_key};
 
 /// Agent 级 System Prompt 注入模式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,8 +38,7 @@ pub enum ThinkingLevel {
 /// 所有字段均为 Option，方便模板安装、项目实例编辑和运行态解析共享同一结构。
 ///
 /// 消费方通过 `to_agent_config()` 提取运行态执行器配置 [`AgentConfig`]。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct AgentPresetConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
@@ -66,19 +65,19 @@ pub struct AgentPresetConfig {
     /// 前端 → API → 存储 → Resolver 全链路使用相同的 `ToolCapabilityDirective` 表示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_directives: Option<Vec<ToolCapabilityDirective>>,
-    /// MCP Preset key 引用列表（如 `["github", "jira"]`）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mcp_preset_keys: Option<Vec<String>>,
     /// Agent 可访问的 Project VFS mount 及其权限。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vfs_access_grants: Option<Vec<AgentVfsAccessGrant>>,
     /// Project SkillAsset key 引用列表（如 `["research", "writer"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_asset_keys: Option<Vec<String>>,
-    /// 允许此 Agent 调用的 companion agent 名称白名单。
+    /// 此 Agent 是否默认进入同项目其它 Agent 的 companion roster。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_companions: Option<Vec<String>>,
-    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{mount_id}`）。
+    pub default_companion_enabled: Option<bool>,
+    /// 调用侧额外加入的非默认 companion agent 名称。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_companions: Option<Vec<String>>,
+    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
     /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。
@@ -112,10 +111,10 @@ impl AgentPresetConfig {
             display_name,
             description,
             capability_directives,
-            mcp_preset_keys,
             vfs_access_grants,
             skill_asset_keys,
-            allowed_companions,
+            default_companion_enabled,
+            extra_companions,
             visible_workspace_module_refs,
         )
     }
@@ -141,7 +140,122 @@ impl AgentPresetConfig {
 
     /// 从 DB JSON 反序列化为权威配置结构。
     pub fn from_json(value: &serde_json::Value) -> Result<Self, DomainError> {
-        serde_json::from_value(value.clone()).map_err(DomainError::Serialization)
+        serde_json::from_value::<Self>(value.clone()).map_err(DomainError::Serialization)
+    }
+
+    /// 归一化 ProjectAgent config JSON，并保留未知字段。
+    ///
+    /// API 的 `config` 仍是 opaque JSON；这里集中处理 legacy `mcp_preset_keys`
+    /// 迁移，避免 route 层手写一套路径语义。
+    pub fn normalize_json_value(
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, DomainError> {
+        let normalized = Self::from_json(value)?;
+        let mut object = match value {
+            serde_json::Value::Object(map) => map.clone(),
+            _ => {
+                return Err(DomainError::InvalidConfig(
+                    "AgentPresetConfig 必须是 JSON object".to_string(),
+                ));
+            }
+        };
+
+        object.remove("mcp_preset_keys");
+        match normalized.capability_directives {
+            Some(directives) => {
+                object.insert(
+                    "capability_directives".to_string(),
+                    serde_json::to_value(directives)?,
+                );
+            }
+            None => {
+                object.remove("capability_directives");
+            }
+        }
+
+        Ok(serde_json::Value::Object(object))
+    }
+
+    fn prepend_legacy_mcp_preset_keys(
+        &mut self,
+        legacy_keys: Option<Vec<String>>,
+    ) -> Result<(), String> {
+        let Some(legacy_keys) = legacy_keys else {
+            return Ok(());
+        };
+        let mut legacy_directives = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, key) in legacy_keys.into_iter().enumerate() {
+            let capability_key = mcp_capability_key(&key)
+                .map_err(|reason| format!("mcp_preset_keys[{index}] 非法: {reason}"))?;
+            if seen.insert(capability_key.clone()) {
+                legacy_directives.push(ToolCapabilityDirective::add_simple(capability_key));
+            }
+        }
+
+        if legacy_directives.is_empty() {
+            return Ok(());
+        }
+
+        let mut merged = legacy_directives;
+        if let Some(explicit) = self.capability_directives.take() {
+            merged.extend(explicit);
+        }
+        self.capability_directives = Some(merged);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct AgentPresetConfigWire {
+    executor: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    agent_id: Option<String>,
+    thinking_level: Option<ThinkingLevel>,
+    permission_policy: Option<String>,
+    system_prompt: Option<String>,
+    system_prompt_mode: Option<SystemPromptMode>,
+    display_name: Option<String>,
+    description: Option<String>,
+    capability_directives: Option<Vec<ToolCapabilityDirective>>,
+    mcp_preset_keys: Option<Vec<String>>,
+    vfs_access_grants: Option<Vec<AgentVfsAccessGrant>>,
+    skill_asset_keys: Option<Vec<String>>,
+    default_companion_enabled: Option<bool>,
+    extra_companions: Option<Vec<String>>,
+    visible_workspace_module_refs: Option<Vec<String>>,
+}
+
+impl<'de> Deserialize<'de> for AgentPresetConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = AgentPresetConfigWire::deserialize(deserializer)?;
+        let mut config = Self {
+            executor: wire.executor,
+            provider_id: wire.provider_id,
+            model_id: wire.model_id,
+            agent_id: wire.agent_id,
+            thinking_level: wire.thinking_level,
+            permission_policy: wire.permission_policy,
+            system_prompt: wire.system_prompt,
+            system_prompt_mode: wire.system_prompt_mode,
+            display_name: wire.display_name,
+            description: wire.description,
+            capability_directives: wire.capability_directives,
+            vfs_access_grants: wire.vfs_access_grants,
+            skill_asset_keys: wire.skill_asset_keys,
+            default_companion_enabled: wire.default_companion_enabled,
+            extra_companions: wire.extra_companions,
+            visible_workspace_module_refs: wire.visible_workspace_module_refs,
+        };
+        config
+            .prepend_legacy_mcp_preset_keys(wire.mcp_preset_keys)
+            .map_err(serde::de::Error::custom)?;
+        Ok(config)
     }
 }
 
@@ -218,6 +332,8 @@ mod tests {
             "description": "检查代码结构",
             "skill_asset_keys": ["research", "review"],
             "vfs_access_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
+            "default_companion_enabled": true,
+            "extra_companions": ["deep-reviewer"],
             "capability_directives": [{ "add": "workflow_management" }]
         }))
         .expect("valid preset config");
@@ -230,13 +346,76 @@ mod tests {
         );
         assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
         assert_eq!(config.vfs_access_grants.as_ref().map(Vec::len), Some(1));
+        assert_eq!(config.default_companion_enabled, Some(true));
+        assert_eq!(
+            config.extra_companions.as_deref(),
+            Some(["deep-reviewer".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn preset_config_normalizes_legacy_mcp_preset_keys_before_explicit_directives() {
+        let config = AgentPresetConfig::from_json(&serde_json::json!({
+            "mcp_preset_keys": [" abc-config ", "docs", "abc-config"],
+            "capability_directives": [
+                { "remove": "mcp:abc-config::ABCConfigAnalyzer_get_file_content" }
+            ]
+        }))
+        .expect("legacy mcp preset keys should normalize");
+
+        let directives = config
+            .capability_directives
+            .as_ref()
+            .expect("normalized capability directives");
+        assert_eq!(directives.len(), 3);
+        assert_eq!(
+            serde_json::to_value(directives).expect("serialize directives"),
+            serde_json::json!([
+                { "add": "mcp:abc-config" },
+                { "add": "mcp:docs" },
+                { "remove": "mcp:abc-config::ABCConfigAnalyzer_get_file_content" }
+            ])
+        );
+
+        let serialized = serde_json::to_value(&config).expect("serialize config");
+        assert!(serialized.get("mcp_preset_keys").is_none());
+    }
+
+    #[test]
+    fn preset_config_normalize_json_value_removes_legacy_field_and_preserves_unknown_fields() {
+        let normalized = AgentPresetConfig::normalize_json_value(&serde_json::json!({
+            "display_name": "Analyzer",
+            "unknown_future_field": { "keep": true },
+            "mcp_preset_keys": ["abc-config"],
+            "capability_directives": [{ "remove": "mcp:abc-config::hidden_tool" }]
+        }))
+        .expect("normalize config json");
+
+        assert_eq!(normalized["display_name"], "Analyzer");
+        assert_eq!(normalized["unknown_future_field"]["keep"], true);
+        assert!(normalized.get("mcp_preset_keys").is_none());
+        assert_eq!(
+            normalized["capability_directives"],
+            serde_json::json!([
+                { "add": "mcp:abc-config" },
+                { "remove": "mcp:abc-config::hidden_tool" }
+            ])
+        );
+    }
+
+    #[test]
+    fn preset_config_rejects_invalid_legacy_mcp_preset_keys() {
+        let result = AgentPresetConfig::from_json(&serde_json::json!({
+            "mcp_preset_keys": ["abc::config"]
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]
     fn preset_config_merge_over_replaces_skill_asset_keys_when_present() {
         let base = AgentPresetConfig {
             skill_asset_keys: Some(vec!["base".to_string()]),
-            mcp_preset_keys: Some(vec!["mcp-base".to_string()]),
             vfs_access_grants: Some(vec![AgentVfsAccessGrant {
                 mount_id: "base".to_string(),
                 capabilities: vec![MountCapability::Read],
@@ -255,7 +434,6 @@ mod tests {
         let merged = over.merge_over(&base);
 
         assert_eq!(merged.skill_asset_keys, Some(vec!["override".to_string()]));
-        assert_eq!(merged.mcp_preset_keys, Some(vec!["mcp-base".to_string()]));
         assert_eq!(
             merged
                 .vfs_access_grants
@@ -268,12 +446,12 @@ mod tests {
     #[test]
     fn preset_config_roundtrips_and_merges_visible_workspace_module_refs() {
         let config = AgentPresetConfig::from_json(&serde_json::json!({
-            "visible_workspace_module_refs": ["ext:demo", "canvas:dashboard-a"]
+            "visible_workspace_module_refs": ["ext:demo", "canvas:cvs-dashboard-a"]
         }))
         .expect("valid preset config");
         assert_eq!(
             config.visible_workspace_module_refs.as_deref(),
-            Some(["ext:demo".to_string(), "canvas:dashboard-a".to_string()].as_slice())
+            Some(["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()].as_slice())
         );
 
         let base = AgentPresetConfig {

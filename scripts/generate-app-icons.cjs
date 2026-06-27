@@ -13,14 +13,17 @@ const icoTargets = [
   path.join(root, "packages", "app-web", "public", "favicon.ico"),
   path.join(root, "packages", "app-tauri", "public", "favicon.ico"),
 ];
-const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+const icoSizes = [256, 128, 96, 64, 48, 40, 32, 24, 20, 16];
+const desktopIconBackgroundColor = "#000";
+const desktopIconStrokeColor = "#fff";
+const desktopIconScale = 1.12;
 const crcTable = createCrcTable();
 
 const svg = fs.readFileSync(sourceSvgPath, "utf8");
 const viewBox = readViewBox(svg);
 const strokeWidth = Number(readAttribute(svg, "stroke-width") ?? 12);
 const strokeColor = readAttribute(svg, "stroke") ?? "#fff";
-const backgroundColor = readRectFill(svg) ?? "#000";
+const backgroundColor = readRectFill(svg);
 const segments = readPathSegments(svg);
 
 if (segments.length === 0) {
@@ -32,7 +35,13 @@ for (const target of svgTargets) {
   fs.copyFileSync(sourceSvgPath, target);
 }
 
-const ico = createIco(icoSizes.map((size) => renderPng(size)));
+const ico = createIco(icoSizes.map((size) => renderPng(size, {
+  backgroundColor: desktopIconBackgroundColor,
+  featherPx: 0.32,
+  iconScale: desktopIconScale,
+  minStrokeWidthPx: desktopIconStrokeWidth(size),
+  strokeColor: desktopIconStrokeColor,
+})));
 for (const target of icoTargets) {
   ensureDir(target);
   fs.writeFileSync(target, ico);
@@ -150,16 +159,24 @@ function readNumber(tokens, index) {
   return value;
 }
 
-function renderPng(size) {
+function renderPng(size, options = {}) {
   const rgba = Buffer.alloc(size * size * 4);
-  const scale = size / Math.max(viewBox.width, viewBox.height);
-  const halfStroke = Math.max(1.25, (strokeWidth * scale) / 2);
-  const feather = Math.max(0.65, scale * 1.25);
-  const bg = parseHexColor(backgroundColor);
-  const fg = parseHexColor(strokeColor);
+  const baseScale = size / Math.max(viewBox.width, viewBox.height);
+  const scale = baseScale * (options.iconScale ?? 1);
+  const centerX = size / 2;
+  const centerY = size / 2;
+  const viewBoxCenterX = viewBox.x + viewBox.width / 2;
+  const viewBoxCenterY = viewBox.y + viewBox.height / 2;
+  const minHalfStroke = options.minStrokeWidthPx ? options.minStrokeWidthPx / 2 : 0.42;
+  const halfStroke = Math.max(minHalfStroke, (strokeWidth * scale) / 2);
+  const feather = options.featherPx ?? Math.max(0.28, Math.min(0.85, baseScale * 14));
+  const bgColor = options.backgroundColor ?? backgroundColor;
+  const fgColor = options.strokeColor ?? strokeColor;
+  const bg = bgColor ? parseHexColor(bgColor) : null;
+  const fg = parseHexColor(fgColor);
   const scaledSegments = segments.map(([a, b]) => [
-    [(a[0] - viewBox.x) * scale, (a[1] - viewBox.y) * scale],
-    [(b[0] - viewBox.x) * scale, (b[1] - viewBox.y) * scale],
+    [centerX + (a[0] - viewBoxCenterX) * scale, centerY + (a[1] - viewBoxCenterY) * scale],
+    [centerX + (b[0] - viewBoxCenterX) * scale, centerY + (b[1] - viewBoxCenterY) * scale],
   ]);
 
   for (let y = 0; y < size; y++) {
@@ -172,14 +189,18 @@ function renderPng(size) {
       }
       const coverage = Math.max(0, Math.min(1, (halfStroke + feather - distance) / feather));
       const offset = (y * size + x) * 4;
-      rgba[offset] = mix(bg.r, fg.r, coverage);
-      rgba[offset + 1] = mix(bg.g, fg.g, coverage);
-      rgba[offset + 2] = mix(bg.b, fg.b, coverage);
-      rgba[offset + 3] = 255;
+      rgba[offset] = bg ? mix(bg.r, fg.r, coverage) : fg.r;
+      rgba[offset + 1] = bg ? mix(bg.g, fg.g, coverage) : fg.g;
+      rgba[offset + 2] = bg ? mix(bg.b, fg.b, coverage) : fg.b;
+      rgba[offset + 3] = bg ? 255 : Math.round(coverage * 255);
     }
   }
 
   return { size, png: encodePng(size, size, rgba) };
+}
+
+function desktopIconStrokeWidth(size) {
+  return Math.min(3, 1.1 + size / 53);
 }
 
 function parseHexColor(value) {

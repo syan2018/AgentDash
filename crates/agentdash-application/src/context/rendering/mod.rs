@@ -5,7 +5,7 @@
 //! 是消除同一 section 在多个产出点被独立重写带来的 drift 风险。
 
 pub mod declared_sources;
-pub mod workflow_injection;
+pub mod r#workflow_injection;
 
 pub use declared_sources::{
     display_source_label, fragment_label, fragment_slot, render_source_section, truncate_text,

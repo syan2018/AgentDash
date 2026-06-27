@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanvasRuntimeSnapshot } from "../../types";
+import { buildPreviewFailureObservation } from "./CanvasRuntimePreview.observation";
 import {
   buildPreviewDocument,
   createRuntimeAssetUrlCache,
@@ -12,6 +13,8 @@ import {
 function snapshot(): CanvasRuntimeSnapshot {
   return {
     canvas_id: "canvas-1",
+    canvas_mount_id: "cvs-canvas-1",
+    vfs_mount_id: "cvs-canvas-1",
     session_id: "session-1",
     resource_surface_ref: "session-runtime:session-1",
     entry: "src/main.tsx",
@@ -27,13 +30,44 @@ function snapshot(): CanvasRuntimeSnapshot {
     libraries: [],
     runtime_bridge: {
       enabled: false,
-      surface: null,
       disabled_reason: "test",
     },
   };
 }
 
 describe("CanvasRuntimePreview VFS image assets", () => {
+  it("builds an error observation for preview document build failures", () => {
+    const observation = buildPreviewFailureObservation(
+      "frame-build-failed",
+      3,
+      "无法解析 Canvas 模块：bindings/events.json",
+      { clientWidth: 640, clientHeight: 360 },
+    );
+
+    expect(observation).toMatchObject({
+      frame_id: "frame-build-failed",
+      generation: 3,
+      status: "error",
+      message: "无法解析 Canvas 模块：bindings/events.json",
+      viewport: {
+        width: 640,
+        height: 360,
+      },
+      document: {
+        root_empty: true,
+        body_text_preview: "",
+        element_count: 0,
+      },
+      diagnostics: [
+        {
+          level: "error",
+          source: "runtime",
+          message: "Canvas 预览构建失败：无法解析 Canvas 模块：bindings/events.json",
+        },
+      ],
+    });
+  });
+
   it("parses safe VFS image mount URIs", () => {
     expect(parseVfsAssetUri("docs-media://assets/doc-1/source.png")).toEqual({
       mountId: "docs-media",
@@ -61,12 +95,68 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     const built = buildPreviewDocument(snapshot(), "frame-1");
 
     expect(built.srcDoc).toContain("assets: Object.freeze");
+    expect(built.srcDoc).toContain("interaction: Object.freeze");
+    expect(built.srcDoc).toContain("agent: Object.freeze");
     expect(built.srcDoc).toContain("canvas-asset-url-request");
     expect(built.srcDoc).toContain("canvas-asset-url-result");
+    expect(built.srcDoc).toContain("canvas-render-observation");
+    expect(built.srcDoc).toContain("canvas-interaction-snapshot");
+    expect(built.srcDoc).toContain("canvas-agent-submit");
+    expect(built.srcDoc).toContain("generation: frameGeneration");
 
     built.dispose();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:canvas-module");
 
+    createObjectUrl.mockRestore();
+    revokeObjectUrl.mockRestore();
+  });
+
+  it("resolves binding-generated files imported by snapshot path", async () => {
+    const blobs: Blob[] = [];
+    const createObjectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockImplementation((object: Blob | MediaSource) => {
+        if (object instanceof Blob) {
+          blobs.push(object);
+        }
+        return `blob:module-${blobs.length}`;
+      });
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+    const built = buildPreviewDocument(
+      {
+        ...snapshot(),
+        files: [
+          {
+            path: "src/main.tsx",
+            content: "import events from 'bindings/lifecycle_events.json'; export default events;",
+            file_type: "code",
+          },
+          {
+            path: "bindings/lifecycle_events.json",
+            content: "{\"events\":[]}",
+            file_type: "data",
+          },
+        ],
+        bindings: [
+          {
+            alias: "lifecycle_events",
+            source_uri: "lifecycle://session/events.json",
+            data_path: "bindings/lifecycle_events.json",
+            content_type: "application/json",
+            resolved: true,
+          },
+        ],
+      },
+      "frame-1",
+    );
+
+    const moduleTexts = await Promise.all(blobs.map((blob) => blob.text()));
+
+    expect(moduleTexts[0]).toBe("export default {\"events\":[]};");
+    expect(moduleTexts[1]).toContain("blob:module-1");
+
+    built.dispose();
     createObjectUrl.mockRestore();
     revokeObjectUrl.mockRestore();
   });

@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession 与 AgentRun/AgentFrame 职责边界"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "connector accepted boundary 与 launch commit 顺序"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "runtime control actions 与 delivery session 关系"}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "HookRuntimeAccess 与 frame-scoped target 约束"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "AgentConfig provider/model/thinking 契约"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "前端 action state 与 runtime control view 来源"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "generated DTO 与 projection keying 约束"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/review.md", "reason": "live code review evidence"}
+{"file": ".trellis/tasks/06-11-session-model-delivery-state-chain/design.md", "reason": "父任务目标架构与 child 依赖"}

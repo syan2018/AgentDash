@@ -2,14 +2,16 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { UserInput } from "./backbone-protocol";
-import type { AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto } from "./project-agent-contracts";
+import type { AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView, RuntimeSessionRefDto } from "./agent-run-mailbox-contracts";
+import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
+import type { InstalledAssetSourceDto } from "./shared-library-contracts";
+import type { ResolvedVfsSurface } from "./vfs-contracts";
 
 export type ActiveRuntimeNodeRefDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, status: string, };
 
 export type ActivityCompletionPolicy = { "kind": "output_ports", required_ports: Array<string>, } | { "kind": "executor_terminal" } | { "kind": "human_decision", decision_port: string, } | { "kind": "hook_gate", hook_key: string, } | { "kind": "open_ended" };
 
-export type ActivityDefinition = { key: string, description: string, executor: ActivityExecutorSpec, input_ports?: Array<InputPortDefinition>, output_ports?: Array<OutputPortDefinition>, completion_policy: ActivityCompletionPolicy, iteration_policy: ActivityIterationPolicy, join_policy: ActivityJoinPolicy, };
+export type ActivityDefinition = { key: string, description: string, executor: ActivityExecutorSpec, input_ports: Array<InputPortDefinition>, output_ports: Array<OutputPortDefinition>, completion_policy: ActivityCompletionPolicy, iteration_policy: ActivityIterationPolicy, join_policy: ActivityJoinPolicy, };
 
 export type ActivityExecutorSpec = { "kind": "agent" } & AgentActivityExecutorSpec | { "kind": "function" } & FunctionActivityExecutorSpec | { "kind": "human" } & HumanActivityExecutorSpec;
 
@@ -17,31 +19,81 @@ export type ActivityIterationPolicy = { max_attempts?: number, artifact_alias: A
 
 export type ActivityJoinPolicy = "all" | "any" | "first" | { "n_of_m": { n: number, } };
 
-export type ActivityTransition = { from: string, to: string, kind: ActivityTransitionKind, condition: TransitionCondition, artifact_bindings?: Array<ArtifactBinding>, max_traversals?: number, };
+export type ActivityTransition = { from: string, to: string, kind: ActivityTransitionKind, condition: TransitionCondition, artifact_bindings: Array<ArtifactBinding>, max_traversals?: number, };
 
 export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
+export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
 
-export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
+export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
+
+export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
+
+export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
+
+export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config: CapabilityConfig, output_ports: Array<OutputPortDefinition>, input_ports: Array<InputPortDefinition>, };
+
+export type AgentProcedureResponse = { id: string, project_id: string, key: string, name: string, description: string, target_kinds: Array<WorkflowTargetKind>, source: DefinitionSource, installed_source?: InstalledAssetSourceDto, version: number, contract: AgentProcedureContract, created_at: string, updated_at: string, };
 
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
-export type AgentRunMessageRequest = {
+export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, client_command_id: string, };
+
 /**
- * canonical 用户输入，与 steer（`AgentRunSteeringRequest.input`）同形。
+ * AgentRun lineage 控制树上的一跳引用（父或子）。
+ *
+ * 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
  */
-input: Array<UserInput>, executor_config?: JsonValue, };
+export type AgentRunLineageRef = { run_id: string, agent_id: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+ */
+source: string, relation_kind: string, display_title: string,
+/**
+ * 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
+ */
+subagent_count: number, };
 
-export type AgentRunMessageResponse = { runtime_session_id: string, turn_id: string, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, };
+/**
+ * AgentRun 列表内联的直接子 Agent 节点（一跳），携带真实 shell 状态，免前端懒加载。
+ *
+ * 与 run 级 `AgentRunWorkspaceListEntry` 区分：子节点不持有 run_status / subject 等 run 级字段，
+ * 仅承载渲染一行子 Agent 所需信息 + 自身子树规模（供「N sub」深层提示）。
+ */
+export type AgentRunListChild = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto,
+/**
+ * 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
+ * 未绑定 project agent（动态 companion 等）时为 None。
+ */
+project_agent_label?: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug）。
+ */
+source: string,
+/**
+ * 含 display_title / delivery_status / last_activity_at 等执行态。
+ */
+shell: AgentRunWorkspaceShell,
+/**
+ * 该子自身子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开开关。
+ */
+subagent_count: number,
+/**
+ * 递归内联的下一层直接子 Agent，支持列表内任意深度展开（深度上限兜底）。
+ */
+children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, };
 
-export type AgentRunSteeringRequest = { input: Array<UserInput>, };
+export type AgentRunResourceSurfaceCoordinateView = { surface_frame_ref: AgentFrameRefDto, source_anchor?: AgentRunResourceSurfaceSourceAnchorView, };
 
-export type AgentRunSteeringResponse = { runtime_session_id: string, accepted: boolean, state: RuntimeSessionCommandStateDto, };
+export type AgentRunResourceSurfaceSourceAnchorView = { runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
 
-export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
+export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
+ */
+source: string, project_agent_id?: string, status: string,
 /**
  * 投递用的 runtime session（由 execution anchor 提供）。
  */
@@ -51,6 +103,47 @@ delivery_runtime_ref?: RuntimeSessionRefDto,
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
 
+export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
+
+export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, };
+
+export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus,
+/**
+ * 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
+ * 未绑定 project agent 时为 None。
+ */
+project_agent_label?: string,
+/**
+ * Agent 创建/启动来源（标准化枚举 slug），供列表行展示来源标签。
+ */
+source: string,
+/**
+ * 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
+ */
+subagent_count: number,
+/**
+ * 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
+ */
+children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+
+export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>,
+/**
+ * 下一页游标（keyset，不透明）；None 表示已到尾页。
+ */
+next_cursor?: string, };
+
+export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
+
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
+/**
+ * lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
+ */
+parent?: AgentRunLineageRef,
+/**
+ * 本 Run 直接派发的 subagent（一跳子节点），供右侧展开/下钻。
+ */
+children: Array<AgentRunLineageRef>, };
+
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
 export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history";
@@ -59,9 +152,37 @@ export type ArtifactBinding = { from_activity?: string, from_port: string, to_po
 
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string, };
 
-export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective>, mount_directives?: Array<unknown>, };
+export type CapabilityCatalogEntryDto = { key: string, label: string, description: string, allowed_scopes: Array<CapabilityScopeDto>, auto_granted: boolean, agent_can_grant: boolean, workflow_can_grant: boolean, tools: Array<ToolDescriptorDto>, };
+
+export type CapabilityCatalogResponse = { capabilities: Array<CapabilityCatalogEntryDto>, };
+
+export type CapabilityConfig = { tool_directives: Array<ToolCapabilityDirective>, mount_directives: Array<unknown>, };
+
+export type CapabilityScopeDto = "project" | "story" | "task";
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
+
+export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result: OrchestrationExecutorDrainResultDto, };
+
+export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
+
+export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
+
+export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
+
+export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
+
+export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "starting_claimed" | "running_active" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
+
+export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_session_ref?: RuntimeSessionRefDto, active_turn_id?: string, reason?: string, };
+
+export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
+
+export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, };
+
+export type ConversationModelConfigStatus = "resolved" | "model_required";
+
+export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
 
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
@@ -72,10 +193,6 @@ export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
-
-export type EnqueuePendingMessageRequest = { input: Array<UserInput>, executor_config?: JsonValue, };
-
-export type EnqueuePendingMessageResponse = { message: PendingMessageView, };
 
 export type ExecutorRunRef = { "kind": "runtime_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 
@@ -93,23 +210,29 @@ export type HumanApprovalExecutorSpec = { form_schema_key: string, title?: strin
 
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
+export type LaunchedAgentNodeDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, runtime_session_id: string, };
+
 export type LifecycleExecutionEntry = { timestamp: string, activity_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
 
 export type LifecycleExecutionEventKind = "activity_activated" | "activity_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
-export type LifecycleRunTopology = "graphless" | "workflow_graph";
+export type LifecycleRunTopology = "plain" | "workflow_graph";
 
 export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, topology: LifecycleRunTopology, status: LifecycleRunStatus, orchestrations: Array<OrchestrationInstanceView>, active_runtime_node_refs: Array<ActiveRuntimeNodeRefDto>, agents: Array<AgentRunView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 
+export type OpenedHumanGateDto = { run_id: string, orchestration_id: string, node_path: string, attempt: number, gate_id: string, };
+
+export type OrchestrationExecutorDrainResultDto = { launched_agent_nodes: Array<LaunchedAgentNodeDto>, opened_human_gates: Array<OpenedHumanGateDto>, completed_effect_nodes: Array<string>, failed_nodes: Array<string>, };
+
 export type OrchestrationInstanceView = { orchestration_id: string, role: string, status: string, plan_digest: string, source_ref: JsonValue, ready_node_ids: Array<string>, nodes: Array<RuntimeNodeView>, created_at: string, updated_at: string, };
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
-export type PendingMessageView = { id: string, preview: string, has_images: boolean, created_at: string, };
+export type PlatformMcpScopeDto = "relay" | "story" | "workflow";
 
 export type PreflightWorkflowScriptRequest = { project_id: string, source_text: string, args?: JsonValue, ctx?: JsonValue, runtime_session_id?: string, };
 
@@ -117,39 +240,31 @@ export type PreflightWorkflowScriptResponse = { valid: boolean, source_digest: s
 
 export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<AgentRunView>, };
 
-export type ProjectSessionListEntry = { runtime_session_id: string, title: string, delivery_status: string, run_status?: LifecycleRunStatus, run_ref?: LifecycleRunRefDto, agent_ref?: AgentRunRefDto, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, updated_at: string, };
-
-export type ProjectSessionListView = { project_id: string, sessions: Array<ProjectSessionListEntry>, };
-
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
-
-export type RuntimeSessionCommandStateDto = { status: string, turn_id?: string, message?: string, };
 
 export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
+export type RuntimeSessionTraceMeta = { runtime_session_ref: RuntimeSessionRefDto, last_event_seq: bigint, executor_session_id?: string, trace_title: string, trace_title_source: string, delivery_status: string, last_turn_id?: string, terminal_summary?: string, updated_at: bigint, };
+
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
 
-export type SessionRuntimeActionAvailabilityView = { enabled: boolean, unavailable_reason?: string, };
-
-export type SessionRuntimeActionSetView = { send_next: SessionRuntimeActionAvailabilityView, enqueue: SessionRuntimeActionAvailabilityView, steer: SessionRuntimeActionAvailabilityView, cancel: SessionRuntimeActionAvailabilityView, };
-
-export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "terminal" | "frame_missing";
+export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "anchored_cancelling" | "terminal" | "frame_missing";
 
 export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
 
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, actions: SessionRuntimeActionSetView, pending_messages: Array<PendingMessageView>, };
+export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
 export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
-export type StoryLaunchResult = { created: boolean, story_id: string, project_agent_id: string, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref: SubjectRefDto, };
+export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, runtime_attempts: Array<SubjectRuntimeAttemptView>, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
 
-export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: AgentRunView, latest_runtime_node?: RuntimeNodeView, artifacts: JsonValue, };
+export type SubjectRuntimeAttemptView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, current_frame_id?: string, orchestration_id: string, node_path: string, attempt: number, status: string, observed_at: string, runtime_node: RuntimeNodeView, artifacts: JsonValue, };
 
 export type SubmitOrchestrationHumanDecisionRequest = { orchestration_id: string, node_path: string, attempt: number, decision: JsonValue, resolved_by?: string, };
 
@@ -158,6 +273,12 @@ export type SubmitOrchestrationHumanDecisionResponse = { run: LifecycleRunView, 
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 
 export type ToolCapabilityPath = string;
+
+export type ToolClusterDto = "read" | "write" | "execute" | "workflow" | "collaboration" | "task" | "workspace_module";
+
+export type ToolDescriptorDto = { name: string, display_name: string, description: string, source: ToolSourceDto, capability_key: string, };
+
+export type ToolSourceDto = { "type": "platform", cluster: ToolClusterDto, } | { "type": "platform_mcp", scope: PlatformMcpScopeDto, } | { "type": "mcp", server_name: string, };
 
 export type TransitionCondition = { "kind": "always" } | { "kind": "artifact_field_equals", activity: string, port: string, path: string, value: JsonValue, } | { "kind": "human_decision_equals", activity: string, decision_port: string, value: string, } | { "kind": "agent_signal_equals", activity: string, signal_key: string, value: JsonValue, };
 
@@ -168,6 +289,8 @@ export type ValidationIssue = { code: string, message: string, field_path: strin
 export type ValidationSeverity = "error" | "warning";
 
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string, };
+
+export type WorkflowGraphResponse = { id: string, project_id: string, key: string, name: string, description: string, target_kinds: Array<WorkflowTargetKind>, source: DefinitionSource, installed_source?: InstalledAssetSourceDto, version: number, entry_activity_key: string, activities: Array<ActivityDefinition>, transitions: Array<ActivityTransition>, created_at: string, updated_at: string, };
 
 export type WorkflowHookRuleSpec = { key: string, trigger: WorkflowHookTrigger, description: string, preset?: string, params?: JsonValue, script?: string, enabled: boolean, };
 
@@ -188,3 +311,5 @@ export type WorkflowScriptPlanPreviewDto = { plan_digest: string, node_count: nu
 export type WorkflowScriptPlanPreviewNodeDto = { node_id: string, node_path: string, kind: string, label?: string, };
 
 export type WorkflowScriptPreflightDiagnosticDto = { code: string, severity: ValidationSeverity, message: string, source_path: string, };
+
+export type WorkflowTargetKind = "project" | "story";

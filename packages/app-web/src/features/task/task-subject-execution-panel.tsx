@@ -4,16 +4,15 @@
  * Task 本身只作为 SubjectRef，运行状态由 lifecycle target view 投影。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SubjectExecutionView, Task } from "../../types";
 import { subjectExecutionKey } from "../../types";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
-import { useStoryStore } from "../../stores/storyStore";
+import { agentRunWorkspacePath } from "../agent/agent-run-paths";
 
 interface TaskSubjectExecutionPanelProps {
   task: Task;
-  onTaskUpdated: (task: Task) => void;
 }
 
 function JsonBlock({ value }: { value: unknown }) {
@@ -47,9 +46,10 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
           {currentAgent ? (
             <button
               type="button"
-              onClick={() => navigate(`/agent/${currentAgent.agent_ref.agent_id}`, {
-                state: { run_id: currentAgent.agent_ref.run_id },
-              })}
+              onClick={() => navigate(agentRunWorkspacePath(
+                currentAgent.agent_ref.run_id,
+                currentAgent.agent_ref.agent_id,
+              ))}
               className="mt-2 block w-full truncate text-left font-mono text-xs text-primary hover:underline"
             >
               {currentAgent.agent_ref.agent_id}
@@ -93,14 +93,12 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
               {run.runtime_trace_refs.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {run.runtime_trace_refs.map((ref) => (
-                    <button
+                    <span
                       key={ref.runtime_session_id}
-                      type="button"
-                      onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
-                      className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                      className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                     >
-                      trace {ref.runtime_session_id.slice(0, 8)}
-                    </button>
+                      RuntimeSession trace {ref.runtime_session_id.slice(0, 8)}
+                    </span>
                   ))}
                 </div>
               )}
@@ -117,22 +115,9 @@ function SubjectExecutionSummary({ view }: { view: SubjectExecutionView | null }
   );
 }
 
-export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectExecutionPanelProps) {
-  const startTaskExecution = useStoryStore((s) => s.startTaskExecution);
-  const continueTaskExecution = useStoryStore((s) => s.continueTaskExecution);
-  const cancelTaskExecution = useStoryStore((s) => s.cancelTaskExecution);
-  const refreshTask = useStoryStore((s) => s.refreshTask);
+export function TaskSubjectExecutionPanel({ task }: TaskSubjectExecutionPanelProps) {
   const fetchSubjectExecution = useLifecycleStore((s) => s.fetchSubjectExecution);
   const view = useLifecycleStore((s) => s.subjectExecutions.get(subjectExecutionKey("task", task.id)) ?? null);
-
-  const [prompt, setPrompt] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const onTaskUpdatedRef = useRef(onTaskUpdated);
-  useEffect(() => {
-    onTaskUpdatedRef.current = onTaskUpdated;
-  }, [onTaskUpdated]);
 
   const reloadExecution = useCallback(async () => {
     await fetchSubjectExecution("task", task.id);
@@ -141,39 +126,6 @@ export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectEx
   useEffect(() => {
     void reloadExecution();
   }, [reloadExecution, task.status, task.updated_at]);
-
-  const syncTask = useCallback(async () => {
-    const latest = await refreshTask(task.id);
-    if (latest) onTaskUpdatedRef.current(latest);
-  }, [refreshTask, task.id]);
-
-  const runAction = useCallback(
-    async (kind: "start" | "continue" | "cancel") => {
-      setIsBusy(true);
-      setMessage(null);
-      try {
-        let updated: Task | null = null;
-        if (kind === "start") {
-          updated = await startTaskExecution(task.id, prompt.trim() ? { override_prompt: prompt.trim() } : undefined);
-        } else if (kind === "continue") {
-          updated = await continueTaskExecution(task.id, prompt.trim() ? { additional_prompt: prompt.trim() } : undefined);
-        } else {
-          updated = await cancelTaskExecution(task.id);
-        }
-        if (updated) onTaskUpdatedRef.current(updated);
-        await reloadExecution();
-        if (kind !== "cancel") setPrompt("");
-      } finally {
-        setIsBusy(false);
-      }
-    },
-    [cancelTaskExecution, continueTaskExecution, prompt, reloadExecution, startTaskExecution, task.id],
-  );
-
-  const canStart = task.status === "pending" || task.status === "assigned" || !view?.current_agent;
-  const canContinue =
-    Boolean(view?.current_agent) && task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled";
-  const canCancel = task.status === "running";
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -186,53 +138,15 @@ export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectEx
           <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {task.status}
           </span>
-        </div>
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          rows={3}
-          placeholder="可选执行指令"
-          className="mt-3 w-full resize-none rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void runAction("start")}
-            disabled={isBusy || !canStart}
-            className="agentdash-button-primary disabled:opacity-50"
-          >
-            启动执行
-          </button>
-          <button
-            type="button"
-            onClick={() => void runAction("continue")}
-            disabled={isBusy || !canContinue}
-            className="agentdash-button-secondary disabled:opacity-50"
-          >
-            继续执行
-          </button>
-          {canCancel && (
-            <button
-              type="button"
-              onClick={() => void runAction("cancel")}
-              disabled={isBusy}
-              className="rounded-[8px] border border-destructive/40 bg-destructive/8 px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50"
-            >
-              取消
-            </button>
-          )}
           <button
             type="button"
             onClick={() => {
-              void syncTask();
               void reloadExecution();
             }}
-            disabled={isBusy}
-            className="rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             刷新
           </button>
-          {message && <span className="text-xs text-destructive">{message}</span>}
         </div>
       </div>
 

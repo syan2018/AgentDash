@@ -5,5 +5,6 @@ mod value_objects;
 pub use entity::McpPreset;
 pub use repository::McpPresetRepository;
 pub use value_objects::{
-    McpEnvVar, McpHttpHeader, McpPresetSource, McpRoutePolicy, McpTransportConfig,
+    McpEnvVar, McpHttpHeader, McpPresetSource, McpRoutePolicy, McpRuntimeBindingConfig,
+    McpRuntimeBindingRule, McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
 };

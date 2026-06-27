@@ -20,6 +20,7 @@
 //! | 外部服务 | `ExternalServiceClient` | 企业 KM、文档中心等只读内容源 |
 
 pub mod auth;
+pub mod directory;
 pub mod external;
 pub mod integration;
 
@@ -27,18 +28,34 @@ pub mod integration;
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
 pub use agentdash_spi::platform::marketplace_source;
+pub use agentdash_spi::platform::memory_discovery;
+pub use agentdash_spi::{
+    DiscoveredMemorySource, DiscoveredSkill, MemoryDiscoveryCluster, MemoryDiscoveryContext,
+    MemoryDiscoveryDiagnostic, MemoryDiscoveryError, MemoryDiscoveryMount, MemoryDiscoveryOutput,
+    MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
+    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, MemorySourceFormat,
+    MemorySourceScope, MemorySourceTrustLevel, MountCapability, RoutineTriggerProvider,
+    SkillContextExposure, SkillDiscoveryCluster, SkillDiscoveryContext, SkillDiscoveryDiagnostic,
+    SkillDiscoveryError, SkillDiscoveryOutput, SkillDiscoveryOwnerKind, SkillDiscoveryProvider,
+    SkillDiscoveryUserContext, SkillDiscoveryVfsFile, SkillDiscoveryVfsRule, SourceResolver,
+    VfsDiscoveryProvider, is_controlled_vfs_memory_uri,
+};
 pub use agentdash_spi::{
     MarketplaceAssetDetail, MarketplaceAssetListing, MarketplaceAssetPage, MarketplaceAssetQuery,
     MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload, MarketplaceInstallRequirement,
     MarketplaceInstallRequirementKind, MarketplaceSourceDescriptor, MarketplaceSourceError,
     MarketplaceSourceProvider, MarketplaceSourceProviderKind, MarketplaceSourceTrustLevel,
 };
-pub use agentdash_spi::{RoutineTriggerProvider, SourceResolver, VfsDiscoveryProvider};
 
 pub use auth::{
     AuthCallbackRequest, AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
     AuthStartRequest, AuthStartResponse, LoginCredentials, LoginFieldDescriptor, LoginMetadata,
     LoginMode, LoginResponse,
+};
+pub use directory::{
+    DirectoryGroup, DirectoryProviderError, DirectoryResolveRequest, DirectorySearchRequest,
+    DirectorySearchResponse, DirectoryTreeNode, DirectoryTreeRequest, DirectoryUser,
+    IdentityDirectoryProvider,
 };
 pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,

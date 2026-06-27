@@ -169,7 +169,6 @@ fn parse_change_kind(raw: &str) -> Result<ChangeKind, DomainError> {
         "task_updated" => Ok(ChangeKind::TaskUpdated),
         "task_status_changed" => Ok(ChangeKind::TaskStatusChanged),
         "task_deleted" => Ok(ChangeKind::TaskDeleted),
-        "task_artifact_added" => Ok(ChangeKind::TaskArtifactAdded),
         _ => Err(DomainError::InvalidConfig(format!(
             "state_changes.kind: 未知值 `{raw}`"
         ))),

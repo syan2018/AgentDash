@@ -7,7 +7,8 @@ use std::pin::Pin;
 use async_trait::async_trait;
 
 use agentdash_agent::bridge::{
-    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
+    BridgeError, BridgeRequest, BridgeResponse, LlmBridge, ProviderErrorClassification,
+    StreamChunk, ToolCallDeltaContent,
 };
 use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
 
@@ -83,7 +84,7 @@ async fn run_stream(
         )
         .send()
         .await
-        .map_err(|e| BridgeError::CompletionFailed(format!("HTTP 请求失败: {e}")))?;
+        .map_err(|error| super::provider_transport_error("HTTP 请求失败", error))?;
 
     let response = super::check_http_response(response, "API").await?;
 
@@ -94,19 +95,29 @@ async fn run_stream(
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|e| BridgeError::CompletionFailed(format!("读取响应流失败: {e}")))?
+        .map_err(|error| super::provider_stream_read_error("读取响应流失败", error))?
     {
         let text = String::from_utf8_lossy(&chunk);
         for event in parser.feed(&text) {
             let event_type = event.event.as_deref().unwrap_or("");
             if event_type == "error" {
-                return Err(BridgeError::CompletionFailed(event.data.clone()));
+                return Err(super::provider_event_error(
+                    event.data.clone(),
+                    Some(&event.data),
+                ));
             }
             if !is_message_event(event_type) {
                 continue;
             }
             process_anthropic_event(event_type, &event.data, &mut state, tx).await?;
         }
+    }
+
+    if !state.has_visible_output() {
+        return Err(BridgeError::provider(
+            "Anthropic stream ended before any visible output",
+            ProviderErrorClassification::retryable().with_provider_code("empty_stream"),
+        ));
     }
 
     let message = state.into_agent_message();
@@ -153,10 +164,10 @@ fn build_request_body(model_id: &str, request: &BridgeRequest) -> serde_json::Va
         "stream": true,
     });
 
-    if let Some(ref sp) = request.system_prompt {
-        if !sp.is_empty() {
-            body["system"] = serde_json::Value::String(sp.clone());
-        }
+    if let Some(ref sp) = request.system_prompt
+        && !sp.is_empty()
+    {
+        body["system"] = serde_json::Value::String(sp.clone());
     }
 
     if !request.tools.is_empty() {
@@ -284,13 +295,12 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                     "is_error": is_error,
                 });
                 // Anthropic: tool_result 必须在 user 消息内
-                if let Some(last) = messages.last_mut() {
-                    if last.get("role").and_then(|r| r.as_str()) == Some("user") {
-                        if let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
-                            arr.push(result);
-                            continue;
-                        }
-                    }
+                if let Some(last) = messages.last_mut()
+                    && last.get("role").and_then(|r| r.as_str()) == Some("user")
+                    && let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut())
+                {
+                    arr.push(result);
+                    continue;
                 }
                 messages.push(serde_json::json!({
                     "role": "user",
@@ -361,6 +371,14 @@ struct StreamState {
 }
 
 impl StreamState {
+    fn has_visible_output(&self) -> bool {
+        !self.content_parts.is_empty()
+            || !self.tool_calls.is_empty()
+            || !self.text_buf.is_empty()
+            || !self.thinking_buf.is_empty()
+            || self.pending_tool.is_some()
+    }
+
     fn finish_text(&mut self) {
         if !self.text_buf.is_empty() {
             self.content_parts
@@ -510,16 +528,16 @@ async fn process_anthropic_event(
                     }
                 }
                 "input_json_delta" => {
-                    if let Some(partial) = delta.get("partial_json").and_then(|p| p.as_str()) {
-                        if let Some(ref mut tool) = state.pending_tool {
-                            tool.input_json_buf.push_str(partial);
-                            let _ = tx
-                                .send(StreamChunk::ToolCallDelta {
-                                    id: tool.id.clone(),
-                                    content: ToolCallDeltaContent::Arguments(partial.to_string()),
-                                })
-                                .await;
-                        }
+                    if let Some(partial) = delta.get("partial_json").and_then(|p| p.as_str())
+                        && let Some(ref mut tool) = state.pending_tool
+                    {
+                        tool.input_json_buf.push_str(partial);
+                        let _ = tx
+                            .send(StreamChunk::ToolCallDelta {
+                                id: tool.id.clone(),
+                                content: ToolCallDeltaContent::Arguments(partial.to_string()),
+                            })
+                            .await;
                     }
                 }
                 "signature_delta" => {

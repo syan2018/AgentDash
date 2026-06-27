@@ -22,6 +22,19 @@ pub mod action_type {
     /// Companion result is informational only; parent session may ignore.
     pub const SUGGESTION: &str = "suggestion";
 }
+
+/// Well-known model context usage bucket identifiers.
+///
+/// Runtime context producers write these values into `context_usage_kind`;
+/// projection consumers only read that explicit marker.
+pub mod context_usage_kind {
+    pub const SYSTEM_DEVELOPER: &str = "system_developer";
+    pub const CAPABILITY_STATE: &str = "capability_state";
+    pub const SYSTEM_TOOLS: &str = "system_tools";
+    pub const MCP_TOOLS: &str = "mcp_tools";
+    pub const AGENTS: &str = "agents";
+    pub const SKILLS: &str = "skills";
+}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -315,10 +328,6 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         default_mount_after: Option<String>,
     },
-    ToolSchema {
-        #[serde(default)]
-        tools: Vec<RuntimeToolSchemaEntry>,
-    },
     ToolSchemaDelta {
         #[serde(default)]
         added_tools: Vec<RuntimeToolSchemaEntry>,
@@ -331,11 +340,15 @@ pub enum ContextFrameSection {
         #[serde(default)]
         changed_skills: Vec<RuntimeSkillEntry>,
     },
-    HookInjection {
-        title: String,
-        summary: String,
+    CompanionAgentRosterDelta {
         #[serde(default)]
-        injections: Vec<RuntimeHookInjectionEntry>,
+        added_agents: Vec<RuntimeCompanionAgentEntry>,
+        #[serde(default)]
+        removed_agent_keys: Vec<String>,
+        #[serde(default)]
+        changed_agents: Vec<RuntimeCompanionAgentEntry>,
+        #[serde(default)]
+        effective_agents: Vec<RuntimeCompanionAgentEntry>,
     },
     SystemNotice {
         title: String,
@@ -389,6 +402,30 @@ pub enum ContextFrameSection {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,
     },
+    /// 用户级偏好（来自 settings）。作为系统级指引随 `system_guidelines` 帧投递。
+    UserPreferences {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        items: Vec<String>,
+    },
+    /// 项目级指引（来自 VFS 发现的 AGENTS.md 等）。
+    ProjectGuidelines {
+        title: String,
+        summary: String,
+        #[serde(default)]
+        entries: Vec<ProjectGuidelineEntry>,
+    },
+}
+
+/// `ProjectGuidelines` section 中的单条指引条目。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectGuidelineEntry {
+    /// 相对于 mount 根的路径（如 `AGENTS.md` 或 `packages/foo/AGENTS.md`）。
+    pub path: String,
+    /// 文件全文内容。
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -403,6 +440,8 @@ pub struct RuntimeToolSchemaEntry {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -411,6 +450,8 @@ pub struct RuntimeHookInjectionEntry {
     pub slot: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -420,16 +461,42 @@ pub struct RuntimeContextFragmentEntry {
     pub label: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeSkillEntry {
     pub name: String,
+    #[serde(default)]
+    pub capability_key: String,
+    #[serde(default)]
+    pub provider_key: String,
+    #[serde(default)]
+    pub local_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub description: String,
     pub file_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_dir: Option<String>,
+    #[serde(default)]
+    pub exposure: crate::platform::skill_discovery::SkillContextExposure,
     #[serde(default)]
     pub disable_model_invocation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeCompanionAgentEntry {
+    pub agent_key: String,
+    pub executor: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -783,7 +850,7 @@ pub struct HookResolution {
     /// Hook 规则（Rhai 脚本 / preset）通过返回 `effects` 数组声明需要在 pipeline 中
     /// 执行的领域级副作用。Pipeline 将 effects 转交给注册的 `HookEffectExecutor` 分派执行。
     ///
-    /// kind 约定格式 `domain:action`，如 `"task:set_status"`。
+    /// kind 约定格式 `domain:action`，如 `"record:note"`。
     /// 载荷由 kind 消费方定义，SPI 层不对 payload 做类型约束。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<HookEffect>,
@@ -801,9 +868,7 @@ pub struct HookResolution {
 /// 领域无关的通用结构：`kind` 标识副作用类型，`payload` 携带类型特定数据。
 /// Pipeline 中注册的 effect executor 按 `kind` 前缀分派执行。
 ///
-/// `kind` 约定格式 `domain:action`，示例：
-/// - `"task:set_status"` — 设置关联 task 的状态
-/// - `"task:clear_binding"` — 清理 task 的 session 绑定
+/// `kind` 约定格式 `domain:action`，示例：`"record:note"`。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookEffect {
@@ -939,14 +1004,6 @@ pub enum HookError {
 
 #[async_trait]
 pub trait ExecutionHookProvider: Send + Sync {
-    async fn resolve_runtime_hook_target(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<Option<HookControlTarget>, HookError> {
-        let _ = runtime_session_id;
-        Ok(None)
-    }
-
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,

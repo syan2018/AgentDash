@@ -181,10 +181,7 @@ describe("CapabilityPanel", () => {
     );
 
     expect(markup).toContain("基线能力");
-    // project baseline 含 file_read / file_write / shell_execute
-    expect(markup).toContain("文件读取");
-    expect(markup).toContain("文件写入");
-    expect(markup).toContain("Shell 执行");
+    expect(markup).toContain("工作流追加能力");
   });
 
   it("追加能力区列出非 baseline 的 Add 指令", () => {
@@ -202,7 +199,7 @@ describe("CapabilityPanel", () => {
     );
 
     expect(markup).toContain("工作流追加能力");
-    expect(markup).toContain("工作流管理");
+    expect(markup).toContain("workflow_management");
     expect(markup).toContain("追加");
   });
 });

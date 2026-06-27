@@ -1,11 +1,10 @@
 /**
- * Workflow panel 共享常量与辅助函数
- *
- * 这些常量原本散落在 workflow-editor.tsx 中。拆分 panel 后抽到此处，
- * 保证各 panel 与容器引用同一份源。行为完全等价，只做物理位置迁移。
+ * Workflow panel 共享辅助函数。
  */
 
 import type {
+  CapabilityCatalogEntryDto,
+  CapabilityScopeDto,
   JsonValue,
   WorkflowHookTrigger,
   WorkflowTargetKind,
@@ -94,61 +93,38 @@ export function toggleTargetKind(
   return [...current, value];
 }
 
-// ─── Capability 编辑器常量 ────────────────────────────
+// ─── Capability catalog helpers ───────────────────────
 
-export const CAP_EDITOR_WELL_KNOWN_KEYS = [
-  "file_read",
-  "file_write",
-  "shell_execute",
-  "canvas",
-  "workflow",
-  "collaboration",
-  "story_management",
-  "task_management",
-  "relay_management",
-  "workflow_management",
-] as const;
+export function capabilityScopeForTargetKind(kind: WorkflowTargetKind): CapabilityScopeDto {
+  switch (kind) {
+    case "project":
+      return "project";
+    case "story":
+      return "story";
+  }
+  const unreachable: never = kind;
+  return unreachable;
+}
 
-export type WellKnownCapabilityKey = (typeof CAP_EDITOR_WELL_KNOWN_KEYS)[number];
+export function capabilityVisibleForTargetKind(
+  entry: CapabilityCatalogEntryDto,
+  targetKind: WorkflowTargetKind,
+): boolean {
+  return entry.allowed_scopes.includes(capabilityScopeForTargetKind(targetKind));
+}
 
-export const WELL_KNOWN_CAPABILITY_LABEL: Record<WellKnownCapabilityKey, string> = {
-  file_read: "文件读取",
-  file_write: "文件写入",
-  shell_execute: "Shell 执行",
-  canvas: "画布",
-  workflow: "工作流",
-  collaboration: "协作",
-  story_management: "Story 管理",
-  task_management: "Task 管理",
-  relay_management: "Relay 管理",
-  workflow_management: "工作流管理",
-};
+export function capabilityAutoGrantedForTargetKind(
+  entry: CapabilityCatalogEntryDto,
+  targetKind: WorkflowTargetKind,
+): boolean {
+  return entry.auto_granted && capabilityVisibleForTargetKind(entry, targetKind);
+}
 
-export const WELL_KNOWN_CAPABILITY_DESCRIPTION: Record<WellKnownCapabilityKey, string> = {
-  file_read: "只读文件系统访问（fs_read、fs_glob、fs_grep 等）",
-  file_write: "文件写入操作（fs_apply_patch）",
-  shell_execute: "执行 shell 命令（shell_exec）",
-  canvas: "画布 / 白板操作",
-  workflow: "工作流汇报与推进",
-  collaboration: "多 agent 协作通道",
-  story_management: "创建 / 调整 Story",
-  task_management: "创建 / 调整 Task",
-  relay_management: "Relay 后端管理",
-  workflow_management: "MCP workflow 管理工具",
-};
-
-/**
- * 各 target_kinds 下 auto_granted=true 的能力基线。
- * 镜像自后端 `crates/agentdash-spi/src/tool_capability.rs::default_visibility_rules`。
- * 若后端 visibility rule 调整，此处需同步更新。
- */
-export const AUTO_GRANTED_BASELINE: Record<WorkflowTargetKind, WellKnownCapabilityKey[]> = {
-  project: ["file_read", "file_write", "shell_execute", "canvas", "collaboration", "relay_management"],
-  story: ["file_read", "file_write", "shell_execute", "story_management"],
-};
-
-export function isWellKnownCapability(key: string): key is WellKnownCapabilityKey {
-  return (CAP_EDITOR_WELL_KNOWN_KEYS as readonly string[]).includes(key);
+export function capabilityKnownInCatalog(
+  catalog: ReadonlyArray<CapabilityCatalogEntryDto>,
+  key: string,
+): boolean {
+  return catalog.some((entry) => entry.key === key);
 }
 
 export function extractMcpPresetName(key: string): string | null {

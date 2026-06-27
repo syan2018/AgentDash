@@ -1,6 +1,5 @@
 pub mod adapters;
 pub mod connectors;
-pub(crate) mod hook_events;
 pub mod mcp;
 
 pub use adapters::codex_config::to_codex_config;

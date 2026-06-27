@@ -109,6 +109,13 @@ pub enum RelayMessage {
         payload: CommandWorkspaceDetectGitPayload,
     },
 
+    /// 按 Workspace identity 反向发现本机候选目录
+    #[serde(rename = "command.workspace_discover_by_identity")]
+    CommandWorkspaceDiscoverByIdentity {
+        id: String,
+        payload: CommandWorkspaceDiscoverByIdentityPayload,
+    },
+
     /// 浏览本地目录（盘符列表 / 子目录列表）
     #[serde(rename = "command.browse_directory")]
     CommandBrowseDirectory {
@@ -164,6 +171,24 @@ pub enum RelayMessage {
     CommandToolShellExec {
         id: String,
         payload: ToolShellExecPayload,
+    },
+
+    #[serde(rename = "command.tool.shell_read")]
+    CommandToolShellRead {
+        id: String,
+        payload: ToolShellReadPayload,
+    },
+
+    #[serde(rename = "command.tool.shell_input")]
+    CommandToolShellInput {
+        id: String,
+        payload: ToolShellInputPayload,
+    },
+
+    #[serde(rename = "command.tool.shell_terminate")]
+    CommandToolShellTerminate {
+        id: String,
+        payload: ToolShellTerminatePayload,
     },
 
     /// 将云端 VFS 资源物化到本机 backend 的 session cache / working copy
@@ -242,6 +267,15 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
+    #[serde(rename = "response.workspace_discover_by_identity")]
+    ResponseWorkspaceDiscoverByIdentity {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseWorkspaceDiscoverByIdentityPayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
     #[serde(rename = "response.browse_directory")]
     ResponseBrowseDirectory {
         id: String,
@@ -311,6 +345,33 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ToolShellExecResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_read")]
+    ResponseToolShellRead {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellReadResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_input")]
+    ResponseToolShellInput {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellInputResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.shell_terminate")]
+    ResponseToolShellTerminate {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolShellTerminateResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -572,6 +633,7 @@ impl RelayMessage {
             | Self::CommandDiscoverOptions { id, .. }
             | Self::CommandWorkspaceDetect { id, .. }
             | Self::CommandWorkspaceDetectGit { id, .. }
+            | Self::CommandWorkspaceDiscoverByIdentity { id, .. }
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
             | Self::CommandToolFileReadBinary { id, .. }
@@ -580,6 +642,9 @@ impl RelayMessage {
             | Self::CommandToolFileRename { id, .. }
             | Self::CommandToolApplyPatch { id, .. }
             | Self::CommandToolShellExec { id, .. }
+            | Self::CommandToolShellRead { id, .. }
+            | Self::CommandToolShellInput { id, .. }
+            | Self::CommandToolShellTerminate { id, .. }
             | Self::CommandVfsMaterialize { id, .. }
             | Self::CommandToolFileList { id, .. }
             | Self::CommandToolSearch { id, .. }
@@ -589,6 +654,7 @@ impl RelayMessage {
             | Self::ResponseDiscover { id, .. }
             | Self::ResponseWorkspaceDetect { id, .. }
             | Self::ResponseWorkspaceDetectGit { id, .. }
+            | Self::ResponseWorkspaceDiscoverByIdentity { id, .. }
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
             | Self::ResponseToolFileReadBinary { id, .. }
@@ -597,6 +663,9 @@ impl RelayMessage {
             | Self::ResponseToolFileRename { id, .. }
             | Self::ResponseToolApplyPatch { id, .. }
             | Self::ResponseToolShellExec { id, .. }
+            | Self::ResponseToolShellRead { id, .. }
+            | Self::ResponseToolShellInput { id, .. }
+            | Self::ResponseToolShellTerminate { id, .. }
             | Self::ResponseVfsMaterialize { id, .. }
             | Self::ResponseToolFileList { id, .. }
             | Self::ResponseToolSearch { id, .. }
@@ -681,6 +750,19 @@ mod tests {
     }
 
     #[test]
+    fn command_prompt_payload_rejects_legacy_prompt_and_workspace_root() {
+        let error = serde_json::from_value::<CommandPromptPayload>(serde_json::json!({
+            "session_id": "s1",
+            "prompt": "old text prompt",
+            "workspace_root": "/workspace"
+        }))
+        .expect_err("legacy prompt/workspace_root fields should be rejected");
+
+        let message = error.to_string();
+        assert!(message.contains("prompt") || message.contains("workspace_root"));
+    }
+
+    #[test]
     fn mcp_probe_transport_command_roundtrip() {
         let msg = RelayMessage::CommandMcpProbeTransport {
             id: "probe-1".to_string(),
@@ -689,6 +771,7 @@ mod tests {
                     command: "npx".to_string(),
                     args: vec!["@mcp/server".to_string()],
                     env: vec![],
+                    cwd: None,
                 },
             },
         };
@@ -741,6 +824,53 @@ mod tests {
     }
 
     #[test]
+    fn mcp_list_and_call_commands_carry_resolved_server_declaration() {
+        let server = McpServerRelay {
+            name: "p4-tools".to_string(),
+            transport: McpTransportConfigRelay::Http {
+                url: "http://127.0.0.1:8999/mcp?p4_client=demo".to_string(),
+                headers: vec![McpHttpHeaderRelay {
+                    name: "x-p4-client".to_string(),
+                    value: "demo".to_string(),
+                }],
+            },
+        };
+        let list = RelayMessage::CommandMcpListTools {
+            id: "mcp-list-1".to_string(),
+            payload: CommandMcpListToolsPayload {
+                server: server.clone(),
+            },
+        };
+        let json = serde_json::to_value(&list).expect("serialize list");
+        assert_eq!(json["type"], "command.mcp_list_tools");
+        assert_eq!(json["payload"]["server"]["name"], "p4-tools");
+        assert_eq!(json["payload"]["server"]["transport"]["type"], "http");
+        assert_eq!(
+            json["payload"]["server"]["transport"]["headers"][0]["value"],
+            "demo"
+        );
+
+        let call = RelayMessage::CommandMcpCallTool {
+            id: "mcp-call-1".to_string(),
+            payload: CommandMcpCallToolPayload {
+                server,
+                tool_name: "workspace_status".to_string(),
+                arguments: Some(serde_json::Map::from_iter([(
+                    "detail".to_string(),
+                    serde_json::json!(true),
+                )])),
+            },
+        };
+        let json = serde_json::to_value(&call).expect("serialize call");
+        assert_eq!(json["type"], "command.mcp_call_tool");
+        assert_eq!(json["payload"]["server"]["name"], "p4-tools");
+        assert_eq!(json["payload"]["tool_name"], "workspace_status");
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize call");
+        assert_eq!(deser.id(), "mcp-call-1");
+    }
+
+    #[test]
     fn extension_action_invoke_roundtrip() {
         let msg = RelayMessage::CommandExtensionActionInvoke {
             id: "ext-1".to_string(),
@@ -770,6 +900,13 @@ mod tests {
         assert_eq!(json["type"], "command.extension_action_invoke");
         assert_eq!(json["payload"]["action_key"], "local-hello.profile");
         assert_eq!(json["payload"]["workspace"]["mount_id"], "main");
+        assert!(
+            !json["payload"]
+                .as_object()
+                .expect("payload object")
+                .contains_key("backend_id"),
+            "extension action relay payload must not carry backend_id; routing owns the target"
+        );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "ext-1");
@@ -835,6 +972,13 @@ mod tests {
         assert_eq!(
             json["payload"]["workspace"]["root_ref"],
             "D:/Workspaces/demo"
+        );
+        assert!(
+            !json["payload"]
+                .as_object()
+                .expect("payload object")
+                .contains_key("backend_id"),
+            "extension channel relay payload must not carry backend_id; routing owns the target"
         );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
@@ -933,5 +1077,81 @@ mod tests {
         assert_eq!(json["payload"]["entry_count"], 1);
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "mat-1");
+    }
+
+    #[test]
+    fn shell_session_commands_roundtrip() {
+        let start = RelayMessage::CommandToolShellExec {
+            id: "shell-start-1".to_string(),
+            payload: ToolShellExecPayload {
+                call_id: "call-1".to_string(),
+                command: "cargo check".to_string(),
+                mount_root_ref: "D:/workspace".to_string(),
+                cwd: Some("crates/agentdash-local".to_string()),
+                timeout_ms: None,
+                yield_time_ms: Some(750),
+                max_output_bytes: Some(65_536),
+                tty: false,
+            },
+        };
+        let json = serde_json::to_value(&start).expect("serialize start");
+        assert_eq!(json["type"], "command.tool.shell_exec");
+        assert_eq!(json["payload"]["yield_time_ms"], 750);
+        assert_eq!(json["payload"]["max_output_bytes"], 65_536);
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize start");
+        assert_eq!(decoded.id(), "shell-start-1");
+
+        let read = RelayMessage::CommandToolShellRead {
+            id: "shell-read-1".to_string(),
+            payload: ToolShellReadPayload {
+                session_id: "shell-1".to_string(),
+                after_seq: Some(3),
+                wait_ms: Some(1_000),
+                max_bytes: Some(8_192),
+            },
+        };
+        let json = serde_json::to_value(&read).expect("serialize read");
+        assert_eq!(json["type"], "command.tool.shell_read");
+        assert_eq!(json["payload"]["after_seq"], 3);
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize read");
+        assert_eq!(decoded.id(), "shell-read-1");
+    }
+
+    #[test]
+    fn shell_running_response_carries_session_seq_and_truncation() {
+        let msg = RelayMessage::ResponseToolShellExec {
+            id: "shell-start-1".to_string(),
+            payload: Some(ToolShellExecResponse {
+                call_id: "call-1".to_string(),
+                session_id: "shell-1".to_string(),
+                terminal_id: Some("shell-1".to_string()),
+                state: ToolShellSessionState::Running,
+                exit_code: None,
+                stdout: "ready\n".to_string(),
+                stderr: String::new(),
+                pty: String::new(),
+                chunks: vec![ToolShellOutputChunk {
+                    seq: 0,
+                    stream: ShellOutputStream::Stdout,
+                    data: "ready\n".to_string(),
+                }],
+                next_seq: 1,
+                truncation: ToolShellTruncationInfo {
+                    truncated: true,
+                    omitted_bytes: 1024,
+                    omitted_chunks: 2,
+                    omitted_tokens_estimate: Some(256),
+                },
+            }),
+            error: None,
+        };
+        let json = serde_json::to_value(&msg).expect("serialize response");
+        assert_eq!(json["type"], "response.tool.shell_exec");
+        assert_eq!(json["payload"]["state"], "running");
+        assert_eq!(json["payload"]["next_seq"], 1);
+        assert_eq!(json["payload"]["truncation"]["truncated"], true);
+
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize response");
+        assert_eq!(decoded.id(), "shell-start-1");
     }
 }

@@ -27,6 +27,12 @@ pub enum PlatformEvent {
         value: serde_json::Value,
     },
 
+    /// Provider attempt lifecycle status, used for model connection/retry UI.
+    ProviderAttemptStatus(ProviderAttemptStatus),
+
+    /// Session projection was rewound to a stable boundary after a failed turn.
+    SessionRewound(SessionRewound),
+
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
     TerminalOutput { terminal_id: String, data: String },
 
@@ -39,6 +45,66 @@ pub enum PlatformEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    /// Mailbox 消息状态变更（消费/删除/promote 等），前端据此刷新 mailbox 视图。
+    MailboxStateChanged { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ProviderAttemptStatus {
+    pub turn_id: String,
+    pub phase: ProviderAttemptPhase,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    #[serde(default)]
+    pub will_retry: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAttemptPhase {
+    Connecting,
+    ConnectedWaitingFirstDelta,
+    Streaming,
+    RetryScheduled,
+    Retrying,
+    Failed,
+    Succeeded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionRewound {
+    pub discarded_turn_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discarded_entry_index: Option<u32>,
+    pub stable_event_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stable_turn_id: Option<String>,
+    pub reason: SessionRewindReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRewindReason {
+    ProviderRetry,
+    ProviderFailure,
+    RuntimeFailure,
 }
 
 /// Hook trace payload — 对应原 `hook_trace_notification.rs` 产出的信息。

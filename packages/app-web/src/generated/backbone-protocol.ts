@@ -32,7 +32,7 @@ export type AdditionalPermissionProfile = {
  */
 network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
 
-export type AgentDashNativeThreadItem = { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+export type AgentDashNativeThreadItem = { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
 
 export type AgentDashThreadItem = ThreadItem | AgentDashNativeThreadItem;
 
@@ -58,7 +58,7 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
  * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
  * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */
-export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
+export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
 
 export type ByteRange = { start: number, end: number, };
 
@@ -209,11 +209,13 @@ export type HookTraceSeverity = "error" | "warning" | "success" | "info";
 
 export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "before_compact" | "after_compact" | "before_provider_request";
 
-export type ImageDetail = "high" | "original";
+export type ImageDetail = "auto" | "low" | "high" | "original";
 
 export type ItemCompletedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, completedAtMs: number, };
 
 export type ItemStartedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, startedAtMs: number, };
+
+export type ItemUpdatedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, updatedAtMs: number, };
 
 export type McpToolCallError = { message: string, };
 
@@ -251,7 +253,7 @@ export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined
 
 export type PatchChangeKind = { "type": "add" } | { "type": "delete" } | { "type": "update", move_path: string | null, };
 
-export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
+export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string, environmentId: string | null,
 /**
  * Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -266,12 +268,16 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } } | { "kind": "mailbox_state_changed", "data": { reason: string, } };
+
+export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
+
+export type ProviderAttemptStatus = { turn_id: string, phase: ProviderAttemptPhase, attempt: number, max_attempts: number, will_retry: boolean, delay_ms: bigint | null, reason_code: string | null, message: string | null, provider: string | null, model: string | null, };
 
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
  */
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = string;
 
 export type ReasoningSummaryTextDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, summaryIndex: number, };
 
@@ -281,10 +287,18 @@ export type RequestId = string | number;
 
 export type RequestPermissionProfile = { network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
 
+export type SessionRewindReason = "provider_retry" | "provider_failure" | "runtime_failure";
+
+export type SessionRewound = { discarded_turn_id: string, discarded_entry_index: number | null, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
+
+export type ShellExecExecutionMode = "platform" | "mountExec";
+
 /**
  * 事件来源标识。
  */
 export type SourceInfo = { connectorId: string, connectorType: string, executorId: string | null, };
+
+export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
 
 export type TextElement = {
 /**
@@ -298,7 +312,7 @@ placeholder: string | null, };
 
 export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
-export type ThreadItem = { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
+export type ThreadItem = { "type": "userMessage", id: string, clientId: string | null, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
 /**
  * The command to be executed.
  */
@@ -373,7 +387,7 @@ reasoningEffort: ReasoningEffort | null,
 /**
  * Last known status of the target agents, when available.
  */
-agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "subAgentActivity", id: string, kind: SubAgentActivityKind, agentThreadId: string, agentPath: string, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
 
 export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "type": "systemError" } | { "type": "active", activeFlags: Array<ThreadActiveFlag>, };
 
@@ -393,7 +407,7 @@ export type ToolRequestUserInputOption = { label: string, description: string, }
 /**
  * EXPERIMENTAL. Params sent with a request_user_input event.
  */
-export type ToolRequestUserInputParams = { threadId: string, turnId: string, itemId: string, questions: Array<ToolRequestUserInputQuestion>, };
+export type ToolRequestUserInputParams = { threadId: string, turnId: string, itemId: string, questions: Array<ToolRequestUserInputQuestion>, autoResolutionMs: number | null, };
 
 /**
  * EXPERIMENTAL. Represents one request_user_input question and its required options.

@@ -1,4 +1,3 @@
-pub mod audit;
 mod builder;
 mod builtins;
 pub mod mount_file_discovery;
@@ -9,7 +8,7 @@ pub mod vfs_discovery;
 mod workflow_bindings;
 pub mod workspace_sources;
 
-pub use audit::{
+pub use agentdash_application_runtime_session::context::{
     AuditFilter, AuditTrigger, ContextAuditBus, ContextAuditEvent, InMemoryContextAuditBus,
     NoopContextAuditBus, SharedContextAuditBus, emit_bundle_fragments, emit_fragment,
 };
@@ -19,11 +18,8 @@ pub use builder::{
     build_declared_source_warning_fragment, build_session_context_bundle,
 };
 pub use builtins::build_owner_context_resource_block;
-pub(crate) use builtins::{WorkspaceFragmentMode, trim_or_dash, workspace_context_fragment};
-pub use builtins::{
-    contribute_binding_initial_context, contribute_core_context, contribute_declared_sources,
-    contribute_instruction, contribute_mcp, contribute_task_binding,
-};
+pub use builtins::contribute_mcp;
+pub(crate) use builtins::{trim_or_dash, workspace_context_fragment};
 pub use source_resolver::{
     SourceResolverRegistry, resolve_declared_sources, resolve_declared_sources_with_registry,
 };

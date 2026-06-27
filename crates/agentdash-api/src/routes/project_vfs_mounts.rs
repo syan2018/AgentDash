@@ -6,10 +6,11 @@ use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_contracts::context::VfsCapabilityDto as ContractMountCapability;
 use agentdash_contracts::vfs::{
     CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse, InstalledAssetSourceResponse,
     ProjectVfsMountContentDto as ContractProjectVfsMountContent, ProjectVfsMountResponse,
-    UpdateProjectVfsMountRequest, VfsCapabilityDto as ContractMountCapability,
+    UpdateProjectVfsMountRequest,
 };
 use agentdash_domain::common::MountCapability as DomainMountCapability;
 use agentdash_domain::inline_file::InlineFileOwnerKind;

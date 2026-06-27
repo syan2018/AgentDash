@@ -5,17 +5,33 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTabTypeRegistrySnapshot } from "./tab-type-registry";
+import type { TabTypeDescriptor } from "./tab-type-registry";
+import type { CanvasModuleOpenOption } from "./model/canvasModuleOpen";
+import type { ProjectWorkspaceModulesStatus } from "../workspace-module/model/types";
 
 interface AddTabMenuProps {
+  tabTypes: TabTypeDescriptor[];
   onAddTab: (typeId: string) => void;
+  canvasOptions: CanvasModuleOpenOption[];
+  canvasOptionsStatus: ProjectWorkspaceModulesStatus;
+  canvasOpenBusyKey: string | null;
+  canvasOpenError: string | null;
+  onOpenCanvasModule: (option: CanvasModuleOpenOption) => Promise<boolean>;
 }
 
-export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
+export function AddTabMenu({
+  tabTypes,
+  onAddTab,
+  canvasOptions,
+  canvasOptionsStatus,
+  canvasOpenBusyKey,
+  canvasOpenError,
+  onOpenCanvasModule,
+}: AddTabMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const creatableTypes = useTabTypeRegistrySnapshot().filter((type) => !type.pinned);
+  const creatableTypes = tabTypes.filter((type) => !type.pinned);
 
   const handleSelect = useCallback(
     (typeId: string) => {
@@ -23,6 +39,15 @@ export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
       setOpen(false);
     },
     [onAddTab],
+  );
+
+  const handleCanvasSelect = useCallback(
+    (option: CanvasModuleOpenOption) => {
+      void onOpenCanvasModule(option).then((opened) => {
+        if (opened) setOpen(false);
+      });
+    },
+    [onOpenCanvasModule],
   );
 
   useEffect(() => {
@@ -57,6 +82,20 @@ export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
           </p>
           {creatableTypes.map((type) => {
             const Icon = type.icon;
+            if (type.typeId === "canvas") {
+              return (
+                <CanvasSelectorGroup
+                  key={type.typeId}
+                  icon={Icon}
+                  label={type.label}
+                  options={canvasOptions}
+                  status={canvasOptionsStatus}
+                  busyKey={canvasOpenBusyKey}
+                  error={canvasOpenError}
+                  onSelect={handleCanvasSelect}
+                />
+              );
+            }
             return (
               <button
                 key={type.typeId}
@@ -71,6 +110,70 @@ export function AddTabMenu({ onAddTab }: AddTabMenuProps) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function CanvasSelectorGroup({
+  icon: Icon,
+  label,
+  options,
+  status,
+  busyKey,
+  error,
+  onSelect,
+}: {
+  icon: TabTypeDescriptor["icon"];
+  label: string;
+  options: CanvasModuleOpenOption[];
+  status: ProjectWorkspaceModulesStatus;
+  busyKey: string | null;
+  error: string | null;
+  onSelect: (option: CanvasModuleOpenOption) => void;
+}) {
+  const loading = status === "loading" || status === "refreshing";
+  const disabledMessage = loading
+    ? "加载中"
+    : status === "error"
+      ? "加载失败"
+      : "无可打开 Canvas";
+
+  return (
+    <div className="border-t border-border/60 first:border-t-0">
+      <div className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-foreground">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+        <span>{label}</span>
+      </div>
+      <div className="pb-1">
+        {options.length > 0 ? (
+          options.map((option) => {
+            const key = `${option.module_id}:${option.view_key}`;
+            const busy = busyKey === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                disabled={busy}
+                onClick={() => onSelect(option)}
+                className="flex w-full min-w-0 items-center justify-between gap-2 px-6 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-secondary disabled:cursor-wait disabled:text-muted-foreground"
+                title={option.presentation_uri}
+              >
+                <span className="min-w-0 truncate">{option.title}</span>
+                {busy && (
+                  <span className="shrink-0 text-[10px] text-muted-foreground">打开中</span>
+                )}
+              </button>
+            );
+          })
+        ) : (
+          <div className="px-6 py-1.5 text-xs text-muted-foreground">{disabledMessage}</div>
+        )}
+        {error && (
+          <div className="mx-3 mt-1 rounded-[6px] border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+            {error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

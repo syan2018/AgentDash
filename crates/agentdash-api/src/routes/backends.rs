@@ -5,12 +5,12 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 
-use agentdash_contracts::core::BackendResponse;
-use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::backend::BackendResponse;
+use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLease, BackendRepository, BackendShareScopeKind, BackendType,
-    BackendVisibility, RuntimeHealth,
+    BackendVisibility, ProjectBackendAccessRepository, RuntimeHealth,
 };
 use agentdash_domain::project::ProjectRepository;
 
@@ -30,7 +30,7 @@ use agentdash_application::backend::{
     LocalRuntimeScopeInput, add_backend_record, can_manage_global_backend_scope,
     ensure_local_runtime_record, remove_backend_record,
 };
-use agentdash_application::runtime_gateway::{
+use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
@@ -38,10 +38,16 @@ use agentdash_application::runtime_gateway::{
 
 fn backend_authz(
     state: &AppState,
-) -> BackendAuthorizationService<'_, dyn BackendRepository, dyn ProjectRepository> {
+) -> BackendAuthorizationService<
+    '_,
+    dyn BackendRepository,
+    dyn ProjectRepository,
+    dyn ProjectBackendAccessRepository,
+> {
     BackendAuthorizationService::new(
         state.repos.backend_repo.as_ref(),
         state.repos.project_repo.as_ref(),
+        state.repos.project_backend_access_repo.as_ref(),
     )
 }
 
@@ -111,7 +117,6 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: online_info.is_some(),
             runtime_health,
-            workspace_roots: online_info.map(|o| o.workspace_roots.clone()),
             capabilities: online_info
                 .map(|o| backend_capabilities_response(o.capabilities.clone())),
             backend: backend_response(b),
@@ -132,7 +137,6 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: true,
             runtime_health,
-            workspace_roots: Some(o.workspace_roots.clone()),
             capabilities: Some(backend_capabilities_response(o.capabilities.clone())),
             backend: backend_response(BackendConfig {
                 id: o.backend_id.clone(),
@@ -146,7 +150,6 @@ pub async fn list_backends(
                 device_id: None,
                 machine_id: None,
                 machine_label: None,
-                legacy_machine_ids: Vec::new(),
                 visibility: BackendVisibility::Private,
                 share_scope_kind: BackendShareScopeKind::User,
                 share_scope_id: None,
@@ -320,7 +323,6 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
         online,
         version: health.version,
         capabilities: health.capabilities,
-        workspace_roots: health.workspace_roots,
         device: health.device,
         connected_at: health.connected_at,
         last_seen_at: health.last_seen_at,
@@ -344,7 +346,6 @@ fn online_backend_config(online: &OnlineBackendInfo) -> BackendConfig {
         device_id: None,
         machine_id: None,
         machine_label: None,
-        legacy_machine_ids: Vec::new(),
         visibility: BackendVisibility::Private,
         share_scope_kind: BackendShareScopeKind::User,
         share_scope_id: None,
@@ -443,7 +444,6 @@ pub async fn ensure_local_runtime(
             current_user_id: current_user.user_id.clone(),
             machine_id: req.machine_id,
             machine_label: req.machine_label,
-            legacy_machine_ids: req.legacy_machine_ids,
             profile_id: req.profile_id,
             scope: req.scope.map(|scope| LocalRuntimeScopeInput {
                 kind: scope.kind,
@@ -451,7 +451,6 @@ pub async fn ensure_local_runtime(
             }),
             capability_slot: req.capability_slot,
             name: req.name,
-            workspace_roots: req.workspace_roots,
             executor_enabled: req.executor_enabled,
             client_version: req.client_version,
             device: req.device,
@@ -471,9 +470,11 @@ pub async fn ensure_local_runtime(
         machine_id: result.machine_id,
         machine_label: result.machine_label,
         visibility: result.backend.visibility,
-        share_scope_kind: result.backend.share_scope_kind,
+        share_scope_kind: result.share_scope_kind,
         share_scope_id: result.share_scope_id,
         capability_slot: result.capability_slot,
+        registration_source: result.registration_source,
+        claimed_at: result.claimed_at,
     }))
 }
 

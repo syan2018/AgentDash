@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 workspace view 没有把 RuntimeSession 作为主体"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 actions 与 control plane 一致"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "检查 execution_profile 输出完整"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 generated contracts 已同步"}
+{"file": ".trellis/tasks/06-11-agentrun-workspace-api-contract/prd.md", "reason": "检查本 child 验收标准"}

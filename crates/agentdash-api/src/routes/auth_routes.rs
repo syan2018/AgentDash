@@ -5,10 +5,16 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
 
-use agentdash_integration_api::{
-    AuthCallbackRequest, AuthStartRequest, AuthStartResponse, LoginCredentials, LoginMetadata,
-    LoginResponse,
+use agentdash_contracts::auth::{
+    AuthStartRequest, AuthStartResponse, CurrentUser as CurrentUserResponse, LoginCredentials,
+    LoginFieldDescriptor, LoginMetadata, LoginMode, LoginResponse,
 };
+use agentdash_integration_api::{
+    AuthCallbackRequest, AuthStartRequest as ProviderAuthStartRequest,
+    LoginCredentials as ProviderLoginCredentials, LoginMetadata as ProviderLoginMetadata,
+    LoginMode as ProviderLoginMode,
+};
+use serde_json::Value;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, map_auth_error, persist_identity_snapshot_or_service_unavailable};
@@ -25,6 +31,12 @@ pub async fn login(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("认证提供者未初始化".to_string()))?;
 
+    let credentials = ProviderLoginCredentials {
+        username: credentials.username,
+        password: credentials.password,
+        extra: credentials.extra.unwrap_or(Value::Null),
+    };
+
     let response = provider.login(&credentials).await.map_err(map_auth_error)?;
 
     persist_identity_snapshot_or_service_unavailable(state.as_ref(), &response.identity).await?;
@@ -36,7 +48,11 @@ pub async fn login(
         .await
         .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
 
-    Ok(Json(response))
+    let identity = response.identity;
+    Ok(Json(LoginResponse {
+        access_token: response.access_token,
+        identity: CurrentUserResponse::from(identity),
+    }))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
@@ -64,10 +80,16 @@ pub async fn start_oidc_login(
         .ok_or_else(|| ApiError::ServiceUnavailable("认证提供者未初始化".to_string()))?;
 
     let response = provider
-        .start_login(&request)
+        .start_login(&ProviderAuthStartRequest {
+            return_to: request.return_to,
+        })
         .await
         .map_err(map_auth_error)?;
-    Ok(Json(response))
+    Ok(Json(AuthStartResponse {
+        auth_url: response.auth_url,
+        state: response.state,
+        expires_at_epoch_seconds: response.expires_at_epoch_seconds,
+    }))
 }
 
 /// GET /api/auth/oidc/callback — OIDC 授权码回调。
@@ -138,7 +160,7 @@ pub async fn metadata(State(state): State<Arc<AppState>>) -> Result<Json<LoginMe
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("认证提供者未初始化".to_string()))?;
 
-    Ok(Json(provider.login_metadata()))
+    Ok(Json(map_login_metadata(provider.login_metadata())))
 }
 
 /// POST /api/auth/logout — 当前 token 失效（需要认证）。
@@ -193,6 +215,31 @@ fn extract_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) -> Op
 
 fn urlencoding_percent_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+fn map_login_metadata(metadata: ProviderLoginMetadata) -> LoginMetadata {
+    LoginMetadata {
+        provider_type: metadata.provider_type,
+        display_name: metadata.display_name,
+        description: metadata.description,
+        fields: metadata
+            .fields
+            .into_iter()
+            .map(|field| LoginFieldDescriptor {
+                name: field.name,
+                label: field.label,
+                field_type: field.field_type,
+                placeholder: field.placeholder,
+                required: field.required,
+            })
+            .collect(),
+        login_mode: match metadata.login_mode {
+            ProviderLoginMode::Form => LoginMode::Form,
+            ProviderLoginMode::Redirect => LoginMode::Redirect,
+        },
+        start_url: metadata.start_url,
+        requires_login: metadata.requires_login,
+    }
 }
 
 #[cfg(test)]

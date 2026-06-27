@@ -6,10 +6,9 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::workflow::lifecycle_run_view_builder;
-use agentdash_contracts::workflow::{
-    LifecycleRunStatus as ContractLifecycleRunStatus, SubjectExecutionView,
-};
+use agentdash_application_lifecycle::run_view_builder;
+use agentdash_application_lifecycle::run_view_builder::LifecycleRunStatusView;
+use agentdash_contracts::workflow::SubjectExecutionView;
 use agentdash_domain::workflow::SubjectRef;
 
 use crate::{
@@ -17,6 +16,8 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     rpc::ApiError,
 };
+
+use super::lifecycle_contracts::subject_execution_view_to_contract;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -46,9 +47,9 @@ pub async fn list_story_runs(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let view =
-        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
-    Ok(Json(view))
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
+    Ok(Json(subject_execution_view_to_contract(view)))
 }
 
 /// GET /stories/{story_id}/runs/active
@@ -69,17 +70,17 @@ pub async fn get_active_story_run(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let view =
-        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject).await?;
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
     let has_active_run = view.runs.iter().any(|run| {
         matches!(
             run.status,
-            ContractLifecycleRunStatus::Ready | ContractLifecycleRunStatus::Running
+            LifecycleRunStatusView::Ready | LifecycleRunStatusView::Running
         )
     });
 
     if has_active_run {
-        Ok(Json(Some(view)))
+        Ok(Json(Some(subject_execution_view_to_contract(view))))
     } else {
         Ok(Json(None))
     }

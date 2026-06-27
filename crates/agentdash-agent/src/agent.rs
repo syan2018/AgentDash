@@ -8,6 +8,7 @@
 /// - 事件驱动状态同步 — 对齐 Pi `Agent._processLoopEvent`
 /// - Steering / Follow-up 队列（支持 all / one-at-a-time 出队模式）
 /// - prompt / continue 入口
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -16,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
     self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn, BeforeToolCallFn,
-    TransformContextFn,
+    ToolResultRefContext, TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
@@ -73,6 +74,9 @@ pub struct AgentConfig {
 
     /// 统一运行时委托
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+
+    /// 当前 turn 的工具结果引用上下文。
+    pub tool_result_ref_context: Option<ToolResultRefContext>,
 }
 
 // ─── Agent ──────────────────────────────────────────────────
@@ -172,6 +176,10 @@ impl Agent {
 
     pub fn set_runtime_delegate(&mut self, delegate: Option<DynAgentRuntimeDelegate>) {
         self.config.runtime_delegate = delegate;
+    }
+
+    pub fn set_tool_result_ref_context(&mut self, context: Option<ToolResultRefContext>) {
+        self.config.tool_result_ref_context = context;
     }
 
     pub async fn messages(&self) -> Vec<AgentMessage> {
@@ -325,9 +333,13 @@ impl Agent {
 
     /// 等待当前 agent loop 完成 — 对齐 Pi `waitForIdle()`
     pub async fn wait_for_idle(&self) {
-        let is_streaming = self.state.lock().await.is_streaming;
-        if is_streaming {
-            self.idle_notify.notified().await;
+        loop {
+            let notified = self.idle_notify.notified();
+            tokio::pin!(notified);
+            if !self.state.lock().await.is_streaming {
+                return;
+            }
+            notified.await;
         }
     }
 
@@ -336,12 +348,7 @@ impl Agent {
     /// 重置全部状态 — 对齐 Pi `reset()`
     pub async fn reset(&mut self) {
         self.abort();
-        {
-            let is_streaming = self.state.lock().await.is_streaming;
-            if is_streaming {
-                self.idle_notify.notified().await;
-            }
-        }
+        self.wait_for_idle().await;
         {
             let mut s = self.state.lock().await;
             s.messages.clear();
@@ -480,6 +487,7 @@ impl Agent {
             after_tool_call: self.config.after_tool_call.clone(),
             await_tool_approval: Some(build_tool_approval_waiter(pending_approvals)),
             runtime_delegate: self.config.runtime_delegate.clone(),
+            tool_result_ref_context: self.config.tool_result_ref_context.clone(),
             get_tools: Some(Arc::new(move || {
                 live_tools
                     .read()
@@ -527,26 +535,14 @@ impl Agent {
             let result = match result {
                 Ok(messages) => Ok(messages),
                 Err(error) => {
-                    let error_message =
-                        AgentMessage::error_assistant(error.to_string(), cancel.is_cancelled());
-                    event_sink(AgentEvent::MessageStart {
-                        message: error_message.clone(),
-                    })
-                    .await;
-                    event_sink(AgentEvent::MessageEnd {
-                        message: error_message.clone(),
-                    })
-                    .await;
-                    event_sink(AgentEvent::TurnEnd {
-                        message: error_message.clone(),
-                        tool_results: vec![],
-                    })
-                    .await;
-                    event_sink(AgentEvent::AgentEnd {
-                        messages: vec![error_message.clone()],
-                    })
-                    .await;
-                    Ok(vec![error_message])
+                    let error_text = error.to_string();
+                    {
+                        let mut s = state.lock().await;
+                        s.error = Some(error_text.clone());
+                    }
+                    diag!(Error, Subsystem::AgentRun,
+        error = %error_text, "Agent loop failed");
+                    Err(error)
                 }
             };
 
@@ -693,6 +689,7 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
             s.stream_message = None;
             s.error = Some(error.clone());
         }
+        AgentEvent::ProviderAttemptStatus { .. } => {}
         AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
             s.pending_tool_calls.insert(tool_call_id.clone());
         }

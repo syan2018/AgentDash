@@ -11,6 +11,7 @@ use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
@@ -106,6 +107,7 @@ impl AgentConnector for RelayAgentConnector {
         })?;
         let backend_id = backend_execution.backend_id.clone();
         let lease_id = backend_execution.lease_id;
+        let turn_id = context.session.turn_id.clone();
 
         // relay 边界仍按 ACP ContentBlock JSON 与远程后端互通（远程 resolve_prompt_payload
         // 仍按 ContentBlock 反序列化）。canonical 输入在此投影为 ContentBlock 形态。
@@ -153,7 +155,7 @@ impl AgentConnector for RelayAgentConnector {
                 .session
                 .mcp_servers
                 .iter()
-                .filter_map(|server| serde_json::to_value(server).ok())
+                .map(crate::mcp_relay_adapter::runtime_mcp_server_to_relay)
                 .collect(),
         };
 
@@ -163,11 +165,13 @@ impl AgentConnector for RelayAgentConnector {
             session_id: session_id.to_string(),
             backend_id: backend_id.clone(),
             lease_id,
+            turn_id: turn_id.clone(),
             tx,
         });
         let sink_guard = RelaySessionSinkGuard {
             transport: self.transport.clone(),
             session_id: session_id.to_string(),
+            turn_id,
         };
 
         let _turn_id = match self.transport.relay_prompt(&backend_id, payload).await {
@@ -228,6 +232,19 @@ impl AgentConnector for RelayAgentConnector {
                                 BackendExecutionTerminalKind::Interrupted
                             }
                             RelayTerminalKind::Failed => unreachable!(),
+                            RelayTerminalKind::Lost => {
+                                let notification = sink_guard.as_ref().map(|guard| {
+                                    relay_lost_terminal_envelope(
+                                        &guard.session_id,
+                                        &guard.turn_id,
+                                        message.clone(),
+                                    )
+                                });
+                                sink_guard.take();
+                                return notification.map(|notification| {
+                                    (Ok(notification), (rx, None, true, lease_repo, lease_id))
+                                });
+                            }
                         };
                         let _ = lease_repo
                             .release(lease_id, Some(terminal_kind), message, chrono::Utc::now())
@@ -329,12 +346,39 @@ impl AgentConnector for RelayAgentConnector {
 struct RelaySessionSinkGuard {
     transport: Arc<dyn RelayPromptTransport>,
     session_id: String,
+    turn_id: String,
 }
 
 impl Drop for RelaySessionSinkGuard {
     fn drop(&mut self) {
         self.transport.unregister_session_sink(&self.session_id);
     }
+}
+
+fn relay_lost_terminal_envelope(
+    session_id: &str,
+    turn_id: &str,
+    message: Option<String>,
+) -> BackboneEnvelope {
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "turn_terminal".to_string(),
+            value: serde_json::json!({
+                "terminal_type": "turn_lost",
+                "message": message,
+            }),
+        }),
+        session_id,
+        SourceInfo {
+            connector_id: "relay".to_string(),
+            connector_type: "relay".to_string(),
+            executor_id: None,
+        },
+    )
+    .with_trace(agentdash_agent_protocol::TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
 }
 
 /// 对远程执行器列表去重（同一 executor_id 可能被多个后端上报）。
@@ -621,6 +665,7 @@ mod tests {
                     session_id: route.session_id.clone(),
                     backend_id: route.backend_id.clone(),
                     lease_id: route.lease_id,
+                    turn_id: route.turn_id.clone(),
                 }
             })
         }
@@ -732,6 +777,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -747,12 +793,16 @@ mod tests {
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
         let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
         let root = tempfile::tempdir().expect("workspace");
-        let mcp_server = agentdash_spi::SessionMcpServer {
+        let mcp_server = agentdash_spi::RuntimeMcpServer {
             name: "third_party_mcp".to_string(),
             transport: agentdash_spi::McpTransportConfig::Stdio {
                 command: "cmd".to_string(),
-                args: Vec::new(),
-                env: Vec::new(),
+                args: vec!["/c".to_string(), "server".to_string()],
+                env: vec![agentdash_spi::McpEnvVar {
+                    name: "TOKEN".to_string(),
+                    value: "secret".to_string(),
+                }],
+                cwd: Some("C:/workspace".to_string()),
             },
             uses_relay: false,
         };
@@ -769,6 +819,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -795,12 +846,24 @@ mod tests {
             .expect("payload should be captured");
         assert_eq!(payload.working_dir.as_deref(), Some("crates/app"));
         assert_eq!(payload.mcp_servers.len(), 1);
-        assert_eq!(
-            payload.mcp_servers[0]
-                .get("name")
-                .and_then(serde_json::Value::as_str),
-            Some("third_party_mcp")
-        );
+        let server = &payload.mcp_servers[0];
+        assert_eq!(server.name, "third_party_mcp");
+        match &server.transport {
+            agentdash_relay::McpTransportConfigRelay::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => {
+                assert_eq!(command, "cmd");
+                assert_eq!(args, &vec!["/c".to_string(), "server".to_string()]);
+                assert_eq!(env.len(), 1);
+                assert_eq!(env[0].name, "TOKEN");
+                assert_eq!(env[0].value, "secret");
+                assert_eq!(cwd.as_deref(), Some("C:/workspace"));
+            }
+            other => panic!("unexpected MCP transport: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -822,6 +885,7 @@ mod tests {
                     lease_id: Uuid::new_v4(),
                     selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
                 }),
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -1030,6 +1094,65 @@ mod tests {
         );
         assert_eq!(releases[0].reason.as_deref(), Some("remote failed"));
         assert!(!transport.has_session_sink("session-terminal-failed"));
+    }
+
+    #[tokio::test]
+    async fn terminal_lost_emits_turn_lost_without_releasing_lease() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+
+        let mut stream = connector
+            .prompt(
+                "session-terminal-lost",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                relay_context(root.path(), "turn-terminal-lost"),
+            )
+            .await
+            .expect("relay prompt should succeed");
+        stream
+            .next()
+            .await
+            .expect("initial notification")
+            .expect("notification should be successful");
+        let route = transport
+            .sinks
+            .lock()
+            .unwrap()
+            .get("session-terminal-lost")
+            .expect("route should be registered")
+            .tx
+            .clone();
+        route
+            .send(RelaySessionEvent::Terminal {
+                kind: RelayTerminalKind::Lost,
+                message: Some("backend disconnected".to_string()),
+            })
+            .expect("terminal should be delivered");
+
+        let notification = stream
+            .next()
+            .await
+            .expect("lost terminal should emit a terminal notification")
+            .expect("lost terminal notification should be successful");
+        match notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
+                assert_eq!(key, "turn_terminal");
+                assert_eq!(value["terminal_type"], "turn_lost");
+                assert_eq!(value["message"], "backend disconnected");
+            }
+            other => panic!("unexpected lost terminal event: {other:?}"),
+        }
+        assert_eq!(
+            notification.trace.turn_id.as_deref(),
+            Some("turn-terminal-lost")
+        );
+        assert!(stream.next().await.is_none());
+        assert!(lease_repo.releases.lock().unwrap().is_empty());
+        assert!(!transport.has_session_sink("session-terminal-lost"));
     }
 
     #[tokio::test]

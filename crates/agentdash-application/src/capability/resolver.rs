@@ -3,6 +3,7 @@
 //! 负责把各来源 contributions（agent / workflow）+ MCP 候选 归约为 session
 //! 的有效能力状态：`CapabilityState`。
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::McpPreset;
@@ -38,8 +39,6 @@ pub struct ToolContribution {
 pub struct McpCandidates {
     /// project 级 MCP Preset 预展开字典。
     pub presets: AvailableMcpPresets,
-    /// agent 内联 MCP servers。
-    pub agent_servers: Vec<AgentMcpServerEntry>,
 }
 
 /// Companion 维度的 contribution。
@@ -65,39 +64,89 @@ pub struct ContextContributions {
     pub companion: Option<CompanionContribution>,
 }
 
-/// 增强型能力解析上下文 — 包含 session owner 与 subject association 两条解析路径。
+/// 增强型能力解析上下文 — 包含 session owner 与 subject association 解析路径。
 ///
 /// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
-/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径（后续 AgentPermission 在此扩展）。
+/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径。
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityContext {
     /// Run 关联的 subject kinds（由 LifecycleSubjectAssociation 投影）。
     /// 例如 run 关联 Story → 此处含 `story`。
     pub run_subject_kinds: Vec<String>,
-    /// Permission Grant 授予的 capability keys（由 active grants 解析）。
-    /// 任何出现在此集合中的 well-known key 视为已授权可见，绕过静态规则。
-    pub granted_capability_keys: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationAuthorityStatus {
+    Allowed,
+    Hidden,
+    Denied,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorityState {
+    pub companion_dispatch: OperationAuthorityStatus,
+    pub companion_respond: OperationAuthorityStatus,
+    pub workspace_module_present: OperationAuthorityStatus,
+    pub dynamic_workflow_author: OperationAuthorityStatus,
+}
+
+impl AuthorityState {
+    pub fn main_project_agent() -> Self {
+        Self {
+            companion_dispatch: OperationAuthorityStatus::Allowed,
+            companion_respond: OperationAuthorityStatus::Hidden,
+            workspace_module_present: OperationAuthorityStatus::Allowed,
+            dynamic_workflow_author: OperationAuthorityStatus::Allowed,
+        }
+    }
+
+    pub fn companion_child() -> Self {
+        Self {
+            companion_dispatch: OperationAuthorityStatus::Hidden,
+            companion_respond: OperationAuthorityStatus::Allowed,
+            workspace_module_present: OperationAuthorityStatus::Hidden,
+            dynamic_workflow_author: OperationAuthorityStatus::Denied,
+        }
+    }
+
+    pub fn allows_companion_dispatch(&self) -> bool {
+        self.companion_dispatch == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_companion_respond(&self) -> bool {
+        self.companion_respond == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_workspace_module_present(&self) -> bool {
+        self.workspace_module_present == OperationAuthorityStatus::Allowed
+    }
+
+    pub fn allows_dynamic_workflow_author(&self) -> bool {
+        self.dynamic_workflow_author == OperationAuthorityStatus::Allowed
+    }
+}
+
+impl Default for AuthorityState {
+    fn default() -> Self {
+        Self::main_project_agent()
+    }
 }
 
 /// Resolver 输入 — 纯粹的 session 上下文描述。
 #[derive(Debug, Clone)]
-pub struct CapabilityResolverInput {
+pub struct CapabilityResolverInput<'a> {
     /// session 归属上下文（决定 visibility 基线 + platform MCP scope）。
     pub owner_ctx: CapabilityScopeCtx,
     /// 各来源按 directive 应用顺序排列的 contributions；授权语义由 `source` 显式决定。
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
+    /// frame construction final VFS 派生的 MCP runtime binding 上下文。
+    pub mcp_runtime_context: Option<crate::mcp_preset::McpRuntimeBindingContext<'a>>,
     /// LifecycleSubjectAssociation-based 解析上下文（可选，新路径）。
     #[allow(dead_code)]
     pub capability_context: Option<CapabilityContext>,
-}
-
-/// agent config 中注册的 MCP server 条目（用于 `mcp:*` key 解析）
-#[derive(Debug, Clone)]
-pub struct AgentMcpServerEntry {
-    pub name: String,
-    pub server: agentdash_spi::SessionMcpServer,
+    pub authority_state: AuthorityState,
 }
 
 // ── Resolver 内部合并中间态 ──────────────────────────────────────────
@@ -209,20 +258,26 @@ impl CapabilityResolver {
     /// 3. 对全部 directives 执行 slot 归约，对 baseline 做覆盖
     /// 4. 解析自定义 MCP → 映射到 cluster / platform MCP scope
     pub fn resolve(
-        input: &CapabilityResolverInput,
+        input: &CapabilityResolverInput<'_>,
         platform: &PlatformConfig,
     ) -> CapabilityResolverOutput {
+        Self::resolve_checked(input, platform).unwrap_or_else(|error| {
+            diag!(Warn, Subsystem::AgentRun,
+        error = %error, "CapabilityResolver resolve 降级为非严格 MCP 解析");
+            CapabilityState::default()
+        })
+    }
+
+    pub fn resolve_checked(
+        input: &CapabilityResolverInput<'_>,
+        platform: &PlatformConfig,
+    ) -> Result<CapabilityResolverOutput, String> {
         let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let granted_keys = input
-            .capability_context
-            .as_ref()
-            .map(|ctx| &ctx.granted_capability_keys);
-        let mut effective_caps =
-            default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
+        let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
 
-        let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
+        let mut resolved_mcp_servers = Vec::<agentdash_spi::RuntimeMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
 
         // ── 按 directive 序列执行 slot 归约 ──
@@ -244,38 +299,41 @@ impl CapabilityResolver {
                         } else {
                             effective_caps.remove(&cap);
                         }
-                    } else if cap.is_custom_mcp() {
-                        if let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
-                        {
-                            if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
-                                effective_caps.insert(cap.clone());
-                                if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    resolved_mcp_servers.push(
-                                        crate::mcp_preset::preset_to_session_mcp_server(preset),
-                                    );
-                                }
-                            } else if let Some(agent_entry) = input
-                                .mcp_candidates
-                                .agent_servers
-                                .iter()
-                                .find(|e| e.name == server_name)
-                            {
-                                effective_caps.insert(cap.clone());
-                                if seen_custom_mcp_names.insert(server_name.clone()) {
-                                    resolved_mcp_servers.push(agent_entry.server.clone());
-                                }
-                            } else {
-                                tracing::warn!(
-                                    key = %cap.key(),
-                                    server_name = %server_name,
-                                    "directive 声明了 mcp:{server_name}，但 McpPreset 和 agent 内联都未注册"
-                                );
+                    } else if cap.is_custom_mcp()
+                        && let Some(server_name) = cap.custom_mcp_server_name().map(str::to_string)
+                    {
+                        if let Some(preset) = input.mcp_candidates.presets.get(&server_name) {
+                            effective_caps.insert(cap.clone());
+                            if seen_custom_mcp_names.insert(server_name.clone()) {
+                                let server = crate::mcp_preset::resolve_preset_mcp_server(
+                                    preset,
+                                    input.mcp_runtime_context.as_ref(),
+                                )
+                                .map_err(|error| error.to_string())?;
+                                resolved_mcp_servers.push(server);
                             }
+                        } else {
+                            diag!(Warn, Subsystem::AgentRun,
+
+                                key = %cap.key(),
+                                server_name = %server_name,
+                                "directive 声明了 mcp:{server_name}，但 Project MCP Preset 未注册"
+                            );
                         }
                     }
                 }
                 ToolCapabilitySlotState::NotDeclared => {}
             }
+        }
+
+        if !input.authority_state.allows_workspace_module_present() {
+            effective_caps.remove(&ToolCapability::new(tool_capability::CAP_WORKSPACE_MODULE));
+        }
+
+        if !input.authority_state.allows_dynamic_workflow_author() {
+            effective_caps.remove(&ToolCapability::new(
+                tool_capability::CAP_WORKFLOW_MANAGEMENT,
+            ));
         }
 
         // ── effective_caps → ToolCluster / platform MCP scope ──
@@ -284,21 +342,28 @@ impl CapabilityResolver {
             for cluster in tool_capability::capability_to_tool_clusters(cap) {
                 enabled_clusters.insert(cluster);
             }
-            if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap) {
-                if let Some(config) = build_platform_mcp_config(
+            if let Some(scope) = tool_capability::capability_to_platform_mcp_scope(cap)
+                && let Some(config) = build_platform_mcp_config(
                     scope,
                     platform.mcp_base_url.as_deref(),
                     &input.owner_ctx,
-                ) {
-                    resolved_mcp_servers.push(config.to_session_mcp_server());
-                }
+                )
+            {
+                resolved_mcp_servers.push(config.to_runtime_mcp_server());
             }
+        }
+
+        if input.authority_state.allows_companion_respond() {
+            effective_caps.insert(ToolCapability::new(CAP_COLLABORATION));
+            enabled_clusters.insert(ToolCluster::Collaboration);
         }
 
         let tool_policy = compute_tool_policy(&reduction, &effective_caps);
 
         let companion_candidates = merge_companion_candidates(&input.contributions);
-        let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION)) {
+        let companion = if effective_caps.contains(&ToolCapability::new(CAP_COLLABORATION))
+            && input.authority_state.allows_companion_dispatch()
+        {
             agentdash_spi::CompanionDimension {
                 agents: companion_candidates,
             }
@@ -306,7 +371,7 @@ impl CapabilityResolver {
             agentdash_spi::CompanionDimension::default()
         };
 
-        CapabilityState {
+        Ok(CapabilityState {
             tool: agentdash_spi::ToolDimension {
                 capabilities: effective_caps.clone(),
                 enabled_clusters,
@@ -315,7 +380,7 @@ impl CapabilityResolver {
             },
             companion,
             ..Default::default()
-        }
+        })
     }
 
     /// resolve 后对 CapabilityState 施加 companion slice 裁剪。
@@ -369,17 +434,10 @@ fn compute_tool_policy(
 fn default_visible_capabilities(
     owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
-    granted_keys: Option<&BTreeSet<String>>,
 ) -> BTreeSet<ToolCapability> {
     let mut effective = BTreeSet::new();
     for &key in WELL_KNOWN_KEYS {
         let cap = ToolCapability::new(key);
-
-        // Permission Grant override: 如果 key 在 active grants 中，直接可见
-        if granted_keys.is_some_and(|gk| gk.contains(key)) {
-            effective.insert(cap);
-            continue;
-        }
 
         let agent_declares_this = merged.agent_declared_keys.contains(key);
         let workflow_declares_this = key == CAP_WORKFLOW && merged.has_active_workflow;
@@ -464,11 +522,6 @@ fn build_platform_mcp_config(
             let story_id = owner_ctx.story_id()?;
             McpInjectionConfig::for_story(base_url, owner_ctx.project_id(), story_id)
         }
-        PlatformMcpScope::Task => {
-            let task_id = owner_ctx.task_id()?;
-            let story_id = owner_ctx.story_id()?;
-            McpInjectionConfig::for_task(base_url, owner_ctx.project_id(), story_id, task_id)
-        }
         PlatformMcpScope::Workflow => {
             McpInjectionConfig::for_workflow(base_url, owner_ctx.project_id())
         }
@@ -478,17 +531,23 @@ fn build_platform_mcp_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use uuid::Uuid;
 
-    fn test_session_mcp(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {
-        agentdash_spi::SessionMcpServer {
-            name: name.to_string(),
-            transport: agentdash_spi::McpTransportConfig::Http {
+    fn test_mcp_preset(key: &str, url: &str) -> McpPreset {
+        use agentdash_domain::mcp_preset::{McpRoutePolicy, McpTransportConfig};
+
+        McpPreset::new_user(
+            Uuid::new_v4(),
+            key,
+            key,
+            None,
+            McpTransportConfig::Http {
                 url: url.to_string(),
                 headers: vec![],
             },
-            uses_relay: false,
-        }
+            McpRoutePolicy::Direct,
+        )
     }
 
     fn test_platform() -> PlatformConfig {
@@ -497,14 +556,44 @@ mod tests {
         }
     }
 
-    fn base_input() -> CapabilityResolverInput {
+    fn test_runtime_vfs() -> agentdash_spi::Vfs {
+        agentdash_spi::Vfs {
+            mounts: vec![agentdash_spi::Mount {
+                id: "main".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend-1".to_string(),
+                root_ref: "main://workspace".to_string(),
+                capabilities: vec![],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: json!({
+                    "workspace_id": "workspace-1",
+                    "workspace_binding_id": "binding-1",
+                    "workspace_identity_payload": {},
+                    "workspace_detected_facts": {
+                        "p4": {
+                            "client_name": "p4-client-main"
+                        }
+                    }
+                }),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: vec![],
+        }
+    }
+
+    fn base_input() -> CapabilityResolverInput<'static> {
         CapabilityResolverInput {
             owner_ctx: CapabilityScopeCtx::Project {
                 project_id: Uuid::new_v4(),
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         }
     }
 
@@ -536,7 +625,7 @@ mod tests {
     fn state_mcp_server<'a>(
         output: &'a CapabilityResolverOutput,
         name: &str,
-    ) -> Option<&'a agentdash_spi::SessionMcpServer> {
+    ) -> Option<&'a agentdash_spi::RuntimeMcpServer> {
         output
             .tool
             .mcp_servers
@@ -555,9 +644,62 @@ mod tests {
             output.has(ToolCluster::Execute),
             "shell_execute auto-granted"
         );
-        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::WorkspaceModule));
         assert!(output.has(ToolCluster::Collaboration));
         assert!(!output.has(ToolCluster::Workflow));
+    }
+
+    #[test]
+    fn capability_context_does_not_override_visibility() {
+        let mut input = base_input();
+        input.capability_context = Some(CapabilityContext {
+            run_subject_kinds: vec!["story".to_string()],
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("story_management")),
+            "CapabilityResolver must remain a declarative baseline calculator; AgentRun owns runtime grants"
+        );
+        assert!(
+            !state_has_mcp_url(&output, "/mcp/story/"),
+            "runtime subject/grant context must not inject story MCP scope through resolver"
+        );
+    }
+
+    #[test]
+    fn companion_child_keeps_respond_channel_without_dispatch_roster() {
+        let mut input = base_input();
+        input.authority_state = AuthorityState::companion_child();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
+            tool: Some(ToolContribution {
+                directives: vec![ToolCapabilityDirective::remove_simple("collaboration")],
+                has_active_workflow: false,
+            }),
+            companion: Some(CompanionContribution {
+                available: vec![agentdash_spi::context::capability::CompanionAgentEntry {
+                    name: "reviewer".to_string(),
+                    executor: "PI_AGENT".to_string(),
+                    display_name: "Reviewer".to_string(),
+                }],
+            }),
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output.has(ToolCluster::Collaboration),
+            "companion.respond return channel must survive selected preset capability cropping",
+        );
+        assert!(
+            output.companion.agents.is_empty(),
+            "companion.dispatch is hidden for child runs, so no roster should be projected",
+        );
     }
 
     #[test]
@@ -588,6 +730,38 @@ mod tests {
     }
 
     #[test]
+    fn companion_child_denies_workflow_management_authority() {
+        let mut input = base_input();
+        input.authority_state = AuthorityState::companion_child();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Workflow,
+            tool: Some(ToolContribution {
+                directives: vec![ToolCapabilityDirective::add_simple("workflow_management")],
+                has_active_workflow: true,
+            }),
+            companion: None,
+        });
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output.has(ToolCluster::Workflow),
+            "companion child 可继续执行已派发的 lifecycle workflow",
+        );
+        assert!(
+            !output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("workflow_management")),
+            "companion child 不应获得动态 workflow 管理能力",
+        );
+        assert!(
+            !state_has_mcp_url(&output, "/mcp/workflow/"),
+            "被 authority 裁剪的 workflow_management 不应注入 Workflow MCP",
+        );
+    }
+
+    #[test]
     fn project_session_without_workflow_declaration_no_workflow_mcp() {
         let input = base_input();
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -600,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn task_session_gets_task_mcp() {
+    fn task_session_gets_task_runtime_tools() {
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -608,18 +782,24 @@ mod tests {
         let input = CapabilityResolverInput {
             owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
-                story_id,
+                story_id: Some(story_id),
                 task_id,
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
+        assert!(
+            output.has(ToolCluster::Task),
+            "task session 应启用 Task tools"
+        );
         let has_task_mcp = state_has_mcp_url(&output, "/mcp/task/");
-        assert!(has_task_mcp, "task session 应注入 TaskMcpServer");
+        assert!(!has_task_mcp, "task session 不再注入 TaskMcpServer");
 
         let has_relay_mcp = state_has_mcp_url(&output, "/mcp/relay");
         assert!(!has_relay_mcp, "task session 不应注入 RelayMcpServer");
@@ -637,7 +817,9 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -711,17 +893,17 @@ mod tests {
     }
 
     #[test]
-    fn custom_mcp_from_workflow_resolved() {
+    fn custom_mcp_from_workflow_resolves_preset() {
         let mut input = base_input();
         with_workflow_directives(
             &mut input,
             vec![ToolCapabilityDirective::add_simple("mcp:code_analyzer")],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
 
@@ -731,6 +913,7 @@ mod tests {
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
         );
+        assert!(state_mcp_server(&output, "code_analyzer").is_some());
     }
 
     #[test]
@@ -797,15 +980,80 @@ mod tests {
         }
     }
 
-    /// Preset 与 inline agent mcp_server 同名时以 Preset 为准（不重复注入）。
     #[test]
-    fn preset_takes_precedence_over_inline_agent_mcp_server() {
+    fn workflow_mcp_capability_resolves_preset_with_runtime_context() {
+        use agentdash_domain::mcp_preset::{
+            McpPreset, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingRule,
+            McpRuntimeBindingSource, McpRuntimeBindingTarget, McpTransportConfig,
+        };
+
+        let vfs = test_runtime_vfs();
+        let runtime_context = crate::mcp_preset::McpRuntimeBindingContext {
+            vfs: Some(&vfs),
+            backend_anchor: None,
+        };
+        let mut input = base_input();
+        input.mcp_runtime_context = Some(runtime_context);
+        with_workflow_directives(
+            &mut input,
+            vec![ToolCapabilityDirective::add_simple("mcp:p4_local")],
+            true,
+        );
+        input.mcp_candidates.presets.insert(
+            "p4_local".to_string(),
+            McpPreset::new_user(
+                Uuid::new_v4(),
+                "p4_local",
+                "P4 Local",
+                None,
+                McpTransportConfig::Http {
+                    url: "http://127.0.0.1:7357/mcp".to_string(),
+                    headers: vec![],
+                },
+                McpRoutePolicy::Direct,
+            )
+            .with_runtime_binding(Some(McpRuntimeBindingConfig {
+                mount_id: None,
+                bindings: vec![McpRuntimeBindingRule {
+                    source: McpRuntimeBindingSource::WorkspaceDetectedFact {
+                        path: vec!["p4".to_string(), "client_name".to_string()],
+                    },
+                    target: McpRuntimeBindingTarget::HttpQuery {
+                        name: "p4_client".to_string(),
+                    },
+                    required: true,
+                }],
+            })),
+        );
+
+        let output =
+            CapabilityResolver::resolve_checked(&input, &test_platform()).expect("resolved");
+        let server = state_mcp_server(&output, "p4_local").expect("应注入 p4_local");
+        let agentdash_spi::McpTransportConfig::Http { url, .. } = &server.transport else {
+            panic!("expected http transport");
+        };
+        let parsed = url::Url::parse(url).expect("resolved url");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "p4_client")
+                .map(|(_, value)| value.into_owned()),
+            Some("p4-client-main".to_string())
+        );
+    }
+
+    /// 同一个 preset key 被重复声明时只注入一条 RuntimeMcpServer。
+    #[test]
+    fn duplicate_preset_key_injects_single_runtime_mcp_server() {
         use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
         let mut input = base_input();
         with_workflow_directives(
             &mut input,
-            vec![ToolCapabilityDirective::add_simple("mcp:shared")],
+            vec![
+                ToolCapabilityDirective::add_simple("mcp:shared"),
+                ToolCapabilityDirective::add_simple("mcp:shared"),
+            ],
             true,
         );
         input.mcp_candidates.presets.insert(
@@ -822,10 +1070,6 @@ mod tests {
                 McpRoutePolicy::Direct,
             ),
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "shared".to_string(),
-            server: test_session_mcp("shared", "http://inline/mcp"),
-        }];
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert_eq!(
@@ -841,7 +1085,7 @@ mod tests {
         let server = state_mcp_server(&output, "shared").expect("应注入 shared");
         match &server.transport {
             agentdash_spi::McpTransportConfig::Http { url, .. } => {
-                assert_eq!(url, "http://preset/mcp", "应以 preset url 为准");
+                assert_eq!(url, "http://preset/mcp");
             }
             other => panic!("期望 Http transport, 实际: {other:?}"),
         }
@@ -878,7 +1122,7 @@ mod tests {
         assert!(output.has(ToolCluster::Read));
         assert!(output.has(ToolCluster::Write));
         assert!(output.has(ToolCluster::Execute));
-        assert!(output.has(ToolCluster::Canvas));
+        assert!(output.has(ToolCluster::WorkspaceModule));
         assert!(output.has(ToolCluster::Collaboration));
     }
 
@@ -890,10 +1134,10 @@ mod tests {
             vec![ToolCapabilityDirective::add_simple("mcp:code_analyzer")],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(state_mcp_server(&output, "code_analyzer").is_some());
@@ -1022,10 +1266,10 @@ mod tests {
             ],
             true,
         );
-        input.mcp_candidates.agent_servers = vec![AgentMcpServerEntry {
-            name: "code_analyzer".to_string(),
-            server: test_session_mcp("code_analyzer", "http://external:8080/mcp"),
-        }];
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
         assert!(state_mcp_server(&output, "code_analyzer").is_none());
@@ -1034,6 +1278,51 @@ mod tests {
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("code_analyzer"))
+        );
+    }
+
+    #[test]
+    fn agent_custom_mcp_add_with_tool_remove_injects_server_and_excludes_raw_tool() {
+        let mut input = base_input();
+        input.contributions.push(ContextContributions {
+            source: ContextContributionSource::Agent,
+            tool: Some(ToolContribution {
+                directives: vec![
+                    ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
+                    ToolCapabilityDirective::remove_tool("mcp:code_analyzer", "scan_repo"),
+                ],
+                has_active_workflow: false,
+            }),
+            companion: None,
+        });
+        input.mcp_candidates.presets.insert(
+            "code_analyzer".to_string(),
+            test_mcp_preset("code_analyzer", "http://external:8080/mcp"),
+        );
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("code_analyzer")),
+            "add mcp:<key> 应通过 resolver 授权 custom MCP capability"
+        );
+        assert!(
+            state_mcp_server(&output, "code_analyzer").is_some(),
+            "custom MCP capability 应从 candidates 注入 RuntimeMcpServer"
+        );
+        assert!(output.is_capability_tool_enabled("mcp:code_analyzer", "inspect_repo", None));
+        assert!(!output.is_capability_tool_enabled("mcp:code_analyzer", "scan_repo", None));
+        assert_eq!(
+            output
+                .tool
+                .tool_policy
+                .get("mcp:code_analyzer")
+                .map(|filter| filter.exclude.clone()),
+            Some(BTreeSet::from(["scan_repo".to_string()])),
+            "remove mcp:<key>::<raw_tool> 应编译到 tool_policy.exclude"
         );
     }
 
@@ -1077,7 +1366,9 @@ mod tests {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1098,9 +1389,9 @@ mod tests {
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. }
-                    if url.contains("/mcp/story/") || url.contains("/mcp/task/")
+                    if url.contains("/mcp/story/")
             )),
-            "project owner 不应注入 story/task scope"
+            "project owner 不应注入 story scope"
         );
     }
 
@@ -1115,7 +1406,9 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
             capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1135,47 +1428,37 @@ mod tests {
             panic!("story MCP 应使用 HTTP transport");
         };
         assert!(url.contains(&story_id.to_string()));
+    }
+
+    #[test]
+    fn task_owner_ctx_enables_task_cluster_without_mcp_scope() {
+        let project_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let input = CapabilityResolverInput {
+            owner_ctx: CapabilityScopeCtx::Task {
+                project_id,
+                story_id: None,
+                task_id,
+            },
+            contributions: Vec::new(),
+            mcp_candidates: McpCandidates::default(),
+            mcp_runtime_context: None,
+            capability_context: None,
+            authority_state: AuthorityState::main_project_agent(),
+        };
+
+        let output = CapabilityResolver::resolve(&input, &test_platform());
+
+        assert!(
+            output.has(ToolCluster::Task),
+            "task owner 应启用 Task runtime tools"
+        );
         assert!(
             !output.tool.mcp_servers.iter().any(|server| matches!(
                 &server.transport,
                 agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
             )),
-            "story owner 不应注入 task scope"
+            "task owner 不再注入 Task MCP"
         );
-    }
-
-    #[test]
-    fn task_owner_ctx_injects_task_scope_with_story_and_task_ids() {
-        let project_id = Uuid::new_v4();
-        let story_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
-        let input = CapabilityResolverInput {
-            owner_ctx: CapabilityScopeCtx::Task {
-                project_id,
-                story_id,
-                task_id,
-            },
-            contributions: Vec::new(),
-            mcp_candidates: McpCandidates::default(),
-            capability_context: None,
-        };
-
-        let output = CapabilityResolver::resolve(&input, &test_platform());
-
-        let task = output
-            .tool
-            .mcp_servers
-            .iter()
-            .find(|server| {
-                matches!(
-                    &server.transport,
-                    agentdash_spi::McpTransportConfig::Http { url, .. } if url.contains("/mcp/task/")
-                )
-            })
-            .expect("task owner 应注入 task MCP");
-        let agentdash_spi::McpTransportConfig::Http { url, .. } = &task.transport else {
-            panic!("task MCP 应使用 HTTP transport");
-        };
-        assert!(url.contains(&task_id.to_string()));
     }
 }

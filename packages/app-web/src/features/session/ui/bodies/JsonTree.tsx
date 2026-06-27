@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback, type ReactNode } from "react";
+import { CB } from "./cardBodyTokens";
 
 export interface JsonTreeProps {
   data: unknown;
@@ -188,7 +189,7 @@ export function CopyJsonButton({ data }: { data: unknown }) {
     <button
       type="button"
       onClick={() => { void handleCopy(); }}
-      className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground/60 transition-colors hover:bg-secondary hover:text-foreground"
+      className={CB.actionButton}
     >
       {copied ? "已复制" : "复制 JSON"}
     </button>

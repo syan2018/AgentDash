@@ -7,31 +7,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentFrameHookRuntimeInfo, SessionRuntimeControlView } from "../../../types";
+import type {
+  AgentFrameHookRuntimeInfo,
+  AgentFrameRuntimeView,
+  SessionRuntimeControlView,
+} from "../../../types";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchSessionRuntimeControl } from "../../../services/lifecycle";
-import type { AgentFrameRuntimeView } from "../../../types";
+import { resolveVfsSurface } from "../../../services/vfs";
+import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 
 export type { SessionRuntimeStateStatus };
-
-export interface SessionContextPayload {
-  workspace_id: string | null;
-  agent_binding: null;
-  vfs: null;
-  runtime_surface: null;
-  context_snapshot: null;
-  session_capabilities: null;
-}
 
 export interface SessionRuntimeProjectionState {
   session_id: string | null;
   source_key: string | null;
   status: SessionRuntimeStateStatus;
-  context: SessionContextPayload | null;
+  runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
   control: SessionRuntimeControlView | null;
+  runtime_surface_error: string | null;
   error: string | null;
 }
 
@@ -45,10 +42,11 @@ export function emptySessionRuntimeState(): SessionRuntimeProjectionState {
     session_id: null,
     source_key: null,
     status: "idle",
-    context: null,
+    runtime_surface: null,
     hook_runtime: null,
     frame: null,
     control: null,
+    runtime_surface_error: null,
     error: null,
   };
 }
@@ -74,7 +72,7 @@ export function useSessionRuntimeState({
   const setAgent = useLifecycleStore((s) => s.setAgent);
   const setFrame = useLifecycleStore((s) => s.setFrame);
 
-  const loadFrameContext = useCallback(async (
+  const loadRuntimeState = useCallback(async (
     sid: string,
     skey: string,
     canCommit: () => boolean = () => true,
@@ -85,15 +83,29 @@ export function useSessionRuntimeState({
       session_id: sid,
       source_key: skey,
       status: "loading",
-      context: null,
+      runtime_surface: null,
       hook_runtime: null,
       frame: null,
       control: null,
+      runtime_surface_error: null,
       error: null,
     });
 
     try {
-      const control = await fetchSessionRuntimeControl(sid);
+      const [controlResult, runtimeSurfaceResult] = await Promise.allSettled([
+        fetchSessionRuntimeControl(sid),
+        resolveVfsSurface({ source_type: "session_runtime", session_id: sid }),
+      ]);
+      if (controlResult.status === "rejected") {
+        throw controlResult.reason;
+      }
+      const control = controlResult.value;
+      const runtimeSurface = runtimeSurfaceResult.status === "fulfilled"
+        ? runtimeSurfaceResult.value
+        : null;
+      const runtimeSurfaceError = runtimeSurfaceResult.status === "rejected"
+        ? errorMessage(runtimeSurfaceResult.reason)
+        : null;
       if (!canCommit()) return;
       if (control.run) {
         ingestLifecycleRun(control.run);
@@ -108,10 +120,11 @@ export function useSessionRuntimeState({
         session_id: sid,
         source_key: skey,
         status: "ready",
-        context: null,
+        runtime_surface: runtimeSurface,
         hook_runtime: null,
         frame: control.frame_runtime ?? null,
         control,
+        runtime_surface_error: runtimeSurfaceError,
         error: null,
       });
     } catch (error: unknown) {
@@ -122,10 +135,11 @@ export function useSessionRuntimeState({
         session_id: sid,
         source_key: skey,
         status: is404 ? "ready" : "error",
-        context: null,
+        runtime_surface: null,
         hook_runtime: null,
         frame: null,
         control: null,
+        runtime_surface_error: null,
         error: is404 ? null : errorMessage(error),
       });
     }
@@ -138,29 +152,30 @@ export function useSessionRuntimeState({
 
     let cancelled = false;
     const timeoutId = window.setTimeout(() => {
-      void loadFrameContext(sessionId, sourceKey, () => !cancelled);
+      void loadRuntimeState(sessionId, sourceKey, () => !cancelled);
     }, 0);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [sessionId, sourceKey, loadFrameContext]);
+  }, [sessionId, sourceKey, loadRuntimeState]);
 
-  const refreshContext = useCallback(async () => {
+  const refreshRuntimeState = useCallback(async () => {
     if (!sessionId || !sourceKey) return;
     setState((current) => ({
       ...current,
       status: current.frame ? "refreshing" : "loading",
       error: null,
+      runtime_surface_error: null,
     }));
-    await loadFrameContext(sessionId, sourceKey);
-  }, [sessionId, sourceKey, loadFrameContext]);
+    await loadRuntimeState(sessionId, sourceKey);
+  }, [sessionId, sourceKey, loadRuntimeState]);
 
   const refreshHookRuntime = useCallback(async () => {
     if (!sessionId || !sourceKey) return;
-    await loadFrameContext(sessionId, sourceKey);
-  }, [sessionId, sourceKey, loadFrameContext]);
+    await loadRuntimeState(sessionId, sourceKey);
+  }, [sessionId, sourceKey, loadRuntimeState]);
 
   const activeState = useMemo(() => {
     return selectActiveSessionRuntimeState(state, sessionId, sourceKey);
@@ -168,7 +183,7 @@ export function useSessionRuntimeState({
 
   return {
     state: activeState,
-    refreshContext,
+    refreshRuntimeState,
     refreshHookRuntime,
   };
 }

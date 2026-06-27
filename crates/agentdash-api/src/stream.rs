@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
+use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_domain::common::events::StreamEvent;
 use agentdash_domain::story::StateChange;
 
@@ -48,7 +50,8 @@ pub async fn event_stream_ndjson(
         .latest_event_id_by_project(project.id)
         .await?;
 
-    tracing::info!(
+    diag!(Info, Subsystem::Api,
+
         project_id = %project.id,
         resume_from = ?resume_from,
         has_resume_cursor = resume_from.is_some(),
@@ -68,22 +71,31 @@ pub async fn event_stream_ndjson(
                     for change in changes {
                         cursor = change.id;
                         replayed += 1;
-                        if let Some(line) = to_ndjson_line(&StreamEvent::StateChanged(change)) {
-                            yield Ok::<Bytes, std::convert::Infallible>(line);
+                        if let Some(event) = contract_stream_event(StreamEvent::StateChanged(change)) {
+                            if let Some(line) = to_ndjson_line(&event) {
+                                yield Ok::<Bytes, std::convert::Infallible>(line);
+                            }
+                        } else {
+                            diag!(Error, Subsystem::Api,
+        project_id = %project.id, "Project NDJSON StateChanged payload is not a JSON object");
                         }
                     }
                 }
                 Err(err) => {
-                    tracing::error!(project_id = %project.id, error = %err, "Project NDJSON 事件流补发失败");
+                    diag!(Error, Subsystem::Api,
+        project_id = %project.id, error = %err, "Project NDJSON 事件流补发失败");
                 }
             }
         }
 
         cursor = cursor.max(initial_latest_event_id);
-        if let Some(line) = to_ndjson_line(&StreamEvent::Connected { last_event_id: cursor }) {
+        if let Some(line) = contract_stream_event(StreamEvent::Connected { last_event_id: cursor })
+            .and_then(|event| to_ndjson_line(&event))
+        {
             yield Ok::<Bytes, std::convert::Infallible>(line);
         }
-        tracing::info!(
+        diag!(Info, Subsystem::Api,
+
             project_id = %project.id,
             replayed_count = replayed,
             cursor = cursor,
@@ -103,13 +115,19 @@ pub async fn event_stream_ndjson(
                         Ok(changes) => {
                             for change in changes {
                                 cursor = change.id;
-                                if let Some(line) = to_ndjson_line(&StreamEvent::StateChanged(change)) {
-                                    yield Ok::<Bytes, std::convert::Infallible>(line);
+                                if let Some(event) = contract_stream_event(StreamEvent::StateChanged(change)) {
+                                    if let Some(line) = to_ndjson_line(&event) {
+                                        yield Ok::<Bytes, std::convert::Infallible>(line);
+                                    }
+                                } else {
+                                    diag!(Error, Subsystem::Api,
+        project_id = %project.id, "Project NDJSON StateChanged payload is not a JSON object");
                                 }
                             }
                         }
                         Err(err) => {
-                            tracing::error!(project_id = %project.id, error = %err, "Project NDJSON 事件流轮询 state_changes 失败");
+                            diag!(Error, Subsystem::Api,
+        project_id = %project.id, error = %err, "Project NDJSON 事件流轮询 state_changes 失败");
                         }
                     }
                 }
@@ -117,15 +135,17 @@ pub async fn event_stream_ndjson(
                     match event {
                         Ok(backend_id) => {
                             let runtime_event = StreamEvent::BackendRuntimeChanged { backend_id };
-                            if let Some(line) = to_ndjson_line(&runtime_event) {
+                            if let Some(line) = contract_stream_event(runtime_event).and_then(|event| to_ndjson_line(&event)) {
                                 yield Ok(line);
                             }
                         }
                         Err(RecvError::Lagged(skipped)) => {
-                            tracing::warn!(project_id = %project.id, skipped, "Project NDJSON 事件流 backend runtime 事件滞后");
+                            diag!(Warn, Subsystem::Api,
+        project_id = %project.id, skipped, "Project NDJSON 事件流 backend runtime 事件滞后");
                         }
                         Err(RecvError::Closed) => {
-                            tracing::warn!(project_id = %project.id, "Project NDJSON 事件流 backend runtime 事件通道已关闭");
+                            diag!(Warn, Subsystem::Api,
+        project_id = %project.id, "Project NDJSON 事件流 backend runtime 事件通道已关闭");
                             break;
                         }
                     }
@@ -134,7 +154,7 @@ pub async fn event_stream_ndjson(
                     let heartbeat = StreamEvent::Heartbeat {
                         timestamp: chrono::Utc::now().timestamp_millis(),
                     };
-                    if let Some(line) = to_ndjson_line(&heartbeat) {
+                    if let Some(line) = contract_stream_event(heartbeat).and_then(|event| to_ndjson_line(&event)) {
                         yield Ok(line);
                     }
                 }
@@ -177,6 +197,21 @@ fn parse_stream_since_id(headers: &HeaderMap) -> Result<Option<i64>, ApiError> {
     Ok(Some(parsed))
 }
 
+fn contract_stream_event(event: StreamEvent) -> Option<ProjectEventStreamEnvelope> {
+    match event {
+        StreamEvent::Connected { last_event_id } => {
+            Some(ProjectEventStreamEnvelope::connected(last_event_id))
+        }
+        StreamEvent::StateChanged(change) => ProjectEventStreamEnvelope::state_changed(change),
+        StreamEvent::BackendRuntimeChanged { backend_id } => Some(
+            ProjectEventStreamEnvelope::backend_runtime_changed(backend_id),
+        ),
+        StreamEvent::Heartbeat { timestamp } => {
+            Some(ProjectEventStreamEnvelope::heartbeat(timestamp))
+        }
+    }
+}
+
 fn to_ndjson_line<T: Serialize>(value: &T) -> Option<Bytes> {
     match serde_json::to_vec(value) {
         Ok(mut raw) => {
@@ -184,7 +219,8 @@ fn to_ndjson_line<T: Serialize>(value: &T) -> Option<Bytes> {
             Some(Bytes::from(raw))
         }
         Err(err) => {
-            tracing::error!(error = %err, "序列化 NDJSON 事件失败");
+            diag!(Error, Subsystem::Api,
+        error = %err, "序列化 NDJSON 事件失败");
             None
         }
     }

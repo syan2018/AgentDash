@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Check that memory writes remain ordinary VFS/inline_fs mutations and source capabilities are derived from resolved mounts."}
+{"file": ".trellis/spec/backend/capability/integration-api.md", "reason": "Check that MemoryDiscoveryProvider registration follows Host Integration collection and duplicate-key validation."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check that final VFS, CapabilityState, context frames, and launch handoff share the same frame construction source."}
+{"file": ".trellis/tasks/06-24-agent-memory-discovery-system/research/claude-code-memory-prompts.md", "reason": "Check that the memory-manager skill preserves high-signal, topic-based, stale-claim-aware guidance."}

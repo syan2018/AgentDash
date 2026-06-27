@@ -31,10 +31,22 @@ export interface WorkspaceBackendTarget {
   online: boolean;
 }
 
+export interface AgentRunCanvasBridgeBase {
+  run_id: string;
+  agent_id: string;
+  project_id: string;
+}
+
+export interface AgentRunCanvasBridgeIdentity extends AgentRunCanvasBridgeBase {
+  canvas_mount_id: string;
+}
+
 export interface WorkspaceRuntimeData {
   projectId: string | null;
   sessionId: string | null;
   runtimeSessionId: string | null;
+  agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
+  refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
   sessionMeta: SessionShellDto | null;
   controlAnchor: RuntimeSessionExecutionAnchorDto | null;
   lifecycleRun: LifecycleRunView | null;
@@ -52,5 +64,4 @@ export interface WorkspaceRuntimeData {
   workspaceBackend: WorkspaceBackendTarget | null;
   hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  activeCanvasId: string | null;
 }

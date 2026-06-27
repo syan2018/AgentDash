@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"检查是否仍满足统一 launch pipeline 和 ProjectAgent two-receipt 合同。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"检查 mailbox、internal follow-up、workspace control state 是否未被 route-local 分支破坏。"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查 mailbox command、scheduler、turn boundary 语义。"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"检查 ExecutionContext 仍只作为 connector projection。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"若 DTO / route / generated TS 变化，检查前后端合同和 drift。"}

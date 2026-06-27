@@ -17,6 +17,17 @@ pub struct ItemStartedNotification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "backbone/")]
+pub struct ItemUpdatedNotification {
+    pub item: AgentDashThreadItem,
+    pub thread_id: String,
+    pub turn_id: String,
+    #[ts(type = "number")]
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "backbone/")]
 pub struct ItemCompletedNotification {
     pub item: AgentDashThreadItem,
     pub thread_id: String,
@@ -45,6 +56,21 @@ impl ItemStartedNotification {
             thread_id: value.thread_id,
             turn_id: value.turn_id,
             started_at_ms: value.started_at_ms,
+        }
+    }
+}
+
+impl ItemUpdatedNotification {
+    pub fn new(
+        item: impl Into<AgentDashThreadItem>,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            item: item.into(),
+            thread_id: thread_id.into(),
+            turn_id: turn_id.into(),
+            updated_at_ms: now_ms(),
         }
     }
 }

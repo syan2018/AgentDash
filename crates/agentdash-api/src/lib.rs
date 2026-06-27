@@ -1,6 +1,9 @@
+mod agent_run_mailbox;
+pub mod agent_run_runtime_surface;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;
+pub mod context;
 pub mod dto;
 pub mod integrations;
 pub mod mount_providers;
@@ -9,21 +12,21 @@ pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
-pub mod session_construction;
 pub mod stream;
-pub mod task_agent_context;
 #[cfg(test)]
 mod vfs_access;
 pub mod vfs_materialization;
 mod vfs_surface_runtime;
 pub mod workspace_resolution;
 
+use agentdash_diagnostics::{Subsystem, diag};
 use anyhow::Result;
 use axum::Router;
 use tokio::net::TcpListener;
 
 use agentdash_integration_api::AgentDashIntegration;
 
+pub use agentdash_diagnostics::DiagnosticBuffer;
 use app_state::AppState;
 pub use integrations::builtin_integrations;
 
@@ -108,17 +111,30 @@ impl ApiServer {
 ///
 /// 接受 Host Integration 列表，在 DI 组装完成后启动 HTTP 服务。
 /// 开源版通常传入 `builtin_integrations()`；企业版在此基础上追加私有集成。
-pub async fn run_server(integrations: Vec<Box<dyn AgentDashIntegration>>) -> Result<()> {
-    run_server_with_options(integrations, ApiServerOptions::from_env()?).await
+///
+/// `diagnostics` 为统一诊断环形缓冲句柄：调用方（main）先把它接进 tracing
+/// 订阅器（[`DiagnosticBuffer::layer`]），再透传到这里供 `GET /api/diagnostics`
+/// 查询。订阅器装配只在 main，本函数不 `.init()`。
+pub async fn run_server(
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
+    diagnostics: DiagnosticBuffer,
+) -> Result<()> {
+    run_server_with_options(integrations, ApiServerOptions::from_env()?, diagnostics).await
 }
 
 pub async fn run_server_with_options(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
 ) -> Result<()> {
-    let server = build_server(integrations, options).await?;
+    let server = build_server(integrations, options, diagnostics).await?;
     let ready = server.ready().clone();
-    tracing::info!("AgentDash API 服务启动: {}", ready.origin);
+    diag!(
+        Info,
+        Subsystem::Api,
+        "AgentDash API 服务启动: {}",
+        ready.origin
+    );
     server.serve().await
 }
 
@@ -134,13 +150,44 @@ pub async fn check_postgres_ready_with_options(options: ApiServerOptions) -> Res
     Ok(ready)
 }
 
+pub async fn build_server_with_migrations(
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
+    options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
+) -> Result<ApiServer> {
+    build_server_with_schema_preparation(
+        integrations,
+        options,
+        diagnostics,
+        SchemaPreparation::RunMigrations,
+    )
+    .await
+}
+
 pub async fn build_server(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
     options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
 ) -> Result<ApiServer> {
-    let (db_ready, db_runtime) = prepare_database(&options, SchemaPreparation::CheckReady).await?;
+    build_server_with_schema_preparation(
+        integrations,
+        options,
+        diagnostics,
+        SchemaPreparation::CheckReady,
+    )
+    .await
+}
 
-    let state = AppState::new_with_integrations(db_runtime.pool.clone(), integrations).await?;
+async fn build_server_with_schema_preparation(
+    integrations: Vec<Box<dyn AgentDashIntegration>>,
+    options: ApiServerOptions,
+    diagnostics: DiagnosticBuffer,
+    preparation: SchemaPreparation,
+) -> Result<ApiServer> {
+    let (db_ready, db_runtime) = prepare_database(&options, preparation).await?;
+
+    let state =
+        AppState::new_with_integrations(db_runtime.pool.clone(), integrations, diagnostics).await?;
 
     let app = routes::create_router(state);
 
@@ -184,7 +231,12 @@ async fn prepare_database(
         options.max_connections,
     )
     .await?;
-    tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
+    diag!(
+        Info,
+        Subsystem::Infra,
+        database = %redact_database_url(&db_runtime.connection_url),
+        "数据库已就绪"
+    );
     if matches!(preparation, SchemaPreparation::RunMigrations) {
         agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
             .await
@@ -207,4 +259,39 @@ fn schema_version() -> i64 {
     env!("AGENTDASH_SCHEMA_VERSION")
         .parse::<i64>()
         .unwrap_or_default()
+}
+
+pub fn redact_database_url(database_url: &str) -> String {
+    let Some((scheme, rest)) = database_url.split_once("://") else {
+        return database_url.to_string();
+    };
+    let Some((userinfo, host_and_path)) = rest.split_once('@') else {
+        return database_url.to_string();
+    };
+    let redacted_userinfo = match userinfo.split_once(':') {
+        Some((username, _password)) => format!("{username}:***"),
+        None => userinfo.to_string(),
+    };
+    format!("{scheme}://{redacted_userinfo}@{host_and_path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_database_url;
+
+    #[test]
+    fn redact_database_url_masks_password() {
+        assert_eq!(
+            redact_database_url("postgres://agentdash:secret@postgres:5432/agentdash"),
+            "postgres://agentdash:***@postgres:5432/agentdash"
+        );
+    }
+
+    #[test]
+    fn redact_database_url_keeps_passwordless_url_unchanged() {
+        assert_eq!(
+            redact_database_url("postgres://agentdash@postgres:5432/agentdash"),
+            "postgres://agentdash@postgres:5432/agentdash"
+        );
+    }
 }

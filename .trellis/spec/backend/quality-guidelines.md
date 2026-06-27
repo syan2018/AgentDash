@@ -137,7 +137,7 @@ store.write_meta(&session_meta).await?;
 | 字段 | 用途 | 展示 |
 |------|------|------|
 | `system_context` | owner 级上下文，每轮随 system prompt 注入 Agent | 不出现在用户消息流 |
-| `prompt_blocks` resource block | `agentdash://project-context/` URI，仅前端展示锚点 | 渲染为 SessionOwnerContextCard |
+| `prompt_blocks` resource block | `agentdash://project-context/` URI，仅前端展示锚点 | 渲染为 subject context 展示卡片 |
 
 **禁止**：在 `prompt_blocks` 中放 instruction text block；在用户消息文本中暴露技术 slot 标识。
 
@@ -148,7 +148,7 @@ store.write_meta(&session_meta).await?;
 | 归属 | 放置位置 | 典型字段 |
 |---|---|---|
 | 来源意图 | `LaunchCommand` source payload | source identity、parent/session 引用、override、follow-up hint |
-| 构建事实 | `SessionConstructionPlan` | owner、workspace、working directory、VFS、MCP、capability、context、identity |
+| 构建事实 | `FrameLaunchEnvelope` | frame refs、working directory、VFS、MCP、capability、context、identity |
 | 单轮启动决策 | `LaunchPlan` | resolved prompt payload、lifecycle、restore、hook、runtime command、terminal effect |
 | Connector 投影 | `ExecutionContext` | session frame / turn frame 字段 |
 

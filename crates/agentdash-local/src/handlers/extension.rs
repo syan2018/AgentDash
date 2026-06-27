@@ -8,13 +8,42 @@ use agentdash_relay::{
 };
 use serde_json::{Map, json};
 
-use super::CommandHandler;
 use crate::{
-    ExtensionArtifactDownloadRequest, LocalExtensionHostActivation,
+    ExtensionArtifactDownloadRequest, LocalExtensionHostActivation, LocalExtensionHostManager,
     download_and_cache_extension_artifact,
 };
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct ExtensionCommandHandler {
+    backend_id: String,
+    workspace_roots: Vec<PathBuf>,
+    extension_host: LocalExtensionHostManager,
+    artifact_api_base_url: String,
+    artifact_access_token: String,
+    artifact_cache_root: PathBuf,
+}
+
+pub(super) struct ExtensionCommandHandlerConfig {
+    pub backend_id: String,
+    pub workspace_roots: Vec<PathBuf>,
+    pub extension_host: LocalExtensionHostManager,
+    pub artifact_api_base_url: String,
+    pub artifact_access_token: String,
+    pub artifact_cache_root: PathBuf,
+}
+
+impl ExtensionCommandHandler {
+    pub(super) fn new(config: ExtensionCommandHandlerConfig) -> Self {
+        Self {
+            backend_id: config.backend_id,
+            workspace_roots: config.workspace_roots,
+            extension_host: config.extension_host,
+            artifact_api_base_url: config.artifact_api_base_url,
+            artifact_access_token: config.artifact_access_token,
+            artifact_cache_root: config.artifact_cache_root,
+        }
+    }
+
     pub(super) async fn handle_extension_action_invoke(
         &self,
         id: String,
@@ -163,12 +192,12 @@ impl CommandHandler {
             return Ok(());
         };
         let cache_entry = download_and_cache_extension_artifact(ExtensionArtifactDownloadRequest {
-            api_base_url: self.extension_artifact_api_base_url.clone(),
-            access_token: self.extension_artifact_access_token.clone(),
+            api_base_url: self.artifact_api_base_url.clone(),
+            access_token: self.artifact_access_token.clone(),
             project_id: payload.project_id.clone(),
             artifact_id: artifact.artifact_id.clone(),
             archive_digest: artifact.archive_digest.clone(),
-            cache_root: self.extension_artifact_cache_root.clone(),
+            cache_root: self.artifact_cache_root.clone(),
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -222,12 +251,12 @@ impl CommandHandler {
         workspace: Option<&ExtensionInvocationWorkspaceRelay>,
     ) -> Result<(), String> {
         let cache_entry = download_and_cache_extension_artifact(ExtensionArtifactDownloadRequest {
-            api_base_url: self.extension_artifact_api_base_url.clone(),
-            access_token: self.extension_artifact_access_token.clone(),
+            api_base_url: self.artifact_api_base_url.clone(),
+            access_token: self.artifact_access_token.clone(),
             project_id: project_id.to_string(),
             artifact_id: artifact.artifact_id.clone(),
             archive_digest: artifact.archive_digest.clone(),
-            cache_root: self.extension_artifact_cache_root.clone(),
+            cache_root: self.artifact_cache_root.clone(),
         })
         .await
         .map_err(|error| error.to_string())?;

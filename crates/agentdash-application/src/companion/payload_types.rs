@@ -51,7 +51,7 @@ impl PayloadTypeRegistry {
             name: "task",
             is_request: true,
             is_response: false,
-            required_fields: &["prompt"],
+            required_fields: &["message"],
             response_type: Some("completion"),
             ui_hint: "task_dispatch_card",
             validator: None,
@@ -60,7 +60,7 @@ impl PayloadTypeRegistry {
             name: "review",
             is_request: true,
             is_response: false,
-            required_fields: &["prompt"],
+            required_fields: &["message"],
             response_type: Some("resolution"),
             ui_hint: "review_card",
             validator: None,
@@ -69,7 +69,7 @@ impl PayloadTypeRegistry {
             name: "approval",
             is_request: true,
             is_response: false,
-            required_fields: &["prompt"],
+            required_fields: &["message"],
             response_type: Some("decision"),
             ui_hint: "approval_card",
             validator: None,
@@ -187,16 +187,14 @@ impl PayloadTypeRegistry {
         }
 
         // 如果知道原始 request type，校验 response type 是否匹配
-        if let Some(req_type) = request_type {
-            if let Some(req_def) = self.types.get(req_type) {
-                if let Some(expected_response) = req_def.response_type {
-                    if type_name != expected_response {
-                        return Some(format!(
-                            "request type=`{req_type}` 期望 response type=`{expected_response}`，收到 `{type_name}`"
-                        ));
-                    }
-                }
-            }
+        if let Some(req_type) = request_type
+            && let Some(req_def) = self.types.get(req_type)
+            && let Some(expected_response) = req_def.response_type
+            && type_name != expected_response
+        {
+            return Some(format!(
+                "request type=`{req_type}` 期望 response type=`{expected_response}`，收到 `{type_name}`"
+            ));
         }
 
         for field in definition.required_fields {
@@ -341,7 +339,7 @@ mod tests {
     #[test]
     fn validate_request_passes_for_valid_task() {
         let registry = PayloadTypeRegistry::with_builtins();
-        let payload = serde_json::json!({"type": "task", "prompt": "审阅代码"});
+        let payload = serde_json::json!({"type": "task", "message": "审阅代码"});
         assert!(registry.validate_request(&payload).is_none());
     }
 
@@ -351,7 +349,7 @@ mod tests {
         let payload = serde_json::json!({"type": "task"});
         let error = registry.validate_request(&payload);
         assert!(error.is_some());
-        assert!(error.unwrap().contains("prompt"));
+        assert!(error.unwrap().contains("message"));
     }
 
     #[test]
@@ -374,7 +372,7 @@ mod tests {
     #[test]
     fn validate_request_skips_missing_type() {
         let registry = PayloadTypeRegistry::with_builtins();
-        let payload = serde_json::json!({"prompt": "no type field"});
+        let payload = serde_json::json!({"message": "no type field"});
         assert!(registry.validate_request(&payload).is_none());
     }
 

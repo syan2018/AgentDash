@@ -17,10 +17,20 @@ import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
 import { VfsBrowser } from "../vfs";
-import { resolveDefaultWorkspaceId } from "../task/dispatch-preference";
 import { useVfsPicker, VfsEntryPickerInline } from "../context-source";
 import { useStoryStore } from "../../stores/storyStore";
 import { sourceKindMeta } from "./context-source-utils";
+
+function resolveDefaultWorkspaceId(
+  projectConfig: ProjectConfig | undefined,
+  workspaces: Workspace[],
+): string {
+  const projectDefault = projectConfig?.default_workspace_id?.trim() ?? "";
+  if (projectDefault && workspaces.some((item) => item.id === projectDefault)) {
+    return projectDefault;
+  }
+  return "";
+}
 
 function buildFileContextSource(address: string, label: string, index: number): ContextSourceRef {
   return {
@@ -295,7 +305,7 @@ export function ContextPanel({
       <div className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
-            地址空间预览
+            资源浏览预览
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             以下是当前 Story 配置下 Agent 将看到的挂载视图。

@@ -1,244 +1,162 @@
 import { api } from "../api/client";
-import { asRecord, asRecordArray, asStringArray } from "../api/mappers";
+import type { AgentRunMessageCommandResponse } from "../generated/agent-run-mailbox-contracts";
+import type { UserInput } from "../generated/backbone-protocol";
+import type { JsonValue } from "../generated/common-contracts";
+import type {
+  CanvasAgentInputSubmitRequest,
+  CanvasAgentRunRuntimeSnapshotDto,
+  CanvasInteractionEventDto,
+  CanvasInteractionSnapshot,
+  CanvasInteractionSnapshotUpsertRequest,
+  CanvasRuntimeDiagnosticDto,
+  CanvasRuntimeBindingUpsertRequest,
+  CanvasRuntimeInvokeRequest,
+  CanvasRuntimeObservation,
+  CanvasRuntimeObservationUpsertRequest,
+} from "../generated/canvas-contracts";
 import type { ExtensionPackageInstallationResponse } from "../generated/extension-package-contracts";
 import type {
   Canvas,
-  CanvasDataBinding,
-  CanvasFile,
-  CanvasImportMap,
-  CanvasRuntimeBinding,
-  CanvasRuntimeBridgeSnapshot,
-  CanvasRuntimeFile,
+  CanvasListScope,
   CanvasRuntimeSnapshot,
-  CanvasSandboxConfig,
-  RuntimeActionDescriptor,
-  RuntimeContext,
+  CopyCanvasToPersonalInput,
+  CreateCanvasInput,
+  DeleteCanvasResult,
+  PublishCanvasToProjectInput,
   RuntimeInvocationResult,
-  RuntimePolicy,
-  RuntimeSurface,
+  UnpublishCanvasResult,
+  UpdateCanvasInput,
 } from "../types";
 
-function mapCanvasImportMap(raw: unknown): CanvasImportMap {
-  const value = asRecord(raw);
-  const imports = asRecord(value?.imports);
-
-  return {
-    imports: Object.fromEntries(
-      Object.entries(imports ?? {}).map(([key, value]) => [key, String(value ?? "")]),
-    ),
-  };
+export interface AgentRunCanvasBridgeIdentity {
+  run_id: string;
+  agent_id: string;
+  canvas_mount_id: string;
+  project_id: string;
 }
 
-function mapCanvasSandboxConfig(raw: unknown): CanvasSandboxConfig {
-  const value = asRecord(raw);
-  return {
-    libraries: asStringArray(value?.libraries),
-    import_map: mapCanvasImportMap(value?.import_map),
-  };
+export type CanvasRuntimeDiagnosticEntry = CanvasRuntimeDiagnosticDto;
+
+export type UploadCanvasRenderObservationInput = CanvasRuntimeObservationUpsertRequest;
+
+export type CanvasInteractionEventInput = CanvasInteractionEventDto;
+
+export type UploadCanvasInteractionSnapshotInput = CanvasInteractionSnapshotUpsertRequest;
+
+export interface SubmitCanvasAgentInput {
+  text?: string;
+  input?: UserInput[];
+  include_interaction_state?: boolean;
+  include_render_observation?: boolean;
+  delivery_intent?: "queue" | "steer";
+  client_command_id?: string;
+  interaction_snapshot_id?: string;
+  render_observation_id?: string;
 }
 
-function mapCanvasFile(raw: Record<string, unknown>): CanvasFile {
-  return {
-    path: String(raw.path ?? ""),
-    content: String(raw.content ?? ""),
-  };
+export interface CanvasRuntimeInvokeInput extends Omit<CanvasRuntimeInvokeRequest, "input"> {
+  input?: JsonValue;
 }
 
-function mapCanvasBinding(raw: Record<string, unknown>): CanvasDataBinding {
-  return {
-    alias: String(raw.alias ?? ""),
-    source_uri: String(raw.source_uri ?? ""),
-    content_type: String(raw.content_type ?? "application/json"),
-  };
+export type UpsertCanvasRuntimeBindingInput = CanvasRuntimeBindingUpsertRequest & {
+  alias: string;
+};
+
+function agentRunCanvasPath(
+  bridge: AgentRunCanvasBridgeIdentity,
+  route: string,
+): string {
+  return `/agent-runs/${encodeURIComponent(bridge.run_id)}`
+    + `/agents/${encodeURIComponent(bridge.agent_id)}`
+    + `/canvases/${encodeURIComponent(bridge.canvas_mount_id)}${route}`;
 }
 
-function mapCanvasRuntimeFile(raw: Record<string, unknown>): CanvasRuntimeFile {
-  return {
-    path: String(raw.path ?? ""),
-    content: String(raw.content ?? ""),
-    file_type: String(raw.file_type ?? "code"),
-  };
-}
-
-function mapCanvasRuntimeBinding(raw: Record<string, unknown>): CanvasRuntimeBinding {
-  return {
-    alias: String(raw.alias ?? ""),
-    source_uri: String(raw.source_uri ?? ""),
-    data_path: String(raw.data_path ?? ""),
-    content_type: String(raw.content_type ?? "application/json"),
-    resolved: Boolean(raw.resolved),
-  };
-}
-
-function mapRuntimePolicy(raw: unknown): RuntimePolicy {
-  const value = asRecord(raw);
-  return {
-    required_capabilities: asStringArray(value?.required_capabilities),
-    timeout_ms: typeof value?.timeout_ms === "number" ? value.timeout_ms : null,
-    allow_background: Boolean(value?.allow_background),
-  };
-}
-
-function mapRuntimeActionDescriptor(raw: Record<string, unknown>): RuntimeActionDescriptor {
-  return {
-    action_key: String(raw.action_key ?? ""),
-    kind: raw.kind === "setup" ? "setup" : "session_runtime",
-    description: raw.description != null ? String(raw.description) : null,
-    input_schema: raw.input_schema,
-    output_schema: raw.output_schema,
-    default_policy: mapRuntimePolicy(raw.default_policy),
-  };
-}
-
-function mapRuntimeContext(raw: unknown): RuntimeContext {
-  const value = asRecord(raw);
-  if (value?.type === "setup") {
-    return {
-      type: "setup",
-      project_id: value.project_id != null ? String(value.project_id) : null,
-      workspace_id: value.workspace_id != null ? String(value.workspace_id) : null,
-      backend_id: value.backend_id != null ? String(value.backend_id) : null,
-      root_ref: value.root_ref != null ? String(value.root_ref) : null,
-    };
+export async function fetchProjectCanvases(
+  projectId: string,
+  scope?: CanvasListScope,
+): Promise<Canvas[]> {
+  const params = new URLSearchParams();
+  if (scope) {
+    params.set("scope", scope);
   }
-
-  return {
-    type: "session",
-    session_id: String(value?.session_id ?? ""),
-    project_id: value?.project_id != null ? String(value.project_id) : null,
-    workspace_id: value?.workspace_id != null ? String(value.workspace_id) : null,
-  };
-}
-
-function mapRuntimeSurface(raw: unknown): RuntimeSurface | null {
-  const value = asRecord(raw);
-  if (!value) {
-    return null;
-  }
-
-  return {
-    context: mapRuntimeContext(value.context),
-    actions: asRecordArray(value.actions).map(mapRuntimeActionDescriptor),
-  };
-}
-
-function mapCanvasRuntimeBridge(raw: unknown): CanvasRuntimeBridgeSnapshot {
-  const value = asRecord(raw);
-  return {
-    enabled: Boolean(value?.enabled),
-    surface: mapRuntimeSurface(value?.surface),
-    disabled_reason: value?.disabled_reason != null ? String(value.disabled_reason) : null,
-  };
-}
-
-function mapCanvas(raw: Record<string, unknown>): Canvas {
-  return {
-    id: String(raw.id ?? ""),
-    project_id: String(raw.project_id ?? ""),
-    mount_id: String(raw.mount_id ?? ""),
-    title: String(raw.title ?? ""),
-    description: String(raw.description ?? ""),
-    entry_file: String(raw.entry_file ?? ""),
-    sandbox_config: mapCanvasSandboxConfig(raw.sandbox_config),
-    files: asRecordArray(raw.files).map(mapCanvasFile),
-    bindings: asRecordArray(raw.bindings).map(mapCanvasBinding),
-    created_at: String(raw.created_at ?? new Date().toISOString()),
-    updated_at: String(raw.updated_at ?? new Date().toISOString()),
-  };
-}
-
-export function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSnapshot {
-  return {
-    canvas_id: String(raw.canvas_id ?? ""),
-    session_id: raw.session_id != null ? String(raw.session_id) : null,
-    resource_surface_ref: raw.resource_surface_ref != null ? String(raw.resource_surface_ref) : null,
-    entry: String(raw.entry ?? ""),
-    files: asRecordArray(raw.files).map(mapCanvasRuntimeFile),
-    bindings: asRecordArray(raw.bindings).map(mapCanvasRuntimeBinding),
-    import_map: mapCanvasImportMap(raw.import_map),
-    libraries: asStringArray(raw.libraries),
-    runtime_bridge: mapCanvasRuntimeBridge(raw.runtime_bridge),
-  };
-}
-
-export interface CreateCanvasInput {
-  mount_id?: string;
-  title: string;
-  description?: string;
-  entry_file?: string;
-  sandbox_config?: CanvasSandboxConfig;
-  files?: CanvasFile[];
-  bindings?: CanvasDataBinding[];
-}
-
-export interface UpdateCanvasInput {
-  title?: string;
-  description?: string;
-  entry_file?: string;
-  sandbox_config?: CanvasSandboxConfig;
-  files?: CanvasFile[];
-  bindings?: CanvasDataBinding[];
-}
-
-export async function fetchProjectCanvases(projectId: string): Promise<Canvas[]> {
-  const raw = await api.get<Record<string, unknown>[]>(
-    `/projects/${encodeURIComponent(projectId)}/canvases`,
+  const query = params.toString();
+  return api.get<Canvas[]>(
+    query
+      ? `/projects/${encodeURIComponent(projectId)}/canvases?${query}`
+      : `/projects/${encodeURIComponent(projectId)}/canvases`,
   );
-  return raw.map(mapCanvas);
 }
 
 export async function createCanvas(
   projectId: string,
   input: CreateCanvasInput,
 ): Promise<Canvas> {
-  const raw = await api.post<Record<string, unknown>>(
+  return api.post<Canvas>(
     `/projects/${encodeURIComponent(projectId)}/canvases`,
     input,
   );
-  return mapCanvas(raw);
 }
 
 export async function fetchCanvas(canvasId: string): Promise<Canvas> {
-  const raw = await api.get<Record<string, unknown>>(`/canvases/${encodeURIComponent(canvasId)}`);
-  return mapCanvas(raw);
+  return api.get<Canvas>(`/canvases/${encodeURIComponent(canvasId)}`);
+}
+
+export async function fetchCanvasByMountId(
+  projectId: string,
+  canvasMountId: string,
+): Promise<Canvas> {
+  return api.get<Canvas>(
+    `/projects/${encodeURIComponent(projectId)}/canvases/by-mount/${encodeURIComponent(canvasMountId)}`,
+  );
 }
 
 export async function updateCanvas(
   canvasId: string,
   input: UpdateCanvasInput,
 ): Promise<Canvas> {
-  const raw = await api.put<Record<string, unknown>>(
+  return api.put<Canvas>(
     `/canvases/${encodeURIComponent(canvasId)}`,
     input,
   );
-  return mapCanvas(raw);
 }
 
-export async function deleteCanvas(canvasId: string): Promise<void> {
-  await api.delete(`/canvases/${encodeURIComponent(canvasId)}`);
+export async function deleteCanvas(canvasId: string): Promise<DeleteCanvasResult> {
+  return api.delete<DeleteCanvasResult>(`/canvases/${encodeURIComponent(canvasId)}`);
+}
+
+export async function publishCanvasToProject(
+  canvasId: string,
+  input: PublishCanvasToProjectInput = {},
+): Promise<Canvas> {
+  return api.post<Canvas>(
+    `/canvases/${encodeURIComponent(canvasId)}/publish-to-project`,
+    input,
+  );
+}
+
+export async function copyCanvasToPersonal(
+  canvasId: string,
+  input: CopyCanvasToPersonalInput = {},
+): Promise<Canvas> {
+  return api.post<Canvas>(
+    `/canvases/${encodeURIComponent(canvasId)}/copy-to-personal`,
+    input,
+  );
+}
+
+export async function unpublishCanvas(canvasId: string): Promise<UnpublishCanvasResult> {
+  return api.post<UnpublishCanvasResult>(
+    `/canvases/${encodeURIComponent(canvasId)}/unpublish`,
+    {},
+  );
 }
 
 export async function fetchCanvasRuntimeSnapshot(
   canvasId: string,
-  sessionId?: string | null,
 ): Promise<CanvasRuntimeSnapshot> {
-  const params = new URLSearchParams();
-  if (sessionId) {
-    params.set("session_id", sessionId);
-  }
-  const query = params.toString();
-  const raw = await api.get<Record<string, unknown>>(
-    query
-      ? `/canvases/${encodeURIComponent(canvasId)}/runtime-snapshot?${query}`
-      : `/canvases/${encodeURIComponent(canvasId)}/runtime-snapshot`,
+  return api.get<CanvasRuntimeSnapshot>(
+    `/canvases/${encodeURIComponent(canvasId)}/runtime-snapshot`,
   );
-  return mapCanvasRuntimeSnapshot(raw);
-}
-
-export interface CanvasRuntimeInvokeInput {
-  session_id: string;
-  action_key: string;
-  input?: unknown;
 }
 
 export interface PromoteCanvasToExtensionInput {
@@ -250,12 +168,60 @@ export interface PromoteCanvasToExtensionInput {
 }
 
 export async function invokeCanvasRuntimeAction(
-  canvasId: string,
+  bridge: AgentRunCanvasBridgeIdentity,
   input: CanvasRuntimeInvokeInput,
 ): Promise<RuntimeInvocationResult> {
+  const request: CanvasRuntimeInvokeRequest = {
+    action_key: input.action_key,
+    input: input.input ?? {},
+  };
   return api.post<RuntimeInvocationResult>(
-    `/canvases/${encodeURIComponent(canvasId)}/runtime-invoke`,
-    input,
+    agentRunCanvasPath(bridge, "/runtime-invoke"),
+    request,
+  );
+}
+
+export async function fetchAgentRunCanvasRuntimeSnapshot(
+  bridge: AgentRunCanvasBridgeIdentity,
+): Promise<CanvasAgentRunRuntimeSnapshotDto> {
+  return api.get<CanvasAgentRunRuntimeSnapshotDto>(agentRunCanvasPath(bridge, "/runtime-snapshot"));
+}
+
+export async function upsertAgentRunCanvasRuntimeBinding(
+  bridge: AgentRunCanvasBridgeIdentity,
+  input: UpsertCanvasRuntimeBindingInput,
+): Promise<CanvasAgentRunRuntimeSnapshotDto> {
+  return api.put<CanvasAgentRunRuntimeSnapshotDto>(
+    agentRunCanvasPath(bridge, `/runtime-bindings/${encodeURIComponent(input.alias)}`),
+    {
+      source_uri: input.source_uri,
+      content_type: input.content_type,
+    },
+  );
+}
+
+export async function uploadCanvasRenderObservation(
+  bridge: AgentRunCanvasBridgeIdentity,
+  input: UploadCanvasRenderObservationInput,
+): Promise<CanvasRuntimeObservation> {
+  return api.post<CanvasRuntimeObservation>(agentRunCanvasPath(bridge, "/runtime-observation"), input);
+}
+
+export async function uploadCanvasInteractionSnapshot(
+  bridge: AgentRunCanvasBridgeIdentity,
+  input: UploadCanvasInteractionSnapshotInput,
+): Promise<CanvasInteractionSnapshot> {
+  return api.post<CanvasInteractionSnapshot>(agentRunCanvasPath(bridge, "/interaction-snapshot"), input);
+}
+
+export async function submitCanvasAgentInput(
+  bridge: AgentRunCanvasBridgeIdentity,
+  input: SubmitCanvasAgentInput,
+): Promise<AgentRunMessageCommandResponse> {
+  const request = toCanvasAgentInputSubmitRequest(input);
+  return api.post<AgentRunMessageCommandResponse>(
+    agentRunCanvasPath(bridge, "/agent-input-submit"),
+    request,
   );
 }
 
@@ -267,4 +233,36 @@ export async function promoteCanvasToExtension(
     `/canvases/${encodeURIComponent(canvasId)}/promote-extension`,
     input,
   );
+}
+
+function toCanvasAgentInputSubmitRequest(input: SubmitCanvasAgentInput): CanvasAgentInputSubmitRequest {
+  const userInput = normalizeCanvasAgentInput(input);
+  if (userInput.length === 0) {
+    throw new Error("Canvas Agent submit 需要 input 或 text");
+  }
+  return {
+    input: userInput,
+    client_command_id: input.client_command_id ?? createCanvasClientCommandId(),
+    delivery_intent: input.delivery_intent,
+    interaction_snapshot_id: input.interaction_snapshot_id,
+    render_observation_id: input.render_observation_id,
+  };
+}
+
+function normalizeCanvasAgentInput(input: SubmitCanvasAgentInput): UserInput[] {
+  if (input.input && input.input.length > 0) {
+    return input.input;
+  }
+  const text = input.text?.trim();
+  if (!text) {
+    return [];
+  }
+  return [{ type: "text", text, text_elements: [] }];
+}
+
+function createCanvasClientCommandId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `canvas-agent-${crypto.randomUUID()}`;
+  }
+  return `canvas-agent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

@@ -63,6 +63,7 @@ import type {
   ContextUsageSource,
 } from "../../../generated/backbone-protocol";
 import type { SessionEventResponse } from "../../../generated/session-contracts";
+import type { ContextFrame } from "./contextFrame";
 import { resolveKind } from "./threadItemKind";
 
 type JsonRecord = Record<string, unknown>;
@@ -248,9 +249,56 @@ export function extractTextFromUserInputs(input: readonly UserInput[]): string {
     .join("\n");
 }
 
+/** 用户消息中的图片块（用专有 block 渲染，而非拍扁成文本）。 */
+export interface UserMessageImage {
+  /** 可直接作为 <img src> 的地址（data URL 或远程 URL）。 */
+  url: string;
+  /** 无障碍文本 / lightbox 标题。 */
+  alt: string;
+}
+
+/** 用户输入拆分结果：文本部分仍走文本气泡，图片部分走专有图片 block。 */
+export interface PartitionedUserInputs {
+  text: string;
+  images: UserMessageImage[];
+}
+
+/**
+ * 将用户输入拆为「文本」与「图片」两部分。
+ * image 块（含 data URL）单独成图片 block 渲染，避免把 base64 拍扁成文本；
+ * 其余块（text / localImage / skill / mention）仍按既有文本语义拼接。
+ */
+export function partitionUserInputs(input: readonly UserInput[]): PartitionedUserInputs {
+  const images: UserMessageImage[] = [];
+  const textParts: string[] = [];
+
+  for (const block of input) {
+    if (block.type === "image") {
+      images.push({ url: block.url, alt: `用户图片 ${images.length + 1}` });
+      continue;
+    }
+    const text = extractTextFromUserInput(block).trim();
+    if (text.length > 0) textParts.push(text);
+  }
+
+  return { text: textParts.join("\n"), images };
+}
+
 // ==================== 前端扩展类型 ====================
 
-export type SessionEventEnvelope = SessionEventResponse;
+export type SessionEventEnvelope = SessionEventResponse & {
+  /** 进度态事件标记：仅 live 显示，不写入可重放 rawEvents backlog。 */
+  ephemeral?: boolean;
+};
+
+/** UI 时间线顺序来源：durable 与 ephemeral progress 使用不同坐标。 */
+export type TimelineOrder =
+  | { kind: "durable"; seq: number }
+  | { kind: "anchored_progress"; anchorId: string; progressSeq: number }
+  | { kind: "local_progress"; receivedOrdinal: number; progressSeq: number };
+
+/** 同一 item 的事实新鲜度，避免低权威事件回写高权威 UI 状态。 */
+export type SessionItemFreshness = "started" | "progress" | "completed";
 
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =
@@ -273,7 +321,14 @@ export interface SessionDisplayEntry {
   id: string;
   sessionId: string;
   timestamp: number;
+  /** durable event seq；对纯 ephemeral entry 仅作诊断值，不参与 durable 时间线排序。 */
   eventSeq: number;
+  /** UI 排序事实源，拆开 durable event_seq 与 ephemeral progress_seq。 */
+  timelineOrder?: TimelineOrder;
+  /** 最近应用到该 entry 的 ephemeral_seq，只用于 progress 去重/诊断。 */
+  progressSeq?: number;
+  /** 同 item lifecycle freshness：completed > progress > started。 */
+  itemFreshness?: SessionItemFreshness;
   event: BackboneEvent;
   turnId?: string;
   entryIndex?: number;
@@ -281,6 +336,8 @@ export interface SessionDisplayEntry {
   isPendingApproval?: boolean;
   /** delta 累积后的文本（用于 agent_message_delta / reasoning_text_delta 等） */
   accumulatedText?: string;
+  /** model 层解析后的 context frame，供 UI 直接渲染。 */
+  contextFrame?: ContextFrame;
 }
 
 /** 工具调用聚合状态 */
@@ -306,6 +363,9 @@ export interface AggregatedThinkingGroup {
   entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
+  turnId?: string;
+  eventSeq: number;
+  isStreamingThinking?: boolean;
 }
 
 /** 相邻 ContextFrame 的用户侧聚合组 */
@@ -420,6 +480,7 @@ export function extractTextFromEvent(event: BackboneEvent): string {
 export function getThreadItemTitle(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
       return item.command;
     case "fileChange":
       return item.changes.length > 0 ? item.changes[0]!.path : "文件变更";
@@ -456,6 +517,7 @@ export function getThreadItemTitle(item: AgentDashThreadItem): string {
 export function getThreadItemStatus(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":

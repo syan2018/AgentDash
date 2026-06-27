@@ -26,12 +26,11 @@ import {
   bindingToInput,
   candidateToBindingInput,
   detectedFactsSummary,
-  identityKindLabels,
   identitySummary,
   localAuthorizedBackends,
   summarizeResolution,
 } from "../model/workspaceRouting";
-import { TERMS } from "../model/workspaceTerms";
+import { IDENTITY_KIND_LABELS, TERMS } from "../model/workspaceTerms";
 import { BindingStatusBadge, ResolutionBadge } from "./badges";
 import { CandidateList } from "./CandidateList";
 import { DirectoryDetector } from "./DirectoryDetector";
@@ -149,14 +148,14 @@ export function WorkspaceDetailDrawer({
   const handleAddCandidateBinding = (candidate: WorkspaceInventoryCandidate) => {
     const binding = candidateToBindingInput(candidate);
     if (bindings.some((item) => bindingDraftKey(item) === bindingDraftKey(binding))) {
-      setFeedback({ tone: "info", text: "这个目录已在当前运行位置中" });
+      setFeedback({ tone: "info", text: "这个目录已在当前目录绑定中" });
       return;
     }
     setBindings((current) => [...current, binding]);
     if (!defaultBindingId) {
       setDefaultBindingId(binding.id ?? null);
     }
-    setFeedback({ tone: "success", text: "已加入运行位置，保存后生效" });
+    setFeedback({ tone: "success", text: "已加入目录绑定，保存后生效" });
   };
 
   const handleSave = async () => {
@@ -166,7 +165,7 @@ export function WorkspaceDetailDrawer({
       return;
     }
     if (!bindingsAllowedForCurrentUser()) {
-      setFeedback({ tone: "error", text: "当前权限只能从已有可选目录确认运行位置，不能添加新的可选目录" });
+      setFeedback({ tone: "error", text: "当前权限只能从已有可选目录确认目录绑定，不能添加新的可选目录" });
       return;
     }
 
@@ -187,11 +186,11 @@ export function WorkspaceDetailDrawer({
     });
     if (!updated) return;
 
-    // 先 await 刷新（store 已 upsert），再驻留并刷新「运行解析预览」。
+    // 先 await 刷新（store 已 upsert），再驻留并刷新「目录解析预览」。
     // 把签名对齐到刚保存的结果，避免渲染期同步逻辑清掉这条成功反馈、并保留用户已编辑的字段。
     setSyncedSignature(`${updated.id}:${updated.updated_at}`);
     await onCandidatesChanged();
-    setFeedback({ tone: "success", text: "已保存变更，下方运行解析预览已更新。" });
+    setFeedback({ tone: "success", text: "已保存变更，下方目录解析预览已更新。" });
   };
 
   const handleDelete = async () => {
@@ -265,7 +264,7 @@ export function WorkspaceDetailDrawer({
                 onChange={(event) => handleIdentityKindChange(event.target.value as WorkspaceIdentityKind)}
                 className="agentdash-form-select"
               >
-                {Object.entries(identityKindLabels).map(([value, label]) => (
+                {Object.entries(IDENTITY_KIND_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
@@ -307,8 +306,8 @@ export function WorkspaceDetailDrawer({
 
           {resolutionSummary && (
             <DetailSection
-              title="运行解析预览"
-              description="展示保存后这个 Workspace 会运行在哪个 Backend / 目录。"
+              title="目录解析预览"
+              description="展示保存后这个 Workspace 会绑定到哪个 Backend / 目录。"
             >
               <div className="rounded-[8px] border border-border bg-background px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -328,17 +327,17 @@ export function WorkspaceDetailDrawer({
           )}
 
           <DetailSection
-            title="运行位置"
+            title="目录绑定"
             description={canManageBindings
-              ? "选择这个 Workspace 可以运行在哪些 Backend / 目录；运行时会优先使用在线的 Backend。"
-              : "当前权限只能从已有可选目录确认运行位置。"}
+              ? "选择这个 Workspace 已确认的 Backend / 目录。"
+              : "当前权限只能从已有可选目录确认目录绑定。"}
           >
             <div className="space-y-4">
               <div className="space-y-2">
-                <p className="text-xs font-medium text-foreground">当前运行位置</p>
+                <p className="text-xs font-medium text-foreground">当前目录绑定</p>
                 {dedupeBindings(bindings).length === 0 ? (
                   <p className="rounded-[8px] border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    当前还没有运行位置。请从下方可选目录确认一个 Backend / 目录。
+                    当前还没有目录绑定。请从下方可选目录确认一个 Backend / 目录。
                   </p>
                 ) : (
                   dedupeBindings(bindings).map((binding) => (

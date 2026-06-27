@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 use super::workspace::FileEntryRelay;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileReadPayload {
     pub call_id: String,
     pub path: String,
     pub mount_root_ref: String,
     /// 0-based 起始行号；省略 = 从头读。
-    /// 远端 backend 未识别此字段时按"读全文"回退（兼容旧实现）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
     /// 行数上限；省略 = 读到 EOF。
-    /// 远端 backend 未识别此字段时按"读全文"回退。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileWritePayload {
     pub call_id: String,
     pub path: String,
@@ -26,6 +26,7 @@ pub struct ToolFileWritePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileDeletePayload {
     pub call_id: String,
     pub path: String,
@@ -33,6 +34,7 @@ pub struct ToolFileDeletePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileRenamePayload {
     pub call_id: String,
     pub from_path: String,
@@ -41,6 +43,7 @@ pub struct ToolFileRenamePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolApplyPatchPayload {
     pub call_id: String,
     pub patch: String,
@@ -48,6 +51,7 @@ pub struct ToolApplyPatchPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolShellExecPayload {
     pub call_id: String,
     pub command: String,
@@ -63,59 +67,88 @@ pub struct ToolShellExecPayload {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// 单次 shell_start 等待首包输出/终态的窗口；到期后进程继续由本机 runtime 持有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yield_time_ms: Option<u64>,
+    /// retained output buffer 的每 session 上限。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_bytes: Option<usize>,
+    /// 使用 PTY 执行；省略或 false 时使用 stdout/stderr pipe。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tty: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellReadPayload {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellInputPayload {
+    pub session_id: String,
+    /// 空字符串表示 poll/read wait，不向 stdin 写入字节。
+    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolShellTerminatePayload {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolFileListPayload {
     pub call_id: String,
     pub path: String,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
-    #[serde(default)]
     pub recursive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolSearchPayload {
     pub call_id: String,
     pub mount_root_ref: String,
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
     pub is_regex: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_glob: Option<String>,
-    #[serde(default = "default_search_max_results")]
     pub max_results: usize,
-    #[serde(default)]
     pub context_lines: usize,
-    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 true（与历史一致）。
-    /// 旧远端不识别此字段时反序列化为 default = true，行为不变。
-    #[serde(default = "default_case_sensitive")]
+    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。
     pub case_sensitive: bool,
     /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep `--multiline
     /// --multiline-dotall`）。
-    #[serde(default)]
     pub multiline: bool,
     /// `-B` 等价；与 `context_lines` 同时设置时取 max。
-    #[serde(default)]
     pub before_lines: usize,
     /// `-A` 等价。
-    #[serde(default)]
     pub after_lines: usize,
 }
 
-fn default_search_max_results() -> usize {
-    50
-}
-
-fn default_case_sensitive() -> bool {
-    true
-}
 fn default_utf8() -> String {
     "utf-8".to_string()
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,14 +197,151 @@ pub struct ToolApplyPatchResponse {
     pub deleted: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolShellSessionState {
+    Starting,
+    Running,
+    Completed,
+    Failed,
+    TimedOut,
+    Killed,
+    Lost,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolShellTerminateStatus {
+    Killed,
+    AlreadyExited,
+    UnknownSession,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolShellTruncationInfo {
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub omitted_bytes: usize,
+    #[serde(default)]
+    pub omitted_chunks: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted_tokens_estimate: Option<usize>,
+}
+
+impl ToolShellTruncationInfo {
+    pub fn is_empty(&self) -> bool {
+        !self.truncated
+            && self.omitted_bytes == 0
+            && self.omitted_chunks == 0
+            && self.omitted_tokens_estimate.is_none()
+    }
+
+    pub fn merge(&self, other: &Self) -> Self {
+        let omitted_bytes = self.omitted_bytes.saturating_add(other.omitted_bytes);
+        let omitted_chunks = self.omitted_chunks.saturating_add(other.omitted_chunks);
+        let omitted_tokens_estimate =
+            match (self.omitted_tokens_estimate, other.omitted_tokens_estimate) {
+                (Some(left), Some(right)) => Some(left.saturating_add(right)),
+                (Some(value), None) | (None, Some(value)) => Some(value),
+                (None, None) => None,
+            };
+        Self {
+            truncated: self.truncated || other.truncated,
+            omitted_bytes,
+            omitted_chunks,
+            omitted_tokens_estimate,
+        }
+    }
+}
+
+pub const LIVE_OUTPUT_EVENT_MAX_BYTES: usize = 64 * 1024;
+
+pub fn truncate_live_output_text(
+    text: &str,
+    max_bytes: usize,
+) -> (String, ToolShellTruncationInfo) {
+    let max_bytes = max_bytes.max(1);
+    if text.len() <= max_bytes {
+        return (text.to_string(), ToolShellTruncationInfo::default());
+    }
+
+    let end = text
+        .char_indices()
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .take_while(|end| *end <= max_bytes)
+        .last()
+        .unwrap_or(0);
+    let bounded = text[..end].to_string();
+    let omitted_bytes = text.len().saturating_sub(bounded.len());
+    (
+        bounded,
+        ToolShellTruncationInfo {
+            truncated: true,
+            omitted_bytes,
+            omitted_chunks: 1,
+            omitted_tokens_estimate: None,
+        },
+    )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellOutputChunk {
+    pub seq: u64,
+    pub stream: ShellOutputStream,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolShellExecResponse {
     pub call_id: String,
-    pub exit_code: i32,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     #[serde(default)]
     pub stdout: String,
     #[serde(default)]
     pub stderr: String,
+    #[serde(default)]
+    pub pty: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunks: Vec<ToolShellOutputChunk>,
+    pub next_seq: u64,
+    #[serde(default)]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellReadResponse {
+    pub session_id: String,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub chunks: Vec<ToolShellOutputChunk>,
+    pub next_seq: u64,
+    #[serde(default)]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellInputResponse {
+    pub session_id: String,
+    pub accepted: bool,
+    pub stdin_closed: bool,
+    pub read: ToolShellReadResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolShellTerminateResponse {
+    pub session_id: String,
+    pub status: ToolShellTerminateStatus,
+    pub state: ToolShellSessionState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFileListResponse {
@@ -205,6 +375,17 @@ pub struct ToolShellOutputPayload {
     pub call_id: String,
     pub delta: String,
     pub stream: ShellOutputStream,
+    #[serde(default, skip_serializing_if = "ToolShellTruncationInfo::is_empty")]
+    pub truncation: ToolShellTruncationInfo,
+}
+
+impl ToolShellOutputPayload {
+    pub fn bounded(mut self, max_bytes: usize) -> Self {
+        let (delta, truncation) = truncate_live_output_text(&self.delta, max_bytes);
+        self.delta = delta;
+        self.truncation = self.truncation.merge(&truncation);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -212,6 +393,7 @@ pub struct ToolShellOutputPayload {
 pub enum ShellOutputStream {
     Stdout,
     Stderr,
+    Pty,
 }
 
 #[cfg(test)]
@@ -237,16 +419,38 @@ mod tests {
     }
 
     #[test]
-    fn tool_file_read_payload_legacy_json_without_offset_limit() {
-        // 旧 JSON（没有 offset/limit 字段）反序列化后两字段为 None。
-        let legacy = json!({
+    fn tool_file_read_payload_without_range_uses_full_file() {
+        let value = json!({
             "call_id": "c1",
             "path": "src/main.rs",
             "mount_root_ref": "main"
         });
-        let decoded: ToolFileReadPayload = serde_json::from_value(legacy).expect("deserialize");
+        let decoded: ToolFileReadPayload = serde_json::from_value(value).expect("deserialize");
         assert!(decoded.offset.is_none());
         assert!(decoded.limit.is_none());
+    }
+
+    #[test]
+    fn tool_file_read_payload_rejects_legacy_workspace_root() {
+        let legacy = json!({
+            "call_id": "c1",
+            "path": "src/main.rs",
+            "workspace_root": "/workspace"
+        });
+        let error = serde_json::from_value::<ToolFileReadPayload>(legacy)
+            .expect_err("workspace_root is not part of the current payload");
+        assert!(error.to_string().contains("workspace_root"));
+    }
+
+    #[test]
+    fn tool_file_read_payload_requires_mount_root_ref() {
+        let missing_mount = json!({
+            "call_id": "c1",
+            "path": "src/main.rs"
+        });
+        let error = serde_json::from_value::<ToolFileReadPayload>(missing_mount)
+            .expect_err("mount_root_ref is required");
+        assert!(error.to_string().contains("mount_root_ref"));
     }
 
     #[test]
@@ -262,6 +466,35 @@ mod tests {
         // skip_serializing_if = Option::is_none ⇒ JSON 不应含这两个 key。
         assert!(!s.contains("\"offset\""));
         assert!(!s.contains("\"limit\""));
+    }
+
+    #[test]
+    fn shell_output_payload_defaults_missing_truncation() {
+        let payload: ToolShellOutputPayload = serde_json::from_value(json!({
+            "call_id": "call-1",
+            "delta": "ok\n",
+            "stream": "stdout"
+        }))
+        .expect("payload should deserialize");
+
+        assert!(!payload.truncation.truncated);
+        assert_eq!(payload.truncation.omitted_bytes, 0);
+    }
+
+    #[test]
+    fn live_output_payload_bounded_is_utf8_safe() {
+        let payload = ToolShellOutputPayload {
+            call_id: "call-1".to_string(),
+            delta: "好".repeat(10),
+            stream: ShellOutputStream::Stdout,
+            truncation: ToolShellTruncationInfo::default(),
+        }
+        .bounded(7);
+
+        assert!(payload.delta.is_char_boundary(payload.delta.len()));
+        assert!(payload.delta.len() <= 7);
+        assert!(payload.truncation.truncated);
+        assert!(payload.truncation.omitted_bytes > 0);
     }
 
     #[test]
@@ -293,19 +526,35 @@ mod tests {
     }
 
     #[test]
-    fn tool_search_payload_legacy_json_uses_defaults() {
-        // 旧 JSON 缺 grep 新字段 ⇒ default 值（case_sensitive=true，其余=0/false）。
-        let legacy = json!({
+    fn tool_search_payload_rejects_missing_current_options() {
+        let missing_options = json!({
             "call_id": "c1",
             "mount_root_ref": "m",
             "query": "x",
             "max_results": 50
         });
-        let decoded: ToolSearchPayload = serde_json::from_value(legacy).expect("deserialize");
-        assert!(decoded.case_sensitive);
-        assert!(!decoded.multiline);
-        assert_eq!(decoded.before_lines, 0);
-        assert_eq!(decoded.after_lines, 0);
-        assert_eq!(decoded.context_lines, 0);
+        let error = serde_json::from_value::<ToolSearchPayload>(missing_options)
+            .expect_err("search options are required in current payload");
+        assert!(error.to_string().contains("is_regex"));
+    }
+
+    #[test]
+    fn tool_search_payload_rejects_unknown_legacy_workspace_root() {
+        let legacy = json!({
+            "call_id": "c1",
+            "mount_root_ref": "m",
+            "workspace_root": "/workspace",
+            "query": "x",
+            "is_regex": false,
+            "max_results": 50,
+            "context_lines": 0,
+            "case_sensitive": true,
+            "multiline": false,
+            "before_lines": 0,
+            "after_lines": 0
+        });
+        let error = serde_json::from_value::<ToolSearchPayload>(legacy)
+            .expect_err("unknown workspace_root should be rejected");
+        assert!(error.to_string().contains("workspace_root"));
     }
 }

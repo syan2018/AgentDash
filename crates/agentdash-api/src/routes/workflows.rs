@@ -7,29 +7,47 @@ use axum::{
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use agentdash_application::hooks::hook_rule_preset_registry;
-use agentdash_application::workflow::{
-    ActivityLifecycleCatalogService, LifecycleDispatchService, OrchestrationExecutorLauncher,
-    ScriptCompiler, SubmitHumanGateDecisionInput, WorkflowScriptPreflightInput,
-    WorkflowScriptPreflightService, lifecycle_run_view_builder,
+use agentdash_application::capability::tool_catalog::{
+    CapabilityCatalog as ApplicationCapabilityCatalog,
+    CapabilityCatalogEntry as ApplicationCapabilityCatalogEntry,
+    CapabilityCatalogScope as ApplicationCapabilityCatalogScope,
+    ToolCatalogCluster as ApplicationToolCatalogCluster,
+    ToolCatalogDescriptor as ApplicationToolCatalogDescriptor,
+    ToolCatalogPlatformMcpScope as ApplicationToolCatalogPlatformMcpScope,
+    ToolCatalogSource as ApplicationToolCatalogSource,
+};
+use agentdash_application_hooks::{HookRulePreset, hook_rule_preset_registry};
+use agentdash_application_lifecycle::{
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    run_view_builder,
+};
+use agentdash_application_workflow::{
+    ActivityLifecycleCatalogService, OrchestrationExecutorDrainResult,
+    OrchestrationExecutorLauncher, ScriptCompiler, SubmitHumanGateDecisionInput,
+    WorkflowScriptPreflightInput, WorkflowScriptPreflightService,
 };
 use agentdash_contracts::workflow::{
-    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    HookPresetResponse, HookPresetsResponse, PreflightWorkflowScriptRequest,
+    AgentProcedureResponse, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
+    CapabilityScopeDto, ContinueLifecycleRunResponse, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, HookPresetResponse, HookPresetsResponse,
+    LaunchedAgentNodeDto, LifecycleRunView, OpenedHumanGateDto,
+    OrchestrationExecutorDrainResultDto, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
     PreflightWorkflowScriptResponse, RegisterHookPresetResponse,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
-    ValidateHookScriptResponse, ValidationSeverity as ContractValidationSeverity,
+    ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse,
+    ValidationSeverity as ContractValidationSeverity, WorkflowGraphResponse,
     WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
     WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
-    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
-    LifecycleRunStartIntent, OrchestrationSourceRef, ValidationIssue, ValidationSeverity,
-    WorkflowGraph, WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
+    OrchestrationSourceRef, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphDraft,
+    WorkflowGraphRef, WorkflowScriptCapabilitySummary, WorkflowScriptProvenance,
     WorkflowScriptProvenanceSource, workflow_script_source_digest,
 };
 
+use super::lifecycle_contracts::lifecycle_run_view_to_contract;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
@@ -39,13 +57,13 @@ use crate::dto::{
     ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
-use agentdash_application::session::context::normalize_string;
+use agentdash_application_runtime_session::session::context::normalize_string;
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<AgentProcedure>>, ApiError> {
+) -> Result<Json<Vec<AgentProcedureResponse>>, ApiError> {
     let project_id = parse_project_id_query(query.project_id.as_deref())?;
     load_project_with_permission(
         state.as_ref(),
@@ -59,7 +77,12 @@ pub async fn list_workflows(
         .agent_procedure_repo
         .list_by_project(project_id)
         .await?;
-    Ok(Json(definitions))
+    Ok(Json(
+        definitions
+            .into_iter()
+            .map(agent_procedure_to_contract_response)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
@@ -110,10 +133,22 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             "/hook-presets/custom/{key}",
             axum::routing::delete(delete_hook_preset),
         )
-        .route("/lifecycle-runs", axum::routing::post(start_lifecycle_run))
+        .route("/lifecycle-runs", axum::routing::post(create_lifecycle_run))
+        .route(
+            "/lifecycle-runs/commands/create-and-continue",
+            axum::routing::post(create_and_continue_lifecycle_run),
+        )
         .route(
             "/lifecycle-runs/{id}",
             axum::routing::get(get_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/{id}/continue",
+            axum::routing::post(continue_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/{id}/drain",
+            axum::routing::post(continue_lifecycle_run),
         )
         .route(
             "/lifecycle-runs/{id}/orchestration-human-decisions",
@@ -125,7 +160,7 @@ pub async fn list_activity_lifecycles(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
-) -> Result<Json<Vec<WorkflowGraph>>, ApiError> {
+) -> Result<Json<Vec<WorkflowGraphResponse>>, ApiError> {
     let project_id = parse_project_id_query(query.project_id.as_deref())?;
     load_project_with_permission(
         state.as_ref(),
@@ -139,14 +174,19 @@ pub async fn list_activity_lifecycles(
         .workflow_graph_repo
         .list_by_project(project_id)
         .await?;
-    Ok(Json(definitions))
+    Ok(Json(
+        definitions
+            .into_iter()
+            .map(workflow_graph_to_contract_response)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
 }
 
 pub async fn create_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateWorkflowGraphRequest>,
-) -> Result<Json<WorkflowGraph>, ApiError> {
+) -> Result<Json<WorkflowGraphResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -155,30 +195,30 @@ pub async fn create_workflow_graph(
         ProjectPermission::Edit,
     )
     .await?;
-    let definition = WorkflowGraph::new(
+    let definition = WorkflowGraph::new(WorkflowGraphDraft {
         project_id,
-        req.key,
-        req.name,
-        req.description,
-        DefinitionSource::UserAuthored,
-        req.entry_activity_key,
-        req.activities,
-        req.transitions,
-    )
+        key: req.key,
+        name: req.name,
+        description: req.description,
+        source: DefinitionSource::UserAuthored,
+        entry_activity_key: req.entry_activity_key,
+        activities: req.activities,
+        transitions: req.transitions,
+    })
     .map_err(ApiError::BadRequest)?;
     let service = ActivityLifecycleCatalogService::new(
         state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
     );
     let saved = service.upsert_workflow_graph(definition).await?;
-    Ok(Json(saved))
+    Ok(Json(workflow_graph_to_contract_response(saved)?))
 }
 
 pub async fn get_workflow_graph(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<WorkflowGraph>, ApiError> {
+) -> Result<Json<WorkflowGraphResponse>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let definition = state
         .repos
@@ -193,7 +233,7 @@ pub async fn get_workflow_graph(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(definition))
+    Ok(Json(workflow_graph_to_contract_response(definition)?))
 }
 
 pub async fn update_workflow_graph(
@@ -201,7 +241,7 @@ pub async fn update_workflow_graph(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkflowGraphRequest>,
-) -> Result<Json<WorkflowGraph>, ApiError> {
+) -> Result<Json<WorkflowGraphResponse>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let mut definition = state
         .repos
@@ -236,7 +276,7 @@ pub async fn update_workflow_graph(
         state.repos.workflow_graph_repo.as_ref(),
     );
     let saved = service.upsert_workflow_graph(definition).await?;
-    Ok(Json(saved))
+    Ok(Json(workflow_graph_to_contract_response(saved)?))
 }
 
 pub async fn validate_workflow_graph(
@@ -252,16 +292,16 @@ pub async fn validate_workflow_graph(
         ProjectPermission::View,
     )
     .await?;
-    match WorkflowGraph::new(
+    match WorkflowGraph::new(WorkflowGraphDraft {
         project_id,
-        req.key,
-        req.name,
-        req.description,
-        DefinitionSource::UserAuthored,
-        req.entry_activity_key,
-        req.activities,
-        req.transitions,
-    ) {
+        key: req.key,
+        name: req.name,
+        description: req.description,
+        source: DefinitionSource::UserAuthored,
+        entry_activity_key: req.entry_activity_key,
+        activities: req.activities,
+        transitions: req.transitions,
+    }) {
         Ok(definition) => {
             let service = ActivityLifecycleCatalogService::new(
                 state.repos.agent_procedure_repo.as_ref(),
@@ -394,11 +434,11 @@ pub async fn delete_workflow_graph(
     Ok(Json(DeleteWorkflowGraphResponse { deleted: true }))
 }
 
-pub async fn start_lifecycle_run(
+pub async fn create_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<StartWorkflowRunRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
+) -> Result<Json<LifecycleRunView>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -408,52 +448,69 @@ pub async fn start_lifecycle_run(
     )
     .await?;
     let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
-    let dispatch_service = LifecycleDispatchService::new(
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_agent_repo.as_ref(),
-        state.repos.agent_frame_repo.as_ref(),
-        state.repos.lifecycle_subject_association_repo.as_ref(),
-        state.repos.lifecycle_gate_repo.as_ref(),
-        state.repos.agent_lineage_repo.as_ref(),
-    )
-    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
-    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
-    let dispatch_result = dispatch_service
-        .start_lifecycle_run(&LifecycleRunStartIntent {
+    let run = lifecycle_command_service(&state)
+        .create_lifecycle_run(CreateLifecycleRunCommand {
             project_id,
             source: ExecutionSource::Api,
             workflow_graph_ref,
         })
         .await?;
-    let run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(dispatch_result.run_ref)
-        .await?
-        .ok_or_else(|| {
-            ApiError::Internal(format!(
-                "Lifecycle dispatch 未持久化 run {}",
-                dispatch_result.run_ref
-            ))
-        })?;
-    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
-        .with_function_runner(state.services.function_runner.clone());
-    launcher.drain_ready_nodes(run.id).await?;
-    let latest_run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(run.id)
-        .await?
-        .unwrap_or(run);
-    Ok(Json(latest_run))
+    Ok(Json(lifecycle_run_to_contract_view(&state, &run).await?))
+}
+
+pub async fn create_and_continue_lifecycle_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<StartWorkflowRunRequest>,
+) -> Result<Json<ContinueLifecycleRunResponse>, ApiError> {
+    let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
+    let result = lifecycle_command_service(&state)
+        .create_and_continue_lifecycle_run(CreateLifecycleRunCommand {
+            project_id,
+            source: ExecutionSource::Api,
+            workflow_graph_ref,
+        })
+        .await?;
+    Ok(Json(
+        continue_lifecycle_run_result_to_contract(&state, result).await?,
+    ))
+}
+
+pub async fn continue_lifecycle_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(run_id): Path<String>,
+) -> Result<Json<ContinueLifecycleRunResponse>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let run = load_lifecycle_run(&state, run_id).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let result = lifecycle_command_service(&state)
+        .continue_lifecycle_run(run_id)
+        .await?;
+    Ok(Json(
+        continue_lifecycle_run_result_to_contract(&state, result).await?,
+    ))
 }
 
 pub async fn get_lifecycle_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(run_id): Path<String>,
-) -> Result<Json<LifecycleRun>, ApiError> {
+) -> Result<Json<LifecycleRunView>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
     let run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
@@ -463,7 +520,7 @@ pub async fn get_lifecycle_run(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(run))
+    Ok(Json(lifecycle_run_to_contract_view(&state, &run).await?))
 }
 
 pub async fn submit_orchestration_human_decision(
@@ -483,7 +540,8 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
-    let launcher = OrchestrationExecutorLauncher::new(state.repos.clone())
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let launcher = OrchestrationExecutorLauncher::new(state.repos.to_workflow_repository_set())
         .with_function_runner(state.services.function_runner.clone());
     let result = launcher
         .submit_human_gate_decision(SubmitHumanGateDecisionInput {
@@ -497,10 +555,9 @@ pub async fn submit_orchestration_human_decision(
                 .unwrap_or_else(|| current_user.user_id.to_string()),
         })
         .await?;
-    let view =
-        lifecycle_run_view_builder::build_lifecycle_run_view(&state.repos, &result.run).await?;
+    let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &result.run).await?;
     Ok(Json(SubmitOrchestrationHumanDecisionResponse {
-        run: view,
+        run: lifecycle_run_view_to_contract(view),
         gate_id: result.gate_id.to_string(),
     }))
 }
@@ -509,7 +566,7 @@ pub async fn create_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateAgentProcedureRequest>,
-) -> Result<Json<AgentProcedure>, ApiError> {
+) -> Result<Json<AgentProcedureResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -528,14 +585,14 @@ pub async fn create_agent_procedure(
     )
     .map_err(ApiError::BadRequest)?;
     let saved = upsert_agent_procedure(state.as_ref(), definition).await?;
-    Ok(Json(saved))
+    Ok(Json(agent_procedure_to_contract_response(saved)?))
 }
 
 pub async fn get_agent_procedure(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<AgentProcedure>, ApiError> {
+) -> Result<Json<AgentProcedureResponse>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let definition = state
         .repos
@@ -550,7 +607,7 @@ pub async fn get_agent_procedure(
         ProjectPermission::View,
     )
     .await?;
-    Ok(Json(definition))
+    Ok(Json(agent_procedure_to_contract_response(definition)?))
 }
 
 pub async fn update_agent_procedure(
@@ -558,7 +615,7 @@ pub async fn update_agent_procedure(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentProcedureRequest>,
-) -> Result<Json<AgentProcedure>, ApiError> {
+) -> Result<Json<AgentProcedureResponse>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let mut definition = state
         .repos
@@ -598,7 +655,7 @@ pub async fn update_agent_procedure(
         )));
     }
     let saved = upsert_agent_procedure(state.as_ref(), definition).await?;
-    Ok(Json(saved))
+    Ok(Json(agent_procedure_to_contract_response(saved)?))
 }
 
 pub async fn validate_agent_procedure(
@@ -694,6 +751,97 @@ pub async fn delete_agent_procedure(
     Ok(Json(DeleteAgentProcedureResponse { deleted: true }))
 }
 
+fn agent_procedure_to_contract_response(
+    definition: AgentProcedure,
+) -> Result<AgentProcedureResponse, ApiError> {
+    Ok(AgentProcedureResponse {
+        id: definition.id.to_string(),
+        project_id: definition.project_id.to_string(),
+        key: definition.key,
+        name: definition.name,
+        description: definition.description,
+        target_kinds: default_workflow_target_kinds(),
+        source: definition_source_to_contract(definition.source),
+        installed_source: definition
+            .installed_source
+            .map(installed_asset_source_to_contract),
+        version: definition.version,
+        contract: domain_to_contract_value(definition.contract, "agent_procedure.contract")?,
+        created_at: definition.created_at.to_rfc3339(),
+        updated_at: definition.updated_at.to_rfc3339(),
+    })
+}
+
+fn workflow_graph_to_contract_response(
+    definition: WorkflowGraph,
+) -> Result<WorkflowGraphResponse, ApiError> {
+    Ok(WorkflowGraphResponse {
+        id: definition.id.to_string(),
+        project_id: definition.project_id.to_string(),
+        key: definition.key,
+        name: definition.name,
+        description: definition.description,
+        target_kinds: default_workflow_target_kinds(),
+        source: definition_source_to_contract(definition.source),
+        installed_source: definition
+            .installed_source
+            .map(installed_asset_source_to_contract),
+        version: definition.version,
+        entry_activity_key: definition.entry_activity_key,
+        activities: domain_to_contract_value(definition.activities, "workflow_graph.activities")?,
+        transitions: domain_to_contract_value(
+            definition.transitions,
+            "workflow_graph.transitions",
+        )?,
+        created_at: definition.created_at.to_rfc3339(),
+        updated_at: definition.updated_at.to_rfc3339(),
+    })
+}
+
+fn default_workflow_target_kinds() -> Vec<WorkflowTargetKind> {
+    vec![WorkflowTargetKind::Story]
+}
+
+fn definition_source_to_contract(
+    source: agentdash_domain::workflow::DefinitionSource,
+) -> agentdash_contracts::workflow::DefinitionSource {
+    match source {
+        agentdash_domain::workflow::DefinitionSource::BuiltinSeed => {
+            agentdash_contracts::workflow::DefinitionSource::BuiltinSeed
+        }
+        agentdash_domain::workflow::DefinitionSource::UserAuthored => {
+            agentdash_contracts::workflow::DefinitionSource::UserAuthored
+        }
+        agentdash_domain::workflow::DefinitionSource::Cloned => {
+            agentdash_contracts::workflow::DefinitionSource::Cloned
+        }
+    }
+}
+
+fn installed_asset_source_to_contract(
+    source: agentdash_domain::shared_library::InstalledAssetSource,
+) -> agentdash_contracts::shared_library::InstalledAssetSourceDto {
+    agentdash_contracts::shared_library::InstalledAssetSourceDto {
+        library_asset_id: source.library_asset_id.to_string(),
+        source_ref: source.source_ref,
+        source_version: source.source_version,
+        source_digest: source.source_digest,
+        installed_at: source.installed_at.to_rfc3339(),
+    }
+}
+
+fn domain_to_contract_value<T, U>(value: T, field: &str) -> Result<U, ApiError>
+where
+    T: serde::Serialize,
+    U: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(
+        serde_json::to_value(value)
+            .map_err(|error| ApiError::Internal(format!("序列化 {field} 失败: {error}")))?,
+    )
+    .map_err(|error| ApiError::Internal(format!("转换 {field} contract DTO 失败: {error}")))
+}
+
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
     state
         .repos
@@ -701,6 +849,74 @@ async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<Lifec
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
+}
+
+async fn lifecycle_run_to_contract_view(
+    state: &Arc<AppState>,
+    run: &LifecycleRun,
+) -> Result<LifecycleRunView, ApiError> {
+    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    run_view_builder::build_lifecycle_run_view(&lifecycle_repos, run)
+        .await
+        .map(lifecycle_run_view_to_contract)
+        .map_err(ApiError::from)
+}
+
+fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {
+    LifecycleRunCommandService::new(
+        state.repos.to_lifecycle_repository_set(),
+        lifecycle_platform_config(state),
+    )
+    .with_function_runner(state.services.function_runner.clone())
+}
+
+fn lifecycle_platform_config(
+    state: &Arc<AppState>,
+) -> agentdash_application_lifecycle::SharedPlatformConfig {
+    Arc::new(agentdash_application_lifecycle::PlatformConfig {
+        mcp_base_url: state.config.platform_config.mcp_base_url.clone(),
+    })
+}
+
+async fn continue_lifecycle_run_result_to_contract(
+    state: &Arc<AppState>,
+    result: ContinueLifecycleRunResult,
+) -> Result<ContinueLifecycleRunResponse, ApiError> {
+    Ok(ContinueLifecycleRunResponse {
+        run: lifecycle_run_to_contract_view(state, &result.run).await?,
+        drain_result: orchestration_drain_result_to_contract(result.drain_result),
+    })
+}
+
+fn orchestration_drain_result_to_contract(
+    result: OrchestrationExecutorDrainResult,
+) -> OrchestrationExecutorDrainResultDto {
+    OrchestrationExecutorDrainResultDto {
+        launched_agent_nodes: result
+            .launched_agent_nodes
+            .into_iter()
+            .map(|node| LaunchedAgentNodeDto {
+                run_id: node.run_id.to_string(),
+                orchestration_id: node.orchestration_id.to_string(),
+                node_path: node.node_path,
+                attempt: node.attempt,
+                runtime_session_id: node.runtime_session_id,
+            })
+            .collect(),
+        opened_human_gates: result
+            .opened_human_gates
+            .into_iter()
+            .map(|gate| OpenedHumanGateDto {
+                run_id: gate.run_id.to_string(),
+                orchestration_id: gate.orchestration_id.to_string(),
+                node_path: gate.node_path,
+                attempt: gate.attempt,
+                gate_id: gate.gate_id.to_string(),
+            })
+            .collect(),
+        completed_effect_nodes: result.completed_effect_nodes,
+        failed_nodes: result.failed_nodes,
+    }
 }
 
 async fn upsert_agent_procedure(
@@ -861,6 +1077,88 @@ fn workflow_graph_ref_from_start_request(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_catalog_mapper_preserves_read_model_shape() {
+        let catalog = ApplicationCapabilityCatalog {
+            capabilities: vec![ApplicationCapabilityCatalogEntry {
+                key: "workspace_module".to_string(),
+                label: "Workspace Module".to_string(),
+                description: "模块创建、调用与展示，包含 Canvas".to_string(),
+                allowed_scopes: vec![
+                    ApplicationCapabilityCatalogScope::Project,
+                    ApplicationCapabilityCatalogScope::Story,
+                    ApplicationCapabilityCatalogScope::Task,
+                ],
+                auto_granted: true,
+                agent_can_grant: false,
+                workflow_can_grant: false,
+                tools: vec![
+                    ApplicationToolCatalogDescriptor {
+                        name: "workspace_module_present".to_string(),
+                        display_name: "Present workspace module".to_string(),
+                        description: "展示 workspace module UI".to_string(),
+                        source: ApplicationToolCatalogSource::Platform {
+                            cluster: ApplicationToolCatalogCluster::WorkspaceModule,
+                        },
+                        capability_key: "workspace_module".to_string(),
+                    },
+                    ApplicationToolCatalogDescriptor {
+                        name: "list_workflows".to_string(),
+                        display_name: "List workflows".to_string(),
+                        description: "列出 workflow".to_string(),
+                        source: ApplicationToolCatalogSource::PlatformMcp {
+                            scope: ApplicationToolCatalogPlatformMcpScope::Workflow,
+                        },
+                        capability_key: "workflow_management".to_string(),
+                    },
+                    ApplicationToolCatalogDescriptor {
+                        name: "mcp:code_analyzer".to_string(),
+                        display_name: "MCP: code_analyzer".to_string(),
+                        description: "运行时发现".to_string(),
+                        source: ApplicationToolCatalogSource::Mcp {
+                            server_name: "code_analyzer".to_string(),
+                        },
+                        capability_key: "mcp:code_analyzer".to_string(),
+                    },
+                ],
+            }],
+        };
+
+        let response = capability_catalog_to_contract(catalog);
+        let entry = response.capabilities.first().expect("catalog entry");
+        assert_eq!(entry.key, "workspace_module");
+        assert_eq!(
+            entry.allowed_scopes,
+            vec![
+                CapabilityScopeDto::Project,
+                CapabilityScopeDto::Story,
+                CapabilityScopeDto::Task,
+            ]
+        );
+        assert_eq!(entry.tools.len(), 3);
+        assert!(matches!(
+            &entry.tools[0].source,
+            ToolSourceDto::Platform {
+                cluster: ToolClusterDto::WorkspaceModule
+            }
+        ));
+        assert!(matches!(
+            &entry.tools[1].source,
+            ToolSourceDto::PlatformMcp {
+                scope: PlatformMcpScopeDto::Workflow
+            }
+        ));
+        assert!(matches!(
+            &entry.tools[2].source,
+            ToolSourceDto::Mcp { server_name } if server_name == "code_analyzer"
+        ));
+    }
+}
+
 pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> {
     let presets = hook_rule_preset_registry();
     let grouped = group_presets_by_trigger(presets)?;
@@ -868,7 +1166,7 @@ pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> 
 }
 
 fn group_presets_by_trigger(
-    presets: &[agentdash_application::hooks::HookRulePreset],
+    presets: &[HookRulePreset],
 ) -> Result<BTreeMap<String, Vec<HookPresetResponse>>, ApiError> {
     let mut groups: BTreeMap<String, Vec<HookPresetResponse>> = BTreeMap::new();
     for preset in presets {
@@ -955,13 +1253,100 @@ pub async fn delete_hook_preset(
 
 pub async fn query_tool_catalog(
     Query(query): Query<ToolCatalogQuery>,
-) -> Json<Vec<agentdash_spi::ToolDescriptor>> {
-    let keys: Vec<String> = query
-        .capabilities
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let catalog = agentdash_application::capability::query_tool_catalog(&keys);
-    Json(catalog)
+) -> Json<CapabilityCatalogResponse> {
+    let keys = query.capabilities.as_deref().map(|raw| {
+        raw.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+    });
+    let catalog = agentdash_application::capability::query_capability_catalog(keys.as_deref());
+    Json(capability_catalog_to_contract(catalog))
+}
+
+fn capability_catalog_to_contract(
+    catalog: ApplicationCapabilityCatalog,
+) -> CapabilityCatalogResponse {
+    CapabilityCatalogResponse {
+        capabilities: catalog
+            .capabilities
+            .into_iter()
+            .map(capability_catalog_entry_to_contract)
+            .collect(),
+    }
+}
+
+fn capability_catalog_entry_to_contract(
+    entry: ApplicationCapabilityCatalogEntry,
+) -> CapabilityCatalogEntryDto {
+    CapabilityCatalogEntryDto {
+        key: entry.key,
+        label: entry.label,
+        description: entry.description,
+        allowed_scopes: entry
+            .allowed_scopes
+            .into_iter()
+            .map(capability_scope_to_contract)
+            .collect(),
+        auto_granted: entry.auto_granted,
+        agent_can_grant: entry.agent_can_grant,
+        workflow_can_grant: entry.workflow_can_grant,
+        tools: entry
+            .tools
+            .into_iter()
+            .map(tool_descriptor_to_contract)
+            .collect(),
+    }
+}
+
+fn tool_descriptor_to_contract(descriptor: ApplicationToolCatalogDescriptor) -> ToolDescriptorDto {
+    ToolDescriptorDto {
+        name: descriptor.name,
+        display_name: descriptor.display_name,
+        description: descriptor.description,
+        source: tool_source_to_contract(descriptor.source),
+        capability_key: descriptor.capability_key,
+    }
+}
+
+fn tool_source_to_contract(source: ApplicationToolCatalogSource) -> ToolSourceDto {
+    match source {
+        ApplicationToolCatalogSource::Platform { cluster } => ToolSourceDto::Platform {
+            cluster: tool_cluster_to_contract(cluster),
+        },
+        ApplicationToolCatalogSource::PlatformMcp { scope } => ToolSourceDto::PlatformMcp {
+            scope: platform_mcp_scope_to_contract(scope),
+        },
+        ApplicationToolCatalogSource::Mcp { server_name } => ToolSourceDto::Mcp { server_name },
+    }
+}
+
+fn capability_scope_to_contract(scope: ApplicationCapabilityCatalogScope) -> CapabilityScopeDto {
+    match scope {
+        ApplicationCapabilityCatalogScope::Project => CapabilityScopeDto::Project,
+        ApplicationCapabilityCatalogScope::Story => CapabilityScopeDto::Story,
+        ApplicationCapabilityCatalogScope::Task => CapabilityScopeDto::Task,
+    }
+}
+
+fn tool_cluster_to_contract(cluster: ApplicationToolCatalogCluster) -> ToolClusterDto {
+    match cluster {
+        ApplicationToolCatalogCluster::Read => ToolClusterDto::Read,
+        ApplicationToolCatalogCluster::Write => ToolClusterDto::Write,
+        ApplicationToolCatalogCluster::Execute => ToolClusterDto::Execute,
+        ApplicationToolCatalogCluster::Workflow => ToolClusterDto::Workflow,
+        ApplicationToolCatalogCluster::Collaboration => ToolClusterDto::Collaboration,
+        ApplicationToolCatalogCluster::Task => ToolClusterDto::Task,
+        ApplicationToolCatalogCluster::WorkspaceModule => ToolClusterDto::WorkspaceModule,
+    }
+}
+
+fn platform_mcp_scope_to_contract(
+    scope: ApplicationToolCatalogPlatformMcpScope,
+) -> PlatformMcpScopeDto {
+    match scope {
+        ApplicationToolCatalogPlatformMcpScope::Relay => PlatformMcpScopeDto::Relay,
+        ApplicationToolCatalogPlatformMcpScope::Story => PlatformMcpScopeDto::Story,
+        ApplicationToolCatalogPlatformMcpScope::Workflow => PlatformMcpScopeDto::Workflow,
+    }
 }

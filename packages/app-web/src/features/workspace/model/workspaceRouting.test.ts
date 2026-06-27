@@ -28,16 +28,15 @@ function backend(id: string, online: boolean, backend_type: "local" | "remote" =
     device_id: null,
     machine_id: null,
     machine_label: null,
-    legacy_machine_ids: [],
     visibility: "private",
     share_scope_kind: "user",
     share_scope_id: null,
     capability_slot: "default",
     device: {},
     last_claimed_at: null,
+    registration_source: null,
     online,
     runtime_health: null,
-    workspace_roots: null,
     capabilities: null,
   };
 }
@@ -48,10 +47,12 @@ function access(backend_id: string, status: ProjectBackendAccess["status"] = "ac
     project_id: "project-1",
     backend_id,
     status,
-    access_mode: "use_inventory",
+    access_mode: "explicit_grant",
     priority: 0,
     root_policy: {},
     capability_policy: {},
+    note: null,
+    created_by: null,
     created_at: "2026-05-17T00:00:00Z",
     updated_at: "2026-05-17T00:00:00Z",
   };
@@ -83,6 +84,8 @@ describe("workspaceRouting", () => {
   it("blocks resolution when workspace has no bindings", () => {
     const summary = summarizeResolution(workspace(), [], []);
     expect(summary.state).toBe("blocked");
+    expect(summary.label).toBe("等待目录绑定");
+    expect(summary.description).toContain("目录绑定");
     expect(summary.binding).toBeNull();
   });
 
@@ -103,7 +106,31 @@ describe("workspaceRouting", () => {
     });
     const summary = summarizeResolution(target, [backend("backend-1", true)], [access("backend-1")]);
     expect(summary.state).toBe("resolved");
+    expect(summary.label).toBe("目录已就绪");
+    expect(`${summary.label} ${summary.description}`).not.toMatch(/运行|可分配|执行占用/);
     expect(summary.binding?.id).toBe("binding-1");
+  });
+
+  it("describes unavailable routing as directory binding readiness", () => {
+    const target = workspace({
+      bindings: [{
+        id: "binding-1",
+        workspace_id: "workspace-1",
+        backend_id: "backend-1",
+        root_ref: "D:/Repo",
+        status: "offline",
+        detected_facts: {},
+        priority: 0,
+        created_at: "2026-05-17T00:00:00Z",
+        updated_at: "2026-05-17T00:00:00Z",
+        last_verified_at: null,
+      }],
+    });
+    const summary = summarizeResolution(target, [backend("backend-1", true)], [access("backend-1")]);
+    expect(summary.state).toBe("blocked");
+    expect(summary.label).toBe("目录不可用");
+    expect(summary.description).toContain("目录");
+    expect(`${summary.label} ${summary.description}`).not.toMatch(/可分配|执行占用/);
   });
 
   it("counts only ready authorized online bindings as online availability", () => {

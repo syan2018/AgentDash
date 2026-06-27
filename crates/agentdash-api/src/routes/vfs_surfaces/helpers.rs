@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_application::vfs::{PROVIDER_INLINE_FS, RuntimeFileEntry, VfsMutationError};
+use agentdash_application_vfs::{
+    PROVIDER_INLINE_FS, RuntimeFileEntry, VfsMutationError,
+    types::{runtime_entry_content_kind, runtime_entry_mime_type},
+};
 use agentdash_spi::Vfs;
 
 use crate::{app_state::AppState, rpc::ApiError};
@@ -8,13 +11,13 @@ use crate::{app_state::AppState, rpc::ApiError};
 use super::dto::SurfaceStatFileResponse;
 
 pub(super) fn ensure_not_skill_asset_document_path(
-    source: &agentdash_application::vfs::ResolvedVfsSurfaceSource,
+    source: &agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource,
     path: &str,
     operation: &str,
 ) -> Result<(), ApiError> {
     if matches!(
         source,
-        agentdash_application::vfs::ResolvedVfsSurfaceSource::ProjectSkillAssets { .. }
+        agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::ProjectSkillAssets { .. }
     ) && skill_asset_relative_path(path) == Some("SKILL.md")
     {
         return Err(ApiError::BadRequest(format!(
@@ -66,21 +69,11 @@ pub(super) fn surface_stat_response(
 }
 
 pub(super) fn entry_content_kind(entry: &RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("content_kind"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
+    runtime_entry_content_kind(entry).map(str::to_owned)
 }
 
 pub(super) fn entry_mime_type(entry: &RuntimeFileEntry) -> Option<String> {
-    entry
-        .attributes
-        .as_ref()
-        .and_then(|attrs| attrs.get("mime_type"))
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
+    runtime_entry_mime_type(entry).map(str::to_owned)
 }
 
 pub(super) fn guess_image_mime_type(path: &str) -> String {

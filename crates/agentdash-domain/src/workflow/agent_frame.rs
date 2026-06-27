@@ -24,12 +24,11 @@ pub struct AgentFrame {
     /// 当前可见的 Canvas mount ids（运行时追加，不随 revision 复制）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_canvas_mount_ids_json: Option<serde_json::Value>,
-    /// 运行时 Accumulate grant 预留列，当前不写入（恒为 `None`/NULL）。
+    /// 运行时 Accumulate grant，记录当前 frame 可见的动态 WorkspaceModule refs。
     ///
-    /// 声明式 workspace module 可见性已迁至 `effective_capability_json` 中的
-    /// `CapabilityState.workspace_module` 维度（base 收口，经标准 revision 投影）。
-    /// 本列保留以备将来运行时 append 型授予（参照 `visible_canvas_mount_ids_json` 的累积语义），
-    /// 暂不删除以保持零迁移。
+    /// 声明式 workspace module 可见性来自 `effective_capability_json` 中的
+    /// `CapabilityState.workspace_module` 维度；Canvas create / present / user-open 等
+    /// 运行期授权通过本列随 frame revision 累积携带。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_workspace_module_refs_json: Option<serde_json::Value>,
     pub created_by_kind: String,
@@ -147,10 +146,10 @@ mod tests {
         frame.append_visible_workspace_module_ref("ext:demo");
         frame.append_visible_workspace_module_ref("ext:demo");
         frame.append_visible_workspace_module_ref("   ");
-        frame.append_visible_workspace_module_ref("canvas:dashboard-a");
+        frame.append_visible_workspace_module_ref("canvas:cvs-dashboard-a");
         assert_eq!(
             frame.visible_workspace_module_refs(),
-            vec!["ext:demo".to_string(), "canvas:dashboard-a".to_string()]
+            vec!["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()]
         );
     }
 

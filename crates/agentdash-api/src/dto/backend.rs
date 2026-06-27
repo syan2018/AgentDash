@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_contracts::core::{
+use agentdash_contracts::backend::{
     BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
     BackendWithStatusResponse,
@@ -24,15 +24,11 @@ pub struct CreateBackendRequest {
 pub struct EnsureLocalRuntimeRequest {
     pub machine_id: String,
     pub machine_label: Option<String>,
-    #[serde(default)]
-    pub legacy_machine_ids: Vec<String>,
     pub profile_id: String,
     #[serde(default)]
     pub scope: Option<LocalRuntimeScopeRequest>,
     pub capability_slot: Option<String>,
     pub name: Option<String>,
-    #[serde(default)]
-    pub workspace_roots: Vec<String>,
     #[serde(default)]
     pub executor_enabled: bool,
     pub client_version: Option<String>,
@@ -62,6 +58,10 @@ pub struct EnsureLocalRuntimeResponse {
     pub share_scope_kind: BackendShareScopeKind,
     pub share_scope_id: Option<String>,
     pub capability_slot: String,
+    // 与 RunnerRegistrationClaimResponse 同构的核心字段，让两条 enrollment 路径
+    // 共享 registration source 与 claim 时间语义。
+    pub registration_source: String,
+    pub claimed_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub type BackendWithStatus = BackendWithStatusResponse;

@@ -10,7 +10,7 @@ Approval:
   "wait": true,
   "payload": {
     "type": "approval",
-    "prompt": "是否允许本轮修改 Trellis 任务文档？",
+    "message": "是否允许本轮修改 Trellis 任务文档？",
     "options": ["允许", "不允许"]
   }
 }
@@ -24,7 +24,7 @@ Free-form answer:
   "wait": true,
   "payload": {
     "type": "approval",
-    "prompt": "请补充这个任务的最小验收标准。"
+    "message": "请补充这个任务的最小验收标准。"
   }
 }
 ```

@@ -19,8 +19,8 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityTransition, ActivityTransitionKind,
     AgentProcedure, AgentProcedureContract, ArtifactBinding, DefinitionSource, InputPortDefinition,
-    OutputPortDefinition, ValidationSeverity, WorkflowGraph, WorkflowHookRuleSpec,
-    WorkflowHookTrigger,
+    OutputPortDefinition, ValidationSeverity, WorkflowGraph, WorkflowGraphDraft,
+    WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -80,7 +80,7 @@ pub struct HookRuleInput {
     pub trigger: String,
     #[schemars(description = "规则描述")]
     pub description: String,
-    #[schemars(description = "预设名称（如 task_session_terminal），与 script 二选一")]
+    #[schemars(description = "预设名称（如 session_terminal_advance），与 script 二选一")]
     pub preset: Option<String>,
     #[schemars(description = "预设参数")]
     pub params: Option<serde_json::Value>,
@@ -566,16 +566,16 @@ impl WorkflowMcpServer {
         let activities = build_activities(&params.activities)?;
         let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default())?;
 
-        let definition = WorkflowGraph::new(
-            self.project_id,
-            params.key,
-            params.name,
-            params.description,
-            DefinitionSource::UserAuthored,
-            params.entry_activity_key,
+        let definition = WorkflowGraph::new(WorkflowGraphDraft {
+            project_id: self.project_id,
+            key: params.key,
+            name: params.name,
+            description: params.description,
+            source: DefinitionSource::UserAuthored,
+            entry_activity_key: params.entry_activity_key,
             activities,
             transitions,
-        )
+        })
         .map_err(|e| McpError::invalid_param("lifecycle", e))?;
 
         let saved = self.upsert_lifecycle_definition(definition).await?;

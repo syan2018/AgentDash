@@ -173,15 +173,15 @@ fn parse_secret_key(raw: &str) -> Option<[u8; 32]> {
     if trimmed.is_empty() {
         return None;
     }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trimmed) {
-        if let Ok(key) = decoded.try_into() {
-            return Some(key);
-        }
+    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trimmed)
+        && let Ok(key) = decoded.try_into()
+    {
+        return Some(key);
     }
-    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed) {
-        if let Ok(key) = decoded.try_into() {
-            return Some(key);
-        }
+    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(trimmed)
+        && let Ok(key) = decoded.try_into()
+    {
+        return Some(key);
     }
     let bytes = trimmed.as_bytes();
     if bytes.len() == 32 {

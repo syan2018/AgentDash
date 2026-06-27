@@ -1,0 +1,12 @@
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/prd.md","reason":"验收标准 checklist。"}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/design.md","reason":"检查实现是否符合统一入口与冗余链路清理设计。"}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/implement.md","reason":"执行阶段、验证命令和风险文件。"}
+{"file":".trellis/tasks/06-23-agentrun-runtime-surface-projection-convergence/research/scattered-runtime-surface-paths.md","reason":"检查散落路径是否全部处理或明确延后。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"核对 RuntimeSession 不拥有业务归属或 Agent effective surface。"}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"核对 AgentRun effective capability/admission 读取唯一入口。"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"核对 transition payload 不保存完整 CapabilityState。"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"核对 permission grant surface-changing effect 的可见错误语义。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"核对 Canvas session visibility 行为没有回归。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"核对 Lifecycle Workflow / AgentProcedure 写入边界仍符合 AgentFrame construction contract。"}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"核对 workflow AgentCall materialization 与 RuntimeNodeState 推进仍一致。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核对前端状态刷新与展示语义。"}

@@ -1,5 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
+mod command_receipt;
 pub mod dispatch;
 mod entity;
 mod lifecycle_agent;
@@ -12,6 +13,10 @@ mod value_objects;
 
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
+pub use command_receipt::{
+    AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
+    AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
+};
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentRuntimeRefs, CapabilityPolicy,
     ContextPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
@@ -21,10 +26,13 @@ pub use dispatch::{
     SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
-    AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, build_effective_contract,
-    build_effective_contract_from_contract,
+    AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
+    build_effective_contract, build_effective_contract_from_contract,
 };
-pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
+pub use lifecycle_agent::{
+    AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentCurrentDeliveryBinding,
+    bootstrap_status,
+};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
@@ -46,17 +54,19 @@ pub use value_objects::{
     ExecutorRunRef, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
     HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition, LifecycleContext,
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
-    MountDirective, NodeCacheRef, NodeCacheState, NodePortValue, OrchestrationInstance,
-    OrchestrationJournalFact, OrchestrationLimits, OrchestrationPlanSnapshot,
-    OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, PlanActivation, PlanNode,
-    PlanNodeKind, RunScriptArtifact, RunScriptArtifactStatus, RuntimeNodeError, RuntimeNodeState,
-    RuntimeNodeStatus, RuntimeSessionPolicy, RuntimeTraceRef, StandaloneFulfillment,
-    StateArtifactRef, StateExchangeRule, StateExchangeSnapshot, ToolCapabilityDirective,
-    ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState, TransitionCondition,
-    ValidationIssue, ValidationSeverity, WorkflowContextBinding, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
+    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, MountDirective,
+    NodeCacheRef, NodeCacheState, NodePortValue, OrchestrationInstance, OrchestrationJournalFact,
+    OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus,
+    OutputPortDefinition, PlanActivation, PlanNode, PlanNodeKind, RunScriptArtifact,
+    RunScriptArtifactStatus, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus,
+    RuntimeSessionPolicy, RuntimeTraceRef, StandaloneFulfillment, StateArtifactRef,
+    StateExchangeRule, StateExchangeSnapshot, TaskPlanStatus, TaskPriority,
+    ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
+    TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowScriptApiEndpoint,
     WorkflowScriptBashCommand, WorkflowScriptCapabilitySummary, WorkflowScriptDefinition,
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
-    WorkflowSessionTerminalState, reduce_tool_capability_directives, workflow_script_source_digest,
+    WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
+    reduce_tool_capability_directives, workflow_script_source_digest,
 };

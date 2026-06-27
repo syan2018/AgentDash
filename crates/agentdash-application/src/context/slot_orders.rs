@@ -1,4 +1,4 @@
-//! Context fragment slot 的默认 order 集中常量（PR 5c）。
+//! Context fragment slot 的默认 order 集中常量。
 //!
 //! 历史上 slot order 数字（10/20/30/35/36/37/38/40/48/49/50/60/80/82/83/84/85/
 //! 86/89/90/96/100/200）直接硬编码在各 contributor 内；`HOOK_SLOT_ORDERS`
@@ -62,7 +62,6 @@ pub const INSTRUCTION_ADDITIONAL: i32 = 100;
 // 常量保持语义一致：`workflow` hook fragment (83) 与 `workflow_projection_snapshot`
 // (83) / `lifecycle_workflow_injection` (83) 对齐，确保 hook 注入的 workflow
 // fragment 与 contributor 产出的 workflow fragment 在 bundle 排序中位于同一区段。
-pub const HOOK_COMPANION_AGENTS: i32 = 60;
 pub const HOOK_WORKFLOW: i32 = WORKFLOW_PROJECTION_SNAPSHOT; // = 83
 pub const HOOK_CONSTRAINT: i32 = LIFECYCLE_RUNTIME_POLICY; // = 84
 pub const HOOK_DEFAULT: i32 = 200;

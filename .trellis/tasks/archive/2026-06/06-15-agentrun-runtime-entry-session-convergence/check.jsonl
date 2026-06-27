@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/prd.md", "reason": "检查验收标准是否覆盖 session 残留收束"}
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/design.md", "reason": "检查 AgentRun-first runtime entry 模型"}
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/implement.md", "reason": "检查迁移阶段和验证命令"}
+{"file": ".trellis/tasks/06-15-agentrun-runtime-entry-session-convergence/research/session-entry-audit.md", "reason": "检查 subagent 审计结果"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 RuntimeSession 是否只保留 message stream / trace 语义"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查 AgentRun-first 外部入口与 orchestration node ownership"}
+{"file": "crates/agentdash-application/src/session", "reason": "检查 session-first API 是否被分类或迁移"}
+{"file": "crates/agentdash-application/src/workflow", "reason": "检查 workflow runtime 是否使用 AgentRun / node coordinate"}
+{"file": "crates/agentdash-application/src/task", "reason": "检查 task effect / context 是否仍误用 session 作业务入口"}

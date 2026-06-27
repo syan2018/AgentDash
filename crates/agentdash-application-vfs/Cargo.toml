@@ -1,0 +1,34 @@
+[package]
+name = "agentdash-application-vfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent-protocol = { workspace = true }
+agentdash-agent-types = { workspace = true }
+agentdash-application-ports = { workspace = true }
+agentdash-domain = { workspace = true }
+agentdash-relay = { workspace = true }
+agentdash-spi = { workspace = true }
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { workspace = true }
+futures = { workspace = true }
+globset = "0.4"
+json-patch = "2.0"
+lru = "0.12"
+regex = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+sha2 = "0.10"
+shell-words = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+agentdash-diagnostics = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+walkdir = "2.5"

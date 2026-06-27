@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { AggregatedContextFrameGroup } from "../model/types";
+import type { ContextFrame } from "../model/contextFrame";
 import { SessionEntry } from "./SessionEntry";
 
 describe("SessionEntry ContextFrame 聚合", () => {
@@ -11,7 +12,7 @@ describe("SessionEntry ContextFrame 聚合", () => {
       id: "ctx-1",
       groupKey: "context-frame-ctx-1",
       entries: [
-        contextFrameEntry("ctx-1", "capability_state_update"),
+        contextFrameEntry("ctx-1", "capability_state_delta"),
         contextFrameEntry("ctx-2", "assignment_context"),
       ],
     };
@@ -61,5 +62,29 @@ function contextFrameEntry(id: string, kind: string): AggregatedContextFrameGrou
         },
       },
     },
+    contextFrame: contextFrame(id, kind),
+  };
+}
+
+function contextFrame(id: string, kind: string): ContextFrame {
+  return {
+    id,
+    kind,
+    source: "runtime_context_update",
+    phase_node: "apply",
+    apply_mode: "live",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Capability Update",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "capability_key_delta",
+        added_capabilities: [],
+        removed_capabilities: [],
+        effective_capabilities: ["workflow_management"],
+      },
+    ],
   };
 }

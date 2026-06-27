@@ -1,0 +1,27 @@
+[package]
+name = "agentdash-workspace-module"
+description = "AgentDash Workspace Module 业务边界 — module contracts 与 Canvas 子模块业务"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-ports = { workspace = true }
+agentdash-application-vfs = { workspace = true }
+agentdash-agent-protocol = { workspace = true }
+agentdash-contracts = { workspace = true }
+agentdash-domain = { workspace = true }
+agentdash-spi = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+agentdash-diagnostics = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+regex = "1"

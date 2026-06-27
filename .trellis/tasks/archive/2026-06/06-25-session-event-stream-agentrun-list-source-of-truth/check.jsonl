@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "检查 Session stream reducer/feed/tool burst 行为是否符合流式 Hook 与聚合契约。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 AgentRun list projection store 是否只缓存列表投影，不复制 command authority。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端是否消费 generated DTO 与 snake_case 字段，避免手写兼容层。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端类型、lint、Vitest 覆盖和提交前质量要求。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查后端 projection 修改是否保持 API/application/domain 边界。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查 durable session event 与 ephemeral progress event 的前端消费语义。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 contract 生成、AgentRun shell DTO 与 drift check 要求。"}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isVfsMountBrowsable,
   resolveDefaultMountId,
+  selectVfsBackendTarget,
   type VfsMountBrowsingPolicy,
 } from "./vfs-browser-panel-policy";
 import { formatBytes } from "./vfs-format";
@@ -59,6 +60,32 @@ describe("VfsBrowserPanel mount browsing policy", () => {
     const mounts = [mount("workspace", "relay_fs", false)];
 
     expect(resolveDefaultMountId(mounts)).toBe("workspace");
+  });
+
+  it("backend target 选择复用浏览策略并跳过离线 relay_fs", () => {
+    const target = selectVfsBackendTarget([
+      {
+        id: "workspace",
+        provider: "relay_fs",
+        backend_id: "backend-offline",
+        display_name: "Offline",
+        backend_online: false,
+      },
+      {
+        id: "backup",
+        provider: "relay_fs",
+        backend_id: "backend-2",
+        display_name: "Backup",
+        backend_online: true,
+      },
+    ], { defaultMountId: "workspace" });
+
+    expect(target).toEqual({
+      mountId: "backup",
+      backend_id: "backend-2",
+      label: "Backup",
+      online: true,
+    });
   });
 
   it("统一格式化文件大小", () => {

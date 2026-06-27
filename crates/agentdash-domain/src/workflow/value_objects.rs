@@ -10,6 +10,7 @@ mod orchestration;
 mod ports;
 mod run_state;
 mod script_asset;
+mod task_plan;
 
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
@@ -20,7 +21,8 @@ pub use activity_def::{
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
-    ToolCapabilitySlotState, reduce_tool_capability_directives,
+    ToolCapabilitySlotState, mcp_capability_key, mcp_tool_capability_path,
+    reduce_tool_capability_directives,
 };
 pub use contract::{
     AgentProcedureContract, EffectiveSessionContract, WorkflowSessionTerminalState,
@@ -50,6 +52,10 @@ pub use script_asset::{
     WorkflowScriptDefinitionScope, WorkflowScriptDefinitionStatus,
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     workflow_script_source_digest,
+};
+pub use task_plan::{
+    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, TaskPlanStatus,
+    TaskPriority,
 };
 
 #[cfg(test)]
@@ -395,6 +401,28 @@ mod tests {
     }
 
     #[test]
+    fn mcp_capability_helpers_trim_and_build_canonical_paths() {
+        assert_eq!(
+            mcp_capability_key(" code_analyzer ").unwrap(),
+            "mcp:code_analyzer"
+        );
+
+        let path = mcp_tool_capability_path(" code_analyzer ", " scan ").unwrap();
+        assert_eq!(path.capability, "mcp:code_analyzer");
+        assert_eq!(path.tool.as_deref(), Some("scan"));
+        assert_eq!(path.to_qualified_string(), "mcp:code_analyzer::scan");
+    }
+
+    #[test]
+    fn mcp_capability_helpers_reject_empty_and_nested_segments() {
+        assert!(mcp_capability_key("").is_err());
+        assert!(mcp_capability_key("   ").is_err());
+        assert!(mcp_capability_key("code::analyzer").is_err());
+        assert!(mcp_tool_capability_path("code_analyzer", "").is_err());
+        assert!(mcp_tool_capability_path("code_analyzer", "scan::deep").is_err());
+    }
+
+    #[test]
     fn tool_capability_path_parse_rejects_empty() {
         assert!(ToolCapabilityPath::parse("").is_err());
         assert!(ToolCapabilityPath::parse("   ").is_err());
@@ -433,17 +461,17 @@ mod tests {
         assert!(!add.is_remove());
         assert_eq!(add.key(), "file_read");
 
-        let remove = ToolCapabilityDirective::remove_simple("canvas");
+        let remove = ToolCapabilityDirective::remove_simple("example_capability");
         assert!(!remove.is_add());
         assert!(remove.is_remove());
-        assert_eq!(remove.key(), "canvas");
+        assert_eq!(remove.key(), "example_capability");
     }
 
     #[test]
     fn tool_capability_directive_serde_roundtrip() {
         let directives = vec![
             ToolCapabilityDirective::add_simple("file_read"),
-            ToolCapabilityDirective::remove_simple("canvas"),
+            ToolCapabilityDirective::remove_simple("example_capability"),
             ToolCapabilityDirective::add_tool("file_read", "fs_read"),
             ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
             ToolCapabilityDirective::add_simple("mcp:code_analyzer"),
@@ -544,12 +572,12 @@ mod tests {
     fn reduce_remove_then_add_re_enables() {
         // 后来者胜
         let directives = vec![
-            ToolCapabilityDirective::remove_simple("canvas"),
-            ToolCapabilityDirective::add_simple("canvas"),
+            ToolCapabilityDirective::remove_simple("example_capability"),
+            ToolCapabilityDirective::add_simple("example_capability"),
         ];
         let reduction = reduce_tool_capability_directives(&directives);
         assert_eq!(
-            reduction.slots.get("canvas"),
+            reduction.slots.get("example_capability"),
             Some(&ToolCapabilitySlotState::FullCapability)
         );
     }
@@ -636,12 +664,10 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_ignores_legacy_fields_gracefully() {
-        // 旧数据可能残留 constraints / completion / capabilities 字段，
-        // 移除 deny_unknown_fields 后应静默忽略
+    fn workflow_contract_rejects_legacy_fields() {
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: AgentProcedureContract =
-            serde_json::from_str(json).expect("旧数据应当可反序列化");
-        assert!(contract.output_ports.is_empty());
+        let error = serde_json::from_str::<AgentProcedureContract>(json)
+            .expect_err("旧 workflow contract 字段必须被拒绝");
+        assert!(error.to_string().contains("unknown field"));
     }
 }

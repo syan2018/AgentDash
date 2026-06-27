@@ -8,7 +8,7 @@ mod repository;
 mod value_objects;
 
 pub use entity::PermissionGrant;
-pub use repository::PermissionGrantRepository;
+pub use repository::{PermissionGrantRepository, PermissionGrantStatusFilter};
 pub use value_objects::{
     GrantScope, GrantStatus, PolicyDecision, PolicyOutcome, ScopeEscalationIntent,
 };

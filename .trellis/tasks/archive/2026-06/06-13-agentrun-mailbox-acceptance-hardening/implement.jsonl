@@ -1,0 +1,11 @@
+{"kind":"spec","path":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"AgentRun mailbox command、barrier、recovery、hook delivery 的权威契约"}
+{"kind":"spec","path":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Rust DTO 与 generated TypeScript 的跨层契约"}
+{"kind":"spec","path":".trellis/spec/frontend/type-safety.md","reason":"前端必须消费 generated DTO，不能手写 mailbox union"}
+{"kind":"task","path":".trellis/tasks/archive/2026-06/06-13-agentrun-session-queue-command-convergence/current-state.md","reason":"原 mailbox 收口任务的 cut-line gates"}
+{"kind":"task","path":".trellis/tasks/archive/2026-06/06-13-agentrun-session-queue-command-convergence/design.md","reason":"原 mailbox/barrier 设计与 follow_up、HookAutoResume 契约"}
+{"kind":"file","path":"crates/agentdash-application/src/workflow/agent_run_mailbox.rs","reason":"mailbox scheduler、command receipt、claim recovery 主实现"}
+{"kind":"file","path":"crates/agentdash-application/src/session/mailbox_delegate.rs","reason":"AgentRun runtime delegate 的 hook boundary 收口"}
+{"kind":"file","path":"crates/agentdash-api/src/routes/lifecycle_agents.rs","reason":"AgentRun mailbox API command surface"}
+{"kind":"file","path":"crates/agentdash-infrastructure/src/persistence/postgres/agent_run_mailbox_repository.rs","reason":"mailbox repository claim/recovery/pause/resume 实现"}
+{"kind":"file","path":"packages/app-web/src/pages/AgentRunWorkspacePage.tsx","reason":"frontend mailbox command 调用与 workspace projection"}
+{"kind":"file","path":"packages/app-web/src/features/session/ui/composer/MailboxMessageRow.tsx","reason":"mailbox row 状态展示"}

@@ -2,14 +2,14 @@
 
 ## Role
 
-前端负责以 Project 为中心组织业务视图，消费后端权威状态与实时事件，提供 Workspace、Story、Task、Session、Workflow、VFS、Assets 等交互界面。前端不创建第二套业务事实源。
+前端负责以 Project 为中心组织业务视图，消费后端权威状态与实时事件，提供 Workspace、Story、Task、AgentRun、Workflow、VFS、Assets 等交互界面。前端不创建第二套业务事实源。
 
 ## Invariants
 
 - API 字段直接使用后端 `snake_case`，前端不做 camelCase/snake_case 双风格兼容。
 - API 响应必须经 mapper 从 `unknown` 转换为 typed object。
-- Story / Task / Session / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
-- Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` 为准；`RuntimeSession` 页面只展示 trace，不作为业务执行归属事实源。
+- Story / Task / AgentRun / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
+- Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` / `AgentRunWorkspaceView` 为准；用户可见执行工作台展示 AgentRun Workspace，`RuntimeSession` trace view 只展示 trace，不作为业务执行归属事实源。
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
 - Session workspace panel、context overview 和 VFS tab 以 `runtime_surface` 作为 runtime mount 展示与浏览能力的唯一 UI 输入。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。
@@ -47,7 +47,80 @@
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 - WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。
+- WorkspacePanel 打开 Canvas tab 使用 `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`，原因是 Canvas 展示身份属于 workspace module UI entry；`{canvas_mount_id}://...` 保留给 Agent/runtime VFS 编辑面。
 - Workflow 资产入口是 `WorkflowGraph` 定义态入口；Agent Activity 关联的 `AgentProcedure` contract 可以作为编辑器配套 draft 一起维护。运行态观察进入 `lifecycleStore`，原因是 graph definition 与 lifecycle projection 的变化节奏不同。
+- VFS Browser 和 Extension webview 的 runtime VFS 读写入口共享 `vfs-browser-panel-policy.ts` 的 `selectDefaultVfsMount` / `selectVfsBackendTarget` 解析 mount/backend 选择，原因是 `runtime_surface` 是同一份 UI 输入，VFS tab 和插件 iframe 不能各自推断默认 mount 或本机 backend。
+
+## Scenario: Runtime VFS Panel Policy
+
+### 1. Scope / Trigger
+
+- Trigger: Session VFS tab 与 Extension webview 都需要从同一 `runtime_surface` 发起 VFS read/write；mount id、backend id 和只读状态必须由共享策略解析。
+
+### 2. Signatures
+
+```ts
+export function resolveDefaultMountId(
+  mounts: Array<{ id: string; provider: string; browsable: boolean }>,
+  initialMountId?: string,
+  defaultMountId?: string | null,
+): string | null
+
+export function selectDefaultVfsMount<T extends VfsMountSelectionPolicy>(
+  mounts: T[],
+  options?: VfsMountSelectionOptions,
+): T | null
+
+export function selectVfsBackendTarget<T extends VfsMountBackendPolicy>(
+  mounts: T[],
+  options?: VfsMountSelectionOptions,
+): VfsBackendTargetSelection | null
+```
+
+### 3. Contracts
+
+- default mount 从 `runtimeSurface.vfs.mounts` 选择 requested mount，缺省使用 runtime surface default mount。
+- backend target 只从可浏览且携带 `backend_id` 的 mount 中选择；Project workspace binding fallback 在调用方转换成 mount policy 输入前完成。
+- Extension webview bridge 的 `vfs.read` / `vfs.write` 使用同一 selector 生成请求上下文。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| runtime surface 为空 | policy 返回不可读写状态 |
+| requested mount 不存在 | policy 返回不可用状态并保留诊断 |
+| mount 只读 | write action 不可用 |
+| backend 无法解析 | 本机 VFS relay action 不可用 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: VFS tab 和 extension iframe 指向同一个 session default mount 时得到同一个 backend id。
+- Base: Project workspace binding 只作为 extension tab 缺少 session backend 时的 fallback。
+- Boundary mismatch: VFS tab 和 webview bridge 各自实现 mount/backend 选择会让同一 runtime surface 产生两个 UI 行为。
+- Canonical flow: 两个入口都调用 `selectDefaultVfsMount()` / `selectVfsBackendTarget()`，再按 selector 结果发起 API/bridge request。
+
+### 6. Tests Required
+
+- `vfs-browser-panel.test.ts` 覆盖 default mount、requested mount、readonly 与 backend fallback。
+- `extension-runtime/model/bridge.test.ts` 覆盖 webview bridge 复用 policy 后的 VFS read/write request context。
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```ts
+const backendId = projectWorkspaceBinding.backend_id
+const mountId = requestedMountId ?? "main"
+```
+
+#### Canonical
+
+```ts
+const target = selectVfsBackendTarget(runtimeSurface.vfs.mounts, {
+  initialMountId: requestedMountId,
+  defaultMountId: runtimeSurface.vfs.default_mount_id,
+})
+```
 
 ## Contract Appendices
 

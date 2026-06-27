@@ -1,21 +1,38 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
+use crate::connectors::pi_agent::stream_mapper::convert_event_to_envelopes;
 use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
+    TokenUsage,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
+use agentdash_agent_types::AgentDashThreadItem;
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};
 use chrono::Utc;
-use std::sync::{Mutex as StdMutex, RwLock};
+use std::sync::{
+    Mutex as StdMutex, RwLock,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::Duration;
 
 fn test_source() -> SourceInfo {
     SourceInfo {
         connector_id: "pi-agent".to_string(),
         connector_type: "local_executor".to_string(),
         executor_id: None,
+    }
+}
+
+/// 提取终态 ItemCompleted 承载的助手正文（codex AgentMessage）。
+fn assistant_message_text(item: &AgentDashThreadItem) -> Option<String> {
+    match item {
+        AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
+            Some(text.clone())
+        }
+        _ => None,
     }
 }
 
@@ -40,6 +57,30 @@ fn test_vfs(root_ref: &str) -> agentdash_spi::Vfs {
         default_mount_id: Some("workspace".to_string()),
         ..Default::default()
     }
+}
+
+fn content_item_text(items: &[codex::DynamicToolCallOutputContentItem]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => Some(text.as_str()),
+            codex::DynamicToolCallOutputContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
+    let path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("lifecycle_path: "))
+        .expect("bounded tool result should include lifecycle_path marker");
+    let path_item_id = path
+        .strip_prefix("lifecycle://session/tool-results/")
+        .and_then(|rest| rest.strip_suffix("/result.txt"))
+        .expect("lifecycle_path should use tool-results result.txt shape");
+    let normalized_item_id = path_item_id.replace('/', ":");
+    assert_eq!(normalized_item_id, item_id);
 }
 
 #[derive(Default)]
@@ -92,6 +133,34 @@ impl LlmBridge for ModelRecordingBridge {
             agentdash_agent::BridgeResponse {
                 message: agentdash_agent::AgentMessage::assistant("done"),
                 raw_content: vec![agentdash_agent::ContentPart::text("done")],
+                usage: agentdash_agent::TokenUsage::default(),
+            },
+        )))
+    }
+}
+
+#[derive(Default)]
+struct CancelThenDoneBridge {
+    calls: AtomicUsize,
+    first_provider_started: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl LlmBridge for CancelThenDoneBridge {
+    async fn stream_complete(
+        &self,
+        _request: agentdash_agent::BridgeRequest,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call_index == 0 {
+            self.first_provider_started.notify_waiters();
+            return Box::pin(futures::stream::pending());
+        }
+
+        Box::pin(tokio_stream::once(agentdash_agent::StreamChunk::Done(
+            agentdash_agent::BridgeResponse {
+                message: agentdash_agent::AgentMessage::assistant("second done"),
+                raw_content: vec![agentdash_agent::ContentPart::text("second done")],
                 usage: agentdash_agent::TokenUsage::default(),
             },
         )))
@@ -394,6 +463,7 @@ fn execution_context_with_config(executor_config: agentdash_spi::AgentConfig) ->
             mcp_servers: Vec::new(),
             vfs: Some(test_vfs("/tmp/test-workspace")),
             backend_execution: None,
+            runtime_backend_anchor: None,
             identity: None,
         },
         turn: agentdash_spi::ExecutionTurnFrame::default(),
@@ -580,6 +650,55 @@ fn context_compaction_failure_maps_diagnostic_and_error() {
 }
 
 #[test]
+fn provider_attempt_status_maps_to_platform_event() {
+    let event = AgentEvent::ProviderAttemptStatus {
+        status: agentdash_agent::ProviderAttemptStatus {
+            phase: agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+            attempt: 1,
+            max_attempts: 3,
+            will_retry: true,
+            delay_ms: Some(0),
+            reason_code: Some("stream_disconnected".to_string()),
+            message: Some("Reconnecting... 1/3".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-4.1".to_string()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::ProviderAttemptStatus(status),
+        ) => {
+            assert_eq!(status.turn_id, "turn-1");
+            assert_eq!(
+                status.phase,
+                agentdash_agent_protocol::ProviderAttemptPhase::RetryScheduled
+            );
+            assert_eq!(status.attempt, 1);
+            assert_eq!(status.max_attempts, 3);
+            assert!(status.will_retry);
+            assert_eq!(status.delay_ms, Some(0));
+            assert_eq!(status.reason_code.as_deref(), Some("stream_disconnected"));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
 fn tool_call_stream_events_map_to_pending_start_and_updates() {
     let start_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {
@@ -687,21 +806,83 @@ fn tool_call_stream_events_map_to_pending_start_and_updates() {
             let item = serde_json::to_value(&n.item).expect("thread item should serialize");
             assert_eq!(
                 item.get("type").and_then(|value| value.as_str()),
-                Some("commandExecution")
+                Some("shellExec")
             );
             assert_eq!(
                 item.get("command").and_then(|value| value.as_str()),
                 Some("echo he")
             );
+            assert_eq!(
+                item.get("cwd").and_then(|value| value.as_str()),
+                Some("platform://")
+            );
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
-    assert!(delta_envelopes.is_empty());
+    assert_eq!(delta_envelopes.len(), 1);
+    match &delta_envelopes[0].event {
+        BackboneEvent::ItemUpdated(n) => {
+            let item = serde_json::to_value(&n.item).expect("thread item should serialize");
+            assert_eq!(
+                item.get("type").and_then(|value| value.as_str()),
+                Some("shellExec")
+            );
+            assert_eq!(
+                item.get("command").and_then(|value| value.as_str()),
+                Some("echo hello")
+            );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
     assert!(end_envelopes.is_empty());
 }
 
 #[test]
 fn tool_call_delta_preserves_unparseable_draft_in_meta() {
+    let delta_event = AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-fs-apply-patch-1".to_string(),
+                call_id: Some("tool-fs-apply-patch-1".to_string()),
+                name: "fs_apply_patch".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-fs-apply-patch-1".to_string(),
+            name: "fs_apply_patch".to_string(),
+            delta: "\"hello".to_string(),
+            draft: "{\"patch\":\"not a patch".to_string(),
+            is_parseable: false,
+        },
+    };
+
+    let mut entry_index = 0;
+
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &delta_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert!(envelopes.is_empty());
+    assert!(tool_call_states.contains_key("tool-fs-apply-patch-1"));
+}
+
+#[test]
+fn tool_call_delta_apply_patch_partial_draft_emits_file_change_preview() {
     let delta_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {
             content: vec![],
@@ -727,7 +908,6 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
     };
 
     let mut entry_index = 0;
-
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
     let envelopes = convert_event_to_envelopes(
@@ -740,8 +920,159 @@ fn tool_call_delta_preserves_unparseable_draft_in_meta() {
         &mut tool_call_states,
     );
 
-    assert!(envelopes.is_empty());
-    assert!(tool_call_states.contains_key("tool-fs-apply-patch-1"));
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemUpdated(n) => {
+            let Some(codex::ThreadItem::FileChange {
+                id,
+                changes,
+                status,
+            }) = n.item.as_codex()
+            else {
+                panic!("expected fileChange preview, got {:?}", n.item);
+            };
+            assert_eq!(id, "turn-1:tool-fs-apply-patch-1");
+            assert!(matches!(status, codex::PatchApplyStatus::InProgress));
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].path, "notes.txt");
+            assert!(matches!(changes[0].kind, codex::PatchChangeKind::Add));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn tool_call_delta_apply_patch_reuses_item_id_for_later_preview() {
+    let make_event = |draft: &str| AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-fs-apply-patch-1".to_string(),
+                call_id: Some("tool-fs-apply-patch-1".to_string()),
+                name: "fs_apply_patch".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-fs-apply-patch-1".to_string(),
+            name: "fs_apply_patch".to_string(),
+            delta: String::new(),
+            draft: draft.to_string(),
+            is_parseable: false,
+        },
+    };
+    let first_event = make_event("{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello");
+    let second_event = make_event(
+        "{\"patch\":\"*** Begin Patch\\n*** Add File: notes.txt\\n+hello\\n*** Update File: src/lib.rs\\n@@\\n-old\\n+new",
+    );
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let first_envelopes = convert_event_to_envelopes(
+        &first_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+    let second_envelopes = convert_event_to_envelopes(
+        &second_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    let first_id = match &first_envelopes[0].event {
+        BackboneEvent::ItemUpdated(n) => match n.item.as_codex() {
+            Some(codex::ThreadItem::FileChange { id, .. }) => id.clone(),
+            other => panic!("expected fileChange preview, got {other:?}"),
+        },
+        other => panic!("unexpected backbone event: {other:?}"),
+    };
+    match &second_envelopes[0].event {
+        BackboneEvent::ItemUpdated(n) => {
+            let Some(codex::ThreadItem::FileChange { id, changes, .. }) = n.item.as_codex() else {
+                panic!("expected fileChange preview, got {:?}", n.item);
+            };
+            assert_eq!(id, &first_id);
+            assert_eq!(changes.len(), 2);
+            assert_eq!(changes[1].path, "src/lib.rs");
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn tool_call_delta_non_apply_patch_parseable_draft_updates_input_preview() {
+    let delta_event = AgentEvent::MessageUpdate {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-external-1".to_string(),
+                call_id: Some("tool-external-1".to_string()),
+                name: "mcp_code_analyzer_long_task".to_string(),
+                arguments: serde_json::json!({ "query": "scan repo" }),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+        event: AssistantStreamEvent::ToolCallDelta {
+            content_index: 0,
+            tool_call_id: "tool-external-1".to_string(),
+            name: "mcp_code_analyzer_long_task".to_string(),
+            delta: "repo\"}".to_string(),
+            draft: "{\"query\":\"scan repo\"}".to_string(),
+            is_parseable: true,
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &delta_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemUpdated(n) => {
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                arguments,
+                status,
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool input preview, got {:?}", n.item);
+            };
+            assert_eq!(id, "turn-1:tool-external-1");
+            assert_eq!(tool, "mcp_code_analyzer_long_task");
+            assert_eq!(*arguments, serde_json::json!({ "query": "scan repo" }));
+            assert!(matches!(status, codex::DynamicToolCallStatus::InProgress));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    assert!(tool_call_states.contains_key("tool-external-1"));
 }
 
 #[test]
@@ -782,6 +1113,120 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
             assert!(
                 matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. }) if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
             );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn message_end_with_usage_emits_token_usage_update_with_context_window() {
+    let event = AgentEvent::MessageEnd {
+        message: AgentMessage::Assistant {
+            content: vec![ContentPart::text("done")],
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::Stop),
+            error_message: None,
+            usage: Some(TokenUsage {
+                input: 100,
+                cache_read_input: 20,
+                cache_creation_input: 30,
+                output: 40,
+            }),
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes_with_runtime_context(
+        &event,
+        "session-usage",
+        &test_source(),
+        "turn-usage",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+        StreamMapperRuntimeContext {
+            model_context_window: Some(200_000),
+            reserve_tokens: 16_384,
+            readable_ids: None,
+        },
+    );
+
+    let usage = envelopes
+        .iter()
+        .find_map(|envelope| match &envelope.event {
+            BackboneEvent::TokenUsageUpdated(notification) => Some(notification),
+            _ => None,
+        })
+        .expect("MessageEnd usage should emit token usage update");
+
+    assert_eq!(usage.thread_id, "session-usage");
+    assert_eq!(usage.turn_id, "turn-usage");
+    assert_eq!(usage.token_usage.last.input_tokens, 100);
+    assert_eq!(usage.token_usage.last.cached_input_tokens, 50);
+    assert_eq!(usage.token_usage.last.output_tokens, 40);
+    assert_eq!(usage.token_usage.last.total_tokens, 190);
+    assert_eq!(usage.token_usage.model_context_window, Some(200_000));
+    assert_eq!(
+        usage.token_usage.context.provider_context_tokens, 150,
+        "cache tokens count toward provider-visible context pressure"
+    );
+    assert_eq!(usage.token_usage.context.current_context_tokens, 150);
+    assert_eq!(
+        usage.token_usage.context.effective_context_window,
+        Some(200_000)
+    );
+    assert_eq!(usage.token_usage.context.reserve_tokens, 16_384);
+}
+
+#[test]
+fn message_end_shell_exec_emits_native_shell_exec_item() {
+    let event = AgentEvent::MessageEnd {
+        message: AgentMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![agentdash_agent::ToolCallInfo {
+                id: "tool-shell-1".to_string(),
+                call_id: Some("tool-shell-1".to_string()),
+                name: "shell_exec".to_string(),
+                arguments: serde_json::json!({ "command": "pwd" }),
+            }],
+            stop_reason: Some(StopReason::ToolUse),
+            error_message: None,
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(matches!(
+                &n.item,
+                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                    agentdash_agent_protocol::AgentDashNativeThreadItem::ShellExec {
+                        command,
+                        cwd: Some(cwd),
+                        execution_mode: agentdash_agent_protocol::ShellExecExecutionMode::Platform,
+                        status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                        ..
+                    }
+                ) if command == "pwd" && cwd == "platform://"
+            ));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -1044,11 +1489,15 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
             let item = serde_json::to_value(&n.item).expect("thread item should serialize");
             assert_eq!(
                 item.get("type").and_then(|value| value.as_str()),
-                Some("commandExecution")
+                Some("shellExec")
             );
             assert_eq!(
                 item.get("command").and_then(|value| value.as_str()),
                 Some("cargo test")
+            );
+            assert_eq!(
+                item.get("cwd").and_then(|value| value.as_str()),
+                Some("platform://")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -1056,11 +1505,28 @@ fn execution_start_after_pending_tool_call_emits_in_progress_update() {
 }
 
 #[test]
-fn tool_execution_updates_preserve_full_tool_result_payload() {
+fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
+    let raw_sentinel = "RAW_TOOL_RESULT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
+    let stable_item_id = "turn_001:tool_001";
+    let lifecycle_path = "lifecycle://session/tool-results/turn_001/tool_001/result.txt";
+    let bounded_text = format!(
+        "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded preview"
+    );
     let result = AgentToolResult {
-        content: vec![ContentPart::text("done")],
+        content: vec![ContentPart::text(bounded_text.clone())],
         is_error: false,
-        details: Some(serde_json::json!({ "ok": true })),
+        details: Some(serde_json::json!({
+            "ok": true,
+            "raw_sentinel_for_regression": raw_sentinel,
+            "lifecycle_path": lifecycle_path,
+            "truncation": {
+                "truncated": true,
+                "original_bytes": 131072,
+                "inline_bytes": bounded_text.len(),
+                "omitted_bytes": 131072 - bounded_text.len(),
+                "policy": "head_tail"
+            }
+        })),
     };
     let raw_result = serde_json::to_value(&result).expect("tool result should serialize");
 
@@ -1081,7 +1547,11 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
 
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let update_envelopes = convert_event_to_envelopes(
+    let runtime_context = StreamMapperRuntimeContext {
+        readable_ids: Some(ReadableIdRegistry::new()),
+        ..StreamMapperRuntimeContext::default()
+    };
+    let update_envelopes = convert_event_to_envelopes_with_runtime_context(
         &update_event,
         "session-1",
         &test_source(),
@@ -1089,8 +1559,9 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context.clone(),
     );
-    let end_envelopes = convert_event_to_envelopes(
+    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
         &end_event,
         "session-1",
         &test_source(),
@@ -1098,23 +1569,166 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
+        runtime_context,
     );
 
     assert_eq!(update_envelopes.len(), 1);
     match &update_envelopes[0].event {
-        BackboneEvent::ItemStarted(n) => {
-            assert!(
-                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "echo")
-            );
+        BackboneEvent::ItemUpdated(n) => {
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                content_items: Some(content_items),
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool update, got {:?}", n.item);
+            };
+            assert_eq!(id, stable_item_id);
+            assert_eq!(tool, "echo");
+            let text = content_item_text(content_items);
+            assert!(text.contains("bounded preview"));
+            assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
+            assert!(!text.contains(raw_sentinel));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
 
     match &end_envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
-            assert!(
-                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. }) if tool == "echo" && *success == Some(true))
-            );
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            let Some(codex::ThreadItem::DynamicToolCall {
+                id,
+                tool,
+                content_items: Some(content_items),
+                success,
+                ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected dynamic tool completion, got {:?}", n.item);
+            };
+            assert_eq!(id, stable_item_id);
+            assert_eq!(tool, "echo");
+            assert_eq!(*success, Some(true));
+            let text = content_item_text(content_items);
+            assert!(text.contains("bounded preview"));
+            assert!(text.contains(lifecycle_path));
+            assert_lifecycle_path_matches_item_id(&text, id);
+            assert!(!text.contains(raw_sentinel));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn shell_exec_final_uses_bounded_output_and_structured_details() {
+    let raw_sentinel = "RAW_SHELL_OUTPUT_SENTINEL_SHOULD_NOT_REACH_THREAD_ITEM";
+    let stable_item_id = "turn_001:cmd_001";
+    let lifecycle_path = "lifecycle://session/tool-results/turn_001/cmd_001/result.txt";
+    let bounded_output = format!(
+        "[tool result truncated]\nlifecycle_path: {lifecycle_path}\npolicy: head_tail\n\nbounded shell preview"
+    );
+    let start_event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        args: serde_json::json!({
+            "command": "cargo test -p agentdash-executor pi_agent",
+            "cwd": "workspace://repo"
+        }),
+    };
+    let result = AgentToolResult {
+        content: vec![ContentPart::text(bounded_output.clone())],
+        is_error: true,
+        details: Some(serde_json::json!({
+            "type": "shell_exec",
+            "original_command": "cargo test -p agentdash-executor pi_agent",
+            "executed_command": "cargo test -p agentdash-executor pi_agent",
+            "state": "completed",
+            "exit_code": 7,
+            "session_id": "shell-session-1",
+            "terminal_id": "terminal-1",
+            "next_seq": 42,
+            "truncated": true,
+            "omitted_bytes": 8192,
+            "raw_sentinel_for_regression": raw_sentinel,
+            "lifecycle_path": lifecycle_path,
+            "truncation": {
+                "truncated": true,
+                "original_bytes": 131072,
+                "inline_bytes": bounded_output.len(),
+                "omitted_bytes": 131072 - bounded_output.len(),
+                "policy": "head_tail"
+            }
+        })),
+    };
+    let end_event = AgentEvent::ToolExecutionEnd {
+        tool_call_id: "tool-shell-1".to_string(),
+        tool_name: "shell_exec".to_string(),
+        result: serde_json::to_value(&result).expect("tool result should serialize"),
+        is_error: true,
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let runtime_context = StreamMapperRuntimeContext {
+        readable_ids: Some(ReadableIdRegistry::new()),
+        ..StreamMapperRuntimeContext::default()
+    };
+    let _ = convert_event_to_envelopes_with_runtime_context(
+        &start_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+        runtime_context.clone(),
+    );
+    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
+        &end_event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+        runtime_context,
+    );
+
+    assert_eq!(end_envelopes.len(), 1);
+    match &end_envelopes[0].event {
+        BackboneEvent::ItemCompleted(n) => {
+            let item_json = serde_json::to_string(&n.item).expect("item should serialize");
+            assert!(!item_json.contains(raw_sentinel));
+            assert!(matches!(
+                &n.item,
+                agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                    agentdash_agent_protocol::AgentDashNativeThreadItem::ShellExec {
+                        command,
+                        id,
+                        cwd: Some(cwd),
+                        status: codex::DynamicToolCallStatus::Failed,
+                        aggregated_output: Some(aggregated_output),
+                        exit_code: Some(7),
+                        success: Some(false),
+                        ..
+                    }
+                ) if id == stable_item_id
+                    && command == "cargo test -p agentdash-executor pi_agent"
+                    && cwd == "workspace://repo"
+                    && aggregated_output == &bounded_output
+                    && aggregated_output.contains(lifecycle_path)
+                    && {
+                        assert_lifecycle_path_matches_item_id(aggregated_output, id);
+                        true
+                    }
+                    && !aggregated_output.contains(raw_sentinel)
+            ));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -1297,14 +1911,24 @@ fn assistant_message_end_with_error_message_emits_fallback_chunk() {
         &mut tool_call_states,
     );
 
-    assert_eq!(envelopes.len(), 1);
+    // 残余 delta 补发 + 终态 ItemCompleted(AgentMessage) 并存。
     assert_eq!(entry_index, 1);
-    match &envelopes[0].event {
-        BackboneEvent::AgentMessageDelta(delta) => {
-            assert_eq!(delta.delta, "Agent run aborted");
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
+    let delta = envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(delta) => Some(delta),
+            _ => None,
+        })
+        .expect("residual agent message delta");
+    assert_eq!(delta.delta, "Agent run aborted");
+    let final_text = envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => assistant_message_text(&n.item),
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_text, "Agent run aborted");
 }
 
 #[test]
@@ -1358,14 +1982,28 @@ fn message_end_does_not_repeat_full_snapshot_after_deltas() {
     );
 
     assert_eq!(delta_envelopes.len(), 1);
-    assert_eq!(end_envelopes.len(), 1);
-    match (&delta_envelopes[0].event, &end_envelopes[0].event) {
-        (BackboneEvent::AgentMessageDelta(delta), BackboneEvent::AgentMessageDelta(end)) => {
-            assert_eq!(delta.item_id, end.item_id);
-            assert_eq!(end.delta, "llo");
-        }
-        other => panic!("unexpected backbone events: {other:?}"),
-    }
+    // 残余 delta ("llo") + 终态 ItemCompleted("hello") 并存。
+    let delta = match &delta_envelopes[0].event {
+        BackboneEvent::AgentMessageDelta(delta) => delta,
+        other => panic!("unexpected backbone event: {other:?}"),
+    };
+    let end = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(end) => Some(end),
+            _ => None,
+        })
+        .expect("residual agent message delta on MessageEnd");
+    assert_eq!(delta.item_id, end.item_id);
+    assert_eq!(end.delta, "llo");
+    let final_text = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => assistant_message_text(&n.item),
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_text, "hello");
 }
 
 #[test]
@@ -1455,22 +2093,39 @@ fn message_end_after_tool_call_reuses_text_entry_index_and_message_id() {
 
     assert_eq!(delta_envelopes.len(), 1);
     assert_eq!(tool_envelopes.len(), 1);
-    assert_eq!(end_envelopes.len(), 1);
 
     let delta_item_id = match &delta_envelopes[0].event {
         BackboneEvent::AgentMessageDelta(d) => d.item_id.clone(),
         other => panic!("unexpected event: {other:?}"),
     };
-    let end_delta = match &end_envelopes[0].event {
-        BackboneEvent::AgentMessageDelta(d) => d,
-        other => panic!("unexpected event: {other:?}"),
-    };
+    let end_delta = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::AgentMessageDelta(d) => Some(d),
+            _ => None,
+        })
+        .expect("residual agent message delta on MessageEnd");
 
     assert_eq!(
         delta_item_id, end_delta.item_id,
         "MessageEnd reconcile 必须命中 TextDelta 的 chunk_emit_state，否则前端会渲染成两条文本气泡"
     );
     assert_eq!(end_delta.delta, "llo");
+
+    // 终态 ItemCompleted(AgentMessage) 与残余 delta 共享 item_id，前端可并入同一气泡。
+    let final_item_id = end_envelopes
+        .iter()
+        .find_map(|env| match &env.event {
+            BackboneEvent::ItemCompleted(n) => match &n.item {
+                AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { id, .. }) => {
+                    Some(id.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("terminal assistant message item");
+    assert_eq!(final_item_id, delta_item_id);
 
     let delta_entry_index = delta_envelopes[0].trace.entry_index;
     let tool_entry_index = tool_envelopes[0].trace.entry_index;
@@ -1735,6 +2390,7 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     backend_execution: None,
+                    runtime_backend_anchor: None,
                     identity: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame::default(),
@@ -1747,6 +2403,52 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
             assert!(message.contains("尚未配置任何可用的 LLM Provider"));
         }
         Ok(_) => panic!("prompt should fail without configured provider"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_missing_model_selection_reports_guidance_with_dynamic_providers() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    provider.global_api_key_ciphertext = "test-key".to_string();
+    provider.default_model = "model-ok".to_string();
+    llm_repo.set_providers(vec![provider]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let result = connector
+        .prompt(
+            "session-missing-model-selection",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("缺少模型选择"));
+            assert!(message.contains("模型选择器"));
+            assert!(message.contains("Provider/Model"));
+        }
+        Ok(_) => panic!("prompt should fail when dynamic provider mode has no model selection"),
         Err(other) => panic!("unexpected connector error: {other}"),
     }
 }
@@ -1799,6 +2501,7 @@ async fn prompt_selected_unavailable_provider_reports_credential_mode() {
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     backend_execution: None,
+                    runtime_backend_anchor: None,
                     identity: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame::default(),
@@ -1865,6 +2568,7 @@ async fn prompt_selected_user_required_provider_reports_byok_when_identity_exist
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     backend_execution: None,
+                    runtime_backend_anchor: None,
                     identity: Some(agentdash_spi::AuthIdentity {
                         auth_mode: agentdash_spi::AuthMode::Personal,
                         user_id: "user-1".to_string(),
@@ -2068,6 +2772,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
                     backend_execution: None,
+                    runtime_backend_anchor: None,
                     identity: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame {
@@ -2120,7 +2825,8 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                         delivery_status: "prepared_for_connector".to_string(),
                         delivery_channel: "connector_context".to_string(),
                         message_role: "system".to_string(),
-                        rendered_text: format!("## Identity\n\n{prompt}"),
+                        // identity 帧 rendered_text 为原样身份提示词（无 markdown 脚手架）。
+                        rendered_text: prompt.to_string(),
                         sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
                             title: "Identity".to_string(),
                             summary: "test".to_string(),
@@ -2144,6 +2850,7 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                 mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
                 backend_execution: None,
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: turn_frame,
@@ -2218,7 +2925,54 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     let runtime = agents
         .get(session_id)
         .expect("session runtime should be retained");
-    assert_eq!(runtime.last_identity_prompt.as_deref(), Some("SP_B"));
+    assert_eq!(runtime.last_system_prompt.as_deref(), Some("SP_B"));
+}
+
+/// 系统提示词由 identity 帧 + system_guidelines 帧 + memory_context 帧按序组装。
+#[test]
+fn assemble_system_prompt_combines_identity_guidelines_and_memory() {
+    fn frame(kind: &str, rendered: &str) -> agentdash_spi::hooks::ContextFrame {
+        agentdash_spi::hooks::ContextFrame {
+            id: format!("{kind}-1"),
+            kind: kind.to_string(),
+            source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status: "prepared_for_connector".to_string(),
+            delivery_channel: "connector_context".to_string(),
+            message_role: "system".to_string(),
+            rendered_text: rendered.to_string(),
+            sections: Vec::new(),
+            created_at_ms: 1,
+        }
+    }
+
+    let identity = frame("identity", "## Identity\n\nbase");
+    let guidelines = frame(
+        "system_guidelines",
+        "## Project Guidelines\n\n### AGENTS.md\n\n使用中文交流",
+    );
+    let memory = frame(
+        "memory_context",
+        "## Memory Context\n\nDefault source: `agent://`",
+    );
+
+    // 帧顺序不应影响结果：身份、指引、memory context 按固定顺序拼接。
+    let prompt = assemble_system_prompt(&[memory.clone(), guidelines.clone(), identity.clone()])
+        .expect("system prompt should exist");
+    assert!(prompt.starts_with("## Identity"));
+    assert!(prompt.contains("base"));
+    assert!(prompt.contains("## Project Guidelines"));
+    assert!(prompt.contains("使用中文交流"));
+    assert!(prompt.contains("## Memory Context"));
+    assert!(prompt.ends_with("Default source: `agent://`"));
+
+    // 仅有身份帧时也成立。
+    let identity_only = assemble_system_prompt(&[identity]).expect("identity only");
+    assert_eq!(identity_only, "## Identity\n\nbase");
+
+    // 无任何系统帧时返回 None。
+    assert!(assemble_system_prompt(&[]).is_none());
 }
 
 #[tokio::test]
@@ -2260,6 +3014,7 @@ async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
                 mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
                 backend_execution: None,
+                runtime_backend_anchor: None,
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame::default(),
@@ -2305,6 +3060,50 @@ async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
 }
 
 #[tokio::test]
+async fn cancel_waits_for_agent_idle_before_next_prompt() {
+    let bridge = Arc::new(CancelThenDoneBridge::default());
+    let connector = PiAgentConnector::new(bridge.clone(), "系统提示");
+    let session_id = "session-cancel-idle";
+
+    let first_provider_started = bridge.first_provider_started.notified();
+    tokio::pin!(first_provider_started);
+    let _first_stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("first".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await
+        .expect("first prompt should start");
+    first_provider_started.await;
+
+    tokio::time::timeout(Duration::from_secs(1), connector.cancel(session_id))
+        .await
+        .expect("cancel should wait for provider cancellation and agent idle")
+        .expect("cancel should succeed");
+
+    let mut second_stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("second".to_string()),
+            execution_context_with_config(agentdash_spi::AgentConfig::new("PI_AGENT")),
+        )
+        .await
+        .expect("second prompt should not hit stale Pi Agent is_streaming");
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while let Some(next) = second_stream.next().await {
+            next.expect("second stream item should succeed");
+        }
+    })
+    .await
+    .expect("second stream should complete");
+    assert_eq!(bridge.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn update_session_tools_replaces_all_tools() {
     let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
 
@@ -2322,11 +3121,13 @@ async fn update_session_tools_replaces_all_tools() {
         PiAgentSessionRuntime {
             agent,
             tools: vec![old_tool],
-            last_identity_prompt: None,
+            last_system_prompt: None,
             model_selection: PiAgentModelSelection {
                 provider_id: None,
                 model_id: None,
             },
+            model_context_window: Some(CONTEXT_WINDOW_STANDARD),
+            readable_ids: ReadableIdRegistry::new(),
         },
     );
 

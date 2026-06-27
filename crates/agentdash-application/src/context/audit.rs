@@ -8,6 +8,7 @@
 //! 每 session 最多保留 `capacity_per_session` 条（默认 2000）；session_events 持久化
 //! 稳定后再迁移。
 
+use agentdash_diagnostics::{diag, Subsystem};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
@@ -27,7 +28,7 @@ pub type AuditSessionKey = String;
 /// 审计事件的触发源。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditTrigger {
-    /// Owner bootstrap 路径产出的 Bundle（compose_owner_bootstrap）。
+    /// Owner bootstrap composer 产出的 Bundle。
     SessionBootstrap,
     /// Compose 路径产出的 Bundle（story step / lifecycle / companion 等常规 rebuild）。
     ComposerRebuild,
@@ -127,7 +128,8 @@ impl ContextAuditBus for InMemoryContextAuditBus {
         let mut guard = match self.store.write() {
             Ok(g) => g,
             Err(poisoned) => {
-                tracing::warn!("context audit bus lock poisoned; 恢复并继续");
+                diag!(Warn, Subsystem::AgentRun,
+        "context audit bus lock poisoned; 恢复并继续");
                 poisoned.into_inner()
             }
         };
@@ -288,7 +290,7 @@ mod tests {
     fn filter_by_slot_and_source_prefix() {
         let bus = InMemoryContextAuditBus::new(100);
         let mut bundle = SessionContextBundle::new(Uuid::new_v4(), "task_start");
-        bundle.upsert_by_slot(frag("task", "legacy:session_plan", "alpha"));
+        bundle.upsert_by_slot(frag("task", "session_plan", "alpha"));
         bundle.upsert_by_slot(frag("story", "hook:UserPromptSubmit", "beta"));
 
         emit_bundle_fragments(&bus, &bundle, SESSION_KEY, AuditTrigger::ComposerRebuild);

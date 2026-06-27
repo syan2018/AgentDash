@@ -10,6 +10,8 @@ import type {
 } from "../types";
 import { subjectExecutionKey } from "../types";
 import { useLifecycleStore } from "../stores/lifecycleStore";
+import { agentRunWorkspacePath } from "../features/agent/agent-run-paths";
+import { agentSourceLabel } from "../lib/agent-source";
 
 function Section({
   title,
@@ -133,12 +135,12 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
                 key={agent.agent_ref.agent_id}
                 type="button"
                 onClick={() => navigate(`/agent/${agent.agent_ref.agent_id}`, {
-                  state: { run_id: lifecycleRun.run_ref.run_id, frame_id: agent.current_frame_id ?? null },
+                  state: { run_id: lifecycleRun.run_ref.run_id },
                 })}
                 className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-left hover:bg-secondary/40"
               >
-                <span className="truncate text-sm text-foreground">
-                  {agent.agent_role || agent.agent_kind}
+                <span className="flex min-w-0 items-center gap-1.5 truncate text-sm text-foreground">
+                  {agentSourceLabel(agent.source) ?? agent.source}
                 </span>
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   {agent.agent_ref.agent_id.slice(0, 8)}
@@ -158,10 +160,10 @@ function RunSummary({ lifecycleRun }: { lifecycleRun: LifecycleRunView }) {
               <button
                 key={ref.runtime_session_id}
                 type="button"
-                onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
+                onClick={() => {}}
                 className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
               >
-                {ref.runtime_session_id}
+                trace {ref.runtime_session_id}
               </button>
             ))}
           </div>
@@ -237,14 +239,16 @@ function AgentSummary({
       <Section title="Agent">
         <div className="space-y-2 text-sm">
           <p className="font-mono text-xs text-muted-foreground">{agent.agent_ref.agent_id}</p>
-          <p className="text-foreground">{agent.agent_role || agent.agent_kind}</p>
+          <p className="text-foreground">
+            {agentSourceLabel(agent.source) ?? agent.source}
+          </p>
           <p className="text-xs text-muted-foreground">status: {agent.status}</p>
           <button
             type="button"
-            onClick={() => navigate(`/run/${agent.agent_ref.run_id}`)}
+            onClick={() => navigate(agentRunWorkspacePath(agent.agent_ref.run_id, agent.agent_ref.agent_id))}
             className="font-mono text-xs text-primary hover:underline"
           >
-            run {agent.agent_ref.run_id}
+            打开 AgentRun
           </button>
         </div>
       </Section>
@@ -265,7 +269,7 @@ function AgentSummary({
                   <button
                     key={ref.runtime_session_id}
                     type="button"
-                    onClick={() => navigate(`/session/${ref.runtime_session_id}`)}
+                    onClick={() => {}}
                     className="rounded-[6px] border border-border bg-secondary/40 px-2 py-1 font-mono text-xs text-muted-foreground hover:text-foreground"
                   >
                     trace {ref.runtime_session_id.slice(0, 8)}
@@ -334,7 +338,7 @@ export function LifecycleAgentPage() {
   const fetchAndIngestLifecycleRun = useLifecycleStore((s) => s.fetchAndIngestLifecycleRun);
   const fetchFrame = useLifecycleStore((s) => s.fetchFrame);
   const agent = useLifecycleStore((s) => s.agents.get(agentId) ?? null);
-  const frameId = routeState.frame_id ?? agent?.current_frame_id ?? null;
+  const frameId = routeState.frame_id ?? null;
   const frame = useLifecycleStore((s) => (frameId ? s.frames.get(frameId) ?? null : null));
   const error = useLifecycleStore((s) => s.error);
 

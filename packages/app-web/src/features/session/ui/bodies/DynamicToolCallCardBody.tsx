@@ -11,6 +11,7 @@ import type { ThreadItem } from "../../../../generated/backbone-protocol";
 import { GenericJsonBody } from "./GenericJsonBody";
 import { ReadCardBody } from "./ReadCardBody";
 import { DiffCardBodyAuto } from "./DiffCardBody";
+import { TaskToolCardBody } from "./TaskToolCardBody";
 
 type DynamicItem = Extract<ThreadItem, { type: "dynamicToolCall" }>;
 
@@ -20,6 +21,10 @@ export function DynamicToolCallCardBody({ item }: { item: DynamicItem }) {
 
   if (tool === "read") {
     return <ReadCardBody item={item} />;
+  }
+
+  if (tool === "task_read" || tool === "task_write") {
+    return <TaskToolCardBody item={item} />;
   }
 
   if (tool === "edit" || tool === "str_replace_editor") {

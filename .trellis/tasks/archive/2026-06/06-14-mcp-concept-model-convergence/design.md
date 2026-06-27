@@ -1,0 +1,147 @@
+# MCP 概念模型收束设计
+
+## Current Shape After Gate 0
+
+```mermaid
+flowchart LR
+  DomainPreset["domain::McpPreset<br/>项目资产"]
+  DomainTransport["domain::McpTransportConfig<br/>连接参数"]
+  ContractDto["contracts::McpTransportConfigDto<br/>API/TS DTO"]
+  FrontendTypes["app-web generated MCP types"]
+  LocalTs["packages/core local-runtime<br/>McpTransportConfig"]
+  Editor["views McpTransportConfigEditor<br/>编辑值类型"]
+
+  Runtime["spi::RuntimeMcpServer<br/>执行面事实源"]
+  Summary["application::McpServerSummary<br/>只读展示投影"]
+  FrameJson["agent_frames.mcp_surface_json<br/>JSON 投影"]
+
+  RelayDto["relay::McpServerRelay<br/>wire DTO"]
+  Adapter["application::mcp_relay_adapter<br/>唯一 wire 转换"]
+  Capability["capability resolver<br/>mcp key -> preset -> runtime"]
+  Marketplace["shared_library::mcp_server_template<br/>安装模板"]
+
+  DomainPreset --> DomainTransport
+  DomainTransport <--> ContractDto
+  ContractDto --> FrontendTypes
+  FrontendTypes --> Editor
+  LocalTs --> Editor
+
+  DomainPreset --> Capability --> Runtime
+  Runtime --> FrameJson
+  FrameJson --> Runtime
+  Runtime --> Summary
+
+  Runtime --> Adapter --> RelayDto
+  DomainTransport --> Adapter
+  RelayDto --> Adapter --> Runtime
+  Marketplace --> DomainPreset
+```
+
+## Target Shape
+
+```mermaid
+flowchart LR
+  Transport["McpTransportConfig<br/>唯一 transport 语义"]
+  Preset["McpPreset<br/>项目资产事实源"]
+  Runtime["RuntimeMcpServer<br/>执行面事实源"]
+  Wire["McpServerRelay<br/>Relay/API 边界 DTO"]
+  Summary["McpServerSummary<br/>只读展示投影"]
+  Template["McpServerTemplate<br/>Marketplace 安装模板"]
+  Adapter["mcp adapter<br/>集中转换"]
+  Frame["AgentFrame.mcp_surface_json<br/>Runtime JSON 投影"]
+  FrontendPreset["app-web MCP Preset contract types"]
+  LocalConfig["McpLocalServerEntry<br/>本机配置 wrapper"]
+  Editor["McpTransportConfigEditor<br/>显式抽象 props"]
+
+  Preset --> Transport
+  Preset --> Runtime
+  Runtime --> Frame
+  Frame --> Runtime
+
+  Runtime <--> Adapter
+  Transport <--> Adapter
+  Wire <--> Adapter
+  LocalConfig <--> Adapter
+
+  Runtime --> Summary
+  Template --> Preset
+
+  FrontendPreset --> Editor
+  LocalConfig --> Editor
+```
+
+## Target Concepts
+
+| Concept | Role | Ownership |
+| --- | --- | --- |
+| `McpTransportConfig` | 纯连接参数：HTTP/SSE/stdio、headers/env/cwd | domain；SPI 可 re-export |
+| `McpPreset` | project 级可编辑、可安装、可引用资产 | domain/application/API |
+| `RuntimeMcpServer` | 本次执行真实可用的 MCP server：name + transport + placement | SPI/application/session/executor |
+| `McpServerRelay` | Relay/API 边界 DTO | relay crate + adapter |
+| `McpServerSummary` | 只读展示和 session plan 文案 | application/frontend |
+| `McpServerTemplate` | Marketplace 安装模板 | shared_library |
+
+## Architecture Boundaries
+
+- Domain owns durable business meaning: preset, transport, template.
+- SPI owns executable runtime surface: runtime server and capability state.
+- Relay owns wire shape only.
+- Application owns resolution: preset refs, runtime binding, capability directives, AgentFrame projection.
+- Local runtime owns machine config and connection lifecycle, but transport semantics come from domain or adapter.
+- Frontend generated contract owns cloud MCP Preset API types; local runtime package owns desktop config types.
+
+## Contract Lock Gate
+
+本任务先交付一个目标 MCP contract lock，再进入模块级重构。Contract lock 需要在代码中固定以下内容：
+
+| Locked Item | Target |
+| --- | --- |
+| Transport shape | domain `McpTransportConfig` 是唯一业务 transport 语义，其他 transport DTO 只在边界存在 |
+| Runtime surface | SPI 执行面类型是唯一可执行 MCP server 事实源 |
+| Summary shape | 展示 / markdown / plan 使用 summary 类型，summary 单向来源于 runtime surface |
+| Wire adapter | Relay / local / API 只能通过统一 adapter 转换 |
+| Frontend typing | Cloud preset contract type 与 local runtime config type 显式分流 |
+| Concept policy | 只保留 preset、runtime、wire、summary、template 主路径 |
+
+Contract lock 先固定类型和模块归属；后续 subagent 沿锁定 contract 收束调用点。
+
+## Data Flow
+
+1. Project Agent config stores `mcp_preset_keys`.
+2. Construction planning resolves keys into `McpPreset`.
+3. Frame construction applies runtime binding against final VFS facts.
+4. Result becomes `RuntimeMcpServer`.
+5. Capability state and AgentFrame surface persist that runtime surface.
+6. Executor discovers direct or relay MCP tools from the runtime surface.
+7. Relay/local boundaries convert through one adapter.
+8. UI consumes generated DTOs or summary projections only.
+
+## Subagent Refactor Boundaries
+
+第一阶段由主会话完成 contract lock。之后按以下边界分派 subagent：
+
+| Boundary | Scope | Expected Result |
+| --- | --- | --- |
+| Session / Capability | resolver、AgentFrame projection、runtime replay、launch surface | MCP runtime surface 单一化，inline/fallback 删除 |
+| Relay / Local Runtime | relay protocol adapter、prompt payload、local manager、MCP probe/list/call | transport/server 转换集中，边界 DTO 不泄漏业务语义 |
+| Frontend | generated contract、local-runtime config、shared editor、MCP preset UI | cloud/local 类型显式分流，editor 不再隐式绑定 local type |
+| Marketplace / Shared Library | `mcp_server_template` publish/install、dependency display | template 只安装为 preset，不进入 runtime/capability |
+| Docs / Specs / Verification | spec 更新、contract generation、targeted tests | 只记录目标模型原因，验证无重复概念回流 |
+
+## Migration Notes
+
+- Database changes are allowed to be hard changes. New migrations should remove unused MCP columns when the target model no longer needs them.
+- Existing JSON payloads do not need backward compatibility migrations unless the current dev database must be transformed to keep tests or local dev usable.
+- Generated TypeScript must be regenerated if Rust contract DTO names or shapes change.
+
+## Trade-Offs
+
+- Keeping boundary DTOs is acceptable when serialization ownership differs; keeping business logic or enum matching in multiple boundary modules is not.
+- `mcp_server_template` remains separate because it models install-time parameterization, not execution. Its output must be `McpPreset`.
+- Summary types remain useful for UI and markdown, but their naming must make one-way projection obvious.
+
+## Risks
+
+- Relay prompt and relay command paths currently use similar but separate conversions; moving them requires targeted tests on both cloud-to-local prompt and API relay MCP provider.
+- Frontend editor typing may require small component API changes across app-web and desktop views.
+- AgentFrame JSON projection must remain symmetrical with capability replay; this needs focused tests around `mcp_surface_json`.

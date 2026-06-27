@@ -126,7 +126,7 @@ export function RoutineTabView() {
       const result = await createRoutine.mutateAsync(payload);
       if (result) {
         setShowCreate(false);
-        if (result.webhook_token && result.trigger_config?.endpoint_id) {
+        if (result.webhook_token && result.trigger_config.type === "webhook") {
           setTokenAlert({
             token: result.webhook_token,
             endpointId: result.trigger_config.endpoint_id,

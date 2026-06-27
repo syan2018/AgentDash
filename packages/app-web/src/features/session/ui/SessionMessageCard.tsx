@@ -8,6 +8,9 @@ import {
   getFileKindLabel,
   toFileUri,
 } from "../../file-reference/fileReferenceUi";
+import { SessionUserImageBlock } from "./SessionUserImageBlock";
+import type { UserMessageImage } from "../model/types";
+import { ST } from "./bodies/cardBodyTokens";
 
 export interface SessionMessageCardProps {
   type: "user" | "agent" | "thinking";
@@ -17,6 +20,8 @@ export interface SessionMessageCardProps {
   defaultCollapsed?: boolean;
   badgeOverride?: string;
   labelOverride?: string;
+  /** 仅用户消息：随文本一起展示的图片块。 */
+  images?: UserMessageImage[];
 }
 
 function renderTextWithFilePills(text: string): ReactNode[] {
@@ -59,96 +64,71 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   type,
   content,
   isStreaming,
-  collapsible = false,
-  defaultCollapsed = false,
-  badgeOverride,
-  labelOverride,
+  collapsible: _collapsible = false,
+  defaultCollapsed,
+  badgeOverride: _badgeOverride,
+  labelOverride: _labelOverride,
+  images,
 }: SessionMessageCardProps) {
-  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
-  const config = MESSAGE_CONFIG[type];
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed ?? type === "thinking");
+  const hasImages = type === "user" && Boolean(images && images.length > 0);
+  const hasText = content.trim().length > 0;
 
-  if (type === "thinking" && !collapsible) {
+  if (type === "thinking") {
+    const canExpand = hasText;
+    const label = isStreaming ? "正在思考" : "思考";
     return (
-      <div className="rounded-[12px] border border-dashed border-border bg-secondary/60 px-4 py-3.5">
+      <div>
         <button
           type="button"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex w-full items-center justify-between gap-3 text-left"
+          onClick={() => {
+            if (canExpand) setIsCollapsed(!isCollapsed);
+          }}
+          className={ST.groupRow}
         >
-          <span className="flex items-center gap-2">
-            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-[6px] border border-border bg-background px-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">
-              {config.badge}
-            </span>
-            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              思考
-            </span>
-          </span>
-          <span className="text-xs text-muted-foreground">{isCollapsed ? "展开" : "收起"}</span>
+          <span className={ST.chevron}>{canExpand ? (isCollapsed ? "▶" : "▼") : "•"}</span>
+          <span className={ST.badge}>THINK</span>
+          <span className={ST.hint}>{label}</span>
         </button>
 
-        {!isCollapsed && (
-          <div className="mt-2.5 border-t border-border/70 pt-2.5 text-sm text-muted-foreground">
-            <pre className="whitespace-pre-wrap text-xs leading-6">{content}</pre>
+        {canExpand && !isCollapsed && (
+          <div className={ST.itemList}>
+            <div className={ST.bodyArea}>
+              <pre className="whitespace-pre-wrap text-xs leading-6 text-muted-foreground/75">{content}</pre>
+            </div>
           </div>
         )}
       </div>
     );
   }
 
-  return (
-    <div className={`flex gap-3 ${config.containerClass}`}>
-      <div className="flex w-11 shrink-0 flex-col items-start pt-0.5">
-        <span className={config.avatarClass}>{badgeOverride ?? config.badge}</span>
-        <span className={config.labelClass}>{labelOverride ?? config.label}</span>
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className={config.contentClass}>
-          {type === "user" ? (
-            <p className="whitespace-pre-wrap text-sm leading-7 text-foreground">
-              {renderTextWithFilePills(content)}
-            </p>
-          ) : (
-            <MarkdownRenderer content={content} isStreaming={isStreaming} />
-          )}
-
-          {isStreaming && (
-            <span className="mt-3 inline-flex h-4 w-[2px] animate-pulse rounded-[4px] bg-primary align-middle" />
-          )}
+  // ── User：右侧对齐气泡 ──
+  if (type === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="min-w-0 max-w-[85%] rounded-[12px] rounded-tr-[4px] bg-primary/10 px-4 py-2.5">
+          <div className="space-y-2.5">
+            {hasText && (
+              <p className="whitespace-pre-wrap wrap-anywhere text-sm leading-7 text-foreground">
+                {renderTextWithFilePills(content)}
+              </p>
+            )}
+            {hasImages && <SessionUserImageBlock images={images!} />}
+          </div>
         </div>
       </div>
+    );
+  }
+
+  // ── Agent：无边框文档流 ──
+  return (
+    <div className="py-0.5">
+      <MarkdownRenderer content={content} isStreaming={isStreaming} />
+      {isStreaming && (
+        <span className="mt-1 inline-flex h-4 w-[2px] animate-pulse rounded-[4px] bg-primary align-middle" />
+      )}
     </div>
   );
 });
-
-const MESSAGE_CONFIG = {
-  user: {
-    badge: "ME",
-    label: "用户",
-    containerClass: "items-start",
-    avatarClass:
-      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-secondary px-1.5 text-[10px] font-semibold tracking-[0.14em] text-foreground",
-    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
-    contentClass: "rounded-[12px] border border-border bg-secondary px-4 py-3.5",
-  },
-  agent: {
-    badge: "AI",
-    label: "Agent",
-    containerClass: "items-start",
-    avatarClass:
-      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-background px-1.5 text-[10px] font-semibold tracking-[0.14em] text-foreground",
-    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
-    contentClass: "rounded-[12px] border border-border bg-background px-4 py-3.5",
-  },
-  thinking: {
-    badge: "TH",
-    label: "思考",
-    containerClass: "items-start opacity-85",
-    avatarClass:
-      "inline-flex h-6 min-w-6 items-center justify-center rounded-[7px] border border-border bg-secondary px-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground",
-    labelClass: "mt-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground",
-    contentClass: "rounded-[12px] border border-dashed border-border bg-secondary/60 px-4 py-3.5 text-muted-foreground",
-  },
-} as const;
 
 export default SessionMessageCard;

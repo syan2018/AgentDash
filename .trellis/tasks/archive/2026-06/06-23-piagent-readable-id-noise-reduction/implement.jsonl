@@ -1,0 +1,22 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "crates/agentdash-agent/src/agent_loop/tool_call.rs", "reason": "tool_call_id 到 tool result ref 的接线入口"}
+{"file": "crates/agentdash-agent/src/agent_loop/tool_result.rs", "reason": "bounded tool result 文本和 lifecycle_path 生成入口"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Backbone ThreadItem 与 lifecycle path 跨层契约"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "PiAgent streaming 与 tool result lifecycle 当前契约"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs", "reason": "PiAgent stream 到 ThreadItem 的 id 映射入口"}
+{"file": "crates/agentdash-application/src/session/continuation.rs", "reason": "session continuation 对 bounded tool result 的文本投影入口"}
+{"file": "crates/agentdash-application/src/session/tool_result_cache.rs", "reason": "SessionToolResultCache key、metadata 与 status message 入口"}
+{"file": "crates/agentdash-application/src/vfs/provider_lifecycle.rs", "reason": "lifecycle VFS tool-results 路径解析与读取入口"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "lifecycle VFS 地址模型和 provider 边界"}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "projection/continuation 只消费 bounded fact 的上下文契约"}
+{"file": ".trellis/tasks/archive/2026-06/06-23-piagent-large-output-lifecycle-closeout/design.md", "reason": "前置任务关于 stable item id 和共享 cache 的设计决策"}
+{"file": "crates/agentdash-application/src/lifecycle/surface/journey/mod.rs", "reason": "session lifecycle journey 的 tool-results/terminal read surface"}
+{"file": "crates/agentdash-application/src/lifecycle/surface/journey/session_items.rs", "reason": "session items/tool result metadata path 投影入口"}
+{"file": ".trellis/tasks/archive/2026-06/06-23-piagent-large-output-lifecycle-closeout/prd.md", "reason": "前置大输出 lifecycle 收口任务需求背景"}
+{"file": "crates/agentdash-api/src/bootstrap/session.rs", "reason": "共享 SessionToolResultCache 写入注入 bootstrap"}
+{"file": "crates/agentdash-agent/src/agent_loop.rs", "reason": "ToolResultRefContext 与 stable id helper 所在入口"}
+{"file": "crates/agentdash-api/src/bootstrap/vfs.rs", "reason": "lifecycle VFS provider 注入 bootstrap"}
+{"file": "packages/app-web/src/features/session/model/boundedOutput.ts", "reason": "前端 bounded output lifecycle path 解析入口"}
+{"file": "packages/app-web/src/features/session/ui/bodies/ToolOutputContentViewer.tsx", "reason": "工具结果卡片 lifecycle path 展示入口"}
+{"file": "crates/agentdash-executor/src/connectors/pi_agent/connector.rs", "reason": "PiAgent prompt 设置 tool result ref context 的组装点"}
+{"file": "packages/app-web/src/features/session/ui/bodies/CommandExecutionCardBody.tsx", "reason": "命令输出卡片 bounded lifecycle path 展示入口"}

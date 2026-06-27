@@ -29,16 +29,9 @@ pub const ASSIGNMENT_CONTEXT_SLOTS: &[&str] = &[
     "constraint",
     "codebase",
     "references",
-    "project_guidelines",
     "instruction",
     "instruction_append",
-    // companion_agents: 从独立 section 统一归入 Bundle 主数据面；
-    // ContextFrame 收束后由 assignment_context frame 按白名单注入给 Agent。
-    "companion_agents",
 ];
-
-/// 兼容旧调用点的别名。
-pub const RUNTIME_AGENT_CONTEXT_SLOTS: &[&str] = ASSIGNMENT_CONTEXT_SLOTS;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {
@@ -191,10 +184,10 @@ pub struct ContextFragment {
     /// 产出来源标记（吸收原 `HookInjection.source`）。
     ///
     /// 约定前缀：
-    /// - `legacy:session_plan` — `build_session_plan_fragments` 产出
-    /// - `legacy:contributor:<name>` — 内置 Contributor 产出
-    /// - `legacy:workspace_source` — 工作空间声明式来源
-    /// - `legacy:source_resolver:<kind>` — 声明式来源解析器
+    /// - `session_plan` — `build_session_plan_fragments` 产出
+    /// - `context_contributor:<name>` — 内置 Contributor 产出
+    /// - `workspace_source:<kind>` — 工作空间声明式来源
+    /// - `source_resolver:<kind>` — 声明式来源解析器
     /// - `hook:<trigger>` — 后续 Hook 注入路径使用
     pub source: String,
     pub content: String,

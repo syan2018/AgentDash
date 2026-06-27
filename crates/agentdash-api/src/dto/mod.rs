@@ -12,26 +12,25 @@ mod extension_management;
 mod extension_runtime;
 mod file_picker;
 mod health;
-mod identity_directory;
 mod llm_provider;
 mod project;
 mod project_agent;
-mod routine;
 mod session;
 mod shared_library;
 mod skill_asset;
 mod story;
-mod task_execution;
 mod terminal;
 mod vfs;
 mod workflow;
 mod workspace;
 
-pub use agentdash_contracts::core::{
+pub use agentdash_contracts::project::{
     ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
-    ProjectSubjectGrantResponse, StoryResponse, TaskResponse, WorkspaceBindingResponse,
-    WorkspaceResponse,
+    ProjectSubjectGrantResponse,
 };
+pub use agentdash_contracts::story::StoryResponse;
+pub use agentdash_contracts::task::TaskResponse;
+pub use agentdash_contracts::workspace::{WorkspaceBindingResponse, WorkspaceResponse};
 pub use auth::*;
 pub use backend::*;
 pub use backend_access::*;
@@ -42,16 +41,13 @@ pub use extension_management::*;
 pub use extension_runtime::*;
 pub use file_picker::*;
 pub use health::*;
-pub use identity_directory::*;
 pub use llm_provider::*;
 pub use project::*;
 pub use project_agent::*;
-pub use routine::*;
 pub use session::*;
 pub use shared_library::*;
 pub use skill_asset::*;
 pub use story::*;
-pub use task_execution::*;
 pub use terminal::*;
 pub use vfs::*;
 pub use workflow::*;

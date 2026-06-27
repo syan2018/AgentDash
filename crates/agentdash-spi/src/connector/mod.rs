@@ -6,7 +6,9 @@ use std::{
 };
 
 use agentdash_agent_types::{AgentMessage, MessageRef};
-use agentdash_domain::backend::BackendExecutionSelectionMode;
+use agentdash_domain::backend::{
+    BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
+};
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
@@ -71,13 +73,18 @@ pub struct ExecutionSessionFrame {
     /// 云端内嵌 connector 不自行处理这里的 MCP，而是消费 Application 已经预构建好的
     /// `turn.assembled_tools`。Relay/remote transport connector 可将该结构原样下发给
     /// 远端 agent，由远端 agent 自行建联。
-    pub mcp_servers: Vec<SessionMcpServer>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
     /// Relay/backend execution placement resolved during session launch.
     ///
     /// This field is set only for remote backend executions. It is the connector-facing
     /// projection of the already claimed backend execution lease.
     pub backend_execution: Option<ExecutionBackendPlacement>,
+    /// Lifecycle / AgentRun 生成的运行期 backend anchor。
+    ///
+    /// 这是 runtime backend identity 的唯一事实源；下游 runtime 组件只能消费该值，
+    /// 不得从 session route、VFS mount 或 online backend 列表重新推导 backend。
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::platform::auth::AuthIdentity>,
 }
@@ -122,6 +129,22 @@ pub struct ExecutionTurnFrame {
 pub struct ExecutionContext {
     pub session: ExecutionSessionFrame,
     pub turn: ExecutionTurnFrame,
+}
+
+impl ExecutionSessionFrame {
+    pub fn require_runtime_backend_anchor(
+        &self,
+        component: impl Into<String>,
+        session_id: Option<&str>,
+    ) -> Result<&RuntimeBackendAnchor, RuntimeBackendAnchorError> {
+        self.runtime_backend_anchor
+            .as_ref()
+            .ok_or_else(|| RuntimeBackendAnchorError::Missing {
+                component: component.into(),
+                session_id: session_id.map(str::to_string),
+                turn_id: Some(self.turn_id.clone()),
+            })
+    }
 }
 
 /// VFS 中发现的项目级指导文件。
@@ -204,9 +227,10 @@ pub enum ToolCluster {
     Workflow,
     /// 协作与交互：companion_request, companion_respond
     Collaboration,
-    /// Canvas 资产：canvases_list, canvas_start, bind_canvas_data, present_canvas
-    Canvas,
-    /// Workspace module 发现：workspace_module_list, workspace_module_describe
+    /// Task 清单读写：task_read, task_write
+    Task,
+    /// Workspace module：workspace_module_list, workspace_module_describe,
+    /// workspace_module_operate, workspace_module_invoke, workspace_module_present
     WorkspaceModule,
 }
 
@@ -234,7 +258,7 @@ impl ToolCapabilityFilter {
     }
 }
 
-/// 工具 + MCP 维度的运行态。
+/// 工具 + MCP 维度的运行态投影。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDimension {
     /// 最终生效的能力全集（well-known + custom MCP）。
@@ -243,8 +267,11 @@ pub struct ToolDimension {
     pub enabled_clusters: BTreeSet<ToolCluster>,
     /// 运行态唯一工具级过滤表；key 是 capability key，value 是该 capability 下的工具策略。
     pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
-    /// 平台 + 自定义 MCP server 完整列表。
-    pub mcp_servers: Vec<SessionMcpServer>,
+    /// MCP server 的 capability/draft 投影。
+    ///
+    /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
+    /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
+    pub mcp_servers: Vec<RuntimeMcpServer>,
 }
 
 /// Companion 维度的运行态。
@@ -269,11 +296,10 @@ pub struct SkillDimension {
 }
 
 /// Workspace module 可见性裁切模式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceModuleVisibilityMode {
-    /// 默认：全集 = Project enabled extension + project visible canvas。
-    #[default]
+    /// 全集 = Project enabled extension + project visible canvas。
     All,
     /// 仅 `allowed_module_ids` 列出的 module 可见。
     Allowlist,
@@ -282,17 +308,32 @@ pub enum WorkspaceModuleVisibilityMode {
 /// Workspace module 维度的运行态——可见性裁切的唯一权威来源。
 ///
 /// 声明式可见性的唯一 upstream 是 ProjectAgent preset 的 `visible_workspace_module_refs`，
-/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转：
-/// preset 非空 → `Allowlist`；`None`/空集 → `All`。工具在返回 projection 前按此维度过滤。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// 经 base `CapabilityState.workspace_module` 投影（`effective_capability_json`）流转。
+/// 工具在返回 projection 前按此维度过滤。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceModuleDimension {
-    #[serde(default)]
     pub mode: WorkspaceModuleVisibilityMode,
     #[serde(default)]
     pub allowed_module_ids: Vec<String>,
 }
 
+impl Default for WorkspaceModuleDimension {
+    fn default() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::Allowlist,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+}
+
 impl WorkspaceModuleDimension {
+    pub fn all() -> Self {
+        Self {
+            mode: WorkspaceModuleVisibilityMode::All,
+            allowed_module_ids: Vec::new(),
+        }
+    }
+
     /// 判断给定 module_id 是否对当前 session 可见。
     pub fn allows(&self, module_id: &str) -> bool {
         match self.mode {
@@ -328,7 +369,6 @@ pub struct CapabilityState {
     #[serde(default)]
     pub skill: SkillDimension,
     /// Workspace module 可见性维度。
-    #[serde(default)]
     pub workspace_module: WorkspaceModuleDimension,
 }
 
@@ -343,7 +383,8 @@ impl CapabilityState {
                     ToolCluster::Execute,
                     ToolCluster::Workflow,
                     ToolCluster::Collaboration,
-                    ToolCluster::Canvas,
+                    ToolCluster::Task,
+                    ToolCluster::WorkspaceModule,
                 ]),
                 ..Default::default()
             },
@@ -502,13 +543,13 @@ fn merge_tool_policy_for_intersection(
     merged
 }
 
-// ── Session 级 MCP Server 声明 ─────────────────────────────────
+// ── Runtime MCP Server ──────────────────────────────────────
 
-/// Session 级 MCP server — 内部统一类型，通过 `uses_relay` 标记区分直连与中继。
+/// Runtime-resolved MCP server for the executable surface.
 ///
 /// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SessionMcpServer {
+pub struct RuntimeMcpServer {
     pub name: String,
     pub transport: McpTransportConfig,
     /// 是否通过 relay backend 代理而非云端直连。
@@ -518,22 +559,22 @@ pub struct SessionMcpServer {
 // MCP transport 配置统一归 domain，spi 直接复用，避免领域/SPI 两份等价定义漂移。
 pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 
-impl SessionMcpServer {}
+impl RuntimeMcpServer {}
 
-/// 按 relay 标记分组：返回 (relay_server_names, direct_servers)。
-pub fn partition_session_mcp_servers(
-    servers: &[SessionMcpServer],
-) -> (Vec<String>, Vec<SessionMcpServer>) {
-    let mut relay_names = Vec::new();
+/// 按 relay 标记分组：返回 (relay_servers, direct_servers)。
+pub fn partition_runtime_mcp_servers(
+    servers: &[RuntimeMcpServer],
+) -> (Vec<RuntimeMcpServer>, Vec<RuntimeMcpServer>) {
+    let mut relay = Vec::new();
     let mut direct = Vec::new();
     for s in servers {
         if s.uses_relay {
-            relay_names.push(s.name.clone());
+            relay.push(s.clone());
         } else {
             direct.push(s.clone());
         }
     }
-    (relay_names, direct)
+    (relay, direct)
 }
 
 #[derive(Debug, Clone)]

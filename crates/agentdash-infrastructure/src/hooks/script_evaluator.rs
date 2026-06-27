@@ -4,6 +4,7 @@
 //! shared engine, sandbox, AST cache and JSON bridge live in
 //! [`crate::script_runtime::RhaiScriptRuntime`].
 
+use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -30,7 +31,8 @@ impl RhaiHookScriptEvaluator {
                     preset_asts.insert(key.to_string(), ast);
                 }
                 Err(e) => {
-                    tracing::error!(preset_key = key, error = %e, "preset Rhai 脚本编译失败");
+                    diag!(Error, Subsystem::Hooks,
+        preset_key = key, error = %e, "preset Rhai 脚本编译失败");
                 }
             }
         }
@@ -176,12 +178,15 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
         let elapsed = start.elapsed();
 
         match &result {
-            Ok(_) => tracing::debug!(
+            Ok(_) => diag!(
+                Debug,
+                Subsystem::Hooks,
                 preset = preset_key,
                 elapsed_us = elapsed.as_micros() as u64,
                 "rhai preset 执行完成"
             ),
-            Err(e) => tracing::warn!(
+            Err(e) => diag!(Warn, Subsystem::Hooks,
+
                 preset = preset_key,
                 elapsed_us = elapsed.as_micros() as u64,
                 error = %e,
@@ -203,12 +208,15 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
         let elapsed = start.elapsed();
 
         match &result {
-            Ok(_) => tracing::debug!(
+            Ok(_) => diag!(
+                Debug,
+                Subsystem::Hooks,
                 script_hash = hash,
                 elapsed_us = elapsed.as_micros() as u64,
                 "rhai 自定义脚本执行完成"
             ),
-            Err(e) => tracing::warn!(
+            Err(e) => diag!(Warn, Subsystem::Hooks,
+
                 script_hash = hash,
                 elapsed_us = elapsed.as_micros() as u64,
                 error = %e,

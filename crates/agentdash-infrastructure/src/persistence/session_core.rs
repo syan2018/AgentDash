@@ -86,6 +86,7 @@ where
         turn_id: row.get::<Option<String>, _>("turn_id"),
         entry_index,
         tool_call_id: row.get::<Option<String>, _>("tool_call_id"),
+        ephemeral: false,
         notification,
     })
 }
@@ -442,6 +443,7 @@ pub(crate) fn parse_execution_status(
         "completed" => Ok(ExecutionStatus::Completed),
         "failed" => Ok(ExecutionStatus::Failed),
         "interrupted" => Ok(ExecutionStatus::Interrupted),
+        "lost" => Ok(ExecutionStatus::Lost),
         other => Err(SessionStoreError::InvalidData(format!(
             "{field} 非法: {other}"
         ))),
@@ -718,6 +720,7 @@ pub(crate) fn projection_from_envelope(envelope: &BackboneEnvelope) -> SessionPr
                     "turn_completed" => "completed",
                     "turn_failed" => "failed",
                     "turn_interrupted" => "interrupted",
+                    "turn_lost" => "lost",
                     _ => "completed",
                 };
                 projection.last_delivery_status = Some(status.to_string());
@@ -739,6 +742,7 @@ pub(crate) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::ReasoningTextDelta(_) => "reasoning_text_delta",
         BackboneEvent::ReasoningSummaryDelta(_) => "reasoning_summary_delta",
         BackboneEvent::ItemStarted(_) => "item_started",
+        BackboneEvent::ItemUpdated(_) => "item_updated",
         BackboneEvent::ItemCompleted(_) => "item_completed",
         BackboneEvent::CommandOutputDelta(_) => "command_output_delta",
         BackboneEvent::FileChangeDelta(_) => "file_change_delta",
@@ -765,6 +769,7 @@ fn thread_item_tool_call_id(item: &AgentDashThreadItem) -> Option<String> {
 fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
     match &envelope.event {
         BackboneEvent::ItemStarted(n) => thread_item_tool_call_id(&n.item),
+        BackboneEvent::ItemUpdated(n) => thread_item_tool_call_id(&n.item),
         BackboneEvent::ItemCompleted(n) => thread_item_tool_call_id(&n.item),
         _ => None,
     }

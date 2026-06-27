@@ -1,7 +1,6 @@
-//! Workflow Injection 渲染共享 helper（PR 5a）。
+//! Workflow Injection 渲染共享 helper。
 //!
-//! 历史上 workflow `guidance` / `context_bindings` 的 markdown 渲染
-//! 散落在三处：
+//! Workflow `guidance` / `context_bindings` 的 markdown 渲染由三条路径共享：
 //! - `contribute_workflow_binding`（task 路径 / workflow_bindings.rs）
 //! - `contribute_lifecycle_context`（lifecycle node 路径 / assembler.rs:1464+）
 //! - `compose_companion_with_workflow`（companion+workflow 路径 / assembler.rs:1733+）

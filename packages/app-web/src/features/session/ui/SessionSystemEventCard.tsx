@@ -16,11 +16,13 @@ import {
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { SessionCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { ContextFrameCard } from "./ContextFrameCard";
-import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
+import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
+import type { ContextFrame } from "../model/contextFrame";
 
 export interface SessionSystemEventCardProps {
   event: BackboneEvent;
   sessionId?: string;
+  contextFrame?: ContextFrame;
 }
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
@@ -89,8 +91,12 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   companion_human_request:         "Agent 请求用户回应",
   companion_human_response:        "用户已回应 Agent",
   companion_review_request:        "协作 Agent 提审",
-  canvas_presented:                "Canvas 已展示",
+  workspace_module_presented:      "Workspace Module 已展示",
+  workspace_module_present_failed: "Workspace Module 展示失败",
   context_frame:          "Agent 上下文",
+  provider_attempt_status:         "模型状态",
+  provider_retry:                  "模型重试",
+  provider_status:                 "模型状态",
   hook_event:                      "流程事件",
 };
 
@@ -112,10 +118,20 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   companion_human_request:         "Agent 正在等待用户回应",
   companion_human_response:        "已将用户回应写入当前会话",
   companion_review_request:        "协作 Agent 请求审阅",
-  canvas_presented:                "已请求打开 Canvas 面板",
+  workspace_module_presented:      "已请求打开 Workspace Module 视图",
+  workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
   context_frame:          "Agent 上下文已更新",
+  provider_attempt_status:         "模型服务状态更新",
+  provider_retry:                  "模型服务正在重试",
+  provider_status:                 "模型服务状态更新",
   hook_event:                      "流程产生新事件",
 };
+
+const VERBOSE_ONLY_EVENT_TYPES = new Set([
+  "provider_attempt_status",
+  "provider_retry",
+  "provider_status",
+]);
 
 // ─── Hook 决策分类 ────────────────────────────────────────────────────────────
 
@@ -183,20 +199,27 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function SessionSystemEventCard({ event }: SessionSystemEventCardProps) {
+export function SessionSystemEventCard({ event, contextFrame }: SessionSystemEventCardProps) {
+  const { prefs } = useDebugPrefs();
+
   if (event.type !== "platform") return null;
 
   const eventType = extractPlatformEventType(event) ?? "system";
   const eventData = extractPlatformEventData(event);
   const eventMessage = extractPlatformEventMessage(event);
 
+  if (VERBOSE_ONLY_EVENT_TYPES.has(eventType) && !prefs.hookVerbose) {
+    return null;
+  }
+
   // ── companion_human_request → 交互卡片 ──
   if (eventType === "companion_human_request") {
     return <SessionCompanionRequestCard event={event} />;
   }
 
-  if (eventType === "context_frame" && eventData) {
-    return <ContextFrameCard data={eventData} />;
+  if (eventType === "context_frame") {
+    if (!contextFrame) return null;
+    return <ContextFrameCard frame={contextFrame} />;
   }
 
   // ── hook_event → hook 卡片逻辑 ──
@@ -207,7 +230,7 @@ export function SessionSystemEventCard({ event }: SessionSystemEventCardProps) {
     const code = hookData?.code ?? null;
     const decision = extractHookDecision(code) ?? hookData?.decision ?? null;
     const hasSubstance = isHookEventSubstantive(decision, hookData);
-    if (!hasSubstance && !getDebugPrefs().hookVerbose) {
+    if (!hasSubstance && !prefs.hookVerbose) {
       return null;
     }
 

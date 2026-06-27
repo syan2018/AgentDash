@@ -1,0 +1,28 @@
+{
+  "id": "agentrun-lifecycle-surface-projector",
+  "name": "agentrun-lifecycle-surface-projector",
+  "title": "AgentRun lifecycle surface projector 标准化",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-06-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-15-agentrun-runtime-entry-session-convergence"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

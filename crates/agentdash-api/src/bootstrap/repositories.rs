@@ -1,26 +1,36 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::PgPool;
 
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::SessionPersistence;
-use agentdash_application::shared_library::{
-    IntegrationEmbeddedLibraryAssetSeed, SharedLibraryService,
+use agentdash_application::repository_set::{LifecycleProjectAgentLaunchAdapter, RepositorySet};
+use agentdash_application_agentrun::agent_run::frame::{
+    AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
-use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
+use agentdash_application_lifecycle::{
+    AgentRunLifecycleSurfaceProjector, SessionPersistenceRuntimeSessionCreator,
+};
+use agentdash_application_runtime_session::session::SessionPersistence;
+use agentdash_application_shared_library::{
+    BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
+    SeedBuiltinLibraryAssetsInput, SharedLibraryService,
+};
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAuthSessionRepository,
+    PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
+    PostgresAgentRunMailboxRepository, PostgresAuthSessionRepository,
     PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
-    PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
-    PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
+    PostgresInlineFileRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository,
+    PostgresRunnerRegistrationTokenRepository, PostgresRuntimeHealthRepository,
     PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
     PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -45,6 +55,8 @@ pub(crate) async fn build_repositories(
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
 
     let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
+    let canvas_runtime_state_repo =
+        Arc::new(PostgresCanvasRuntimeStateRepository::new(pool.clone()));
 
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
 
@@ -62,6 +74,8 @@ pub(crate) async fn build_repositories(
         Arc::new(PostgresBackendExecutionLeaseRepository::new(pool.clone()));
     let project_backend_access_repo =
         Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
+    let runner_registration_token_repo =
+        Arc::new(PostgresRunnerRegistrationTokenRepository::new(pool.clone()));
 
     let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
@@ -71,10 +85,16 @@ pub(crate) async fn build_repositories(
     {
         let service = SharedLibraryService::new(shared_library_repo.as_ref());
         let seeded = service
-            .seed_builtin_assets(Default::default())
+            .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
+                asset_type: None,
+                key: None,
+                seed_provider: builtin_seed_provider_input()?,
+            })
             .await
             .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
-        tracing::info!(
+        diag!(
+            Info,
+            Subsystem::Api,
             seeded = seeded.len(),
             "已同步 builtin Shared Library assets"
         );
@@ -120,6 +140,32 @@ pub(crate) async fn build_repositories(
             pool.clone(),
         ),
     );
+    let agent_run_command_receipt_repo =
+        Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
+    let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
+    let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
+        agent_frame_repo.clone(),
+    ));
+    let lifecycle_surface_projection = Arc::new(
+        AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
+    );
+    let workflow_agent_frame_materialization =
+        Arc::new(AgentRunWorkflowNodeFrameMaterializationAdapter::new(
+            agent_frame_repo.clone(),
+            lifecycle_surface_projection,
+        ));
+    let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
+        workflow_repo.clone(),
+        workflow_repo.clone(),
+        lifecycle_agent_repo.clone(),
+        agent_frame_repo.clone(),
+        lifecycle_subject_association_repo.clone(),
+        lifecycle_gate_repo.clone(),
+        agent_lineage_repo.clone(),
+        execution_anchor_repo.clone(),
+        runtime_session_creator.clone(),
+        agent_frame_construction.clone(),
+    ));
 
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
@@ -127,6 +173,7 @@ pub(crate) async fn build_repositories(
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
         canvas_repo: canvas_repo.clone(),
+        canvas_runtime_state_repo: canvas_runtime_state_repo.clone(),
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),
@@ -135,6 +182,7 @@ pub(crate) async fn build_repositories(
         backend_execution_lease_repo: backend_execution_lease_repo.clone(),
         project_backend_access_repo: project_backend_access_repo.clone(),
         backend_workspace_inventory_repo: project_backend_access_repo.clone(),
+        runner_registration_token_repo: runner_registration_token_repo.clone(),
         auth_session_repo: auth_session_repo.clone(),
         user_directory_repo: user_directory_repo.clone(),
         settings_repo: settings_repo.clone(),
@@ -157,7 +205,12 @@ pub(crate) async fn build_repositories(
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
         execution_anchor_repo: execution_anchor_repo.clone(),
+        agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
+        agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
+        agent_frame_construction,
+        workflow_agent_frame_materialization,
+        project_agent_lifecycle_launch,
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
@@ -171,7 +224,9 @@ pub(crate) async fn build_repositories(
             .seed_integration_embedded_assets(integration_library_asset_seeds)
             .await
             .map_err(|e| anyhow::anyhow!("integration embedded library assets 初始化失败: {e}"))?;
-        tracing::info!(
+        diag!(
+            Info,
+            Subsystem::Api,
             declared = integration_asset_count,
             seeded = seeded.len(),
             "已同步 integration embedded Shared Library assets"
@@ -185,5 +240,12 @@ pub(crate) async fn build_repositories(
         extension_package_artifact_storage: Arc::new(
             FilesystemExtensionPackageArtifactStorage::default(),
         ),
+    })
+}
+
+fn builtin_seed_provider_input() -> Result<BuiltinLibrarySeedProviderInput> {
+    Ok(BuiltinLibrarySeedProviderInput {
+        workflow_templates: agentdash_application_workflow::list_builtin_workflow_templates()
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
     })
 }

@@ -46,6 +46,20 @@ flowchart LR
 
 `Project`、`Story`、`Task`、`Routine` 都是有用的业务入口，但它们不拥有 runtime truth。真正稳定的中心是 **Lifecycle 控制面、运行 surface、Connector 投递和事件流**。
 
+## 核心模块概览
+
+| 模块 | 为什么存在 | 边界 |
+| --- | --- | --- |
+| Lifecycle 控制面 | 记录一次工作的业务归属、运行状态、Agent / Activity 和事件证据 | 不等同于聊天 session，也不是任务清单 |
+| AgentRun 工作台 | 让用户、Agent 和子 Agent 面向同一运行身份协作 | `RuntimeSession` 只承载消息流和 connector trace |
+| Runtime Surface / Frame | 在启动期把身份、guidelines、VFS、能力、SkillAsset 和上下文投影成执行空间 | 投影服务本次执行，不替代控制面事实 |
+| VFS / Surface Projector | 统一本机、云端、资产、Lifecycle、Skill、Canvas 等资源地址 | UI、API、tool、MCP adapter 使用同一种 mount 语言 |
+| Connector / Runtime Gateway | 把运行 surface 投递到云端 Agent、Function / Tool Activity 或外部执行适配器 | Connector 不拥有业务状态 |
+| Backbone 事件流 | 承载 runtime facts、工具调用、上下文用量、压缩和 UI reducer 所需的观察事实 | 事件是证据，不是业务对象本身 |
+| Story / Task Subject | Story 管主题和上下文；Task 管 `LifecycleRun.tasks` 内的 run-scoped 计划项 | 二者不拥有 runtime truth |
+| Asset / Workspace Module | Workflow、MCP Preset、Skill、VFS Mount、Canvas、Extension 等进入 runtime surface 的来源 | 资产定义能力，运行时由控制面投影和裁切 |
+| Permission / Backend Access | 管理 Project 授权、本机 backend 可用性、能力授权和 extension runtime 权限 | 授权事实由控制面与 permission grant 表达 |
+
 ## VFS 空间
 
 AgentDash 让所有运行时资源拥有同一种地址形态：
@@ -82,7 +96,7 @@ flowchart LR
     Connector["Agent Connector"]
     CloudAgent["云端原生 Agent<br/>主路径"]
     Function["Function / Tool Activity"]
-    External["外部 Agent 适配<br/>fallback / 兼容"]
+    External["外部 Agent 适配<br/>执行器桥接"]
     Events["BackboneEnvelope"]
 
     Runtime --> Context --> Connector
@@ -147,12 +161,14 @@ flowchart LR
 
 | 界面 | 展示内容 |
 | --- | --- |
-| Agent 工作台 | Agent run、Live session、执行状态、运行时事件流 |
-| Project / Story / Task 视图 | 面向项目下 Agent 事务的管理入口 |
-| Assets | Workflow、Agent procedure、VFS mount、Skill、MCP preset、Canvas 资产 |
-| Lifecycle 编辑器 | Activity graph、端口、edge 和运行状态 |
-| VFS 浏览器 | 本机、云端、资产、Lifecycle 控制面中的挂载资源 |
-| 本机 Runtime 设置 | 机器身份、可访问目录、Relay 健康状态、本机能力 |
+| Agent 工作台 | ProjectAgent、Draft AgentRun、AgentRun Workspace、运行状态、mailbox、Task 状态、lineage 和运行时事件流 |
+| Story / Subject 视图 | 面向主题、上下文和运行投影的管理入口；执行事实回到 Lifecycle / AgentRun |
+| Assets | Workflow、Marketplace、Canvas、MCP Preset、Skill、VFS Mount、Extension 等项目级资产 |
+| Routine | 定时、Webhook 或插件事件触发的自动化入口，绑定 ProjectAgent 和运行模板 |
+| Lifecycle 编辑器 | Workflow / Activity graph、端口、edge、能力、注入、Hook rules 和运行状态 |
+| Workspace Panel | AgentRun 右侧运行空间，承载 Context、Inspector、Canvas、VFS、Terminal 和 Extension tab |
+| Project 设置 | Project 基础信息、Backend Access、Workspace binding、VFS 资源、Workspace Modules、共享、模板和 clone |
+| Settings / 本机 Runtime | 系统、用户和 desktop-only 本机 runtime 设置；包含机器身份、可访问目录、Relay 健康状态和本机能力 |
 
 ## 其它能力
 
@@ -160,29 +176,45 @@ flowchart LR
 
 | 能力 | 用途 |
 | --- | --- |
-| Shared Library / Marketplace | 管理可复用的 Agent、Workflow、Skill 等资产来源 |
-| MCP Preset | 为 Agent runtime surface 组织外部工具入口 |
-| Canvas | 承载可运行的前端资产和可视化结果 |
-| Routine | 用定时、Webhook 或插件事件触发运行过程 |
+| Shared Library / Marketplace | 管理可复用的 Agent、Workflow、Skill、MCP、VFS Mount、Extension 等资产来源与安装状态 |
+| Extension / Workspace Module | 让项目安装的扩展贡献 UI entry、runtime operation、Workspace Panel tab 和 Agent 可发现能力 |
+| MCP Preset / MCP Server | MCP Preset 组织 runtime surface 的外部工具入口；`agentdash-mcp` 提供协议入口 |
+| Canvas | 承载可运行的前端资产、可视化结果和可提升为 Extension 的模块 |
+| Task 工具集 | `task_read` / `task_write` 让 Agent 维护 `LifecycleRun.tasks`，UI、Story projection 和 agent-facing 工具同源 |
+| Permission Grant | 管理 Project、Backend、能力申请和 extension runtime 权限的授权事实 |
+| Backend Access | 管理项目可使用的本机 backend、workspace inventory、执行 lease 和 runtime health |
 | Hook Runtime | 在执行边界注入约束、上下文、完成判定和后续动作 |
+| Contract Generation | Rust contract crate 生成前端 TS DTO，并通过 `contracts:check` 防止跨层漂移 |
+| Background Workers | 驱动 routine scheduler、terminal effect replay、stall detector、auth cleanup 等云端后台过程 |
 | Desktop Shell | 通过 Tauri 托管 Dashboard 与本机 Runtime 管理面 |
 
 ## 代码地图
 
 ```text
 crates/
-  agentdash-application      Session、VFS、Lifecycle、Runtime Gateway
+  agentdash-domain           领域模型：Project、Story、Lifecycle、AgentRun、Permission、Asset
+  agentdash-application      用例编排、runtime surface、Session、VFS、Lifecycle、Runtime Gateway
+  agentdash-application-ports application 层外部端口
   agentdash-api              REST、NDJSON、WebSocket endpoint
+  agentdash-infrastructure   PostgreSQL、migration、repository 实现
+  agentdash-contracts        Rust 到 TypeScript 的跨层契约生成
+  agentdash-spi              平台 SPI、Hook、MCP、Skill、Routine 等扩展边界
   agentdash-relay            云端 / 本机共享 Relay 协议类型
   agentdash-local            本机 Runtime、工具、MCP、Shell / 文件
+  agentdash-local-tauri      桌面端本机 Runtime 壳
   agentdash-executor         Agent Connector 与执行适配
+  agentdash-mcp              MCP 服务层
+  agentdash-integration-api  外部集成 API
+  agentdash-first-party-integrations 一方集成
   agentdash-agent-protocol   Backbone 事件协议
   agentdash-agent            云端 Agent Runtime
+  agentdash-agent-types      Agent Runtime 共享类型
 
 packages/
-  app-web                    Web Dashboard
+  app-web                    Web Dashboard，入口在 packages/app-web/src/App.tsx
   app-tauri                  桌面端壳
-  core / ui / views          共享前端包
+  core / ui / views          共享前端能力、设计系统和视图组件
+  extension-sdk / extension-ui / extension-dev  Extension 开发与运行时包
 ```
 
 ## 运行

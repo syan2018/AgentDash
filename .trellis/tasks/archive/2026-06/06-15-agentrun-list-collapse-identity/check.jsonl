@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "校验收束查询未越界 repo 边界"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "校验契约新增字段跨层数据流一致"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验生成契约消费与可选字段处理"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端编码质量约定"}

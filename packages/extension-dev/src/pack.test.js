@@ -60,3 +60,50 @@ test("packProject builds a self-contained agentdash extension archive", async ()
   assert.match(panelBundle, /Hello panel bundle/);
   await assert.rejects(readFile(path.join(root, "dist", "panel", "main.ts"), "utf8"));
 });
+
+test("packProject rejects TS runtime registrations missing from manifest", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentdash-pack-parity-"));
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await writeFile(
+    path.join(root, "src", "extension.ts"),
+    [
+      'import { defineExtension } from "@agentdash/extension-sdk";',
+      "",
+      "export default defineExtension({",
+      "  manifest: { manifest_version: '2', extension_id: 'local-hello', package: { name: '@agentdash/local-hello', version: '0.1.0' }, asset_version: '0.1.0' },",
+      "  activate(ctx) {",
+      "    ctx.runtime.registerAction({",
+      "      action_key: 'local-hello.profile',",
+      "      kind: 'session_runtime',",
+      "      description: 'Read profile',",
+      "      input_schema: true,",
+      "      output_schema: true,",
+      "      invoke() { return {}; },",
+      "    });",
+      "  },",
+      "});",
+      "",
+    ].join("\n"),
+  );
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "@agentdash/local-hello",
+    version: "0.1.0",
+    type: "module",
+  }));
+  await writeFile(path.join(root, "agentdash.extension.json"), JSON.stringify({
+    manifest_version: "2",
+    extension_id: "local-hello",
+    package: { name: "@agentdash/local-hello", version: "0.1.0" },
+    asset_version: "0.1.0",
+    bundles: [{
+      kind: "extension_host",
+      entry: "dist/extension.js",
+      digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    }],
+  }));
+
+  await assert.rejects(
+    packProject(root),
+    /TS 注册了 manifest 未声明的 runtime action: local-hello\.profile/,
+  );
+});

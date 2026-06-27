@@ -5,13 +5,14 @@
  */
 
 import { useCallback, useState } from "react";
-import { tabTypeRegistry, type TabInstance } from "./tab-type-registry";
+import type { TabInstance, TabTypeDescriptor } from "./tab-type-registry";
 
 interface AddressBarProps {
   tab: TabInstance | null;
+  tabTypes: TabTypeDescriptor[];
 }
 
-export function AddressBar({ tab }: AddressBarProps) {
+export function AddressBar({ tab, tabTypes }: AddressBarProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -25,7 +26,7 @@ export function AddressBar({ tab }: AddressBarProps) {
 
   if (!tab) return null;
 
-  const type = tabTypeRegistry.getType(tab.typeId);
+  const type = tabTypes.find((descriptor) => descriptor.typeId === tab.typeId);
   const Icon = type?.icon;
 
   return (

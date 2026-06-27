@@ -14,6 +14,7 @@ import {
   type DiffLine,
   type DiffPayload,
 } from "./diffPayload";
+import { CB } from "./cardBodyTokens";
 
 const DEFAULT_PREVIEW_LINES = 40;
 
@@ -50,21 +51,21 @@ export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
   };
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className="text-success tabular-nums">+{payload.added}</span>
-        <span className="text-destructive tabular-nums">-{payload.removed}</span>
-        <span className="text-muted-foreground/50">· {totalLines} 行</span>
+    <div className={CB.itemGap}>
+      <div className={`flex items-center gap-2 ${CB.meta}`}>
+        <span className={`${CB.diffAdded} tabular-nums`}>+{payload.added}</span>
+        <span className={`${CB.diffRemoved} tabular-nums`}>-{payload.removed}</span>
+        <span>· {totalLines} 行</span>
         <button
           type="button"
           onClick={() => void handleCopyDiff()}
-          className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          className={`ml-auto ${CB.actionButton}`}
         >
           {copied ? "已复制" : "复制 diff"}
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-[8px] border border-border bg-muted/15">
+      <div className={`overflow-hidden ${CB.inlineEntry}`}>
         <pre className={`overflow-auto font-mono text-xs leading-relaxed ${expanded ? "max-h-[60vh]" : ""}`}>
           {showLines.map((line, idx) => (
             <DiffLineRow key={idx} line={line} />
@@ -75,7 +76,7 @@ export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             展开余下 {hidden} 行
           </button>
@@ -84,7 +85,7 @@ export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="block w-full border-t border-border bg-secondary/30 px-2.5 py-1 text-center text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className={`block w-full border-t border-border/30 bg-secondary/20 px-2.5 py-1 text-center ${CB.actionButton}`}
           >
             折叠
           </button>
@@ -97,9 +98,9 @@ export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
 function DiffLineRow({ line }: { line: DiffLine }): ReactNode {
   if (line.kind === "hunk" || line.kind === "meta") {
     return (
-      <div className="grid grid-cols-[3rem_3rem_1rem_1fr] items-baseline bg-secondary/40">
-        <span className="px-1 text-right tabular-nums text-muted-foreground/40">·</span>
-        <span className="px-1 text-right tabular-nums text-muted-foreground/40">·</span>
+      <div className="grid grid-cols-[3rem_3rem_1rem_1fr] items-baseline bg-secondary/30">
+        <span className={CB.lineNumber}>·</span>
+        <span className={CB.lineNumber}>·</span>
         <span className="text-muted-foreground/40">·</span>
         <span className="whitespace-pre-wrap break-words pr-2 text-muted-foreground/60">
           {line.text}
@@ -124,10 +125,10 @@ function DiffLineRow({ line }: { line: DiffLine }): ReactNode {
 
   return (
     <div className={`grid grid-cols-[3rem_3rem_1rem_1fr] items-baseline ${rowBg}`}>
-      <span className="select-none px-1 text-right tabular-nums text-muted-foreground/40">
+      <span className={CB.lineNumber}>
         {line.oldNo ?? ""}
       </span>
-      <span className="select-none px-1 text-right tabular-nums text-muted-foreground/40">
+      <span className={CB.lineNumber}>
         {line.newNo ?? ""}
       </span>
       <span className={`select-none text-center ${textColor}`}>{sign}</span>

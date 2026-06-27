@@ -1,14 +1,25 @@
 //! MCP Relay 命令处理——probe / list_tools / call_tool / close
 
+use std::sync::Arc;
+
 use agentdash_relay::*;
 use rmcp::transport::child_process::TokioChildProcess;
 
-use super::CommandHandler;
+use crate::mcp_client_manager::McpClientManager;
 
 /// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
 const PROBE_TIMEOUT_SECS: u64 = 15;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct McpCommandHandler {
+    mcp_manager: Option<Arc<McpClientManager>>,
+}
+
+impl McpCommandHandler {
+    pub(super) fn new(mcp_manager: Option<Arc<McpClientManager>>) -> Self {
+        Self { mcp_manager }
+    }
+
     /// 一次性 probe：临时连接指定 transport → tools/list → 关闭，不入连接池。
     pub(super) async fn handle_mcp_probe_transport(
         &self,
@@ -22,11 +33,19 @@ impl CommandHandler {
 
         let probe_fut = async {
             match &transport {
-                McpTransportConfigRelay::Stdio { command, args, env } => {
+                McpTransportConfigRelay::Stdio {
+                    command,
+                    args,
+                    env,
+                    cwd,
+                } => {
                     let mut cmd = tokio::process::Command::new(command);
                     cmd.args(args);
                     for var in env {
                         cmd.env(&var.name, &var.value);
+                    }
+                    if let Some(cwd) = cwd {
+                        cmd.current_dir(cwd);
                     }
                     let child = TokioChildProcess::new(cmd)
                         .map_err(|e| format!("spawn stdio 进程失败: {e}"))?;
@@ -40,9 +59,11 @@ impl CommandHandler {
                     let _ = client.cancel().await;
                     Ok::<Vec<rmcp::model::Tool>, String>(tools)
                 }
-                McpTransportConfigRelay::Http { url, .. }
-                | McpTransportConfigRelay::Sse { url, .. } => {
-                    let worker = crate::mcp_connect::mcp_http_worker(url);
+                McpTransportConfigRelay::Http { url, headers }
+                | McpTransportConfigRelay::Sse { url, headers } => {
+                    let headers = relay_headers_to_domain(headers);
+                    let worker = crate::mcp_connect::mcp_http_worker(url, &headers)
+                        .map_err(|error| error.to_string())?;
                     let client = rmcp::ServiceExt::serve((), worker)
                         .await
                         .map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
@@ -116,13 +137,11 @@ impl CommandHandler {
                 };
             }
         };
-        match mgr.list_tools(&payload.server_name).await {
+        let server_name = payload.server.name.clone();
+        match mgr.list_tools(&payload.server).await {
             Ok(tools) => RelayMessage::ResponseMcpListTools {
                 id,
-                payload: Some(ResponseMcpListToolsPayload {
-                    server_name: payload.server_name,
-                    tools,
-                }),
+                payload: Some(ResponseMcpListToolsPayload { server_name, tools }),
                 error: None,
             },
             Err(e) => RelayMessage::ResponseMcpListTools {
@@ -149,7 +168,7 @@ impl CommandHandler {
             }
         };
         match mgr
-            .call_tool(&payload.server_name, &payload.tool_name, payload.arguments)
+            .call_tool(&payload.server, &payload.tool_name, payload.arguments)
             .await
         {
             Ok(result) => RelayMessage::ResponseMcpCallTool {
@@ -196,4 +215,16 @@ impl CommandHandler {
             },
         }
     }
+}
+
+fn relay_headers_to_domain(
+    headers: &[McpHttpHeaderRelay],
+) -> Vec<agentdash_domain::mcp_preset::McpHttpHeader> {
+    headers
+        .iter()
+        .map(|header| agentdash_domain::mcp_preset::McpHttpHeader {
+            name: header.name.clone(),
+            value: header.value.clone(),
+        })
+        .collect()
 }

@@ -59,13 +59,15 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
     ) -> Result<(), DomainError> {
         update_state(
             &self.pool,
-            lease_id,
-            BackendExecutionLeaseState::Running,
-            Some(activated_at),
-            None,
-            None,
-            None,
-            activated_at,
+            BackendExecutionLeaseStateUpdate {
+                lease_id,
+                state: BackendExecutionLeaseState::Running,
+                activated_at: Some(activated_at),
+                released_at: None,
+                terminal_kind: None,
+                release_reason: None,
+                updated_at: activated_at,
+            },
         )
         .await
     }
@@ -79,13 +81,15 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
     ) -> Result<(), DomainError> {
         update_state(
             &self.pool,
-            lease_id,
-            BackendExecutionLeaseState::Released,
-            None,
-            Some(released_at),
-            terminal_kind,
-            reason,
-            released_at,
+            BackendExecutionLeaseStateUpdate {
+                lease_id,
+                state: BackendExecutionLeaseState::Released,
+                activated_at: None,
+                released_at: Some(released_at),
+                terminal_kind,
+                release_reason: reason,
+                updated_at: released_at,
+            },
         )
         .await
     }
@@ -98,13 +102,15 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
     ) -> Result<(), DomainError> {
         update_state(
             &self.pool,
-            lease_id,
-            BackendExecutionLeaseState::Failed,
-            None,
-            Some(failed_at),
-            Some(BackendExecutionTerminalKind::Failed),
-            reason,
-            failed_at,
+            BackendExecutionLeaseStateUpdate {
+                lease_id,
+                state: BackendExecutionLeaseState::Failed,
+                activated_at: None,
+                released_at: Some(failed_at),
+                terminal_kind: Some(BackendExecutionTerminalKind::Failed),
+                release_reason: reason,
+                updated_at: failed_at,
+            },
         )
         .await
     }
@@ -193,8 +199,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
 
 const LEASE_COLUMNS_SQL: &str = "SELECT id, backend_id, session_id, turn_id, executor_id, workspace_id, root_ref, selection_mode, state, claim_reason, terminal_kind, release_reason, claimed_at, activated_at, released_at, last_seen_at, created_at, updated_at FROM backend_execution_leases";
 
-async fn update_state(
-    pool: &PgPool,
+struct BackendExecutionLeaseStateUpdate {
     lease_id: Uuid,
     state: BackendExecutionLeaseState,
     activated_at: Option<DateTime<Utc>>,
@@ -202,6 +207,11 @@ async fn update_state(
     terminal_kind: Option<BackendExecutionTerminalKind>,
     release_reason: Option<String>,
     updated_at: DateTime<Utc>,
+}
+
+async fn update_state(
+    pool: &PgPool,
+    update: BackendExecutionLeaseStateUpdate,
 ) -> Result<(), DomainError> {
     let result = sqlx::query(
         "UPDATE backend_execution_leases
@@ -214,20 +224,20 @@ async fn update_state(
              updated_at = $6
          WHERE id = $7",
     )
-    .bind(state_to_str(state))
-    .bind(activated_at)
-    .bind(released_at)
-    .bind(terminal_kind.map(terminal_kind_to_str))
-    .bind(release_reason)
-    .bind(updated_at)
-    .bind(lease_id.to_string())
+    .bind(state_to_str(update.state))
+    .bind(update.activated_at)
+    .bind(update.released_at)
+    .bind(update.terminal_kind.map(terminal_kind_to_str))
+    .bind(update.release_reason)
+    .bind(update.updated_at)
+    .bind(update.lease_id.to_string())
     .execute(pool)
     .await
     .map_err(super::db_err)?;
     if result.rows_affected() == 0 {
         return Err(DomainError::NotFound {
             entity: "backend_execution_lease",
-            id: lease_id.to_string(),
+            id: update.lease_id.to_string(),
         });
     }
     Ok(())

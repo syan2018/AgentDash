@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use axum::{
@@ -89,7 +90,8 @@ fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            tracing::error!(error = %err, "序列化 discovered_options NDJSON 消息失败");
+            diag!(Error, Subsystem::Api,
+        error = %err, "序列化 discovered_options NDJSON 消息失败");
             None
         }
     }

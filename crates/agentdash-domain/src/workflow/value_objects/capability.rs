@@ -37,6 +37,36 @@ pub struct ToolCapabilityPath {
 }
 
 const TOOL_CAPABILITY_PATH_SEPARATOR: &str = "::";
+const MCP_CAPABILITY_PREFIX: &str = "mcp:";
+
+fn normalize_mcp_capability_segment(field: &str, value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{field} 不能为空"));
+    }
+    if trimmed.contains(TOOL_CAPABILITY_PATH_SEPARATOR) {
+        return Err(format!(
+            "{field} `{value}` 不能包含 `{TOOL_CAPABILITY_PATH_SEPARATOR}`"
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// 将 Project MCP preset key 转为唯一的 MCP capability key。
+pub fn mcp_capability_key(preset_key: &str) -> Result<String, String> {
+    let preset_key = normalize_mcp_capability_segment("MCP preset key", preset_key)?;
+    Ok(format!("{MCP_CAPABILITY_PREFIX}{preset_key}"))
+}
+
+/// 构造 MCP 工具级 capability path。
+pub fn mcp_tool_capability_path(
+    preset_key: &str,
+    tool_name: &str,
+) -> Result<ToolCapabilityPath, String> {
+    let capability = mcp_capability_key(preset_key)?;
+    let tool_name = normalize_mcp_capability_segment("MCP tool name", tool_name)?;
+    Ok(ToolCapabilityPath::of_tool(capability, tool_name))
+}
 
 impl ToolCapabilityPath {
     /// 构造能力级短 path。

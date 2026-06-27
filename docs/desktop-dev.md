@@ -141,25 +141,28 @@ pnpm --filter app-tauri build
 生成 release exe：
 
 ```powershell
+$env:AGENTDASH_DEFAULT_CLOUD_ORIGIN = "https://agentdash.example.com"
 pnpm run desktop:build
 ```
 
 生成 Windows NSIS 安装包：
 
 ```powershell
+$env:AGENTDASH_DEFAULT_CLOUD_ORIGIN = "https://agentdash.example.com"
 pnpm run desktop:bundle
 ```
 
-`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `builtin` API mode，也就是打出的桌面壳会在进程内托管 Dashboard API。可按发行形态覆盖：
+`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `external` API mode，也就是打出的桌面壳连接配置好的远端 server。`AGENTDASH_DEFAULT_CLOUD_ORIGIN` 会同时作为 Dashboard API origin 和 Local Runtime 默认 server URL 写入安装包 defaults。
 
 ```powershell
+pnpm run desktop:build -- --default-cloud-origin https://agentdash.example.com
+pnpm run desktop:build -- --api-origin https://agentdash.example.com
 pnpm run desktop:build -- --api-mode builtin
-pnpm run desktop:build -- --api-mode external --api-origin http://127.0.0.1:3001
-pnpm run desktop:build -- --api-mode sidecar --api-origin http://127.0.0.1:3001 --api-sidecar target/release/agentdash-server.exe
+pnpm run desktop:build -- --api-mode sidecar --api-origin http://127.0.0.1:17301 --api-sidecar target/release/agentdash-server.exe
 ```
 
-- `builtin`：默认形态，桌面壳内置启动 API。
-- `external`：桌面壳只复用外部已经启动的 API。
+- `external`：默认形态，桌面壳连接远端 server。
+- `builtin`：显式 opt-in 形态，桌面壳内置启动本机 API。
 - `sidecar`：桌面壳启动指定 API 可执行文件，并在退出时一起终止。
 - `--sccache` / `--no-sccache` / `--sccache-dir` 与开发启动脚本语义一致，用于控制 Rust 编译缓存。
 

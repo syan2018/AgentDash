@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
+
+import { SessionProjectionView } from "./SessionProjectionView";
 
 import type {
   useExecutorConfig,
@@ -14,11 +16,12 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { SessionDisplayItem, TokenUsageInfo } from "../model/types";
-import { isSessionComposerPrimaryDisabled } from "./SessionChatComposerState";
+import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
+import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
+import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
+import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
-import type { SessionChatControlState } from "./SessionChatViewTypes";
+import type { SessionChatCommand, SessionChatCommandState } from "./SessionChatViewTypes";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
@@ -71,66 +74,136 @@ function getItemKey(item: SessionDisplayItem): string {
   return item.id;
 }
 
-function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
-  const [showDetail, setShowDetail] = useState(false);
-  if (!usage) return null;
+/**
+ * 上下文用量入口
+ *
+ * 输入框工具栏里的小圆环进度条，是查看上下文用量的唯一入口：
+ * - hover 出轻量摘要（百分比 / 当前·上限 / 最近输入输出 / 估算）
+ * - 点击向上展开锚定圆环的浮层，渲染完整明细（构成 / 消息明细 / Top Tools / segments）
+ *
+ * 只要存在会话就渲染（即便用量数据尚未到达，也能点开看投影明细），
+ * 因此入口在 GUI 上始终可见、可发现。
+ */
+function ContextUsageRing({
+  usage,
+  sessionId,
+  refreshKey,
+}: {
+  usage: TokenUsageInfo | null;
+  sessionId: string | null;
+  refreshKey: number;
+}) {
+  const [hover, setHover] = useState(false);
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
 
-  const {
-    currentContextTokens,
-    effectiveContextWindow,
-    modelContextWindow,
-    pendingEstimateTokens,
-    total,
-    last,
-  } = usage;
-  const maxTokens = effectiveContextWindow ?? modelContextWindow;
-  const hasAny = currentContextTokens > 0 || total.totalTokens > 0 || last.totalTokens > 0;
-  if (!hasAny) return null;
+  // 点击外部 / Esc 关闭浮层
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(e: MouseEvent) {
+      if (anchorRef.current && !anchorRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
-  const percent = maxTokens
+  // 没有会话可查时不渲染入口
+  if (!sessionId) return null;
+
+  const maxTokens = usage ? usage.effectiveContextWindow ?? usage.modelContextWindow : undefined;
+  const currentContextTokens = usage?.currentContextTokens ?? 0;
+  const pendingEstimateTokens = usage?.pendingEstimateTokens ?? 0;
+  const last = usage?.last;
+  const percent = usage && maxTokens
     ? Math.min(Math.round((currentContextTokens / maxTokens) * 100), 100)
     : undefined;
+  const hasLastFlow = Boolean(
+    last && (last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0),
+  );
+
   const radius = 7;
   const circumference = 2 * Math.PI * radius;
   const strokeDash = percent != null ? (percent / 100) * circumference : 0;
   const isHigh = percent != null && percent > 80;
 
   return (
-    <span
-      className="relative flex items-center"
-      onMouseEnter={() => setShowDetail(true)}
-      onMouseLeave={() => setShowDetail(false)}
-    >
-      <svg width="20" height="20" className="shrink-0 -rotate-90">
-        <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/40" />
+    <div ref={anchorRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title="上下文用量"
+        className={`flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-xs transition-colors ${
+          open
+            ? "bg-secondary text-foreground"
+            : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+        }`}
+      >
+        <svg width="16" height="16" className="shrink-0 -rotate-90">
+          <circle cx="8" cy="8" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-muted/40" />
+          {percent != null && (
+            <circle
+              cx="8" cy="8" r={radius}
+              fill="none" strokeWidth="2" strokeLinecap="round"
+              strokeDasharray={`${strokeDash} ${circumference}`}
+              className={isHigh ? "text-warning" : "text-primary/70"}
+              stroke="currentColor"
+            />
+          )}
+        </svg>
         {percent != null && (
-          <circle
-            cx="10" cy="10" r={radius}
-            fill="none" strokeWidth="2.5" strokeLinecap="round"
-            strokeDasharray={`${strokeDash} ${circumference}`}
-            className={isHigh ? "text-warning" : "text-primary/70"}
-            stroke="currentColor"
-          />
+          <span className="tabular-nums font-medium">{percent}%</span>
         )}
-      </svg>
-      {showDetail && (
-        <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
-          {percent != null && <span className="font-medium">{percent}% 上下文</span>}
-          {maxTokens != null && (
-            <span className="text-muted-foreground"> ({formatTokens(currentContextTokens)}/{formatTokens(maxTokens)})</span>
+      </button>
+
+      {/* hover 摘要 — 仅在浮层未展开时显示，向上弹出 */}
+      {hover && !open && (
+        <span className="absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
+          {percent != null ? (
+            <>
+              <span className="font-medium">{percent}% 上下文</span>
+              {maxTokens != null && (
+                <span className="text-muted-foreground"> ({formatTokens(currentContextTokens)}/{formatTokens(maxTokens)})</span>
+              )}
+              {hasLastFlow && last && (
+                <span className="text-muted-foreground">
+                  {" · "}
+                  {last.inputTokens > 0 && `↑${formatTokens(last.inputTokens)}`}
+                  {last.inputTokens > 0 && last.outputTokens > 0 && " "}
+                  {last.outputTokens > 0 && `↓${formatTokens(last.outputTokens)}`}
+                  {pendingEstimateTokens > 0 && ` +${formatTokens(pendingEstimateTokens)}估算`}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-muted-foreground">查看上下文用量明细</span>
           )}
-          {(last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0) && (
-            <span className="text-muted-foreground">
-              {percent != null ? " · " : ""}
-              {last.inputTokens > 0 && `↑${formatTokens(last.inputTokens)}`}
-              {last.inputTokens > 0 && last.outputTokens > 0 && " "}
-              {last.outputTokens > 0 && `↓${formatTokens(last.outputTokens)}`}
-              {pendingEstimateTokens > 0 && ` +${formatTokens(pendingEstimateTokens)}估算`}
-            </span>
-          )}
+          <span className="mt-0.5 block text-[10px] text-muted-foreground/60">点击查看完整明细</span>
         </span>
       )}
-    </span>
+
+      {/* 点击浮层 — 完整明细，向上弹出、右对齐避免越界 */}
+      {open && (
+        <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
+          <SessionProjectionView
+            sessionId={sessionId}
+            refreshKey={refreshKey}
+            tokenUsage={usage}
+            embedded
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -142,10 +215,7 @@ export function SessionChatStatusBar({
   isConnected,
   sessionId,
   showLineageView,
-  showProjectionView,
-  tokenUsage,
   onToggleLineage,
-  onToggleProjection,
 }: {
   connectionColor: string;
   connectionLabel: string;
@@ -154,49 +224,32 @@ export function SessionChatStatusBar({
   isConnected: boolean;
   sessionId: string | null;
   showLineageView: boolean;
-  showProjectionView: boolean;
-  tokenUsage: TokenUsageInfo | null;
   onToggleLineage: () => void;
-  onToggleProjection: () => void;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
       <span className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
-        <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
+        <span className={`inline-block h-1.5 w-1.5 rounded-[8px] ${connectionColor}`} />
         {connectionLabel}
       </span>
       {isActionRunning && (
         <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+          <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-primary" />
           {isConnected ? "接收中" : "执行中"}
         </span>
       )}
-      <ContextUsageRing usage={tokenUsage} />
       {hasSession && sessionId && (
-        <>
-          <button
-            type="button"
-            onClick={onToggleLineage}
-            className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-              showLineageView
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-            }`}
-          >
-            分支
-          </button>
-          <button
-            type="button"
-            onClick={onToggleProjection}
-            className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-              showProjectionView
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-            }`}
-          >
-            上下文
-          </button>
-        </>
+        <button
+          type="button"
+          onClick={onToggleLineage}
+          className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+            showLineageView
+              ? "border-primary/30 bg-primary/10 text-primary"
+              : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+          }`}
+        >
+          分支
+        </button>
       )}
     </div>
   );
@@ -205,6 +258,7 @@ export function SessionChatStatusBar({
 export function SessionChatStream({
   containerRef,
   displayItems,
+  turnSegments,
   hasSession,
   isLoading,
   sessionId,
@@ -214,6 +268,7 @@ export function SessionChatStream({
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
   displayItems: SessionDisplayItem[];
+  turnSegments?: TurnSegment[];
   hasSession: boolean;
   isLoading: boolean;
   sessionId: string | null;
@@ -226,25 +281,38 @@ export function SessionChatStream({
       {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <div className="mx-auto h-8 w-8 animate-spin rounded-[12px] border-2 border-primary border-t-transparent" />
             <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
           </div>
         </div>
       ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
-        <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
+        <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
-          {displayItems.map((item) => {
-            const key = getItemKey(item);
-            return (
-              <div key={key}>
-                <SessionEntry
-                  item={item}
-                  isStreaming={key === streamingEntryId}
-                  sessionId={sessionId}
-                />
-              </div>
-            );
-          })}
+          {turnSegments && turnSegments.length > 0 ? (
+            turnSegments.map((segment, idx) => (
+              <TurnSection
+                key={segment.turnId ?? `gap-${idx}`}
+                segment={segment}
+                sessionId={sessionId}
+                streamingEntryId={streamingEntryId}
+              />
+            ))
+          ) : (
+            displayItems.map((item, idx) => {
+              const key = getItemKey(item);
+              const followed = isToolGroup(item) && hasFollowingAgentMessage(displayItems, idx);
+              return (
+                <div key={key}>
+                  <SessionEntry
+                    item={item}
+                    isStreaming={key === streamingEntryId}
+                    sessionId={sessionId}
+                    followedByMessage={followed}
+                  />
+                </div>
+              );
+            })
+          )}
         </div>
       ) : (
         <div className="flex h-full items-center justify-center">
@@ -262,8 +330,154 @@ export function SessionChatStream({
   );
 }
 
+/** 判断 displayItem 是否是 agent 文本消息 */
+function isAgentMessage(item: SessionDisplayItem): boolean {
+  if (!isDisplayEntry(item)) return false;
+  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+}
+
+/** 判断当前 item 是否是 aggregated tool group */
+function isToolGroup(item: SessionDisplayItem): boolean {
+  return isAggregatedGroup(item);
+}
+
+/** 列表中某 tool group 后面是否紧跟 agent message */
+function hasFollowingAgentMessage(items: SessionDisplayItem[], idx: number): boolean {
+  for (let i = idx + 1; i < items.length; i++) {
+    const next = items[i]!;
+    if (isAgentMessage(next)) return true;
+    if (isToolGroup(next)) continue;
+    if (isAggregatedThinkingGroup(next)) continue;
+    break;
+  }
+  return false;
+}
+
+function formatTurnDuration(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
+}
+
+function terminalTurnLabel(status: TurnSegment["status"]): string | null {
+  switch (status) {
+    case "completed":
+      return "已处理";
+    case "failed":
+      return "执行失败";
+    case "interrupted":
+      return "执行已中断";
+    default:
+      return null;
+  }
+}
+
+function turnActivityClassName(activity: TurnActivityStatus): string {
+  switch (activity.kind) {
+    case "retry_exhausted":
+      return "border-destructive/20 bg-destructive/8 text-destructive";
+    case "reconnecting":
+      return "border-warning/25 bg-warning/10 text-warning";
+    case "connecting":
+    default:
+      return "border-info/20 bg-info/8 text-info";
+  }
+}
+
+function TurnActivityStrip({ activity }: { activity: TurnActivityStatus }) {
+  return (
+    <div className={`flex w-fit items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs ${turnActivityClassName(activity)}`}>
+      <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-current" />
+      <span>{activity.label}</span>
+    </div>
+  );
+}
+
+function TurnSection({
+  segment,
+  sessionId,
+  streamingEntryId,
+}: {
+  segment: TurnSegment;
+  sessionId: string | null;
+  streamingEntryId: string | null;
+}) {
+  const isCompleted = segment.status === "completed";
+  const terminalLabel = terminalTurnLabel(segment.status);
+  const [collapsed, setCollapsed] = useState(false);
+  const [prevStatus, setPrevStatus] = useState(segment.status);
+
+  if (segment.status !== prevStatus) {
+    setPrevStatus(segment.status);
+    if (segment.status === "completed" && prevStatus === "active") {
+      setCollapsed(true);
+    }
+  }
+
+  if (!isCompleted || !collapsed) {
+    return (
+      <div className="space-y-1.5">
+        {segment.activity && (
+          <TurnActivityStrip activity={segment.activity} />
+        )}
+        {terminalLabel && (
+          <button
+            type="button"
+            onClick={() => {
+              if (isCompleted) setCollapsed(true);
+            }}
+            className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
+          >
+            <span className="h-px flex-1 max-w-6 bg-border/40" />
+            <span>{terminalLabel}{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+            <span className="h-px flex-1 bg-border/40" />
+          </button>
+        )}
+        {segment.items.map((item, idx) => {
+          const key = getItemKey(item);
+          const followed = isToolGroup(item) && hasFollowingAgentMessage(segment.items, idx);
+          return (
+            <div key={key}>
+              <SessionEntry
+                item={item}
+                isStreaming={key === streamingEntryId}
+                sessionId={sessionId}
+                followedByMessage={followed}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // 折叠态：只显示 summary bar + 最终输出
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
+      >
+        <span className="text-muted-foreground/40">▶</span>
+        <span>已处理{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+        <span className="h-px flex-1 bg-border/40" />
+      </button>
+      {segment.finalOutput && (
+        <SessionEntry
+          item={segment.finalOutput}
+          isStreaming={false}
+          sessionId={sessionId}
+        />
+      )}
+    </div>
+  );
+}
+
 export function SessionChatComposer({
-  controlState,
+  commandState,
   discovery,
   discovered,
   execConfig,
@@ -280,17 +494,20 @@ export function SessionChatComposer({
   richInputRef,
   showExecutorSelector,
   workspaceId,
+  tokenUsage,
+  sessionId,
+  projectionRefreshKey,
   onAtTrigger,
   onFileSelected,
   onInputChange,
   onKeyDown,
   onCancelAction,
-  onPrimaryAction,
-  onSteerAction,
+  onCommandAction,
+  onExecutorConfigExplicitChange,
   onPlusMenuFiles,
   onRemoveImage,
 }: {
-  controlState: SessionChatControlState;
+  commandState: SessionChatCommandState;
   discovery: ExecutorDiscoveryState;
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
@@ -307,55 +524,70 @@ export function SessionChatComposer({
   richInputRef: RefObject<RichInputRef | null>;
   showExecutorSelector: boolean;
   workspaceId?: string | null;
+  tokenUsage: TokenUsageInfo | null;
+  sessionId: string | null;
+  projectionRefreshKey: number;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
-  onPrimaryAction: () => void;
-  onSteerAction?: () => void;
+  onCommandAction: (command: SessionChatCommand) => void;
+  onExecutorConfigExplicitChange?: (config: {
+    providerId: string;
+    modelId: string;
+    thinkingLevel: string;
+    permissionPolicy: string;
+  }) => void;
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;
 }) {
-  const { primaryAction, cancelAction, secondaryAction } = controlState;
-  const isEnqueueMode = primaryAction.kind === "enqueue";
-  const inputDisabled = isSending || !primaryAction.enabled;
+  const enterCommandId = commandState.commands.keyboard.enter;
+  const runtimeSubmitCommand = commandState.commands.commands.find(
+    (command) => command.command_id === enterCommandId,
+  ) ?? commandState.commands.commands.find(
+    (command) => command.placement.includes("composer_primary") && command.enabled,
+  ) ?? commandState.commands.commands.find(
+    (command) => command.placement.includes("composer_primary"),
+  );
+  const submitCommand = commandState.localDraftAction ?? runtimeSubmitCommand;
+  const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
   // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用
   const isExpanded = inputValue.trim().includes("\n") || imageAttachments.length > 0 || fileRef.references.length > 0;
-  const sendDisabled = isSessionComposerPrimaryDisabled({
-    primaryActionEnabled: primaryAction.enabled,
+  const sendDisabled = isSessionComposerSubmitDisabled({
+    commandEnabled: Boolean(submitCommand?.enabled),
     requirePromptText: false,
     inputValue: hasContent ? "has_content" : "",
     isCancelling,
     isSending,
   });
-  const cancelDisabled = isCancelling || !cancelAction.enabled;
+  const cancelDisabled = isCancelling || !cancelCommand?.enabled;
 
   const executorName = discovery.executors.find((e) => e.id === execConfig.executor)?.name;
   const isDiscoveredLoading = Boolean(execConfig.executor.trim()) &&
     (!discovered.isInitialized || (discovered.options?.loading_models ?? false));
 
-  // Steer 态模型选择器只读（FR5）
-  const isSteerReadonly = isEnqueueMode;
+  const modelRequired = commandState.modelConfig.status === "model_required";
+  const isModelReadonly = Boolean(
+    submitCommand && submitCommand.executor_config_policy === "forbidden",
+  );
 
-  const actionReason = primaryAction.enabled
+  const actionReason = submitCommand?.enabled
     ? undefined
-    : primaryAction.unavailableReason ?? controlState.helperText;
-  const helperText = primaryAction.enabled
-    ? controlState.helperText ?? (
-        isEnqueueMode
-          ? `Enter 排队${secondaryAction?.enabled ? " · Ctrl+Enter steer" : ""} · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
-          : `Ctrl+Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
-      )
-    : actionReason ?? "当前 Session 只能查看 runtime trace。";
+    : submitCommand?.unavailable_reason
+      ?? commandState.modelConfig.message
+      ?? commandState.helperText;
+  const helperText = submitCommand?.enabled
+    ? commandState.helperText ?? `Enter 提交 · ${workspaceId ? "@ 引用文件" : "@ 文件引用不可用"}`
+    : actionReason ?? "当前 AgentRun 只能查看。";
 
   return (
     <div className="shrink-0 pb-4 pt-2">
       <div className="mx-auto w-full max-w-4xl px-5">
         {/* Prompt 模板（无 session + draft 模式） */}
-        {!hasSession && !primaryAction.enabled && promptTemplates && promptTemplates.length > 0 && (
+        {!hasSession && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button
@@ -431,12 +663,11 @@ export function SessionChatComposer({
               />
               <RichInput
                 ref={richInputRef}
-                placeholder={primaryAction.placeholder ?? "Send follow-up"}
+                placeholder={modelRequired ? "请选择模型后继续" : "Send follow-up"}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onAtTrigger={onAtTrigger}
                 onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-                disabled={inputDisabled}
               />
             </div>
           </div>
@@ -444,7 +675,7 @@ export function SessionChatComposer({
           {/* ② + 菜单 */}
           <div className={isExpanded ? "order-2" : "order-1"}>
             <ComposerPlusMenu
-              disabled={inputDisabled}
+              disabled={isSending}
               onSelectFiles={onPlusMenuFiles}
             />
           </div>
@@ -452,21 +683,30 @@ export function SessionChatComposer({
           {/* ③ 弹性间隔（展开时推右） */}
           {isExpanded && <div className="order-3 flex-1" />}
 
-          {/* ④ 模型选择器 */}
-          {showExecutorSelector && (
-            <div className={isExpanded ? "order-4" : "order-3"}>
+          {/* ④ 上下文用量入口 + 模型选择器 */}
+          <div className={isExpanded ? "order-4 flex items-center gap-0.5" : "order-3 flex items-center gap-0.5"}>
+            <ContextUsageRing
+              usage={tokenUsage}
+              sessionId={sessionId}
+              refreshKey={projectionRefreshKey}
+            />
+            {showExecutorSelector && (
               <InlineModelSelector
                 execConfig={execConfig}
                 discoveredOptions={discovered.options}
                 isDiscoveredLoading={isDiscoveredLoading}
                 executorName={executorName}
-                readonly={isSteerReadonly}
-                onReset={execConfig.reset}
-                onRefetch={discovery.refetch}
-                onReconnect={discovered.reconnect}
+                readonly={isModelReadonly}
+                status={commandState.modelConfig.status}
+                message={commandState.modelConfig.message}
+                onExplicitChange={onExecutorConfigExplicitChange}
+                onRefresh={() => {
+                  discovery.refetch();
+                  discovered.reconnect();
+                }}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* ⑤ 发送/状态按钮 — 常驻 */}
           <div className={isExpanded ? "order-5" : "order-4"}>
@@ -475,12 +715,9 @@ export function SessionChatComposer({
               hasInput={hasContent}
               isSending={isSending}
               isCancelling={isCancelling}
-              sendDisabled={sendDisabled}
               cancelDisabled={cancelDisabled}
-              primaryKind={primaryAction.kind}
-              canSteer={Boolean(secondaryAction?.enabled)}
-              onSend={onPrimaryAction}
-              onSteer={onSteerAction}
+              submitCommand={sendDisabled ? undefined : submitCommand}
+              onSubmit={onCommandAction}
               onCancel={onCancelAction}
             />
           </div>

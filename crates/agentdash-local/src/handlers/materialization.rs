@@ -1,8 +1,20 @@
 use agentdash_relay::{RelayError, RelayMessage, VfsMaterializePayload};
+use std::sync::Arc;
 
-use super::CommandHandler;
+use crate::materialization::MaterializationStore;
 
-impl CommandHandler {
+#[derive(Clone)]
+pub(super) struct MaterializationCommandHandler {
+    materialization_store: Arc<MaterializationStore>,
+}
+
+impl MaterializationCommandHandler {
+    pub(super) fn new(materialization_store: Arc<MaterializationStore>) -> Self {
+        Self {
+            materialization_store,
+        }
+    }
+
     pub(super) async fn handle_vfs_materialize(
         &self,
         id: String,

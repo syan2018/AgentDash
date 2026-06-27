@@ -57,27 +57,111 @@ pub const MY_SKILL_BUNDLE: EmbeddedSkillBundle = EmbeddedSkillBundle {
 - 若受管文件路径使用 `\`，materializer 应归一为 `/`。
 - 若受管文件内容与源码 bundle 不一致，materializer 以源码 bundle 为准覆盖。
 
-Canvas 当前使用：
+## Runtime Builtin SkillAsset Contract
+
+### 1. Scope / Trigger
+
+源码内嵌系统 Skill 进入 AgentRun 时必须先成为项目级 builtin `SkillAsset`，再由 lifecycle mount 暴露给 session。该契约适用于 `canvas-system`、`workspace-module-system`、`companion-system`、`routine-memory` 以及后续同类系统 Skill。
+
+### 2. Signatures
 
 ```rust
-ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
+agentdash_application_skill::skill_asset::SkillAssetService::new(repo)
+    .bootstrap_builtins(project_id, Some(builtin_key))
+    .await;
+
+AgentRunLifecycleSurfaceInput {
+    explicit_skill_asset_keys,
+    builtin_skills: BuiltinLifecycleSkillPolicy::EnsureAndProject(skills),
+    ..
+}
 ```
 
-`ensure_canvas_system_skill` 只是 Canvas 兼容包装，不应继续扩展手写文件同步逻辑。
+### 3. Contracts
+
+- `agentdash-application-skill` owns builtin SkillAsset template lookup, embedded bundle parsing, file sync, and builtin seed convergence.
+- `agentdash-application-lifecycle` owns lifecycle surface projection. `EnsureAndProject` calls the skill service for each builtin key, then writes the normalized effective key list into the single `lifecycle` mount metadata.
+- `PreserveProjected` reads existing lifecycle metadata and does not bootstrap builtin SkillAsset content.
+- `LifecycleMountProvider` exposes projected files as `lifecycle://skills/<key>/SKILL.md` and related bundle files.
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| builtin key 没有 embedded template | skill service returns not found |
+| embedded bundle `SKILL.md` 缺失或 metadata 不一致 | skill service validation error |
+| project 已有同 key 旧快照 | sync to builtin seed source and embedded files |
+| lifecycle surface lacks required projection facts | lifecycle projector returns projection error |
+
+### 5. Good/Base/Bad Cases
+
+- Good: caller passes `EnsureAndProject([CanvasSystem, WorkspaceModuleSystem, CompanionSystem])`; all three project `SkillAsset` records are synced before lifecycle metadata is refreshed.
+- Base: caller passes `PreserveProjected`; session carries forward existing projected keys only.
+- Bad: caller manually creates one system SkillAsset outside the skill service; reset/sync and lifecycle file projection no longer share the same source of truth.
+
+### 6. Tests Required
+
+- lifecycle projector test asserts bootstrap calls happen before metadata projection for multiple builtin keys.
+- skill service builtin bootstrap tests assert embedded bundle sync and old project snapshot convergence.
+- frame construction tests assert project owner and companion paths declare builtin policy instead of writing skill metadata directly.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+append_lifecycle_skill_asset_projection(vfs, project_id, &[builtin_key.to_string()]);
+```
+
+#### Correct
+
+```rust
+AgentRunLifecycleSurfaceInput {
+    builtin_skills: BuiltinLifecycleSkillPolicy::EnsureAndProject(vec![BuiltinLifecycleSkill::CanvasSystem]),
+    ..
+}
+```
+
+Canvas authoring 协议使用项目级内嵌 Skill 路径：`canvas-system` 先通过
+`SkillAssetService::bootstrap_builtins(project_id, Some(key))` 同步到项目 SkillAsset，
+再经 AgentRun lifecycle VFS projection 暴露给 session。这样 Canvas runnable asset
+只保存 `Canvas.files` 的业务源码与数据文件，Agent-facing authoring 指南由 lifecycle skill
+surface 统一提供。`canvas-system` 必须描述 Canvas authoring、runtime bridge、VFS asset、
+interaction snapshot、render diagnostics 和 submit-to-Agent 的当前协议，因为这些能力都是
+Agent 在同一 Canvas runtime surface 上可观察或可触发的操作面。
 
 项目级内嵌 Skill 当前通过 `SkillAssetService::bootstrap_builtins(project_id, Some(key))`
-同步到项目 SkillAsset，再由 VFS projection 暴露给 session。`append_skill_asset_projection`
-在普通 session 中创建 `skill_asset_fs` 只读 mount；当 VFS 已包含 lifecycle mount 时，会把
-SkillAsset keys 写入 lifecycle mount metadata，由 `LifecycleMountProvider` 在
-`lifecycle://skills/<key>/...` 下暴露同一组 skill 文件。`companion-system` 使用这条
-lifecycle projection，让执行 workflow / lifecycle 的 session 获得 companion 协作协议说明，
-同时保持 skill 内容仍由 embedded bundle 与项目 SkillAsset 管理。
+同步到项目 SkillAsset，再由 AgentRun lifecycle VFS projection 暴露给 session。
+`AgentRunLifecycleSurfaceProjector` 通过 `BuiltinLifecycleSkillPolicy` 表达是否只保留已有
+projection，或 ensure 并投影 `companion-system` / `workspace-module-system` / `routine-memory`。
+projector 将 SkillAsset keys 写入唯一 `lifecycle` mount metadata，由 `LifecycleMountProvider`
+在 `lifecycle://skills/<key>/...` 下暴露同一组 skill 文件。
+同一个 lifecycle mount 可由 agent preset、companion system、workspace module system 或 routine
+memory 多个来源追加 SkillAsset key；projection helper 负责合并去重，原因是执行器 skill baseline、
+AgentRun workspace resource surface 和前端 capability 展示必须观察同一组已投影 skill。
+这样 session 的 skill baseline 与 lifecycle runtime 上下文使用同一条 mount 事实源，
+同时保持 skill 内容仍由 embedded bundle 与项目 SkillAsset 管理。Project SkillAsset
+文件管理 surface 继续使用 `skill_asset_fs` provider 直接浏览和编辑项目级 Skill 文件。
 
 Routine 信息管理使用同一条项目级内嵌 Skill 路径：`routine-memory` 先通过
 `SkillAssetService::bootstrap_builtins(project_id, Some(key))` 同步到项目 SkillAsset，
-再在 Routine Session construction 中追加到 final VFS projection。这样 Routine Session
-默认具备 memory 协议说明，而 skill 内容仍由 embedded bundle 与 SkillAsset 管理；
-`routine_vfs` 只负责 Routine state projection。
+再在 Routine frame construction 中通过 lifecycle VFS projection 注入。这样 Routine
+Session 默认具备 memory 协议说明，而 skill 内容仍由 embedded bundle 与 SkillAsset
+管理；`routine_vfs` 只负责 Routine state projection。
+
+Workspace Module 操作协议也使用项目级内嵌 Skill 路径：`workspace-module-system` 应作为 builtin SkillAsset
+同步到项目 SkillAsset，并在 session 具备 `workspace_module` capability 时经 lifecycle VFS projection
+暴露。这个 skill 只描述 Agent 调用 `workspace_module_operate/list/describe/invoke/present` 的顺序、
+`canvas:{canvas_mount_id}` / `ext:{extension_key}` / `builtin:{key}` module id 形态、describe 返回的
+operation schema 是调用事实源，以及 Canvas work 如何进入 `canvas-system` 指南。原因是 workspace module 与 canvas authoring 都是 session 级
+Agent 操作协议，统一经 lifecycle skill surface 投影，避免指南可见性绑定到某个 Canvas 实例文件树。
+
+`workspace-module-system` 的最小注册建议：
+
+- 在 domain 层按现有 embedded bundle 模式声明 `WORKSPACE_MODULE_SYSTEM_BUNDLE`，文件根为 `skills/workspace-module-system`。
+- 在 builtin SkillAsset template 列表中加入 `workspace-module-system`。
+- 在 session assembly 中，当 effective capability 包含 `workspace_module` 时 bootstrap 该 builtin 并把 key 加入 lifecycle skill projection。
+- 注册代码应复用 `SkillAssetService::bootstrap_builtins(project_id, Some(key))` 与 `append_lifecycle_skill_asset_projection`，保持项目级 skill 内容、lifecycle mount 和 skill baseline 使用同一事实源。
 
 ## Validation Contract
 

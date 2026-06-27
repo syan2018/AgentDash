@@ -1,0 +1,18 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认云端后端与本机后端职责边界，避免把所有大内容默认回写本机。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "确认 RuntimeSession、turn、tool、event、resume、projection 与 lifecycle anchor 的所有权。"}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "确认 PiAgent AgentEvent 到 Backbone ThreadItem 的 tool/terminal 映射契约。"}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "确认 SessionEvent 是事实源、projection 只构建模型上下文，裁切必须发生在持久化前。"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "确认 runtime tool composition、VFS provider 与 lifecycle mount 的分层。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "确认 lifecycle://session/* surface、fs_read 行为和 VFS path 安全约束。"}
+{"file": ".trellis/spec/backend/vfs/vfs-materialization.md", "reason": "确认本机 materialization 与 relay shell/terminal 输出边界。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "确认 BackboneEnvelope 同时承担持久化、NDJSON 和前端 ThreadItem 输入。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认协议字段需要由 Rust contract 生成 TS，不在前端手写漂移字段。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "确认 useSessionStream/rawEvents/hydration 的消费方式，评估前端大 payload 风险。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/discussion-draft.md", "reason": "记录用户讨论形成的 PiAgent-only、bounded preview、短期 cache、lifecycle ref 共识。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/piagent-tool-result-path.md", "reason": "定位 AgentToolResult 进入模型上下文、Backbone 和 SessionEvent 的主路径与 guard 插入点。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/terminal-output-path.md", "reason": "定位 shell_exec、streaming update、interactive terminal 的大输出绕过点与 RetainedOutputBuffer / ToolShellTruncationInfo 接入点。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/lifecycle-vfs-ref-surface.md", "reason": "定位 lifecycle_vfs 可扩展 ref surface、fs_read 防御和 cache miss 表达层。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/session-event-projection-risk.md", "reason": "定位 SessionEvent、Postgres、NDJSON、前端 rawEvents 与 ContextProjector 的大 payload 风险。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/reference-codex-large-output.md", "reason": "参考 Codex 对 exec/MCP 输出 cap、durable JSONL policy、resume 重截断和 SQLite metadata/index 的处理方式。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/reference-claude-code-large-output.md", "reason": "参考 Claude Code 对大 tool result offload、Bash owner file、content replacement resume 和 cleanup 边界的处理方式。"}
+{"file": ".trellis/tasks/06-22-tool-large-output-lifecycle-draft/research/agentdash-implementation-slice-map.md", "reason": "提供可派发 subagent 的工作包、ownership、依赖顺序、验收测试和冲突文件清单。"}

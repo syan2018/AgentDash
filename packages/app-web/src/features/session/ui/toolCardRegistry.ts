@@ -9,7 +9,12 @@
 
 import { createElement, type ReactNode } from "react";
 import type { ThreadItem, AgentDashThreadItem } from "../../../generated/backbone-protocol";
-import { resolveKind, type KindMeta } from "../model/threadItemKind";
+import {
+  resolveDynamicToolMeta,
+  resolveKind,
+  type DynamicToolMeta,
+  type KindMeta,
+} from "../model/threadItemKind";
 import type { DisplayStatus } from "./ToolCallCardShell";
 import type { ToolCardHeaderModel } from "./ToolCardHeader";
 import { FilePathPill } from "./FilePathPill";
@@ -47,6 +52,7 @@ export function renderToolCallCard(
 
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
       return {
         kind,
         header: {
@@ -59,7 +65,7 @@ export function renderToolCallCard(
           sessionId: ctx.sessionId,
         }),
         status,
-        durationMs: item.durationMs ?? undefined,
+        durationMs: "durationMs" in item ? item.durationMs ?? undefined : undefined,
       };
 
     case "fileChange": {
@@ -137,7 +143,7 @@ export function renderToolCallCard(
     case "dynamicToolCall":
       return {
         kind,
-        header: getDynamicToolHeader(item),
+        header: getDynamicToolHeader(item, resolveDynamicToolMeta(item.tool)),
         body: createElement(DynamicToolCallCardBody, { item }),
         status,
         durationMs: item.durationMs ?? undefined,
@@ -192,14 +198,13 @@ export function renderToolCallCard(
 
 type DynamicItem = Extract<ThreadItem, { type: "dynamicToolCall" }>;
 
-function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
+function getDynamicToolHeader(item: DynamicItem, meta: DynamicToolMeta): ToolCardHeaderModel {
   const args = item.arguments as Record<string, unknown> | null;
-  const tool = item.tool.toLowerCase();
 
-  switch (tool) {
+  switch (meta.family) {
     case "read": {
       const path = str(args, "path") ?? str(args, "file_path");
-      if (!path) return { primary: "Read" };
+      if (!path) return { primary: meta.fallbackLabel };
       return {
         primary: createElement(FilePathPill, {
           path,
@@ -210,15 +215,13 @@ function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
     case "write": {
       const path = str(args, "file_path") ?? str(args, "path");
       return {
-        primary: path ? createElement(FilePathPill, { path }) : "Write",
+        primary: path ? createElement(FilePathPill, { path }) : meta.fallbackLabel,
       };
     }
-    case "edit":
-    case "str_replace_editor":
-    case "applypatch": {
+    case "edit": {
       const path = str(args, "file_path") ?? str(args, "path");
       return {
-        primary: path ? createElement(FilePathPill, { path }) : "Edit",
+        primary: path ? createElement(FilePathPill, { path }) : meta.fallbackLabel,
       };
     }
     case "grep": {
@@ -227,7 +230,7 @@ function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
       return {
         primary: pattern
           ? createElement("code", { className: "font-mono" }, `"${pattern}"`)
-          : "Grep",
+          : meta.fallbackLabel,
         secondary: target ? `in ${target}` : undefined,
       };
     }
@@ -236,29 +239,46 @@ function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
       return {
         primary: pattern
           ? createElement("code", { className: "font-mono" }, pattern)
-          : "Glob",
+          : meta.fallbackLabel,
       };
     }
-    case "websearch": {
+    case "web_search": {
       const query = str(args, "search_term") ?? str(args, "query");
       return {
         primary: query
           ? createElement("code", { className: "font-mono" }, `"${query}"`)
-          : "WebSearch",
+          : meta.fallbackLabel,
       };
     }
-    case "webfetch":
     case "fetch": {
       const url = str(args, "url");
-      return { primary: url ?? "WebFetch" };
+      return { primary: url ?? meta.fallbackLabel };
     }
-    case "todowrite": {
+    case "todo": {
       const todos = args?.todos;
       const count = Array.isArray(todos) ? todos.length : 0;
-      return { primary: count > 0 ? `更新 ${count} 项 todo` : "TodoWrite" };
+      return { primary: count > 0 ? `更新 ${count} 项 todo` : meta.fallbackLabel };
     }
-    case "askquestion":
-    case "askuserquestion": {
+    case "task": {
+      if (item.tool === "task_write") {
+        const ops = args?.operations;
+        const snapshot = args?.snapshot;
+        const count = Array.isArray(ops)
+          ? ops.length
+          : Array.isArray(snapshot)
+            ? snapshot.length
+            : 0;
+        const mode = str(args, "mode");
+        return {
+          primary: count > 0 ? `更新 ${count} 项 Task` : "更新 Task",
+          secondary: mode ?? undefined,
+        };
+      }
+      // task_read
+      const mode = str(args, "mode") ?? "overview";
+      return { primary: `读取 Task · ${mode}` };
+    }
+    case "question": {
       const questions = args?.questions;
       const first =
         Array.isArray(questions) && questions[0]
@@ -268,7 +288,7 @@ function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
       const q = typeof first === "string" ? first : null;
       const n = Array.isArray(questions) ? questions.length : 0;
       return {
-        primary: q ?? "AskQuestion",
+        primary: q ?? meta.fallbackLabel,
         secondary: n > 1 ? `+${n - 1} 个问题` : undefined,
       };
     }
@@ -353,6 +373,7 @@ function formatArgValue(value: unknown): string | null {
 function getItemDisplayStatus(item: AgentDashThreadItem): DisplayStatus {
   switch (item.type) {
     case "commandExecution":
+    case "shellExec":
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":

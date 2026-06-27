@@ -1,17 +1,21 @@
 //! 通用 Mount 文件发现模块
 //!
-//! 基于 VFS 的 `VfsService` 扫描约定路径下的已知文件（如 AGENTS.md / MEMORY.md），
+//! 基于 VFS 的 `VfsService` 扫描约定路径下的已知文件（如 AGENTS.md），
 //! 返回文件内容供调用方按场景注入到 session context 中。
 //!
 //! 设计参考 `skill/loader.rs` 的 VFS scan 模式，但抽象为通用的"规则 + 扫描"机制，
 //! 不绑定特定文件格式。
 
+use agentdash_diagnostics::{Subsystem, diag};
+use std::collections::VecDeque;
+
+use agentdash_spi::{MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
 use agentdash_spi::{Mount, MountCapability, Vfs};
 
 use crate::vfs::types::ResourceRef;
 use crate::vfs::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    PROVIDER_SKILL_ASSET_FS, VfsService,
+    PROVIDER_SKILL_ASSET_FS, RuntimeFileEntry, VfsService, normalize_mount_relative_path,
 };
 
 const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
@@ -23,7 +27,7 @@ const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
 ///
 /// 调用方通过组合多条规则，描述需要在 mount 中搜索哪些约定文件。
 pub struct MountFileDiscoveryRule {
-    /// 规则标识（如 `"agents_md"` / `"memory_md"`），用于结果归类。
+    /// 规则标识（如 `"agents_md"`），用于结果归类。
     pub key: &'static str,
     /// 目标文件名列表（如 `["AGENTS.md"]`）。
     pub file_names: &'static [&'static str],
@@ -68,24 +72,14 @@ pub struct MountFileDiscoveryResult {
 
 // ─── 内置规则常量 ──────────────────────────────────────────────
 
-pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[
-    MountFileDiscoveryRule {
-        key: "agents_md",
-        file_names: &["AGENTS.md"],
-        scan_root: true,
-        scan_children: true,
-        scan_prefixes: &[],
-        max_size_bytes: 64 * 1024,
-    },
-    MountFileDiscoveryRule {
-        key: "memory_md",
-        file_names: &["MEMORY.md"],
-        scan_root: true,
-        scan_children: true,
-        scan_prefixes: &[],
-        max_size_bytes: 64 * 1024,
-    },
-];
+pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscoveryRule {
+    key: "agents_md",
+    file_names: &["AGENTS.md"],
+    scan_root: true,
+    scan_children: true,
+    scan_prefixes: &[],
+    max_size_bytes: 64 * 1024,
+}];
 
 pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscoveryRule {
     key: "skill_md",
@@ -115,7 +109,8 @@ pub async fn discover_mount_files(
 
     for mount in &vfs.mounts {
         if !should_scan_mount_for_discovery(mount) {
-            tracing::debug!(
+            diag!(Debug, Subsystem::AgentRun,
+
                 mount_id = %mount.id,
                 provider = %mount.provider,
                 "跳过 mount 自动文件发现"
@@ -166,6 +161,152 @@ pub async fn discover_mount_files(
     result
 }
 
+/// 按 dynamic skill provider 声明的 VFS 规则扫描文件。
+///
+/// Provider 规则只描述“在允许自动发现的 mount 内找什么”。是否允许扫描某个
+/// mount 仍由 `should_scan_mount_for_discovery` 决定，避免 KM / 外部文档等
+/// 高成本 mount 在 session capability 构建时被递归扫爆。
+pub async fn discover_skill_vfs_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    rules: &[agentdash_spi::SkillDiscoveryVfsRule],
+) -> (
+    Vec<agentdash_spi::SkillDiscoveryVfsFile>,
+    Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let (files, diagnostics) =
+        agentdash_application_skill::discovery::discover_skill_vfs_files(service, vfs, rules, None)
+            .await;
+    (
+        files,
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| MountFileDiscoveryDiagnostic {
+                rule_key: diagnostic.rule_key,
+                mount_id: diagnostic.mount_id,
+                path: diagnostic.path,
+                message: diagnostic.message,
+            })
+            .collect(),
+    )
+}
+
+pub async fn discover_memory_vfs_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    rules: &[MemoryDiscoveryVfsRule],
+) -> (
+    Vec<MemoryDiscoveryVfsFile>,
+    Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let mut files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for mount in &vfs.mounts {
+        if !should_scan_mount_for_discovery(mount) {
+            diag!(Debug, Subsystem::AgentRun,
+
+                mount_id = %mount.id,
+                provider = %mount.provider,
+                "跳过 memory VFS discovery mount"
+            );
+            continue;
+        }
+        if !mount.capabilities.contains(&MountCapability::Read) {
+            continue;
+        }
+
+        let has_list = mount.capabilities.contains(&MountCapability::List);
+        for rule in rules {
+            let rule_key = normalized_memory_rule_key(rule);
+
+            for exact_path in &rule.exact_paths {
+                let Ok(path) =
+                    normalize_rule_path(&rule_key, &mount.id, exact_path, false, &mut diagnostics)
+                else {
+                    continue;
+                };
+                try_read_memory_vfs_file(
+                    service,
+                    vfs,
+                    &mount.id,
+                    &path,
+                    &rule_key,
+                    rule.max_size_bytes,
+                    &mut files,
+                    &mut diagnostics,
+                )
+                .await;
+            }
+
+            if !has_list || rule.scan_prefixes.is_empty() || rule.file_names.is_empty() {
+                continue;
+            }
+
+            let max_files = rule.max_files.unwrap_or(usize::MAX);
+            let mut emitted_for_rule = 0usize;
+            for prefix in &rule.scan_prefixes {
+                if emitted_for_rule >= max_files {
+                    break;
+                }
+                let Ok(prefix) =
+                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut diagnostics)
+                else {
+                    continue;
+                };
+
+                let candidates = if rule.recursive {
+                    list_recursive_files(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &prefix,
+                        rule.max_depth.unwrap_or(8),
+                        max_files.saturating_sub(emitted_for_rule),
+                    )
+                    .await
+                } else {
+                    let children = list_children_at(service, vfs, &mount.id, &prefix).await;
+                    children
+                        .into_iter()
+                        .flat_map(|child_dir| {
+                            rule.file_names
+                                .iter()
+                                .map(move |file_name| format!("{child_dir}/{file_name}"))
+                        })
+                        .collect()
+                };
+
+                for candidate in candidates {
+                    if emitted_for_rule >= max_files {
+                        break;
+                    }
+                    if !matches_any_file_name(&candidate, &rule.file_names) {
+                        continue;
+                    }
+                    let before_len = files.len();
+                    try_read_memory_vfs_file(
+                        service,
+                        vfs,
+                        &mount.id,
+                        &candidate,
+                        &rule_key,
+                        rule.max_size_bytes,
+                        &mut files,
+                        &mut diagnostics,
+                    )
+                    .await;
+                    if files.len() > before_len {
+                        emitted_for_rule += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    (files, diagnostics)
+}
+
 // ─── 内部辅助 ─────────────────────────────────────────────────
 
 fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
@@ -201,6 +342,114 @@ fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
             | PROVIDER_CANVAS_FS
             | PROVIDER_SKILL_ASSET_FS
     )
+}
+
+fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
+    let key = rule.key.trim();
+    if key.is_empty() {
+        "memory_discovery".to_string()
+    } else {
+        key.to_string()
+    }
+}
+
+fn normalize_rule_path(
+    rule_key: &str,
+    mount_id: &str,
+    raw_path: &str,
+    allow_empty: bool,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+) -> Result<String, ()> {
+    normalize_mount_relative_path(raw_path, allow_empty).map_err(|error| {
+        diagnostics.push(MountFileDiscoveryDiagnostic {
+            rule_key: rule_key.to_string(),
+            mount_id: mount_id.to_string(),
+            path: raw_path.to_string(),
+            message: format!("discovery path 非法: {error}"),
+        });
+    })
+}
+
+async fn try_read_memory_vfs_file(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    path: &str,
+    rule_key: &str,
+    max_size_bytes: u64,
+    files: &mut Vec<MemoryDiscoveryVfsFile>,
+    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+) {
+    let target = ResourceRef {
+        mount_id: mount_id.to_string(),
+        path: path.to_string(),
+    };
+    let read = match service.read_text(vfs, &target, None, None).await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let content_len = read.content.len() as u64;
+    if content_len > max_size_bytes {
+        diagnostics.push(MountFileDiscoveryDiagnostic {
+            rule_key: rule_key.to_string(),
+            mount_id: mount_id.to_string(),
+            path: path.to_string(),
+            message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
+        });
+        return;
+    }
+
+    files.push(MemoryDiscoveryVfsFile {
+        rule_key: rule_key.to_string(),
+        mount_id: mount_id.to_string(),
+        path: read.path,
+        content: read.content,
+        size_bytes: Some(content_len),
+    });
+}
+
+async fn list_recursive_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    root_path: &str,
+    max_depth: usize,
+    max_files: usize,
+) -> Vec<String> {
+    if max_files == 0 {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([(root_path.to_string(), 0usize)]);
+    while let Some((path, depth)) = queue.pop_front() {
+        if depth > max_depth {
+            continue;
+        }
+        let entries = list_entries_at(service, vfs, mount_id, &path).await;
+        for entry in entries {
+            if entry.is_dir {
+                if depth < max_depth {
+                    queue.push_back((entry.path, depth + 1));
+                }
+            } else {
+                files.push(entry.path);
+                if files.len() >= max_files {
+                    return files;
+                }
+            }
+        }
+    }
+
+    files
+}
+
+fn matches_any_file_name(path: &str, file_names: &[String]) -> bool {
+    let Some(name) = path.rsplit('/').next() else {
+        return false;
+    };
+    file_names.iter().any(|file_name| file_name == name)
 }
 
 /// 尝试从 mount 中读取单个文件，成功则追加到结果。
@@ -247,13 +496,12 @@ async fn try_read_file(
     });
 }
 
-/// 列出指定目录下的一级子目录路径。
-async fn list_children_at(
+async fn list_entries_at(
     service: &VfsService,
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
-) -> Vec<String> {
+) -> Vec<RuntimeFileEntry> {
     let list_result = service
         .list(
             vfs,
@@ -269,41 +517,29 @@ async fn list_children_at(
         .await;
 
     match list_result {
-        Ok(r) => r
-            .entries
-            .into_iter()
-            .filter(|e| e.is_dir)
-            .map(|e| e.path)
-            .collect(),
+        Ok(r) => r.entries,
         Err(_) => Vec::new(),
     }
 }
 
+/// 列出指定目录下的一级子目录路径。
+async fn list_children_at(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    dir_path: &str,
+) -> Vec<String> {
+    list_entries_at(service, vfs, mount_id, dir_path)
+        .await
+        .into_iter()
+        .filter(|e| e.is_dir)
+        .map(|e| e.path)
+        .collect()
+}
+
 /// 列出 mount 根目录下的一级子目录名。
 async fn list_root_children(service: &VfsService, vfs: &Vfs, mount_id: &str) -> Vec<String> {
-    let list_result = service
-        .list(
-            vfs,
-            mount_id,
-            ListOptions {
-                path: ".".to_string(),
-                pattern: None,
-                recursive: false,
-            },
-            None,
-            None,
-        )
-        .await;
-
-    match list_result {
-        Ok(r) => r
-            .entries
-            .into_iter()
-            .filter(|e| e.is_dir)
-            .map(|e| e.path)
-            .collect(),
-        Err(_) => Vec::new(),
-    }
+    list_children_at(service, vfs, mount_id, ".").await
 }
 
 #[cfg(test)]
@@ -324,15 +560,18 @@ mod tests {
     }
 
     #[test]
-    fn builtin_guideline_rules_cover_agents_and_memory() {
-        assert_eq!(BUILTIN_GUIDELINE_RULES.len(), 2);
+    fn builtin_guideline_rules_cover_agents_only() {
+        assert_eq!(BUILTIN_GUIDELINE_RULES.len(), 1);
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].key, "agents_md");
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].file_names, &["AGENTS.md"]);
         assert!(BUILTIN_GUIDELINE_RULES[0].scan_root);
         assert!(BUILTIN_GUIDELINE_RULES[0].scan_children);
-
-        assert_eq!(BUILTIN_GUIDELINE_RULES[1].key, "memory_md");
-        assert_eq!(BUILTIN_GUIDELINE_RULES[1].file_names, &["MEMORY.md"]);
+        assert!(
+            !BUILTIN_GUIDELINE_RULES
+                .iter()
+                .flat_map(|rule| rule.file_names.iter())
+                .any(|file_name| *file_name == "MEMORY.md")
+        );
     }
 
     #[test]
@@ -382,6 +621,34 @@ mod tests {
         )));
         assert!(should_scan_mount_for_discovery(&mount(
             "custom_remote_provider",
+            serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "auto" })
+        )));
+    }
+
+    #[test]
+    fn dynamic_rule_file_name_matching_uses_leaf_name() {
+        assert!(matches_any_file_name(
+            "Tools/example/nested/SKILL.md",
+            &["SKILL.md".to_string()]
+        ));
+        assert!(!matches_any_file_name(
+            "Tools/example/nested/README.md",
+            &["SKILL.md".to_string()]
+        ));
+    }
+
+    #[test]
+    fn discovery_policy_models_external_mounts_as_manual_by_default() {
+        assert!(!should_scan_mount_for_discovery(&mount(
+            "km",
+            serde_json::Value::Null
+        )));
+        assert!(!should_scan_mount_for_discovery(&mount(
+            "external_service",
+            serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "manual" })
+        )));
+        assert!(should_scan_mount_for_discovery(&mount(
+            "km",
             serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "auto" })
         )));
     }

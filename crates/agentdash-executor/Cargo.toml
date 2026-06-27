@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-agent-types = { workspace = true }
@@ -12,6 +13,7 @@ agentdash-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }

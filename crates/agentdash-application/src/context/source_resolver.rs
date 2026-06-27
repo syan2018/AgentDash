@@ -122,7 +122,7 @@ impl SourceResolver for ManualTextResolver {
             order,
             strategy: MergeStrategy::Append,
             scope: ContextFragment::default_scope(),
-            source: "legacy:source_resolver:manual_text".to_string(),
+            source: "source_resolver:manual_text".to_string(),
             content: render_source_section(source, source.locator.clone()),
         })
     }

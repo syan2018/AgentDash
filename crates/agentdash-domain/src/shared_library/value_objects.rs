@@ -13,7 +13,9 @@ use crate::skill_asset::SkillAssetFileKind;
 use crate::workflow::ToolCapabilityDirective;
 
 pub const EXTENSION_PERMISSION_LOCAL_PROFILE_READ: &str = "local.profile.read";
-pub const EXTENSION_PERMISSION_PROCESS_EXECUTE: &str = "process.execute";
+pub const EXTENSION_PERMISSION_PROCESS_EXEC: &str = "process.exec";
+pub const EXTENSION_PERMISSION_PROCESS_SHELL: &str = "process.shell";
+pub const EXTENSION_PERMISSION_PROCESS_ENV_SET: &str = "process.env.set";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -193,9 +195,12 @@ pub enum LibraryAssetPayload {
 impl LibraryAssetPayload {
     pub fn from_value(asset_type: LibraryAssetType, value: Value) -> Result<Self, DomainError> {
         match asset_type {
-            LibraryAssetType::AgentTemplate => serde_json::from_value(value)
-                .map(Self::AgentTemplate)
-                .map_err(|error| payload_error("agent_template", error)),
+            LibraryAssetType::AgentTemplate => {
+                let payload = serde_json::from_value::<AgentTemplatePayload>(value)
+                    .map_err(|error| payload_error("agent_template", error))?;
+                payload.validate()?;
+                Ok(Self::AgentTemplate(payload))
+            }
             LibraryAssetType::McpServerTemplate => {
                 let payload = serde_json::from_value::<McpServerTemplatePayload>(value)
                     .map_err(|error| payload_error("mcp_server_template", error))?;
@@ -272,13 +277,19 @@ fn payload_error(asset_type: &str, error: serde_json::Error) -> DomainError {
     ))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct AgentTemplatePayload {
     pub config: AgentTemplateConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+impl AgentTemplatePayload {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        self.config.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct AgentTemplateConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +312,23 @@ pub struct AgentTemplateConfig {
     pub capability_directives: Vec<ToolCapabilityDirective>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_slots: Vec<AgentMcpSlotTemplate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_dependencies: Vec<AgentMcpDependencyTemplate>,
+}
+
+impl AgentTemplateConfig {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        for (index, slot) in self.mcp_slots.iter().enumerate() {
+            require_non_empty(
+                &format!("agent_template.config.mcp_slots[{index}].key"),
+                &slot.key,
+            )?;
+        }
+        for (index, dependency) in self.mcp_dependencies.iter().enumerate() {
+            dependency.validate(index)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -310,6 +338,58 @@ pub struct AgentMcpSlotTemplate {
     pub description: Option<String>,
     #[serde(default)]
     pub required: bool,
+}
+
+/// Agent 模板的 MCP 依赖只描述安装期要生成的 Project MCP Preset。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentMcpDependencyTemplate {
+    pub slot_key: String,
+    pub asset_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Value>,
+}
+
+impl AgentMcpDependencyTemplate {
+    fn validate(&self, index: usize) -> Result<(), DomainError> {
+        require_non_empty(
+            &format!("agent_template.config.mcp_dependencies[{index}].slot_key"),
+            &self.slot_key,
+        )?;
+        require_non_empty(
+            &format!("agent_template.config.mcp_dependencies[{index}].asset_key"),
+            &self.asset_key,
+        )?;
+        if let Some(target_key) = &self.target_key {
+            require_non_empty(
+                &format!("agent_template.config.mcp_dependencies[{index}].target_key"),
+                target_key,
+            )?;
+        }
+        if let Some(display_name) = &self.display_name {
+            require_non_empty(
+                &format!("agent_template.config.mcp_dependencies[{index}].display_name"),
+                display_name,
+            )?;
+        }
+        if let Some(parameters) = &self.parameters
+            && !parameters.is_object()
+        {
+            return Err(DomainError::InvalidConfig(format!(
+                "agent_template.config.mcp_dependencies[{index}].parameters 必须是对象"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -336,6 +416,7 @@ pub struct ProjectAgentConfigOverride {
     pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
+/// Marketplace MCP 安装模板，只能在安装事务中解析为 Project MCP Preset。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct McpServerTemplatePayload {
@@ -878,25 +959,6 @@ fn validate_public_http_url(field: &str, value: &str) -> Result<(), DomainError>
     if host.is_empty() {
         return Err(DomainError::InvalidConfig(format!("{field} 缺少 host")));
     }
-    let is_local_or_private = matches!(host, "localhost") || host.ends_with(".local") || {
-        match host.parse::<std::net::IpAddr>() {
-            Ok(std::net::IpAddr::V4(ip)) => {
-                ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
-            }
-            Ok(std::net::IpAddr::V6(ip)) => {
-                ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ip.is_unique_local()
-                    || ip.is_unicast_link_local()
-            }
-            Err(_) => false,
-        }
-    };
-    if is_local_or_private {
-        return Err(DomainError::InvalidConfig(format!(
-            "{field} 指向本机或私有网络，不能进入公共 MCP 模板"
-        )));
-    }
     Ok(())
 }
 
@@ -1242,10 +1304,14 @@ fn classify_extension_permission_key(permission: &str) -> &'static str {
         "workspace"
     } else if permission.starts_with("env.read") {
         "env"
-    } else if permission == EXTENSION_PERMISSION_PROCESS_EXECUTE
-        || permission.starts_with("process.run")
+    } else if permission == EXTENSION_PERMISSION_PROCESS_EXEC
+        || permission == EXTENSION_PERMISSION_PROCESS_SHELL
     {
         "process"
+    } else if permission == EXTENSION_PERMISSION_PROCESS_ENV_SET
+        || permission.starts_with("process.env.set:")
+    {
+        "process_env"
     } else if permission.starts_with("runtime.invoke") {
         "runtime_action"
     } else if permission.starts_with("extension.channel.invoke") {
@@ -1385,9 +1451,7 @@ pub struct ExtensionRuntimeActionDefinition {
     pub action_key: String,
     pub kind: ExtensionRuntimeActionKind,
     pub description: String,
-    #[serde(default = "empty_json_schema")]
     pub input_schema: Value,
-    #[serde(default = "empty_json_schema")]
     pub output_schema: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<String>,
@@ -1460,9 +1524,7 @@ impl ExtensionProtocolChannelDefinition {
 pub struct ExtensionProtocolChannelMethodDefinition {
     pub name: String,
     pub description: String,
-    #[serde(default = "empty_json_schema")]
     pub input_schema: Value,
-    #[serde(default = "empty_json_schema")]
     pub output_schema: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<String>,
@@ -1677,10 +1739,6 @@ impl ExtensionBundleRef {
         require_non_empty("extension_template.bundles[].entry", &self.entry)?;
         validate_bundle_digest("extension_template.bundles[].digest", &self.digest)
     }
-}
-
-fn empty_json_schema() -> Value {
-    Value::Object(Default::default())
 }
 
 fn validate_json_schema(field: &str, value: &Value) -> Result<(), DomainError> {
@@ -1921,18 +1979,28 @@ mod tests {
     }
 
     #[test]
-    fn mcp_template_rejects_private_url_and_stdio_payload() {
-        let private_url = LibraryAssetPayload::from_value(
-            LibraryAssetType::McpServerTemplate,
-            json!({
-                "transport_template": {
-                    "type": "http",
-                    "url_template": "http://localhost:8765/mcp"
-                }
-            }),
-        );
-        assert!(private_url.is_err());
+    fn mcp_template_allows_private_local_and_localhost_urls() {
+        for url_template in [
+            "http://localhost:8765/mcp",
+            "http://127.0.0.1:8765/mcp",
+            "http://10.22.71.7:8026/km/read/mcp",
+            "http://host.local:8765/mcp",
+        ] {
+            LibraryAssetPayload::from_value(
+                LibraryAssetType::McpServerTemplate,
+                json!({
+                    "transport_template": {
+                        "type": "http",
+                        "url_template": url_template
+                    }
+                }),
+            )
+            .expect("local/private MCP URLs are allowed");
+        }
+    }
 
+    #[test]
+    fn mcp_template_rejects_stdio_payload() {
         let stdio = LibraryAssetPayload::from_value(
             LibraryAssetType::McpServerTemplate,
             json!({
@@ -1943,6 +2011,31 @@ mod tests {
             }),
         );
         assert!(stdio.is_err());
+    }
+
+    #[test]
+    fn mcp_template_rejects_userinfo_and_secret_markers() {
+        let userinfo = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "https://user:pass@example.com/mcp"
+                }
+            }),
+        );
+        assert!(userinfo.is_err());
+
+        let secret_marker = LibraryAssetPayload::from_value(
+            LibraryAssetType::McpServerTemplate,
+            json!({
+                "transport_template": {
+                    "type": "http",
+                    "url_template": "https://example.com/mcp?api_key=abc"
+                }
+            }),
+        );
+        assert!(secret_marker.is_err());
     }
 
     #[test]
@@ -2010,6 +2103,60 @@ mod tests {
     }
 
     #[test]
+    fn agent_template_validates_mcp_dependency_contract() {
+        let payload = match LibraryAssetPayload::from_value(
+            LibraryAssetType::AgentTemplate,
+            json!({
+                "config": {
+                    "executor": "pi-agent",
+                    "system_prompt": "Use ABC editing tools.",
+                    "mcp_slots": [{
+                        "key": "abc-copilot-tool",
+                        "display_name": "ABC Copilot Tool"
+                    }],
+                    "mcp_dependencies": [{
+                        "slot_key": "abc-copilot-tool",
+                        "asset_key": "abc-copilot-tool",
+                        "target_key": "abc-copilot-tool",
+                        "display_name": "ABC Copilot Tool",
+                        "required": true,
+                        "parameters": {
+                            "local_ip": "127.0.0.1",
+                            "port": 7321
+                        }
+                    }]
+                }
+            }),
+        )
+        .expect("valid agent template")
+        {
+            LibraryAssetPayload::AgentTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        };
+
+        assert_eq!(payload.config.mcp_dependencies.len(), 1);
+        assert_eq!(
+            payload.config.mcp_dependencies[0].slot_key,
+            "abc-copilot-tool"
+        );
+
+        let invalid = LibraryAssetPayload::from_value(
+            LibraryAssetType::AgentTemplate,
+            json!({
+                "config": {
+                    "mcp_dependencies": [{
+                        "slot_key": "abc-copilot-tool",
+                        "asset_key": "abc-copilot-tool",
+                        "parameters": ["not", "object"]
+                    }]
+                }
+            }),
+        );
+
+        assert!(invalid.is_err());
+    }
+
+    #[test]
     fn rejects_invalid_payload_for_type() {
         let result = LibraryAssetPayload::from_value(
             LibraryAssetType::SkillTemplate,
@@ -2054,7 +2201,7 @@ mod tests {
                     "local.profile.read",
                     "http.fetch:gitlab.example",
                     "env.read:GITLAB_TOKEN",
-                    "process.execute",
+                    "process.exec",
                     "extension.channel.invoke:gitlab-review.api.listMergeRequests"
                 ]
             }],
@@ -2217,6 +2364,43 @@ mod tests {
     }
 
     #[test]
+    fn classifies_current_process_runtime_permission_keys() {
+        let template = extension_template_from_json(json!({
+            "runtime_actions": [{
+                "action_key": "demo.run",
+                "kind": "session_runtime",
+                "description": "Run demo",
+                "input_schema": {},
+                "output_schema": {},
+                "permissions": [
+                    "process.exec",
+                    "process.shell",
+                    "process.env.set:DEMO_TOKEN"
+                ]
+            }]
+        }));
+
+        let exec = template.evaluate_action_permission("demo.run", "process.exec");
+        assert!(exec.allowed);
+        assert_eq!(exec.capability_family, "process");
+
+        let shell = template.evaluate_action_permission("demo.run", "process.shell");
+        assert!(shell.allowed);
+        assert_eq!(shell.capability_family, "process");
+
+        let env_set = template.evaluate_action_permission("demo.run", "process.env.set:DEMO_TOKEN");
+        assert!(env_set.allowed);
+        assert_eq!(env_set.capability_family, "process_env");
+
+        let legacy = template.evaluate_action_permission("demo.run", "process.execute");
+        assert!(!legacy.allowed);
+        assert_eq!(
+            legacy.reason,
+            ExtensionPermissionDecisionReason::UnknownPermission
+        );
+    }
+
+    #[test]
     fn rejects_invalid_extension_runtime_contracts() {
         let bad_action = LibraryAssetPayload::from_value(
             LibraryAssetType::ExtensionTemplate,
@@ -2300,6 +2484,54 @@ mod tests {
         let result = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_extension_runtime_schema_missing_or_null() {
+        let missing = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "2",
+                "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
+                "runtime_actions": [{
+                    "action_key": "bad.run",
+                    "kind": "session_runtime",
+                    "description": "bad",
+                    "output_schema": {}
+                }]
+            }),
+        );
+        assert!(missing.is_err());
+
+        let null_schema = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "2",
+                "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
+                "protocol_channels": [{
+                    "channel_key": "bad.api",
+                    "version": "1.0.0",
+                    "description": "Bad API",
+                    "methods": [{
+                        "name": "ping",
+                        "description": "Ping",
+                        "input_schema": null,
+                        "output_schema": {}
+                    }]
+                }]
+            }),
+        );
+        assert!(null_schema.is_err());
     }
 
     fn extension_template_from_json(extra: serde_json::Value) -> ExtensionTemplatePayload {

@@ -1,3 +1,4 @@
+use agentdash_diagnostics::{Subsystem, diag};
 use std::{
     collections::HashMap,
     env,
@@ -550,7 +551,9 @@ async fn handle_server_notification(
             }
         }
         _ => {
-            tracing::debug!(
+            diag!(
+                Debug,
+                Subsystem::AgentRun,
                 "codex bridge: unhandled notification method={}",
                 notification.method
             );
@@ -821,7 +824,12 @@ impl AgentConnector for CodexBridgeConnector {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        tracing::debug!("codex app-server stderr: {}", line.trim());
+                        diag!(
+                            Debug,
+                            Subsystem::AgentRun,
+                            "codex app-server stderr: {}",
+                            line.trim()
+                        );
                     }
                     _ => break,
                 }
@@ -998,6 +1006,8 @@ impl AgentConnector for CodexBridgeConnector {
                 input,
                 responsesapi_client_metadata: None,
                 expected_turn_id: expected_turn_id.to_string(),
+                additional_context: None,
+                client_user_message_id: None,
             },
         };
         let response: TurnSteerResponse =

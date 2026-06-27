@@ -1,122 +1,79 @@
 // ─── Canvas ──────────────────────────────────────────
+import type {
+  CanvasAccessDto,
+  CanvasAgentRunRuntimeSnapshotDto,
+  CanvasFileDto,
+  CanvasImportMapDto,
+  CanvasListScopeDto,
+  CanvasResponse,
+  CanvasRuntimeBindingDto,
+  CanvasRuntimeBindingUpsertRequest,
+  CanvasRuntimeBridgeSnapshotDto,
+  CanvasRuntimeFileDto,
+  CanvasRuntimeSnapshotDto,
+  CanvasSandboxConfigDto,
+  CanvasScopeDto,
+  CopyCanvasToPersonalRequest,
+  CreateCanvasRequest,
+  DeleteCanvasResponse,
+  ListCanvasesQuery,
+  PublishCanvasToProjectRequest,
+  RuntimeActionDescriptorDto,
+  RuntimeActionKindDto,
+  RuntimeContextDto,
+  RuntimeInvocationResultDto,
+  RuntimePolicyDto,
+  RuntimeSurfaceDto,
+  UnpublishCanvasResponse,
+  UpdateCanvasRequest,
+} from "../generated/canvas-contracts";
 
-export interface CanvasImportMap {
-  imports: Record<string, string>;
-}
+export type CanvasImportMap = CanvasImportMapDto;
 
-export interface CanvasSandboxConfig {
-  libraries: string[];
-  import_map: CanvasImportMap;
-}
+export type CanvasSandboxConfig = CanvasSandboxConfigDto;
 
-export interface CanvasFile {
-  path: string;
-  content: string;
-}
+export type CanvasFile = CanvasFileDto;
 
-export interface CanvasDataBinding {
-  alias: string;
-  source_uri: string;
-  content_type: string;
-}
+export type CanvasScope = CanvasScopeDto;
 
-export interface Canvas {
-  id: string;
-  project_id: string;
-  mount_id: string;
-  title: string;
-  description: string;
-  entry_file: string;
-  sandbox_config: CanvasSandboxConfig;
-  files: CanvasFile[];
-  bindings: CanvasDataBinding[];
-  created_at: string;
-  updated_at: string;
-}
+export type CanvasListScope = CanvasListScopeDto;
 
-export interface CanvasRuntimeFile {
-  path: string;
-  content: string;
-  file_type: string;
-}
+export type CanvasAccess = CanvasAccessDto;
 
-export interface CanvasRuntimeBinding {
-  alias: string;
-  source_uri: string;
-  data_path: string;
-  content_type: string;
-  resolved: boolean;
-}
+export type ListCanvasesInput = ListCanvasesQuery;
 
-export type RuntimeActionKind = "session_runtime" | "setup";
+export type Canvas = CanvasResponse;
 
-export interface RuntimePolicy {
-  required_capabilities: string[];
-  timeout_ms?: number | null;
-  allow_background: boolean;
-}
+export type CreateCanvasInput = CreateCanvasRequest;
 
-export interface RuntimeActionDescriptor {
-  action_key: string;
-  kind: RuntimeActionKind;
-  description?: string | null;
-  input_schema?: unknown;
-  output_schema?: unknown;
-  default_policy: RuntimePolicy;
-}
+export type UpdateCanvasInput = UpdateCanvasRequest;
 
-export type RuntimeContext =
-  | {
-      type: "session";
-      session_id: string;
-      project_id?: string | null;
-      workspace_id?: string | null;
-    }
-  | {
-      type: "setup";
-      project_id?: string | null;
-      workspace_id?: string | null;
-      backend_id?: string | null;
-      root_ref?: string | null;
-    };
+export type DeleteCanvasResult = DeleteCanvasResponse;
 
-export interface RuntimeSurface {
-  context: RuntimeContext;
-  actions: RuntimeActionDescriptor[];
-}
+export type PublishCanvasToProjectInput = PublishCanvasToProjectRequest;
 
-export interface CanvasRuntimeBridgeSnapshot {
-  enabled: boolean;
-  surface?: RuntimeSurface | null;
-  disabled_reason?: string | null;
-}
+export type CopyCanvasToPersonalInput = CopyCanvasToPersonalRequest;
 
-export interface CanvasRuntimeSnapshot {
-  canvas_id: string;
-  session_id?: string | null;
-  resource_surface_ref?: string | null;
-  entry: string;
-  files: CanvasRuntimeFile[];
-  bindings: CanvasRuntimeBinding[];
-  import_map: CanvasImportMap;
-  libraries: string[];
-  runtime_bridge: CanvasRuntimeBridgeSnapshot;
-}
+export type UnpublishCanvasResult = UnpublishCanvasResponse;
 
-export interface RuntimeTrace {
-  trace_id: string;
-  invocation_id: string;
-  parent_trace_id?: string | null;
-  created_at: string;
-}
+export type CanvasRuntimeFile = CanvasRuntimeFileDto;
 
-export interface RuntimeInvocationOutput {
-  output: unknown;
-  metadata: Record<string, unknown>;
-}
+export type CanvasRuntimeBinding = CanvasRuntimeBindingDto;
 
-export interface RuntimeInvocationResult {
-  action_key: string;
-  trace: RuntimeTrace;
-  output: RuntimeInvocationOutput;
-}
+export type CanvasRuntimeBindingUpsertInput = CanvasRuntimeBindingUpsertRequest;
+
+export type RuntimeActionKind = RuntimeActionKindDto;
+
+export type RuntimePolicy = RuntimePolicyDto;
+
+export type RuntimeActionDescriptor = RuntimeActionDescriptorDto;
+
+export type RuntimeContext = RuntimeContextDto;
+
+export type RuntimeSurface = RuntimeSurfaceDto;
+
+export type CanvasRuntimeBridgeSnapshot = CanvasRuntimeBridgeSnapshotDto;
+
+export type CanvasRuntimeSnapshot = CanvasRuntimeSnapshotDto | CanvasAgentRunRuntimeSnapshotDto;
+
+export type RuntimeInvocationResult = RuntimeInvocationResultDto;

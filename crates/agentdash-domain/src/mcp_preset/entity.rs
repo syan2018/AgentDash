@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{McpPresetSource, McpRoutePolicy, McpTransportConfig};
+use super::value_objects::{
+    McpPresetSource, McpRoutePolicy, McpRuntimeBindingConfig, McpTransportConfig,
+};
 use crate::shared_library::InstalledAssetSource;
 
 /// MCP Preset — Project 级单个 MCP Server 配置模板。
@@ -23,6 +25,8 @@ pub struct McpPreset {
     pub transport: McpTransportConfig,
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_binding: Option<McpRuntimeBindingConfig>,
     pub source: McpPresetSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
@@ -49,6 +53,7 @@ impl McpPreset {
             description,
             transport,
             route_policy,
+            runtime_binding: None,
             source: McpPresetSource::User,
             installed_source: None,
             created_at: now,
@@ -78,6 +83,7 @@ impl McpPreset {
             description,
             transport,
             route_policy,
+            runtime_binding: None,
             source: McpPresetSource::Builtin { key: source_key },
             installed_source: None,
             created_at: now,
@@ -87,6 +93,14 @@ impl McpPreset {
 
     pub fn is_builtin(&self) -> bool {
         self.source.is_builtin()
+    }
+
+    pub fn with_runtime_binding(
+        mut self,
+        runtime_binding: Option<McpRuntimeBindingConfig>,
+    ) -> Self {
+        self.runtime_binding = runtime_binding;
+        self
     }
 
     pub fn touch(&mut self) {
@@ -129,6 +143,7 @@ mod tests {
                 command: "npx".to_string(),
                 args: vec![],
                 env: vec![],
+                cwd: None,
             },
             McpRoutePolicy::Auto,
         );

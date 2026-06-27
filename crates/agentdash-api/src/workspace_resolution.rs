@@ -8,14 +8,19 @@ use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolut
 use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
     RelayPromptRequest, RelayPromptTransport, RelaySessionRoute, RelaySessionRouteInfo,
-    RelaySteerRequest, RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
+    RelaySteerRequest, RemoteExecutorInfo, TransportError, WorkspaceIdentityDiscoveryCandidate,
+    WorkspaceIdentityDiscoveryInfo, WorkspaceIdentityDiscoveryRequest,
+    WorkspaceIdentityDiscoverySkipped, WorkspaceProbeInfo,
 };
-use agentdash_domain::workspace::Workspace;
+use agentdash_domain::workspace::{Workspace, WorkspaceIdentityKind};
 use agentdash_relay::{
     AgentConfigRelay, CommandBrowseDirectoryPayload, CommandCancelPayload, CommandPromptPayload,
-    CommandSteerPayload, CommandWorkspaceDetectPayload, RelayMessage, ResponsePromptPayload,
+    CommandSteerPayload, CommandWorkspaceDetectPayload, CommandWorkspaceDiscoverByIdentityPayload,
+    RelayMessage, ResponsePromptPayload, WorkspaceIdentityDiscoveryWorkspaceRelay,
+    WorkspaceIdentityKindRelay,
 };
 use async_trait::async_trait;
+use uuid::Uuid;
 
 pub use agentdash_application::workspace::WorkspaceDetectionResult;
 pub use agentdash_application::workspace::resolve_workspace_binding_with_allowed_backends as resolve_workspace_binding_core;
@@ -148,6 +153,114 @@ impl BackendTransport for BackendRegistry {
             )),
         }
     }
+
+    async fn discover_workspace_by_identity(
+        &self,
+        backend_id: &str,
+        workspaces: Vec<WorkspaceIdentityDiscoveryRequest>,
+    ) -> Result<WorkspaceIdentityDiscoveryInfo, TransportError> {
+        if !self.is_online(backend_id).await {
+            return Err(TransportError::BackendOffline(backend_id.to_string()));
+        }
+        let cmd = RelayMessage::CommandWorkspaceDiscoverByIdentity {
+            id: RelayMessage::new_id("workspace-discover-identity"),
+            payload: CommandWorkspaceDiscoverByIdentityPayload {
+                workspaces: workspaces
+                    .into_iter()
+                    .map(|workspace| WorkspaceIdentityDiscoveryWorkspaceRelay {
+                        workspace_id: workspace.workspace_id.to_string(),
+                        identity_kind: identity_kind_to_relay(workspace.identity_kind),
+                        identity_payload: workspace.identity_payload,
+                    })
+                    .collect(),
+            },
+        };
+        let resp = self
+            .send_command(backend_id, cmd)
+            .await
+            .map_err(map_backend_command_error)?;
+
+        match resp {
+            RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => {
+                let candidates = payload
+                    .candidates
+                    .into_iter()
+                    .map(|candidate| {
+                        Ok::<_, TransportError>(WorkspaceIdentityDiscoveryCandidate {
+                            workspace_id: parse_relay_uuid(
+                                &candidate.workspace_id,
+                                "workspace_id",
+                            )?,
+                            root_ref: candidate.root_ref,
+                            identity_kind: identity_kind_from_relay(candidate.identity_kind),
+                            identity_payload: candidate.identity_payload,
+                            detected_facts: candidate.detected_facts,
+                            confidence: candidate.confidence,
+                            display_name: candidate.display_name,
+                            client_name: candidate.client_name,
+                            server_address: candidate.server_address,
+                            stream: candidate.stream,
+                            warnings: candidate.warnings,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let skipped = payload
+                    .skipped
+                    .into_iter()
+                    .map(|skipped| {
+                        Ok::<_, TransportError>(WorkspaceIdentityDiscoverySkipped {
+                            workspace_id: parse_relay_uuid(&skipped.workspace_id, "workspace_id")?,
+                            identity_kind: identity_kind_from_relay(skipped.identity_kind),
+                            reason: skipped.reason,
+                            message: skipped.message,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(WorkspaceIdentityDiscoveryInfo {
+                    candidates,
+                    skipped,
+                    warnings: payload.warnings,
+                })
+            }
+            RelayMessage::ResponseWorkspaceDiscoverByIdentity {
+                error: Some(err), ..
+            } => Err(TransportError::OperationFailed(format!(
+                "远程 workspace_discover_by_identity 错误: {}",
+                err.message
+            ))),
+            _ => Err(TransportError::OperationFailed(
+                "远程 workspace_discover_by_identity 返回了意外响应".into(),
+            )),
+        }
+    }
+}
+
+fn identity_kind_to_relay(kind: WorkspaceIdentityKind) -> WorkspaceIdentityKindRelay {
+    match kind {
+        WorkspaceIdentityKind::GitRepo => WorkspaceIdentityKindRelay::GitRepo,
+        WorkspaceIdentityKind::P4Workspace => WorkspaceIdentityKindRelay::P4Workspace,
+        WorkspaceIdentityKind::LocalDir => WorkspaceIdentityKindRelay::LocalDir,
+    }
+}
+
+fn identity_kind_from_relay(kind: WorkspaceIdentityKindRelay) -> WorkspaceIdentityKind {
+    match kind {
+        WorkspaceIdentityKindRelay::GitRepo => WorkspaceIdentityKind::GitRepo,
+        WorkspaceIdentityKindRelay::P4Workspace => WorkspaceIdentityKind::P4Workspace,
+        WorkspaceIdentityKindRelay::LocalDir => WorkspaceIdentityKind::LocalDir,
+    }
+}
+
+fn parse_relay_uuid(raw: &str, field: &str) -> Result<Uuid, TransportError> {
+    Uuid::parse_str(raw).map_err(|error| {
+        TransportError::OperationFailed(format!(
+            "远程 workspace_discover_by_identity 返回非法 {field}: {error}"
+        ))
+    })
 }
 
 /// BackendRegistry 适配 RelayPromptTransport trait —— relay connector 所需的完整传输能力

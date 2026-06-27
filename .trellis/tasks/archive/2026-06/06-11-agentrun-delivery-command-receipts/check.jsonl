@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 accepted 语义"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 command state 返回"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 receipt 没有改变 RuntimeSession 职责"}
+{"file": ".trellis/tasks/06-11-agentrun-delivery-command-receipts/prd.md", "reason": "检查幂等验收"}
+{"file": ".trellis/tasks/06-11-agentrun-workspace-api-contract/prd.md", "reason": "检查 DTO 依赖一致"}

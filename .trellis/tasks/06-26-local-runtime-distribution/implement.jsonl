@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "定义桌面壳、DashboardHost、LocalRuntimeClient 的跨层边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "涉及云端 API、DTO 与前端生成契约。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "runner registration token 需要数据库迁移。"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "runner 与诊断日志需要统一脱敏约定。"}

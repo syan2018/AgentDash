@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "确认前端不创建第二套业务事实源、Session 与 AgentRun UI 的 feature 边界。"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Session NDJSON stream、useSessionFeed 聚合、tool burst 与 active tool 语义的直接规范。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "确认 AgentRun workspace/list projection 的缓存边界与写后刷新原则。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "确认 generated DTO、snake_case wire 字段与前端类型边界。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认 AgentRun list projection 修复应落在 API/application 读模型边界。"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "确认跨层事件流、HTTP DTO 与前后端事实源职责。"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "确认 Backbone event、NDJSON session stream 与 tool card rendering contract。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 AgentRun workspace shell、generated contract 与 contract check 要求。"}
+{"file": ".trellis/spec/shared/index.md", "reason": "确认中文文档、命名与跨层协作约定。"}

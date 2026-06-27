@@ -1,0 +1,16 @@
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/prd.md","reason":"检查验收标准是否全部覆盖"}
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/design.md","reason":"检查 crate 边界、数据流和无 fallback 约束"}
+{"file":".trellis/tasks/06-25-lifecycle-builtin-skill-discovery-fix/implement.md","reason":"检查实现步骤和验证命令是否覆盖风险"}
+{"file":".trellis/spec/backend/embedded-skill-bundles.md","reason":"核对 builtin SkillAsset bootstrap 与 lifecycle projection 契约"}
+{"file":".trellis/spec/backend/capability/capability-dimension-pipeline.md","reason":"核对 Skill baseline 发现物化与 CapabilityState 事实源"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"核对 runtime context frame 消费路径"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"质量门槛与测试要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨 crate / API / runtime projection 一致性审查"}
+{"command":"cargo fmt --package agentdash-application-skill --package agentdash-application-lifecycle --package agentdash-application-agentrun --package agentdash-application","result":"passed"}
+{"command":"cargo test -q -p agentdash-application-skill","result":"passed: 16 passed"}
+{"command":"cargo test -q -p agentdash-application-lifecycle lifecycle::surface","result":"passed: 18 passed"}
+{"command":"cargo test -q -p agentdash-application frame_construction","result":"passed: 22 passed"}
+{"command":"cargo check -q -p agentdash-application-agentrun","result":"passed; warnings only"}
+{"command":"cargo check -q -p agentdash-application","result":"passed; warnings only"}
+{"command":"cargo check -q -p agentdash-api","result":"passed; warnings only"}
+{"command":"cargo test -q -p agentdash-application-agentrun vfs_first_skill_provider_discovers_files_without_unavailable_diagnostic","result":"blocked by existing lib-test compile issues in unrelated agentrun tests: missing crate::test_support, CapabilityDimensionKey import, and project_agent_lifecycle_launch test initializers"}

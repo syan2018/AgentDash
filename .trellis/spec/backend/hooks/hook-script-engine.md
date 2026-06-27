@@ -6,7 +6,7 @@
 
 ## 概述
 
-`HookScriptEngine` 位于 `agentdash-application::hooks`，负责预编译 builtin preset `.rhai` 脚本、运行时注册用户自定义 preset、沙箱求值并返回结构化 `ScriptDecision`。
+`HookScriptEngine` 位于 `agentdash-application-hooks`，负责预编译 builtin preset `.rhai` 脚本、运行时注册用户自定义 preset、沙箱求值并返回结构化 `ScriptDecision`。
 
 Rhai 的具体执行能力由 `agentdash-infrastructure::script_runtime::RhaiScriptRuntime` 承载。该公共内核只管理 engine 初始化、sandbox limits、AST cache 和 `serde_json::Value` bridge；Hook adapter 负责注册 `block` / `inject` / `approve` 等 Hook helper，并维护 preset cache。这样 workflow script builder 等后续脚本入口可以复用同一 Rhai 安全内核，同时保持各自业务 surface 独立。
 
@@ -109,7 +109,6 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `session_terminal_advance` | `BeforeStop` | Session 终态自动推进 lifecycle step |
 | `stop_gate_checks_pending` | `BeforeStop` | 完成条件门禁 |
 | `manual_step_notice` | `BeforeStop` | 通知 Agent 当前 step 使用手动推进 |
-| `task_session_terminal` | `SessionTerminal` | Task session 终态处理 |
 | `context_compaction_trigger` | `AfterCompaction` | 压缩后刷新 snapshot |
 | `subagent_inherit_context` | `BeforeSubagentDispatch` | 子 Agent 继承注入和约束 |
 | `subagent_record_result` | `AfterSubagentDispatch` | 记录子 Agent 派发结果 |

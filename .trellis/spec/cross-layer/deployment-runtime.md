@@ -26,8 +26,7 @@
 | `AGENTDASH_BIND_HOST` | 云端服务监听地址 |
 | `AGENTDASH_PORT` | 云端服务监听端口 |
 | `DATABASE_URL` | 部署期外部 PostgreSQL 连接串 |
-| `AGENTDASH_SECRET_KEY` | 服务端签名或会话类 secret |
-| `AGENTDASH_ENCRYPTION_KEY` | 服务端加密类 secret |
+| `AGENTDASH_SECRET_KEY` | 服务端 LLM Provider secret 加密主密钥；必须是 32 字节原文或 32 字节 key 的 base64 表示 |
 | `AGENTDASH_WEB_DIST_DIR` | Web Dashboard static assets 目录；存在时由 `agentdash-server` 托管 SPA |
 | `AGENTDASH_RELAY_WS_URL` | Relay WebSocket 公开地址覆盖值 |
 | `AGENTDASH_MIN_DESKTOP_VERSION` | 服务器声明的最低桌面端版本 |

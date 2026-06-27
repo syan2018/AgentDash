@@ -17,6 +17,7 @@ pub use model::projection::{
 pub use protocol::{
     AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
     DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
+    ShellExecExecutionMode,
 };
 
 pub use runtime::decisions::{

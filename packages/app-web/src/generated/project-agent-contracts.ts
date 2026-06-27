@@ -2,36 +2,31 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 import type { UserInput } from "./backbone-protocol";
 
-export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: number, };
+export type ConversationEffectiveExecutorConfigView = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: string, permission_policy?: string, source: ConversationModelConfigSource, };
 
-export type AgentRunRefDto = { run_id: string, agent_id: string, };
+export type ConversationModelConfigSource = "project_agent_preset" | "frame_execution_profile" | "user_override" | "executor_discovery_default" | "unspecified";
 
-export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
+export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, };
 
-export type CreateProjectAgentSessionRequest = {
+export type CreateProjectAgentRunRequest = {
 /**
  * canonical 用户输入，与 steer / lifecycle message 同形。
  */
-input: Array<UserInput>, executor_config?: JsonValue, };
+input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, };
 
-export type LifecycleRunRefDto = { run_id: string, };
-
-export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, knowledge_enabled: boolean, created_at: string, updated_at: string, };
+export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentRunStartResult = { command_receipt: AgentRunCommandReceipt, accepted_refs: AgentRunAcceptedRefs, initial_message: AgentRunMessageCommandResponse, effective_executor_config?: ConversationEffectiveExecutorConfigView, runtime_session_id: string, turn_id?: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
 
-export type ProjectAgentSessionStartResult = { runtime_session_id: string, turn_id: string, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref: AgentFrameRefDto, subject_ref?: SubjectRefDto, };
-
-export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, };
-
-export type RuntimeSessionRefDto = { runtime_session_id: string, };
+export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, effective_executor_config?: ConversationEffectiveExecutorConfigView, preset_name?: string, source: string, };
 
 export type SubjectRefDto = { kind: string, id: string, };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };
+export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, knowledge_enabled?: boolean, };

@@ -154,4 +154,4 @@ Manual acceptance to hand off:
 - [x] Design resolves embedded-default packaging policy.
 - [x] Implement plan is split into independently verifiable runner steps.
 - [x] `implement.jsonl` and `check.jsonl` point to real specs/research artifacts.
-- [ ] User reviews planning artifacts and approves `task.py start`.
+- [x] User reviews planning artifacts and approves `task.py start`.

@@ -179,6 +179,8 @@ CLI commands:
 
 ```text
 agentdash-local run [--config <path>] [--server-url <url>] [--registration-token <adrt_...>] [--backend-id <id>] [--relay-ws-url <url>] [--auth-token <token>] [--runner-name <name>] [--workspace-root <path>...]
+agentdash-local setup [--config <path>] [--server-url <url>] [--registration-token <adrt_...>] [--runner-name <name>] [--workspace-root <path>...] [--install-service] [--start] [--dry-run] [--json] [--non-interactive]
+agentdash-local doctor [--config <path>] [--json]
 agentdash-local status [--config <path>] [--json]
 agentdash-local service install [--config <path>]
 agentdash-local service uninstall [--config <path>]
@@ -204,8 +206,12 @@ Status snapshot file:
 
 ### 3. Contracts
 
-- Config precedence is `CLI > environment > config file > default`; this keeps service units deterministic while allowing one-off debugging overrides.
+- Config precedence is `CLI > environment > config file > embedded default > platform default`; this keeps service units deterministic while allowing one-off debugging overrides and environment-specific release artifacts.
 - Environment keys use the `AGENTDASH_RUNNER_` prefix for runner concerns: `CONFIG`, `SERVER_URL`, `REGISTRATION_TOKEN`, `BACKEND_ID`, `RELAY_WS_URL`, `AUTH_TOKEN`, `RUNNER_NAME`, `STATE_DIR`, `LOG_PATH`, `WORKSPACE_ROOTS`, and `EXECUTOR_ENABLED`.
+- Embedded default keys are limited to non-secret packaging hints: `AGENTDASH_RUNNER_DEFAULT_SERVER_URL`, `AGENTDASH_RUNNER_DEFAULT_NAME_PREFIX`, and `AGENTDASH_RUNNER_DEFAULT_WORKSPACE_ROOT`. Generic runner artifacts can omit them; cloud-hosted or customer-specific artifacts can compile the target server origin into the binary.
+- `setup` is the canonical first-install orchestration path. It resolves defaults, collects missing inputs, writes runner config, performs registration-token claim, persists server-issued credentials, optionally installs/starts the OS service, and prints a redacted summary.
+- `setup --dry-run` reports the planned config path, service actions and missing fields without config writes, claim calls, or service lifecycle actions.
+- `doctor` is a read-only diagnostics path. It checks config readability, credential/enrollment presence, service state, status snapshot freshness, log path writability and lightweight server reachability while keeping token-bearing values redacted or omitted.
 - `registration_token` is an enrollment credential. It is only sent to `/api/local-runtime/runner/claim`; WebSocket relay authentication uses the returned `auth_token`.
 - Successful claim writes `backend_id`, `relay_ws_url`, `auth_token`, and registration metadata back to the TOML config through an atomic replace so service restart does not re-require a plaintext token in the environment.
 - `status --json` reports local configuration and latest snapshot facts without starting an HTTP server or binding an inbound business port.
@@ -228,6 +234,7 @@ Status snapshot file:
 ### 5. Operational Rationale
 
 - Linux first boot can provide only `AGENTDASH_RUNNER_SERVER_URL` and `AGENTDASH_RUNNER_REGISTRATION_TOKEN`; runner claims once, writes relay credentials, and later service restarts can use the persisted server-issued relay auth token.
+- Server install instructions should prefer `agentdash-local setup --registration-token ... --install-service --start`; explicit config editing and `service install/start` remain useful diagnostic and recovery steps.
 - Windows service installation records a stable SCM command that points to `agentdash-local service run --config ...`; SCM stop/shutdown maps to the runner shutdown signal so WebSocket and status snapshots stop gracefully.
 - `agentdash-local status --json` gives support scripts and cloud diagnostics a stable local status surface without adding an inbound HTTP health port.
 - Enrollment and relay authentication stay separate because registration-token revocation, backend relay auth rotation, and ProjectBackendAccess auditing have different lifecycles.
@@ -235,17 +242,19 @@ Status snapshot file:
 
 ### 6. Tests Required
 
-- CLI tests assert command parsing for `run`, `status`, `service *`, and `machine-identity`.
-- Config tests assert precedence order, TOML roundtrip, environment key parsing, workspace root parsing, and missing credential validation.
+- CLI tests assert command parsing for `setup`, `doctor`, `run`, `status`, `service *`, and `machine-identity`.
+- Config tests assert precedence order, TOML roundtrip, embedded defaults, environment key parsing, workspace root parsing, and missing credential validation.
 - Claim tests assert request path, Authorization header, response mapping into runtime config, and atomic credentials write-back.
 - Redaction tests assert JSON fields, bearer headers, query params, and common token names are masked.
+- Setup tests assert dry-run has no config, claim or service mutation and setup summaries omit token-bearing values.
+- Doctor tests assert read-only human/JSON output shape with missing config, partial enrollment, complete credentials and stale snapshot cases.
 - Service tests assert Linux systemd command execution through an executor abstraction, Windows SCM command formation, native service run entrypoint parsing, status mapping, and no accidental OS mutation in dry/unit contexts.
 - Status tests assert JSON output shape with and without a snapshot file.
 
 ### 7. Canonical Flow
 
 ```text
-agentdash-local run --registration-token adrt_...
+agentdash-local setup --registration-token adrt_... --install-service --start
 claim response -> backend_id + relay_ws_url + auth_token
 runner connects to relay_ws_url with auth_token
 ```

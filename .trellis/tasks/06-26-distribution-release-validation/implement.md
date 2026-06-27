@@ -205,10 +205,10 @@ Validation:
 - [ ] 使用云端 UI/API 创建 project-scoped runner registration token。
 - [ ] 构建或下载 release `agentdash-local` binary，不使用 `target/debug` 或 repo dev script。
 - [ ] 运行 `agentdash-local --version` 并记录输出。
-- [ ] 创建 runner config，包含 `server_url`、registration token 或已领取 credentials、runner name、workspace roots。
-- [ ] 运行 `agentdash-local status --config <config> --json`，验证缺省/未连接状态可读且 token 已脱敏。
-- [ ] 运行 `agentdash-local service install --config <config>`，记录 unit 文件路径。
-- [ ] 运行 `agentdash-local service start --config <config>` 或 `systemctl start agentdash-local-runner`。
+- [ ] 运行 `agentdash-local setup --server-url <server> --registration-token <token> --runner-name <name> --workspace-root <path> --install-service --start`，记录脱敏 summary。
+- [ ] 运行 `agentdash-local doctor --config <config> --json`，验证 config、credentials、service、status、log path 诊断可读且 token 已脱敏。
+- [ ] 运行 `agentdash-local status --config <config> --json`，验证 runner 状态可读且 token 已脱敏。
+- [ ] 记录 setup 生成/使用的 systemd unit 文件路径。
 - [ ] 运行 `agentdash-local service status --config <config>`，验证 running/active。
 - [ ] 运行 `systemctl status agentdash-local-runner`，验证 active/running。
 - [ ] 验证 runner 首次 claim 后将 `backend_id`、`relay_ws_url`、`auth_token` 写回本地配置。
@@ -229,11 +229,11 @@ Validation:
 - [ ] 使用云端 UI/API 创建 project-scoped runner registration token。
 - [ ] 构建或下载 release `agentdash-local.exe` binary，不使用 debug/dev script。
 - [ ] 运行 `agentdash-local.exe --version` 并记录输出。
-- [ ] 创建 runner config，包含 `server_url`、registration token 或已领取 credentials、runner name、workspace roots。
-- [ ] 运行 `agentdash-local.exe status --config <config> --json`，验证缺省/未连接状态可读且 token 已脱敏。
-- [ ] 运行 `agentdash-local.exe service install --config <config>`，验证 SCM service `AgentDashLocalRunner` 创建成功。
+- [ ] 运行 `agentdash-local.exe setup --server-url <server> --registration-token <token> --runner-name <name> --workspace-root <path> --install-service --start`，记录脱敏 summary。
+- [ ] 运行 `agentdash-local.exe doctor --config <config> --json`，验证 config、credentials、service、status、log path 诊断可读且 token 已脱敏。
+- [ ] 运行 `agentdash-local.exe status --config <config> --json`，验证 runner 状态可读且 token 已脱敏。
+- [ ] 验证 SCM service `AgentDashLocalRunner` 创建成功。
 - [ ] 验证 SCM binPath 使用 `agentdash-local.exe service run --config <config>`。
-- [ ] 运行 `agentdash-local.exe service start --config <config>` 或 `Start-Service AgentDashLocalRunner`。
 - [ ] 运行 `agentdash-local.exe service status --config <config>`，验证 running。
 - [ ] 运行 `Get-Service AgentDashLocalRunner`，验证 `Status = Running`。
 - [ ] 验证 runner 首次 claim 后将 `backend_id`、`relay_ws_url`、`auth_token` 写回本地配置。
@@ -280,3 +280,819 @@ Validation:
 - Setup exe is not confused with app exe。
 - User workspace/task data is not deleted by uninstall。
 - Version evidence matches across artifacts。
+
+
+## Step-By-Step Packaging And Manual Validation Runbook
+
+**0. 前置约定**
+
+所有命令默认在仓库根目录执行：
+
+```powershell
+cd C:\Users\yihao.liao\.codex\worktrees\8509\AgentDashboard
+```
+
+先确认当前分支和工作区：
+
+```powershell
+git status --short --branch
+git log --oneline -5
+```
+
+预期：
+
+```text
+## codex/desktop-local-runtime...origin/codex/desktop-local-runtime
+```
+
+并且 `git status --short` 没有脏文件。
+
+记录这些信息到验收 evidence：
+
+```powershell
+git rev-parse HEAD
+git branch --show-current
+```
+
+---
+
+**1. 基础静态检查**
+
+这些是打包前先跑的本地 gate：
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm run contracts:check
+pnpm run migration:guard
+cargo fmt --all -- --check
+pnpm run desktop:check
+```
+
+如果只做 runner release，也建议至少跑：
+
+```powershell
+cargo test -p agentdash-local
+```
+
+如果要覆盖当前 diagnostics 变更：
+
+```powershell
+pnpm --filter app-web run typecheck
+pnpm --filter @agentdash/views typecheck
+pnpm --filter app-tauri typecheck
+pnpm --filter app-web test -- workspaceRouting runtimeDiagnostics
+cargo test -p agentdash-local
+cargo test -p agentdash-local-tauri
+```
+
+注意：当前全量 `pnpm run frontend:lint` 已知会失败在一个无关旧文件：
+
+```text
+packages/app-web/src/features/canvas-panel/CanvasRuntimeBindingsEditor.tsx
+react-hooks/set-state-in-effect
+```
+
+所以这次 release validation 不要把这个误判成本机运行形态任务失败；除非你要顺手另开任务修它。
+
+---
+
+**2. Windows Desktop 完整安装包打包**
+
+这是用户最终下载/安装的完整桌面安装包。
+
+在 Windows 环境执行：
+
+```powershell
+pnpm run desktop:bundle
+```
+
+这个脚本实际对应：
+
+```json
+"desktop:bundle": "node ./scripts/desktop-build.js --bundles nsis --no-sign --ci"
+```
+
+预期产物：
+
+```text
+target\release\bundle\nsis\*.exe
+```
+
+也就是 NSIS setup exe。这个是“交付给普通 Windows 用户安装”的产物。
+
+同时构建后可能存在 app exe 候选：
+
+```text
+target\release\AgentDash.exe
+target\release\agentdash-local-tauri.exe
+```
+
+这里要记住边界：
+
+- `target\release\bundle\nsis\*.exe` 是安装包。
+- `target\release\AgentDash.exe` / `agentdash-local-tauri.exe` 是安装后的 app 进程候选或 release app exe。
+- release 验收必须从 NSIS setup exe 开始，不能只双击 app exe 代替安装流程。
+
+打包后记录：
+
+```powershell
+Get-ChildItem .\target\release\bundle\nsis\*.exe | Select-Object FullName, Length, LastWriteTime
+Get-ChildItem .\target\release\*.exe | Select-Object FullName, Length, LastWriteTime
+```
+
+可选记录 hash：
+
+```powershell
+Get-FileHash .\target\release\bundle\nsis\*.exe -Algorithm SHA256
+```
+
+---
+
+**3. Windows Desktop app exe 单独构建**
+
+这个不是用户最终安装包，主要用于诊断“release app exe 是否能构建”。
+
+```powershell
+pnpm run desktop:build
+```
+
+这个脚本实际对应：
+
+```json
+"desktop:build": "node ./scripts/desktop-build.js --no-bundle --ci"
+```
+
+预期产物：
+
+```text
+target\release\AgentDash.exe
+target\release\agentdash-local-tauri.exe
+```
+
+记录：
+
+```powershell
+Get-ChildItem .\target\release\AgentDash.exe, .\target\release\agentdash-local-tauri.exe -ErrorAction SilentlyContinue |
+  Select-Object FullName, Length, LastWriteTime
+```
+
+验收说明：
+
+- 这个命令可以证明 desktop app release binary 能出来。
+- 它不能替代 NSIS installer 安装/卸载验收。
+- 自启动、卸载清理、Start Menu entry、安装目录，都必须通过 `desktop:bundle` 的 setup exe 测。
+
+---
+
+**4. Windows Desktop 安装包手工验收**
+
+在干净 Windows x64 VM 或至少干净用户环境中执行。
+
+1. 运行安装包：
+
+```powershell
+.\target\release\bundle\nsis\<AgentDash-setup>.exe
+```
+
+2. 验证安装成功：
+
+```powershell
+Get-Process AgentDash -ErrorAction SilentlyContinue
+Get-Process agentdash-local-tauri -ErrorAction SilentlyContinue
+```
+
+3. 验证 Desktop API 只在 loopback：
+
+```powershell
+netstat -ano | Select-String "17301"
+```
+
+预期看到 `127.0.0.1:17301`，不应该看到 `0.0.0.0:17301` 或 LAN IP。
+
+如果 app 已启动，可测 health：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:17301/api/health
+```
+
+4. 验证启动项：
+
+开启 `launch_at_login=true` 后检查：
+
+```powershell
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" | Select-Object AgentDash
+```
+
+预期：
+
+- 有 `AgentDash` 项。
+- 值指向安装后的 app exe。
+- 不指向 setup/installer exe。
+
+5. 验证关闭到托盘：
+
+手工步骤：
+
+- 打开 AgentDash。
+- 点击窗口关闭按钮。
+- 预期窗口隐藏，但进程仍存在。
+- 通过托盘菜单 `Open AgentDash` 恢复窗口。
+- 如果 runtime 正在运行，关闭窗口不应中断 runtime。
+
+6. 验证显式退出：
+
+手工步骤：
+
+- 从托盘菜单选择 Quit / Exit。
+- 预期 Tauri 进程退出。
+- 桌面托管 runtime 被停止。
+
+可辅助检查：
+
+```powershell
+Get-Process AgentDash -ErrorAction SilentlyContinue
+Get-Process agentdash-local-tauri -ErrorAction SilentlyContinue
+```
+
+7. 验证启动偏好：
+
+在设置页分别测试：
+
+- `launch_at_login`
+- `start_minimized_to_tray`
+- `auto_connect_local_runtime`
+
+建议记录成表：
+
+```text
+设置项 | 操作 | 重启/重新登录后结果 | 证据
+launch_at_login=true | 重新登录 | app 自动启动 | HKCU Run + 进程截图
+start_minimized_to_tray=true | 重启 app | 主窗口不弹出，托盘存在 | 截图
+auto_connect_local_runtime=true | 重启 app | runtime 自动连接 | 诊断页 + 云端 online
+auto_connect_local_runtime=false | 重启 app | runtime 不自动连接 | 诊断页
+```
+
+8. 验证卸载：
+
+通过 Windows Apps / NSIS uninstaller 卸载后检查：
+
+```powershell
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" | Select-Object AgentDash
+Get-Process AgentDash -ErrorAction SilentlyContinue
+Get-Process agentdash-local-tauri -ErrorAction SilentlyContinue
+```
+
+预期：
+
+- AgentDash 管理的 HKCU Run entry 被清理。
+- app 进程退出。
+- 安装目录、Start Menu entry、Desktop shortcut 按安装器配置清理。
+- workspace、任务产物、machine identity、profile、logs/cache 默认保留，不被静默删除。
+
+---
+
+**5. Windows Runner release binary 打包**
+
+这是服务器托管场景下的独立 runner，无 UI。
+
+在 Windows 执行：
+
+```powershell
+cargo build -p agentdash-local --release
+```
+
+预期产物：
+
+```text
+target\release\agentdash-local.exe
+```
+
+记录版本：
+
+```powershell
+.\target\release\agentdash-local.exe --version
+```
+
+记录文件和 hash：
+
+```powershell
+Get-ChildItem .\target\release\agentdash-local.exe | Select-Object FullName, Length, LastWriteTime
+Get-FileHash .\target\release\agentdash-local.exe -Algorithm SHA256
+```
+
+可选打 zip：
+
+```powershell
+New-Item -ItemType Directory -Force .\dist | Out-Null
+Compress-Archive -Path .\target\release\agentdash-local.exe -DestinationPath .\dist\agentdash-local-windows-x64.zip -Force
+Get-FileHash .\dist\agentdash-local-windows-x64.zip -Algorithm SHA256
+```
+
+环境专用 runner artifact 可以在构建时写入非密钥默认 server origin：
+
+```powershell
+$env:AGENTDASH_RUNNER_DEFAULT_SERVER_URL="https://<your-agentdash-server>"
+cargo build -p agentdash-local --release
+Remove-Item Env:\AGENTDASH_RUNNER_DEFAULT_SERVER_URL
+```
+
+该默认值只用于减少 `setup` 输入项；registration token 和 claim 后返回的 relay credentials 仍来自运行期。
+
+---
+
+**6. Windows Runner 一键 setup**
+
+创建一个目录：
+
+```powershell
+New-Item -ItemType Directory -Force C:\AgentDash\runner | Out-Null
+New-Item -ItemType Directory -Force C:\AgentDash\runner\state | Out-Null
+New-Item -ItemType Directory -Force C:\AgentDash\runner\logs | Out-Null
+New-Item -ItemType Directory -Force C:\AgentDash\workspaces | Out-Null
+```
+
+管理员 PowerShell 运行：
+
+```powershell
+.\target\release\agentdash-local.exe setup `
+  --config C:\AgentDash\runner\agentdash-runner.toml `
+  --server-url https://<your-agentdash-server> `
+  --registration-token adrt_<token_id>_<secret> `
+  --runner-name windows-runner-01 `
+  --workspace-root C:\AgentDash\workspaces `
+  --install-service `
+  --start
+```
+
+如果 binary 已内嵌 `AGENTDASH_RUNNER_DEFAULT_SERVER_URL`，命令可以省略 `--server-url`：
+
+```powershell
+.\target\release\agentdash-local.exe setup `
+  --config C:\AgentDash\runner\agentdash-runner.toml `
+  --registration-token adrt_<token_id>_<secret> `
+  --runner-name windows-runner-01 `
+  --workspace-root C:\AgentDash\workspaces `
+  --install-service `
+  --start
+```
+
+诊断：
+
+```powershell
+.\target\release\agentdash-local.exe doctor --config C:\AgentDash\runner\agentdash-runner.toml --json
+.\target\release\agentdash-local.exe status --config C:\AgentDash\runner\agentdash-runner.toml --json
+```
+
+---
+
+**7. Windows Runner 配置文件诊断示例**
+
+setup 会写入配置文件；需要人工排障时可打开：
+
+```powershell
+notepad C:\AgentDash\runner\agentdash-runner.toml
+```
+
+示例内容按当前 runner 设计应包含这些信息。字段名如果后续实现里已有更精确模板，以 `agentdash-local status --json` 和实际 config parser 为准：
+
+```toml
+[runner]
+name = "windows-runner-01"
+server_url = "https://<your-agentdash-server>"
+state_dir = "C:\\AgentDash\\runner\\state"
+log_path = "C:\\AgentDash\\runner\\logs\\agentdash-local.log"
+workspace_roots = ["C:\\AgentDash\\workspaces"]
+executor_enabled = true
+
+[registration]
+token = "adrt_<token_id>_<secret>"
+```
+
+如果已经完成 claim，也可能会写回类似这些 server-issued credentials：
+
+```toml
+[credentials]
+backend_id = "<server-issued-backend-id>"
+relay_ws_url = "wss://<your-agentdash-server>/ws/backend"
+auth_token = "<server-issued-relay-auth-token>"
+```
+
+注意：
+
+- `registration_token` 只用于 claim。
+- WebSocket relay 连接使用 claim 返回的 `auth_token`。
+- 不要把 registration token 当 relay token 用。
+
+---
+
+**8. Windows Runner 前台 smoke test**
+
+先不要装服务，前台跑一遍：
+
+```powershell
+.\target\release\agentdash-local.exe status --config C:\AgentDash\runner\agentdash-runner.toml --json
+.\target\release\agentdash-local.exe run --config C:\AgentDash\runner\agentdash-runner.toml
+```
+
+预期：
+
+- 首次 claim 成功。
+- 配置写回 `backend_id / relay_ws_url / auth_token`。
+- 云端 backend/runtime summary 看到 runner online。
+- 日志和 status 输出不泄露 token。
+
+另开 PowerShell 检查：
+
+```powershell
+.\target\release\agentdash-local.exe status --config C:\AgentDash\runner\agentdash-runner.toml --json
+Get-Content C:\AgentDash\runner\logs\agentdash-local.log -Tail 80
+```
+
+---
+
+**9. Windows Runner 安装为 Windows Service**
+
+必须使用管理员 PowerShell。
+
+安装：
+
+```powershell
+.\target\release\agentdash-local.exe service install --config C:\AgentDash\runner\agentdash-runner.toml
+```
+
+启动：
+
+```powershell
+.\target\release\agentdash-local.exe service start --config C:\AgentDash\runner\agentdash-runner.toml
+```
+
+状态：
+
+```powershell
+.\target\release\agentdash-local.exe service status --config C:\AgentDash\runner\agentdash-runner.toml
+Get-Service AgentDashLocalRunner
+sc.exe qc AgentDashLocalRunner
+```
+
+预期：
+
+- `Get-Service AgentDashLocalRunner` 显示 `Running`。
+- `sc.exe qc` 里 binPath 使用：
+  ```text
+  agentdash-local.exe service run --config <config>
+  ```
+- 云端 backend/runtime summary online。
+- `registration_source=runner_registration_token`。
+- 日志脱敏。
+
+停止：
+
+```powershell
+.\target\release\agentdash-local.exe service stop --config C:\AgentDash\runner\agentdash-runner.toml
+Get-Service AgentDashLocalRunner
+```
+
+卸载：
+
+```powershell
+.\target\release\agentdash-local.exe service uninstall --config C:\AgentDash\runner\agentdash-runner.toml
+Get-Service AgentDashLocalRunner
+```
+
+最后一条预期找不到 service。
+
+确认进程退出：
+
+```powershell
+Get-Process agentdash-local -ErrorAction SilentlyContinue
+```
+
+---
+
+**10. Linux Runner release binary 打包**
+
+建议在 Linux x64 host 或 CI 上构建，不建议临时从 Windows 跨编译，除非已经配好 Rust target、linker 和系统依赖。
+
+在 Linux 仓库根目录：
+
+```bash
+pnpm install --frozen-lockfile
+cargo build -p agentdash-local --release
+```
+
+预期产物：
+
+```bash
+target/release/agentdash-local
+```
+
+记录版本：
+
+```bash
+./target/release/agentdash-local --version
+```
+
+记录文件和 hash：
+
+```bash
+ls -lh target/release/agentdash-local
+sha256sum target/release/agentdash-local
+```
+
+可选打 tarball：
+
+```bash
+mkdir -p dist
+tar -czf dist/agentdash-local-linux-x64.tar.gz -C target/release agentdash-local
+sha256sum dist/agentdash-local-linux-x64.tar.gz
+```
+
+环境专用 runner artifact 可以在构建时写入非密钥默认 server origin：
+
+```bash
+AGENTDASH_RUNNER_DEFAULT_SERVER_URL="https://<your-agentdash-server>" cargo build -p agentdash-local --release
+```
+
+该默认值只用于 setup 默认提示或省略 `--server-url`；registration token 和 relay credentials 仍来自运行期。
+
+---
+
+**11. Linux Runner 一键 setup**
+
+准备目录：
+
+```bash
+sudo mkdir -p /etc/agentdash
+sudo mkdir -p /var/lib/agentdash-local-runner
+sudo mkdir -p /var/log/agentdash
+sudo mkdir -p /srv/agentdash-workspaces
+```
+
+复制 binary：
+
+```bash
+sudo install -m 0755 target/release/agentdash-local /usr/local/bin/agentdash-local
+agentdash-local --version
+```
+
+运行 setup：
+
+```bash
+sudo agentdash-local setup \
+  --config /etc/agentdash/agentdash-runner.toml \
+  --server-url https://<your-agentdash-server> \
+  --registration-token adrt_<token_id>_<secret> \
+  --runner-name linux-runner-01 \
+  --workspace-root /srv/agentdash-workspaces \
+  --install-service \
+  --start
+```
+
+如果 binary 已内嵌 `AGENTDASH_RUNNER_DEFAULT_SERVER_URL`，命令可以省略 `--server-url`：
+
+```bash
+sudo agentdash-local setup \
+  --config /etc/agentdash/agentdash-runner.toml \
+  --registration-token adrt_<token_id>_<secret> \
+  --runner-name linux-runner-01 \
+  --workspace-root /srv/agentdash-workspaces \
+  --install-service \
+  --start
+```
+
+诊断：
+
+```bash
+agentdash-local doctor --config /etc/agentdash/agentdash-runner.toml --json
+agentdash-local status --config /etc/agentdash/agentdash-runner.toml --json
+```
+
+---
+
+**12. Linux Runner 配置文件诊断示例**
+
+setup 会写入配置文件；需要人工排障时可打开：
+
+```bash
+sudo nano /etc/agentdash/agentdash-runner.toml
+```
+
+示例：
+
+```toml
+[runner]
+name = "linux-runner-01"
+server_url = "https://<your-agentdash-server>"
+state_dir = "/var/lib/agentdash-local-runner"
+log_path = "/var/log/agentdash/agentdash-local.log"
+workspace_roots = ["/srv/agentdash-workspaces"]
+executor_enabled = true
+
+[registration]
+token = "adrt_<token_id>_<secret>"
+```
+
+检查状态：
+
+```bash
+agentdash-local status --config /etc/agentdash/agentdash-runner.toml --json
+```
+
+---
+
+**13. Linux Runner 前台 smoke test**
+
+```bash
+agentdash-local run --config /etc/agentdash/agentdash-runner.toml
+```
+
+另一个 shell：
+
+```bash
+agentdash-local status --config /etc/agentdash/agentdash-runner.toml --json
+tail -n 80 /var/log/agentdash/agentdash-local.log
+```
+
+预期：
+
+- claim 成功。
+- config 写回 server-issued credentials。
+- 云端显示 online。
+- 日志和 status 无明文 token。
+
+---
+
+**14. Linux Runner 安装为 systemd service**
+
+安装：
+
+```bash
+sudo agentdash-local service install --config /etc/agentdash/agentdash-runner.toml
+```
+
+启动：
+
+```bash
+sudo agentdash-local service start --config /etc/agentdash/agentdash-runner.toml
+```
+
+状态：
+
+```bash
+agentdash-local service status --config /etc/agentdash/agentdash-runner.toml
+systemctl status agentdash-local-runner --no-pager
+journalctl -u agentdash-local-runner -n 100 --no-pager
+```
+
+预期：
+
+- systemd service active/running。
+- 云端 backend/runtime summary online。
+- `registration_source=runner_registration_token`。
+- `runner-status.json` 显示 relay state。
+- 日志无 token 泄露。
+
+停止：
+
+```bash
+sudo agentdash-local service stop --config /etc/agentdash/agentdash-runner.toml
+systemctl status agentdash-local-runner --no-pager
+```
+
+卸载：
+
+```bash
+sudo agentdash-local service uninstall --config /etc/agentdash/agentdash-runner.toml
+systemctl status agentdash-local-runner --no-pager
+```
+
+预期：
+
+- unit 不存在或 not found。
+- runner 进程退出。
+- config、credentials、state、logs、workspace data 默认保留。
+
+辅助检查：
+
+```bash
+pgrep -a agentdash-local || true
+ls -la /etc/agentdash
+ls -la /var/lib/agentdash-local-runner
+ls -la /var/log/agentdash
+```
+
+---
+
+**15. 断网重连验收**
+
+Linux 可用一种简单方式临时阻断 server origin，例如如果 server 是固定 host/IP，可以用防火墙规则。更温和的方式是直接断开测试 VM 网络。
+
+验收步骤：
+
+1. runner 正常 online。
+2. 断开网络或阻断 server。
+3. 观察：
+
+```bash
+agentdash-local status --config /etc/agentdash/agentdash-runner.toml --json
+journalctl -u agentdash-local-runner -n 100 --no-pager
+```
+
+Windows：
+
+```powershell
+.\target\release\agentdash-local.exe service status --config C:\AgentDash\runner\agentdash-runner.toml
+Get-Content C:\AgentDash\runner\logs\agentdash-local.log -Tail 100
+```
+
+预期：
+
+- runner 进入 reconnecting / retrying / offline 类状态。
+- 云端 online 状态变为离线或不可派发。
+- 日志有可诊断错误，但无 token。
+
+4. 恢复网络。
+5. 预期自动 online，不需要手工重启 service。
+
+---
+
+**16. Diagnostics UI 验收**
+
+打开 Windows Desktop App 的设置页，本机运行时/诊断入口。
+
+逐项验证：
+
+```text
+Cloud API
+Desktop API
+Local Runtime
+Runner
+Relay
+Registration
+Logs
+Desktop Settings
+```
+
+要点：
+
+- Cloud API 异常时，Cloud 层显示异常。
+- Desktop API starting/running/error/stopped 显示准确。
+- Local Runtime stopped/running/error 显示准确。
+- Relay 状态来自 `LocalRuntimeStatus.relay_connection` 结构化 snapshot。
+- 不允许从日志文本或 `backend.online` 推断 relay。
+- Registration source 显示：
+  - 桌面登录授权：`desktop_access_token`
+  - Runner 注册令牌：`runner_registration_token`
+- 独立 runner 显示为 systemd / Windows Service 管理，不提供桌面 UI 假重启按钮。
+- 桌面托管 runtime 可以在 UI 里 start / stop / restart。
+- 有 running/canceling session 时 restart runtime，要显示阻止重启文案。
+
+日志复制验证：
+
+1. 打开诊断日志。
+2. 点击复制。
+3. 粘贴到临时文本文件。
+4. 搜索：
+
+```powershell
+Select-String -Path .\copied-logs.txt -Pattern "token|access_token|refresh_token|auth_token|relay_token|registration_token|Bearer"
+```
+
+预期：
+
+- 可以看到字段名。
+- 不应该看到真实 secret 值。
+- 值应为 `***` 或等价脱敏形式。
+
+---
+
+**17. 最终 release gate 判定**
+
+这些必须全部通过才能归档 `distribution-release-validation`：
+
+- [ ] `pnpm run desktop:bundle` 产出 NSIS setup exe。
+- [ ] Windows installer 可安装、启动、后台运行、托盘恢复、显式退出。
+- [ ] Desktop API 只绑定 `127.0.0.1:17301`。
+- [ ] Windows login autostart 行为通过真实重启/重新登录验证。
+- [ ] Windows uninstall 清理安装项和 AgentDash 管理的 HKCU Run entry。
+- [ ] Windows runner release binary 可作为 Windows Service online。
+- [ ] Linux runner release binary 可作为 systemd service online。
+- [ ] Linux/Windows runner 可通过 `agentdash-local setup ... --install-service --start` 完成首次部署。
+- [ ] Linux/Windows runner 的 `agentdash-local doctor --json` 能输出脱敏诊断 summary。
+- [ ] Linux/Windows runner 断网后自动重连。
+- [ ] 三类产物版本证据一致。
+- [ ] diagnostics UI 能定位 Cloud / Desktop API / Runtime / Runner / Relay / Registration 问题。
+- [ ] 日志显示和复制不泄露 token。
+- [ ] 所有阻断项 evidence 都有命令输出、截图或日志路径。
+
+完成后归档：
+
+```powershell
+python ./.trellis/scripts/task.py archive 06-26-distribution-release-validation
+```
+
+如果父任务此时显示 `5/5 done`，再归档父任务：
+
+```powershell
+python ./.trellis/scripts/task.py archive 06-26-local-runtime-distribution
+```

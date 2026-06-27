@@ -139,7 +139,7 @@ Validation:
 
 - Runner enrollment token 已归档，registration token 管理 API、runner claim API、claim DTO、ProjectBackendAccess side effect 与 relay auth 边界已实现。
 - Local Runner 已实现配置合并、registration token claim、凭据写回、status snapshot、文件日志、relay state、Linux systemd service command 与 Windows SCM service command。
-- Windows Desktop 已实现 Desktop API loopback 端口 `127.0.0.1:17301`、托盘/后台运行、显式退出、自启动设置、启动到托盘设置、启动后自动连接 runtime 设置、desktop bundle 产物边界输出。
+- Windows Desktop 已实现托盘/后台运行、显式退出、自启动设置、启动到托盘设置、启动后自动连接 runtime 设置、desktop bundle 产物边界输出；默认发行形态连接配置的远端 server，builtin loopback Desktop API `127.0.0.1:17301` 仅作为显式 opt-in 形态保留。
 - Runtime diagnostics 正在接入状态聚合、设置入口、日志与恢复动作；完成后本任务应消费其 UI 路径、日志脱敏证据与恢复命令。
 
 本任务仍然不能归档的原因：
@@ -172,6 +172,7 @@ Validation:
 - [ ] 准备 desktop defaults JSON，例如 `{ "default_cloud_origin": "https://agentdash.example.com" }`。
 - [ ] 在 Windows x64 clean VM 或干净用户环境运行 `pnpm run desktop:bundle -- --desktop-defaults <defaults.json>` 或使用 CI 产出的 NSIS setup exe。
 - [ ] 也可用快捷参数 `pnpm run desktop:bundle -- --default-cloud-origin https://agentdash.example.com` 生成同等 defaults。
+- [ ] 验证默认构建模式为 `external`，Dashboard API origin 指向 `default_cloud_origin` / `--api-origin` 配置的远端 server。
 - [ ] 记录 setup exe 路径、文件名、版本 metadata。
 - [ ] 验证安装包携带的 `agentdash-desktop-defaults.json` 包含预期 `default_cloud_origin`。
 - [ ] 验证桌面前端运行时实际读取 `agentdash-desktop-defaults.json`，而不是依赖构建期 env 默认值。
@@ -179,8 +180,8 @@ Validation:
 - [ ] 验证 Start Menu entry 存在。
 - [ ] 验证 Desktop shortcut 如安装器配置启用则存在。
 - [ ] 启动安装后的 AgentDash app，记录进程名与安装后 app exe 路径。
-- [ ] 验证 Desktop API health ready，且绑定 `127.0.0.1:17301`。
-- [ ] 验证 Desktop API 未绑定 LAN 地址或 `0.0.0.0`。
+- [ ] 验证远端 Cloud API health ready，桌面 Dashboard 不启动默认 builtin 本机 API。
+- [ ] 如显式测试 builtin/sidecar 形态，验证本机 API 只绑定 `127.0.0.1:17301`，不绑定 LAN 地址或 `0.0.0.0`。
 - [ ] 验证 Dashboard 渲染完成。
 - [ ] 登录/连接云端后保存本机 runtime profile。
 - [ ] 打开本机运行时设置，验证 Server URL 默认预填 desktop defaults 的 `default_cloud_origin`。

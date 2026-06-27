@@ -3,9 +3,12 @@ import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const desktopApiOrigin = process.env.VITE_API_ORIGIN ?? 'http://127.0.0.1:17301'
+const desktopApiOrigin = process.env.VITE_API_ORIGIN ?? process.env.AGENTDASH_DEFAULT_CLOUD_ORIGIN ?? ''
 const desktopDefaultsJson = process.env.AGENTDASH_DESKTOP_DEFAULTS_JSON ?? '{}'
-const desktopDefaults = parseDesktopDefaults(desktopDefaultsJson)
+const desktopDefaults = withDefaultCloudOrigin(
+  parseDesktopDefaults(desktopDefaultsJson),
+  process.env.AGENTDASH_DEFAULT_CLOUD_ORIGIN,
+)
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), desktopDefaultsAssetPlugin(desktopDefaults)],
@@ -36,6 +39,16 @@ function parseDesktopDefaults(value: string): DesktopDefaults {
       : {}
   } catch {
     return {}
+  }
+}
+
+function withDefaultCloudOrigin(defaults: DesktopDefaults, value: string | undefined): DesktopDefaults {
+  if (defaults.default_cloud_origin || !value?.trim()) {
+    return defaults
+  }
+  return {
+    ...defaults,
+    default_cloud_origin: value.trim().replace(/\/+$/, ''),
   }
 }
 

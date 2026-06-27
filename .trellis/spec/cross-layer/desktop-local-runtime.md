@@ -1,11 +1,11 @@
 # Desktop Local Runtime
 
-Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 API 收敛在同一个应用进程中。本文档约束跨 Rust/Tauri/React 的 command、HTTP authority、profile 和打包入口。
+Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力收敛在同一个应用进程中。本文档约束跨 Rust/Tauri/React 的 command、HTTP authority、profile 和打包入口。
 
 ## Scope
 
-- `agentdash-local-tauri` 作为薄壳持有 `LocalRuntimeManager`，通过 Tauri command 暴露 runtime/profile/MCP/log 操作，并在独立 Tokio runtime 线程启动 `agentdash-api`。
-- Dashboard 不直接访问 Rust 内存态；仍通过 HTTP API 访问 `agentdash-api`。Local Runtime 设置面板才通过 Tauri `invoke()` 访问本机 runtime manager。
+- `agentdash-local-tauri` 作为薄壳持有 `LocalRuntimeManager`，通过 Tauri command 暴露 runtime/profile/MCP/log 操作。
+- Dashboard 不直接访问 Rust 内存态；默认通过远端 cloud HTTP API 访问业务数据。Local Runtime 设置面板才通过 Tauri `invoke()` 访问本机 runtime manager。
 
 ## 关键类型
 
@@ -17,8 +17,9 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 
 ### API 与 Dashboard
 
-- Desktop API 默认 `127.0.0.1:17301`，`service_name = "agentdash_desktop_api"`。Desktop API 属于 Tauri 内置 Dashboard API 宿主，和普通 cloud/backend dev server 的 `3001` 分开，原因是桌面安装包应避开用户或开发者本机常见 Web 调试端口，同时保持内置前端访问目标稳定。
-- release bundle 的 builtin Desktop API origin 固定为 `http://127.0.0.1:17301`；release external/sidecar 诊断入口如果存在，也必须使用同一个 loopback origin，原因是 Desktop API 只服务桌面内置前端，不以 localhost 作为认证边界向 LAN 暴露。
+- Desktop release bundle 默认使用 `external` API mode，并通过 `AGENTDASH_DEFAULT_CLOUD_ORIGIN` / `--api-origin` 指向远端 server，原因是桌面安装包的业务数据、登录、项目和 runner enrollment 权威事实属于 cloud server。
+- Builtin Desktop API 是显式 opt-in 的本机 API host，origin 固定为 `http://127.0.0.1:17301`，原因是它只适合未来本地部署/实验形态，不属于默认桌面发行路径。
+- Sidecar Desktop API 仍必须使用 loopback origin，原因是 sidecar 是本机 API 进程，不以 localhost 作为认证边界向 LAN 暴露。
 - `desktop_api_snapshot` 的 `state` 只能是 `starting | running | error | stopped`
 - DashboardHost 必须先确认 `/api/health` ready 后才渲染 Web Dashboard
 - `packages/app-web` 只导出 `App`，`app-tauri` 复用该入口，不能复制组件树
@@ -254,7 +255,7 @@ runner connects to relay_ws_url with auth_token
 ### 1. Scope / Trigger
 
 - Trigger: Windows desktop full installer needs behave like a resident desktop app: close-to-tray, explicit quit, runtime lifecycle menu, startup preferences, and a stable frontend bridge.
-- Scope: `agentdash-local-tauri` tray/menu/window lifecycle, Tauri commands, `desktop-app-settings.json`, `packages/app-tauri` desktop bridge, Desktop API hosting at loopback port `17301`.
+- Scope: `agentdash-local-tauri` tray/menu/window lifecycle, Tauri commands, `desktop-app-settings.json`, `packages/app-tauri` desktop bridge, cloud API origin packaging, and explicit opt-in Desktop API hosting at loopback port `17301`.
 
 ### 2. Signatures
 
@@ -292,6 +293,12 @@ Desktop release build:
 pnpm run desktop:bundle -- --desktop-defaults desktop-defaults.json
 ```
 
+Default cloud origin:
+
+```text
+AGENTDASH_DEFAULT_CLOUD_ORIGIN=https://agentdash.example.com
+```
+
 Desktop defaults JSON:
 
 ```json
@@ -307,11 +314,12 @@ Desktop defaults JSON:
 - Tray menu exposes `Open AgentDash`, runtime start/stop/status actions, and explicit quit. Runtime start uses the saved profile; it does not silently create a profile when none exists.
 - `start_minimized_to_tray` controls first window visibility after setup. When false, setup shows/focuses the main window after Desktop API initialization; when true, the tray-resident process stays hidden.
 - `launch_at_login`, `start_minimized_to_tray`, and `auto_connect_local_runtime` persist in `desktop-app-settings.json` and are surfaced through the frontend bridge.
+- Default desktop packaging uses `external` API mode. `AGENTDASH_DEFAULT_CLOUD_ORIGIN`, `--api-origin`, or `--default-cloud-origin` must provide the remote server origin that the dashboard uses for business HTTP API calls.
 - `--desktop-defaults` carries a non-secret JSON defaults file into the desktop frontend bundle as `agentdash-desktop-defaults.json`; the desktop frontend reads this file at runtime before creating an auto-connect profile.
 - `--default-cloud-origin` is a shortcut that produces the same carried `default_cloud_origin` value without hand-writing a defaults file.
-- `default_cloud_origin` pre-fills the Local Runtime profile server URL. It does not change Desktop API origin, does not create a `backend_id`, and does not embed access/registration/relay tokens.
+- `default_cloud_origin` pre-fills the Local Runtime profile server URL and, when no separate `--api-origin` is provided, also acts as the packaged dashboard API origin. It does not create a `backend_id`, and does not embed access/registration/relay tokens.
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
-- Desktop API remains loopback-only at `127.0.0.1:17301`; its presence does not change local runtime/runner WebSocket relay communication.
+- Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
 
 ### 4. Validation & Error Matrix
 

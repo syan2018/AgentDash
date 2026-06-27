@@ -40,6 +40,7 @@ export function runDesktopBuild(options) {
     AGENTDASH_DESKTOP_DEFAULT_API_MODE: config.apiMode,
     AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN: config.apiOrigin,
     AGENTDASH_DESKTOP_DEFAULTS_JSON: JSON.stringify(config.desktopDefaults),
+    VITE_API_ORIGIN: config.apiOrigin,
   };
   if (config.apiMode === 'sidecar') {
     env.AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR = config.apiSidecar;
@@ -102,13 +103,13 @@ function parseDesktopBuildArgs(args, options) {
     env.AGENTDASH_DESKTOP_DEFAULT_API_MODE
       || env.AGENTDASH_DESKTOP_API_MODE
       || options.defaultApiMode
-      || 'builtin',
+      || 'external',
   );
-  let apiOrigin = normalizeOrigin(
+  let apiOrigin = normalizeOptionalOrigin(
     env.AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN
       || env.AGENTDASH_DESKTOP_API_ORIGIN
-      || options.defaultApiOrigin
-      || DEFAULT_DESKTOP_API_ORIGIN,
+      || options.defaultApiOrigin,
+    '--api-origin',
   );
   let apiSidecar = normalizeOptionalValue(
     env.AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR
@@ -141,11 +142,11 @@ function parseDesktopBuildArgs(args, options) {
       continue;
     }
     if (arg.startsWith('--api-origin=')) {
-      apiOrigin = normalizeOrigin(arg.slice('--api-origin='.length));
+      apiOrigin = normalizeRequiredOrigin(arg.slice('--api-origin='.length), '--api-origin');
       continue;
     }
     if (arg === '--api-origin') {
-      apiOrigin = normalizeOrigin(readNextValue(args, ++index, arg));
+      apiOrigin = normalizeRequiredOrigin(readNextValue(args, ++index, arg), arg);
       continue;
     }
     if (arg.startsWith('--api-sidecar=')) {
@@ -200,15 +201,31 @@ function parseDesktopBuildArgs(args, options) {
   if (!help && apiMode === 'sidecar' && !apiSidecar) {
     throw new Error('--api-mode sidecar 需要同时提供 --api-sidecar');
   }
-  if (!help) {
-    validateDesktopApiOrigin(apiOrigin);
-  }
 
-  const desktopDefaults = loadDesktopDefaults({
+  let desktopDefaults = loadDesktopDefaults({
     defaultCloudOrigin,
     defaultsPath: desktopDefaultsPath,
     root,
   });
+  defaultCloudOrigin = defaultCloudOrigin || desktopDefaults.default_cloud_origin || null;
+
+  if (apiMode === 'builtin') {
+    apiOrigin = DEFAULT_DESKTOP_API_ORIGIN;
+  } else if (!apiOrigin && apiMode === 'external') {
+    apiOrigin = defaultCloudOrigin;
+  } else if (!apiOrigin) {
+    apiOrigin = DEFAULT_DESKTOP_API_ORIGIN;
+  }
+
+  if (!help) {
+    validateDesktopApiConfig({ apiMode, apiOrigin });
+  }
+  if (!desktopDefaults.default_cloud_origin && apiMode === 'external' && apiOrigin) {
+    desktopDefaults = {
+      ...desktopDefaults,
+      default_cloud_origin: apiOrigin,
+    };
+  }
 
   return {
     apiMode,
@@ -226,8 +243,8 @@ function parseDesktopBuildArgs(args, options) {
 }
 
 function printHelp(options) {
-  const defaultMode = options.defaultApiMode || 'builtin';
-  const defaultOrigin = options.defaultApiOrigin || DEFAULT_DESKTOP_API_ORIGIN;
+  const defaultMode = options.defaultApiMode || 'external';
+  const defaultOrigin = options.defaultApiOrigin || 'AGENTDASH_DEFAULT_CLOUD_ORIGIN / --api-origin';
   console.log('用法: node ./scripts/desktop-build.js [build-options] [...tauri-build-options]');
   console.log('');
   console.log('AgentDash 桌面端构建入口。');
@@ -333,12 +350,12 @@ function normalizeApiMode(value) {
   return normalized;
 }
 
-function normalizeOrigin(value) {
-  const trimmed = String(value || '').trim().replace(/\/+$/, '');
-  if (!trimmed) {
-    throw new Error('--api-origin 不能为空');
+function normalizeRequiredOrigin(value, flagName) {
+  const origin = normalizeOptionalOrigin(value, flagName);
+  if (!origin) {
+    throw new Error(`${flagName} 不能为空`);
   }
-  return trimmed;
+  return origin;
 }
 
 function normalizeOptionalOrigin(value, flagName) {
@@ -400,23 +417,23 @@ function normalizeDesktopDefaults(value, sourceLabel) {
   return result;
 }
 
-function validateDesktopApiOrigin(origin) {
-  let parsed;
-  try {
-    parsed = new URL(origin);
-  } catch (error) {
-    throw new Error(`桌面端 API origin 无效: ${error.message}`);
+function validateDesktopApiConfig({ apiMode, apiOrigin }) {
+  if (apiMode === 'external') {
+    if (!apiOrigin) {
+      throw new Error('桌面端默认使用 external API mode；请通过 AGENTDASH_DEFAULT_CLOUD_ORIGIN、--api-origin 或 --default-cloud-origin 配置远端 server origin');
+    }
+    return;
   }
-  if (
-    parsed.protocol !== 'http:'
-    || parsed.hostname !== '127.0.0.1'
-    || parsed.port !== '17301'
-    || parsed.pathname !== '/'
-    || parsed.search
-    || parsed.hash
-  ) {
-    throw new Error(`桌面端 release 构建的 API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
+  if (apiMode === 'builtin' && apiOrigin !== DEFAULT_DESKTOP_API_ORIGIN) {
+    throw new Error(`builtin Desktop API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
   }
+  if (apiMode === 'sidecar' && !isDesktopLoopbackOrigin(apiOrigin)) {
+    throw new Error(`sidecar Desktop API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
+  }
+}
+
+function isDesktopLoopbackOrigin(origin) {
+  return origin === DEFAULT_DESKTOP_API_ORIGIN;
 }
 
 function normalizeRequiredValue(value, flagName) {

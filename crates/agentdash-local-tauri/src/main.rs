@@ -1523,12 +1523,11 @@ fn desktop_api_config_from_values(
     build_default_sidecar: Option<String>,
     explicit_mode: Option<String>,
     build_default_mode: Option<String>,
-    build_profile: DesktopApiBuildProfile,
+    _build_profile: DesktopApiBuildProfile,
 ) -> Result<DesktopApiConfig, String> {
     let configured_origin = explicit_origin
         .map(normalize_origin)
-        .or_else(|| build_default_origin.map(normalize_origin))
-        .unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
+        .or_else(|| build_default_origin.map(normalize_origin));
 
     let sidecar = explicit_sidecar.or(build_default_sidecar);
 
@@ -1549,17 +1548,21 @@ fn desktop_api_config_from_values(
 
     let mode = explicit_mode
         .or(build_default_mode)
-        .unwrap_or(DesktopApiMode::Builtin);
+        .unwrap_or(DesktopApiMode::External);
     let origin = match mode {
         DesktopApiMode::Builtin => desktop_api_origin(DESKTOP_API_PORT),
-        DesktopApiMode::External | DesktopApiMode::Sidecar => {
-            validate_release_desktop_api_origin(build_profile, &configured_origin)?;
-            configured_origin
+        DesktopApiMode::External => {
+            let origin = configured_origin
+                .ok_or_else(|| "桌面端 external API mode 需要配置远端 server origin".to_string())?;
+            validate_external_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
+            origin
+        }
+        DesktopApiMode::Sidecar => {
+            let origin = configured_origin.unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
+            validate_sidecar_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
+            origin
         }
     };
-    if mode == DesktopApiMode::Sidecar {
-        validate_sidecar_desktop_api_origin(&origin).map_err(|error| error.to_string())?;
-    }
 
     Ok(DesktopApiConfig {
         mode,
@@ -1568,16 +1571,18 @@ fn desktop_api_config_from_values(
     })
 }
 
-fn validate_release_desktop_api_origin(
-    build_profile: DesktopApiBuildProfile,
-    origin: &str,
-) -> Result<(), String> {
-    if build_profile == DesktopApiBuildProfile::Release && !is_default_desktop_api_origin(origin) {
-        return Err(format!(
-            "release 桌面端 API origin 必须是 {}，当前为 {}",
-            desktop_api_origin(DESKTOP_API_PORT),
-            origin
-        ));
+fn validate_external_desktop_api_origin(origin: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(origin)?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("桌面端 external API origin 只支持 http/https: {origin}");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("桌面端 external API origin 不应包含认证信息: {origin}");
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "桌面端 external API origin 必须是 origin，不应包含 path/query/fragment: {origin}"
+        );
     }
     Ok(())
 }
@@ -1680,9 +1685,25 @@ mod tests {
     }
 
     #[test]
-    fn release_external_origin_must_match_desktop_api_origin() {
+    fn default_config_requires_external_origin() {
         let error = desktop_api_config_from_values(
-            Some("http://127.0.0.1:3001".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            DesktopApiBuildProfile::Release,
+        )
+        .expect_err("default external mode requires a configured origin");
+
+        assert!(error.contains("external API mode"));
+    }
+
+    #[test]
+    fn release_external_origin_may_use_remote_cloud_origin() {
+        let config = desktop_api_config_from_values(
+            Some("https://agentdash.example.com".to_string()),
             None,
             None,
             None,
@@ -1690,9 +1711,10 @@ mod tests {
             None,
             DesktopApiBuildProfile::Release,
         )
-        .expect_err("release external origin must use the Desktop API origin");
+        .expect("release desktop app may connect to the configured remote server");
 
-        assert!(error.contains("http://127.0.0.1:17301"));
+        assert_eq!(config.mode, DesktopApiMode::External);
+        assert_eq!(config.origin, "https://agentdash.example.com");
     }
 
     #[test]

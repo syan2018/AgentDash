@@ -23,6 +23,7 @@
 | `backbone-protocol.md` | BackboneEnvelope / BackboneEvent wire contract |
 | `frontend-backend-contracts.md` | Rust wire DTO、TypeScript 生成、drift check 与迁移优先级 |
 | `desktop-local-runtime.md` | Tauri desktop、DashboardHost、LocalRuntimeClient 边界 |
+| `deployment-runtime.md` | 云端部署运行入口、环境变量、版本发现和 image command 契约 |
 | `project-backend-workspace-routing.md` | Backend Access、workspace detect、inventory registration |
 | `shared-library-contract.md` | Shared Library / Marketplace / Project Asset 跨层契约 |
 
@@ -31,11 +32,13 @@
 - Shared Library payload 在 API 展示层可保留 `unknown` / JSON，但安装和运行前必须由后端按 `asset_type` 类型化校验，原因是共享资产既需要可浏览，也不能让运行路径消费未验证 JSON。
 - Desktop Dashboard 等待 `/api/health` ready 后渲染 Web App，原因是 Web Dashboard 的权威接口仍是 HTTP API，而不是 Tauri invoke。
 - 业务 DTO 生成使用独立 contract crate 承载 wire type，原因是 API route、前端 generated type 和 drift check 应共享同一个事实源，而不是把路由实现文件当作协议入口。
+- 云端 Compose 与 Kubernetes 共用 `agentdash-cloud:<version>` 镜像，原因是单一 image command 契约能让 `serve`、`migrate`、`doctor` 在不同部署形态下保持相同运行语义。
 
 ## Contract Appendices
 
 - [Backbone Protocol](./backbone-protocol.md)
 - [Frontend / Backend Contracts](./frontend-backend-contracts.md)
 - [Desktop Local Runtime](./desktop-local-runtime.md)
+- [Deployment Runtime Contract](./deployment-runtime.md)
 - [Project Backend Workspace Routing](./project-backend-workspace-routing.md)
 - [Shared Library Contract](./shared-library-contract.md)

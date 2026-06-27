@@ -1,0 +1,8 @@
+services:
+  migrate:
+    depends_on: !reset []
+
+  agentdash-cloud:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

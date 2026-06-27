@@ -1,0 +1,75 @@
+name: Deployment Contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cloud-image.yml"
+      - ".github/workflows/deploy-contract.yml"
+      - "deploy/**"
+      - "scripts/cloud-image-build.js"
+      - "scripts/release-metadata.js"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AGENTDASH_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/agentdash-cloud
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Compose config
+        run: docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env.example config
+
+      - name: Managed PostgreSQL compose config
+        run: >
+          docker compose
+          -f deploy/compose/docker-compose.yml
+          -f deploy/compose/docker-compose.managed-postgres.yml
+          --env-file deploy/compose/.env.example
+          config
+
+      - name: Compose update dry run
+        run: node deploy/compose/update.mjs --env-file deploy/compose/.env.example --dry-run --skip-pull
+
+      - name: Managed PostgreSQL update dry run
+        run: >
+          node deploy/compose/update.mjs
+          --env-file deploy/compose/.env.example
+          --managed-postgres
+          --skip-backup
+          --dry-run
+          --skip-pull
+
+      - name: Managed PostgreSQL backup boundary
+        shell: bash
+        run: |
+          if node deploy/compose/update.mjs --env-file deploy/compose/.env.example --managed-postgres --dry-run --skip-pull; then
+            echo "managed PostgreSQL update must require --skip-backup"
+            exit 1
+          fi
+
+      - name: Release metadata
+        run: pnpm run release:metadata
+
+      - name: Cloud image build dry run
+        run: pnpm run docker:cloud:build -- --dry-run

@@ -9,7 +9,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 
 ## 关键类型
 
-- **Rust**：`ApiServerOptions`（`agentdash-api/src/lib.rs`）+ `build_server()` 可复用入口
+- **Rust**：`ApiServerOptions`（`agentdash-api/src/lib.rs`）+ `build_server()` / `build_server_with_migrations()` 可复用入口
 - **Tauri commands**：profile / runtime / logs / MCP / open_external_url（定义在 `agentdash-local-tauri`）
 - **TS port**：`LocalRuntimeClient`（`@agentdash/core`），Tauri 适配层实现 `invoke()` 绑定
 

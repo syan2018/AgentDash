@@ -1191,7 +1191,7 @@ async fn run_desktop_api(state: DesktopState) {
     let options = ApiServerOptions::desktop_localhost(DESKTOP_API_PORT);
     // 桌面宿主保持原 fmt 订阅器，不接 JSON 文件层 / 诊断缓冲层：传入一个未接订阅器的
     // 空缓冲即可，`/api/diagnostics` 在桌面端返回空集（行为与原先一致）。
-    match agentdash_api::build_server(
+    match agentdash_api::build_server_with_migrations(
         agentdash_api::builtin_integrations(),
         options,
         agentdash_api::DiagnosticBuffer::new(0),

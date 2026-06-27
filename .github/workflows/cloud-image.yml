@@ -1,0 +1,104 @@
+name: Cloud Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Push image to GHCR"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  AGENTDASH_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/agentdash-cloud
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloud-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Backend check
+        run: pnpm run backend:check
+
+      - name: Frontend check
+        run: pnpm run frontend:check
+
+      - name: Generate release metadata
+        run: pnpm run release:metadata -- --out dist/release/agentdash-release.json
+
+      - name: Compute image tags
+        id: image
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          SHA_TAG="${GITHUB_SHA::12}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "primary_tag=${AGENTDASH_IMAGE_REPOSITORY}:${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "secondary_tag=${AGENTDASH_IMAGE_REPOSITORY}:${VERSION}-${SHA_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.push_image == 'true')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build cloud image
+        run: >
+          pnpm run docker:cloud:build --
+          --tag ${{ steps.image.outputs.primary_tag }}
+          --tag ${{ steps.image.outputs.secondary_tag }}
+
+      - name: Push cloud image
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.push_image == 'true')
+        run: |
+          docker push "${{ steps.image.outputs.primary_tag }}"
+          docker push "${{ steps.image.outputs.secondary_tag }}"
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentdash-release-metadata
+          path: dist/release/agentdash-release.json

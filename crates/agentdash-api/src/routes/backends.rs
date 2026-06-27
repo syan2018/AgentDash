@@ -24,6 +24,7 @@ use crate::dto::{
     backend_response,
 };
 use crate::relay::registry::OnlineBackendInfo;
+use crate::routes::release_info;
 use crate::rpc::ApiError;
 use agentdash_application::backend::{
     BackendAuthorizationService, BackendPermission, CreateBackendInput, EnsureLocalRuntimeInput,
@@ -437,7 +438,8 @@ pub async fn ensure_local_runtime(
     headers: HeaderMap,
     Json(req): Json<EnsureLocalRuntimeRequest>,
 ) -> Result<Json<EnsureLocalRuntimeResponse>, ApiError> {
-    let relay_ws_url = relay_ws_url_from_headers(&headers);
+    let relay_ws_url = release_info::configured_relay_ws_url_from_env()
+        .unwrap_or_else(|| relay_ws_url_from_headers(&headers));
     let result = ensure_local_runtime_record(
         &state.repos,
         EnsureLocalRuntimeInput {

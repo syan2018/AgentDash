@@ -74,6 +74,10 @@ jobs:
       - name: Frontend check
         run: pnpm run frontend:check
 
+      - name: Compute build time
+        shell: bash
+        run: echo "AGENTDASH_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+
       - name: Generate release metadata
         run: pnpm run release:metadata -- --out dist/release/agentdash-release.json
 

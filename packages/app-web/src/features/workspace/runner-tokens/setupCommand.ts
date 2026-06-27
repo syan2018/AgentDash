@@ -61,9 +61,9 @@ export function buildRunnerSetupCommand(input: RunnerSetupCommandInput): string 
   const workspaceRoot = input.workspaceRoot.trim() || DEFAULT_WORKSPACE_ROOT;
   const parts = [
     "agentdash-local setup",
-    `--server ${shellArg(origin)}`,
-    `--token ${shellArg(input.token)}`,
-    `--name ${shellArg(input.runnerName)}`,
+    `--server-url ${shellArg(origin)}`,
+    `--registration-token ${shellArg(input.token)}`,
+    `--runner-name ${shellArg(input.runnerName)}`,
     `--workspace-root ${shellArg(workspaceRoot)}`,
     "--install-service",
     "--start",

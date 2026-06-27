@@ -28,8 +28,8 @@ AgentDash 的「本机执行面」是指真正在某台机器上承载 agent 执
    - token 明文（`adrt_<id>_<secret>`）**只展示一次**，请立即复制。
 2. 复制生成的安装命令，到服务器上执行：
    ```bash
-   agentdash-local setup --server <origin> --token adrt_... \
-     --name <runner-name> --workspace-root <path> --install-service --start
+   agentdash-local setup --server-url <origin> --registration-token adrt_... \
+     --runner-name <runner-name> --workspace-root <path> --install-service --start
    ```
 3. `setup` 用 token 调用 `POST /api/local-runtime/runner/claim`，云端：
    - 创建/复用一个 **机器级**（不绑定具体 project 的）本机 backend；

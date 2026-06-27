@@ -20,6 +20,7 @@ use agentdash_contracts::backend::{
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::routes::release_info;
 use crate::rpc::ApiError;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -152,7 +153,8 @@ async fn claim_runner(
     Json(req): Json<RunnerRegistrationClaimRequest>,
 ) -> Result<Json<RunnerRegistrationClaimResponse>, ApiError> {
     let registration_token = resolve_registration_token(&headers, req.registration_token)?;
-    let relay_ws_url = relay_ws_url_from_headers(&headers);
+    let relay_ws_url = release_info::configured_relay_ws_url_from_env()
+        .unwrap_or_else(|| relay_ws_url_from_headers(&headers));
     let result = claim_runner_registration_token(
         &state.repos,
         RunnerRegistrationClaimInput {

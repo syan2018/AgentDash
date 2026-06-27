@@ -14,8 +14,8 @@ describe("buildRunnerSetupCommand", () => {
     });
 
     expect(command).toBe(
-      "agentdash-local setup --server https://cloud.example.com --token rrt_plain_abc123 " +
-        "--name build-server-01 --workspace-root /srv/agentdash/workspaces --install-service --start",
+      "agentdash-local setup --server-url https://cloud.example.com --registration-token rrt_plain_abc123 " +
+        "--runner-name build-server-01 --workspace-root /srv/agentdash/workspaces --install-service --start",
     );
   });
 
@@ -27,7 +27,7 @@ describe("buildRunnerSetupCommand", () => {
       workspaceRoot: "/data",
     });
 
-    expect(command).toContain("--server https://cloud.example.com ");
+    expect(command).toContain("--server-url https://cloud.example.com ");
     expect(command).not.toContain("example.com/ ");
   });
 
@@ -50,7 +50,7 @@ describe("buildRunnerSetupCommand", () => {
       workspaceRoot: "C:/Program Files/agentdash",
     });
 
-    expect(command).toContain("--name 'My Server'");
+    expect(command).toContain("--runner-name 'My Server'");
     expect(command).toContain("--workspace-root 'C:/Program Files/agentdash'");
   });
 

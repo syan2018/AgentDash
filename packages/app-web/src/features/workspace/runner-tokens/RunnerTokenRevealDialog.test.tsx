@@ -17,8 +17,8 @@ describe("RunnerTokenRevealDialog", () => {
     expect(html).toContain("rrt_plain_visible_once");
     // and embedded into the copyable setup command
     expect(html).toContain("agentdash-local setup");
-    expect(html).toContain("--token rrt_plain_visible_once");
-    expect(html).toContain("--name build-server-01");
+    expect(html).toContain("--registration-token rrt_plain_visible_once");
+    expect(html).toContain("--runner-name build-server-01");
     expect(html).toContain("--install-service --start");
     // it must warn that the token will not be shown again
     expect(html).toContain("此令牌不会再次展示");

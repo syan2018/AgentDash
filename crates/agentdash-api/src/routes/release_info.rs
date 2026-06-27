@@ -48,7 +48,7 @@ fn build_version_info() -> VersionInfoResponse {
 fn build_agentdash_discovery() -> AgentDashDiscoveryResponse {
     let public_origin = configured_public_origin();
     let api_base_url = format!("{public_origin}/api");
-    let relay_ws_url = configured_relay_ws_url(&public_origin);
+    let relay_ws_url = configured_relay_ws_url_for_public_origin(&public_origin);
     let version = env!("CARGO_PKG_VERSION");
 
     AgentDashDiscoveryResponse {
@@ -67,17 +67,40 @@ fn build_agentdash_discovery() -> AgentDashDiscoveryResponse {
 }
 
 fn configured_public_origin() -> String {
-    runtime_env("AGENTDASH_PUBLIC_ORIGIN")
-        .or_else(|| runtime_env("AGENTDASH_WEB_BASE_URL"))
+    configured_public_origin_from_env()
         .unwrap_or_else(derived_local_origin)
         .trim_end_matches('/')
         .to_string()
 }
 
-fn configured_relay_ws_url(public_origin: &str) -> String {
-    runtime_env("AGENTDASH_RELAY_WS_URL")
+fn configured_public_origin_from_env() -> Option<String> {
+    runtime_env("AGENTDASH_PUBLIC_ORIGIN")
+        .or_else(|| runtime_env("AGENTDASH_WEB_BASE_URL"))
         .map(|value| value.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| derive_relay_ws_url(public_origin))
+}
+
+pub(crate) fn configured_relay_ws_url_from_env() -> Option<String> {
+    configured_relay_ws_url_from_values(
+        configured_public_origin_from_env(),
+        runtime_env("AGENTDASH_RELAY_WS_URL"),
+    )
+}
+
+fn configured_relay_ws_url_for_public_origin(public_origin: &str) -> String {
+    configured_relay_ws_url_from_values(
+        Some(public_origin.to_string()),
+        runtime_env("AGENTDASH_RELAY_WS_URL"),
+    )
+    .unwrap_or_else(|| derive_relay_ws_url(public_origin))
+}
+
+fn configured_relay_ws_url_from_values(
+    public_origin: Option<String>,
+    relay_override: Option<String>,
+) -> Option<String> {
+    relay_override
+        .map(|value| value.trim_end_matches('/').to_string())
+        .or_else(|| public_origin.map(|value| derive_relay_ws_url(value.trim_end_matches('/'))))
 }
 
 fn derive_relay_ws_url(public_origin: &str) -> String {
@@ -114,7 +137,7 @@ fn runtime_env(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::derive_relay_ws_url;
+    use super::{configured_relay_ws_url_from_values, derive_relay_ws_url};
 
     #[test]
     fn relay_ws_url_uses_ws_for_http_origin() {
@@ -129,6 +152,28 @@ mod tests {
         assert_eq!(
             derive_relay_ws_url("https://agentdash.example.internal"),
             "wss://agentdash.example.internal/ws/backend"
+        );
+    }
+
+    #[test]
+    fn configured_relay_ws_url_uses_explicit_override_first() {
+        assert_eq!(
+            configured_relay_ws_url_from_values(
+                Some("https://agentdash.example.internal".to_string()),
+                Some("wss://relay.example.internal/custom/relay/".to_string()),
+            ),
+            Some("wss://relay.example.internal/custom/relay".to_string())
+        );
+    }
+
+    #[test]
+    fn configured_relay_ws_url_derives_from_public_origin() {
+        assert_eq!(
+            configured_relay_ws_url_from_values(
+                Some("https://agentdash.example.internal/".to_string()),
+                None,
+            ),
+            Some("wss://agentdash.example.internal/ws/backend".to_string())
         );
     }
 }

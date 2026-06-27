@@ -1,3 +1,16 @@
+x-agentdash-cloud-env: &agentdash-cloud-env
+  AGENTDASH_PUBLIC_ORIGIN: ${AGENTDASH_PUBLIC_ORIGIN:?AGENTDASH_PUBLIC_ORIGIN is required}
+  AGENTDASH_BIND_HOST: ${AGENTDASH_BIND_HOST:-0.0.0.0}
+  AGENTDASH_PORT: ${AGENTDASH_PORT:-3001}
+  AGENTDASH_RELAY_WS_URL: ${AGENTDASH_RELAY_WS_URL:-}
+  AGENTDASH_SECRET_KEY: ${AGENTDASH_SECRET_KEY:?AGENTDASH_SECRET_KEY is required}
+  AGENTDASH_ENCRYPTION_KEY: ${AGENTDASH_ENCRYPTION_KEY:?AGENTDASH_ENCRYPTION_KEY is required}
+  AGENTDASH_MIN_DESKTOP_VERSION: ${AGENTDASH_MIN_DESKTOP_VERSION:-}
+  AGENTDASH_RECOMMENDED_DESKTOP_VERSION: ${AGENTDASH_RECOMMENDED_DESKTOP_VERSION:-}
+  AGENTDASH_RELAY_PROTOCOL_VERSION: ${AGENTDASH_RELAY_PROTOCOL_VERSION:-1}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  RUST_LOG: ${RUST_LOG:-info}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -14,23 +27,21 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   migrate:
-    image: agentdash-cloud:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
+    image: ${AGENTDASH_IMAGE_REPOSITORY:-agentdash-cloud}:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
     command: ["migrate"]
     depends_on:
       postgres:
         condition: service_healthy
-    env_file:
-      - .env
+    environment: *agentdash-cloud-env
     restart: "no"
 
   agentdash-cloud:
-    image: agentdash-cloud:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
+    image: ${AGENTDASH_IMAGE_REPOSITORY:-agentdash-cloud}:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
     command: ["serve"]
     depends_on:
       migrate:
         condition: service_completed_successfully
-    env_file:
-      - .env
+    environment: *agentdash-cloud-env
     expose:
       - "3001"
     healthcheck:

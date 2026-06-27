@@ -10,20 +10,25 @@
 mkdir -p backups
 ```
 
-执行逻辑备份：
+执行逻辑备份。为了保留 custom dump 的二进制格式，先在 `postgres` 容器内写入 dump，再通过 `docker compose cp` 复制到宿主机：
 
-```bash
-docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner' > backups/agentdash-$(date +%Y%m%d-%H%M%S).dump
+```powershell
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env exec -T postgres sh -c "pg_dump -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" --format=custom --no-owner --file=/tmp/agentdash-$timestamp.dump"
+docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env cp postgres:/tmp/agentdash-$timestamp.dump deploy/compose/backups/agentdash-$timestamp.dump
+docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env exec -T postgres rm -f /tmp/agentdash-$timestamp.dump
 ```
 
 备份文件需要和本次发布的 cloud image tag、git SHA、schema version 一起记录。这样恢复时能明确数据库快照对应的应用版本，而不是只依赖文件名判断。
+
+managed PostgreSQL 部署使用数据库平台 snapshot 或外部备份工具。Compose update 脚本在 `-ManagedPostgres` 模式下要求显式 `-SkipBackup`，原因是外部数据库备份入口应由部署方数据库平台负责。
 
 ## 升级前检查
 
 升级前确认目标镜像和当前备份可用：
 
-```bash
-docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env pull
+```powershell
+pnpm run deploy:compose:update:dry-run -- -EnvFile deploy/compose/.env -Version 0.2.0
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env run --rm agentdash-cloud doctor
 ```
 
@@ -33,20 +38,20 @@ docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.e
 
 恢复前停止会写入数据库的服务：
 
-```bash
+```powershell
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env stop agentdash-cloud reverse-proxy
 ```
 
 重建目标数据库并导入备份：
 
-```bash
+```powershell
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env exec -T postgres sh -c 'dropdb --if-exists -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' < backups/agentdash-<timestamp>.dump
 ```
 
 恢复后使用与该备份匹配的 `AGENTDASH_VERSION` 启动服务：
 
-```bash
+```powershell
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env up -d agentdash-cloud reverse-proxy
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env run --rm agentdash-cloud doctor
 curl -fsS http://127.0.0.1:8080/api/health

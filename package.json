@@ -40,6 +40,8 @@
     "backend:clippy": "cargo clippy --workspace -- -D warnings -A clippy::too_many_arguments -A clippy::new_ret_no_self -A clippy::type_complexity -A clippy::collapsible_if -A clippy::collapsible_match -A clippy::redundant_closure -A clippy::map_flatten",
     "backend:test": "cargo test --workspace",
     "docker:cloud:build": "node scripts/cloud-image-build.js",
+    "deploy:compose:update": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy/compose/update.ps1",
+    "deploy:compose:update:dry-run": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy/compose/update.ps1 -DryRun",
     "release:metadata": "node scripts/release-metadata.js",
     "migration:guard": "node scripts/check-migration-history.js",
     "hooks:install": "node scripts/install-git-hooks.js",

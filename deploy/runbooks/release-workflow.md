@@ -55,14 +55,47 @@ compatible_local_runtime_range
 Compose 基准升级流程：
 
 ```text
-1. 拉取目标版本 cloud image
-2. 备份 PostgreSQL
-3. 执行 migrate one-shot service
-4. 启动 agentdash-cloud 和 reverse-proxy
-5. 检查 /api/health
-6. 检查 /api/version
-7. 执行 `docker compose run --rm agentdash-cloud doctor`
-8. 记录升级结果
+1. 解析目标 AGENTDASH_IMAGE_REPOSITORY 和 AGENTDASH_VERSION
+2. 校验 Compose 配置
+3. 拉取目标版本 cloud image
+4. 备份 PostgreSQL 或确认 managed PostgreSQL 快照已完成
+5. 执行 migrate one-shot service
+6. 启动 agentdash-cloud 和 reverse-proxy
+7. 检查 /api/health
+8. 检查 /api/version
+9. 执行 `docker compose run --rm agentdash-cloud doctor`
+10. 记录升级结果
 ```
+
+PowerShell 更新入口：
+
+```powershell
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0
+```
+
+连接 managed PostgreSQL 时：
+
+```powershell
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0 -ManagedPostgres -SkipBackup
+```
+
+`-ManagedPostgres` 会追加 `deploy/compose/docker-compose.managed-postgres.yml`，让 migration job 直接连接 `DATABASE_URL` 指向的外部 PostgreSQL。`-SkipBackup` 表示备份由 managed database snapshot 或部署方数据库备份流程承担。
+
+## CI Artifact Flow
+
+`.github/workflows/cloud-image.yml` 提供 cloud image 构建骨架：
+
+```text
+checkout
+install pnpm / Rust
+backend check
+frontend check
+release metadata
+docker build cloud image
+optional push to GHCR
+upload release metadata artifact
+```
+
+该 workflow 不执行远端部署。后续 CD 应消费 registry image、release metadata 和 Compose update script，并通过环境审批管理生产发布。
 
 备份、恢复和回滚边界见 [备份与恢复 Runbook](./backup-restore.md)。涉及 schema 变更的回退以升级前数据库备份恢复为准；同 schema version 内可以回滚 cloud image。

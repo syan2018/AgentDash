@@ -14,6 +14,7 @@ const packageJson = readJson(path.join(root, 'package.json'));
 const cargoMetadata = readCargoMetadata();
 const gitSha = readGitSha();
 const buildTime = process.env.AGENTDASH_BUILD_TIME || new Date().toISOString();
+const imageRepository = normalizeEnv('AGENTDASH_IMAGE_REPOSITORY') || 'agentdash-cloud';
 
 const workspaceVersions = collectWorkspaceVersions(cargoMetadata);
 if (!workspaceVersions.includes(packageJson.version)) {
@@ -31,7 +32,7 @@ const manifest = {
   cargo_versions: workspaceVersions,
   artifacts: {
     server_binary: 'agentdash-server',
-    cloud_image: `agentdash-cloud:${packageJson.version}`,
+    cloud_image: `${imageRepository}:${packageJson.version}`,
     web_dist: 'packages/app-web/dist',
     desktop_installer: `AgentDash_${packageJson.version}_x64-setup.exe`,
   },
@@ -73,6 +74,15 @@ function parseArgs(values) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function normalizeEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function readCargoMetadata() {

@@ -8,7 +8,7 @@
 
 | 类型 | 契约 |
 | --- | --- |
-| Cloud image | `agentdash-cloud:<version>` |
+| Cloud image | `${AGENTDASH_IMAGE_REPOSITORY:-agentdash-cloud}:${AGENTDASH_VERSION}` |
 | Image entrypoint | `agentdash-server` |
 | Server commands | `serve` / `migrate` / `doctor` |
 | Health endpoint | `GET /api/health` |
@@ -20,6 +20,8 @@
 
 | 变量 | 作用 |
 | --- | --- |
+| `AGENTDASH_IMAGE_REPOSITORY` | cloud image repository；本地默认 `agentdash-cloud`，远端部署使用 registry repository |
+| `AGENTDASH_VERSION` | cloud image tag 与部署目标版本 |
 | `AGENTDASH_PUBLIC_ORIGIN` | 部署公共入口，作为 API URL、Relay WebSocket URL 和 discovery response 的事实源 |
 | `AGENTDASH_BIND_HOST` | 云端服务监听地址 |
 | `AGENTDASH_PORT` | 云端服务监听端口 |
@@ -42,3 +44,62 @@ Web Dashboard 在云端部署中仍通过 HTTP API 访问业务数据。cloud im
 部署期数据库是外部 PostgreSQL。Migration 是发布链路的一等步骤，应用启动时的 schema readiness check 用于确认当前服务看到的数据库结构满足运行要求。
 
 `/.well-known/agentdash` 是桌面端识别企业/云端服务器的发现入口。响应中的 public origin、API base URL、Relay WebSocket URL、server version、桌面端版本要求和 Relay 协议版本必须来自部署配置或 release metadata，而不是桌面端本地推断。
+
+## Scenario: Compose Release Update
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 Compose 部署、版本更新、registry image、managed PostgreSQL 或 CI artifact 产出。
+- Scope: `deploy/compose/docker-compose.yml`、managed PostgreSQL override、update script、release workflow、cloud image workflow。
+
+### 2. Signatures
+
+```text
+AGENTDASH_IMAGE_REPOSITORY=agentdash-cloud
+AGENTDASH_VERSION=0.1.0
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version <version>
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version <version> -ManagedPostgres -SkipBackup
+```
+
+### 3. Contracts
+
+- Compose image 必须由 `AGENTDASH_IMAGE_REPOSITORY` 与 `AGENTDASH_VERSION` 共同决定。
+- 默认 Compose 文件保留内置 `postgres` 服务，并让 `migrate` 等待其 healthy。
+- managed PostgreSQL override 必须让 `migrate` 不依赖 Compose 内置 `postgres`。
+- update script 的执行顺序为 config、pull、backup、migrate、up、health、version、doctor。
+- CI workflow 只构建 image / metadata artifact，不执行远端部署。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 默认 Compose config | `migrate` depends on `postgres: service_healthy` |
+| managed PostgreSQL config | `migrate` 无 `postgres` depends_on |
+| managed PostgreSQL update 未传 `-SkipBackup` | 脚本失败并要求先完成外部数据库快照 |
+| `AGENTDASH_VERSION` 缺失 | Compose / update script 失败 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: registry image 通过 `AGENTDASH_IMAGE_REPOSITORY=ghcr.io/<owner>/agentdash-cloud` 和 `AGENTDASH_VERSION=0.2.0` 部署。
+- Base: 本地预研用默认 `agentdash-cloud:0.1.0` 与 Compose 内置 PostgreSQL。
+- Bad: CI/CD 直接改写 Compose 文件里的 image 字符串，导致部署目标版本无法由环境事实追踪。
+
+### 6. Tests Required
+
+- `docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env.example config`
+- `docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.managed-postgres.yml --env-file deploy/compose/.env.example config`
+- update script dry-run 覆盖默认与 managed PostgreSQL 模式。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+image: ghcr.io/example/agentdash-cloud:0.2.0
+```
+
+#### Correct
+
+```yaml
+image: ${AGENTDASH_IMAGE_REPOSITORY:-agentdash-cloud}:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
+```

@@ -9,7 +9,7 @@
 | 目录 | 职责 |
 | --- | --- |
 | `docker/` | 云端镜像构建入口、镜像标签和构建参数说明 |
-| `compose/` | Docker Compose 基准部署文件、`.env.example` 和本机验证入口 |
+| `compose/` | Docker Compose 基准部署文件、managed PostgreSQL override、`.env.example` 和版本更新脚本 |
 | `k8s/` | Kubernetes 映射草案，保持与 Compose 角色一致 |
 | `runbooks/` | 发布、升级、备份、恢复和排障流程 |
 
@@ -41,7 +41,7 @@ pnpm run release:metadata
 pnpm run release:metadata -- --out dist/release/agentdash-release.json
 ```
 
-该命令从根 `package.json`、Cargo workspace metadata 和当前 Git commit 生成 artifact manifest。云端 `/api/version` 与 `/.well-known/agentdash` 暴露运行中的版本和发现信息。
+该命令从根 `package.json`、Cargo workspace metadata、当前 Git commit 和 `AGENTDASH_IMAGE_REPOSITORY` 生成 artifact manifest。云端 `/api/version` 与 `/.well-known/agentdash` 暴露运行中的版本和发现信息。
 
 云端 release build 需要把 metadata 注入 Rust 编译环境：
 
@@ -66,3 +66,18 @@ write release notes and compatibility matrix
 ```
 
 Compose 与 Kubernetes 共享 `agentdash-cloud:<version>`。桌面端发布包通过 discovery endpoint 与服务器确认版本兼容性。
+
+## Compose 更新入口
+
+Compose 使用 `AGENTDASH_IMAGE_REPOSITORY` 和 `AGENTDASH_VERSION` 共同定位 cloud image。默认 repository 是本地 `agentdash-cloud`；CI 或远端部署可以设置为 `ghcr.io/<owner>/agentdash-cloud` 这类 registry 地址。
+
+```powershell
+pnpm run deploy:compose:update:dry-run -- -EnvFile deploy/compose/.env
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0
+```
+
+连接 managed PostgreSQL 时追加 managed override，并在执行前完成外部数据库快照：
+
+```powershell
+pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -ManagedPostgres -SkipBackup
+```

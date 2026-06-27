@@ -1596,6 +1596,7 @@ fn validate_sidecar_desktop_api_origin(origin: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn is_default_desktop_api_origin(origin: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(origin) else {
         return false;

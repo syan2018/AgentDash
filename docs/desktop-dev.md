@@ -26,13 +26,14 @@ pnpm dev:desktop
 
 脚本会按顺序执行：
 
-1. 清理 `3001`、`5381`、`5382` 端口和残留 `agentdash-server` / `agentdash-local-tauri` 进程。
-2. 先统一执行 `cargo build -p agentdash-api -p agentdash-local -p agentdash-local-tauri`，与 `pnpm dev` 使用同一套 dev Rust 编译目标。
-3. 启动已构建的独立 `agentdash-server`。
-4. 等待 `http://127.0.0.1:3001/api/health` 就绪。
-5. 启动 `app-tauri` Vite dev server。
-6. 等待 `http://127.0.0.1:5381` 就绪。
-7. 启动 `agentdash-local-tauri` 桌面壳，并通过 `AGENTDASH_DESKTOP_API_MODE=external` 复用外部 `agentdash-server`。
+1. 从 `assets/brand/app-icon.svg` 生成 Web favicon 与 Tauri 桌面图标资源。
+2. 清理 `3001`、`5381`、`5382` 端口和残留 `agentdash-server` / `agentdash-local-tauri` 进程。
+3. 先统一执行 `cargo build -p agentdash-api -p agentdash-local -p agentdash-local-tauri`，与 `pnpm dev` 使用同一套 dev Rust 编译目标。
+4. 启动已构建的独立 `agentdash-server`。
+5. 等待 `http://127.0.0.1:3001/api/health` 就绪。
+6. 启动 `app-tauri` Vite dev server。
+7. 等待 `http://127.0.0.1:5381` 就绪。
+8. 启动 `agentdash-local-tauri` 桌面壳，并通过 `AGENTDASH_DESKTOP_API_MODE=external` 复用外部 `agentdash-server`。
 
 窗口打开后会直接进入复用 Web Dashboard 的主应用体验。本机 runtime 管理能力不再作为桌面端顶层入口存在，而是出现在 Web 设置页的 desktop-only `本机运行时` scope 中，通过 Tauri command 访问 `agentdash-local` library。
 
@@ -52,11 +53,12 @@ pnpm dev:desktop
 
 `pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-runtime.js --profile desktop`：
 
-1. 清理独立后端、桌面 renderer 和残留 Tauri 壳。
-2. 先统一编译 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`，避免任一长驻进程编译期间就开始做健康探测。
-3. 启动独立 `agentdash-server`，用于后端日志、断点和 API 调试。
-4. 启动桌面 renderer `app-tauri`。
-5. 启动 Tauri 壳 `agentdash-local-tauri`，并让它复用外部 `agentdash-server`。
+1. 生成 Web favicon 与 Tauri 桌面图标资源。
+2. 清理独立后端、桌面 renderer 和残留 Tauri 壳。
+3. 先统一编译 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`，避免任一长驻进程编译期间就开始做健康探测。
+4. 启动独立 `agentdash-server`，用于后端日志、断点和 API 调试。
+5. 启动桌面 renderer `app-tauri`。
+6. 启动 Tauri 壳 `agentdash-local-tauri`，并让它复用外部 `agentdash-server`。
 
 开发期 `pnpm dev` 与 `pnpm dev:desktop` 都复用 `agentdash-local` crate 的机器身份逻辑。Tauri 壳不再维护第二套开发态 machine identity，避免同一台机器在 Web 联合调试和桌面调试中被 server 识别成两个 personal local runtime。
 

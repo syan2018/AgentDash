@@ -13,7 +13,11 @@ const icoTargets = [
   path.join(root, "packages", "app-web", "public", "favicon.ico"),
   path.join(root, "packages", "app-tauri", "public", "favicon.ico"),
 ];
+const pngTargets = [
+  path.join(root, "crates", "agentdash-local-tauri", "icons", "icon.png"),
+];
 const icoSizes = [256, 128, 96, 64, 48, 40, 32, 24, 20, 16];
+const pngSize = 1024;
 const desktopIconBackgroundColor = "#000";
 const desktopIconStrokeColor = "#fff";
 const desktopIconScale = 1.12;
@@ -47,7 +51,19 @@ for (const target of icoTargets) {
   fs.writeFileSync(target, ico);
 }
 
-for (const target of [...svgTargets, ...icoTargets]) {
+const png = renderPng(pngSize, {
+  backgroundColor: desktopIconBackgroundColor,
+  featherPx: 0.32,
+  iconScale: desktopIconScale,
+  minStrokeWidthPx: desktopIconStrokeWidth(pngSize),
+  strokeColor: desktopIconStrokeColor,
+}).png;
+for (const target of pngTargets) {
+  ensureDir(target);
+  fs.writeFileSync(target, png);
+}
+
+for (const target of [...svgTargets, ...icoTargets, ...pngTargets]) {
   console.log(`generated ${path.relative(root, target).replace(/\\/g, "/")}`);
 }
 

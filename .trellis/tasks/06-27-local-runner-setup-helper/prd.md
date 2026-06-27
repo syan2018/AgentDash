@@ -51,9 +51,12 @@
 - 新增 `agentdash-local doctor` 或等价诊断命令，检查 config、credentials、service、status snapshot、server health、日志路径可写性，并脱敏输出。
 - 支持 build-time embedded defaults：
   - 只允许内嵌非密钥默认值，例如 default server URL、默认 runner name prefix、默认 workspace root suggestion。
-  - 不允许内嵌 registration token、relay auth token、backend id、access token、refresh token。
+  - registration token、relay auth token、backend id、access token、refresh token 只来自运行期输入或云端签发，原因是这些值具有授权能力和轮换生命周期。
   - 内嵌默认值的优先级低于 CLI、environment、config file。
 - 云端生成 runner registration token 的 UI 后续可以展示一条完整复制命令，直接调用 `agentdash-local setup`。
+- 默认发行策略：
+  - 官方通用 runner binary 不内嵌具体 server URL，适合私有化、开发和未知部署环境。
+  - 云端下载页或客户/环境专用 runner artifact 可以内嵌 production/server origin，原因是这类 artifact 的目标环境已知，可以把 `setup` 缩短为只输入 registration token。
 
 ## Acceptance Criteria
 
@@ -67,13 +70,13 @@
 - [ ] Linux 手工验收：全新服务器运行一条 setup 命令后，systemd service installed/running，云端能看到 runner online。
 - [ ] Windows 手工验收：管理员 PowerShell 运行一条 setup 命令后，SCM service installed/running，云端能看到 runner online。
 
-## Out Of Scope
+## Scope Boundaries
 
-- 不新增本机 HTTP health server；诊断通过 CLI/status/log/cloud online state 完成。
-- 不改变 runner registration token 的云端模型。
-- 不把 registration token 或 relay auth token 编进 binary。
-- 不把 `setup` 做成 GUI installer；第一阶段只做 CLI。
+- 诊断通过 CLI/status/log/cloud online state 完成，原因是 Local Runner 第一版保持纯出站 WebSocket 形态。
+- Registration token 的云端模型沿用 `runner-enrollment-token` 任务，原因是本任务聚焦服务器部署体验。
+- 授权类 secret 由运行期输入和云端 claim 签发，原因是 token 需要支持撤销、轮换和审计。
+- 第一阶段交互入口是 CLI，原因是 Linux/Windows 服务器托管场景优先需要可复制、可脚本化的部署路径。
 
-## Open Questions
+## Planning Decision
 
-- 默认发行策略：官方通用 runner binary 是否内嵌 production cloud origin，还是只允许客户/环境专用 binary 内嵌 default server URL？
+- 支持 build-time embedded defaults，但只用于非密钥 packaging hints。官方通用 runner binary 默认不内嵌 server URL；云端下载页或客户/环境专用 artifact 可以内嵌目标 server origin。

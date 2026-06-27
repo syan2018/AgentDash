@@ -61,7 +61,7 @@ Diagnostics command:
 agentdash-local doctor [--config <path>] [--json]
 ```
 
-`doctor` reads config/status/service and performs lightweight checks. It should not mutate config, claim credentials, or start services.
+`doctor` is a read-only diagnostics command: it reads config/status/service and performs lightweight checks without config writes, credential claim, or service lifecycle actions.
 
 ## Interactive Flow
 
@@ -114,7 +114,7 @@ CLI > environment > config file > embedded default > platform default
 Security boundary:
 
 - Allowed: server URL, name prefix, workspace root suggestion.
-- Forbidden: registration token, relay auth token, backend id, user access token.
+- Secret-bearing runtime facts stay outside embedded defaults: registration token, relay auth token, backend id, user access token.
 - Embedded defaults must appear in `setup --dry-run` and `doctor` summaries as source `embedded`.
 
 Official generic runner binary can ship with no embedded server URL. Cloud-hosted or customer-specific download artifacts can embed the production origin so setup becomes shorter:
@@ -122,6 +122,12 @@ Official generic runner binary can ship with no embedded server URL. Cloud-hoste
 ```bash
 agentdash-local setup --registration-token adrt_... --install-service --start
 ```
+
+## Packaging Policy
+
+- Generic runner release artifact ships without an embedded `server_url`, because generic binaries must work across development, private deployment and cloud-hosted environments.
+- Cloud download pages and customer/environment-specific artifacts may compile `AGENTDASH_RUNNER_DEFAULT_SERVER_URL` into the binary, because their target server origin is already known by the packaging flow.
+- Embedded values are convenience defaults only. CLI, environment and config file values keep higher priority so copied commands and operator-managed config remain authoritative.
 
 ## Config Write Strategy
 
@@ -151,7 +157,7 @@ claimed_at = "..."
 token_source = "runner_registration_token"
 ```
 
-Optional later hardening can remove or blank the registration token after successful claim. This should be a product decision because retaining the token makes re-claim easier but changes revocation expectations.
+Registration token retention after successful claim remains an implementation decision inside this task. The first implementation should keep operator expectations explicit in `doctor`: show whether an enrollment token is present, redacted, and whether complete server-issued relay credentials are available.
 
 ## Summary Output
 
@@ -193,6 +199,12 @@ All token-bearing fields must be omitted or redacted.
 - Claim 401/403 reports token invalid/expired/revoked without printing the token.
 - Service install/start failures include OS command context with token redaction.
 - Existing config with complete credentials can skip claim unless `--force-claim` is later introduced.
+
+## Sub-Agent Handoff
+
+- `trellis-implement` owns Rust implementation under `crates/agentdash-local/src` and related runner tests.
+- Main session owns Trellis specs/task docs, release checklist updates, final integration review and commits.
+- `trellis-check` runs after implementation for focused verification against `check.jsonl`, then may self-fix scoped documentation/test drift.
 
 ## Tests
 

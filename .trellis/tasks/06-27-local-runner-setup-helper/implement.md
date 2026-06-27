@@ -4,7 +4,10 @@
 
 - Read current runner CLI, config, claim, service, status modules.
 - Update cross-layer `desktop-local-runtime.md` with setup helper contract once design is accepted.
-- Decide final embedded default policy before implementation starts.
+- Apply embedded default policy:
+  - generic runner release artifact has no concrete server URL embedded
+  - cloud/customer/environment-specific artifact may embed `AGENTDASH_RUNNER_DEFAULT_SERVER_URL`
+  - embedded defaults contain only non-secret packaging hints
 
 Validation:
 
@@ -109,6 +112,7 @@ cargo test -p agentdash-local doctor -- --nocapture
 - Update `.trellis/spec/cross-layer/desktop-local-runtime.md`.
 - Update `.trellis/tasks/06-26-distribution-release-validation/implement.md` runner acceptance checklist.
 - Add copy-paste Linux and Windows setup examples.
+- Record build-time defaults example for customer/environment-specific runner artifacts.
 
 Validation:
 
@@ -143,3 +147,11 @@ Manual acceptance to hand off:
 - If interactive prompt introduces cross-platform terminal issues, keep non-interactive `setup` and gate prompt behind follow-up.
 - If embedded defaults create packaging ambiguity, ship `setup` with CLI/env/config only and leave embedded defaults behind a build-time feature.
 - If service start verification is flaky, complete setup after service start command succeeds and leave online verification to `doctor`.
+
+## Ready-To-Start Checklist
+
+- [x] PRD has testable setup, doctor, dry-run, JSON and embedded-default acceptance criteria.
+- [x] Design resolves embedded-default packaging policy.
+- [x] Implement plan is split into independently verifiable runner steps.
+- [x] `implement.jsonl` and `check.jsonl` point to real specs/research artifacts.
+- [ ] User reviews planning artifacts and approves `task.py start`.

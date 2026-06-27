@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 setup helper 是否保持云端 claim、runner config、service lifecycle、relay 连接事实源清晰。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查 Rust runner CLI、测试、错误处理和模块边界质量。"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "检查 setup summary、doctor、service output、日志 tail 是否脱敏 token-bearing 字段。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "检查 runner 诊断输出是否符合项目过程诊断约定。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查新增 setup/doctor 未改变 Local Runner 无本机 HTTP API、纯出站 WebSocket 的产品边界。"}
+{"file": ".trellis/tasks/archive/2026-06/06-26-local-runner-daemon/research/planning-review-local-runner-daemon.md", "reason": "回归 daemon/service/status/config 风险项是否被实现覆盖。"}
+{"file": ".trellis/tasks/archive/2026-06/06-26-runner-enrollment-token/research/planning-review-runner-enrollment-token.md", "reason": "回归 enrollment token 与 relay auth token 分离是否被实现保持。"}

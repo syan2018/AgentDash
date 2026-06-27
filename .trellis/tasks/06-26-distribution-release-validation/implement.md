@@ -28,7 +28,7 @@ Validation:
 ## Step 3 - Windows Desktop Release Artifact
 
 - Consume desktop handoff:
-  - `pnpm run desktop:bundle`。
+  - `pnpm run desktop:bundle -- --desktop-defaults <defaults.json>`。
   - output glob/path。
   - setup exe name。
   - installed app exe/process name。
@@ -48,7 +48,7 @@ Validation:
 
 Validation:
 
-- `pnpm run desktop:bundle`
+- `pnpm run desktop:bundle -- --desktop-defaults <defaults.json>`
 - clean Windows manual acceptance。
 
 ## Step 4 - Linux Runner Release Artifact
@@ -169,8 +169,12 @@ Validation:
 
 ### B. Windows Desktop Installer
 
-- [ ] 在 Windows x64 clean VM 或干净用户环境运行 `pnpm run desktop:bundle` 或使用 CI 产出的 NSIS setup exe。
+- [ ] 准备 desktop defaults JSON，例如 `{ "default_cloud_origin": "https://agentdash.example.com" }`。
+- [ ] 在 Windows x64 clean VM 或干净用户环境运行 `pnpm run desktop:bundle -- --desktop-defaults <defaults.json>` 或使用 CI 产出的 NSIS setup exe。
+- [ ] 也可用快捷参数 `pnpm run desktop:bundle -- --default-cloud-origin https://agentdash.example.com` 生成同等 defaults。
 - [ ] 记录 setup exe 路径、文件名、版本 metadata。
+- [ ] 验证安装包携带的 `agentdash-desktop-defaults.json` 包含预期 `default_cloud_origin`。
+- [ ] 验证桌面前端运行时实际读取 `agentdash-desktop-defaults.json`，而不是依赖构建期 env 默认值。
 - [ ] 从 setup exe 开始安装，验证安装成功。
 - [ ] 验证 Start Menu entry 存在。
 - [ ] 验证 Desktop shortcut 如安装器配置启用则存在。
@@ -179,6 +183,7 @@ Validation:
 - [ ] 验证 Desktop API 未绑定 LAN 地址或 `0.0.0.0`。
 - [ ] 验证 Dashboard 渲染完成。
 - [ ] 登录/连接云端后保存本机 runtime profile。
+- [ ] 打开本机运行时设置，验证 Server URL 默认预填 desktop defaults 的 `default_cloud_origin`。
 - [ ] 启动 Local Runtime，验证云端可见 backend online。
 - [ ] 关闭主窗口，验证窗口隐藏到托盘且 runtime 不被中断。
 - [ ] 从托盘 Open AgentDash 恢复窗口。

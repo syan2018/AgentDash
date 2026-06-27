@@ -9,6 +9,11 @@ import { getStoredToken } from "../../../api/client";
 import { API_ORIGIN } from "../../../api/origin";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
 import { getDesktopAppBridge, getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../../../desktop/localRuntimeBridge";
+import {
+  ensureDesktopDefaultsLoaded,
+  resolveDefaultLocalRuntimeServerUrl,
+  subscribeDesktopDefaults,
+} from "../../../desktop/defaults";
 import { DebugPrefsSection } from "./DebugPrefsSection";
 import { UserByokSection } from "./UserByokSection";
 import { SectionCard } from "./primitives";
@@ -74,6 +79,7 @@ function DesktopLocalRuntimePanel({
   const browseDirectory = useMemo(() => getDesktopBrowseDirectory(), []);
   const desktopApp = useMemo(() => getDesktopAppBridge(), []);
   const [desktopApiSnapshot, setDesktopApiSnapshot] = useState<DesktopApiSnapshot | null>(null);
+  const [defaultServerUrl, setDefaultServerUrl] = useState(() => resolveDefaultLocalRuntimeServerUrl());
 
   useEffect(() => {
     if (!desktopApp) return;
@@ -90,6 +96,23 @@ function DesktopLocalRuntimePanel({
     };
   }, [desktopApp]);
 
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => setDefaultServerUrl(resolveDefaultLocalRuntimeServerUrl());
+    const unsubscribe = subscribeDesktopDefaults(refresh);
+    ensureDesktopDefaultsLoaded()
+      .then(() => {
+        if (alive) refresh();
+      })
+      .catch(() => {
+        if (alive) refresh();
+      });
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, []);
+
   if (!client) return null;
 
   return (
@@ -101,7 +124,7 @@ function DesktopLocalRuntimePanel({
         cloud_api: createCloudApiDiagnosticsInput({
           apiError: cloudApiError,
           isChecking: cloudApiChecking,
-          target: API_ORIGIN || "http://127.0.0.1:3001",
+          target: API_ORIGIN || "http://127.0.0.1:17301",
           eventConnectionState,
         }),
         desktop_api_snapshot: desktopApiSnapshot,
@@ -109,7 +132,7 @@ function DesktopLocalRuntimePanel({
         runtime_summaries: runtimeSummaryDiagnosticsFacts(runtimeSummaries),
       }}
       defaultAccessToken={getStoredToken() ?? ""}
-      defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
+      defaultServerUrl={defaultServerUrl}
     />
   );
 }

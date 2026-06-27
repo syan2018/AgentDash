@@ -11,7 +11,7 @@ import type {
   LocalRuntimeProfile,
 } from '@agentdash/core/local-runtime';
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser';
-import { API_ORIGIN } from '../api/origin';
+import { ensureDesktopDefaultsLoaded, resolveDefaultLocalRuntimeServerUrl } from './defaults';
 
 declare global {
   interface Window {
@@ -61,6 +61,7 @@ export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Pro
   const snapshot = await client.runtimeSnapshot().catch(() => null);
   if (snapshot?.state === 'starting' || snapshot?.state === 'running') return;
 
+  await ensureDesktopDefaultsLoaded();
   const profile = await loadOrCreateAutoConnectProfile(client, token);
 
   await client.runtimeStart({
@@ -107,5 +108,5 @@ async function loadOrCreateAutoConnectProfile(
 function resolveDesktopServerUrl(value: string): string {
   const explicit = value.trim().replace(/\/+$/, '');
   if (explicit) return explicit;
-  return API_ORIGIN || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
+  return resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
 }

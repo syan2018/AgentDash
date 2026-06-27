@@ -33,6 +33,7 @@ export function runDesktopBuild(options) {
     ...rustBuild.env,
     AGENTDASH_DESKTOP_DEFAULT_API_MODE: config.apiMode,
     AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN: config.apiOrigin,
+    AGENTDASH_DESKTOP_DEFAULTS_JSON: JSON.stringify(config.desktopDefaults),
   };
   if (config.apiMode === 'sidecar') {
     env.AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR = config.apiSidecar;
@@ -53,6 +54,14 @@ export function runDesktopBuild(options) {
   console.log(`[desktop-build] API origin: ${config.apiOrigin}`);
   if (config.apiMode === 'sidecar') {
     console.log(`[desktop-build] API sidecar: ${config.apiSidecar}`);
+  }
+  if (config.desktopDefaultsPath) {
+    console.log(`[desktop-build] desktop defaults: ${config.desktopDefaultsPath}`);
+  }
+  if (config.desktopDefaults.default_cloud_origin) {
+    console.log(`[desktop-build] default cloud origin: ${config.desktopDefaults.default_cloud_origin}`);
+  } else {
+    console.log('[desktop-build] default cloud origin: 未配置');
   }
   console.log(`[desktop-build] rust cache: ${rustBuild.description}`);
 
@@ -100,6 +109,12 @@ function parseDesktopBuildArgs(args, options) {
       || env.AGENTDASH_DESKTOP_API_SIDECAR
       || options.defaultApiSidecar,
   );
+  let defaultCloudOrigin = normalizeOptionalOrigin(
+    env.AGENTDASH_DEFAULT_CLOUD_ORIGIN
+      || options.defaultCloudOrigin,
+    '--default-cloud-origin',
+  );
+  let desktopDefaultsPath = null;
   let sccacheMode = 'auto';
   let sccacheDir = env.SCCACHE_DIR || null;
   let help = false;
@@ -135,6 +150,28 @@ function parseDesktopBuildArgs(args, options) {
       apiSidecar = normalizeRequiredValue(readNextValue(args, ++index, arg), arg);
       continue;
     }
+    if (arg.startsWith('--default-cloud-origin=')) {
+      defaultCloudOrigin = normalizeOptionalOrigin(
+        arg.slice('--default-cloud-origin='.length),
+        '--default-cloud-origin',
+      );
+      continue;
+    }
+    if (arg === '--default-cloud-origin') {
+      defaultCloudOrigin = normalizeOptionalOrigin(
+        readNextValue(args, ++index, arg),
+        '--default-cloud-origin',
+      );
+      continue;
+    }
+    if (arg.startsWith('--desktop-defaults=')) {
+      desktopDefaultsPath = normalizeRequiredValue(arg.slice('--desktop-defaults='.length), arg);
+      continue;
+    }
+    if (arg === '--desktop-defaults') {
+      desktopDefaultsPath = normalizeRequiredValue(readNextValue(args, ++index, arg), arg);
+      continue;
+    }
     if (arg === '--sccache') {
       sccacheMode = 'required';
       continue;
@@ -161,10 +198,18 @@ function parseDesktopBuildArgs(args, options) {
     validateDesktopApiOrigin(apiOrigin);
   }
 
+  const desktopDefaults = loadDesktopDefaults({
+    defaultCloudOrigin,
+    defaultsPath: desktopDefaultsPath,
+    root,
+  });
+
   return {
     apiMode,
     apiOrigin,
     apiSidecar,
+    desktopDefaults,
+    desktopDefaultsPath,
     help,
     passthrough,
     root,
@@ -185,6 +230,8 @@ function printHelp(options) {
   console.log(`  --api-mode <builtin|external|sidecar>  桌面壳默认 API 模式，默认 ${defaultMode}`);
   console.log(`  --api-origin <url>                    API origin，默认 ${defaultOrigin}`);
   console.log('  --api-sidecar <command>               sidecar 模式下启动的 API 可执行文件');
+  console.log('  --desktop-defaults <path>             携带进安装包的桌面默认配置 JSON');
+  console.log('  --default-cloud-origin <url>          快速设置 desktop defaults 中的默认云端 server origin');
   console.log('  --sccache                             要求使用 sccache');
   console.log('  --no-sccache                          关闭 RUSTC_WRAPPER');
   console.log('  --sccache-dir <path>                  指定 SCCACHE_DIR');
@@ -215,6 +262,65 @@ function normalizeOrigin(value) {
     throw new Error('--api-origin 不能为空');
   }
   return trimmed;
+}
+
+function normalizeOptionalOrigin(value, flagName) {
+  const normalized = normalizeOptionalValue(value);
+  if (!normalized) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch (error) {
+    throw new Error(`${flagName} 无效: ${error.message}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${flagName} 只支持 http:// 或 https://`);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${flagName} 必须是 origin，不应包含认证信息、query 或 hash`);
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+  if (parsed.pathname !== '/') {
+    throw new Error(`${flagName} 必须是 origin，不应包含 path`);
+  }
+  return parsed.origin;
+}
+
+function loadDesktopDefaults({ defaultCloudOrigin, defaultsPath, root }) {
+  let defaults = {};
+  if (defaultsPath) {
+    const resolved = path.isAbsolute(defaultsPath) ? defaultsPath : path.resolve(root, defaultsPath);
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    } catch (error) {
+      throw new Error(`读取 --desktop-defaults 失败: ${error.message}`);
+    }
+    defaults = normalizeDesktopDefaults(parsed, `--desktop-defaults ${resolved}`);
+  }
+  if (defaultCloudOrigin) {
+    defaults = {
+      ...defaults,
+      default_cloud_origin: defaultCloudOrigin,
+    };
+  }
+  return normalizeDesktopDefaults(defaults, 'desktop defaults');
+}
+
+function normalizeDesktopDefaults(value, sourceLabel) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${sourceLabel} 必须是 JSON object`);
+  }
+  const result = {};
+  if (Object.prototype.hasOwnProperty.call(value, 'default_cloud_origin')) {
+    const origin = normalizeOptionalOrigin(value.default_cloud_origin, `${sourceLabel}.default_cloud_origin`);
+    if (origin) {
+      result.default_cloud_origin = origin;
+    }
+  }
+  return result;
 }
 
 function validateDesktopApiOrigin(origin) {

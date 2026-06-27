@@ -286,6 +286,20 @@ Settings file:
 {app_config_dir}/desktop-app-settings.json
 ```
 
+Desktop release build:
+
+```text
+pnpm run desktop:bundle -- --desktop-defaults desktop-defaults.json
+```
+
+Desktop defaults JSON:
+
+```json
+{
+  "default_cloud_origin": "https://agentdash.example.com"
+}
+```
+
 ### 3. Contracts
 
 - Closing the main window hides it to tray by default; the process continues so a running local runtime is not interrupted by an ordinary window close.
@@ -293,6 +307,9 @@ Settings file:
 - Tray menu exposes `Open AgentDash`, runtime start/stop/status actions, and explicit quit. Runtime start uses the saved profile; it does not silently create a profile when none exists.
 - `start_minimized_to_tray` controls first window visibility after setup. When false, setup shows/focuses the main window after Desktop API initialization; when true, the tray-resident process stays hidden.
 - `launch_at_login`, `start_minimized_to_tray`, and `auto_connect_local_runtime` persist in `desktop-app-settings.json` and are surfaced through the frontend bridge.
+- `--desktop-defaults` carries a non-secret JSON defaults file into the desktop frontend bundle as `agentdash-desktop-defaults.json`; the desktop frontend reads this file at runtime before creating an auto-connect profile.
+- `--default-cloud-origin` is a shortcut that produces the same carried `default_cloud_origin` value without hand-writing a defaults file.
+- `default_cloud_origin` pre-fills the Local Runtime profile server URL. It does not change Desktop API origin, does not create a `backend_id`, and does not embed access/registration/relay tokens.
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
 - Desktop API remains loopback-only at `127.0.0.1:17301`; its presence does not change local runtime/runner WebSocket relay communication.
 

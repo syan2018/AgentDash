@@ -35,27 +35,27 @@ RUST_LOG=info
 
 默认 Compose 文件包含 `postgres` 服务，适合单机部署和预研验证：
 
-```powershell
+```bash
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env config
 ```
 
 连接 managed PostgreSQL 时，`DATABASE_URL` 指向外部数据库，并追加 override：
 
-```powershell
-docker compose `
-  -f deploy/compose/docker-compose.yml `
-  -f deploy/compose/docker-compose.managed-postgres.yml `
-  --env-file deploy/compose/.env `
+```bash
+docker compose \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.managed-postgres.yml \
+  --env-file deploy/compose/.env \
   config
 ```
 
-managed PostgreSQL 模式下，数据库备份由外部数据库快照或托管平台备份承担；Compose 更新脚本要求显式传入 `-SkipBackup`。
+managed PostgreSQL 模式下，数据库备份由外部数据库快照或托管平台备份承担；Compose 更新脚本要求显式传入 `--skip-backup`。
 
 ## 验证入口
 
 Compose scaffold 落地后，最小验证命令为：
 
-```powershell
+```bash
 cp .env.example .env
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env config
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env run --rm migrate
@@ -64,15 +64,15 @@ docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.e
 
 当前 Compose 使用 `${AGENTDASH_IMAGE_REPOSITORY:-agentdash-cloud}:${AGENTDASH_VERSION}` 作为目标镜像，镜像构建入口为：
 
-```powershell
+```bash
 pnpm run docker:cloud:build
 ```
 
 版本更新入口：
 
-```powershell
-pnpm run deploy:compose:update:dry-run -- -EnvFile deploy/compose/.env
-pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0
+```bash
+pnpm run deploy:compose:update:dry-run -- --env-file deploy/compose/.env
+pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version 0.2.0
 ```
 
 升级 runbook 记录在 `deploy/runbooks/release-workflow.md`，备份与恢复 runbook 记录在 `deploy/runbooks/backup-restore.md`。

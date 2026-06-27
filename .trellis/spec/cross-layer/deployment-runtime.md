@@ -57,8 +57,8 @@ Web Dashboard 在云端部署中仍通过 HTTP API 访问业务数据。cloud im
 ```text
 AGENTDASH_IMAGE_REPOSITORY=agentdash-cloud
 AGENTDASH_VERSION=0.1.0
-pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version <version>
-pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version <version> -ManagedPostgres -SkipBackup
+pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version <version>
+pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version <version> --managed-postgres --skip-backup
 ```
 
 ### 3. Contracts
@@ -75,7 +75,7 @@ pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version <version
 | --- | --- |
 | 默认 Compose config | `migrate` depends on `postgres: service_healthy` |
 | managed PostgreSQL config | `migrate` 无 `postgres` depends_on |
-| managed PostgreSQL update 未传 `-SkipBackup` | 脚本失败并要求先完成外部数据库快照 |
+| managed PostgreSQL update 未传 `--skip-backup` | 脚本失败并要求先完成外部数据库快照 |
 | `AGENTDASH_VERSION` 缺失 | Compose / update script 失败 |
 
 ### 5. Good/Base/Bad Cases

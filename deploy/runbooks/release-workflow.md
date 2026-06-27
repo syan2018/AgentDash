@@ -67,19 +67,19 @@ Compose 基准升级流程：
 10. 记录升级结果
 ```
 
-PowerShell 更新入口：
+跨平台更新入口：
 
-```powershell
-pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0
+```bash
+pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version 0.2.0
 ```
 
 连接 managed PostgreSQL 时：
 
-```powershell
-pnpm run deploy:compose:update -- -EnvFile deploy/compose/.env -Version 0.2.0 -ManagedPostgres -SkipBackup
+```bash
+pnpm run deploy:compose:update -- --env-file deploy/compose/.env --version 0.2.0 --managed-postgres --skip-backup
 ```
 
-`-ManagedPostgres` 会追加 `deploy/compose/docker-compose.managed-postgres.yml`，让 migration job 直接连接 `DATABASE_URL` 指向的外部 PostgreSQL。`-SkipBackup` 表示备份由 managed database snapshot 或部署方数据库备份流程承担。
+`--managed-postgres` 会追加 `deploy/compose/docker-compose.managed-postgres.yml`，让 migration job 直接连接 `DATABASE_URL` 指向的外部 PostgreSQL。`--skip-backup` 表示备份由 managed database snapshot 或部署方数据库备份流程承担。
 
 ## CI Artifact Flow
 

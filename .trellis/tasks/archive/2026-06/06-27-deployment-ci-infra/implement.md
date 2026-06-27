@@ -5,7 +5,7 @@
 - [x] 调整 Compose image 为 registry-aware 形式。
 - [x] 新增 managed PostgreSQL override，并确保 Compose config 可通过。
 - [x] 更新 `.env.example`，加入 image repository 与 managed PostgreSQL 注释。
-- [x] 新增 `deploy/compose/update.ps1`，实现 config/pull/backup/migrate/up/check/doctor 与 dry-run。
+- [x] 新增 `deploy/compose/update.mjs`，实现 config/pull/backup/migrate/up/check/doctor 与 dry-run。
 - [x] 在 `package.json` 增加可发现的 deploy/metadata 命令入口。
 - [x] 新增 `.github/workflows/cloud-image.yml` skeleton。
 - [x] 更新 deploy README、compose README、release runbook、backup runbook 和 cross-layer deployment spec。
@@ -13,22 +13,20 @@
 
 ## Validation Commands
 
-```powershell
+```bash
 docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env.example config
 docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.managed-postgres.yml --env-file deploy/compose/.env.example config
-pwsh -NoProfile -File deploy/compose/update.ps1 -EnvFile deploy/compose/.env.example -DryRun
+node deploy/compose/update.mjs --env-file deploy/compose/.env.example --dry-run --skip-pull
 pnpm run release:metadata
 pnpm run docker:cloud:build -- --dry-run
 node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json ok')"
 ```
 
-If `pwsh` is unavailable, validate script syntax with Windows PowerShell-compatible parsing where possible and report the limitation.
-
 ## Risky Files
 
 - `deploy/compose/docker-compose.yml`
 - `deploy/compose/docker-compose.managed-postgres.yml`
-- `deploy/compose/update.ps1`
+- `deploy/compose/update.mjs`
 - `.github/workflows/cloud-image.yml`
 - `deploy/runbooks/release-workflow.md`
 - `deploy/runbooks/backup-restore.md`

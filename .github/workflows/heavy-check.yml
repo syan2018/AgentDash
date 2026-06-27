@@ -1,0 +1,66 @@
+name: Heavy Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Run critical Playwright e2e"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  heavy-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Backend clippy
+        run: pnpm run backend:clippy
+
+      - name: Backend tests
+        run: pnpm run backend:test
+
+      - name: Frontend tests
+        run: pnpm run frontend:test
+
+      - name: Install Playwright browsers
+        if: inputs.run_e2e == 'true'
+        run: pnpm exec playwright install --with-deps
+
+      - name: Critical e2e
+        if: inputs.run_e2e == 'true'
+        run: pnpm run e2e:test:critical

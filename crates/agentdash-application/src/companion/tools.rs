@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use crate::session::build_hook_trace_envelope;
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, text_user_input_blocks,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
+use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
 use agentdash_domain::workflow::LifecycleTaskPlanItem;
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -31,10 +32,15 @@ use super::{
     OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     build_companion_event_notification,
 };
-use crate::agent_run::AgentFrameRuntimeTarget;
+use crate::agent_run::{
+    AgentFrameRuntimeTarget, AgentRunMailboxIntakeCommand, AgentRunMailboxService,
+};
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
+use crate::runtime_session_agent_run_bridge::{
+    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+    agent_run_session_launch,
+};
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
-use crate::session::{LaunchCommand, UserPromptInput};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -83,6 +89,24 @@ async fn require_session_services(
     handle.get().await.ok_or_else(|| {
         AgentToolError::ExecutionFailed(format!("Session services 尚未完成初始化，无法{action}"))
     })
+}
+
+fn companion_mailbox_service<'a>(
+    repos: &'a crate::repository_set::RepositorySet,
+    session_services: &'a SessionToolServices,
+) -> AgentRunMailboxService<'a> {
+    AgentRunMailboxService::new(
+        repos.lifecycle_run_repo.as_ref(),
+        repos.lifecycle_agent_repo.as_ref(),
+        repos.agent_frame_repo.as_ref(),
+        repos.execution_anchor_repo.as_ref(),
+        repos.agent_run_command_receipt_repo.as_ref(),
+        repos.agent_run_mailbox_repo.as_ref(),
+        agent_run_session_core(session_services.core.clone()),
+        agent_run_session_control(session_services.control.clone()),
+        agent_run_session_eventing(session_services.eventing.clone()),
+        agent_run_session_launch(session_services.launch.clone()),
+    )
 }
 
 struct CompanionGateControlFactory<'a> {
@@ -474,24 +498,67 @@ impl CompanionRequestTool {
             })
             .await?;
 
-        let launch_outcome = session_services
-            .launch
-            .launch_command_with_outcome(
-                &dispatch_result.delivery_runtime_session_id,
-                LaunchCommand::companion_dispatch_input(
-                    UserPromptInput::from_text(&dispatch_result.launch_source.dispatch_prompt),
-                    self.tool_context.identity().cloned(),
-                    dispatch_result.launch_source.clone(),
+        let gate_ref = dispatch_result.gate_ref.map(|id| id.to_string());
+        let source_ref = gate_ref
+            .clone()
+            .unwrap_or_else(|| dispatch_plan.dispatch_id.clone());
+        let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
+            .with_source_ref(source_ref)
+            .with_correlation_ref(dispatch_plan.dispatch_id.clone())
+            .with_route("sub")
+            .with_metadata(serde_json::json!({
+                "dispatch_id": dispatch_plan.dispatch_id.clone(),
+                "gate_id": gate_ref.clone(),
+                "wait": wait,
+                "parent_run_id": parent_run_id.to_string(),
+                "parent_agent_id": parent_agent_id.to_string(),
+                "parent_frame_id": parent_frame_id.to_string(),
+                "companion_label": companion_label.clone(),
+                "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
+                "selected_agent_key": selected_companion.agent_key.clone(),
+                "slice_mode": slice_mode,
+                "adoption_mode": adoption_mode,
+                "task_id": requested_task_id.map(|id| id.to_string()),
+            }));
+        let mailbox_result = companion_mailbox_service(&self.repos, &session_services)
+            .accept_intake_message(AgentRunMailboxIntakeCommand {
+                run_id: dispatch_result.run_ref,
+                agent_id: dispatch_result.agent_ref,
+                runtime_session_id: dispatch_result.delivery_runtime_session_id.clone(),
+                origin: MailboxMessageOrigin::Companion,
+                source,
+                retain_payload: true,
+                schedule_on_submit: true,
+                input: text_user_input_blocks(&dispatch_result.launch_source.dispatch_prompt),
+                client_command_id: format!(
+                    "companion-dispatch:{}:{}",
+                    dispatch_plan.dispatch_id, dispatch_result.agent_ref
                 ),
-            )
+                source_dedup_key: None,
+                executor_config: Some(
+                    dispatch_result
+                        .launch_source
+                        .companion_executor_config
+                        .clone(),
+                ),
+                identity: self.tool_context.identity().cloned(),
+                delivery_intent: None,
+            })
             .await
             .map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
-                    "child companion session launch 失败: {error}"
+                    "child companion mailbox dispatch 失败: {error}"
                 ))
             })?;
-        let child_turn_id = launch_outcome.turn_id.clone();
-        let child_context_sources = launch_outcome.context_sources.clone();
+        let child_turn_id = mailbox_result
+            .accepted_refs
+            .as_ref()
+            .and_then(|refs| refs.agent_run_turn_id.clone());
+        let mailbox_message_id = mailbox_result
+            .mailbox_message
+            .as_ref()
+            .map(|message| message.id.to_string());
+        let mailbox_outcome = mailbox_result.outcome.as_str();
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(
@@ -506,6 +573,8 @@ impl CompanionRequestTool {
                 "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
                 "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                 "turn_id": child_turn_id.clone(),
+                "mailbox_message_id": mailbox_message_id.clone(),
+                "mailbox_outcome": mailbox_outcome,
                 "slice_mode": slice_mode,
                 "adoption_mode": adoption_mode,
                 "task_id": requested_task_id.map(|id| id.to_string()),
@@ -551,8 +620,10 @@ impl CompanionRequestTool {
                 .unwrap_or_default();
 
             let mut text = format!(
-                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- status: {status}\n- summary: {summary}",
-                dispatch_result.delivery_runtime_session_id, child_turn_id,
+                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}",
+                dispatch_result.delivery_runtime_session_id,
+                child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
+                mailbox_outcome,
             );
             if !findings.is_empty() {
                 text.push_str(&format!("\n- findings:\n- {findings}"));
@@ -572,7 +643,8 @@ impl CompanionRequestTool {
                     "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                     "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                     "child_turn_id": child_turn_id.clone(),
-                    "context_sources": child_context_sources.clone(),
+                    "mailbox_message_id": mailbox_message_id.clone(),
+                    "mailbox_outcome": mailbox_outcome,
                     "task_id": requested_task_id.map(|id| id.to_string()),
                     "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
                     "selected_agent_key": selected_companion.agent_key,
@@ -590,7 +662,7 @@ impl CompanionRequestTool {
                 dispatch_plan.dispatch_id,
                 companion_label,
                 dispatch_result.delivery_runtime_session_id,
-                child_turn_id,
+                child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
                 dispatch_result.agent_ref,
                 dispatch_result.frame_ref,
             ))],
@@ -606,7 +678,8 @@ impl CompanionRequestTool {
                 "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                 "child_session_id": dispatch_result.delivery_runtime_session_id,
                 "child_turn_id": child_turn_id,
-                "context_sources": child_context_sources,
+                "mailbox_message_id": mailbox_message_id,
+                "mailbox_outcome": mailbox_outcome,
                 "task_id": requested_task_id.map(|id| id.to_string()),
                 "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
                 "selected_agent_key": selected_companion.agent_key,

@@ -19,6 +19,7 @@ pub struct RoutineDispatchReuseTarget {
     pub frame_id: Uuid,
     pub orchestration_id: Option<Uuid>,
     pub node_path: Option<String>,
+    pub node_attempt: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +143,7 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
         let frame_id = refs.frame_id();
         let orchestration_id = refs.orchestration_id();
         let node_path = refs.node_path().map(str::to_string);
+        let node_attempt = refs.node_attempt();
 
         let run = self
             .lifecycle_run_repo
@@ -261,6 +263,7 @@ impl<'a> LifecycleAgentReuseResolver<'a> {
             frame_id,
             orchestration_id,
             node_path,
+            node_attempt,
         })
     }
 }
@@ -705,6 +708,7 @@ mod tests {
                 frame_id: frame.id,
                 orchestration_id: Some(orchestration_id),
                 node_path: Some("routine.main".to_string()),
+                node_attempt: Some(1),
             }
         }
     }

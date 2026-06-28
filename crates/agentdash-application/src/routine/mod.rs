@@ -3,4 +3,4 @@ mod executor;
 pub mod reuse_resolver;
 pub mod template;
 
-pub use executor::RoutineExecutor;
+pub use executor::{RoutineExecutor, RoutineMailboxRuntime};

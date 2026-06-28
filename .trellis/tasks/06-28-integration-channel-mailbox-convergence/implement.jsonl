@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Defines AgentRun Mailbox as the durable intake, scheduler, command receipt, recovery, and projection authority used by every convergence phase."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Defines LaunchCommand, source adapters, frame construction modifiers, and accepted turn boundaries for Routine and Companion runtime launches."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Defines generated DTO ownership, mailbox command contracts, Canvas mailbox source precedent, and frontend projection constraints."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/prd.md", "reason": "Captures product scope, resolved Companion full-surface convergence decision, requirements, acceptance criteria, and platform broker boundary."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/design.md", "reason": "Captures the recommended Routine and Companion mailbox convergence architecture and ownership boundaries."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/subagent-dispatch.md", "reason": "Defines sub-agent dispatch rules, dependency waves, parallel feasibility, conflict rules, and completion report format."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/work-items/README.md", "reason": "Indexes the in-task work item files used for dispatch and tracking."}

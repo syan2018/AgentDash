@@ -1,0 +1,38 @@
+# W6: Companion Human Request And Response
+
+Status: planned
+
+## Goal
+
+Human request 继续作为 UI-facing 事件暴露给用户；human response resolve gate 后进入 requesting AgentRun mailbox，避免用户回应只作为 runtime notification 注入。
+
+## Dependencies
+
+- W0 source/schema baseline 完成。
+- W1 mailbox intake command shape 完成。
+- W4 的 gate delivery adapter pattern 已稳定。
+
+## Deliverables
+
+- [ ] `target=human` 创建 gate 后继续产生 human-visible UI notification / projection。
+- [ ] human respond resolve gate 后创建 requesting AgentRun mailbox message，source 使用 `companion_human_response`。
+- [ ] wait=true 轮询 gate 的工具返回仍读取 gate payload；AgentRun 后续处理读取 mailbox message。
+- [ ] wait=false 用户回应后不再仅作为 runtime notification 注入。
+
+## Acceptance
+
+- [ ] human request 在 UI 中可见并可回应。
+- [ ] human response 在 requesting AgentRun mailbox 中可见并可恢复投递。
+- [ ] requesting AgentRun running / paused / failed 行为全部复用 mailbox policy。
+- [ ] duplicate human response 不创建重复 AgentRun input。
+
+## Suggested Validation
+
+- `cargo test -p agentdash-application companion`
+- companion gate API tests
+- `cargo test -p agentdash-application-agentrun mailbox`
+
+## Parallel Guidance
+
+W6 可以与 W5 并行做设计审阅，但落代码建议顺序执行。若必须并行，W6 只负责 API/gate respond human path，W5 只负责 parent-owned gate path，并由主会话统一合并 `companion/tools.rs`。
+

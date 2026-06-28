@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check implementation against mailbox scheduling, dedup, claim recovery, paused/manual resume, and no route-local dispatch authority."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check that Routine and Companion still pass launch facts through source adapter, frame construction, and accepted turn boundaries."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check DTO generation, frontend generated contract consumption, mailbox source labels, and contract drift validation."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/implement.md", "reason": "Check each in-task work item against the planned deliverables, acceptance criteria, guardrails, and validation commands."}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/subagent-dispatch.md", "reason": "Check that assigned agents followed dependency, parallelism, file ownership, conflict, and completion reporting rules."}

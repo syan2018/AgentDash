@@ -13,13 +13,18 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use agentdash_application_agentrun::agent_run::{
+    AgentRunCancelCommand, AgentRunCancelCommandService,
+};
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 use crate::lifecycle::SubjectExecutionControlService;
+use crate::runtime_session_agent_run_bridge::agent_run_session_cancel_runtime;
 use crate::session::SessionRuntimeService;
 
 /// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
@@ -28,6 +33,7 @@ use crate::session::SessionRuntimeService;
 /// 路径查找并 cancel 关联 session。
 pub struct TerminalCancelCoordinator {
     session_runtime: SessionRuntimeService,
+    command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
@@ -39,6 +45,7 @@ impl TerminalCancelCoordinator {
     pub fn new(
         session_runtime: SessionRuntimeService,
         _story_repo: Arc<dyn StoryRepository>,
+        command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         agent_repo: Arc<dyn LifecycleAgentRepository>,
@@ -47,6 +54,7 @@ impl TerminalCancelCoordinator {
     ) -> Self {
         Self {
             session_runtime,
+            command_receipt_repo,
             lifecycle_run_repo,
             association_repo,
             agent_repo,
@@ -68,29 +76,45 @@ impl TerminalCancelCoordinator {
             Some(command) => command,
             None => return,
         };
-        if let Err(err) = self
-            .session_runtime
-            .cancel(&command.runtime_session_id)
+        let cancel_runtime = agent_run_session_cancel_runtime(self.session_runtime.clone());
+        let client_command_id = format!(
+            "terminal-status-cancel:{}:{}",
+            story_id, command.runtime_session_id
+        );
+        match AgentRunCancelCommandService::new(self.command_receipt_repo.as_ref(), &cancel_runtime)
+            .cancel(AgentRunCancelCommand {
+                run_id: command.runtime_refs.run_ref,
+                agent_id: command.runtime_refs.agent_ref,
+                frame_id: Some(command.runtime_refs.frame_ref),
+                runtime_session_id: command.runtime_session_id.clone(),
+                client_command_id,
+                reason: Some("terminal_status_cancel".to_string()),
+            })
             .await
         {
-            diag!(Warn, Subsystem::Reconcile,
+            Err(err) => {
+                diag!(Warn, Subsystem::Reconcile,
 
-                story_id = %story_id,
-                session_id = %command.runtime_session_id,
-                frame_ref = %command.runtime_refs.frame_ref,
-                orchestration_ref = ?command.runtime_refs.orchestration_ref(),
-                node_path = ?command.runtime_refs.node_path(),
-                error = %err,
-                "终态取消协调器：Story 进入终态后取消关联 session 失败"
-            );
-        } else {
-            diag!(Info, Subsystem::Reconcile,
+                    story_id = %story_id,
+                    session_id = %command.runtime_session_id,
+                    frame_ref = %command.runtime_refs.frame_ref,
+                    orchestration_ref = ?command.runtime_refs.orchestration_ref(),
+                    node_path = ?command.runtime_refs.node_path(),
+                    error = %err,
+                    "终态取消协调器：Story 进入终态后取消关联 session 失败"
+                );
+            }
+            Ok(receipt) => {
+                diag!(Info, Subsystem::Reconcile,
 
-                story_id = %story_id,
-                new_status = ?new_status,
-                session_id = %command.runtime_session_id,
-                "终态取消协调器：Story 进入终态，已取消关联 session"
-            );
+                    story_id = %story_id,
+                    new_status = ?new_status,
+                    session_id = %command.runtime_session_id,
+                    command_status = %receipt.status,
+                    command_duplicate = receipt.duplicate,
+                    "终态取消协调器：Story 进入终态，已通过 AgentRun command 取消关联 session"
+                );
+            }
         }
     }
 

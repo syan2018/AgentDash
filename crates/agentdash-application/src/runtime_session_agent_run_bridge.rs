@@ -31,6 +31,12 @@ pub fn agent_run_session_launch(
     agent_run_boundary::SessionLaunchService::new(Arc::new(SessionLaunchBridge { service }))
 }
 
+pub fn agent_run_session_cancel_runtime(
+    service: runtime_session::SessionRuntimeService,
+) -> SessionCancelRuntimeBridge {
+    SessionCancelRuntimeBridge { service }
+}
+
 struct SessionCoreBridge {
     service: runtime_session::SessionCoreService,
 }
@@ -179,6 +185,17 @@ impl agent_run_boundary::RuntimeSessionLaunchPort for SessionLaunchBridge {
             .launch_command_in_task(session_id, command)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))
+    }
+}
+
+pub struct SessionCancelRuntimeBridge {
+    service: runtime_session::SessionRuntimeService,
+}
+
+#[async_trait]
+impl agent_run_boundary::AgentRunCancelRuntimePort for SessionCancelRuntimeBridge {
+    async fn cancel_runtime_session(&self, session_id: &str) -> Result<(), ConnectorError> {
+        self.service.cancel(session_id).await
     }
 }
 

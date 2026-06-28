@@ -1,3 +1,4 @@
+mod cancel_command;
 pub(crate) mod command_receipt;
 mod conversation_snapshot;
 mod delivery_runtime_selection;
@@ -19,6 +20,9 @@ mod runtime_surface_update;
 mod runtime_target;
 pub mod workspace;
 
+pub use cancel_command::{
+    AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
+};
 pub use command_receipt::AgentRunCommandReceiptView;
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,

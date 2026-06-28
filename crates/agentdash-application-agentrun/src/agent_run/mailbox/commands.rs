@@ -86,6 +86,24 @@ pub struct AgentRunMailboxUserMessageCommand {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentRunMailboxIntakeCommand {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub runtime_session_id: String,
+    pub origin: MailboxMessageOrigin,
+    pub source: MailboxSourceIdentity,
+    pub retain_payload: bool,
+    pub schedule_on_submit: bool,
+    pub input: Vec<UserInputBlock>,
+    pub client_command_id: String,
+    pub source_dedup_key: Option<String>,
+    pub executor_config: Option<AgentConfig>,
+    pub identity: Option<AuthIdentity>,
+    /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
+    pub delivery_intent: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentRunMailboxUserMessageTargetCommand {
     pub target: AgentRunMailboxCommandTarget,
     pub source: MailboxSourceIdentity,
@@ -96,6 +114,46 @@ pub struct AgentRunMailboxUserMessageTargetCommand {
     pub identity: Option<AuthIdentity>,
     /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
     pub delivery_intent: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRunMailboxIntakeTargetCommand {
+    pub target: AgentRunMailboxCommandTarget,
+    pub origin: MailboxMessageOrigin,
+    pub source: MailboxSourceIdentity,
+    pub retain_payload: bool,
+    pub schedule_on_submit: bool,
+    pub input: Vec<UserInputBlock>,
+    pub client_command_id: String,
+    pub source_dedup_key: Option<String>,
+    pub executor_config: Option<AgentConfig>,
+    pub identity: Option<AuthIdentity>,
+    /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
+    pub delivery_intent: Option<String>,
+}
+
+impl AgentRunMailboxIntakeTargetCommand {
+    pub fn stable_source_dedup_key(&self) -> Option<String> {
+        mailbox_source_identity_dedup_key(&self.source).or_else(|| self.source_dedup_key.clone())
+    }
+}
+
+pub fn mailbox_source_identity_dedup_key(source: &MailboxSourceIdentity) -> Option<String> {
+    match (&source.source_ref, &source.correlation_ref) {
+        (Some(source_ref), Some(correlation_ref)) => Some(format!(
+            "source:{}:{}:ref:{}:correlation:{}",
+            source.namespace, source.kind, source_ref, correlation_ref
+        )),
+        (Some(source_ref), None) => Some(format!(
+            "source:{}:{}:ref:{}",
+            source.namespace, source.kind, source_ref
+        )),
+        (None, Some(correlation_ref)) => Some(format!(
+            "source:{}:{}:correlation:{}",
+            source.namespace, source.kind, correlation_ref
+        )),
+        (None, None) => None,
+    }
 }
 
 #[derive(Debug, Clone)]

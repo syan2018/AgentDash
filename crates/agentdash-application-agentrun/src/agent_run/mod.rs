@@ -82,8 +82,10 @@ pub use lifecycle_read_model_facade::{
 pub use mailbox::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
     AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
+    AgentRunMailboxIntakeCommand, AgentRunMailboxIntakeTargetCommand,
     AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
     AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
+    mailbox_source_identity_dedup_key,
 };
 pub use mailbox_runtime_adapter::{
     AgentRunMailboxAutoResumeRequest, AgentRunMailboxRuntimeAdapter,

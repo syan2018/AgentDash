@@ -56,8 +56,10 @@ mod tests;
 pub use commands::{
     AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
     AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
+    AgentRunMailboxIntakeCommand, AgentRunMailboxIntakeTargetCommand,
     AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger,
     AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
+    mailbox_source_identity_dedup_key,
 };
 pub(crate) use receipts::{outcome_from_message, outcome_from_result_json};
 

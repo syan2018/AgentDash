@@ -20,12 +20,45 @@ impl<'a> AgentRunMailboxService<'a> {
             frame.id,
             command.runtime_session_id,
         );
-        self.accept_user_message_for_target(AgentRunMailboxUserMessageTargetCommand {
+        self.accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
             target,
+            origin: MailboxMessageOrigin::User,
             source: command.source,
+            retain_payload: false,
             schedule_on_submit: command.schedule_on_submit,
             input: command.input,
             client_command_id: command.client_command_id,
+            source_dedup_key: None,
+            executor_config: command.executor_config,
+            identity: command.identity,
+            delivery_intent: command.delivery_intent,
+        })
+        .await
+    }
+
+    pub async fn accept_intake_message(
+        &self,
+        command: AgentRunMailboxIntakeCommand,
+    ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
+        let (run, agent, frame) = self
+            .resolve_control_plane_for_delivery(&command.runtime_session_id)
+            .await?;
+        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
+        let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+            run.id,
+            agent.id,
+            frame.id,
+            command.runtime_session_id,
+        );
+        self.accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
+            target,
+            origin: command.origin,
+            source: command.source,
+            retain_payload: command.retain_payload,
+            schedule_on_submit: command.schedule_on_submit,
+            input: command.input,
+            client_command_id: command.client_command_id,
+            source_dedup_key: command.source_dedup_key,
             executor_config: command.executor_config,
             identity: command.identity,
             delivery_intent: command.delivery_intent,
@@ -37,11 +70,34 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxUserMessageTargetCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
+        self.accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
+            target: command.target,
+            origin: MailboxMessageOrigin::User,
+            source: command.source,
+            retain_payload: false,
+            schedule_on_submit: command.schedule_on_submit,
+            input: command.input,
+            client_command_id: command.client_command_id,
+            source_dedup_key: None,
+            executor_config: command.executor_config,
+            identity: command.identity,
+            delivery_intent: command.delivery_intent,
+        })
+        .await
+    }
+
+    pub async fn accept_intake_message_for_target(
+        &self,
+        command: AgentRunMailboxIntakeTargetCommand,
+    ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
         diag!(Debug, Subsystem::AgentRun,
 
             run_id = %command.target.address.run_id,
             agent_id = %command.target.address.agent_id,
             frame_id = %command.target.address.frame_id,
+            origin = command.origin.as_str(),
+            source_namespace = %command.source.namespace,
+            source_kind = %command.source.kind,
             runtime_session_id = command
                 .target
                 .message_stream
@@ -50,7 +106,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 .unwrap_or("<resolved-later>"),
             input_blocks = command.input.len(),
             schedule_on_submit = command.schedule_on_submit,
-            "AgentRun mailbox accept user message entered"
+            "AgentRun mailbox accept intake message entered"
         );
         if command.input.is_empty() {
             return Err(WorkflowApplicationError::BadRequest(
@@ -63,6 +119,7 @@ impl<'a> AgentRunMailboxService<'a> {
             ));
         }
 
+        let source_dedup_key = command.stable_source_dedup_key();
         let ResolvedAgentRunMailboxCommandTarget {
             run,
             agent,
@@ -112,8 +169,22 @@ impl<'a> AgentRunMailboxService<'a> {
                 "runtime_session_id": runtime_session_id,
                 "trace_kind": message_stream.trace_kind,
             },
+            "origin": command.origin.as_str(),
+            "source": {
+                "namespace": command.source.namespace,
+                "kind": command.source.kind,
+                "source_ref": command.source.source_ref,
+                "correlation_ref": command.source.correlation_ref,
+                "actor": command.source.actor,
+                "route": command.source.route,
+                "display_label_key": command.source.display_label_key,
+                "metadata": command.source.metadata,
+            },
             "input": command.input,
+            "retain_payload": command.retain_payload,
+            "source_dedup_key": source_dedup_key,
             "executor_config": command.executor_config,
+            "delivery_intent": command.delivery_intent,
         }))?;
         let claim = claim_agent_run_command_receipt(
             self.command_receipt_repo,
@@ -149,13 +220,14 @@ impl<'a> AgentRunMailboxService<'a> {
                 run_id: run.id,
                 agent_id: agent.id,
                 runtime_session_id: runtime_session_id.clone(),
-                origin: MailboxMessageOrigin::User,
+                origin: command.origin,
                 source: command.source,
                 delivery: policy.delivery,
                 barrier: policy.barrier,
                 drain_mode: policy.drain_mode,
                 priority: 0,
-                source_dedup_key: Some(format!("command_receipt:{}", claim.record.id)),
+                source_dedup_key: source_dedup_key
+                    .or_else(|| Some(format!("command_receipt:{}", claim.record.id))),
                 queued_agent_run_turn_id: policy.queued_agent_run_turn_id,
                 expected_active_agent_run_turn_id: policy.expected_active_agent_run_turn_id,
                 command_receipt_id: Some(claim.record.id),
@@ -163,7 +235,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 executor_config_json,
                 preview: build_input_preview(&command.input),
                 has_images: input_has_images(&command.input),
-                retain_payload: false,
+                retain_payload: command.retain_payload,
             })
             .await?;
         diag!(Debug, Subsystem::AgentRun,

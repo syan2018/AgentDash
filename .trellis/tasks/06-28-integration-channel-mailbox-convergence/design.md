@@ -19,7 +19,7 @@ Mailbox 保持 per-AgentRun durable inbox 与 scheduler，不升级为全局 cha
 - `companion_request target=sub` 当前在 `CompanionChildDispatchService::dispatch_child` 后直接调用 `launch_command_with_outcome`。
 - `companion_respond` 会依次尝试 resolve parent request gate、resolve hook pending action、complete child result to parent，且这些副作用可以同时命中。
 - `CompanionGateControlService` 已有 parent request open/resolve、child result complete、human gate respond 的 durable gate 流程；缺口在于 delivery 仍主要是 runtime notification。
-- `target=platform` 当前返回 missing broker error，尚未形成可 materialize 的投递事实。
+- `target=platform` 当前返回 missing broker error，尚未形成可 materialize 的投递事实；该错误路径是边界保护，直到 platform broker 能先产生 durable request fact。
 
 ## Routine Convergence
 
@@ -114,15 +114,19 @@ LifecycleGate remains the durable coordination fact for waiting, review, respons
 
 ### Platform Boundary
 
-`target=platform` currently has no broker implementation. The target state is:
+`target=platform` currently has no broker implementation, so the current behavior remains the missing broker diagnostic for `capability_grant_request`. The target state is:
 
 ```text
 companion_request target=platform
   -> platform broker / permission grant service creates durable request fact
+     (for capability grants this is the PermissionGrant aggregate)
+  -> broker applies policy / user approval / runtime capability effect through its own fact/outbox
   -> broker response materializes mailbox message only when an AgentRun needs to continue
 ```
 
-This keeps platform capability work from becoming another runtime notification side channel while acknowledging that the broker itself is a separate prerequisite.
+The request fact owns broker state, permission policy and audit. The mailbox message is a continuation fact for an AgentRun that must process the broker result, using source identity such as `namespace=platform`, `kind=permission_grant_response`, `source_ref=permission_grant_id`, and a correlation ref to the originating companion request or tool call. Platform broker responses that only update permission/runtime capability state complete through the broker fact and capability transition outbox.
+
+This keeps platform capability work from becoming another runtime notification side channel while acknowledging that the broker itself is a separate prerequisite. Runtime notifications may still project UI visibility, but they are derived from durable broker or mailbox facts rather than being the delivery authority.
 
 ## Mailbox Source Model
 
@@ -150,6 +154,7 @@ Current enum values should be migrated into this shape:
 - `canvas_action` -> `namespace=core`, `kind=canvas_action`
 - `routine_executor` -> `namespace=routine`, `kind=trigger`
 - companion paths -> `namespace=companion`, `kind=dispatch/result/parent_request/parent_response/human_response`
+- platform broker continuations -> `namespace=platform`, `kind=permission_grant_response`, `source_ref=permission_grant_id`
 
 Each Routine / Companion mailbox message should carry:
 
@@ -167,6 +172,7 @@ Human request itself is UI-facing, not AgentRun-facing; the AgentRun-facing mail
 - Duplicate Routine trigger dedups through `RoutineExecution` and mailbox source dedup key.
 - Duplicate companion dispatch dedups through `dispatch_id` / gate correlation.
 - Duplicate child result, parent response, and human response dedup through `gate_id`.
+- Duplicate platform broker continuations dedup through the durable broker request id, e.g. `permission_grant_id`, plus the originating companion/tool correlation.
 - Running target AgentRun queues according to mailbox barrier policy.
 - Failed/interrupted target AgentRun keeps pending mailbox messages paused or blocked according to existing mailbox policy.
 - Gate resolve followed by mailbox delivery failure must leave durable evidence for retry or operator inspection, instead of only logging a warning.

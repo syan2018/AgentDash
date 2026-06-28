@@ -21,7 +21,7 @@
 - `companion_respond` 会尝试命中 parent-owned gate、hook pending action、child-owned gate 三类副作用；这些命中不是互斥路径。
 - `target=parent` 当前已创建 parent-owned `LifecycleGate` 并向 parent runtime 发送 notification；resolve 后仍以 notification 表达。
 - `target=human` 当前创建 gate 并向当前 runtime 发送 human request notification；用户 respond 后写 gate，再注入 runtime notification。
-- `target=platform` 当前只有未启用 broker 的错误路径；它不是本轮 mailbox 投递主线，但需要保留清晰边界，避免后续绕回 ad hoc notification。
+- `target=platform` 当前只有未启用 broker 的 missing broker 错误路径；它不是本轮 mailbox 投递主线。后续接入 platform broker 时，必须先由 broker / permission service 产生 durable request fact；broker response 只有在需要某个 AgentRun 继续处理时才 materialize mailbox message。
 - Companion notification delivery 失败通常只记录 warn，不具备 mailbox 的 claim/recovery/paused/manual resume 语义。
 - Mailbox migration 的 source check 与代码 enum 已有 drift：domain/API 已包含 `canvas_action`，migration `0013_agent_run_mailbox.sql` 尚未包含。这个 drift 暴露出 closed enum + DB check constraint 不适合作为长期来源模型。
 
@@ -38,6 +38,7 @@
 - R9: Host Integration 自定义信道系统由长期 draft 承载；本任务仅为未来信道打好 AgentRun mailbox 入站边界。
 - R10: 重建 mailbox source identity 模型，避免继续用 closed enum 表达来源；目标模型至少能表达 namespace、kind、source ref、correlation、actor、route metadata 和 display label key。
 - R11: 识别当前 schema drift 与必要 migration：`canvas_action` drift 需要被修正，但修正方向应落到可拓展 source identity，而不是继续扩大 enum/check constraint。
+- R12: `target=platform` 的 broker 接入边界必须保持 request fact、runtime capability effect 和 AgentRun mailbox continuation 三者分层；当前 missing broker diagnostic 是预期行为。
 
 ## Acceptance Criteria
 
@@ -55,7 +56,7 @@
 
 长期 Agent 自定义信道、群聊信道、通用 channel broker 和 Host Integration 事件源模型由 `.trellis/tasks/06-28-agent-custom-channel-draft` 承载。本任务聚焦当前 Routine / Companion 的 AgentRun mailbox 收束。
 
-Platform capability grant broker 尚未形成可投递业务事实。本任务只明确 `target=platform` 后续必须接入 broker / mailbox 边界，当前不把未实现 broker 当成可交付消息链路。
+Platform capability grant broker 尚未形成可投递业务事实。本任务只明确 `target=platform` 后续必须接入 broker / mailbox 边界：授权申请事实归 platform broker / `PermissionGrant`，runtime capability 变更归 capability transition/outbox，只有需要 AgentRun 继续处理的 broker response 才进入 AgentRun mailbox。
 
 ## Open Questions
 

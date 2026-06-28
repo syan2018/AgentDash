@@ -127,6 +127,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - Backend envelope/domain/repository 是 AgentRun control-plane fact source。Codex app-server protocol 是优先复用的 `Thread/Turn` 基线；AgentRun-only scheduling 字段必须显式存在于 envelope/domain enum/adapter/projection/test 中。
 - `composer-submit` 接收 canonical `Vec<UserInputBlock>`，claim durable command receipt，创建 mailbox envelope，再调用 scheduler。response 返回 `AgentRunMessageCommandResponse { command_receipt, outcome, mailbox_message?, accepted_refs?, runtime_state? }`。
 - `source` 是开放式 `MailboxSourceIdentity`，用于审计、projection、dedup、correlation 和未来 adapter governance。内置 composer / draft / hook / canvas / routine / companion 只通过 `namespace + kind` 表达来源身份，原因是 mailbox scheduler 的投递策略已经由 `origin`、`delivery`、`barrier`、`drain_mode`、priority 和 runtime state 承载。
+- Platform broker request 本身先落到 broker-owned durable fact，例如 capability grant 使用 `PermissionGrant` 聚合；只有 broker response 需要 AgentRun 继续处理时，才创建 `MailboxSourceIdentity { namespace: "platform", kind: "permission_grant_response", source_ref: permission_grant_id, ... }` 的 mailbox envelope。原因是 permission policy、runtime capability effect 和 AgentRun continuation 是不同事实边界，mailbox 只承担 AgentRun 后续处理的 durable delivery。
 - ProjectAgent draft start 使用同一组 canonical `Vec<UserInputBlock>` 创建 `MailboxSourceIdentity { namespace: "core", kind: "draft_start", actor: "user", ... }` envelope，并返回 `ProjectAgentRunStartResult.initial_message: AgentRunMessageCommandResponse`。`schedule_on_submit=false` 的 draft envelope 由 API 在 start receipt 形成后触发后台 scheduler，原因是 AgentRun workspace 必须先有 durable run/agent/frame/runtime anchor，首条消息投递才能作为可恢复的 mailbox delivery 继续推进。
 - `cancel` 是 AgentRun runtime command，不创建 mailbox envelope，但必须 claim durable `AgentRunCommandReceipt`，以 `client_command_id + request_digest` 提供 duplicate replay/conflict 语义；cancel delivery 失败时 receipt 进入 `terminal_failed`。
 - `outcome` 是 scheduler outcome：`launched | queued | steered | deleted | resumed | blocked | failed`。它不是 route-local command kind。
@@ -161,6 +162,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 | expired `Consuming` with accepted refs | status is restored to terminal `Dispatched` / `Steered`, accepted refs are preserved, and `consumed_at` is set |
 | hook terminal effect replay | same `source_dedup_key` does not create duplicate system-origin envelope |
 | new Routine / Companion / channel source | assign a namespace/kind/source_ref/correlation_ref without changing scheduler branches |
+| platform broker receives capability grant request | broker creates durable request fact first; mailbox envelope appears only for AgentRun continuation response |
 | user-origin envelope consumed successfully | payload cleanup runs after accepted refs/result are recorded |
 
 ### 5. Good/Base/Bad Cases
@@ -180,6 +182,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - Scheduler tests cover idle launch, running AgentLoopTurn-boundary drain-all, running no-steer AgentRunTurn-boundary drain-one, `BeforeStop` continuation, terminal fallback dedup, failed/interrupted pause, new user message after failure, promote, delete and manual resume.
 - Hook integration tests cover `AfterTurn` steering envelope, `BeforeStop` follow-up normalization, anchored hook auto-resume envelope and terminal effect replay dedup.
 - API tests cover composer submit duplicate receipt, mailbox list/delete/promote/resume, typed conflict for expected active AgentRunTurn mismatch, and no route-local `send_next/enqueue/steer` branch as authority.
+- Companion platform boundary tests cover current missing broker diagnostic for `target=platform` capability grants until broker request facts and response continuation delivery exist.
 - Frontend tests cover service URLs, generated DTO consumption, mailbox row rendering by `status/barrier/delivery`, composer submit outcome refresh, and no hand-written pending DTO aliases.
 
 ### 7. Wrong vs Correct

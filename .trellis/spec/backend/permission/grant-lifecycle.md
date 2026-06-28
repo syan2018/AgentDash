@@ -11,7 +11,7 @@
 - Agent runtime 或 platform broker 通过 `PermissionGrantService::request` 发起 capability 申请
 - `permission_grants` 数据库表 + REST endpoints
 - 跨层数据流：domain entity → application service → infrastructure repo → API handler → frontend card
-- Companion `capability_grant_request` 只作为交互/broker 输入；授权事实以 `PermissionGrant` 聚合为准。
+- Companion `capability_grant_request` 只作为交互/broker 输入；授权事实以 `PermissionGrant` 聚合为准。Platform broker 接入 `target=platform` 时，必须先创建 `PermissionGrant` 或等价 durable request fact，再处理 policy、用户审批和 runtime capability effect。
 
 ### 2. Signatures
 
@@ -132,6 +132,10 @@ CREATE INDEX idx_permission_grants_status
 | approved_by | Option\<String\> | user_id or "system" |
 | created_at | String | ISO 8601 |
 | updated_at | String | ISO 8601 |
+
+#### Platform Broker Boundary
+
+`target=platform` 的 capability grant request 进入 broker 后，request identity、policy decision、审批状态和 capability effect 以 `PermissionGrant` 为事实源。Broker response 只有在需要让某个 AgentRun 继续处理授权结果时，才创建 AgentRun mailbox message，并以 `permission_grant_id` 作为 `MailboxSourceIdentity.source_ref`。这样 permission audit、runtime capability transition 和 AgentRun continuation 可以独立恢复与重放。
 
 ### 4. Validation & Error Matrix
 

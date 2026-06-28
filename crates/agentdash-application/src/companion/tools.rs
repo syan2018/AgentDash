@@ -30,6 +30,7 @@ use super::tool_context::{
 use super::{
     CompanionGateControlService, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
+    CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
     ResolveCompanionParentRequestCommand, build_companion_event_notification,
 };
@@ -165,52 +166,164 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionParentMailboxDelivery {
                 "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }));
-        let mailbox_result = companion_mailbox_service(&self.repos, &self.session_services)
-            .accept_intake_message(AgentRunMailboxIntakeCommand {
+        deliver_companion_mailbox_message(
+            &self.repos,
+            &self.session_services,
+            CompanionMailboxDeliveryInput {
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
-                runtime_session_id: command.parent_delivery_runtime_session_id.clone(),
-                origin: MailboxMessageOrigin::Companion,
+                runtime_session_id: command.parent_delivery_runtime_session_id,
                 source,
-                retain_payload: true,
-                schedule_on_submit: true,
-                input: text_user_input_blocks(command.input_text),
+                input_text: command.input_text,
                 client_command_id: format!("companion-result:{}", command.gate_id),
-                source_dedup_key: Some(format!("companion_result:{}", command.gate_id)),
-                executor_config: None,
-                identity: None,
-                delivery_intent: None,
-            })
-            .await
-            .map_err(map_companion_mailbox_error)?;
+                source_dedup_key: format!("companion_result:{}", command.gate_id),
+            },
+        )
+        .await
+    }
+
+    async fn deliver_parent_request_to_parent(
+        &self,
+        command: CompanionParentRequestMailboxDeliveryCommand,
+    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        let source = MailboxSourceIdentity::new("companion", "parent_request", "agent")
+            .with_source_ref(command.gate_id.to_string())
+            .with_correlation_ref(command.request_id.clone())
+            .with_route("parent")
+            .with_metadata(serde_json::json!({
+                "gate_id": command.gate_id.to_string(),
+                "request_id": command.request_id.clone(),
+                "run_id": command.run_id.to_string(),
+                "parent_agent_id": command.parent_agent_id.to_string(),
+                "child_agent_id": command.child_agent_id.to_string(),
+                "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
+                "turn_id": command.turn_id.clone(),
+                "wait": command.wait,
+            }));
+        deliver_companion_mailbox_message(
+            &self.repos,
+            &self.session_services,
+            CompanionMailboxDeliveryInput {
+                run_id: command.run_id,
+                agent_id: command.parent_agent_id,
+                runtime_session_id: command.parent_delivery_runtime_session_id,
+                source,
+                input_text: command.input_text,
+                client_command_id: format!("companion-parent-request:{}", command.gate_id),
+                source_dedup_key: format!("companion_parent_request:{}", command.gate_id),
+            },
+        )
+        .await
+    }
+
+    async fn deliver_parent_response_to_child(
+        &self,
+        command: CompanionParentResponseMailboxDeliveryCommand,
+    ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        let source = MailboxSourceIdentity::new("companion", "parent_response", "agent")
+            .with_source_ref(command.gate_id.to_string())
+            .with_correlation_ref(command.request_id.clone())
+            .with_route("child")
+            .with_metadata(serde_json::json!({
+                "gate_id": command.gate_id.to_string(),
+                "request_id": command.request_id.clone(),
+                "run_id": command.run_id.to_string(),
+                "parent_agent_id": command.parent_agent_id.to_string(),
+                "parent_delivery_runtime_session_id": command.parent_delivery_runtime_session_id.clone(),
+                "child_agent_id": command.child_agent_id.to_string(),
+                "resolved_turn_id": command.resolved_turn_id.clone(),
+            }));
+        deliver_companion_mailbox_message(
+            &self.repos,
+            &self.session_services,
+            CompanionMailboxDeliveryInput {
+                run_id: command.run_id,
+                agent_id: command.child_agent_id,
+                runtime_session_id: command.child_delivery_runtime_session_id,
+                source,
+                input_text: command.input_text,
+                client_command_id: format!("companion-parent-response:{}", command.gate_id),
+                source_dedup_key: format!("companion_parent_response:{}", command.gate_id),
+            },
+        )
+        .await
+    }
+}
+
+struct CompanionMailboxDeliveryInput {
+    run_id: Uuid,
+    agent_id: Uuid,
+    runtime_session_id: String,
+    source: MailboxSourceIdentity,
+    input_text: String,
+    client_command_id: String,
+    source_dedup_key: String,
+}
+
+async fn deliver_companion_mailbox_message(
+    repos: &crate::repository_set::RepositorySet,
+    session_services: &SessionToolServices,
+    input: CompanionMailboxDeliveryInput,
+) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+    let mailbox_result = companion_mailbox_service(repos, session_services)
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: input.run_id,
+            agent_id: input.agent_id,
+            runtime_session_id: input.runtime_session_id,
+            origin: MailboxMessageOrigin::Companion,
+            source: input.source,
+            retain_payload: true,
+            schedule_on_submit: true,
+            input: text_user_input_blocks(input.input_text),
+            client_command_id: input.client_command_id,
+            source_dedup_key: Some(input.source_dedup_key),
+            executor_config: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .map_err(map_companion_mailbox_error)?;
+    if matches!(
+        mailbox_result.outcome,
+        AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
+    ) {
         let mailbox_message_id = mailbox_result
             .mailbox_message
             .as_ref()
-            .map(|message| message.id);
-        let command_receipt_id = mailbox_result
-            .mailbox_message
-            .as_ref()
-            .and_then(|message| message.command_receipt_id);
-        let accepted_agent_run_turn_id = mailbox_result
-            .accepted_refs
-            .as_ref()
-            .and_then(|refs| refs.agent_run_turn_id.clone());
-        let accepted_protocol_turn_id = mailbox_result
-            .accepted_refs
-            .as_ref()
-            .and_then(|refs| refs.protocol_turn_id.clone());
-
-        Ok(CompanionParentMailboxDeliveryResult {
-            mailbox_message_id,
-            command_receipt_id,
-            command_receipt_client_command_id: mailbox_result.command_receipt.client_command_id,
-            command_receipt_status: mailbox_result.command_receipt.status,
-            command_receipt_duplicate: mailbox_result.command_receipt.duplicate,
-            outcome: mailbox_result.outcome.as_str().to_string(),
-            accepted_agent_run_turn_id,
-            accepted_protocol_turn_id,
-        })
+            .map(|message| message.id.to_string())
+            .unwrap_or_else(|| "(none)".to_string());
+        return Err(crate::ApplicationError::Conflict(format!(
+            "companion mailbox delivery 未接受消息: outcome={}, mailbox_message_id={mailbox_message_id}",
+            mailbox_result.outcome.as_str()
+        )));
     }
+    let mailbox_message_id = mailbox_result
+        .mailbox_message
+        .as_ref()
+        .map(|message| message.id);
+    let command_receipt_id = mailbox_result
+        .mailbox_message
+        .as_ref()
+        .and_then(|message| message.command_receipt_id);
+    let accepted_agent_run_turn_id = mailbox_result
+        .accepted_refs
+        .as_ref()
+        .and_then(|refs| refs.agent_run_turn_id.clone());
+    let accepted_protocol_turn_id = mailbox_result
+        .accepted_refs
+        .as_ref()
+        .and_then(|refs| refs.protocol_turn_id.clone());
+
+    Ok(CompanionParentMailboxDeliveryResult {
+        mailbox_message_id,
+        command_receipt_id,
+        command_receipt_client_command_id: mailbox_result.command_receipt.client_command_id,
+        command_receipt_status: mailbox_result.command_receipt.status,
+        command_receipt_duplicate: mailbox_result.command_receipt.duplicate,
+        outcome: mailbox_result.outcome.as_str().to_string(),
+        accepted_agent_run_turn_id,
+        accepted_protocol_turn_id,
+    })
 }
 
 fn map_companion_mailbox_error(
@@ -922,6 +1035,16 @@ impl CompanionRequestTool {
                 "child_agent_id": opened.child_agent_id.to_string(),
                 "child_frame_id": opened.child_frame_id.to_string(),
                 "child_session_id": opened.child_delivery_runtime_session_id,
+                "parent_mailbox_delivery": {
+                    "mailbox_message_id": opened.parent_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
+                    "command_receipt_id": opened.parent_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
+                    "command_receipt_client_command_id": opened.parent_mailbox_delivery.command_receipt_client_command_id,
+                    "command_receipt_status": opened.parent_mailbox_delivery.command_receipt_status,
+                    "command_receipt_duplicate": opened.parent_mailbox_delivery.command_receipt_duplicate,
+                    "outcome": opened.parent_mailbox_delivery.outcome,
+                    "accepted_agent_run_turn_id": opened.parent_mailbox_delivery.accepted_agent_run_turn_id,
+                    "accepted_protocol_turn_id": opened.parent_mailbox_delivery.accepted_protocol_turn_id,
+                },
             })),
         })
     }
@@ -1464,6 +1587,19 @@ impl CompanionRespondTool {
                 "parent_agent_id": result.parent_agent_id.to_string(),
                 "parent_frame_id": result.parent_frame_id.to_string(),
                 "parent_delivery_runtime_session_id": result.parent_delivery_runtime_session_id,
+                "child_agent_id": result.child_agent_id.to_string(),
+                "child_frame_id": result.child_frame_id.to_string(),
+                "child_delivery_runtime_session_id": result.child_delivery_runtime_session_id,
+                "child_mailbox_delivery": {
+                    "mailbox_message_id": result.child_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
+                    "command_receipt_id": result.child_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
+                    "command_receipt_client_command_id": result.child_mailbox_delivery.command_receipt_client_command_id,
+                    "command_receipt_status": result.child_mailbox_delivery.command_receipt_status,
+                    "command_receipt_duplicate": result.child_mailbox_delivery.command_receipt_duplicate,
+                    "outcome": result.child_mailbox_delivery.outcome,
+                    "accepted_agent_run_turn_id": result.child_mailbox_delivery.accepted_agent_run_turn_id,
+                    "accepted_protocol_turn_id": result.child_mailbox_delivery.accepted_protocol_turn_id,
+                },
                 "payload": result.payload,
             })),
         }))

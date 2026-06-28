@@ -10,6 +10,7 @@ pub mod tools;
 pub use gate_control::{
     CompanionGateControlService, CompanionGateRespondResult, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
+    CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
     ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
     SessionEventingCompanionGateDelivery,

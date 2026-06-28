@@ -67,6 +67,7 @@ Mailbox 相关 sub-agent 还应重点走读：
 
 - `crates/agentdash-domain/src/agent_run_mailbox/mod.rs`
 - `crates/agentdash-application-agentrun/src/agent_run/mailbox.rs`
+- `crates/agentdash-application-agentrun/src/agent_run/mailbox/`（W0A 完成后）
 - `crates/agentdash-infrastructure/src/persistence/postgres/agent_run_mailbox_repository.rs`
 - `crates/agentdash-infrastructure/migrations/0013_agent_run_mailbox.sql`
 - `crates/agentdash-api/src/routes/agent_run_mailbox_contracts.rs`
@@ -76,6 +77,7 @@ Mailbox 相关 sub-agent 还应重点走读：
 | Item | Can Parallelize | Reason |
 | --- | --- | --- |
 | W0 | No | Defines source identity / envelope attribution model used by every later item. |
+| W0A | No | Moves `agent_run/mailbox` into a directory module; every later mailbox helper change depends on the new file ownership. |
 | W1 | No | Defines shared mailbox intake helper shape; parallel implementation would duplicate wrappers. |
 | W2 | Yes, after W1 | Mostly Routine files plus mailbox helper call sites. Can run with W3. |
 | W3 | Yes, after W1 | Companion child dispatch path. Can run with W2, but should precede W4. |
@@ -90,7 +92,8 @@ Mailbox 相关 sub-agent 还应重点走读：
 Wave 0: Foundation
 
 - Run W0 source identity model alone.
-- Run W1 mailbox intake command shape alone after W0.
+- Run W0A agent_run/mailbox directory split alone after W0.
+- Run W1 mailbox intake command shape alone after W0A.
 
 Wave 1: Independent backend paths
 
@@ -119,6 +122,7 @@ Wave 4: Projection and final checks
 - If two agents need to edit `crates/agentdash-application/src/companion/tools.rs`, pause one and let the main session serialize the edits.
 - If a work item needs to change mailbox source identity schema, it must go back through W0 rather than adding local ad hoc strings or enum variants.
 - If a work item needs a new mailbox helper field, it must update W1 first and notify active dependent agents.
+- If a work item needs to move `agent_run/mailbox` files, it must go through W0A rather than mixing file moves into Routine or Companion delivery changes.
 - If tests fail due to unrelated dirty workspace changes, do not revert them; report the scope and continue with targeted checks where possible.
 
 ## Completion Report Format

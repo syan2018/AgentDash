@@ -8,9 +8,11 @@ pub(crate) mod tool_context;
 pub mod tools;
 
 pub use gate_control::{
-    CompanionGateControlService, CompanionGateRespondResult, CompleteCompanionChildResultCommand,
-    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
-    RespondCompanionGateCommand, SessionEventingCompanionGateDelivery,
+    CompanionGateControlService, CompanionGateRespondResult, CompanionParentMailboxDelivery,
+    CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
+    CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
+    ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
+    SessionEventingCompanionGateDelivery,
 };
 pub use notifications::{
     build_companion_event_notification, build_companion_human_response_notification,

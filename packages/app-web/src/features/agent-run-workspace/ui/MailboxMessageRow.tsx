@@ -4,6 +4,7 @@ import type {
   ConversationCommandView,
 } from "../../../generated/workflow-contracts";
 import type {
+  MailboxMessageStatus,
   MailboxStateView,
   MailboxMessageView,
 } from "../../../generated/agent-run-mailbox-contracts";
@@ -147,6 +148,82 @@ export function MailboxSections({
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  "mailbox.source.core.composer": "用户输入",
+  "mailbox.source.core.canvas_action": "Canvas",
+  "mailbox.source.core.draft_start": "草稿输入",
+  "mailbox.source.core.hook_after_turn": "Hook",
+  "mailbox.source.core.hook_before_stop": "Hook",
+  "mailbox.source.core.hook_auto_resume": "Hook",
+  "mailbox.source.core.local_relay_prompt": "本机输入",
+  "mailbox.source.routine.trigger": "Routine 触发",
+  "mailbox.source.companion.dispatch": "Companion 派发",
+  "mailbox.source.companion.result": "Companion 结果",
+  "mailbox.source.companion.parent_request": "Parent 请求",
+  "mailbox.source.companion.parent_response": "Parent 回应",
+  "mailbox.source.companion.human_response": "用户回应",
+  "mailbox.source.companion.parent_resume": "Parent 续跑",
+  "mailbox.source.workflow.orchestrator": "Workflow",
+};
+
+const STATUS_LABELS: Record<MailboxMessageStatus, string> = {
+  accepted: "已接收",
+  queued: "排队",
+  ready_to_consume: "待投递",
+  consuming: "投递中",
+  dispatched: "已投递",
+  steered: "已注入",
+  paused: "暂停",
+  blocked: "阻塞",
+  failed: "失败",
+  deleted: "已删除",
+};
+
+function mailboxSourceLabel(message: MailboxMessageView): string {
+  const source = message.source;
+  const explicitLabel = SOURCE_LABELS[source.display_label_key];
+  if (explicitLabel) return explicitLabel;
+
+  const namespaceKindLabel = SOURCE_LABELS[`mailbox.source.${source.namespace}.${source.kind}`];
+  if (namespaceKindLabel) return namespaceKindLabel;
+
+  switch (source.namespace) {
+    case "routine":
+      return "Routine";
+    case "companion":
+      return "Companion";
+    case "workflow":
+      return "Workflow";
+    case "core":
+      return source.kind === "canvas_action" ? "Canvas" : "用户输入";
+    default:
+      return formatSourceKind(source.kind || source.namespace);
+  }
+}
+
+function formatSourceKind(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function mailboxStatusClassName(status: MailboxMessageStatus): string {
+  switch (status) {
+    case "blocked":
+    case "failed":
+      return "bg-destructive/10 text-destructive";
+    case "paused":
+      return "bg-warning/10 text-warning";
+    case "consuming":
+    case "ready_to_consume":
+      return "bg-info/10 text-info";
+    default:
+      return "border border-border bg-secondary text-muted-foreground";
+  }
+}
+
 // ─── Section Label ────────────────────────────────────
 
 function SectionLabel({ label, count }: { label: string; count: number }) {
@@ -202,6 +279,8 @@ function MessageRow({
 
   const isFailed = message.status === "failed" || message.status === "blocked";
   const isSteer = section === "steer";
+  const sourceLabel = mailboxSourceLabel(message);
+  const statusLabel = STATUS_LABELS[message.status];
 
   return (
     <div className="group relative flex h-8 items-center gap-2 px-3">
@@ -224,6 +303,9 @@ function MessageRow({
       </div>
 
       {/* 内容 */}
+      <span className="max-w-28 shrink-0 truncate rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+        {sourceLabel}
+      </span>
       <span className={`min-w-0 flex-1 truncate text-[13px] leading-tight ${isFailed ? "text-destructive/80" : "text-foreground/80"}`}>
         {message.preview || "(空)"}
         {message.has_images && (
@@ -231,11 +313,9 @@ function MessageRow({
         )}
       </span>
 
-      {isFailed && (
-        <span className="shrink-0 rounded-[6px] bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-          失败
-        </span>
-      )}
+      <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium ${mailboxStatusClassName(message.status)}`}>
+        {statusLabel}
+      </span>
 
       {/* hover 操作 */}
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

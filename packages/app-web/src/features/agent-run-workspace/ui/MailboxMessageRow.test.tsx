@@ -76,6 +76,8 @@ describe("MailboxMessageList", () => {
     const markup = renderMailboxList({ deleteCommand });
 
     expect(markup).toContain("继续处理下一步");
+    expect(markup).toContain("用户输入");
+    expect(markup).toContain("排队");
     expect(markup).toContain("删除");
     // 不应暴露后端状态机概念
     expect(markup).not.toContain("排队中");
@@ -83,6 +85,89 @@ describe("MailboxMessageList", () => {
     expect(markup).not.toContain("启动或继续");
     expect(markup).not.toContain("Loop 边界");
     expect(markup).not.toContain("Stop continuation");
+  });
+
+  it("renders Routine source identity with queued status", () => {
+    const markup = renderMailboxList({
+      messages: [
+        {
+          ...mailboxMessage,
+          id: "routine-message-1",
+          origin: "system",
+          source: {
+            namespace: "routine",
+            kind: "trigger",
+            source_ref: "routine-execution-1",
+            correlation_ref: "routine-1",
+            actor: "routine",
+            display_label_key: "mailbox.source.routine.trigger",
+          },
+          preview: "Routine 后续触发",
+          status: "queued",
+          can_reorder: false,
+          can_recall: false,
+        },
+      ],
+      deleteCommand,
+    });
+
+    expect(markup).toContain("Routine 触发");
+    expect(markup).toContain("Routine 后续触发");
+    expect(markup).toContain("排队");
+    expect(markup).not.toContain("mailbox.source.routine.trigger");
+  });
+
+  it("renders Companion source identities with paused and blocked status", () => {
+    const markup = renderMailboxList({
+      messages: [
+        {
+          ...mailboxMessage,
+          id: "companion-dispatch-1",
+          origin: "companion",
+          source: {
+            namespace: "companion",
+            kind: "dispatch",
+            source_ref: "dispatch-1",
+            correlation_ref: "gate-1",
+            actor: "agent",
+            route: "sub",
+            display_label_key: "mailbox.source.companion.dispatch",
+          },
+          preview: "派发给协作 Agent",
+          status: "paused",
+          can_promote: false,
+          can_reorder: false,
+          can_recall: false,
+        },
+        {
+          ...mailboxMessage,
+          id: "companion-human-response-1",
+          origin: "companion",
+          source: {
+            namespace: "companion",
+            kind: "human_response",
+            source_ref: "gate-2",
+            correlation_ref: "request-2",
+            actor: "human",
+            route: "human",
+            display_label_key: "mailbox.source.companion.human_response",
+          },
+          preview: "用户已回应",
+          status: "blocked",
+          can_promote: false,
+          can_reorder: false,
+          can_recall: false,
+        },
+      ],
+      deleteCommand,
+    });
+
+    expect(markup).toContain("Companion 派发");
+    expect(markup).toContain("用户回应");
+    expect(markup).toContain("暂停");
+    expect(markup).toContain("阻塞");
+    expect(markup).not.toContain("mailbox.source.companion.dispatch");
+    expect(markup).not.toContain("mailbox.source.companion.human_response");
   });
 
   it("shows promote button only when command enabled and message can_promote", () => {
@@ -205,7 +290,7 @@ describe("MailboxMessageList", () => {
     });
 
     expect(markup).toContain("继续处理下一步");
-    expect(markup).toContain("失败");
+    expect(markup).toContain("阻塞");
     // 不应暴露后端状态机概念
     expect(markup).not.toContain("已阻塞");
     expect(markup).not.toContain("Loop 边界");

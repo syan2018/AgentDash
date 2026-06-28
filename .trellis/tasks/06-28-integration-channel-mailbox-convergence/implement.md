@@ -22,7 +22,7 @@ Sub-agent 派发规范与并行策略见 [subagent-dispatch.md](./subagent-dispa
 
 最优方案按 4 个 wave 推进：
 
-1. Wave 0 foundation: W0 独占，随后 W1 独占。
+1. Wave 0 foundation: W0 source identity model 独占，随后 W1 mailbox intake command shape 独占。
 2. Wave 1 independent backend paths: W2 与 W3 在 W1 后并行。
 3. Wave 2 Companion delivery adapter: W4 在 W3 后执行，作为 gate resolve -> mailbox delivery 的样板。
 4. Wave 3 remaining Companion surface: W5、W6 顺序执行；W7 可在不改 active Companion 文件时并行。
@@ -37,5 +37,5 @@ Sub-agent 派发规范与并行策略见 [subagent-dispatch.md](./subagent-dispa
 - [ ] 所有新投递路径先有 durable mailbox envelope，再触发 scheduler。
 - [ ] Companion gate 继续作为 request/review/wait/correlation 事实。
 - [ ] Routine / Companion 不新增平行 pending queue。
-- [ ] Source values 必须通过 W0 的跨层 baseline 维护。
+- [ ] Source identity schema 必须通过 W0 的跨层 baseline 维护。
 - [ ] Shared mailbox helper shape 必须通过 W1 维护。

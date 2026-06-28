@@ -1,10 +1,10 @@
-# W0: Source And Schema Baseline
+# W0: Mailbox Source Model Baseline
 
 Status: planned
 
 ## Goal
 
-拉平 mailbox source 在 migration、domain、API mapper、contract DTO、generated TS 与 frontend labels 的一致性，为 Routine / Companion 新 source 提供稳定基础。
+重建 mailbox source identity / envelope attribution 模型，避免继续用 closed enum 和 DB check constraint 表达来源。该模型要支撑当前 core/Routine/Companion 来源，并为未来 Agent channel / integration adapter 留出开放边界。
 
 ## Dependencies
 
@@ -12,16 +12,18 @@ Status: planned
 
 ## Deliverables
 
-- [ ] 修正 `agent_run_mailbox_messages_source_check` 与 domain/API source enum 的一致性，至少包含当前代码已使用的 `canvas_action`。
-- [ ] 新增或规范 Companion source：`companion_dispatch`、`companion_result`、`companion_parent_request`、`companion_parent_response`、`companion_human_response`。
-- [ ] 更新 API mapper、contract DTO、generated TS、frontend label 映射。
-- [ ] 增加 source enum / migration drift 测试。
+- [ ] 设计并落库开放式 `MailboxSourceIdentity`，至少包含 namespace、kind、source_ref、correlation_ref、actor、route metadata、display_label_key、metadata_json。
+- [ ] 将当前 `MailboxMessageSource` enum/check constraint 迁移为 source identity；`canvas_action` drift 在迁移中自然消除。
+- [ ] 更新 domain、repository、API mapper、contract DTO、generated TS、frontend label 映射，前端不再依赖 closed source union 扩展业务来源。
+- [ ] 明确 scheduler 不按 source identity 决定 delivery；delivery 继续由 origin/delivery/barrier/drain_mode/runtime state 驱动。
+- [ ] 增加 source identity serialization / repository / contract drift 测试。
 
 ## Acceptance
 
-- [ ] Migration、domain enum、API mapper、generated TS source union 完全一致。
-- [ ] Canvas submit 现有行为不再受 migration check constraint 阻断。
-- [ ] 后续 Routine / Companion source 新增有单一跨层检查入口。
+- [ ] Migration、domain model、API mapper、generated TS 对 source identity 字段完全一致。
+- [ ] Canvas submit 现有行为不再受 source check constraint 阻断。
+- [ ] Routine / Companion source 不需要新增 enum variant 即可表达。
+- [ ] 后续 channel / integration adapter 能通过 namespace/kind/source_ref/metadata 接入 attribution，不需要改 scheduler 分支。
 
 ## Suggested Validation
 
@@ -31,5 +33,4 @@ Status: planned
 
 ## Parallel Guidance
 
-W0 必须独占执行。其它实现工作项只能在 W0 合并后开始，避免 source value 和 contract churn 反复冲突。
-
+W0 必须独占执行。其它实现工作项只能在 W0 合并后开始，避免 source identity schema 和 contract churn 反复冲突。

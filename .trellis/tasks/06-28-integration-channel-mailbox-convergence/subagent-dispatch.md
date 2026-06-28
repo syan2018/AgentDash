@@ -8,17 +8,35 @@
 
 - 维护 `prd.md`、`design.md`、`implement.md` 和工作项状态。
 - 派发 sub-agent 前确认依赖已满足。
-- 合并跨工作项设计决策，尤其是 mailbox helper shape、source values、gate payload refs。
+- 合并跨工作项设计决策，尤其是 mailbox helper shape、source identity schema、gate payload refs。
 - 处理跨文件冲突和最终检查。
 
 Sub-agent 职责：
 
 - 只实现被派发工作项的 deliverables。
-- 开始前读取 `implement.jsonl` 中列出的 spec/task docs，以及被派发的 `work-items/W*.md`。
+- 开始前完整阅读 `implement.jsonl` 中列出的 spec/task docs，以及当前 task 的 `prd.md`、`design.md`、`implement.md`、`subagent-dispatch.md` 和被派发的 `work-items/W*.md`。
+- 不允许只根据工作项摘要开工；必须掌握完整设计语境，尤其是 mailbox source identity、per-AgentRun scheduler 边界、RoutineExecution / LifecycleGate / AgentRunMailboxMessage 职责拆分。
 - 不修改其它工作项状态，除非主会话明确授权。
 - 不创建 Trellis 子任务，不切换 active task。
 - 不引入 direct launch fallback、runtime-only notification delivery 或新的 pending queue。
 - 完成后汇报改动文件、验证命令、未覆盖风险和需要主会话合并的接口。
+
+## Design Context Gate
+
+Sub-agent 执行前必须确认已经完整读完：
+
+- `.trellis/tasks/06-28-integration-channel-mailbox-convergence/prd.md`
+- `.trellis/tasks/06-28-integration-channel-mailbox-convergence/design.md`
+- `.trellis/tasks/06-28-integration-channel-mailbox-convergence/implement.md`
+- `.trellis/tasks/06-28-integration-channel-mailbox-convergence/subagent-dispatch.md`
+- 对应 `work-items/W*.md`
+
+如果 sub-agent 不能复述本任务的核心设计边界，主会话不得接受其实现结果。核心边界包括：
+
+- Mailbox 是 per-AgentRun durable inbox / scheduler，不是全局 channel broker。
+- Source identity 是开放 attribution/correlation/projection 模型，不是继续追加 closed enum。
+- Scheduler 不按 source identity 分支，仍按 origin、delivery、barrier、drain_mode、priority 和 runtime state 调度。
+- RoutineExecution 和 LifecycleGate 保留业务事实；AgentRunMailboxMessage 承担投递事实。
 
 ## Required Context Per Agent
 
@@ -57,7 +75,7 @@ Mailbox 相关 sub-agent 还应重点走读：
 
 | Item | Can Parallelize | Reason |
 | --- | --- | --- |
-| W0 | No | Defines source/schema baseline used by every later item. |
+| W0 | No | Defines source identity / envelope attribution model used by every later item. |
 | W1 | No | Defines shared mailbox intake helper shape; parallel implementation would duplicate wrappers. |
 | W2 | Yes, after W1 | Mostly Routine files plus mailbox helper call sites. Can run with W3. |
 | W3 | Yes, after W1 | Companion child dispatch path. Can run with W2, but should precede W4. |
@@ -71,8 +89,8 @@ Mailbox 相关 sub-agent 还应重点走读：
 
 Wave 0: Foundation
 
-- Run W0 alone.
-- Run W1 alone after W0.
+- Run W0 source identity model alone.
+- Run W1 mailbox intake command shape alone after W0.
 
 Wave 1: Independent backend paths
 
@@ -99,7 +117,7 @@ Wave 4: Projection and final checks
 ## Conflict Rules
 
 - If two agents need to edit `crates/agentdash-application/src/companion/tools.rs`, pause one and let the main session serialize the edits.
-- If a work item needs to change mailbox source values, it must go back through W0 rather than adding local ad hoc strings.
+- If a work item needs to change mailbox source identity schema, it must go back through W0 rather than adding local ad hoc strings or enum variants.
 - If a work item needs a new mailbox helper field, it must update W1 first and notify active dependent agents.
 - If tests fail due to unrelated dirty workspace changes, do not revert them; report the scope and continue with targeted checks where possible.
 
@@ -110,10 +128,10 @@ Each sub-agent should report:
 ```text
 Work item:
 Status:
+Design context read:
 Files changed:
 Validation run:
 Validation result:
 Residual risks:
 Follow-up needed from main session:
 ```
-

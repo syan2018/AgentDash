@@ -8,13 +8,13 @@ Status: planned
 
 ## Dependencies
 
-- W0 source/schema baseline 完成。
+- W0 source identity model 完成。
 - W1 mailbox intake command shape 完成。
 
 ## Deliverables
 
 - [ ] 在 Routine application 层引入明确 dispatch branch：new target 走 lifecycle creation；existing target 转 mailbox intake。
-- [ ] `DispatchStrategy::Reuse` 命中已有 target 时调用 mailbox intake，source 使用 `routine_executor`。
+- [ ] `DispatchStrategy::Reuse` 命中已有 target 时调用 mailbox intake，source identity 使用 `namespace=routine`、`kind=trigger`、`source_ref=routine_execution_id`。
 - [ ] `DispatchStrategy::PerEntity` 首次触发按 Fresh 创建 run；后续解析到 entity target 时按 Reuse 入 mailbox。
 - [ ] 在 `RoutineExecution` dispatch refs 中记录 mailbox message / command receipt / delivery refs。
 - [ ] client command id / dedup key 使用 `routine_execution:{execution_id}`。
@@ -35,4 +35,3 @@ Status: planned
 ## Parallel Guidance
 
 W2 可以在 W1 完成后与 W3 并行。W2 主要触碰 `routine/*` 和 mailbox helper，避免同时修改 Companion gate 文件。
-

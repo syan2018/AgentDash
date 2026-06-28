@@ -8,13 +8,13 @@ Status: planned
 
 ## Dependencies
 
-- W0 source/schema baseline 完成。
+- W0 source identity model 完成。
 - W1 mailbox intake command shape 完成。
 
 ## Deliverables
 
 - [ ] 将 `CompanionChildDispatchService::dispatch_child` 调整为只负责创建 child AgentRun、AgentFrame、RuntimeSession anchor、LifecycleGate、lineage 和 task binding。
-- [ ] child 首条 `dispatch_prompt` 通过 child mailbox 投递，source 使用 `companion_dispatch`。
+- [ ] child 首条 `dispatch_prompt` 通过 child mailbox 投递，source identity 使用 `namespace=companion`、`kind=dispatch`、`source_ref=dispatch_id/gate_id`。
 - [ ] 保留 `CompanionLaunchSource` 作为 frame construction modifier，不再由 tool 层 direct launch child session。
 - [ ] wait=true / wait=false 都保留 dispatch correlation，便于后续结果回流。
 
@@ -33,4 +33,3 @@ Status: planned
 ## Parallel Guidance
 
 W3 可以与 W2 并行。W3 应先于 W4 完成，原因是 W4 的 end-to-end result 验证依赖 child dispatch correlation 和 child mailbox launch 语义稳定。
-

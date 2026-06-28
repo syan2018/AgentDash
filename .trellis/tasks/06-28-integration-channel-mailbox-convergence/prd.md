@@ -16,14 +16,14 @@
 已确认的现状：
 
 - RoutineExecutor 当前路径是 `trigger -> RoutineExecution -> LifecycleDispatchService`，`DispatchStrategy::Reuse` 会复用已有 run/agent，但 prompt 仍作为 Routine dispatch 的内部输入，而不是进入目标 AgentRun mailbox。
-- `MailboxMessageSource` 已预留 `routine_executor` 和 `workflow_orchestrator`，但 RoutineExecutor 尚未通过 `AgentRunMailboxService` materialize message。
+- `MailboxMessageSource` 当前是 closed enum，并已预留 `routine_executor` 和 `workflow_orchestrator`；这能支撑少量内置来源，但不适合作为后续 Agent channel / integration source 的拓展边界。
 - Companion `target=sub` 当前会创建 child AgentRun 后直接调用 `launch_command_with_outcome`，child 首条任务未进入 child mailbox。
 - `companion_respond` 会尝试命中 parent-owned gate、hook pending action、child-owned gate 三类副作用；这些命中不是互斥路径。
 - `target=parent` 当前已创建 parent-owned `LifecycleGate` 并向 parent runtime 发送 notification；resolve 后仍以 notification 表达。
 - `target=human` 当前创建 gate 并向当前 runtime 发送 human request notification；用户 respond 后写 gate，再注入 runtime notification。
 - `target=platform` 当前只有未启用 broker 的错误路径；它不是本轮 mailbox 投递主线，但需要保留清晰边界，避免后续绕回 ad hoc notification。
 - Companion notification delivery 失败通常只记录 warn，不具备 mailbox 的 claim/recovery/paused/manual resume 语义。
-- Mailbox migration 的 source check 与代码 enum 已有 drift：domain/API 已包含 `canvas_action`，migration `0013_agent_run_mailbox.sql` 尚未包含。
+- Mailbox migration 的 source check 与代码 enum 已有 drift：domain/API 已包含 `canvas_action`，migration `0013_agent_run_mailbox.sql` 尚未包含。这个 drift 暴露出 closed enum + DB check constraint 不适合作为长期来源模型。
 
 ## Requirements
 
@@ -32,17 +32,19 @@
 - R3: 明确 RoutineExecution 与 mailbox message 的关联关系，保留 RoutineExecution 作为触发、模板、entity memory、执行结果的事实源，同时将面向 Agent 的后续输入落到 mailbox。
 - R4: Companion 作为一等收束目标覆盖完整交互面：child initial task、child result to parent、child parent request、parent response to child、human request、human response 都需要有 mailbox delivery 事实；LifecycleGate 保留为等待、审阅、采纳与 correlation 事实。
 - R5: 明确 LifecycleGate 在收束后的角色：负责等待、审阅、采纳、关联 parent/child/human request，而不负责替代消息投递事实。
-- R6: 设计 Companion mailbox envelope 的来源、dedup、correlation、payload retention、preview 和 frontend projection。
+- R6: 设计 Companion mailbox envelope 的 source identity、dedup、correlation、payload retention、preview 和 frontend projection。
 - R7: Companion 与 Routine 入站策略复用现有 mailbox delivery/barrier/drain_mode，作为同一 workspace mailbox/status 面的可观察消息。
 - R8: Routine 后续触发和 Companion 回流在 AgentRun workspace 的 mailbox/status 区域可观察、可暂停、可恢复、可删除或可重排。
 - R9: Host Integration 自定义信道系统由长期 draft 承载；本任务仅为未来信道打好 AgentRun mailbox 入站边界。
-- R10: 识别当前 schema drift 与必要 migration：mailbox source check、domain enum、API mapper、generated TS 必须一致。
+- R10: 重建 mailbox source identity 模型，避免继续用 closed enum 表达来源；目标模型至少能表达 namespace、kind、source ref、correlation、actor、route metadata 和 display label key。
+- R11: 识别当前 schema drift 与必要 migration：`canvas_action` drift 需要被修正，但修正方向应落到可拓展 source identity，而不是继续扩大 enum/check constraint。
 
 ## Acceptance Criteria
 
 - [ ] `design.md` 给出 Routine 单会话模式进入 mailbox 的推荐数据流。
 - [ ] `design.md` 给出 Companion sub / parent / human 全交互面进入 mailbox 的推荐数据流。
 - [ ] `design.md` 明确 RoutineExecution、LifecycleGate、AgentRunMailboxMessage 三者的职责边界。
+- [ ] `design.md` 明确 mailbox source / envelope 的可拓展模型，不以继续追加 enum variant 作为目标方案。
 - [ ] `design.md` 覆盖失败恢复、重复触发、running turn boundary、paused mailbox、manual resume 的行为。
 - [ ] `design.md` 明确数据库 / domain / DTO / frontend projection 需要调整的方向。
 - [ ] `implement.md` 以同一任务下的工作项列出可执行推进计划、依赖、验收和验证命令。

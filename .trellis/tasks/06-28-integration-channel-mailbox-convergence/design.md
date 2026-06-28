@@ -9,10 +9,13 @@
 
 Mailbox 保持 per-AgentRun durable inbox 与 scheduler，不升级为全局 channel broker。RoutineExecution 与 LifecycleGate 继续作为各自业务事实源；AgentRunMailboxMessage 作为投递事实源。
 
+本任务包含 mailbox source / envelope 的可拓展重建模。目标不是继续给 `MailboxMessageSource` 追加 enum variant，而是把“来源身份”和“调度策略”拆开：来源身份用于审计、projection、dedup、correlation 和未来 channel/integration 接入；调度策略继续由 mailbox delivery/barrier/drain_mode 决定。
+
 ## Code Evidence
 
 - Routine 已在 `LifecycleAgentReuseResolver` 中解析 reusable run/agent/frame，但 `RoutineExecutor::execute_with_dispatch` 最终仍统一调用 `LifecycleDispatchService::execute_subject`。
 - Mailbox application service 已有 `accept_user_message_for_target`，可以面向已解析 AgentRun target 创建 durable message、claim command receipt、选择 idle/running/paused delivery policy。
+- Mailbox 当前使用 closed `MailboxMessageSource` enum 和 migration check constraint 表达来源，已经出现 `canvas_action` 代码/迁移 drift；这说明 source 模型需要先从 closed enum/check constraint 中解耦。
 - `companion_request target=sub` 当前在 `CompanionChildDispatchService::dispatch_child` 后直接调用 `launch_command_with_outcome`。
 - `companion_respond` 会依次尝试 resolve parent request gate、resolve hook pending action、complete child result to parent，且这些副作用可以同时命中。
 - `CompanionGateControlService` 已有 parent request open/resolve、child result complete、human gate respond 的 durable gate 流程；缺口在于 delivery 仍主要是 runtime notification。
@@ -40,7 +43,7 @@ Routine trigger
        lifecycle creation creates AgentRun anchors
        initial input enters mailbox as first message
      if target is existing run/agent:
-       AgentRunMailboxService::accept_user_message_for_target(source=routine_executor)
+       AgentRunMailboxService::accept_message_for_target(source_identity=routine trigger)
 ```
 
 ### Ownership
@@ -83,20 +86,20 @@ companion_respond
 ```text
 companion_request target=sub
   -> create/select child AgentRun + gate if wait/review is needed
-  -> child mailbox message(source=companion_dispatch, correlation=dispatch_id/gate_id)
+  -> child mailbox message(source_identity=companion dispatch, correlation=dispatch_id/gate_id)
 
 child companion_respond
   -> resolve child-owned LifecycleGate
-  -> parent mailbox message(source=companion_result, correlation=dispatch_id/gate_id)
+  -> parent mailbox message(source_identity=companion result, correlation=dispatch_id/gate_id)
   -> optional child mailbox event/source projection for local acknowledgement
 
 companion_request target=parent
   -> open parent-owned LifecycleGate
-  -> parent mailbox message(source=companion_parent_request, correlation=gate_id)
+  -> parent mailbox message(source_identity=companion parent request, correlation=gate_id)
 
 parent companion_respond
   -> resolve parent-owned LifecycleGate
-  -> child mailbox message(source=companion_parent_response, correlation=gate_id)
+  -> child mailbox message(source_identity=companion parent response, correlation=gate_id)
 
 companion_request target=human
   -> open current-agent LifecycleGate
@@ -104,7 +107,7 @@ companion_request target=human
 
 human gate respond
   -> resolve LifecycleGate
-  -> requesting AgentRun mailbox message(source=companion_human_response, correlation=gate_id)
+  -> requesting AgentRun mailbox message(source_identity=companion human response, correlation=gate_id)
 ```
 
 LifecycleGate remains the durable coordination fact for waiting, review, response validation and parent/child/human correlation. It should not be the only delivery mechanism for messages that an AgentRun must process.
@@ -121,16 +124,32 @@ companion_request target=platform
 
 This keeps platform capability work from becoming another runtime notification side channel while acknowledging that the broker itself is a separate prerequisite.
 
-## Mailbox Envelope Direction
+## Mailbox Source Model
 
-Short-term domain may continue using enum sources. Candidate source values:
+Target source model should be open enough for built-in sources, Routine, Companion and future channel/integration adapters without changing domain enums for every new route.
 
-- `routine_executor`
-- `companion_dispatch`
-- `companion_result`
-- `companion_parent_request`
-- `companion_parent_response`
-- `companion_human_response`
+Recommended source identity shape:
+
+```text
+MailboxSourceIdentity
+  namespace: "core" | "routine" | "companion" | future integration/channel key
+  kind: stable string, e.g. "composer", "trigger", "dispatch", "result", "parent_request"
+  source_ref: optional durable fact id, e.g. routine_execution_id / gate_id / dispatch_id
+  correlation_ref: optional cross-message correlation id
+  actor: user | system | routine | agent | human | platform
+  route: optional route metadata, e.g. sub / parent / human / platform_boundary
+  display_label_key: frontend/backend projection label key
+  metadata_json: source-specific structured facts
+```
+
+The mailbox scheduler must not branch on source identity for delivery semantics. Delivery remains driven by `origin`, `delivery`, `barrier`, `drain_mode`, priority and runtime state. Source identity is for fact attribution, dedup, correlation, projection and future adapter governance.
+
+Current enum values should be migrated into this shape:
+
+- `composer` -> `namespace=core`, `kind=composer`
+- `canvas_action` -> `namespace=core`, `kind=canvas_action`
+- `routine_executor` -> `namespace=routine`, `kind=trigger`
+- companion paths -> `namespace=companion`, `kind=dispatch/result/parent_request/parent_response/human_response`
 
 Each Routine / Companion mailbox message should carry:
 

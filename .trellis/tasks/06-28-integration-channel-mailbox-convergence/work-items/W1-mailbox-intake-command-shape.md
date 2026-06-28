@@ -4,17 +4,17 @@ Status: planned
 
 ## Goal
 
-为 Routine / Companion 建立中性的 mailbox intake command 形态，复用现有 command receipt、delivery policy、scheduler 和 projection，同时避免语义上把系统/agent 消息伪装成 user composer。
+为 Routine / Companion 建立中性的 mailbox intake command 形态，复用现有 command receipt、delivery policy、scheduler 和 projection，同时接收 W0 定义的开放式 source identity，避免语义上把系统/agent 消息伪装成 user composer。
 
 ## Dependencies
 
-- W0 source/schema baseline 完成。
+- W0 source identity model 完成。
 
 ## Deliverables
 
 - [ ] 评估是否将 `accept_user_message_for_target` 抽出中性 command 名称，或保留现名但新增 Routine / Companion helper。
-- [ ] 明确 origin、source、identity、payload retention、executor_config、client_command_id 的生成规则。
-- [ ] 为 Routine / Companion message 建立 stable source dedup key 格式。
+- [ ] 明确 origin、source_identity、payload retention、executor_config、client_command_id 的生成规则。
+- [ ] 为 Routine / Companion message 建立 stable source dedup key 格式，优先引用 source_ref / correlation_ref。
 - [ ] 给后续 W2-W6 提供统一 helper 或清晰 application service entry。
 
 ## Acceptance
@@ -30,4 +30,3 @@ Status: planned
 ## Parallel Guidance
 
 W1 应在 W0 之后独占执行。W2-W6 应等 W1 的 helper shape 稳定后再并行，否则会在 mailbox application service 上产生重复封装。
-

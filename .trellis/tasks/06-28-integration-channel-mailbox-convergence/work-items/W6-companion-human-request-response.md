@@ -8,14 +8,14 @@ Human request 继续作为 UI-facing 事件暴露给用户；human response reso
 
 ## Dependencies
 
-- W0 source/schema baseline 完成。
+- W0 source identity model 完成。
 - W1 mailbox intake command shape 完成。
 - W4 的 gate delivery adapter pattern 已稳定。
 
 ## Deliverables
 
 - [ ] `target=human` 创建 gate 后继续产生 human-visible UI notification / projection。
-- [ ] human respond resolve gate 后创建 requesting AgentRun mailbox message，source 使用 `companion_human_response`。
+- [ ] human respond resolve gate 后创建 requesting AgentRun mailbox message，source identity 使用 `namespace=companion`、`kind=human_response`、`source_ref=gate_id`。
 - [ ] wait=true 轮询 gate 的工具返回仍读取 gate payload；AgentRun 后续处理读取 mailbox message。
 - [ ] wait=false 用户回应后不再仅作为 runtime notification 注入。
 
@@ -35,4 +35,3 @@ Human request 继续作为 UI-facing 事件暴露给用户；human response reso
 ## Parallel Guidance
 
 W6 可以与 W5 并行做设计审阅，但落代码建议顺序执行。若必须并行，W6 只负责 API/gate respond human path，W5 只负责 parent-owned gate path，并由主会话统一合并 `companion/tools.rs`。
-

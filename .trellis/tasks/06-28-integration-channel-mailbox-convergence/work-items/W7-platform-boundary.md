@@ -8,7 +8,7 @@ Status: planned
 
 ## Dependencies
 
-- W0 source/schema baseline 完成。
+- W0 source identity model 完成。
 - 不依赖 W2-W6 的业务实现。
 
 ## Deliverables
@@ -30,4 +30,3 @@ Status: planned
 ## Parallel Guidance
 
 W7 可以与 W2/W3 并行做文档和测试检查。若需要改 `companion/tools.rs`，应避开 W3/W5/W6 的代码窗口，避免同文件冲突。
-

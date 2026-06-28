@@ -467,7 +467,7 @@ pub async fn submit_agent_run_composer_input(
             run_id: context.run.id,
             agent_id: context.agent.id,
             runtime_session_id: runtime_session_id.clone(),
-            source: agentdash_domain::agent_run_mailbox::MailboxMessageSource::Composer,
+            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
             schedule_on_submit: true,
             input: req.input,
             client_command_id: req.client_command_id,

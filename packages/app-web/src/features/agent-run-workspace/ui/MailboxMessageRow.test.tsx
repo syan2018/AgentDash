@@ -14,7 +14,12 @@ import { MailboxMessageList } from "./MailboxMessageRow";
 const mailboxMessage: MailboxMessageView = {
   id: "mailbox-1",
   origin: "user",
-  source: "composer",
+  source: {
+    namespace: "core",
+    kind: "composer",
+    actor: "user",
+    display_label_key: "mailbox.source.core.composer",
+  },
   delivery: { kind: "launch_or_continue_turn" },
   barrier: "agent_run_turn_boundary",
   drain_mode: "one",

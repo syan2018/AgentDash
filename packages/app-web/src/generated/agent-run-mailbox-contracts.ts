@@ -50,11 +50,11 @@ export type MailboxDrainMode = "one" | "all";
 
 export type MailboxMessageOrigin = "user" | "system" | "hook" | "companion" | "workflow";
 
-export type MailboxMessageSource = "composer" | "draft_start" | "hook_after_turn" | "hook_before_stop" | "hook_auto_resume" | "companion_parent_resume" | "workflow_orchestrator" | "routine_executor" | "local_relay_prompt" | "canvas_action";
-
 export type MailboxMessageStatus = "accepted" | "queued" | "ready_to_consume" | "consuming" | "dispatched" | "steered" | "paused" | "blocked" | "failed" | "deleted";
 
-export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxMessageSource, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, can_reorder: boolean, can_recall: boolean, };
+export type MailboxMessageView = { id: string, origin: MailboxMessageOrigin, source: MailboxSourceIdentity, delivery: MailboxDelivery, barrier: ConsumptionBarrier, drain_mode: MailboxDrainMode, status: MailboxMessageStatus, preview: string, has_images: boolean, attempt_count: number, accepted_refs?: AgentRunMessageAcceptedRefs, last_error?: string, created_at: string, updated_at: string, can_promote: boolean, can_delete: boolean, can_reorder: boolean, can_recall: boolean, };
+
+export type MailboxSourceIdentity = { namespace: string, kind: string, source_ref?: string, correlation_ref?: string, actor: string, route?: string, display_label_key: string, metadata?: JsonValue, };
 
 export type MailboxStateView = { paused: boolean, pause_reason?: string, message?: string, can_resume: boolean, hide_system_steer_messages: boolean, };
 

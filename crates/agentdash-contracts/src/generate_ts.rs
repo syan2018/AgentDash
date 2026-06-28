@@ -10,7 +10,7 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
     AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageSource, MailboxMessageStatus, MailboxMessageView, MailboxStateView,
+    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
     RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
@@ -286,7 +286,7 @@ fn main() {
             export_all::<AgentRunMessageCommandResponse>(dir);
             export_all::<MailboxMessageStatus>(dir);
             export_all::<MailboxMessageOrigin>(dir);
-            export_all::<MailboxMessageSource>(dir);
+            export_all::<MailboxSourceIdentity>(dir);
             export_all::<SteeringStopEffect>(dir);
             export_all::<MailboxDelivery>(dir);
             export_all::<ConsumptionBarrier>(dir);

@@ -410,7 +410,7 @@ workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="can
 - Runtime observation is keyed by AgentRun, Agent, Canvas mount, and frame generation. It records latest ready/error/building status, viewport, DOM summary, diagnostics, and optional screenshot reference.
 - Interaction snapshot is keyed by AgentRun, Agent, Canvas mount, and frame generation. It records explicit Canvas source state and recent user events.
 - Observation and interaction snapshot uploads are diagnostic facts. They do not create mailbox input and do not automatically enter model-visible history.
-- `window.agentdash.agent.submit(...)` is the Canvas-origin user input channel. The backend converts the request to canonical `UserInput` and calls AgentRun mailbox with `MailboxMessageSource::CanvasAction`.
+- `window.agentdash.agent.submit(...)` is the Canvas-origin user input channel. The backend converts the request to canonical `UserInput` and calls AgentRun mailbox with `MailboxSourceIdentity { namespace: "core", kind: "canvas_action", actor: "user", ... }`.
 - Submit response uses the existing `AgentRunMessageCommandResponse` so Canvas UI, workspace composer, scheduler outcome, and command receipt semantics stay aligned.
 - `window.agentdash.invoke(...)` remains RuntimeGateway action invocation. It must not be used to submit user input to the Agent.
 - The Canvas iframe never sends `sessionId`; parent page and backend resolve AgentRun, Agent, Canvas reference, current delivery runtime, and trace coordinates.
@@ -432,14 +432,14 @@ workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="can
 
 - Canvas ready flow: preview posts ready observation, backend stores latest runtime observation, Agent calls `canvas.inspect` and receives DOM/diagnostic summary.
 - Canvas selection flow: source calls `interaction.setState("selection", ...)`, Agent calls `canvas.get_interaction_state` and sees the current selection without mailbox side effects.
-- Canvas action flow: user clicks a Canvas button that calls `agent.submit({ text, include_interaction_state: true })`; backend creates a `CanvasAction` mailbox message and scheduler returns the standard command response.
+- Canvas action flow: user clicks a Canvas button that calls `agent.submit({ text, include_interaction_state: true })`; backend creates a `core/canvas_action` mailbox message and scheduler returns the standard command response.
 
 ### 6. Tests Required
 
 - Frontend runtime preview test asserts observation, interaction snapshot, and submit envelopes route through AgentRun Canvas bridge and report bridge-unavailable errors when missing.
-- API test asserts AgentRun Canvas submit uses `MailboxMessageSource::CanvasAction` and returns `AgentRunMessageCommandResponse`.
+- API test asserts AgentRun Canvas submit uses `MailboxSourceIdentity { namespace: "core", kind: "canvas_action" }` and returns `AgentRunMessageCommandResponse`.
 - WorkspaceModule test asserts diagnostic operations are discoverable from describe and invoke reads latest facts only.
-- Contract check asserts canvas observation, interaction snapshot, submit DTO, workspace module operation dispatch, and mailbox source enums stay generated in TypeScript.
+- Contract check asserts canvas observation, interaction snapshot, submit DTO, workspace module operation dispatch, and `MailboxSourceIdentity` stay generated in TypeScript.
 
 ## Scenario: Canvas Personal And Project Shared Distribution Contract
 

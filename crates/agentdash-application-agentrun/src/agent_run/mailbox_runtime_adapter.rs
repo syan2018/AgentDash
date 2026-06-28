@@ -9,7 +9,7 @@ use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionMailboxRuntimePort,
 };
 use agentdash_domain::agent_run_mailbox::{
-    AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxMessageSource,
+    AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxSourceIdentity,
     SteeringStopEffect,
 };
 use agentdash_domain::workflow::{
@@ -270,7 +270,7 @@ impl HookDeliveryRouter<'_> {
 
     async fn route_hook_delivery_messages(
         &self,
-        source: MailboxMessageSource,
+        source: MailboxSourceIdentity,
         barrier: ConsumptionBarrier,
         stop_effect: SteeringStopEffect,
         drain_mode: MailboxDrainMode,
@@ -436,7 +436,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         let hook_router = self.hook_router();
         let steering_routing = hook_router
             .route_hook_delivery_messages(
-                MailboxMessageSource::HookAfterTurn,
+                MailboxSourceIdentity::hook_after_turn(),
                 ConsumptionBarrier::AgentLoopTurnBoundary,
                 SteeringStopEffect::None,
                 MailboxDrainMode::All,
@@ -447,7 +447,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
         let follow_up_source_event_key = format!("after_turn_follow_up:{source_event_key}");
         let follow_up_routing = hook_router
             .route_hook_delivery_messages(
-                MailboxMessageSource::HookBeforeStop,
+                MailboxSourceIdentity::hook_before_stop(),
                 ConsumptionBarrier::AgentRunTurnBoundary,
                 SteeringStopEffect::ContinueOnStop,
                 MailboxDrainMode::All,
@@ -494,7 +494,7 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
                 let routing = self
                     .hook_router()
                     .route_hook_delivery_messages(
-                        MailboxMessageSource::HookBeforeStop,
+                        MailboxSourceIdentity::hook_before_stop(),
                         ConsumptionBarrier::AgentRunTurnBoundary,
                         SteeringStopEffect::ContinueOnStop,
                         MailboxDrainMode::All,

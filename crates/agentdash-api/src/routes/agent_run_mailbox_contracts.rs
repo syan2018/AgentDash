@@ -5,7 +5,7 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
     AgentRunMessageCommandResponse, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus, MailboxMessageView,
+    MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity,
     MailboxStateView, RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto};
@@ -111,7 +111,7 @@ pub(crate) fn mailbox_message_view(
     MailboxMessageView {
         id: message.id.to_string(),
         origin: mailbox_origin_view(message.origin),
-        source: mailbox_source_view(message.source),
+        source: mailbox_source_view(message.source.clone()),
         delivery: mailbox_delivery_view(message.delivery.clone()),
         barrier: mailbox_barrier_view(message.barrier),
         drain_mode: mailbox_drain_mode_view(message.drain_mode),
@@ -217,39 +217,17 @@ fn mailbox_origin_view(
 }
 
 fn mailbox_source_view(
-    source: agentdash_domain::agent_run_mailbox::MailboxMessageSource,
-) -> MailboxMessageSource {
-    match source {
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::Composer => {
-            MailboxMessageSource::Composer
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::DraftStart => {
-            MailboxMessageSource::DraftStart
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookAfterTurn => {
-            MailboxMessageSource::HookAfterTurn
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookBeforeStop => {
-            MailboxMessageSource::HookBeforeStop
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::HookAutoResume => {
-            MailboxMessageSource::HookAutoResume
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::CompanionParentResume => {
-            MailboxMessageSource::CompanionParentResume
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::WorkflowOrchestrator => {
-            MailboxMessageSource::WorkflowOrchestrator
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::RoutineExecutor => {
-            MailboxMessageSource::RoutineExecutor
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::LocalRelayPrompt => {
-            MailboxMessageSource::LocalRelayPrompt
-        }
-        agentdash_domain::agent_run_mailbox::MailboxMessageSource::CanvasAction => {
-            MailboxMessageSource::CanvasAction
-        }
+    source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity,
+) -> MailboxSourceIdentity {
+    MailboxSourceIdentity {
+        namespace: source.namespace,
+        kind: source.kind,
+        source_ref: source.source_ref,
+        correlation_ref: source.correlation_ref,
+        actor: source.actor,
+        route: source.route,
+        display_label_key: source.display_label_key,
+        metadata: source.metadata,
     }
 }
 

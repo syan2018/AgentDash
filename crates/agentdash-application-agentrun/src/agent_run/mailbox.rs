@@ -12,7 +12,7 @@ use agentdash_application_ports::lifecycle_surface_projection::{
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
     NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 use agentdash_domain::workflow::{
@@ -116,7 +116,7 @@ pub struct AgentRunMailboxUserMessageCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub runtime_session_id: String,
-    pub source: MailboxMessageSource,
+    pub source: MailboxSourceIdentity,
     pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
@@ -129,7 +129,7 @@ pub struct AgentRunMailboxUserMessageCommand {
 #[derive(Debug, Clone)]
 pub struct AgentRunMailboxUserMessageTargetCommand {
     pub target: AgentRunMailboxCommandTarget,
-    pub source: MailboxMessageSource,
+    pub source: MailboxSourceIdentity,
     pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
@@ -486,7 +486,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 agent_id: agent.id,
                 runtime_session_id: runtime_session_id.to_string(),
                 origin: MailboxMessageOrigin::Hook,
-                source: MailboxMessageSource::HookAutoResume,
+                source: MailboxSourceIdentity::hook_auto_resume(),
                 delivery: MailboxDelivery::ResumeLaunchSource {
                     launch_source: "hook_auto_resume".to_string(),
                 },
@@ -520,7 +520,7 @@ impl<'a> AgentRunMailboxService<'a> {
     pub async fn accept_hook_steering_messages(
         &self,
         runtime_session_id: &str,
-        source: MailboxMessageSource,
+        source: MailboxSourceIdentity,
         barrier: ConsumptionBarrier,
         stop_effect: SteeringStopEffect,
         drain_mode: MailboxDrainMode,
@@ -561,14 +561,14 @@ impl<'a> AgentRunMailboxService<'a> {
                     agent_id: agent.id,
                     runtime_session_id: runtime_session_id.to_string(),
                     origin: MailboxMessageOrigin::Hook,
-                    source,
+                    source: source.clone(),
                     delivery: MailboxDelivery::SteerActiveTurn { stop_effect },
                     barrier,
                     drain_mode,
                     priority: 100,
                     source_dedup_key: Some(format!(
                         "hook_delivery:{}:{runtime_session_id}:{turn_key}:{source_event_key}:{index}",
-                        source.as_str(),
+                        source.dedup_fragment(),
                     )),
                     queued_agent_run_turn_id: active_turn_id.clone(),
                     expected_active_agent_run_turn_id: active_turn_id.clone(),

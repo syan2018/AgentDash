@@ -1,6 +1,6 @@
 # W0: Mailbox Source Model Baseline
 
-Status: planned
+Status: done
 
 ## Goal
 
@@ -12,18 +12,18 @@ Status: planned
 
 ## Deliverables
 
-- [ ] 设计并落库开放式 `MailboxSourceIdentity`，至少包含 namespace、kind、source_ref、correlation_ref、actor、route metadata、display_label_key、metadata_json。
-- [ ] 将当前 `MailboxMessageSource` enum/check constraint 迁移为 source identity；`canvas_action` drift 在迁移中自然消除。
-- [ ] 更新 domain、repository、API mapper、contract DTO、generated TS、frontend label 映射，前端不再依赖 closed source union 扩展业务来源。
-- [ ] 明确 scheduler 不按 source identity 决定 delivery；delivery 继续由 origin/delivery/barrier/drain_mode/runtime state 驱动。
-- [ ] 增加 source identity serialization / repository / contract drift 测试。
+- [x] 设计并落库开放式 `MailboxSourceIdentity`，至少包含 namespace、kind、source_ref、correlation_ref、actor、route metadata、display_label_key、metadata/source_metadata。
+- [x] 将当前 `MailboxMessageSource` enum/check constraint 迁移为 source identity；`canvas_action` drift 在迁移中自然消除。
+- [x] 更新 domain、repository、API mapper、contract DTO、generated TS、frontend fixture，前端不再依赖 closed source union 扩展业务来源。
+- [x] 明确 scheduler 不按 source identity 决定 delivery；delivery 继续由 origin/delivery/barrier/drain_mode/runtime state 驱动。
+- [x] 增加 source identity serialization / repository / contract drift 测试。
 
 ## Acceptance
 
-- [ ] Migration、domain model、API mapper、generated TS 对 source identity 字段完全一致。
-- [ ] Canvas submit 现有行为不再受 source check constraint 阻断。
-- [ ] Routine / Companion source 不需要新增 enum variant 即可表达。
-- [ ] 后续 channel / integration adapter 能通过 namespace/kind/source_ref/metadata 接入 attribution，不需要改 scheduler 分支。
+- [x] Migration、domain model、API mapper、generated TS 对 source identity 字段完全一致。
+- [x] Canvas submit 现有行为不再受 source check constraint 阻断。
+- [x] Routine / Companion source 不需要新增 enum variant 即可表达。
+- [x] 后续 channel / integration adapter 能通过 namespace/kind/source_ref/metadata 接入 attribution，不需要改 scheduler 分支。
 
 ## Suggested Validation
 

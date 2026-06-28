@@ -1,9 +1,8 @@
 ﻿//! Companion 子域的 notification 构造 helpers。
 //!
-//! `build_companion_human_response_notification` 构造的是 companion "用户回应"
-//! 事件通知，不属于 continuation transcript 重建。用户回应先 resolve durable
-//! `LifecycleGate`，再由 companion gate delivery adapter 写入 runtime event stream，
-//! 让 Context Inspector 能看到人类回应。
+//! `build_companion_human_response_notification` 是旧 runtime event helper。
+//! 当前 AgentRun-facing human response 投递以 durable mailbox message 为事实源；
+//! human request 仍通过 `build_companion_event_notification` 暴露为 UI-facing 事件。
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -11,9 +10,8 @@ use agentdash_agent_protocol::{
 
 /// 构造 companion "人类回应" 事件通知。
 ///
-/// 调用方：`companion::gate_control` 的 runtime delivery adapter。
-/// 被 registered 的 companion tool 等待 gate resolve 时，HTTP 层先写 gate truth，
-/// 再由 delivery adapter 产出 `BackboneEnvelope` 供 Inspector 可视化。
+/// 该 helper 仅保留给仍需要 runtime meta event 的旧调用点；新的 human response
+/// continuation 应进入 AgentRun mailbox。
 pub fn build_companion_human_response_notification(
     session_id: &str,
     turn_id: Option<&str>,

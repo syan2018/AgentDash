@@ -142,6 +142,19 @@ pub struct CompanionParentResponseMailboxDeliveryCommand {
 }
 
 #[derive(Debug, Clone)]
+pub struct CompanionHumanResponseMailboxDeliveryCommand {
+    pub gate_id: Uuid,
+    pub request_id: String,
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub delivery_runtime_session_id: String,
+    pub turn_id: Option<String>,
+    pub request_type: Option<String>,
+    pub payload: serde_json::Value,
+    pub input_text: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct CompanionParentMailboxDeliveryResult {
     pub mailbox_message_id: Option<Uuid>,
     pub command_receipt_id: Option<Uuid>,
@@ -203,6 +216,14 @@ pub trait CompanionParentMailboxDelivery: Send + Sync {
     ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
 }
 
+#[async_trait]
+pub trait CompanionHumanResponseMailboxDelivery: Send + Sync {
+    async fn deliver_human_response_to_requesting_agent(
+        &self,
+        command: CompanionHumanResponseMailboxDeliveryCommand,
+    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
+}
+
 #[derive(Clone)]
 pub struct SessionEventingCompanionGateDelivery {
     eventing: SessionEventingService,
@@ -214,6 +235,9 @@ pub struct NoopCompanionGateDelivery;
 
 #[derive(Clone, Default)]
 pub struct NoopCompanionParentMailboxDelivery;
+
+#[derive(Clone, Default)]
+pub struct NoopCompanionHumanResponseMailboxDelivery;
 
 impl SessionEventingCompanionGateDelivery {
     pub fn new(eventing: SessionEventingService) -> Self {
@@ -270,6 +294,18 @@ impl CompanionParentMailboxDelivery for NoopCompanionParentMailboxDelivery {
 }
 
 #[async_trait]
+impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailboxDelivery {
+    async fn deliver_human_response_to_requesting_agent(
+        &self,
+        _command: CompanionHumanResponseMailboxDeliveryCommand,
+    ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+        Err(ApplicationError::Internal(
+            "companion human response mailbox delivery 未配置".to_string(),
+        ))
+    }
+}
+
+#[async_trait]
 impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery {
     async fn deliver_human_response(
         &self,
@@ -316,6 +352,7 @@ pub struct CompanionGateControlService {
     lineage_repo: Arc<dyn AgentLineageRepository>,
     delivery: Arc<dyn CompanionGateNotificationDelivery>,
     parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
+    human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
 }
 
 impl CompanionGateControlService {
@@ -337,6 +374,7 @@ impl CompanionGateControlService {
             lineage_repo,
             delivery,
             parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
+            human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
         }
     }
 
@@ -345,6 +383,14 @@ impl CompanionGateControlService {
         parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
     ) -> Self {
         self.parent_mailbox_delivery = parent_mailbox_delivery;
+        self
+    }
+
+    pub fn with_human_response_mailbox_delivery(
+        mut self,
+        human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
+    ) -> Self {
+        self.human_response_mailbox_delivery = human_response_mailbox_delivery;
         self
     }
 
@@ -406,30 +452,87 @@ impl CompanionGateControlService {
 
         let delivery_runtime_session_id = self.resolve_delivery_runtime_session_id(&gate).await?;
         let request_id = gate.id.to_string();
+        let run_id = gate.run_id;
+        let agent_id = gate.agent_id.ok_or_else(|| {
+            ApplicationError::Conflict(format!(
+                "human response gate {} 缺少 requesting agent owner",
+                gate.id
+            ))
+        })?;
 
         gate.payload_json = Some(command.payload.clone());
         gate.resolve("companion_respond");
         self.gate_repo.update(&gate).await?;
 
-        if let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() {
-            let notification = CompanionGateResponseNotification {
-                delivery_runtime_session_id,
-                turn_id,
-                request_id: request_id.clone(),
-                payload: command.payload,
-                request_type,
-                gate_resolved: true,
-            };
-            if let Err(error) = self.delivery.deliver_human_response(notification).await {
-                diag!(Warn, Subsystem::AgentRun,
-        error = %error, gate_id = %gate.id, "companion gate resolved but runtime notification delivery failed");
+        let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() else {
+            let error =
+                "requesting agent 缺少 current delivery runtime session，无法投递 human response"
+                    .to_string();
+            let failed_payload = with_human_mailbox_delivery_payload(
+                command.payload.clone(),
+                serde_json::json!({
+                    "status": "failed",
+                    "error": error.clone(),
+                }),
+            );
+            gate.payload_json = Some(failed_payload);
+            self.gate_repo.update(&gate).await?;
+            return Err(ApplicationError::Conflict(error));
+        };
+
+        let input_text = build_human_response_mailbox_input_text(
+            gate.id,
+            &request_id,
+            turn_id.as_deref(),
+            &command.payload,
+        );
+        let mailbox_result = match self
+            .human_response_mailbox_delivery
+            .deliver_human_response_to_requesting_agent(
+                CompanionHumanResponseMailboxDeliveryCommand {
+                    gate_id: gate.id,
+                    request_id: request_id.clone(),
+                    run_id,
+                    agent_id,
+                    delivery_runtime_session_id: delivery_runtime_session_id.clone(),
+                    turn_id: turn_id.clone(),
+                    request_type: request_type.clone(),
+                    payload: command.payload.clone(),
+                    input_text,
+                },
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let failed_payload = with_human_mailbox_delivery_payload(
+                    command.payload.clone(),
+                    mailbox_delivery_payload(
+                        "delivery_runtime_session_id",
+                        &delivery_runtime_session_id,
+                        serde_json::json!({
+                            "status": "failed",
+                            "error": error.to_string(),
+                        }),
+                    ),
+                );
+                gate.payload_json = Some(failed_payload);
+                self.gate_repo.update(&gate).await?;
+                return Err(error);
             }
-        }
+        };
+
+        let response_payload = with_human_mailbox_delivery_payload(
+            command.payload,
+            human_mailbox_delivery_payload(&delivery_runtime_session_id, &mailbox_result),
+        );
+        gate.payload_json = Some(response_payload);
+        self.gate_repo.update(&gate).await?;
 
         Ok(CompanionGateRespondResult {
             gate_id: gate.id,
             request_id,
-            delivery_runtime_session_id,
+            delivery_runtime_session_id: Some(delivery_runtime_session_id),
             gate_resolved: true,
         })
     }
@@ -1238,6 +1341,37 @@ fn build_parent_response_mailbox_input_text(
     lines.join("\n")
 }
 
+fn build_human_response_mailbox_input_text(
+    gate_id: Uuid,
+    request_id: &str,
+    turn_id: Option<&str>,
+    payload: &serde_json::Value,
+) -> String {
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("responded");
+    let summary = payload
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| payload.get("choice").and_then(serde_json::Value::as_str))
+        .or_else(|| payload.get("message").and_then(serde_json::Value::as_str))
+        .unwrap_or("");
+    let mut lines = vec![
+        "Companion human response is available.".to_string(),
+        format!("- request_id: {request_id}"),
+        format!("- gate_id: {gate_id}"),
+        format!("- status: {status}"),
+    ];
+    if let Some(turn_id) = turn_id {
+        lines.push(format!("- requesting_turn_id: {turn_id}"));
+    }
+    if !summary.trim().is_empty() {
+        lines.push(format!("- summary: {}", summary.trim()));
+    }
+    lines.join("\n")
+}
+
 fn parent_mailbox_delivery_payload(
     parent_delivery_runtime_session_id: &str,
     delivery: &CompanionParentMailboxDeliveryResult,
@@ -1280,6 +1414,27 @@ fn child_mailbox_delivery_payload(
     )
 }
 
+fn human_mailbox_delivery_payload(
+    delivery_runtime_session_id: &str,
+    delivery: &CompanionParentMailboxDeliveryResult,
+) -> serde_json::Value {
+    mailbox_delivery_payload(
+        "delivery_runtime_session_id",
+        delivery_runtime_session_id,
+        serde_json::json!({
+            "status": "accepted",
+            "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
+            "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
+            "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
+            "command_receipt_status": delivery.command_receipt_status.clone(),
+            "command_receipt_duplicate": delivery.command_receipt_duplicate,
+            "outcome": delivery.outcome.clone(),
+            "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
+            "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
+        }),
+    )
+}
+
 fn mailbox_delivery_payload(
     runtime_session_key: &str,
     runtime_session_id: &str,
@@ -1290,6 +1445,16 @@ fn mailbox_delivery_payload(
             runtime_session_key.to_string(),
             serde_json::Value::String(runtime_session_id.to_string()),
         );
+    }
+    payload
+}
+
+fn with_human_mailbox_delivery_payload(
+    mut payload: serde_json::Value,
+    delivery: serde_json::Value,
+) -> serde_json::Value {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("human_mailbox_delivery".to_string(), delivery);
     }
     payload
 }
@@ -1775,6 +1940,26 @@ mod tests {
         parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
+        service_for_test_with_mailboxes(
+            gate_repo,
+            frame_repo,
+            lineage_repo,
+            delivery,
+            parent_mailbox_delivery,
+            Arc::new(CapturingHumanMailboxDelivery::default()),
+            run_id,
+        )
+    }
+
+    fn service_for_test_with_mailboxes(
+        gate_repo: Arc<MemoryGateRepo>,
+        frame_repo: Arc<MemoryFrameRepo>,
+        lineage_repo: Arc<MemoryLineageRepo>,
+        delivery: Arc<CapturingDelivery>,
+        parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
+        human_mailbox_delivery: Arc<CapturingHumanMailboxDelivery>,
+        run_id: Uuid,
+    ) -> CompanionGateControlService {
         let project_id = Uuid::new_v4();
         let agent_repo = Arc::new(MemoryAgentRepo::from_frame_repo(
             frame_repo.as_ref(),
@@ -1795,6 +1980,7 @@ mod tests {
             delivery,
         )
         .with_parent_mailbox_delivery(parent_mailbox_delivery)
+        .with_human_response_mailbox_delivery(human_mailbox_delivery)
     }
 
     #[derive(Default)]
@@ -1831,6 +2017,32 @@ mod tests {
         parent_request_commands: Mutex<Vec<CompanionParentRequestMailboxDeliveryCommand>>,
         parent_response_commands: Mutex<Vec<CompanionParentResponseMailboxDeliveryCommand>>,
         fail_with: Mutex<Option<String>>,
+    }
+
+    #[derive(Default)]
+    struct CapturingHumanMailboxDelivery {
+        commands: Mutex<Vec<CompanionHumanResponseMailboxDeliveryCommand>>,
+        fail_with: Mutex<Option<String>>,
+    }
+
+    impl CapturingHumanMailboxDelivery {
+        fn fail_next(&self, message: impl Into<String>) {
+            *self.fail_with.lock().unwrap() = Some(message.into());
+        }
+    }
+
+    #[async_trait]
+    impl CompanionHumanResponseMailboxDelivery for CapturingHumanMailboxDelivery {
+        async fn deliver_human_response_to_requesting_agent(
+            &self,
+            command: CompanionHumanResponseMailboxDeliveryCommand,
+        ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError> {
+            self.commands.lock().unwrap().push(command);
+            if let Some(message) = self.fail_with.lock().unwrap().take() {
+                return Err(ApplicationError::Internal(message));
+            }
+            Ok(captured_mailbox_result("companion-human-response:test"))
+        }
     }
 
     impl CapturingParentMailboxDelivery {
@@ -1916,11 +2128,15 @@ mod tests {
         frame_repo.seed_runtime_sessions(frame_id, ["session-old", "session-latest"]);
         let lineage_repo = Arc::new(MemoryLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
-        let service = service_for_test(
+        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
+        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
+        let service = service_for_test_with_mailboxes(
             gate_repo.clone(),
             frame_repo,
             lineage_repo,
             delivery.clone(),
+            parent_mailbox_delivery,
+            human_mailbox_delivery.clone(),
             run_id,
         );
 
@@ -1949,15 +2165,25 @@ mod tests {
             .expect("gate exists");
         assert!(!stored.is_open());
         assert_eq!(stored.resolved_by.as_deref(), Some("companion_respond"));
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|delivery| delivery.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("accepted")
+        );
 
         let notifications = delivery.response_notifications.lock().unwrap();
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(
-            notifications[0].delivery_runtime_session_id,
-            "session-latest"
-        );
-        assert_eq!(notifications[0].turn_id.as_deref(), Some("turn-1"));
-        assert_eq!(notifications[0].request_id, gate_id.to_string());
+        assert!(notifications.is_empty());
+        let commands = human_mailbox_delivery.commands.lock().unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].gate_id, gate_id);
+        assert_eq!(commands[0].agent_id, agent_id);
+        assert_eq!(commands[0].delivery_runtime_session_id, "session-latest");
+        assert_eq!(commands[0].turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(commands[0].request_id, gate_id.to_string());
     }
 
     #[tokio::test]
@@ -2000,6 +2226,86 @@ mod tests {
 
         assert!(matches!(error, ApplicationError::Conflict(_)));
         assert!(delivery.response_notifications.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn respond_records_human_mailbox_delivery_failure() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame = AgentFrame::new_revision(agent_id, 1, "test");
+        let frame_id = frame.id;
+        let gate = LifecycleGate::open(
+            run_id,
+            Some(agent_id),
+            Some(frame_id),
+            "companion_wait",
+            "human-request",
+            Some(serde_json::json!({
+                "turn_id": "turn-1",
+                "request_type": "decision"
+            })),
+        );
+        let gate_id = gate.id;
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo.create(&frame).await.expect("seed frame");
+        frame_repo.seed_runtime_sessions(frame_id, ["session-latest"]);
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let delivery = Arc::new(CapturingDelivery::default());
+        let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
+        let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
+        human_mailbox_delivery.fail_next("mailbox unavailable");
+        let service = service_for_test_with_mailboxes(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery,
+            parent_mailbox_delivery,
+            human_mailbox_delivery.clone(),
+            run_id,
+        );
+
+        let error = service
+            .respond(RespondCompanionGateCommand {
+                gate_id,
+                payload: serde_json::json!({
+                    "type": "decision",
+                    "status": "approved",
+                    "choice": "YES",
+                    "summary": "YES"
+                }),
+            })
+            .await
+            .expect_err("mailbox failure should be returned");
+
+        assert!(matches!(error, ApplicationError::Internal(_)));
+        let stored = gate_repo
+            .get(gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert!(!stored.is_open());
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|delivery| delivery.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .and_then(|delivery| delivery.get("error"))
+                .and_then(serde_json::Value::as_str),
+            Some("mailbox unavailable")
+        );
+        assert_eq!(human_mailbox_delivery.commands.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

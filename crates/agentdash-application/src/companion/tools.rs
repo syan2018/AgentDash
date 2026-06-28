@@ -33,7 +33,8 @@ use super::{
     build_companion_event_notification,
 };
 use crate::agent_run::{
-    AgentFrameRuntimeTarget, AgentRunMailboxIntakeCommand, AgentRunMailboxService,
+    AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
+    AgentRunMailboxService,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
@@ -559,6 +560,15 @@ impl CompanionRequestTool {
             .as_ref()
             .map(|message| message.id.to_string());
         let mailbox_outcome = mailbox_result.outcome.as_str();
+        if matches!(
+            mailbox_result.outcome,
+            AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
+        ) {
+            return Err(AgentToolError::ExecutionFailed(format!(
+                "child companion mailbox dispatch 未接受首条任务: outcome={mailbox_outcome}, mailbox_message_id={}",
+                mailbox_message_id.as_deref().unwrap_or("(none)")
+            )));
+        }
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(

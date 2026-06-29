@@ -45,9 +45,6 @@ pub mod vfs_owner_providers;
 pub mod vfs_surface_resolver;
 pub mod workspace;
 
-#[cfg(test)]
-pub(crate) mod test_support;
-
 pub use error::ApplicationError;
 pub use task::lock as task_lock;
 pub use task::view_projector as task_view_projector;

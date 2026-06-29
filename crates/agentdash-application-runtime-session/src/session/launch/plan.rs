@@ -331,7 +331,7 @@ mod tests {
 
     use super::*;
     use crate::session::construction::{
-        ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
+        ConstructionResolutionPlan, FrameSurfaceDraft, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
     };
     use crate::session::launch::{LaunchCommand, LaunchSource};
@@ -340,7 +340,7 @@ mod tests {
     };
     use agentdash_application_ports::frame_launch_envelope::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-        FrameSurfaceDraft, LaunchResolutionTrace,
+        LaunchResolutionTrace,
     };
     use std::path::{Path, PathBuf};
 

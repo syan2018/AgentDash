@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
-    AuthIdentity, CapabilityState, DiscoveredGuideline, SessionBaselineCapabilities,
-    SessionContextBundle, Vfs,
+    AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServer,
+    SessionBaselineCapabilities, SessionContextBundle, Vfs,
 };
 use uuid::Uuid;
 
@@ -16,6 +16,16 @@ use agentdash_spi::CapabilityScope;
 use super::context::SessionContextSnapshot;
 use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
+
+/// 测试 fixture：construction 到 launch plan 的 surface handoff。
+#[derive(Debug, Clone, Default)]
+pub struct FrameSurfaceDraft {
+    pub capability_state: Option<CapabilityState>,
+    pub vfs: Option<Vfs>,
+    pub mcp_servers: Vec<RuntimeMcpServer>,
+    pub context_bundle_summary: Option<serde_json::Value>,
+    pub execution_profile: Option<AgentConfig>,
+}
 
 /// 测试 fixture：RuntimeSession trace 的创建来源信息。
 #[derive(Debug, Clone)]
@@ -61,7 +71,6 @@ impl ResolvedSessionOwner {
         }
     }
 }
-use agentdash_application_ports::frame_launch_envelope::FrameSurfaceDraft;
 use agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurface;
 
 /// 测试 fixture：launch envelope 测试所需的完整投影形态。

@@ -19,7 +19,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { python } from "@codemirror/lang-python";
 import type { Extension } from "@codemirror/state";
-import { MarkdownRenderer } from "../../components/ui/markdown-renderer";
+import { LazyMarkdownRenderer } from "../../components/ui/lazy-markdown-renderer";
 
 type MarkdownViewMode = "edit" | "preview" | "split";
 
@@ -232,7 +232,7 @@ export function VfsCodeEditor({
             <div className={`${showEditor ? "w-1/2" : "w-full"} min-h-0 min-w-0 overflow-y-auto bg-background`}>
               <div className="mx-auto min-h-full w-full max-w-4xl px-5 py-4">
                 {previewContent.trim() ? (
-                  <MarkdownRenderer content={previewContent} />
+                  <LazyMarkdownRenderer content={previewContent} />
                 ) : (
                   <div className="flex min-h-40 items-center justify-center rounded-[6px] border border-dashed border-border bg-secondary/20 px-4 text-center text-xs text-muted-foreground">
                     空 Markdown 文档

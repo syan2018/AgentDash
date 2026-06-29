@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from "react";
-import { MarkdownRenderer } from "../../../components/ui/markdown-renderer";
+import { LazyMarkdownRenderer } from "../../../components/ui/lazy-markdown-renderer";
 import {
   FILE_PILL_BADGE_CLASS,
   FILE_PILL_CLASS,
@@ -123,7 +123,7 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   // ── Agent：无边框文档流 ──
   return (
     <div className="py-0.5">
-      <MarkdownRenderer content={content} isStreaming={isStreaming} />
+      <LazyMarkdownRenderer content={content} isStreaming={isStreaming} />
       {isStreaming && (
         <span className="mt-1 inline-flex h-4 w-[2px] animate-pulse rounded-[4px] bg-primary align-middle" />
       )}

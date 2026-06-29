@@ -186,17 +186,6 @@ impl SessionRuntimeInner {
         Ok(all_tools)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn assemble_tools_for_execution_context(
-        &self,
-        session_id: &str,
-        context: &ExecutionContext,
-    ) -> Vec<DynAgentTool> {
-        self.assemble_tool_surface_for_execution_context(session_id, context)
-            .await
-            .tools
-    }
-
     pub(crate) async fn assemble_tool_surface_for_execution_context(
         &self,
         session_id: &str,

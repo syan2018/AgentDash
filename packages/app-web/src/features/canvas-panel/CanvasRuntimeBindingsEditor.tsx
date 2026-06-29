@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { CanvasRuntimeBinding } from "../../types";
 
 export interface CanvasRuntimeBindingDraft {
@@ -53,15 +53,16 @@ export function CanvasRuntimeBindingsEditor({
     return new Map(value.map((binding) => [binding.alias, binding]));
   }, [value]);
 
-  useEffect(() => {
-    setLocalError(null);
-  }, [value]);
-
   const selectedBinding = bindingsByAlias.get(draft.alias);
 
   const handleSelectAlias = (alias: string) => {
     const binding = bindingsByAlias.get(alias);
     setDraft(binding ? draftFromBinding(binding) : emptyDraft());
+    setLocalError(null);
+  };
+
+  const handleDraftChange = (patch: Partial<CanvasRuntimeBindingDraft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
     setLocalError(null);
   };
 
@@ -117,7 +118,7 @@ export function CanvasRuntimeBindingsEditor({
           <span className="text-muted-foreground">alias</span>
           <input
             value={draft.alias}
-            onChange={(event) => setDraft((current) => ({ ...current, alias: event.target.value }))}
+            onChange={(event) => handleDraftChange({ alias: event.target.value })}
             disabled={readOnly || isSaving}
             className="w-full rounded-[6px] border border-border bg-background px-2 py-1 text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             placeholder="stats"
@@ -127,7 +128,7 @@ export function CanvasRuntimeBindingsEditor({
           <span className="text-muted-foreground">source_uri</span>
           <input
             value={draft.source_uri}
-            onChange={(event) => setDraft((current) => ({ ...current, source_uri: event.target.value }))}
+            onChange={(event) => handleDraftChange({ source_uri: event.target.value })}
             disabled={readOnly || isSaving}
             className="w-full rounded-[6px] border border-border bg-background px-2 py-1 text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             placeholder="main://data/stats.json"
@@ -137,7 +138,7 @@ export function CanvasRuntimeBindingsEditor({
           <span className="text-muted-foreground">content_type</span>
           <input
             value={draft.content_type ?? ""}
-            onChange={(event) => setDraft((current) => ({ ...current, content_type: event.target.value }))}
+            onChange={(event) => handleDraftChange({ content_type: event.target.value })}
             disabled={readOnly || isSaving}
             className="w-full rounded-[6px] border border-border bg-background px-2 py-1 text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
             placeholder="application/json"

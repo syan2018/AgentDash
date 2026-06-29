@@ -162,7 +162,7 @@ pub fn service_action_plan(
     action: ServiceAction,
     context: &ServiceContext,
 ) -> anyhow::Result<ServiceCommandResult> {
-    let mut executor = PlanServiceExecutor::default();
+    let mut executor = PlanServiceExecutor;
     execute_service_action(action, context, &mut executor, true)
 }
 

@@ -430,17 +430,14 @@ mod launcher_drain_tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivationRule, ActivityCompletionPolicy, ActivityIterationPolicy, AgentFrame,
-        AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
-        AgentProcedureContract, AgentProcedureExecutionSpec, AgentProcedureRepository,
-        AgentReusePolicy, AgentRuntimeRefs, ApiRequestExecutorSpec, BashExecExecutorSpec,
-        DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
-        LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationLimits,
+        AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
+        AgentProcedureRepository, AgentReusePolicy, AgentRuntimeRefs, ApiRequestExecutorSpec,
+        BashExecExecutorSpec, DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec,
+        GateStrategy, HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleGate,
+        LifecycleGateRepository, LifecycleRunRepository, OrchestrationLimits,
         OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, RuntimeNodeState,
         RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-        RuntimeSessionPolicy, RuntimeTraceRef, SubjectRef, WorkflowGraph, WorkflowGraphRepository,
-        WorkflowInjectionSpec,
+        RuntimeSessionPolicy, RuntimeTraceRef, WorkflowInjectionSpec,
     };
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
@@ -652,125 +649,6 @@ mod launcher_drain_tests {
 
     fn repo_lookup_error() -> DomainError {
         DomainError::InvalidConfig("snapshot procedure must not query repository".to_string())
-    }
-
-    #[derive(Default)]
-    struct EmptyAgentRepo;
-
-    #[async_trait]
-    impl LifecycleAgentRepository for EmptyAgentRepo {
-        async fn create(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get(&self, _id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_run(&self, _run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct EmptyWorkflowGraphRepo;
-
-    #[async_trait]
-    impl WorkflowGraphRepository for EmptyWorkflowGraphRepo {
-        async fn create(&self, _graph: &WorkflowGraph) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get_by_id(&self, _id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok(None)
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            _project_id: Uuid,
-            _key: &str,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_project(
-            &self,
-            _project_id: Uuid,
-        ) -> Result<Vec<WorkflowGraph>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn update(&self, _graph: &WorkflowGraph) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct EmptyAssociationRepo;
-
-    #[async_trait]
-    impl LifecycleSubjectAssociationRepository for EmptyAssociationRepo {
-        async fn create(
-            &self,
-            _association: &LifecycleSubjectAssociation,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn list_by_subject(
-            &self,
-            _subject: &SubjectRef,
-        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn list_by_anchor(
-            &self,
-            _run_id: Uuid,
-            _agent_id: Option<Uuid>,
-        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct EmptyLineageRepo;
-
-    #[async_trait]
-    impl AgentLineageRepository for EmptyLineageRepo {
-        async fn create(&self, _lineage: &AgentLineage) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn list_by_run(&self, _run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn list_children(
-            &self,
-            _parent_agent_id: Uuid,
-        ) -> Result<Vec<AgentLineage>, DomainError> {
-            Ok(Vec::new())
-        }
-
-        async fn find_parent(
-            &self,
-            _child_agent_id: Uuid,
-        ) -> Result<Option<AgentLineage>, DomainError> {
-            Ok(None)
-        }
     }
 
     #[derive(Default)]

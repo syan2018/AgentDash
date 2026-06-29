@@ -53,18 +53,27 @@ function apiProxyConfig(): ProxyOptions {
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
+    // Canvas runtime 内置浏览器侧 TypeScript 预览编译，Markdown 预览内置
+    // streamdown / shiki / katex / mermaid，生产构建预算按这些能力的异步 chunk 体量设定。
+    chunkSizeWarningLimit: 12000,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('react-router-dom') || id.includes('@remix-run') || id.includes('react-dom') || id.includes('/react/')) {
-              return 'react-vendor'
+          const normalizedId = id.replace(/\\/g, '/')
+          if (normalizedId.includes('node_modules')) {
+            if (normalizedId.includes('@agentclientprotocol/sdk') || normalizedId.includes('fast-json-patch')) {
+              return 'acp-vendor'
             }
-            if (id.includes('streamdown') || id.includes('@streamdown/') || id.includes('mdast') || id.includes('micromark') || id.includes('shiki') || id.includes('katex')) {
+            if (normalizedId.includes('streamdown') || normalizedId.includes('@streamdown/') || normalizedId.includes('mdast') || normalizedId.includes('micromark') || normalizedId.includes('shiki') || normalizedId.includes('katex')) {
               return 'markdown-vendor'
             }
-            if (id.includes('@agentclientprotocol/sdk') || id.includes('fast-json-patch')) {
-              return 'acp-vendor'
+            if (
+              normalizedId.includes('/node_modules/react/') ||
+              normalizedId.includes('/node_modules/react-dom/') ||
+              normalizedId.includes('/node_modules/react-router-dom/') ||
+              normalizedId.includes('/node_modules/@remix-run/')
+            ) {
+              return 'react-vendor'
             }
           }
           return undefined

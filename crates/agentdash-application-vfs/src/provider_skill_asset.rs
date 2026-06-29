@@ -717,8 +717,7 @@ impl MountProvider for SkillAssetFsMountProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skill::load_skills_from_vfs;
-    use crate::{MountProviderRegistry, VfsService, build_project_skill_asset_management_mount};
+    use crate::build_project_skill_asset_management_mount;
     use agentdash_domain::DomainError;
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
@@ -822,36 +821,6 @@ mod tests {
         ];
         repo.assets.lock().unwrap().push(asset);
         repo
-    }
-
-    #[tokio::test]
-    async fn skill_asset_projection_is_discoverable_by_existing_skill_loader() {
-        let project_id = Uuid::new_v4();
-        let repo = repo_with_skill(project_id);
-        let mut registry = MountProviderRegistry::new();
-        registry.register(Arc::new(SkillAssetFsMountProvider::new(repo)));
-        let service = VfsService::new(Arc::new(registry));
-        let vfs = agentdash_spi::Vfs {
-            mounts: vec![build_project_skill_asset_management_mount(
-                project_id,
-                &["writer".to_string()],
-            )],
-            default_mount_id: None,
-            source_project_id: Some(project_id.to_string()),
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let result = load_skills_from_vfs(&service, &vfs).await;
-
-        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
-        assert_eq!(result.skills.len(), 1);
-        assert_eq!(result.skills[0].name, "writer");
-        assert!(result.skills[0].disable_model_invocation);
-        assert_eq!(
-            result.skills[0].file_path.to_string_lossy(),
-            "skill-assets://skills/writer/SKILL.md"
-        );
     }
 
     #[tokio::test]

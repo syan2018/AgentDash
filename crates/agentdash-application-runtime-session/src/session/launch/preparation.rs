@@ -9,6 +9,7 @@ use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
 
 use super::deps::TurnPreparationDeps;
 use super::{LaunchFollowUpSource, LaunchPlan};
+use crate::session::admission_delegate::{AgentRunAdmissionRuntimeDelegate, ToolAdmissionMetadata};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
 use crate::session::guidelines_context_frame::{
     GuidelinesFrameInput, SYSTEM_GUIDELINES_FRAME_KIND, build_guidelines_context_frame,
@@ -107,6 +108,17 @@ impl TurnPreparer {
         let assembled_tool_surface = deps.assemble_tool_surface(&session_id, &context).await;
         let assembled_tool_schemas = assembled_tool_surface.schemas;
         context.turn.assembled_tools = assembled_tool_surface.tools;
+        if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {
+            let admission_metadata =
+                ToolAdmissionMetadata::from_schema_entries(&assembled_tool_schemas);
+            let inner = context.turn.runtime_delegate.take();
+            context.turn.runtime_delegate = Some(AgentRunAdmissionRuntimeDelegate::wrap(
+                session_id.clone(),
+                port.clone(),
+                inner,
+                admission_metadata,
+            ));
+        }
 
         let include_connector_startup_context = should_include_connector_startup_context(
             launch_plan.summary.launch_path,

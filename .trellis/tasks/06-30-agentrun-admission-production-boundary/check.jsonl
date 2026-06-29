@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Check AgentRun admission remains the single Grant execution owner."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check visibility/catalog/readiness/admission separation after D7/D8."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "Check tool-level grants stay admission-only and frame-scoped."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check RuntimeSession delegate integration stays within session boundary."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "Check D1 acceptance and old-path cleanup coverage."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "Check code evidence and intended D1/D6 boundary split."}
+{"file": ".trellis/tasks/06-30-agentrun-admission-production-boundary/design.md", "reason": "Task-local technical design for implementation review."}
+{"file": ".trellis/tasks/06-30-agentrun-admission-production-boundary/implement.md", "reason": "Task-local execution plan and validation expectations."}

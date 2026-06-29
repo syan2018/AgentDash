@@ -45,9 +45,9 @@ pub use delivery_runtime_selection::{
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
 pub use effective_capability::{
-    AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityRequest,
+    AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
-    runtime_session_effective_capability_port,
+    agent_run_effective_capability_port, runtime_session_effective_capability_port,
 };
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,

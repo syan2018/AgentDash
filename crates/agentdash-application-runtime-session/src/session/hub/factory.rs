@@ -6,7 +6,9 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
+use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
+};
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
@@ -124,6 +126,7 @@ impl SessionRuntimeInner {
             agent_frame_repo: None,
             execution_anchor_repo: None,
             runtime_surface_query: None,
+            agent_run_effective_capability_port: None,
             lifecycle_agent_repo: None,
             permission_grant_repo: None,
             effective_capability_port: None,
@@ -203,6 +206,14 @@ impl SessionRuntimeInner {
         query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     ) -> Self {
         self.runtime_surface_query = Some(query);
+        self
+    }
+
+    pub fn with_agent_run_effective_capability_port(
+        mut self,
+        port: Arc<dyn AgentRunEffectiveCapabilityPort>,
+    ) -> Self {
+        self.agent_run_effective_capability_port = Some(port);
         self
     }
 
@@ -350,6 +361,9 @@ impl SessionRuntimeInner {
         }
         if self.runtime_surface_query.is_none() {
             return Err("SessionRuntimeInner 缺少 runtime_surface_query".to_string());
+        }
+        if self.agent_run_effective_capability_port.is_none() {
+            return Err("SessionRuntimeInner 缺少 agent_run_effective_capability_port".to_string());
         }
         if self.lifecycle_agent_repo.is_none() {
             return Err("SessionRuntimeInner 缺少 lifecycle_agent_repo".to_string());

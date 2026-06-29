@@ -1,6 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
+use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
+};
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
@@ -110,6 +112,14 @@ impl SessionRuntimeBuilder {
         query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     ) -> Self {
         self.inner = self.inner.with_runtime_surface_query(query);
+        self
+    }
+
+    pub fn with_agent_run_effective_capability_port(
+        mut self,
+        port: Arc<dyn AgentRunEffectiveCapabilityPort>,
+    ) -> Self {
+        self.inner = self.inner.with_agent_run_effective_capability_port(port);
         self
     }
 

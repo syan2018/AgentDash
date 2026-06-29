@@ -210,7 +210,7 @@ impl SessionRuntimeInner {
     ) -> ExecutionContext {
         let mut context = context.clone();
         context.turn.capability_state = self
-            .capability_state_with_agent_run_admission_projection(
+            .schema_visible_capability_state_for_agent_run(
                 session_id,
                 &context.turn.capability_state,
             )
@@ -218,7 +218,7 @@ impl SessionRuntimeInner {
         context
     }
 
-    async fn capability_state_with_agent_run_admission_projection(
+    async fn schema_visible_capability_state_for_agent_run(
         &self,
         session_id: &str,
         capability_state: &CapabilityState,
@@ -228,7 +228,10 @@ impl SessionRuntimeInner {
         };
 
         match port
-            .execution_capability_state_for_runtime_session(session_id, capability_state.clone())
+            .schema_visible_capability_state_for_runtime_session(
+                session_id,
+                capability_state.clone(),
+            )
             .await
         {
             Ok(state) => state,

@@ -118,11 +118,20 @@ projection 输出。
 工具 schema 构建使用 AgentRun 输出的 final visible capability view；单个工具执行使用 AgentRun
 admission decision。
 
+RuntimeSession 的 schema-visible capability projection 只服务工具 schema assembly，不是 Grant
+authorization。工具执行准入必须在 `tool.execute` 前通过 AgentRun admission bridge 执行，原因是
+tool-level PermissionGrant 需要同时依赖 runtime session anchor、anchored AgentFrame surface 与
+frame-scoped grant projection，provider-local `CapabilityState` guard 不具备这些业务坐标。
+
 Application tool assembly 必须保留 MCP discovery provenance 并生成 `RuntimeToolSchemaEntry`。
 Project MCP 的 `server_name/tool_name/runtime_name/description/parameters_schema` 来自 discovery 结果，
 不能依赖平台静态 catalog 事后猜测。`DynAgentTool` 只服务执行，`RuntimeToolSchemaEntry` 服务
 `tool_schema_delta`、`ContextFrame.rendered_text` 与 Agent 可见 PromptText；两者在 assembly
 边界同源产出，原因是平台需要全局掌握 Agent 实际可见的能力说明。
+
+AgentRun admission bridge 必须从 `RuntimeToolSchemaEntry.capability_key` 和 `tool_path` 构造
+`AgentRunAdmissionRequest`。缺少 provenance 的工具不能绕过 AgentRun admission，原因是该工具没有
+可审计的 capability ownership，不能被视作已授权的 runtime surface。
 
 ## Companion Agent Roster Surface
 

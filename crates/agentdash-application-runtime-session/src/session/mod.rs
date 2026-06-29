@@ -1,3 +1,4 @@
+mod admission_delegate;
 mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod bootstrap;

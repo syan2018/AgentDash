@@ -19,8 +19,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
-    runtime_session_effective_capability_port,
+    accepted_launch_commit_port, agent_run_effective_capability_port, hook_target_runtime_port,
+    mailbox_runtime_port, runtime_session_effective_capability_port,
 };
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_ports::agent_run_surface::{
@@ -270,6 +270,11 @@ pub(crate) async fn build_session_runtime(
         repos.execution_anchor_repo.clone(),
         repos.permission_grant_repo.clone(),
     );
+    let agent_run_capability_port = agent_run_effective_capability_port(
+        repos.execution_anchor_repo.clone(),
+        repos.agent_frame_repo.clone(),
+        repos.permission_grant_repo.clone(),
+    );
 
     let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
         connector.clone(),
@@ -285,6 +290,7 @@ pub(crate) async fn build_session_runtime(
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_runtime_surface_query(session_runtime_surface_query)
+    .with_agent_run_effective_capability_port(agent_run_capability_port)
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
     .with_effective_capability_port(effective_capability_port)

@@ -46,7 +46,11 @@ pub trait RuntimeSessionMailboxRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait RuntimeSessionEffectiveCapabilityPort: Send + Sync {
-    async fn execution_capability_state_for_runtime_session(
+    /// Returns the schema-facing visible `CapabilityState` for runtime tool assembly.
+    ///
+    /// This is not a Grant admission boundary. Tool-level PermissionGrant facts are
+    /// evaluated by AgentRun admission at tool execution time.
+    async fn schema_visible_capability_state_for_runtime_session(
         &self,
         runtime_session_id: &str,
         base_state: CapabilityState,

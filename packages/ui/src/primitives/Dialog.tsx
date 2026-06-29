@@ -6,7 +6,7 @@ import { cn } from '../utils/cn'
 
 export type ConfirmDialogTone = 'default' | 'danger'
 
-interface DialogFrameProps {
+export interface DialogFrameProps {
   open: boolean
   title: string
   description?: string
@@ -45,7 +45,7 @@ export interface PromptDialogProps {
   onConfirm: () => void
 }
 
-function DialogFrame({
+export function DialogFrame({
   open,
   title,
   description,

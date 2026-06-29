@@ -19,6 +19,12 @@ interface LocalWorkspaceDiscoveryPanelProps {
   canEdit: boolean;
   refreshKey?: number;
   onBound?: () => void | Promise<void>;
+  /**
+   * 锁定到某台本机 backend：传入时隐藏内部 backend 选择器，
+   * 直接以该机器维度扫描，并在挂载后自动发现一次。
+   * 用于「在某台机器上扫描可绑定目录」的对话框场景。
+   */
+  backendId?: string;
 }
 
 interface DiscoverableBackend {
@@ -34,6 +40,7 @@ export function LocalWorkspaceDiscoveryPanel({
   canEdit,
   refreshKey = 0,
   onBound,
+  backendId,
 }: LocalWorkspaceDiscoveryPanelProps) {
   const backends = useCoordinatorStore((state) => state.backends);
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
@@ -173,6 +180,12 @@ export function LocalWorkspaceDiscoveryPanel({
     [projectId],
   );
 
+  // 锁定到某台机器时：挂载后自动发现一次。
+  useEffect(() => {
+    if (!backendId) return;
+    void runDiscover(backendId);
+  }, [backendId, runDiscover]);
+
   const bindCandidates = async (candidates: DiscoveredWorkspaceBindingCandidate[]) => {
     if (!result || candidates.length === 0) return;
     const keys = candidates.map((candidate) =>
@@ -212,48 +225,63 @@ export function LocalWorkspaceDiscoveryPanel({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-        <select
-          value={selectedBackendId}
-          onChange={(event) => {
-            setSelectedBackendId(event.target.value);
-            setResult(null);
-            setMessage(null);
-            setError(null);
-          }}
-          disabled={!canEdit || isLoadingAccesses || onlineDiscoverableBackends.length === 0}
-          className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <option value="">选择本机 backend</option>
-          {discoverableBackends.map((backend) => (
-            <option key={backend.id} value={backend.id} disabled={!backend.online}>
-              {backend.name} {backend.online ? "(online)" : "(offline)"}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => void runDiscover(selectedBackendId)}
-          disabled={!canEdit || !selectedBackendId || isDiscovering}
-          className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isDiscovering ? "发现中..." : "发现本机 Workspace"}
-        </button>
-      </div>
+      {backendId ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => void runDiscover(backendId)}
+            disabled={!canEdit || isDiscovering}
+            className="agentdash-button-secondary shrink-0 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDiscovering ? "扫描中..." : result ? "重新扫描" : "扫描目录"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <select
+              value={selectedBackendId}
+              onChange={(event) => {
+                setSelectedBackendId(event.target.value);
+                setResult(null);
+                setMessage(null);
+                setError(null);
+              }}
+              disabled={!canEdit || isLoadingAccesses || onlineDiscoverableBackends.length === 0}
+              className="agentdash-form-select disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">选择本机 backend</option>
+              {discoverableBackends.map((backend) => (
+                <option key={backend.id} value={backend.id} disabled={!backend.online}>
+                  {backend.name} {backend.online ? "(online)" : "(offline)"}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void runDiscover(selectedBackendId)}
+              disabled={!canEdit || !selectedBackendId || isDiscovering}
+              className="agentdash-button-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDiscovering ? "发现中..." : "发现本机 Workspace"}
+            </button>
+          </div>
 
-      <div className="flex flex-wrap gap-2 text-xs">
-        <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-muted-foreground">
-          可发现 identity: {discoverableWorkspaceCount}
-        </span>
-        <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-muted-foreground">
-          本机 backend: {onlineDiscoverableBackends.length}
-        </span>
-      </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-muted-foreground">
+              可发现 identity: {discoverableWorkspaceCount}
+            </span>
+            <span className="rounded-[8px] border border-border bg-secondary/35 px-3 py-1 text-muted-foreground">
+              本机 backend: {onlineDiscoverableBackends.length}
+            </span>
+          </div>
 
-      {!isLoadingAccesses && discoverableBackends.length === 0 && (
-        <p className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
-          当前 Project 还没有可用于本机发现的 local backend access。
-        </p>
+          {!isLoadingAccesses && discoverableBackends.length === 0 && (
+            <p className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
+              当前 Project 还没有可用于本机发现的 local backend access。
+            </p>
+          )}
+        </>
       )}
 
       {message && (

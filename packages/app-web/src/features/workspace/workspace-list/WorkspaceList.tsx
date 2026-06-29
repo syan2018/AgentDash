@@ -112,18 +112,18 @@ export function WorkspaceList({
 
   return (
     <>
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">工作空间</p>
-            <p className="text-xs text-muted-foreground">
-              每个工作空间会落在某台机器的某个目录；在条目里查看可用机器，用「在机器上定位」完成落点。
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1.5">
+            <h2 className="text-xl font-semibold tracking-[-0.025em] text-foreground">工作空间</h2>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              每个工作空间是一处工作内容；落在哪台机器的哪个目录，在条目里就地查看与定位。
             </p>
           </div>
           <button
             type="button"
             onClick={() => void handleOpenCreate()}
-            className="rounded-[8px] border border-border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="agentdash-button-secondary shrink-0"
           >
             + 新建 Workspace
           </button>

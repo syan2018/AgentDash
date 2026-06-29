@@ -1,4 +1,6 @@
 import type {
+  BackendWorkspaceInventory,
+  ProjectBackendAccess,
   WorkspaceBindingStatus,
   WorkspaceIdentityKind,
   WorkspaceStatus,
@@ -63,4 +65,19 @@ export const RESOLUTION_STATE_LABELS: Record<"resolved" | "warning" | "blocked",
   resolved: "目录就绪",
   warning: "需注意",
   blocked: "目录不可用",
+};
+
+/** Backend 授权（access）状态 label。 */
+export const BACKEND_ACCESS_STATUS_LABELS: Record<ProjectBackendAccess["status"], string> = {
+  active: "已启用",
+  paused: "已暂停",
+  revoked: "已撤销",
+};
+
+/** 机器上可用目录（inventory）快照状态 label。 */
+export const INVENTORY_STATUS_LABELS: Record<BackendWorkspaceInventory["status"], string> = {
+  available: "可用",
+  stale: "过期",
+  offline: "离线",
+  error: "异常",
 };

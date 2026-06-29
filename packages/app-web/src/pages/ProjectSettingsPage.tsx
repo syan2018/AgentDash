@@ -12,10 +12,8 @@ import type {
 import { useCurrentUserStore } from "../stores/currentUserStore";
 import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
-import { LocalWorkspaceDiscoveryPanel } from "../features/workspace/workspace-list/LocalWorkspaceDiscoveryPanel";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { WorkspaceModulesPanel } from "../features/workspace-module/ui/WorkspaceModulesPanel";
-import { RunnerTokensPanel } from "../features/workspace/runner-tokens/RunnerTokensPanel";
 import {
   DangerConfirmDialog,
 } from "@agentdash/ui";
@@ -632,54 +630,26 @@ export function ProjectSettingsPage() {
 
               {activeTab === "workspace" && (
                 <>
-                  <SectionCard
-                    title="运行环境"
-                    description="这个项目能在哪台机器上运行，哪台是你自己的设备，哪些是服务器 runner，以及怎么把一台新服务器接进来。"
-                  >
-                    <BackendAccessPanel
-                      projectId={project.id}
-                      canEdit={canEditProject}
-                      inventoryRefreshKey={workspaceInventoryRefreshKey}
-                    />
+                  <BackendAccessPanel
+                    projectId={project.id}
+                    canEdit={canEditProject}
+                    workspaces={workspaces}
+                    inventoryRefreshKey={workspaceInventoryRefreshKey}
+                    onWorkspacesChanged={refreshWorkspaceBindings}
+                  />
 
-                    <ContentGroup
-                      title="接入新服务器"
-                      description="给没有界面、没有登录态的服务器签发接入令牌，复制 setup 命令即可把它作为服务器 runner 接入。"
-                    >
-                      <RunnerTokensPanel projectId={project.id} canEdit={canEditProject} />
-                    </ContentGroup>
-                  </SectionCard>
-
-                  <SectionCard
-                    title="工作空间"
-                    description="每个工作空间是一处工作内容；它落在哪台机器的哪个目录，在条目里就地查看与定位。"
-                  >
-                    <WorkspaceList
-                      projectId={project.id}
-                      workspaces={workspaces}
-                      defaultWorkspaceId={project.config.default_workspace_id}
-                      canManageBindings={canManageSharing}
-                      onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
-                      onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
-                    />
-
-                    <CollapsibleGroup
-                      title="在本机定位目录（高级）"
-                      hint="在已接入的本机上扫描候选目录，确认后写入工作空间。日常使用可直接在工作空间条目的「在机器上定位」里完成。"
-                    >
-                      <LocalWorkspaceDiscoveryPanel
-                        projectId={project.id}
-                        workspaces={workspaces}
-                        canEdit={canEditProject}
-                        refreshKey={workspaceInventoryRefreshKey}
-                        onBound={refreshWorkspaceBindings}
-                      />
-                    </CollapsibleGroup>
-                  </SectionCard>
+                  <WorkspaceList
+                    projectId={project.id}
+                    workspaces={workspaces}
+                    defaultWorkspaceId={project.config.default_workspace_id}
+                    canManageBindings={canManageSharing}
+                    onSetDefault={canEditProject ? (wsId) => void saveDefaultWorkspace(wsId) : undefined}
+                    onInventoryChanged={() => setWorkspaceInventoryRefreshKey((key) => key + 1)}
+                  />
 
                   <SectionCard
-                    title="高级 / 诊断"
-                    description="只读的诊断信息，日常无需关注。"
+                    title="诊断 / 高级"
+                    description="只读诊断，日常无需关注。"
                   >
                     <CollapsibleGroup
                       title="Workspace Modules"

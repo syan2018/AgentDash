@@ -5,17 +5,22 @@ import type { SettingsTab, SettingsTabItem } from "./settings-tabs";
 export function SectionCard({
   title,
   description,
+  action,
   children,
 }: {
   title: string;
   description?: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="space-y-5">
-      <div className="space-y-1.5">
-        <h2 className="text-xl font-semibold tracking-[-0.025em] text-foreground">{title}</h2>
-        {description && <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1.5">
+          <h2 className="text-xl font-semibold tracking-[-0.025em] text-foreground">{title}</h2>
+          {description && <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>}
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
       </div>
       {children}
     </section>

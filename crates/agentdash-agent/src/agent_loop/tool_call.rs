@@ -370,7 +370,7 @@ async fn prepare_tool_call(
         }
     };
 
-    if let Some(delegate) = config.runtime_delegate.as_ref() {
+    if config.runtime_delegates.tool_policy.is_some() {
         let mut hook_context = context.clone();
         apply_tool_definitions(&mut hook_context, &current_tools);
         let input = BeforeToolCallInput {
@@ -379,7 +379,11 @@ async fn prepare_tool_call(
             args: args.clone(),
             context: hook_context,
         };
-        let decision = match delegate.before_tool_call(input, cancel.clone()).await {
+        let decision = match config
+            .runtime_delegates
+            .before_tool_call(input, cancel.clone())
+            .await
+        {
             Ok(decision) => decision,
             Err(error) => {
                 return ToolCallPreparation::Immediate {
@@ -580,7 +584,7 @@ async fn finalize_executed_tool_call(
     let mut result = executed.result;
     let mut is_error = executed.is_error;
 
-    if let Some(delegate) = config.runtime_delegate.as_ref() {
+    if config.runtime_delegates.tool_policy.is_some() {
         let input = AfterToolCallInput {
             assistant_message: assistant_message.clone(),
             tool_call: tc.clone(),
@@ -590,7 +594,11 @@ async fn finalize_executed_tool_call(
             context: context.clone(),
         };
 
-        match delegate.after_tool_call(input, cancel.clone()).await {
+        match config
+            .runtime_delegates
+            .after_tool_call(input, cancel.clone())
+            .await
+        {
             Ok(effects) => {
                 if let Some(content) = effects.content {
                     result.content = content;

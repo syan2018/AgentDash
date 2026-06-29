@@ -138,6 +138,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - `AgentRunTurnBoundary + LaunchOrContinueTurn + DrainMode::One` 在 AgentRunTurn stop/terminal 边界最多消费一条普通 user-origin message。`BeforeStop` 命中时以 steering continuation 继续当前 loop；terminal callback 只作为 fallback。
 - Hook `UserPromptSubmit` 的 block/rewrite/context injection 仍由 hook runtime 处理。hook 产出的 delivery message，包括 `AfterTurn` steering、`BeforeStop` steering、legacy follow-up 和 anchored auto-resume，必须写入 mailbox envelope，并使用稳定 `source_dedup_key`。
 - Legacy hook `follow_up` 不是 mailbox delivery class；它归一为 `SteerActiveTurn { stop_effect: ContinueOnStop }`。
+- AgentRun Mailbox runtime adapter 在 Agent Loop 中只作为 `RuntimeTurnBoundaryDelegate` 参与组合。`after_turn` 负责把 hook steering / follow-up 归一为 mailbox envelope 并触发 AgentLoopTurnBoundary 调度，`before_stop` 负责 AgentRunTurnBoundary drain 并在有可消费 envelope 时继续当前 loop。压缩、上下文变换、工具策略与 provider request 观测分别由 hook runtime、admission 或对应 runtime facet 拥有，原因是 mailbox 的事实源是 durable delivery envelope 与 boundary drain state，而不是模型上下文、工具授权或 provider telemetry。
 - User-origin payload 可以在 queued/consuming 阶段短期持久以支持恢复；消费成功后按 retention policy 清理。preview、status、accepted refs 和 receipt result 继续保留用于投影与审计。
 - `Consuming` message 必须有 claim token、lease 和 attempt count。scheduler completion 必须比较 claim token 后才能写入 `Dispatched`、`Steered`、`Failed` 或恢复状态。
 - `Consuming` lease 过期且没有 accepted refs 时，message 进入 `Blocked` 并写入 `last_error="delivery_result_unknown"`。该状态表示 delivery 副作用边界不确定，普通 promote 不可重新排队，projection 必须给出 `can_promote=false`，原因是自动或误触重排都可能重复 launch/steer。

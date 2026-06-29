@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"Verify runtime delegate facet composition follows session architecture owner rules."}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Verify mailbox remains a turn-boundary adapter and no longer forwards unrelated facets."}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"Verify hook runtime behavior remains mapped across facets."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Use targeted Rust checks and avoid broad compile loops."}
+{"file":".trellis/tasks/06-30-agent-runtime-delegate-set-cleanup/prd.md","reason":"Check against D6 requirements and acceptance criteria."}
+{"file":".trellis/tasks/06-30-agent-runtime-delegate-set-cleanup/design.md","reason":"Check against facet design and composition invariants."}

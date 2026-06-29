@@ -1,17 +1,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use agentdash_agent_types::{
+    AfterToolCallEffects, AfterToolCallInput, AgentRuntimeError, BeforeToolCallInput,
+    DynRuntimeToolPolicyDelegate, RuntimeToolPolicyDelegate, ToolCallDecision,
+};
 use agentdash_application_ports::agent_run_surface::{
     AgentRunAdmissionRequest, AgentRunEffectiveCapabilityPort,
 };
 use agentdash_spi::hooks::RuntimeToolSchemaEntry;
-use agentdash_spi::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
-    CompactionFailureInput, CompactionParams, CompactionResult, DynAgentRuntimeDelegate,
-    EvaluateCompactionInput, StopDecision, ToolCallDecision, ToolCapability, ToolCluster,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
-};
+use agentdash_spi::{ToolCapability, ToolCluster};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
@@ -54,20 +52,20 @@ impl ToolAdmissionMetadata {
     }
 }
 
-pub(crate) struct AgentRunAdmissionRuntimeDelegate {
+pub(crate) struct AgentRunAdmissionToolPolicyFacet {
     runtime_session_id: String,
     port: Arc<dyn AgentRunEffectiveCapabilityPort>,
-    inner: Option<DynAgentRuntimeDelegate>,
+    inner: Option<DynRuntimeToolPolicyDelegate>,
     tools: BTreeMap<String, ToolAdmissionMetadata>,
 }
 
-impl AgentRunAdmissionRuntimeDelegate {
+impl AgentRunAdmissionToolPolicyFacet {
     pub(crate) fn wrap(
         runtime_session_id: String,
         port: Arc<dyn AgentRunEffectiveCapabilityPort>,
-        inner: Option<DynAgentRuntimeDelegate>,
+        inner: Option<DynRuntimeToolPolicyDelegate>,
         tools: BTreeMap<String, ToolAdmissionMetadata>,
-    ) -> DynAgentRuntimeDelegate {
+    ) -> DynRuntimeToolPolicyDelegate {
         Arc::new(Self {
             runtime_session_id,
             port,
@@ -113,54 +111,7 @@ impl AgentRunAdmissionRuntimeDelegate {
 }
 
 #[async_trait]
-impl AgentRuntimeDelegate for AgentRunAdmissionRuntimeDelegate {
-    async fn evaluate_compaction(
-        &self,
-        input: EvaluateCompactionInput,
-        cancel: CancellationToken,
-    ) -> Result<Option<CompactionParams>, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.evaluate_compaction(input, cancel).await,
-            None => Ok(None),
-        }
-    }
-
-    async fn after_compaction(
-        &self,
-        result: CompactionResult,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_compaction(result, cancel).await,
-            None => Ok(()),
-        }
-    }
-
-    async fn after_compaction_failed(
-        &self,
-        input: CompactionFailureInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_compaction_failed(input, cancel).await,
-            None => Ok(()),
-        }
-    }
-
-    async fn transform_context(
-        &self,
-        input: TransformContextInput,
-        cancel: CancellationToken,
-    ) -> Result<TransformContextOutput, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.transform_context(input, cancel).await,
-            None => Ok(TransformContextOutput {
-                steering_messages: input.context.messages,
-                blocked: None,
-            }),
-        }
-    }
-
+impl RuntimeToolPolicyDelegate for AgentRunAdmissionToolPolicyFacet {
     async fn before_tool_call(
         &self,
         input: BeforeToolCallInput,
@@ -185,39 +136,6 @@ impl AgentRuntimeDelegate for AgentRunAdmissionRuntimeDelegate {
             None => Ok(AfterToolCallEffects::default()),
         }
     }
-
-    async fn after_turn(
-        &self,
-        input: AfterTurnInput,
-        cancel: CancellationToken,
-    ) -> Result<TurnControlDecision, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_turn(input, cancel).await,
-            None => Ok(TurnControlDecision::default()),
-        }
-    }
-
-    async fn before_stop(
-        &self,
-        input: BeforeStopInput,
-        cancel: CancellationToken,
-    ) -> Result<StopDecision, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.before_stop(input, cancel).await,
-            None => Ok(StopDecision::Stop),
-        }
-    }
-
-    async fn on_before_provider_request(
-        &self,
-        input: BeforeProviderRequestInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.on_before_provider_request(input, cancel).await,
-            None => Ok(()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -240,6 +158,16 @@ mod tests {
         fn allow() -> Self {
             Self {
                 decision: AgentRunAdmissionDecision::allow(),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn deny() -> Self {
+            Self {
+                decision: AgentRunAdmissionDecision {
+                    allowed: false,
+                    reason: Some("denied by test".to_string()),
+                },
                 requests: Mutex::new(Vec::new()),
             }
         }
@@ -269,6 +197,40 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingToolPolicy {
+        before_calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl RuntimeToolPolicyDelegate for RecordingToolPolicy {
+        async fn before_tool_call(
+            &self,
+            input: BeforeToolCallInput,
+            _cancel: CancellationToken,
+        ) -> Result<ToolCallDecision, AgentRuntimeError> {
+            self.before_calls
+                .lock()
+                .expect("before calls mutex")
+                .push(input.tool_call.name);
+            Ok(ToolCallDecision::Allow)
+        }
+
+        async fn after_tool_call(
+            &self,
+            _input: AfterToolCallInput,
+            _cancel: CancellationToken,
+        ) -> Result<AfterToolCallEffects, AgentRuntimeError> {
+            Ok(AfterToolCallEffects::default())
+        }
+    }
+
+    impl RecordingToolPolicy {
+        fn before_call_count(&self) -> usize {
+            self.before_calls.lock().expect("before calls mutex").len()
+        }
+    }
+
     fn tool_call_input(tool_name: &str) -> BeforeToolCallInput {
         BeforeToolCallInput {
             assistant_message: AgentMessage::user("assistant"),
@@ -286,6 +248,18 @@ mod tests {
                 tools: Vec::new(),
             },
         }
+    }
+
+    fn workflow_tool_metadata() -> BTreeMap<String, ToolAdmissionMetadata> {
+        ToolAdmissionMetadata::from_schema_entries(&[RuntimeToolSchemaEntry {
+            name: "workflow_runtime_name".to_string(),
+            description: "Workflow mutation".to_string(),
+            parameters_schema: serde_json::json!({ "type": "object" }),
+            capability_key: Some("workflow_management".to_string()),
+            source: Some("platform:workflow".to_string()),
+            tool_path: Some("workflow_management::upsert_workflow_tool".to_string()),
+            context_usage_kind: None,
+        }])
     }
 
     #[test]
@@ -309,22 +283,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegate_calls_agent_run_admission_before_inner_delegate() {
+    async fn admission_tool_policy_calls_agent_run_admission_before_inner_policy() {
         let port = Arc::new(CapturingAdmissionPort::allow());
-        let metadata = ToolAdmissionMetadata::from_schema_entries(&[RuntimeToolSchemaEntry {
-            name: "workflow_runtime_name".to_string(),
-            description: "Workflow mutation".to_string(),
-            parameters_schema: serde_json::json!({ "type": "object" }),
-            capability_key: Some("workflow_management".to_string()),
-            source: Some("platform:workflow".to_string()),
-            tool_path: Some("workflow_management::upsert_workflow_tool".to_string()),
-            context_usage_kind: None,
-        }]);
-        let delegate = AgentRunAdmissionRuntimeDelegate {
+        let inner = Arc::new(RecordingToolPolicy::default());
+        let delegate = AgentRunAdmissionToolPolicyFacet {
             runtime_session_id: "session-a".to_string(),
             port: port.clone(),
-            inner: None,
-            tools: metadata,
+            inner: Some(inner.clone()),
+            tools: workflow_tool_metadata(),
         };
 
         let decision = delegate
@@ -341,12 +307,39 @@ mod tests {
         assert_eq!(requests[0].runtime_session_id, "session-a");
         assert_eq!(requests[0].capability_key, "workflow_management");
         assert_eq!(requests[0].tool_name, "upsert_workflow_tool");
+        assert_eq!(inner.before_call_count(), 1);
     }
 
     #[tokio::test]
-    async fn delegate_denies_tools_without_admission_metadata() {
+    async fn admission_deny_short_circuits_before_inner_policy() {
+        let port = Arc::new(CapturingAdmissionPort::deny());
+        let inner = Arc::new(RecordingToolPolicy::default());
+        let delegate = AgentRunAdmissionToolPolicyFacet {
+            runtime_session_id: "session-a".to_string(),
+            port: port.clone(),
+            inner: Some(inner.clone()),
+            tools: workflow_tool_metadata(),
+        };
+
+        let decision = delegate
+            .before_tool_call(
+                tool_call_input("workflow_runtime_name"),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("decision");
+
+        assert!(
+            matches!(decision, ToolCallDecision::Deny { reason } if reason == "denied by test")
+        );
+        assert_eq!(port.requests().len(), 1);
+        assert_eq!(inner.before_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn admission_tool_policy_denies_tools_without_metadata() {
         let port = Arc::new(CapturingAdmissionPort::allow());
-        let delegate = AgentRunAdmissionRuntimeDelegate {
+        let delegate = AgentRunAdmissionToolPolicyFacet {
             runtime_session_id: "session-a".to_string(),
             port: port.clone(),
             inner: None,

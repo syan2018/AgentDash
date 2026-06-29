@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
@@ -18,8 +18,6 @@ use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
 use crate::hooks::{ContextFrame, HookRuntimeAccess};
-use agentdash_agent_types::DynAgentRuntimeDelegate;
-
 pub mod capability_delta;
 
 pub use capability_delta::{
@@ -98,13 +96,13 @@ pub struct ExecutionBackendPlacement {
 
 /// Turn 级执行上下文（How + 运行时控制面）。
 ///
-/// per-turn 动态：工具集、hook runtime、runtime delegate、系统 prompt 产出等；
+/// per-turn 动态：工具集、hook runtime、runtime delegate facets、系统 prompt 产出等；
 /// 会随 session hot-update 或 hook 触发而重建。
 #[derive(Clone, Default)]
 pub struct ExecutionTurnFrame {
     pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
     pub capability_state: CapabilityState,
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
@@ -167,8 +165,14 @@ impl std::fmt::Debug for ExecutionContext {
             .field("executor_config", &self.session.executor_config)
             .field("hook_runtime", &self.turn.hook_runtime)
             .field(
-                "runtime_delegate",
-                &self.turn.runtime_delegate.as_ref().map(|_| ".."),
+                "runtime_delegates",
+                &[
+                    self.turn.runtime_delegates.compaction.is_some(),
+                    self.turn.runtime_delegates.context_transform.is_some(),
+                    self.turn.runtime_delegates.tool_policy.is_some(),
+                    self.turn.runtime_delegates.turn_boundary.is_some(),
+                    self.turn.runtime_delegates.provider_observer.is_some(),
+                ],
             )
             .field(
                 "restored_session_state",

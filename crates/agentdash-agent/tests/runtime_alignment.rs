@@ -902,7 +902,9 @@ async fn running_agent_refreshes_tool_schema_before_next_llm_request() {
     let new_tool: DynAgentTool =
         Arc::new(NamedTool::new("new_tool", Arc::new(AtomicUsize::new(0))));
     let mut agent = Agent::new(Arc::new(bridge.clone()), AgentConfig::default());
-    agent.set_runtime_delegate(Some(Arc::new(EmptyContinueDelegate::default())));
+    agent.set_runtime_delegates(turn_boundary_delegates(Arc::new(
+        EmptyContinueDelegate::default(),
+    )));
     agent.set_tools(vec![old_tool]);
 
     let (_rx, handle) = agent
@@ -952,7 +954,9 @@ async fn running_agent_uses_live_tool_instances_for_tool_lookup() {
         Arc::new(NamedTool::new("old_tool", Arc::new(AtomicUsize::new(0))));
     let new_tool: DynAgentTool = Arc::new(NamedTool::new("new_tool", new_tool_executed.clone()));
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
-    agent.set_runtime_delegate(Some(Arc::new(EmptyContinueDelegate::default())));
+    agent.set_runtime_delegates(turn_boundary_delegates(Arc::new(
+        EmptyContinueDelegate::default(),
+    )));
     agent.set_tools(vec![old_tool]);
 
     let (_rx, handle) = agent
@@ -997,7 +1001,7 @@ async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
     };
     let tool_instances: Vec<DynAgentTool> = vec![];
     let config = AgentLoopConfig {
-        runtime_delegate: Some(Arc::new(EmptyContinueDelegate::default())),
+        runtime_delegates: turn_boundary_delegates(Arc::new(EmptyContinueDelegate::default())),
         ..AgentLoopConfig::default()
     };
 
@@ -1039,7 +1043,7 @@ async fn repeated_empty_continue_decision_fails_instead_of_spinning() {
     let tool_instances: Vec<DynAgentTool> = vec![];
     let before_stop_calls = Arc::new(AtomicUsize::new(0));
     let config = AgentLoopConfig {
-        runtime_delegate: Some(Arc::new(EmptyContinueDelegate {
+        runtime_delegates: turn_boundary_delegates(Arc::new(EmptyContinueDelegate {
             before_stop_calls: before_stop_calls.clone(),
             always_continue: true,
         })),
@@ -1545,7 +1549,7 @@ async fn large_approval_rejection_result_is_bounded_without_tool_execution_end()
     };
     let events = Arc::new(Mutex::new(Vec::new()));
     let config = AgentLoopConfig {
-        runtime_delegate: Some(Arc::new(RejectingRuntimeDelegate)),
+        runtime_delegates: tool_policy_delegates(Arc::new(RejectingRuntimeDelegate)),
         await_tool_approval: Some(Arc::new(|_request, _cancel| {
             Box::pin(async move {
                 ToolApprovalOutcome::Rejected {
@@ -1771,7 +1775,7 @@ async fn runtime_delegate_errors_after_assistant_do_not_become_assistant_message
         agentdash_agent::StreamChunk::Done(bridge_response(assistant_text("done"))),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
-    agent.set_runtime_delegate(Some(Arc::new(FailingBeforeStopDelegate)));
+    agent.set_runtime_delegates(turn_boundary_delegates(Arc::new(FailingBeforeStopDelegate)));
 
     let (_rx, handle) = agent
         .prompt(AgentMessage::user("hi"))
@@ -1970,7 +1974,7 @@ async fn deny_decision_keeps_tool_unexecuted() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = collecting_sink(events.clone());
     let config = AgentLoopConfig {
-        runtime_delegate: Some(Arc::new(DenyingRuntimeDelegate)),
+        runtime_delegates: tool_policy_delegates(Arc::new(DenyingRuntimeDelegate)),
         ..AgentLoopConfig::default()
     };
 
@@ -2036,7 +2040,7 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
     let approval_requested_for_cfg = approval_requested.clone();
     let release_approval_for_cfg = release_approval.clone();
     let config = AgentLoopConfig {
-        runtime_delegate: Some(Arc::new(RejectingRuntimeDelegate)),
+        runtime_delegates: tool_policy_delegates(Arc::new(RejectingRuntimeDelegate)),
         await_tool_approval: Some(Arc::new(move |_request, _cancel| {
             let approval_requested = approval_requested_for_cfg.clone();
             let release_approval = release_approval_for_cfg.clone();
@@ -2107,35 +2111,24 @@ struct EmptyContinueDelegate {
     always_continue: bool,
 }
 
+fn tool_policy_delegates<T>(delegate: Arc<T>) -> agentdash_agent::AgentRuntimeDelegateSet
+where
+    T: agentdash_agent::RuntimeToolPolicyDelegate + 'static,
+{
+    let delegate: agentdash_agent::DynRuntimeToolPolicyDelegate = delegate;
+    agentdash_agent::AgentRuntimeDelegateSet::new().with_tool_policy(Some(delegate))
+}
+
+fn turn_boundary_delegates<T>(delegate: Arc<T>) -> agentdash_agent::AgentRuntimeDelegateSet
+where
+    T: agentdash_agent::RuntimeTurnBoundaryDelegate + 'static,
+{
+    let delegate: agentdash_agent::DynRuntimeTurnBoundaryDelegate = delegate;
+    agentdash_agent::AgentRuntimeDelegateSet::new().with_turn_boundary(Some(delegate))
+}
+
 #[async_trait]
-impl agentdash_agent::AgentRuntimeDelegate for DenyingRuntimeDelegate {
-    async fn evaluate_compaction(
-        &self,
-        _input: agentdash_agent::EvaluateCompactionInput,
-        _cancel: CancellationToken,
-    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
-        Ok(None)
-    }
-
-    async fn after_compaction(
-        &self,
-        _result: agentdash_agent::CompactionResult,
-        _cancel: CancellationToken,
-    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
-        Ok(())
-    }
-
-    async fn transform_context(
-        &self,
-        input: agentdash_agent::TransformContextInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TransformContextOutput {
-            steering_messages: input.context.messages,
-            blocked: None,
-        })
-    }
-
+impl agentdash_agent::RuntimeToolPolicyDelegate for DenyingRuntimeDelegate {
     async fn before_tool_call(
         &self,
         _input: agentdash_agent::BeforeToolCallInput,
@@ -2153,53 +2146,10 @@ impl agentdash_agent::AgentRuntimeDelegate for DenyingRuntimeDelegate {
     ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::AfterToolCallEffects::default())
     }
-
-    async fn after_turn(
-        &self,
-        _input: agentdash_agent::AfterTurnInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TurnControlDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TurnControlDecision::default())
-    }
-
-    async fn before_stop(
-        &self,
-        _input: BeforeStopInput,
-        _cancel: CancellationToken,
-    ) -> Result<StopDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(StopDecision::Stop)
-    }
 }
 
 #[async_trait]
-impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
-    async fn evaluate_compaction(
-        &self,
-        _input: agentdash_agent::EvaluateCompactionInput,
-        _cancel: CancellationToken,
-    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
-        Ok(None)
-    }
-
-    async fn after_compaction(
-        &self,
-        _result: agentdash_agent::CompactionResult,
-        _cancel: CancellationToken,
-    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
-        Ok(())
-    }
-
-    async fn transform_context(
-        &self,
-        input: agentdash_agent::TransformContextInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TransformContextOutput {
-            steering_messages: input.context.messages,
-            blocked: None,
-        })
-    }
-
+impl agentdash_agent::RuntimeToolPolicyDelegate for RejectingRuntimeDelegate {
     async fn before_tool_call(
         &self,
         _input: agentdash_agent::BeforeToolCallInput,
@@ -2219,69 +2169,10 @@ impl agentdash_agent::AgentRuntimeDelegate for RejectingRuntimeDelegate {
     ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
         Ok(agentdash_agent::AfterToolCallEffects::default())
     }
-
-    async fn after_turn(
-        &self,
-        _input: agentdash_agent::AfterTurnInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TurnControlDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TurnControlDecision::default())
-    }
-
-    async fn before_stop(
-        &self,
-        _input: agentdash_agent::BeforeStopInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::StopDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::StopDecision::Stop)
-    }
 }
 
 #[async_trait]
-impl agentdash_agent::AgentRuntimeDelegate for FailingBeforeStopDelegate {
-    async fn evaluate_compaction(
-        &self,
-        _input: agentdash_agent::EvaluateCompactionInput,
-        _cancel: CancellationToken,
-    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
-        Ok(None)
-    }
-
-    async fn after_compaction(
-        &self,
-        _result: agentdash_agent::CompactionResult,
-        _cancel: CancellationToken,
-    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
-        Ok(())
-    }
-
-    async fn transform_context(
-        &self,
-        input: agentdash_agent::TransformContextInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TransformContextOutput {
-            steering_messages: input.context.messages,
-            blocked: None,
-        })
-    }
-
-    async fn before_tool_call(
-        &self,
-        _input: agentdash_agent::BeforeToolCallInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::ToolCallDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::ToolCallDecision::Allow)
-    }
-
-    async fn after_tool_call(
-        &self,
-        _input: agentdash_agent::AfterToolCallInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::AfterToolCallEffects::default())
-    }
-
+impl agentdash_agent::RuntimeTurnBoundaryDelegate for FailingBeforeStopDelegate {
     async fn after_turn(
         &self,
         _input: agentdash_agent::AfterTurnInput,
@@ -2302,50 +2193,7 @@ impl agentdash_agent::AgentRuntimeDelegate for FailingBeforeStopDelegate {
 }
 
 #[async_trait]
-impl agentdash_agent::AgentRuntimeDelegate for EmptyContinueDelegate {
-    async fn evaluate_compaction(
-        &self,
-        _input: agentdash_agent::EvaluateCompactionInput,
-        _cancel: CancellationToken,
-    ) -> Result<Option<agentdash_agent::CompactionParams>, agentdash_agent::AgentRuntimeError> {
-        Ok(None)
-    }
-
-    async fn after_compaction(
-        &self,
-        _result: agentdash_agent::CompactionResult,
-        _cancel: CancellationToken,
-    ) -> Result<(), agentdash_agent::AgentRuntimeError> {
-        Ok(())
-    }
-
-    async fn transform_context(
-        &self,
-        input: agentdash_agent::TransformContextInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::TransformContextOutput, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::TransformContextOutput {
-            steering_messages: input.context.messages,
-            blocked: None,
-        })
-    }
-
-    async fn before_tool_call(
-        &self,
-        _input: agentdash_agent::BeforeToolCallInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::ToolCallDecision, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::ToolCallDecision::Allow)
-    }
-
-    async fn after_tool_call(
-        &self,
-        _input: agentdash_agent::AfterToolCallInput,
-        _cancel: CancellationToken,
-    ) -> Result<agentdash_agent::AfterToolCallEffects, agentdash_agent::AgentRuntimeError> {
-        Ok(agentdash_agent::AfterToolCallEffects::default())
-    }
-
+impl agentdash_agent::RuntimeTurnBoundaryDelegate for EmptyContinueDelegate {
     async fn after_turn(
         &self,
         _input: agentdash_agent::AfterTurnInput,

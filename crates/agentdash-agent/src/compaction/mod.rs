@@ -1,6 +1,6 @@
 //! 上下文压缩引擎
 //!
-//! 纯函数 + LLM 调用编排。策略决策由 AgentRuntimeDelegate 负责，
+//! 纯函数 + LLM 调用编排。策略决策由 RuntimeCompactionDelegate 负责，
 //! 本模块只负责执行：cut point 检测、摘要生成、消息替换。
 
 use tokio_util::sync::CancellationToken;

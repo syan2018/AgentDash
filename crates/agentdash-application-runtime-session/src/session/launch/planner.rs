@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
+use agentdash_agent_types::{AgentRuntimeDelegateSet, DynRuntimeToolPolicyDelegate};
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, TerminalHookEffectBinding,
 };
 use agentdash_domain::backend::{BackendExecutionLease, RuntimeBackendAnchor};
-use agentdash_spi::{ConnectorError, DynAgentRuntimeDelegate, RestoredSessionState, Vfs};
+use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
-use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
+use super::{
+    LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode,
+    RuntimeDelegateCompositionPlan, RuntimeDelegateFacetPlan,
+};
 use crate::backend_execution_placement::{
     BackendSelectionIntent, BackendSelectionRequest, ExecutionPlacementPlan,
     has_available_relay_executor, resolve_backend_execution_placement,
@@ -144,26 +148,38 @@ impl<'a> LaunchPlanner<'a> {
         // context_bundle 在 hook contribution merge 后直接传递给 LaunchPlanInput
 
         let context_audit_bus = self.deps.current_context_audit_bus().await;
-        let hook_runtime_delegate: Option<DynAgentRuntimeDelegate> =
-            hook_runtime.as_ref().map(|hs| {
-                let injection_sink: DynRuntimeHookInjectionSink =
-                    Arc::new(SessionRuntimeHookInjectionSink::new(
-                        self.deps.runtime_registry.clone(),
-                        context_audit_bus.clone(),
-                    ));
-                HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
-                    hs.clone(),
-                    Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+        let hook_runtime_delegate = hook_runtime.as_ref().map(|hs| {
+            let injection_sink: DynRuntimeHookInjectionSink =
+                Arc::new(SessionRuntimeHookInjectionSink::new(
+                    self.deps.runtime_registry.clone(),
                     context_audit_bus.clone(),
-                    Some(injection_sink),
-                )
-            });
-        let runtime_delegate = match self.deps.current_mailbox_runtime_port().await {
-            Some(mailbox_port) => Some(
-                mailbox_port.runtime_delegate(input.session_id.to_string(), hook_runtime_delegate),
-            ),
-            None => hook_runtime_delegate,
+                ));
+            HookRuntimeDelegate::new_facets(
+                hs.clone(),
+                Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+                context_audit_bus.clone(),
+                Some(injection_sink),
+            )
+        });
+        let hook_tool_policy: Option<DynRuntimeToolPolicyDelegate> = hook_runtime_delegate
+            .as_ref()
+            .map(|delegate| delegate.clone() as DynRuntimeToolPolicyDelegate);
+        let mut runtime_delegates = hook_runtime_delegate
+            .as_ref()
+            .map(|delegate| AgentRuntimeDelegateSet::from_all_facets(delegate.clone()))
+            .unwrap_or_default();
+        let mut runtime_delegate_composition = RuntimeDelegateCompositionPlan {
+            hook_facets: hook_runtime_delegate.is_some(),
+            mailbox_turn_boundary: false,
+            admission_tool_policy: false,
         };
+        if let Some(mailbox_port) = self.deps.current_mailbox_runtime_port().await {
+            runtime_delegate_composition.mailbox_turn_boundary = true;
+            runtime_delegates.turn_boundary = Some(mailbox_port.turn_boundary_delegate(
+                input.session_id.to_string(),
+                runtime_delegates.turn_boundary.take(),
+            ));
+        }
         let restore_mode = match prompt_launch_path {
             PromptLaunchPath::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
@@ -252,7 +268,11 @@ impl<'a> LaunchPlanner<'a> {
             environment_variables: prompt_input.env.clone(),
             hook_runtime: hook_runtime.clone(),
             capability_state: capability_state.clone(),
-            runtime_delegate,
+            runtime_delegates,
+            runtime_delegate_facets: RuntimeDelegateFacetPlan {
+                composition: runtime_delegate_composition,
+                hook_tool_policy,
+            },
             restored_session_state,
             post_turn_handler,
             backend_execution,

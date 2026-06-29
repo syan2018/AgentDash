@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_spi::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
-    CompactionFailureInput, CompactionParams, CompactionResult, CompactionTriggerStats,
-    DynAgentRuntimeDelegate, EvaluateCompactionInput, StopDecision, StopReason, ToolCallDecision,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
+use agentdash_agent_types::{
+    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeError,
+    BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput, CompactionFailureInput,
+    CompactionParams, CompactionResult, CompactionTriggerStats, EvaluateCompactionInput,
+    RuntimeCompactionDelegate, RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate,
+    RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason,
+    ToolCallDecision, TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -34,25 +35,36 @@ pub struct HookRuntimeDelegate {
 }
 
 impl HookRuntimeDelegate {
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(hook_runtime: SharedHookRuntime) -> DynAgentRuntimeDelegate {
+    pub(crate) fn new_facets(
+        hook_runtime: SharedHookRuntime,
+        default_mount_root_ref: Option<String>,
+        audit_bus: Option<SharedContextAuditBus>,
+        injection_sink: Option<DynRuntimeHookInjectionSink>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            hook_runtime,
+            default_mount_root_ref,
+            audit_bus,
+            injection_sink,
+        })
+    }
+
+    pub fn new(hook_runtime: SharedHookRuntime) -> Arc<Self> {
         Self::new_with_mount_root(hook_runtime, None)
     }
 
-    #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root(
         hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
-    ) -> DynAgentRuntimeDelegate {
+    ) -> Arc<Self> {
         Self::new_with_mount_root_and_audit(hook_runtime, default_mount_root_ref, None)
     }
 
-    #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root_and_audit(
         hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
         audit_bus: Option<SharedContextAuditBus>,
-    ) -> DynAgentRuntimeDelegate {
+    ) -> Arc<Self> {
         Self::new_with_mount_root_audit_and_sink(
             hook_runtime,
             default_mount_root_ref,
@@ -61,19 +73,18 @@ impl HookRuntimeDelegate {
         )
     }
 
-    #[allow(clippy::new_ret_no_self)]
     pub fn new_with_mount_root_audit_and_sink(
         hook_runtime: SharedHookRuntime,
         default_mount_root_ref: Option<String>,
         audit_bus: Option<SharedContextAuditBus>,
         injection_sink: Option<DynRuntimeHookInjectionSink>,
-    ) -> DynAgentRuntimeDelegate {
-        Arc::new(Self {
+    ) -> Arc<Self> {
+        Self::new_facets(
             hook_runtime,
             default_mount_root_ref,
             audit_bus,
             injection_sink,
-        })
+        )
     }
 
     async fn evaluate(
@@ -260,7 +271,7 @@ impl HookRuntimeDelegate {
 }
 
 #[async_trait]
-impl AgentRuntimeDelegate for HookRuntimeDelegate {
+impl RuntimeCompactionDelegate for HookRuntimeDelegate {
     async fn evaluate_compaction(
         &self,
         input: EvaluateCompactionInput,
@@ -434,7 +445,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         self.hook_runtime.append_diagnostics_vec(diagnostics);
         Ok(())
     }
+}
 
+#[async_trait]
+impl RuntimeContextTransformDelegate for HookRuntimeDelegate {
     async fn transform_context(
         &self,
         input: TransformContextInput,
@@ -522,7 +536,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             blocked: None,
         })
     }
+}
 
+#[async_trait]
+impl RuntimeToolPolicyDelegate for HookRuntimeDelegate {
     async fn before_tool_call(
         &self,
         input: BeforeToolCallInput,
@@ -641,7 +658,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             ..AfterToolCallEffects::default()
         })
     }
+}
 
+#[async_trait]
+impl RuntimeTurnBoundaryDelegate for HookRuntimeDelegate {
     async fn after_turn(
         &self,
         input: AfterTurnInput,
@@ -737,7 +757,10 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             allow_empty: allow_empty_continue,
         })
     }
+}
 
+#[async_trait]
+impl RuntimeProviderObserverDelegate for HookRuntimeDelegate {
     async fn on_before_provider_request(
         &self,
         input: BeforeProviderRequestInput,
@@ -940,7 +963,9 @@ mod tests {
 
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeProviderRequestInput, CompactionFailureInput,
-        CompactionResult, StopDecision, StopReason, TokenUsage,
+        CompactionResult, RuntimeCompactionDelegate, RuntimeContextTransformDelegate,
+        RuntimeProviderObserverDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason,
+        TokenUsage,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;

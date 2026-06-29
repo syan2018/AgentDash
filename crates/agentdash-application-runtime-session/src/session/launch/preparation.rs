@@ -8,8 +8,8 @@ use agentdash_spi::hooks::{
 use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
 
 use super::deps::TurnPreparationDeps;
-use super::{LaunchFollowUpSource, LaunchPlan};
-use crate::session::admission_delegate::{AgentRunAdmissionRuntimeDelegate, ToolAdmissionMetadata};
+use super::{LaunchFollowUpSource, LaunchPlan, RuntimeDelegateCompositionPlan};
+use crate::session::admission_delegate::{AgentRunAdmissionToolPolicyFacet, ToolAdmissionMetadata};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
 use crate::session::guidelines_context_frame::{
     GuidelinesFrameInput, SYSTEM_GUIDELINES_FRAME_KIND, build_guidelines_context_frame,
@@ -48,6 +48,7 @@ pub(in crate::session) struct PreparedTurn {
     pub pending_command_ids: Vec<uuid::Uuid>,
     pub accepted_capability_state: CapabilityState,
     pub is_owner_bootstrap: bool,
+    pub runtime_delegate_composition: RuntimeDelegateCompositionPlan,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
@@ -78,6 +79,7 @@ impl TurnPreparer {
         let resolved_follow_up_session_id = launch_plan.summary.follow_up_session_id.clone();
         let post_turn_handler = launch_plan.terminal_effects.post_turn_handler.clone();
         let hook_runtime = launch_plan.context.turn.hook_runtime.clone();
+        let mut runtime_delegate_facets = launch_plan.runtime_delegate_facets.clone();
         let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();
         let context_bundle = launch_plan.context_bundle.clone();
         let discovered_guidelines = launch_plan.discovered_guidelines.clone();
@@ -111,13 +113,20 @@ impl TurnPreparer {
         if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {
             let admission_metadata =
                 ToolAdmissionMetadata::from_schema_entries(&assembled_tool_schemas);
-            let inner = context.turn.runtime_delegate.take();
-            context.turn.runtime_delegate = Some(AgentRunAdmissionRuntimeDelegate::wrap(
+            let inner_tool_policy = context
+                .turn
+                .runtime_delegates
+                .tool_policy
+                .take()
+                .or_else(|| runtime_delegate_facets.hook_tool_policy.take());
+            let admission_tool_policy = AgentRunAdmissionToolPolicyFacet::wrap(
                 session_id.clone(),
                 port.clone(),
-                inner,
+                inner_tool_policy,
                 admission_metadata,
-            ));
+            );
+            runtime_delegate_facets.composition.admission_tool_policy = true;
+            context.turn.runtime_delegates.tool_policy = Some(admission_tool_policy);
         }
 
         let include_connector_startup_context = should_include_connector_startup_context(
@@ -344,6 +353,7 @@ impl TurnPreparer {
             pending_command_ids,
             accepted_capability_state: capability_state,
             is_owner_bootstrap,
+            runtime_delegate_composition: runtime_delegate_facets.composition,
             hook_runtime,
             post_turn_handler,
         })

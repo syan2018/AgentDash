@@ -5,15 +5,19 @@ use thiserror::Error;
 
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
-    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError, AgentTool,
-    AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
+    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegateSet, AgentRuntimeError,
+    AgentTool, AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
-    CompactionParams, CompactionResult, CompactionTriggerStats, ContentPart,
-    DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, MessageRef, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats, StopDecision, StopReason,
-    TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo,
-    ToolDefinition, ToolUpdateCallback, TransformContextInput, TransformContextOutput,
-    TurnControlDecision, estimate_message_tokens, estimate_request_tokens, now_millis,
+    CompactionParams, CompactionResult, CompactionTriggerStats, ContentPart, DynAgentTool,
+    DynRuntimeCompactionDelegate, DynRuntimeContextTransformDelegate,
+    DynRuntimeProviderObserverDelegate, DynRuntimeToolPolicyDelegate,
+    DynRuntimeTurnBoundaryDelegate, EvaluateCompactionInput, MessageRef, ProjectedEntry,
+    ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats, RuntimeCompactionDelegate,
+    RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,
+    RuntimeTurnBoundaryDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
+    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback,
+    TransformContextInput, TransformContextOutput, TurnControlDecision, estimate_message_tokens,
+    estimate_request_tokens, now_millis,
 };
 pub use agentdash_domain::common::ThinkingLevel;
 

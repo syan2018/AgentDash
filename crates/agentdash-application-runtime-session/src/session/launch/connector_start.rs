@@ -37,6 +37,9 @@ impl ConnectorStarter {
 
             session_id = %prepared.session_id,
             turn_id = %prepared.turn_id,
+            hook_facets = prepared.runtime_delegate_composition.hook_facets,
+            mailbox_turn_boundary = prepared.runtime_delegate_composition.mailbox_turn_boundary,
+            admission_tool_policy = prepared.runtime_delegate_composition.admission_tool_policy,
             "connector starter calling connector.prompt"
         );
         let stream = match self

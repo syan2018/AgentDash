@@ -16,14 +16,14 @@ HookContributionSet merge -> AgentFrameHookSnapshot + HookResolution
         ↓
 AgentFrameHookRuntime（executor 持有，缓存 snapshot/diagnostics/revision）
         ↓
-AgentRuntimeDelegate（agent loop 边界同步消费）
+AgentRuntimeDelegateSet facets（agent loop 边界同步消费）
 ```
 
 ### 分层职责
 
 | Crate | 职责 | 不允许 |
 |-------|------|--------|
-| `agentdash-agent` | 只依赖 `AgentRuntimeDelegate`，在 loop 边界 await | 查询 workflow/task/story/project/repo |
+| `agentdash-agent` | 只依赖 `AgentRuntimeDelegateSet` 中的 runtime facets，在 loop 边界 await | 查询 workflow/task/story/project/repo |
 | `agentdash-executor` | 持有 `AgentFrameHookRuntime`，缓存 snapshot，适配为 delegate | 直接实现业务解析逻辑 |
 | `agentdash-application-hooks` | 实现 `ExecutionHookProvider`，从业务 projection/effect port 与 hook SPI 解析 Hook 信息 | — |
 | `agentdash-api` | HTTP surface `/api/sessions/{id}/hook-runtime` | 持有 hook 解析逻辑 |
@@ -32,9 +32,9 @@ AgentRuntimeDelegate（agent loop 边界同步消费）
 
 ## 核心 Trait
 
-### AgentRuntimeDelegate（`agentdash-agent-types::runtime::delegate`）
+### AgentRuntimeDelegateSet（`agentdash-agent-types::runtime::delegate`）
 
-Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`evaluate_compaction`、`after_compaction`、`after_compaction_failed`、`transform_context`、`before_tool_call`、`after_tool_call`、`after_turn`、`before_stop`、`on_before_provider_request`。具体签名查代码。
+Agent Loop 在关键生命周期节点调用显式 facet set：`RuntimeCompactionDelegate` 负责 `evaluate_compaction` / `after_compaction` / `after_compaction_failed`，`RuntimeContextTransformDelegate` 负责 `transform_context`，`RuntimeToolPolicyDelegate` 负责 `before_tool_call` / `after_tool_call`，`RuntimeTurnBoundaryDelegate` 负责 `after_turn` / `before_stop`，`RuntimeProviderObserverDelegate` 负责 `on_before_provider_request`。Hook runtime 覆盖全量 hook-derived facets；AgentRun admission 只组合 tool policy；AgentRun mailbox 只组合 turn boundary。这样 hook policy、Grant admission 与 mailbox delivery boundary 可以共享 agent loop 生命周期入口，同时保持各自事实 owner 清晰。
 
 ### ExecutionHookProvider（`agentdash-spi::hooks`）
 

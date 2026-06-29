@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::UserInputBlock;
+use agentdash_agent_types::DynRuntimeTurnBoundaryDelegate;
+use agentdash_spi::CapabilityState;
 use agentdash_spi::hooks::{
     AgentFrameHookSnapshot, ExecutionHookProvider, HookControlTarget, SharedHookRuntime,
 };
-use agentdash_spi::{CapabilityState, DynAgentRuntimeDelegate};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -32,11 +33,11 @@ impl RuntimeSessionLivePortError {
 
 #[async_trait]
 pub trait RuntimeSessionMailboxRuntimePort: Send + Sync {
-    fn runtime_delegate(
+    fn turn_boundary_delegate(
         &self,
         runtime_session_id: String,
-        inner: Option<DynAgentRuntimeDelegate>,
-    ) -> DynAgentRuntimeDelegate;
+        inner: Option<DynRuntimeTurnBoundaryDelegate>,
+    ) -> DynRuntimeTurnBoundaryDelegate;
 
     async fn accept_hook_auto_resume_effect(
         &self,

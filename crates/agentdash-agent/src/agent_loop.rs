@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::LlmBridge;
 use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AfterTurnInput, AgentContext, AgentError,
-    AgentEvent, AgentMessage, BeforeStopInput, BeforeToolCallContext, BeforeToolCallResult,
-    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
+    AgentEvent, AgentMessage, AgentRuntimeDelegateSet, BeforeStopInput, BeforeToolCallContext,
+    BeforeToolCallResult, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
     ToolExecutionMode,
 };
 
@@ -319,8 +319,8 @@ pub struct AgentLoopConfig {
     /// 工具审批等待
     pub await_tool_approval: Option<AwaitToolApprovalFn>,
 
-    /// 统一运行时委托
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    /// 显式运行时委托 facet 集合。
+    pub runtime_delegates: AgentRuntimeDelegateSet,
 
     /// 当前 turn 的工具结果引用上下文，用于生成 stable lifecycle path 并写入外部缓存。
     pub tool_result_ref_context: Option<ToolResultRefContext>,
@@ -612,11 +612,12 @@ async fn run_after_turn_delegate(
     tool_results: &[AgentMessage],
     cancel: &CancellationToken,
 ) -> Result<Option<crate::types::TurnControlDecision>, AgentError> {
-    let Some(delegate) = config.runtime_delegate.as_ref() else {
+    if config.runtime_delegates.turn_boundary.is_none() {
         return Ok(None);
-    };
+    }
 
-    delegate
+    config
+        .runtime_delegates
         .after_turn(
             AfterTurnInput {
                 context: context.clone(),
@@ -635,11 +636,12 @@ async fn run_before_stop_delegate(
     context: &AgentContext,
     cancel: &CancellationToken,
 ) -> Result<Option<StopDecision>, AgentError> {
-    let Some(delegate) = config.runtime_delegate.as_ref() else {
+    if config.runtime_delegates.turn_boundary.is_none() {
         return Ok(None);
-    };
+    }
 
-    delegate
+    config
+        .runtime_delegates
         .before_stop(
             BeforeStopInput {
                 context: context.clone(),

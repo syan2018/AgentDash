@@ -20,7 +20,8 @@ pub(in crate::session) use orchestrator::SessionLaunchOrchestrator;
 pub use plan::{
     ConnectorInputPlan, HookLaunchPlan, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput,
     LaunchPlanTrace, LaunchPlanTraceEntry, LaunchRestoreMode, LaunchSummary, PromptLaunchPathPlan,
-    RestoreLaunchPlan, RuntimeCommandLaunchPlan, TerminalEffectPlan,
+    RestoreLaunchPlan, RuntimeCommandLaunchPlan, RuntimeDelegateCompositionPlan,
+    RuntimeDelegateFacetPlan, TerminalEffectPlan,
 };
 pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};
 pub(in crate::session) use preparation::{TurnPreparationInput, TurnPreparer};

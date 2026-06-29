@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_agent_types::DynAgentRuntimeDelegate;
+use agentdash_agent_types::{AgentRuntimeDelegateSet, DynRuntimeToolPolicyDelegate};
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
@@ -20,6 +20,7 @@ use crate::session::types::{
     ResolvedPromptPayload,
 };
 use agentdash_application_ports::frame_launch_envelope::FrameLaunchEnvelope;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -75,6 +76,19 @@ pub struct HookLaunchPlan {
     pub snapshot_contribution: Option<Vec<ContextFragment>>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeDelegateCompositionPlan {
+    pub hook_facets: bool,
+    pub mailbox_turn_boundary: bool,
+    pub admission_tool_policy: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct RuntimeDelegateFacetPlan {
+    pub composition: RuntimeDelegateCompositionPlan,
+    pub hook_tool_policy: Option<DynRuntimeToolPolicyDelegate>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCommandLaunchPlan {
     pub requested_commands: Vec<RuntimeCommandRecord>,
@@ -119,6 +133,7 @@ pub struct LaunchPlan {
     pub launch_path: PromptLaunchPathPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
+    pub runtime_delegate_facets: RuntimeDelegateFacetPlan,
     pub runtime_commands: RuntimeCommandLaunchPlan,
     pub terminal_effects: TerminalEffectPlan,
     pub connector_input: ConnectorInputPlan,
@@ -145,7 +160,8 @@ pub struct LaunchPlanInput {
     pub environment_variables: HashMap<String, String>,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub capability_state: CapabilityState,
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    pub runtime_delegates: AgentRuntimeDelegateSet,
+    pub runtime_delegate_facets: RuntimeDelegateFacetPlan,
     pub restored_session_state: Option<RestoredSessionState>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
     pub backend_execution: Option<ExecutionPlacementPlan>,
@@ -225,6 +241,7 @@ impl LaunchPlan {
             snapshot_reload: input.hook_snapshot_reload,
             snapshot_contribution: input.hook_snapshot_contribution,
         };
+        let runtime_delegate_facets = input.runtime_delegate_facets;
         let runtime_commands = RuntimeCommandLaunchPlan {
             requested_commands: input.requested_runtime_commands,
             pending_capability_transitions: input.pending_capability_transitions,
@@ -282,7 +299,7 @@ impl LaunchPlan {
         let turn = ExecutionTurnFrame {
             hook_runtime: input.hook_runtime,
             capability_state: input.capability_state,
-            runtime_delegate: input.runtime_delegate,
+            runtime_delegates: input.runtime_delegates,
             restored_session_state: input.restored_session_state,
             context_frames: Vec::new(),
             assembled_tools: Vec::new(),
@@ -300,6 +317,7 @@ impl LaunchPlan {
             launch_path,
             restore,
             hooks,
+            runtime_delegate_facets,
             runtime_commands,
             terminal_effects,
             connector_input,
@@ -437,7 +455,8 @@ mod tests {
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
             hook_runtime: None,
             capability_state: CapabilityState::default(),
-            runtime_delegate: None,
+            runtime_delegates: AgentRuntimeDelegateSet::default(),
+            runtime_delegate_facets: RuntimeDelegateFacetPlan::default(),
             restored_session_state: None,
             post_turn_handler: None,
             backend_execution: None,

@@ -837,7 +837,7 @@ impl AgentConnector for PiAgentConnector {
             .hook_runtime
             .as_ref()
             .and_then(|hs| hs.subscribe_traces());
-        agent.set_runtime_delegate(context.turn.runtime_delegate.clone());
+        agent.set_runtime_delegates(context.turn.runtime_delegates.clone());
 
         if let Some(thinking_level) = context.session.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);

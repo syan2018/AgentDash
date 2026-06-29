@@ -3,7 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app_state::AppState;
-use agentdash_application::routine::RoutineExecutor;
+use agentdash_application::routine::{RoutineExecutor, RoutineMailboxRuntime};
+use agentdash_application::runtime_session_agent_run_bridge::{
+    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+    agent_run_session_launch,
+};
 
 pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     match state
@@ -35,6 +39,12 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     let routine_executor = Arc::new(RoutineExecutor::new(
         state.repos.clone(),
         state.services.backend_registry.clone(),
+        RoutineMailboxRuntime {
+            session_core: agent_run_session_core(state.services.session_core.clone()),
+            session_control: agent_run_session_control(state.services.session_control.clone()),
+            session_eventing: agent_run_session_eventing(state.services.session_eventing.clone()),
+            session_launch: agent_run_session_launch(state.services.session_launch.clone()),
+        },
     ));
     if let Some(s) = Arc::get_mut(state) {
         s.services.routine_executor = Some(routine_executor.clone());

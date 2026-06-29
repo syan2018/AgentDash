@@ -69,7 +69,7 @@ impl ProjectAgentRunInitialMailboxCommand {
             run_id: self.run_id,
             agent_id: self.agent_id,
             runtime_session_id: self.runtime_session_id,
-            source: agentdash_domain::agent_run_mailbox::MailboxMessageSource::DraftStart,
+            source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::draft_start(),
             schedule_on_submit: false,
             input: self.input,
             client_command_id: self.client_command_id,
@@ -876,7 +876,7 @@ mod tests {
     use agentdash_domain::agent_run_mailbox::{
         AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
         AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-        MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+        MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
         NewAgentRunMailboxMessage,
     };
     use agentdash_domain::workflow::{
@@ -1924,7 +1924,7 @@ mod tests {
                     agent_id: command.agent_id,
                     runtime_session_id: command.runtime_session_id.clone(),
                     origin: MailboxMessageOrigin::User,
-                    source: MailboxMessageSource::DraftStart,
+                    source: MailboxSourceIdentity::draft_start(),
                     delivery: MailboxDelivery::LaunchOrContinueTurn,
                     barrier: ConsumptionBarrier::ImmediateIfIdle,
                     drain_mode: MailboxDrainMode::One,
@@ -2233,7 +2233,8 @@ mod tests {
         let messages = mailbox_repo.items.lock().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].status, MailboxMessageStatus::Dispatched);
-        assert_eq!(messages[0].source, MailboxMessageSource::DraftStart);
+        assert_eq!(messages[0].source.namespace, "core");
+        assert_eq!(messages[0].source.kind, "draft_start");
         assert_eq!(messages[0].barrier, ConsumptionBarrier::ImmediateIfIdle);
         assert_eq!(
             messages[0].accepted_agent_run_turn_id.as_deref(),
@@ -2453,10 +2454,8 @@ mod tests {
 
         let captured = initial_message.captured.lock().unwrap();
         let command = captured.first().expect("captured initial mailbox command");
-        assert_eq!(
-            command.source,
-            agentdash_domain::agent_run_mailbox::MailboxMessageSource::DraftStart
-        );
+        assert_eq!(command.source.namespace, "core");
+        assert_eq!(command.source.kind, "draft_start");
         assert!(
             !command.schedule_on_submit,
             "ProjectAgent start must create the durable initial mailbox envelope without synchronously scheduling the launch"

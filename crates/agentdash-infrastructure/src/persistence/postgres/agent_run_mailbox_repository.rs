@@ -6,7 +6,7 @@ use uuid::Uuid;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageSource, MailboxMessageStatus,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
     NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 use agentdash_domain::common::error::DomainError;
@@ -97,8 +97,8 @@ impl PostgresAgentRunMailboxRepository {
     }
 }
 
-const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
-const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.runtime_session_id,m.origin,m.source,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
+const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
+const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.runtime_session_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
 const STATE_COLS: &str =
     "run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,updated_at";
 
@@ -113,13 +113,18 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         let order_key = self
             .next_order_key(message.run_id, message.agent_id)
             .await?;
+        let source_metadata = serialize_json_column(
+            message.source.metadata.as_ref(),
+            "agent_run_mailbox_messages.source_metadata",
+        )?;
         sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "INSERT INTO agent_run_mailbox_messages \
-             (id,run_id,agent_id,runtime_session_id,origin,source,delivery,delivery_json,barrier,\
-              drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,\
+             (id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,\
+              source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,\
+              delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,\
               expected_active_agent_run_turn_id,command_receipt_id,payload_json,executor_config_json,\
               preview,has_images,retain_payload,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32) \
              RETURNING {MAILBOX_COLS}"
         ))
         .bind(id.to_string())
@@ -127,7 +132,14 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .bind(message.agent_id.to_string())
         .bind(message.runtime_session_id)
         .bind(message.origin.as_str())
-        .bind(message.source.as_str())
+        .bind(message.source.namespace)
+        .bind(message.source.kind)
+        .bind(message.source.source_ref)
+        .bind(message.source.correlation_ref)
+        .bind(message.source.actor)
+        .bind(message.source.route)
+        .bind(message.source.display_label_key)
+        .bind(source_metadata)
         .bind(message.delivery.kind())
         .bind(message.delivery.to_json())
         .bind(message.barrier.as_str())
@@ -642,7 +654,14 @@ struct AgentRunMailboxMessageRow {
     agent_id: String,
     runtime_session_id: String,
     origin: String,
-    source: String,
+    source_namespace: String,
+    source_kind: String,
+    source_ref: Option<String>,
+    source_correlation_ref: Option<String>,
+    source_actor: String,
+    source_route: Option<String>,
+    source_display_label_key: String,
+    source_metadata: Option<String>,
     delivery: String,
     delivery_json: Value,
     barrier: String,
@@ -683,7 +702,19 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
             agent_id: parse_uuid(&row.agent_id, "lifecycle_agent")?,
             runtime_session_id: row.runtime_session_id,
             origin: MailboxMessageOrigin::try_from(row.origin.as_str())?,
-            source: MailboxMessageSource::try_from(row.source.as_str())?,
+            source: MailboxSourceIdentity {
+                namespace: row.source_namespace,
+                kind: row.source_kind,
+                source_ref: row.source_ref,
+                correlation_ref: row.source_correlation_ref,
+                actor: row.source_actor,
+                route: row.source_route,
+                display_label_key: row.source_display_label_key,
+                metadata: parse_json_column(
+                    row.source_metadata,
+                    "agent_run_mailbox_messages.source_metadata",
+                )?,
+            },
             delivery: MailboxDelivery::from_parts(&row.delivery, row.delivery_json)?,
             barrier: ConsumptionBarrier::try_from(row.barrier.as_str())?,
             drain_mode: MailboxDrainMode::try_from(row.drain_mode.as_str())?,
@@ -750,6 +781,30 @@ impl TryFrom<AgentRunMailboxStateRow> for AgentRunMailboxState {
     }
 }
 
+fn serialize_json_column(
+    value: Option<&Value>,
+    column: &'static str,
+) -> Result<Option<String>, DomainError> {
+    value
+        .map(|value| {
+            serde_json::to_string(value).map_err(|error| {
+                DomainError::InvalidConfig(format!("{column} 无法序列化: {error}"))
+            })
+        })
+        .transpose()
+}
+
+fn parse_json_column(
+    raw: Option<String>,
+    column: &'static str,
+) -> Result<Option<Value>, DomainError> {
+    raw.map(|raw| {
+        serde_json::from_str::<Value>(&raw)
+            .map_err(|error| DomainError::InvalidConfig(format!("{column} 无法解析: {error}")))
+    })
+    .transpose()
+}
+
 fn parse_uuid(raw: &str, entity: &'static str) -> Result<Uuid, DomainError> {
     raw.parse()
         .map_err(|_| DomainError::InvalidConfig(format!("{entity} id 无效: {raw}")))
@@ -813,7 +868,7 @@ mod tests {
             agent_id,
             runtime_session_id: session_id.to_string(),
             origin: MailboxMessageOrigin::User,
-            source: MailboxMessageSource::Composer,
+            source: MailboxSourceIdentity::composer(),
             delivery: MailboxDelivery::LaunchOrContinueTurn,
             barrier,
             drain_mode,
@@ -828,6 +883,68 @@ mod tests {
             has_images: false,
             retain_payload: false,
         }
+    }
+
+    #[tokio::test]
+    async fn source_identity_roundtrips_through_message_rows() {
+        let Some(pool) = test_pg_pool("agent_run_mailbox_source_identity").await else {
+            return;
+        };
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = format!("mailbox-session-{}", Uuid::new_v4());
+        insert_mailbox_refs(&pool, run_id, agent_id, &session_id).await;
+
+        let expected_source = MailboxSourceIdentity::routine_trigger()
+            .with_source_ref("routine-execution-1")
+            .with_correlation_ref("routine-trigger-1")
+            .with_route("reuse")
+            .with_display_label_key("mailbox.source.routine.trigger")
+            .with_metadata(serde_json::json!({
+                "entity_key": "story-1",
+                "trigger_source": "cron"
+            }));
+        let mut message = new_message(
+            run_id,
+            agent_id,
+            &session_id,
+            ConsumptionBarrier::ImmediateIfIdle,
+            MailboxDrainMode::One,
+            "source-identity-message",
+        );
+        message.source = expected_source.clone();
+
+        let created = repo
+            .create_message(message)
+            .await
+            .expect("create message with source identity");
+        assert_eq!(created.source, expected_source);
+
+        let loaded = repo
+            .get_message(created.id)
+            .await
+            .expect("load message")
+            .expect("message exists");
+        assert_eq!(loaded.source, expected_source);
+
+        let claimed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                runtime_session_id: Some(session_id),
+                barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+                drain_mode: Some(MailboxDrainMode::One),
+                limit: 1,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now(),
+            })
+            .await
+            .expect("claim message");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].source, expected_source);
     }
 
     #[tokio::test]

@@ -44,56 +44,105 @@ impl TryFrom<&str> for MailboxMessageOrigin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MailboxMessageSource {
-    Composer,
-    DraftStart,
-    HookAfterTurn,
-    HookBeforeStop,
-    HookAutoResume,
-    CompanionParentResume,
-    WorkflowOrchestrator,
-    RoutineExecutor,
-    LocalRelayPrompt,
-    CanvasAction,
+#[derive(Debug, Clone, PartialEq)]
+pub struct MailboxSourceIdentity {
+    pub namespace: String,
+    pub kind: String,
+    pub source_ref: Option<String>,
+    pub correlation_ref: Option<String>,
+    pub actor: String,
+    pub route: Option<String>,
+    pub display_label_key: String,
+    pub metadata: Option<Value>,
 }
 
-impl MailboxMessageSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Composer => "composer",
-            Self::DraftStart => "draft_start",
-            Self::HookAfterTurn => "hook_after_turn",
-            Self::HookBeforeStop => "hook_before_stop",
-            Self::HookAutoResume => "hook_auto_resume",
-            Self::CompanionParentResume => "companion_parent_resume",
-            Self::WorkflowOrchestrator => "workflow_orchestrator",
-            Self::RoutineExecutor => "routine_executor",
-            Self::LocalRelayPrompt => "local_relay_prompt",
-            Self::CanvasAction => "canvas_action",
+impl MailboxSourceIdentity {
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        Self {
+            display_label_key: format!("mailbox.source.{namespace}.{kind}"),
+            namespace,
+            kind,
+            source_ref: None,
+            correlation_ref: None,
+            actor: actor.into(),
+            route: None,
+            metadata: None,
         }
     }
-}
 
-impl TryFrom<&str> for MailboxMessageSource {
-    type Error = DomainError;
+    pub fn with_source_ref(mut self, source_ref: impl Into<String>) -> Self {
+        self.source_ref = Some(source_ref.into());
+        self
+    }
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "composer" => Ok(Self::Composer),
-            "draft_start" => Ok(Self::DraftStart),
-            "hook_after_turn" => Ok(Self::HookAfterTurn),
-            "hook_before_stop" => Ok(Self::HookBeforeStop),
-            "hook_auto_resume" => Ok(Self::HookAutoResume),
-            "companion_parent_resume" => Ok(Self::CompanionParentResume),
-            "workflow_orchestrator" => Ok(Self::WorkflowOrchestrator),
-            "routine_executor" => Ok(Self::RoutineExecutor),
-            "local_relay_prompt" => Ok(Self::LocalRelayPrompt),
-            "canvas_action" => Ok(Self::CanvasAction),
-            other => Err(DomainError::InvalidConfig(format!(
-                "agent_run_mailbox_messages.source 无效: {other}"
-            ))),
-        }
+    pub fn with_correlation_ref(mut self, correlation_ref: impl Into<String>) -> Self {
+        self.correlation_ref = Some(correlation_ref.into());
+        self
+    }
+
+    pub fn with_route(mut self, route: impl Into<String>) -> Self {
+        self.route = Some(route.into());
+        self
+    }
+
+    pub fn with_display_label_key(mut self, display_label_key: impl Into<String>) -> Self {
+        self.display_label_key = display_label_key.into();
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn dedup_fragment(&self) -> String {
+        format!("{}:{}", self.namespace, self.kind)
+    }
+
+    pub fn composer() -> Self {
+        Self::new("core", "composer", "user")
+    }
+
+    pub fn draft_start() -> Self {
+        Self::new("core", "draft_start", "user")
+    }
+
+    pub fn hook_after_turn() -> Self {
+        Self::new("core", "hook_after_turn", "system")
+    }
+
+    pub fn hook_before_stop() -> Self {
+        Self::new("core", "hook_before_stop", "system")
+    }
+
+    pub fn hook_auto_resume() -> Self {
+        Self::new("core", "hook_auto_resume", "system")
+    }
+
+    pub fn companion_parent_resume() -> Self {
+        Self::new("companion", "parent_resume", "agent").with_route("parent")
+    }
+
+    pub fn workflow_orchestrator() -> Self {
+        Self::new("workflow", "orchestrator", "system")
+    }
+
+    pub fn routine_trigger() -> Self {
+        Self::new("routine", "trigger", "routine")
+    }
+
+    pub fn local_relay_prompt() -> Self {
+        Self::new("core", "local_relay_prompt", "user")
+    }
+
+    pub fn canvas_action() -> Self {
+        Self::new("core", "canvas_action", "user")
     }
 }
 
@@ -307,7 +356,7 @@ pub struct AgentRunMailboxMessage {
     pub agent_id: Uuid,
     pub runtime_session_id: String,
     pub origin: MailboxMessageOrigin,
-    pub source: MailboxMessageSource,
+    pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
     pub barrier: ConsumptionBarrier,
     pub drain_mode: MailboxDrainMode,
@@ -343,7 +392,7 @@ pub struct NewAgentRunMailboxMessage {
     pub agent_id: Uuid,
     pub runtime_session_id: String,
     pub origin: MailboxMessageOrigin,
-    pub source: MailboxMessageSource,
+    pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
     pub barrier: ConsumptionBarrier,
     pub drain_mode: MailboxDrainMode,

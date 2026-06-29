@@ -6,7 +6,15 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::companion::{CompanionGateControlService, RespondCompanionGateCommand};
+use agentdash_application::{
+    companion::{
+        AgentRunCompanionMailboxDelivery, CompanionGateControlService, RespondCompanionGateCommand,
+    },
+    runtime_session_agent_run_bridge::{
+        agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+        agent_run_session_launch,
+    },
+};
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 
 use crate::{
@@ -48,7 +56,16 @@ pub async fn respond_companion_gate(
         state.repos.execution_anchor_repo.clone(),
         state.repos.agent_lineage_repo.clone(),
         state.services.session_eventing.clone(),
-    );
+    )
+    .with_human_response_mailbox_delivery(Arc::new(
+        AgentRunCompanionMailboxDelivery::from_runtime_services(
+            state.repos.clone(),
+            agent_run_session_core(state.services.session_core.clone()),
+            agent_run_session_control(state.services.session_control.clone()),
+            agent_run_session_eventing(state.services.session_eventing.clone()),
+            agent_run_session_launch(state.services.session_launch.clone()),
+        ),
+    ));
     let result = service
         .respond(RespondCompanionGateCommand {
             gate_id: gate_uuid,

@@ -33,19 +33,25 @@ pub enum MailboxMessageOrigin {
     Workflow,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum MailboxMessageSource {
-    Composer,
-    DraftStart,
-    HookAfterTurn,
-    HookBeforeStop,
-    HookAutoResume,
-    CompanionParentResume,
-    WorkflowOrchestrator,
-    RoutineExecutor,
-    LocalRelayPrompt,
-    CanvasAction,
+pub struct MailboxSourceIdentity {
+    pub namespace: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub correlation_ref: Option<String>,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub route: Option<String>,
+    pub display_label_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -103,7 +109,7 @@ pub struct AgentRunMessageAcceptedRefs {
 pub struct MailboxMessageView {
     pub id: String,
     pub origin: MailboxMessageOrigin,
-    pub source: MailboxMessageSource,
+    pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
     pub barrier: ConsumptionBarrier,
     pub drain_mode: MailboxDrainMode,
@@ -245,4 +251,43 @@ pub struct AgentRunMailboxView {
     pub state: MailboxStateView,
     #[serde(default)]
     pub messages: Vec<MailboxMessageView>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mailbox_source_identity_serializes_as_open_wire_object() {
+        let source = MailboxSourceIdentity {
+            namespace: "routine".to_string(),
+            kind: "trigger".to_string(),
+            source_ref: Some("routine-execution-1".to_string()),
+            correlation_ref: Some("routine-trigger-1".to_string()),
+            actor: "routine".to_string(),
+            route: Some("reuse".to_string()),
+            display_label_key: "mailbox.source.routine.trigger".to_string(),
+            metadata: Some(json!({ "entity_key": "story-1" })),
+        };
+
+        let value = serde_json::to_value(&source).expect("serialize source identity");
+        assert_eq!(
+            value,
+            json!({
+                "namespace": "routine",
+                "kind": "trigger",
+                "source_ref": "routine-execution-1",
+                "correlation_ref": "routine-trigger-1",
+                "actor": "routine",
+                "route": "reuse",
+                "display_label_key": "mailbox.source.routine.trigger",
+                "metadata": { "entity_key": "story-1" }
+            })
+        );
+
+        let decoded: MailboxSourceIdentity =
+            serde_json::from_value(value).expect("deserialize source identity");
+        assert_eq!(decoded, source);
+    }
 }

@@ -101,11 +101,21 @@ pub enum DispatchStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoutineDispatchRefs {
     pub runtime_refs: AgentRuntimeRefs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_refs: Option<RoutineMailboxDispatchRefs>,
 }
 
 impl RoutineDispatchRefs {
     pub fn new(runtime_refs: AgentRuntimeRefs) -> Self {
-        Self { runtime_refs }
+        Self {
+            runtime_refs,
+            mailbox_refs: None,
+        }
+    }
+
+    pub fn with_mailbox_refs(mut self, mailbox_refs: RoutineMailboxDispatchRefs) -> Self {
+        self.mailbox_refs = Some(mailbox_refs);
+        self
     }
 
     pub fn run_id(&self) -> Uuid {
@@ -127,6 +137,26 @@ impl RoutineDispatchRefs {
     pub fn node_path(&self) -> Option<&str> {
         self.runtime_refs.node_path()
     }
+
+    pub fn node_attempt(&self) -> Option<u32> {
+        self.runtime_refs.node_attempt()
+    }
+}
+
+/// Mailbox delivery refs for Routine executions that reuse an existing AgentRun.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineMailboxDispatchRefs {
+    pub mailbox_message_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_receipt_id: Option<Uuid>,
+    pub client_command_id: String,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_run_turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_turn_id: Option<String>,
 }
 
 /// 每次触发产生的执行记录

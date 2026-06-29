@@ -28,6 +28,7 @@ const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
 const DEFAULT_PROFILE_ID: &str = "default";
 const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
 const DESKTOP_AUTOSTART_ENTRY_NAME: &str = "AgentDash";
+const DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL: &str = "http://127.0.0.1:3001";
 #[cfg(target_os = "windows")]
 const WINDOWS_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -641,12 +642,6 @@ async fn start_runtime_from_request(
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
     let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
-    if request.access_token.trim().is_empty() {
-        return Ok(state
-            .runtime
-            .mark_waiting_for_auth("等待桌面登录授权，尚未拿到 access token")
-            .await);
-    }
     let runtime_for_claim = state.runtime.clone();
     state
         .runtime
@@ -776,6 +771,11 @@ async fn post_local_runtime_claim(
 
     let status = response.status();
     if !status.is_success() {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!(
+                "本机 runtime 领取被 server 拒绝: HTTP {status}。请重新登录桌面端，或确认当前登录态提供了可用于 /api/local-runtime/ensure 的 access token"
+            );
+        }
         let text = response.text().await.unwrap_or_default();
         anyhow::bail!("本机 runtime 领取失败: HTTP {status} {text}");
     }
@@ -830,11 +830,33 @@ fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartR
 }
 
 fn normalize_server_origin(value: &str) -> String {
+    normalize_server_origin_with_default(value, &default_local_runtime_server_origin())
+}
+
+fn normalize_server_origin_with_default(value: &str, default_origin: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        desktop_api_origin(DESKTOP_API_PORT)
+    if trimmed.is_empty() || is_development_local_runtime_server_origin(trimmed) {
+        default_origin.to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn default_local_runtime_server_origin() -> String {
+    desktop_api_config()
+        .map(|config| config.origin)
+        .unwrap_or_else(|_| desktop_api_origin(DESKTOP_API_PORT))
+}
+
+fn is_development_local_runtime_server_origin(value: &str) -> bool {
+    match (
+        reqwest::Url::parse(value),
+        reqwest::Url::parse(DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL),
+    ) {
+        (Ok(actual), Ok(default)) => {
+            actual.origin().ascii_serialization() == default.origin().ascii_serialization()
+        }
+        _ => value.trim_end_matches('/') == DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL,
     }
 }
 
@@ -1887,6 +1909,28 @@ mod tests {
         });
 
         assert_eq!(request.access_token, "");
+    }
+
+    #[test]
+    fn normalize_server_origin_replaces_development_default_with_packaged_origin() {
+        assert_eq!(
+            normalize_server_origin_with_default(
+                "http://127.0.0.1:3001/",
+                "http://10.22.71.7:8080"
+            ),
+            "http://10.22.71.7:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_server_origin_preserves_explicit_non_default_origin() {
+        assert_eq!(
+            normalize_server_origin_with_default(
+                "http://192.168.1.9:9000/",
+                "http://10.22.71.7:8080"
+            ),
+            "http://192.168.1.9:9000"
+        );
     }
 
     #[test]

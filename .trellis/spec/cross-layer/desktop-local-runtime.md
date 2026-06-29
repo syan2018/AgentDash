@@ -354,9 +354,10 @@ Desktop defaults JSON:
 - `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
 - Desktop runner snapshot state is `idle | disabled | waiting_for_auth | waiting_for_api | claiming | starting | running | retrying | error | stopping | stopped`. The host uses `idle/disabled/waiting_*` before a runtime handle exists, `claiming` while calling `/api/local-runtime/ensure`, and projects relay reconnects as `retrying`, so settings UI can explain both supervisor and relay phases without parsing logs.
 - `LocalRuntimeStatus.owner = "desktop_embedded_runner"` and `registration_source = "desktop_access_token"` for the desktop embedded host. Standalone service runner rows remain identified by backend projection `registration_source = "runner_registration_token"`, so UI can keep lifecycle owner and enrollment source separate.
-- `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to provide the current access token; profile persistence keeps startup configuration facts such as server URL、workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
+- `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as server URL、workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
 - `external` Desktop API mode only chooses the Dashboard API origin. It does not disable the embedded desktop runner host, because cloud API authority and local execution lifecycle are separate facts.
-- Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It requires a non-empty user access token before saving an auto-connect profile or calling `runtime_start`, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures.
+- Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It uses current-user availability as the authenticated intent gate, passes the current bearer token only when one exists, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures. If the Dashboard has a current user but no bearer token, the bridge still calls the same native ensure path so `/api/local-runtime/ensure` can either accept another configured auth source or return an actionable auth/API error in the native snapshot.
+- The development default Local Runtime server URL `http://127.0.0.1:3001` is a replaceable placeholder in desktop profiles. Packaged/external desktop builds must resolve an empty or placeholder profile server URL to the current Desktop API/default cloud origin, while preserving a user-entered non-default origin.
 - Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
 ### 4. Validation & Error Matrix
@@ -373,7 +374,8 @@ Desktop defaults JSON:
 | Desktop API port unavailable | app reports Desktop API error state; Dashboard waits for `/api/health` before rendering |
 | Second desktop instance launched | restore/focus the existing main window and keep the original process as the only Desktop API/runtime owner |
 | Runtime ensure requested concurrently | serialize claim/config/start and return the active `starting` or `running` snapshot to later callers |
-| Auto-connect sees no access token | wait for login/token availability, clear retry state, and skip profile writes or runtime claim |
+| Auto-connect has no current user | wait for login availability, clear retry state, and skip profile writes or runtime claim |
+| Auto-connect has current user but no bearer token | call the native ensure path with an empty bearer field; if the server rejects it, snapshot/logs report an auth/API error rather than staying in `waiting_for_auth` |
 | Native startup has `auto_connect_local_runtime=false` | report `state=disabled` and do not claim until an explicit manual start/retry request arrives |
 | Native startup has no auto-start profile | report `state=idle` and wait for login bridge/profile save or manual start |
 | Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
@@ -387,7 +389,7 @@ Desktop defaults JSON:
 - Window visibility and process lifetime are separate because background execution should not depend on whether the dashboard surface is visible.
 - Single-instance ownership keeps Desktop API port binding, tray ownership, and embedded runner claim/start state in one process, which makes package launch behavior match the user expectation of one resident desktop app.
 - The embedded host boundary keeps claim/start serialization next to `LocalRuntimeManager`, while Tauri stays focused on desktop lifecycle and the web app stays focused on intent and status display.
-- Canonical auto-connect flow: authenticated Dashboard obtains an access token -> desktop bridge ensures defaults/profile -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
+- Canonical auto-connect flow: authenticated Dashboard resolves current user -> desktop bridge ensures defaults/profile and passes the current bearer token when available -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
 - Canonical flow: window close hides; explicit quit exits.
 
 ### 6. Tests Required
@@ -399,7 +401,7 @@ Desktop defaults JSON:
 - Rust tests assert `DesktopRunnerHost` reuses `starting/running` snapshots and serializes concurrent ensure calls around config construction and runtime start.
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
-- Frontend tests assert auto-connect skips empty token, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
+- Frontend tests assert auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
 - Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 

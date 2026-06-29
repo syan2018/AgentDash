@@ -215,7 +215,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!currentUser) return;
     if (!getDesktopLocalRuntimeClient()) return;
-    ensureDesktopLocalRuntimeStarted(getStoredToken() ?? "")
+    ensureDesktopLocalRuntimeStarted(
+      getStoredToken() ?? "",
+      { currentUserAvailable: true },
+    )
       .catch(() => undefined);
   }, [currentUser]);
 

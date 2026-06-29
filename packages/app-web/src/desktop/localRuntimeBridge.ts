@@ -105,7 +105,8 @@ async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<b
   if (snapshot?.state === 'starting' || snapshot?.state === 'running') return true;
 
   await ensureDesktopDefaultsLoaded();
-  const profile = await loadOrCreateAutoConnectProfile(client, token);
+  const profile = await loadOrCreateAutoConnectProfile(client);
+  if (!profile.auto_start) return false;
 
   const started = await client.runtimeStart({
     ...profile,
@@ -136,15 +137,12 @@ function clearDesktopRuntimeAutoConnectRetry(): void {
   desktopRuntimeAutoConnectRetryTimer = null;
 }
 
-async function loadOrCreateAutoConnectProfile(
-  client: LocalRuntimeClient,
-  accessToken: string,
-): Promise<LocalRuntimeProfile> {
+async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promise<LocalRuntimeProfile> {
   const current = await client.profileLoad().catch(() => null);
   if (current) {
     const normalized = {
       ...current,
-      access_token: accessToken,
+      access_token: '',
       server_url: resolveDesktopServerUrl(current.server_url),
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
       machine_id: current.machine_id || '',
@@ -156,14 +154,14 @@ async function loadOrCreateAutoConnectProfile(
 
   const created: LocalRuntimeProfile = {
     server_url: resolveDesktopServerUrl(''),
-    access_token: accessToken,
+    access_token: '',
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
     machine_label: null,
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     workspace_roots: [],
     executor_enabled: true,
-    auto_start: false,
+    auto_start: true,
     backend_id: null,
     relay_ws_url: null,
   };

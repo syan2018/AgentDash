@@ -61,8 +61,14 @@ impl LocalRuntimeConfig {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalRuntimeState {
+    Idle,
+    Disabled,
+    WaitingForAuth,
+    WaitingForApi,
+    Claiming,
     Starting,
     Running,
+    Retrying,
     Stopping,
     Stopped,
     Error,
@@ -73,12 +79,18 @@ pub enum LocalRuntimeState {
 #[serde(rename_all = "snake_case")]
 pub struct LocalRuntimeStatus {
     pub state: LocalRuntimeState,
+    pub owner: String,
+    pub registration_source: Option<String>,
     pub backend_id: String,
     pub name: String,
     pub workspace_roots: Vec<String>,
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
     pub message: Option<String>,
+    pub last_error: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub next_retry_at: Option<String>,
+    pub retry_count: Option<u32>,
     pub relay_connection: Option<ws_client::RelayConnectionStatus>,
 }
 
@@ -174,6 +186,7 @@ impl LocalRuntimeManager {
             &config,
             LocalRuntimeState::Starting,
             None,
+            None,
             Some(initial_relay_status),
         );
         let (status_tx, status_rx) = watch::channel(initial_status);
@@ -202,7 +215,7 @@ impl LocalRuntimeManager {
             let status_tx = status_tx.clone();
             async move {
                 let running_status =
-                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None)
+                    status_from_ws_config(&ws_config, LocalRuntimeState::Running, None, None)
                         .with_relay(status_tx.borrow().relay_connection.clone());
                 let _ = status_tx.send(running_status);
                 push_log(
@@ -219,10 +232,12 @@ impl LocalRuntimeManager {
                         &status_tx.borrow(),
                         LocalRuntimeState::Stopped,
                         Some("runtime 已停止".to_string()),
+                        None,
                     ),
                     Err(error) => status_with_state(
                         &status_tx.borrow(),
                         LocalRuntimeState::Error,
+                        Some(error.to_string()),
                         Some(error.to_string()),
                     ),
                 };
@@ -274,6 +289,7 @@ impl LocalRuntimeManager {
             &running.status_rx.borrow(),
             LocalRuntimeState::Stopping,
             Some("正在停止 runtime".to_string()),
+            None,
         );
         let _ = running.status_tx.send(stopping_status);
         let _ = running.shutdown_tx.send(true);
@@ -611,10 +627,19 @@ fn status_from_config(
     config: &LocalRuntimeConfig,
     state: LocalRuntimeState,
     message: Option<String>,
+    last_error: Option<String>,
     relay_connection: Option<ws_client::RelayConnectionStatus>,
 ) -> LocalRuntimeStatus {
+    let relay_retry_count = relay_connection
+        .as_ref()
+        .and_then(|status| status.retry_count);
+    let relay_next_retry_at = relay_connection
+        .as_ref()
+        .and_then(|status| status.next_retry_at.clone());
     LocalRuntimeStatus {
         state,
+        owner: "desktop_embedded_runner".to_string(),
+        registration_source: Some("desktop_access_token".to_string()),
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
         workspace_roots: config
@@ -625,6 +650,10 @@ fn status_from_config(
         executor_enabled: config.executor_enabled,
         mcp_server_count: 0,
         message,
+        last_error,
+        last_attempt_at: None,
+        next_retry_at: relay_next_retry_at,
+        retry_count: relay_retry_count,
         relay_connection,
     }
 }
@@ -672,9 +701,10 @@ mod tests {
             &config,
             LocalRuntimeState::Starting,
             None,
+            None,
             Some(relay.clone()),
         );
-        let running = status_with_state(&status, LocalRuntimeState::Running, None);
+        let running = status_with_state(&status, LocalRuntimeState::Running, None, None);
 
         assert_eq!(running.relay_connection, Some(relay));
     }
@@ -684,9 +714,12 @@ fn status_from_ws_config(
     config: &ws_client::Config,
     state: LocalRuntimeState,
     message: Option<String>,
+    last_error: Option<String>,
 ) -> LocalRuntimeStatus {
     LocalRuntimeStatus {
         state,
+        owner: "desktop_embedded_runner".to_string(),
+        registration_source: Some("desktop_access_token".to_string()),
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
         workspace_roots: config
@@ -701,6 +734,10 @@ fn status_from_ws_config(
             .map(|manager| manager.capability_entries().len())
             .unwrap_or(0),
         message,
+        last_error,
+        last_attempt_at: None,
+        next_retry_at: None,
+        retry_count: None,
         relay_connection: None,
     }
 }
@@ -709,10 +746,12 @@ fn status_with_state(
     previous: &LocalRuntimeStatus,
     state: LocalRuntimeState,
     message: Option<String>,
+    last_error: Option<String>,
 ) -> LocalRuntimeStatus {
     LocalRuntimeStatus {
         state,
         message,
+        last_error,
         ..previous.clone()
     }
 }
@@ -721,7 +760,59 @@ fn status_with_relay(
     previous: &LocalRuntimeStatus,
     relay_connection: Option<ws_client::RelayConnectionStatus>,
 ) -> LocalRuntimeStatus {
+    let relay_state = relay_connection.as_ref().map(|status| &status.state);
+    let state = match relay_state {
+        Some(ws_client::RelayConnectionState::Registered) => LocalRuntimeState::Running,
+        Some(ws_client::RelayConnectionState::Reconnecting) => LocalRuntimeState::Retrying,
+        Some(ws_client::RelayConnectionState::Error) => LocalRuntimeState::Error,
+        Some(ws_client::RelayConnectionState::Disconnected)
+            if previous.state != LocalRuntimeState::Stopping =>
+        {
+            LocalRuntimeState::Retrying
+        }
+        Some(ws_client::RelayConnectionState::Connecting)
+            if matches!(
+                previous.state,
+                LocalRuntimeState::Retrying | LocalRuntimeState::Running
+            ) =>
+        {
+            LocalRuntimeState::Retrying
+        }
+        _ => previous.state.clone(),
+    };
+    let relay_registered = matches!(
+        relay_state,
+        Some(ws_client::RelayConnectionState::Registered)
+    );
+    let last_error = if relay_registered {
+        None
+    } else {
+        relay_connection
+            .as_ref()
+            .and_then(|status| status.last_error.clone())
+            .or_else(|| previous.last_error.clone())
+    };
+    let next_retry_at = if relay_registered {
+        None
+    } else {
+        relay_connection
+            .as_ref()
+            .and_then(|status| status.next_retry_at.clone())
+            .or_else(|| previous.next_retry_at.clone())
+    };
+    let retry_count = if relay_registered {
+        None
+    } else {
+        relay_connection
+            .as_ref()
+            .and_then(|status| status.retry_count)
+            .or(previous.retry_count)
+    };
     LocalRuntimeStatus {
+        state,
+        last_error,
+        next_retry_at,
+        retry_count,
         relay_connection,
         ..previous.clone()
     }

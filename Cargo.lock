@@ -655,6 +655,7 @@ dependencies = [
  "agentdash-local",
  "agentdash-relay",
  "anyhow",
+ "chrono",
  "open",
  "reqwest 0.13.2",
  "serde",

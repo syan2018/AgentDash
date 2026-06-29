@@ -192,7 +192,7 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
     fn from(profile: LocalRuntimeProfile) -> Self {
         Self {
             server_url: profile.server_url,
-            access_token: profile.access_token,
+            access_token: String::new(),
             profile_id: profile.profile_id,
             machine_id: profile.machine_id,
             machine_label: profile.machine_label,
@@ -454,6 +454,10 @@ struct EnsureLocalRuntimeResponse {
     share_scope_kind: String,
     share_scope_id: Option<String>,
     capability_slot: String,
+    #[serde(default)]
+    registration_source: Option<String>,
+    #[serde(default)]
+    claimed_at: Option<String>,
 }
 
 fn desktop_settings_load_internal() -> Result<DesktopAppSettings, String> {
@@ -637,10 +641,18 @@ async fn start_runtime_from_request(
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
     let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
+    if request.access_token.trim().is_empty() {
+        return Ok(state
+            .runtime
+            .mark_waiting_for_auth("等待桌面登录授权，尚未拿到 access token")
+            .await);
+    }
+    let runtime_for_claim = state.runtime.clone();
     state
         .runtime
         .ensure_started_with(|| async move {
-            let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
+            let claim =
+                claim_local_runtime(&runtime_for_claim, &request, retry_until_server_ready).await?;
             Ok(LocalRuntimeConfig::new(
                 claim.relay_ws_url,
                 claim.auth_token,
@@ -654,6 +666,7 @@ async fn start_runtime_from_request(
 }
 
 async fn claim_local_runtime(
+    runtime: &DesktopRunnerHost,
     request: &RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<EnsureLocalRuntimeResponse> {
@@ -683,6 +696,16 @@ async fn claim_local_runtime(
                 return Ok(response);
             }
             Err(error) if retry_until_server_ready && attempts < 30 => {
+                let next_retry_at =
+                    (chrono::Utc::now() + chrono::Duration::seconds(1)).to_rfc3339();
+                runtime
+                    .mark_waiting_for_api(
+                        "Dashboard API 暂不可用，等待后继续领取本机 runtime",
+                        Some(error.to_string()),
+                        Some(attempts),
+                        Some(next_retry_at),
+                    )
+                    .await;
                 diag!(Warn, Subsystem::Api,
 
                     attempt = attempts,
@@ -722,6 +745,12 @@ fn validate_claim_response(
             response.capability_slot
         );
     }
+    if let Some(source) = response.registration_source.as_deref()
+        && source != "desktop_access_token"
+    {
+        anyhow::bail!("桌面端 ensure 返回了非桌面注册来源: {source}");
+    }
+    let _claimed_at = response.claimed_at.as_deref();
     let _personal_scope = response.share_scope_id.as_deref().unwrap_or("current-user");
     Ok(())
 }
@@ -767,7 +796,7 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
 
     Ok(LocalRuntimeProfile {
         server_url: normalize_server_origin(&profile.server_url),
-        access_token: profile.access_token.trim().to_string(),
+        access_token: String::new(),
         profile_id: normalize_profile_id(profile.profile_id),
         machine_id,
         machine_label: Some(machine_label),
@@ -844,6 +873,60 @@ fn local_hostname() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn initialize_desktop_runner_host(state: DesktopState) {
+    tauri::async_runtime::spawn(async move {
+        let settings = match desktop_settings_load_internal() {
+            Ok(settings) => settings,
+            Err(error) => {
+                state
+                    .runtime
+                    .mark_error("读取桌面设置失败，无法判断 runtime 自动连接策略", error)
+                    .await;
+                return;
+            }
+        };
+
+        if !settings.auto_connect_local_runtime {
+            state
+                .runtime
+                .mark_disabled("桌面设置已关闭启动后自动连接 runtime")
+                .await;
+            return;
+        }
+
+        let profile = match profile_load().await {
+            Ok(Some(profile)) => profile,
+            Ok(None) => {
+                state
+                    .runtime
+                    .mark_idle("等待登录后创建桌面本机 runtime profile")
+                    .await;
+                return;
+            }
+            Err(error) => {
+                state
+                    .runtime
+                    .mark_error("读取桌面本机 runtime profile 失败", error)
+                    .await;
+                return;
+            }
+        };
+
+        if !profile.auto_start {
+            state
+                .runtime
+                .mark_idle("profile 未开启自动启动，等待登录桥接或手动启动")
+                .await;
+            return;
+        }
+
+        state
+            .runtime
+            .mark_waiting_for_auth("profile 已允许自动启动，等待 Web bridge 提供当前 access token")
+            .await;
+    });
+}
+
 fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -880,9 +963,10 @@ fn main() {
         .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
             configure_tray(app.handle(), state.clone())?;
+            let state_for_api = state.clone();
             match desktop_api_config() {
                 Ok(api_config) => match api_config.mode {
-                    DesktopApiMode::Builtin => start_desktop_api(state),
+                    DesktopApiMode::Builtin => start_desktop_api(state_for_api),
                     DesktopApiMode::External => {
                         diag!(Info, Subsystem::Api,
 
@@ -890,21 +974,23 @@ fn main() {
                             "Tauri 桌面端复用外部 Dashboard API"
                         );
                     }
-                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
+                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state_for_api, api_config),
                 },
                 Err(message) => {
                     diag!(Error, Subsystem::Api,
                         error = %message,
                         "桌面端 API 配置无效"
                     );
+                    let state_for_error = state.clone();
                     tauri::async_runtime::spawn(async move {
-                        state
+                        state_for_error
                             .api
                             .mark_error_origin(desktop_api_origin(DESKTOP_API_PORT), message)
                             .await;
                     });
                 }
             }
+            initialize_desktop_runner_host(state);
             apply_startup_window_visibility(app.handle());
             Ok(())
         })
@@ -1782,6 +1868,25 @@ mod tests {
         assert!(settings.launch_at_login);
         assert!(settings.start_minimized_to_tray);
         assert!(!settings.auto_connect_local_runtime);
+    }
+
+    #[test]
+    fn runtime_start_request_from_profile_does_not_reuse_persisted_access_token() {
+        let request = RuntimeStartRequest::from(LocalRuntimeProfile {
+            server_url: "https://agentdash.example".to_string(),
+            access_token: "old-access-token".to_string(),
+            profile_id: "default".to_string(),
+            machine_id: "machine-local".to_string(),
+            machine_label: Some("Desktop".to_string()),
+            backend_id: None,
+            relay_ws_url: None,
+            name: Some("Desktop Local Runtime".to_string()),
+            workspace_roots: Vec::new(),
+            executor_enabled: true,
+            auto_start: true,
+        });
+
+        assert_eq!(request.access_token, "");
     }
 
     #[test]

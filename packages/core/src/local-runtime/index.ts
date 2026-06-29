@@ -1,13 +1,30 @@
-export type LocalRuntimeState = 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
+export type LocalRuntimeState =
+  | 'idle'
+  | 'disabled'
+  | 'waiting_for_auth'
+  | 'waiting_for_api'
+  | 'claiming'
+  | 'starting'
+  | 'running'
+  | 'retrying'
+  | 'stopping'
+  | 'stopped'
+  | 'error'
 
 export interface LocalRuntimeStatus {
   state: LocalRuntimeState
+  owner: string
+  registration_source: RegistrationSource | null
   backend_id: string
   name: string
   workspace_roots: string[]
   executor_enabled: boolean
   mcp_server_count: number
   message: string | null
+  last_error: string | null
+  last_attempt_at: string | null
+  next_retry_at: string | null
+  retry_count: number | null
   relay_connection?: RelayConnectionStatus | null
   registration?: RuntimeRegistrationStatus | null
 }
@@ -52,11 +69,17 @@ export interface DesktopApiLayerStatus extends ApiLayerStatus {
 
 export interface LocalRuntimeLayerStatus extends ApiLayerStatus {
   raw_state: LocalRuntimeState | null
+  owner: string | null
+  registration_source: RegistrationSource | null
   backend_id: string | null
   name: string | null
   workspace_roots: string[]
   executor_enabled: boolean
   mcp_server_count: number
+  last_error: string | null
+  last_attempt_at: string | null
+  next_retry_at: string | null
+  retry_count: number | null
 }
 
 export interface RunnerLayerStatus extends ApiLayerStatus {
@@ -328,7 +351,7 @@ export function createRuntimeDiagnosticsSnapshot(input: RuntimeDiagnosticsInput)
     ? registrationFromBackend(localBackend)
     : runnerBackend
       ? registrationFromBackend(runnerBackend)
-      : input.local_runtime?.registration ?? null
+      : input.local_runtime?.registration ?? registrationFromLocalRuntime(input.local_runtime ?? null)
 
   return {
     generated_at: input.generated_at ?? new Date().toISOString(),
@@ -385,11 +408,17 @@ function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayer
       target: null,
       message: '桌面托管 runtime 未启动',
       raw_state: null,
+      owner: null,
+      registration_source: null,
       backend_id: null,
       name: null,
       workspace_roots: [],
       executor_enabled: false,
       mcp_server_count: 0,
+      last_error: null,
+      last_attempt_at: null,
+      next_retry_at: null,
+      retry_count: null,
     }
   }
   return {
@@ -398,11 +427,17 @@ function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayer
     target: status.backend_id || null,
     message: status.message,
     raw_state: status.state,
+    owner: status.owner || null,
+    registration_source: status.registration_source ?? null,
     backend_id: status.backend_id || null,
     name: status.name || null,
     workspace_roots: status.workspace_roots,
     executor_enabled: status.executor_enabled,
     mcp_server_count: status.mcp_server_count,
+    last_error: status.last_error,
+    last_attempt_at: status.last_attempt_at,
+    next_retry_at: status.next_retry_at,
+    retry_count: status.retry_count,
   }
 }
 
@@ -410,11 +445,17 @@ function localRuntimeLayerState(state: LocalRuntimeState): LayerState {
   switch (state) {
     case 'running':
       return 'healthy'
+    case 'waiting_for_auth':
+    case 'waiting_for_api':
+    case 'claiming':
     case 'starting':
+    case 'retrying':
     case 'stopping':
       return 'checking'
     case 'error':
       return 'unavailable'
+    case 'idle':
+    case 'disabled':
     case 'stopped':
       return 'disabled'
   }
@@ -463,6 +504,23 @@ function registrationFromBackend(backend: RuntimeDiagnosticsBackendFact): Runtim
     claimed_at: backend.last_claimed_at ?? null,
     registered_at: backend.runtime_health?.connected_at ?? null,
     last_seen_at: backend.runtime_health?.last_seen_at ?? null,
+  }
+}
+
+function registrationFromLocalRuntime(status: LocalRuntimeStatus | null): RuntimeRegistrationStatus | null {
+  if (!status?.registration_source) return null
+  return {
+    source: status.registration_source,
+    backend_id: status.backend_id,
+    profile_id: null,
+    machine_id: null,
+    machine_label: null,
+    share_scope_kind: null,
+    share_scope_id: null,
+    capability_slot: null,
+    claimed_at: null,
+    registered_at: status.relay_connection?.last_connected_at ?? null,
+    last_seen_at: status.relay_connection?.last_connected_at ?? null,
   }
 }
 

@@ -8,6 +8,7 @@ use agentdash_application::backend::{BackendAuthorizationService, BackendPermiss
 use agentdash_application::workspace::{
     WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult, WorkspaceDetectionResult,
     WorkspaceInventoryCandidate as ApplicationWorkspaceInventoryCandidate,
+    workspace_inventory_from_detection,
 };
 use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
@@ -26,8 +27,8 @@ use agentdash_contracts::backend::{
 use agentdash_contracts::common_response::RevokedIdResponse;
 use agentdash_contracts::workspace::{WorkspaceBindingSyncResult, WorkspaceInventoryCandidate};
 use agentdash_domain::backend::{
-    BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
-    ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
+    BackendWorkspaceInventorySource, ProjectBackendAccess, ProjectBackendAccessMode,
+    ProjectBackendAccessStatus,
 };
 
 use crate::app_state::AppState;
@@ -302,11 +303,10 @@ pub async fn register_project_backend_inventory(
         &root_ref,
     )
     .await?;
-    let item = inventory_from_detected(
+    let item = workspace_inventory_from_detection(
         access.backend_id,
         root_ref,
-        detected,
-        BackendWorkspaceInventoryStatus::Available,
+        &detected,
         BackendWorkspaceInventorySource::ManualRegister,
         None,
     );
@@ -484,27 +484,6 @@ async fn invoke_workspace_detect(
     let invocation = state.services.runtime_gateway.invoke(request).await?;
     serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output)
         .map_err(|error| ApiError::Internal(format!("workspace.detect 返回值解析失败: {error}")))
-}
-
-fn inventory_from_detected(
-    backend_id: String,
-    root_ref: String,
-    detected: WorkspaceDetectionResult,
-    status: BackendWorkspaceInventoryStatus,
-    source: BackendWorkspaceInventorySource,
-    last_error: Option<String>,
-) -> BackendWorkspaceInventory {
-    let mut item = BackendWorkspaceInventory::available(
-        backend_id,
-        root_ref,
-        detected.identity_kind,
-        detected.identity_payload,
-        detected.binding.detected_facts,
-        source,
-    );
-    item.status = status;
-    item.last_error = last_error;
-    item
 }
 
 fn workspace_binding_sync_response(

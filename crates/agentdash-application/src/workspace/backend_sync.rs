@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::backend::{
-    BackendWorkspaceInventory, BackendWorkspaceInventoryStatus, ProjectBackendAccess,
+    BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
+    ProjectBackendAccess,
 };
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceStatus, identity_payload_matches,
 };
 
+use super::detection::WorkspaceDetectionResult;
 use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,132 @@ pub struct WorkspaceBindingSyncResult {
     pub updated_bindings: usize,
     pub candidates: Vec<WorkspaceInventoryCandidate>,
     pub conflicts: Vec<WorkspaceInventoryCandidate>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceDirectoryFact {
+    pub binding: WorkspaceBinding,
+    pub inventory: BackendWorkspaceInventory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceDirectoryFactApplyResult {
+    Created,
+    Updated,
+}
+
+pub fn workspace_inventory_from_detection(
+    backend_id: String,
+    root_ref: String,
+    detected: &WorkspaceDetectionResult,
+    source: BackendWorkspaceInventorySource,
+    last_error: Option<String>,
+) -> BackendWorkspaceInventory {
+    let mut item = BackendWorkspaceInventory::available(
+        backend_id,
+        root_ref,
+        detected.identity_kind.clone(),
+        detected.identity_payload.clone(),
+        detected.binding.detected_facts.clone(),
+        source,
+    );
+    item.status = BackendWorkspaceInventoryStatus::Available;
+    item.last_error = last_error;
+    item
+}
+
+pub fn workspace_directory_fact_from_detection(
+    seed_binding: &WorkspaceBinding,
+    detected: &WorkspaceDetectionResult,
+    source: BackendWorkspaceInventorySource,
+) -> WorkspaceDirectoryFact {
+    let binding = WorkspaceBinding {
+        id: seed_binding.id,
+        workspace_id: seed_binding.workspace_id,
+        backend_id: detected.binding.backend_id.clone(),
+        root_ref: detected.binding.root_ref.clone(),
+        status: detected.binding.status.clone(),
+        detected_facts: detected.binding.detected_facts.clone(),
+        last_verified_at: detected.binding.last_verified_at,
+        priority: seed_binding.priority,
+        created_at: seed_binding.created_at,
+        updated_at: seed_binding.updated_at,
+    };
+    let inventory = workspace_inventory_from_detection(
+        detected.binding.backend_id.clone(),
+        detected.binding.root_ref.clone(),
+        detected,
+        source,
+        None,
+    );
+    WorkspaceDirectoryFact { binding, inventory }
+}
+
+pub fn workspace_matches_directory_fact(
+    workspace: &Workspace,
+    fact: &WorkspaceDirectoryFact,
+) -> bool {
+    workspace_matches_inventory(workspace, &fact.inventory)
+}
+
+pub fn directory_fact_matches_identity(
+    identity_kind: agentdash_domain::workspace::WorkspaceIdentityKind,
+    identity_payload: &serde_json::Value,
+    fact: &WorkspaceDirectoryFact,
+) -> bool {
+    identity_kind == fact.inventory.identity_kind
+        && identity_payload_matches(
+            identity_kind,
+            identity_payload,
+            &fact.inventory.identity_payload,
+            Some(&fact.inventory.detected_facts),
+        )
+}
+
+pub fn apply_workspace_directory_fact(
+    workspace: &mut Workspace,
+    fact: WorkspaceDirectoryFact,
+    priority: i32,
+) -> WorkspaceDirectoryFactApplyResult {
+    let now = Utc::now();
+    if let Some(existing) = workspace.bindings.iter_mut().find(|binding| {
+        binding.backend_id == fact.binding.backend_id && binding.root_ref == fact.binding.root_ref
+    }) {
+        existing.status = fact.binding.status;
+        existing.detected_facts = fact.binding.detected_facts;
+        existing.last_verified_at = Some(fact.inventory.last_seen_at);
+        existing.priority = priority;
+        existing.updated_at = now;
+        workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
+        workspace.refresh_default_binding();
+        return WorkspaceDirectoryFactApplyResult::Updated;
+    }
+
+    let mut binding = fact.binding;
+    binding.workspace_id = workspace.id;
+    binding.priority = priority;
+    binding.last_verified_at = Some(fact.inventory.last_seen_at);
+    binding.updated_at = now;
+    workspace.bindings.push(binding);
+    workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
+    workspace.refresh_default_binding();
+    WorkspaceDirectoryFactApplyResult::Created
+}
+
+pub fn derive_workspace_status_from_bindings(bindings: &[WorkspaceBinding]) -> WorkspaceStatus {
+    if bindings
+        .iter()
+        .any(|binding| matches!(binding.status, WorkspaceBindingStatus::Ready))
+    {
+        WorkspaceStatus::Ready
+    } else if bindings
+        .iter()
+        .any(|binding| matches!(binding.status, WorkspaceBindingStatus::Error))
+    {
+        WorkspaceStatus::Error
+    } else {
+        WorkspaceStatus::Pending
+    }
 }
 
 pub async fn list_project_workspace_candidates(
@@ -85,32 +213,18 @@ pub async fn sync_project_backend_workspace_bindings(
             .get(&inventory.backend_id)
             .copied()
             .unwrap_or_default();
-        let now = Utc::now();
-        let existing = workspace.bindings.iter_mut().find(|binding| {
-            binding.backend_id == inventory.backend_id && binding.root_ref == inventory.root_ref
-        });
-        if let Some(binding) = existing {
-            binding.status = WorkspaceBindingStatus::Ready;
-            binding.detected_facts = inventory.detected_facts.clone();
-            binding.last_verified_at = Some(inventory.last_seen_at);
-            binding.priority = priority;
-            binding.updated_at = now;
-            updated_bindings += 1;
-        } else {
-            let mut binding = WorkspaceBinding::new(
-                workspace.id,
-                inventory.backend_id.clone(),
-                inventory.root_ref.clone(),
-                inventory.detected_facts.clone(),
-            );
-            binding.status = WorkspaceBindingStatus::Ready;
-            binding.last_verified_at = Some(inventory.last_seen_at);
-            binding.priority = priority;
-            workspace.bindings.push(binding);
-            created_bindings += 1;
+        let mut binding = WorkspaceBinding::new(
+            workspace.id,
+            inventory.backend_id.clone(),
+            inventory.root_ref.clone(),
+            inventory.detected_facts.clone(),
+        );
+        binding.status = WorkspaceBindingStatus::Ready;
+        let fact = WorkspaceDirectoryFact { binding, inventory };
+        match apply_workspace_directory_fact(workspace, fact, priority) {
+            WorkspaceDirectoryFactApplyResult::Created => created_bindings += 1,
+            WorkspaceDirectoryFactApplyResult::Updated => updated_bindings += 1,
         }
-        workspace.status = WorkspaceStatus::Ready;
-        workspace.refresh_default_binding();
         repos.workspace_repo.update(workspace).await?;
         updated_workspace_ids.push(workspace.id);
     }

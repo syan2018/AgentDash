@@ -3,11 +3,14 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use agentdash_application::workspace::WorkspaceDetectionResult;
+use agentdash_application::workspace::{
+    WorkspaceDetectionResult, WorkspaceDirectoryFact, WorkspaceDirectoryFactApplyResult,
+    apply_workspace_directory_fact, derive_workspace_status_from_bindings,
+    directory_fact_matches_identity, workspace_directory_fact_from_detection,
+};
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
@@ -24,11 +27,10 @@ use agentdash_contracts::workspace::{
 };
 use agentdash_domain::backend::{
     BackendType, BackendWorkspaceInventory, BackendWorkspaceInventorySource,
-    BackendWorkspaceInventoryStatus,
 };
 use agentdash_domain::workspace::{
     P4WorkspaceIdentityContract, P4WorkspaceMatchMode, Workspace, WorkspaceBinding,
-    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceStatus,
+    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
     identity_payload_matches, normalize_identity_payload,
 };
 
@@ -119,16 +121,17 @@ pub async fn create_workspace(
     .await?;
 
     let workspace_name = normalize_workspace_name(&req.name)?;
-    let (identity_kind, identity_payload, initial_bindings) = derive_workspace_shape(
-        &state,
-        project_id,
-        Some(current_user.user_id.as_str()),
-        req.identity_kind,
-        req.identity_payload,
-        req.bindings,
-        req.shortcut_binding,
-    )
-    .await?;
+    let (identity_kind, identity_payload, initial_bindings, initial_inventory_items) =
+        derive_workspace_shape(
+            &state,
+            project_id,
+            Some(current_user.user_id.as_str()),
+            req.identity_kind,
+            req.identity_payload,
+            req.bindings,
+            req.shortcut_binding,
+        )
+        .await?;
 
     let mut workspace = Workspace::new(
         project_id,
@@ -141,9 +144,16 @@ pub async fn create_workspace(
     workspace.set_bindings(initial_bindings);
     workspace.default_binding_id = req.default_binding_id.or(workspace.default_binding_id);
     workspace.mount_capabilities = req.mount_capabilities.unwrap_or_default();
-    workspace.status = derive_workspace_status(&workspace.bindings);
+    workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
     workspace.refresh_default_binding();
 
+    if !initial_inventory_items.is_empty() {
+        state
+            .repos
+            .backend_workspace_inventory_repo
+            .upsert_many(&initial_inventory_items)
+            .await?;
+    }
     state.repos.workspace_repo.create(&workspace).await?;
     let stored = state
         .repos
@@ -201,16 +211,24 @@ pub async fn update_workspace(
     if let Some(resolution_policy) = req.resolution_policy {
         workspace.resolution_policy = resolution_policy;
     }
+    let mut inventory_items = Vec::new();
     if let Some(bindings) = req.bindings {
         let next_bindings = bindings
             .into_iter()
             .map(|binding| binding_input_to_binding(workspace.id, binding))
             .collect::<Result<Vec<_>, _>>()?;
-        for binding in &next_bindings {
-            ensure_project_backend_access(&state, workspace.project_id, &binding.backend_id)
-                .await?;
-        }
-        workspace.set_bindings(next_bindings);
+        ensure_unique_bindings(&next_bindings)?;
+        let (hydrated_bindings, next_inventory_items) = hydrate_workspace_bindings(
+            &state,
+            workspace.project_id,
+            Some(current_user.user_id.as_str()),
+            workspace.identity_kind.clone(),
+            &workspace.identity_payload,
+            next_bindings,
+        )
+        .await?;
+        inventory_items = next_inventory_items;
+        workspace.set_bindings(hydrated_bindings);
     }
     if let Some(default_binding_id) = req.default_binding_id {
         workspace.default_binding_id = Some(default_binding_id);
@@ -218,9 +236,16 @@ pub async fn update_workspace(
     if let Some(mount_capabilities) = req.mount_capabilities {
         workspace.mount_capabilities = mount_capabilities;
     }
-    workspace.status = derive_workspace_status(&workspace.bindings);
+    workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
     workspace.refresh_default_binding();
 
+    if !inventory_items.is_empty() {
+        state
+            .repos
+            .backend_workspace_inventory_repo
+            .upsert_many(&inventory_items)
+            .await?;
+    }
     state.repos.workspace_repo.update(&workspace).await?;
     let stored = state
         .repos
@@ -519,12 +544,25 @@ pub async fn bind_discovered(
             &command.root_ref,
         )
         .await?;
+
+        warnings.extend(detected.warnings.clone());
+        let seed_binding = WorkspaceBinding::new(
+            workspace.id,
+            command.backend_id.clone(),
+            command.root_ref.clone(),
+            json!({}),
+        );
+        let fact = workspace_directory_fact_from_detection(
+            &seed_binding,
+            &detected,
+            BackendWorkspaceInventorySource::IdentityDiscovery,
+        );
         if detected.identity_kind != workspace.identity_kind
             || !discovery_identity_payload_matches(
                 workspace.identity_kind.clone(),
                 &workspace.identity_payload,
-                &detected.identity_payload,
-                Some(&detected.binding.detected_facts),
+                &fact.inventory.identity_payload,
+                Some(&fact.inventory.detected_facts),
             )
         {
             return Err(ApiError::BadRequest(format!(
@@ -532,51 +570,18 @@ pub async fn bind_discovered(
                 command.root_ref, workspace.name
             )));
         }
-
-        warnings.extend(detected.warnings.clone());
-        let inventory = inventory_from_detected(
-            access.backend_id.clone(),
-            detected.binding.root_ref.clone(),
-            detected.clone(),
-            BackendWorkspaceInventoryStatus::Available,
-            BackendWorkspaceInventorySource::IdentityDiscovery,
-            None,
-        );
         state
             .repos
             .backend_workspace_inventory_repo
-            .upsert(&inventory)
+            .upsert(&fact.inventory)
             .await?;
 
-        let priority = access.priority;
-        let now = Utc::now();
-        if let Some(existing) = workspace.bindings.iter_mut().find(|binding| {
-            binding.backend_id == command.backend_id
-                && binding.root_ref == detected.binding.root_ref
-        }) {
-            existing.status = WorkspaceBindingStatus::Ready;
-            existing.detected_facts = detected.binding.detected_facts;
-            existing.last_verified_at = Some(inventory.last_seen_at);
-            existing.priority = priority;
-            existing.updated_at = now;
-            updated_bindings += 1;
-        } else {
-            let mut binding = WorkspaceBinding::new(
-                workspace.id,
-                command.backend_id,
-                detected.binding.root_ref,
-                detected.binding.detected_facts,
-            );
-            binding.status = WorkspaceBindingStatus::Ready;
-            binding.last_verified_at = Some(inventory.last_seen_at);
-            binding.priority = priority;
-            workspace.bindings.push(binding);
-            created_bindings += 1;
-        }
-        workspace.status = derive_workspace_status(&workspace.bindings);
-        workspace.refresh_default_binding();
+        match apply_workspace_directory_fact(workspace, fact.clone(), access.priority) {
+            WorkspaceDirectoryFactApplyResult::Created => created_bindings += 1,
+            WorkspaceDirectoryFactApplyResult::Updated => updated_bindings += 1,
+        };
         touched_workspace_ids.insert(workspace.id);
-        inventory_items.push(BackendWorkspaceInventoryResponse::from(inventory));
+        inventory_items.push(BackendWorkspaceInventoryResponse::from(fact.inventory));
     }
 
     let mut stored_workspaces = Vec::new();
@@ -727,27 +732,6 @@ fn relaxed_p4_discovery_payload(expected_payload: &Value) -> Option<Value> {
     serde_json::to_value(contract).ok()
 }
 
-fn inventory_from_detected(
-    backend_id: String,
-    root_ref: String,
-    detected: WorkspaceDetectionResult,
-    status: BackendWorkspaceInventoryStatus,
-    source: BackendWorkspaceInventorySource,
-    last_error: Option<String>,
-) -> BackendWorkspaceInventory {
-    let mut item = BackendWorkspaceInventory::available(
-        backend_id,
-        root_ref,
-        detected.identity_kind,
-        detected.identity_payload,
-        detected.binding.detected_facts,
-        source,
-    );
-    item.status = status;
-    item.last_error = last_error;
-    item
-}
-
 async fn derive_workspace_shape(
     state: &Arc<AppState>,
     project_id: Uuid,
@@ -756,7 +740,15 @@ async fn derive_workspace_shape(
     identity_payload: Option<Value>,
     bindings: Option<Vec<WorkspaceBindingInput>>,
     shortcut_binding: Option<WorkspaceBindingInput>,
-) -> Result<(WorkspaceIdentityKind, Value, Vec<WorkspaceBinding>), ApiError> {
+) -> Result<
+    (
+        WorkspaceIdentityKind,
+        Value,
+        Vec<WorkspaceBinding>,
+        Vec<BackendWorkspaceInventory>,
+    ),
+    ApiError,
+> {
     let raw_bindings = if let Some(bindings) = bindings {
         bindings
     } else if let Some(shortcut_binding) = shortcut_binding {
@@ -765,7 +757,7 @@ async fn derive_workspace_shape(
         Vec::new()
     };
 
-    let mut parsed_bindings = raw_bindings
+    let parsed_bindings = raw_bindings
         .into_iter()
         .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
         .collect::<Result<Vec<_>, _>>()?;
@@ -775,56 +767,122 @@ async fn derive_workspace_shape(
         let identity_payload = identity_payload.ok_or_else(|| {
             ApiError::BadRequest("显式提供 identity_kind 时，identity_payload 不能为空".into())
         })?;
+        let normalized_payload =
+            normalize_workspace_identity_payload(identity_kind.clone(), identity_payload)?;
+        let (parsed_bindings, inventory_items) = hydrate_workspace_bindings(
+            state,
+            project_id,
+            user_id,
+            identity_kind.clone(),
+            &normalized_payload,
+            parsed_bindings,
+        )
+        .await?;
         return Ok((
             identity_kind.clone(),
-            normalize_workspace_identity_payload(identity_kind, identity_payload)?,
+            normalized_payload,
             parsed_bindings,
+            inventory_items,
         ));
     }
 
-    let Some(first_binding) = parsed_bindings.first() else {
+    let Some(first_binding) = parsed_bindings.first().cloned() else {
         return Err(ApiError::BadRequest(
             "创建 Workspace 时，必须提供 identity 或至少一个 binding".into(),
         ));
     };
 
+    let (first_fact, detected) =
+        detect_workspace_binding_fact(state, user_id, project_id, &first_binding).await?;
+
+    let detected_identity_kind = detected.identity_kind.clone();
+    let identity_payload = identity_payload
+        .map(|payload| {
+            normalize_workspace_identity_payload(detected_identity_kind.clone(), payload)
+        })
+        .transpose()?
+        .unwrap_or(detected.identity_payload);
+    if !directory_fact_matches_identity(
+        detected.identity_kind.clone(),
+        &identity_payload,
+        &first_fact,
+    ) {
+        return Err(ApiError::BadRequest(format!(
+            "目录 `{}` 与 Workspace identity 不匹配",
+            first_binding.root_ref
+        )));
+    }
+
+    let mut hydrated_bindings = vec![first_fact.binding];
+    let mut inventory_items = vec![first_fact.inventory];
+    let (remaining_bindings, remaining_inventory_items) = hydrate_workspace_bindings(
+        state,
+        project_id,
+        user_id,
+        detected.identity_kind.clone(),
+        &identity_payload,
+        parsed_bindings.into_iter().skip(1).collect(),
+    )
+    .await?;
+    hydrated_bindings.extend(remaining_bindings);
+    inventory_items.extend(remaining_inventory_items);
+    ensure_unique_bindings(&hydrated_bindings)?;
+    Ok((
+        detected.identity_kind,
+        identity_payload,
+        hydrated_bindings,
+        inventory_items,
+    ))
+}
+
+async fn hydrate_workspace_bindings(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+    user_id: Option<&str>,
+    identity_kind: WorkspaceIdentityKind,
+    identity_payload: &Value,
+    bindings: Vec<WorkspaceBinding>,
+) -> Result<(Vec<WorkspaceBinding>, Vec<BackendWorkspaceInventory>), ApiError> {
+    let mut hydrated_bindings = Vec::with_capacity(bindings.len());
+    let mut inventory_items = Vec::new();
+    for binding in bindings {
+        let (fact, _detected) =
+            detect_workspace_binding_fact(state, user_id, project_id, &binding).await?;
+        if !directory_fact_matches_identity(identity_kind.clone(), identity_payload, &fact) {
+            return Err(ApiError::BadRequest(format!(
+                "目录 `{}` 与 Workspace identity 不匹配",
+                binding.root_ref
+            )));
+        }
+        hydrated_bindings.push(fact.binding);
+        inventory_items.push(fact.inventory);
+    }
+    Ok((hydrated_bindings, inventory_items))
+}
+
+async fn detect_workspace_binding_fact(
+    state: &Arc<AppState>,
+    user_id: Option<&str>,
+    project_id: Uuid,
+    binding: &WorkspaceBinding,
+) -> Result<(WorkspaceDirectoryFact, WorkspaceDetectionResult), ApiError> {
     if project_id != Uuid::nil() {
-        ensure_project_backend_access(state, project_id, &first_binding.backend_id).await?;
+        ensure_project_backend_access(state, project_id, &binding.backend_id).await?;
     }
     let detected = invoke_workspace_detect(
         state,
         user_id,
         project_id,
-        &first_binding.backend_id,
-        &first_binding.root_ref,
+        &binding.backend_id,
+        &binding.root_ref,
     )
     .await?;
-    let replacement_binding = WorkspaceBinding {
-        id: first_binding.id,
-        workspace_id: Uuid::nil(),
-        backend_id: detected.binding.backend_id,
-        root_ref: detected.binding.root_ref,
-        status: detected.binding.status,
-        detected_facts: detected.binding.detected_facts,
-        last_verified_at: detected.binding.last_verified_at,
-        priority: first_binding.priority,
-        created_at: first_binding.created_at,
-        updated_at: first_binding.updated_at,
-    };
-    parsed_bindings[0] = replacement_binding;
-    ensure_unique_bindings(&parsed_bindings)?;
-
-    let detected_identity_kind = detected.identity_kind.clone();
-    Ok((
-        detected.identity_kind,
-        identity_payload
-            .map(|payload| {
-                normalize_workspace_identity_payload(detected_identity_kind.clone(), payload)
-            })
-            .transpose()?
-            .unwrap_or(detected.identity_payload),
-        parsed_bindings,
-    ))
+    let fact = workspace_directory_fact_from_detection(
+        binding,
+        &detected,
+        BackendWorkspaceInventorySource::ManualRegister,
+    );
+    Ok((fact, detected))
 }
 
 fn binding_input_to_binding(
@@ -871,22 +929,6 @@ fn binding_unique_key(backend_id: &str, root_ref: &str) -> String {
     let root = root_ref.trim().replace('\\', "/");
     let root = root.trim_end_matches('/');
     format!("{}:{root}", backend_id.trim())
-}
-
-fn derive_workspace_status(bindings: &[WorkspaceBinding]) -> WorkspaceStatus {
-    if bindings
-        .iter()
-        .any(|binding| matches!(binding.status, WorkspaceBindingStatus::Ready))
-    {
-        WorkspaceStatus::Ready
-    } else if bindings
-        .iter()
-        .any(|binding| matches!(binding.status, WorkspaceBindingStatus::Error))
-    {
-        WorkspaceStatus::Error
-    } else {
-        WorkspaceStatus::Pending
-    }
 }
 
 fn normalize_workspace_identity_payload(

@@ -4,13 +4,15 @@ use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLease, BackendExecutionLeaseRepository, BackendShareScopeKind,
     BackendType, BackendVisibility, RuntimeHealth, RuntimeHealthRepository,
 };
+use agentdash_relay::CapabilitiesPayload;
 
 use crate::ApplicationError;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct BackendRuntimeOnlineSnapshot {
     pub backend_id: String,
     pub name: String,
+    pub capabilities: CapabilitiesPayload,
     pub executors: Vec<BackendRuntimeExecutorSnapshot>,
 }
 
@@ -24,10 +26,12 @@ pub struct BackendRuntimeExecutorSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct BackendRuntimeSummary {
+    pub backend: BackendConfig,
     pub backend_id: String,
     pub name: String,
     pub enabled: bool,
     pub online: bool,
+    pub capabilities: Option<CapabilitiesPayload>,
     pub runtime_health: Option<RuntimeHealth>,
     pub executors: Vec<BackendRuntimeExecutorSummary>,
     pub active_session_count: usize,
@@ -109,11 +113,16 @@ pub fn project_backend_runtime_summaries(
             let executors = backend_runtime_executors(online_info, &active_sessions);
             let allocatable =
                 backend.enabled && online && executors.iter().any(|executor| executor.allocatable);
+            let backend_id = backend.id.clone();
+            let name = backend.name.clone();
+            let enabled = backend.enabled;
             BackendRuntimeSummary {
-                backend_id: backend.id,
-                name: backend.name,
-                enabled: backend.enabled,
+                backend,
+                backend_id,
+                name,
+                enabled,
                 online,
+                capabilities: online_info.map(|online| online.capabilities.clone()),
                 runtime_health,
                 active_session_count: active_sessions.len(),
                 active_sessions,
@@ -213,6 +222,17 @@ mod tests {
         BackendRuntimeOnlineSnapshot {
             backend_id: backend_id.to_string(),
             name: format!("{backend_id} online"),
+            capabilities: agentdash_relay::CapabilitiesPayload {
+                executors: vec![agentdash_relay::AgentInfoRelay {
+                    id: executor_id.to_string(),
+                    name: executor_id.to_string(),
+                    variants: vec!["default".to_string()],
+                    available,
+                }],
+                supports_cancel: true,
+                supports_discover_options: true,
+                mcp_servers: Vec::new(),
+            },
             executors: vec![BackendRuntimeExecutorSnapshot {
                 executor_id: executor_id.to_string(),
                 name: executor_id.to_string(),
@@ -248,6 +268,13 @@ mod tests {
         assert_eq!(summaries[0].active_session_count, 1);
         assert_eq!(summaries[0].executors[0].active_session_count, 1);
         assert!(summaries[0].executors[0].allocatable);
+        assert_eq!(
+            summaries[0]
+                .capabilities
+                .as_ref()
+                .map(|capabilities| capabilities.supports_cancel),
+            Some(true)
+        );
     }
 
     #[test]

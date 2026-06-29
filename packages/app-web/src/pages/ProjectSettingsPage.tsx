@@ -24,10 +24,7 @@ import {
   machineKindLabel,
   type MachineKind,
 } from "../features/workspace/model/machinePresentation";
-import {
-  applyBackendRuntimeSummaries,
-  backendAvailabilitySignature,
-} from "../utils/backendAvailability";
+import { backendStatusSignature } from "../utils/backendStatusSignature";
 import { VfsBrowser } from "../features/vfs";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
@@ -459,13 +456,7 @@ function BackendAccessPanel({
   inventoryRefreshKey?: number;
 }) {
   const backends = useCoordinatorStore((state) => state.backends);
-  const backendRuntimeSummaries = useCoordinatorStore((state) => state.backendRuntimeSummaries);
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
-  const fetchBackendRuntimeSummaries = useCoordinatorStore((state) => state.fetchBackendRuntimeSummaries);
-  const effectiveBackends = useMemo(
-    () => applyBackendRuntimeSummaries(backends, backendRuntimeSummaries),
-    [backends, backendRuntimeSummaries],
-  );
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [inventoriesByAccessId, setInventoriesByAccessId] = useState<Record<string, BackendWorkspaceInventory[]>>({});
   const [expandedInventoryAccessIds, setExpandedInventoryAccessIds] = useState<Record<string, boolean>>({});
@@ -490,9 +481,8 @@ function BackendAccessPanel({
 
   useEffect(() => {
     void fetchBackends();
-    void fetchBackendRuntimeSummaries();
     void load();
-  }, [fetchBackends, fetchBackendRuntimeSummaries, load]);
+  }, [fetchBackends, load]);
 
   const reloadExpandedInventories = useCallback(async () => {
     const expandedAccessIds = Object.entries(expandedInventoryAccessIds)
@@ -535,12 +525,12 @@ function BackendAccessPanel({
     [accesses],
   );
   const selectableBackends = useMemo(
-    () => effectiveBackends.filter((backend) => !authorizedBackendIds.has(backend.id)),
-    [authorizedBackendIds, effectiveBackends],
+    () => backends.filter((backend) => !authorizedBackendIds.has(backend.id)),
+    [authorizedBackendIds, backends],
   );
   const backendRuntimeSignature = useMemo(
-    () => backendAvailabilitySignature(backends, backendRuntimeSummaries),
-    [backends, backendRuntimeSummaries],
+    () => backendStatusSignature(backends),
+    [backends],
   );
 
   useEffect(() => {
@@ -558,13 +548,13 @@ function BackendAccessPanel({
     setSelectedBackendId(selectableBackends[0]?.id ?? "");
   }, [selectableBackends, selectedBackendId]);
 
-  const backendName = (backendId: string) => effectiveBackends.find((backend) => backend.id === backendId)?.name ?? backendId;
+  const backendName = (backendId: string) => backends.find((backend) => backend.id === backendId)?.name ?? backendId;
   const backendMachineKind = (backendId: string): MachineKind => {
-    const backend = effectiveBackends.find((item) => item.id === backendId);
+    const backend = backends.find((item) => item.id === backendId);
     return backend ? classifyMachine(backend) : "other";
   };
   const backendIsOnline = (backendId: string): boolean =>
-    effectiveBackends.find((item) => item.id === backendId)?.online === true;
+    backends.find((item) => item.id === backendId)?.online === true;
 
   const handleAddAccess = async () => {
     if (!selectedBackendId) {

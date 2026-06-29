@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -9,8 +9,7 @@ use agentdash_contracts::backend::BackendResponse;
 use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
-    BackendConfig, BackendExecutionLease, BackendRepository, BackendShareScopeKind, BackendType,
-    BackendVisibility, ProjectBackendAccessRepository, RuntimeHealth,
+    BackendExecutionLease, BackendRepository, ProjectBackendAccessRepository, RuntimeHealth,
 };
 use agentdash_domain::project::ProjectRepository;
 
@@ -91,77 +90,29 @@ pub async fn list_backends(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
-    let backends = state.repos.backend_repo.list_backends().await?;
     let backend_authz = backend_authz(state.as_ref());
     let backends = backend_authz
-        .filter_backends(&current_user, backends)
+        .filter_backends(
+            &current_user,
+            state.repos.backend_repo.list_backends().await?,
+        )
         .await?;
     let online_list = state.services.backend_registry.list_online().await;
-    let runtime_health = state
-        .repos
-        .runtime_health_repo
-        .list_runtime_health()
-        .await?;
-    let runtime_health_by_backend = runtime_health
+    let summaries = list_backend_runtime_summaries(
+        state.repos.runtime_health_repo.as_ref(),
+        state.repos.backend_execution_lease_repo.as_ref(),
+        backends,
+        online_list
+            .into_iter()
+            .map(online_backend_snapshot)
+            .collect(),
+        can_manage_global_backend_scope(&current_user),
+    )
+    .await?;
+    let result = summaries
         .into_iter()
-        .map(|health| (health.backend_id.clone(), health))
-        .collect::<HashMap<_, _>>();
-    let mut result = Vec::with_capacity(backends.len() + online_list.len());
-
-    let mut seen_ids = HashSet::new();
-
-    for b in backends {
-        seen_ids.insert(b.id.clone());
-        let online_info = online_list.iter().find(|o| o.backend_id == b.id);
-        let runtime_health = runtime_health_by_backend
-            .get(&b.id)
-            .cloned()
-            .map(|health| runtime_health_response(health, online_info.is_some()));
-        result.push(BackendWithStatus {
-            online: online_info.is_some(),
-            runtime_health,
-            capabilities: online_info
-                .map(|o| backend_capabilities_response(o.capabilities.clone())),
-            backend: backend_response(b),
-        });
-    }
-
-    for o in &online_list {
-        if seen_ids.contains(&o.backend_id) {
-            continue;
-        }
-        if !can_manage_global_backend_scope(&current_user) {
-            continue;
-        }
-        let runtime_health = runtime_health_by_backend
-            .get(&o.backend_id)
-            .cloned()
-            .map(|health| runtime_health_response(health, true));
-        result.push(BackendWithStatus {
-            online: true,
-            runtime_health,
-            capabilities: Some(backend_capabilities_response(o.capabilities.clone())),
-            backend: backend_response(BackendConfig {
-                id: o.backend_id.clone(),
-                name: o.name.clone(),
-                endpoint: String::new(),
-                auth_token: None,
-                enabled: true,
-                backend_type: BackendType::Remote,
-                owner_user_id: None,
-                profile_id: None,
-                device_id: None,
-                machine_id: None,
-                machine_label: None,
-                visibility: BackendVisibility::Private,
-                share_scope_kind: BackendShareScopeKind::User,
-                share_scope_id: None,
-                capability_slot: "default".to_string(),
-                device: serde_json::json!({}),
-                last_claimed_at: None,
-            }),
-        });
-    }
+        .map(backend_with_status_from_summary)
+        .collect();
 
     Ok(Json(result))
 }
@@ -300,20 +251,32 @@ fn active_session_response(lease: BackendExecutionLease) -> BackendActiveSession
 }
 
 fn online_backend_snapshot(online: OnlineBackendInfo) -> BackendRuntimeOnlineSnapshot {
+    let capabilities = online.capabilities;
     BackendRuntimeOnlineSnapshot {
         backend_id: online.backend_id,
         name: online.name,
-        executors: online
-            .capabilities
+        executors: capabilities
             .executors
-            .into_iter()
+            .iter()
             .map(|executor| BackendRuntimeExecutorSnapshot {
-                executor_id: executor.id,
-                name: executor.name,
-                variants: executor.variants,
+                executor_id: executor.id.clone(),
+                name: executor.name.clone(),
+                variants: executor.variants.clone(),
                 available: executor.available,
             })
             .collect(),
+        capabilities,
+    }
+}
+
+fn backend_with_status_from_summary(summary: BackendRuntimeSummary) -> BackendWithStatus {
+    BackendWithStatus {
+        online: summary.online,
+        runtime_health: summary
+            .runtime_health
+            .map(|health| runtime_health_response(health, summary.online)),
+        capabilities: summary.capabilities.map(backend_capabilities_response),
+        backend: backend_response(summary.backend),
     }
 }
 

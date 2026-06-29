@@ -334,7 +334,8 @@ impl<'a> AgentRunMailboxService<'a> {
         }
 
         let agent_message = AgentMessage::user_parts(user_input_blocks_to_content_parts(&input));
-        self.session_eventing
+        if let Err(error) = self
+            .session_eventing
             .emit_user_input_submitted(
                 &message.runtime_session_id,
                 &active_turn_id,
@@ -348,11 +349,26 @@ impl<'a> AgentRunMailboxService<'a> {
                 input,
             )
             .await
-            .map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "AgentRun mailbox delegate steering 事件写入失败: {error}"
-                ))
-            })?;
+        {
+            let error_message = format!("AgentRun mailbox delegate steering 事件写入失败: {error}");
+            let failed = self
+                .mailbox_repo
+                .mark_message_status(
+                    message.id,
+                    message.claim_token,
+                    MailboxMessageStatus::Failed,
+                    None,
+                    None,
+                    Some(error_message.clone()),
+                )
+                .await?;
+            self.mark_message_receipt_terminal_failed(
+                &failed,
+                WorkflowApplicationError::Internal(error_message),
+            )
+            .await;
+            return Ok(None);
+        }
         let updated = self
             .mailbox_repo
             .mark_message_status(
@@ -582,19 +598,21 @@ impl<'a> AgentRunMailboxService<'a> {
                 .await;
         }
 
-        self.session_control
+        if let Err(error) = self
+            .session_control
             .steer_session(SessionTurnSteerCommand {
                 session_id: message.runtime_session_id.clone(),
                 expected_turn_id: active_turn_id.clone(),
                 input: input.clone(),
             })
             .await
-            .map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "AgentRun mailbox steer 投递失败: {error}"
-                ))
-            })?;
-        self.session_eventing
+        {
+            return self
+                .fail_claimed_message(message, format!("AgentRun mailbox steer 投递失败: {error}"))
+                .await;
+        }
+        let event_error = self
+            .session_eventing
             .emit_user_input_submitted(
                 &message.runtime_session_id,
                 &active_turn_id,
@@ -608,11 +626,16 @@ impl<'a> AgentRunMailboxService<'a> {
                 input,
             )
             .await
-            .map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "AgentRun mailbox steer 事件写入失败: {error}"
-                ))
-            })?;
+            .err()
+            .map(|error| format!("AgentRun mailbox steer 事件写入失败: {error}"));
+        if let Some(error) = event_error.as_deref() {
+            diag!(Warn, Subsystem::AgentRun,
+                runtime_session_id = %message.runtime_session_id,
+                mailbox_message_id = %message.id,
+                error = %error,
+                "AgentRun mailbox steer accepted but event projection failed"
+            );
+        }
         let updated = self
             .mailbox_repo
             .mark_message_status(
@@ -621,7 +644,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 MailboxMessageStatus::Steered,
                 Some(active_turn_id.clone()),
                 None,
-                None,
+                event_error,
             )
             .await?;
         let refs = AgentRunAcceptedRefs {
@@ -771,6 +794,34 @@ impl<'a> AgentRunMailboxService<'a> {
         Ok(AgentRunMailboxScheduleOutcome {
             outcome: AgentRunMailboxCommandOutcome::Blocked,
             mailbox_message: blocked,
+            accepted_refs: None,
+        })
+    }
+
+    async fn fail_claimed_message(
+        &self,
+        message: AgentRunMailboxMessage,
+        error_message: String,
+    ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        let failed = self
+            .mailbox_repo
+            .mark_message_status(
+                message.id,
+                message.claim_token,
+                MailboxMessageStatus::Failed,
+                None,
+                None,
+                Some(error_message.clone()),
+            )
+            .await?;
+        self.mark_message_receipt_terminal_failed(
+            &failed,
+            WorkflowApplicationError::Internal(error_message),
+        )
+        .await;
+        Ok(AgentRunMailboxScheduleOutcome {
+            outcome: AgentRunMailboxCommandOutcome::Failed,
+            mailbox_message: failed,
             accepted_refs: None,
         })
     }

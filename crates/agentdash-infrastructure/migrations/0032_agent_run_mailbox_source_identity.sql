@@ -33,6 +33,7 @@ BEGIN
                 WHEN 'composer' THEN 'user'
                 WHEN 'draft_start' THEN 'user'
                 WHEN 'canvas_action' THEN 'user'
+                WHEN 'local_relay_prompt' THEN 'user'
                 WHEN 'routine_executor' THEN 'routine'
                 WHEN 'companion_parent_resume' THEN 'agent'
                 ELSE 'system'

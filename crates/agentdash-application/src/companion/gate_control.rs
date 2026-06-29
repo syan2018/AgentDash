@@ -460,10 +460,6 @@ impl CompanionGateControlService {
             ))
         })?;
 
-        gate.payload_json = Some(command.payload.clone());
-        gate.resolve("companion_respond");
-        self.gate_repo.update(&gate).await?;
-
         let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() else {
             let error =
                 "requesting agent 缺少 current delivery runtime session，无法投递 human response"
@@ -527,6 +523,7 @@ impl CompanionGateControlService {
             human_mailbox_delivery_payload(&delivery_runtime_session_id, &mailbox_result),
         );
         gate.payload_json = Some(response_payload);
+        gate.resolve("companion_respond");
         self.gate_repo.update(&gate).await?;
 
         Ok(CompanionGateRespondResult {
@@ -616,10 +613,6 @@ impl CompanionGateControlService {
             },
         });
 
-        gate.payload_json = Some(resolution_payload.clone());
-        gate.resolve(format!("child_agent:{}", child_frame.agent_id));
-        self.gate_repo.update(&gate).await?;
-
         let parent_delivery_runtime_session_id = self
             .select_current_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
             .await?;
@@ -692,6 +685,7 @@ impl CompanionGateControlService {
             parent_mailbox_delivery_payload(&parent_delivery_runtime_session_id, &mailbox_result),
         );
         gate.payload_json = Some(resolution_payload.clone());
+        gate.resolve(format!("child_agent:{}", child_frame.agent_id));
         self.gate_repo.update(&gate).await?;
 
         let notification = CompanionGateEventNotification {
@@ -1049,10 +1043,6 @@ impl CompanionGateControlService {
             );
         }
 
-        gate.payload_json = Some(resolution_payload.clone());
-        gate.resolve(format!("parent_agent:{}", parent_frame.agent_id));
-        self.gate_repo.update(&gate).await?;
-
         let input_text = build_parent_response_mailbox_input_text(
             gate.id,
             &command.request_id,
@@ -1099,6 +1089,7 @@ impl CompanionGateControlService {
             child_mailbox_delivery_payload(&child_delivery_runtime_session_id, &mailbox_result),
         );
         gate.payload_json = Some(resolution_payload.clone());
+        gate.resolve(format!("parent_agent:{}", parent_frame.agent_id));
         self.gate_repo.update(&gate).await?;
 
         let notification = CompanionGateEventNotification {
@@ -2286,7 +2277,7 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(!stored.is_open());
+        assert!(stored.is_open());
         assert_eq!(
             stored
                 .payload_json
@@ -2764,7 +2755,7 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(!stored.is_open());
+        assert!(stored.is_open());
         assert_eq!(
             stored
                 .payload_json
@@ -3199,7 +3190,7 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(!stored.is_open());
+        assert!(stored.is_open());
         assert_eq!(
             stored
                 .payload_json

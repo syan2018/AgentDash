@@ -1,266 +1,223 @@
 # AgentDash
 
-![AgentDash 运行时控制平面](docs/assets/readme-runtime-map.svg)
+English | [简体中文](README.zh-CN.md)
 
-**AgentDash 是面向 AI Agent 工作生命过程的 Lifecycle 控制面。**
+![AgentDash runtime control plane](docs/assets/readme-runtime-map.svg)
 
-它不是“把很多 Agent 放进一个列表”的看板，也不是把会话记录包装成项目管理工具。AgentDash 把业务对象、运行拓扑、运行空间和事件证据收敛成可寻址、可观察、可恢复的控制面。
+AgentDash is an enterprise-ready agent workspace platform for turning AI agent
+work from scattered chats and local processes into governed, extensible,
+observable workspaces.
 
-## 运行时形态
+It gives every piece of agent work a home: a Project, an AgentRun workspace, a
+durable mailbox, a runtime surface, local or server-side execution, extension
+modules, and an evidence stream that can be inspected, resumed, shared, and
+automated.
 
-```mermaid
-flowchart LR
-    User["用户 / Dashboard"]
-    Cloud["云端 Agent Runtime<br/>状态、推理、编排、事件"]
-    Connector["Agent Connector<br/>执行边界抽象"]
-    Relay["Relay 信道<br/>工具调用与本机能力"]
-    Local["本机 Runtime<br/>文件、Shell、MCP"]
-    VFS["运行时 VFS<br/>Mount 与 Provider"]
-    Life["Lifecycle 控制面<br/>运行状态与证据"]
-    Stream["Backbone 事件流<br/>可观察的运行事实"]
+## The Idea
 
-    User --> Cloud
-    Cloud --> Connector
-    Connector --> Cloud
-    Connector <--> Relay
-    Relay <--> Local
-    Cloud <--> VFS
-    VFS <--> Local
-    Cloud --> Life
-    VFS --> Life
-    Life --> Stream
-    Connector --> Stream
-    Stream --> User
-```
+AI agents are becoming teammates, but most agent tools still behave like
+temporary terminals: launch a process, stream a chat, hope the logs are enough.
+That breaks down when a team needs shared projects, private workspaces,
+server-side runners, reusable capabilities, human review, automation, and
+traceable execution.
 
-## 为什么需要它
+AgentDash starts from a different assumption:
 
-| 普通 Agent Runner | AgentDash |
+> Agent work should be a managed workspace with identity, permissions,
+> capabilities, runtime context, artifacts, and audit evidence.
+
+This makes AgentDash a fit for enterprise collaboration and platform extension,
+not only for personal agent experiments.
+
+## What Makes It Different
+
+| Capability | What AgentDash Adds |
 | --- | --- |
-| 从会话或日志倒推业务归属 | 业务入口先进入 Lifecycle 控制面 |
-| 把 session 当成任务状态真相 | 控制面记录状态，事件流提供证据 |
-| 每次启动临时拼 prompt / tools | 运行前生成稳定的上下文和能力投影 |
-| 靠列表顺序串联步骤 | 复杂 SOP 展开成显式 Activity graph |
-| 本机路径和工具直接暴露给 Agent | 通过 VFS、MCP 和 capability projection 进入运行空间 |
-| 云端和本机边界含混 | 云端持有控制面事实，本机负责物理执行 |
+| Project-centered collaboration | Projects anchor permissions, settings, agents, assets, workspace bindings, runner access, and shared context. |
+| AgentRun workspaces | Each run gets a workspace with chat, mailbox, lifecycle trace, VFS, terminal output, inspector panels, canvas, and extension tabs. |
+| Durable mailbox | Human input, companion responses, routine triggers, hooks, and system commands enter one recoverable delivery channel instead of ad hoc chat events. |
+| Cloud/local execution | The cloud owns control-plane facts; desktop, local, or server runners connect outward and execute close to the workspace. |
+| Runtime surfaces | VFS mounts, MCP servers, skills, context frames, capabilities, and workspace modules are projected before an agent starts. |
+| Extension platform | Packaged TypeScript extensions can add runtime actions, protocol channels, workspace panels, permissions, and agent-visible operations. |
+| Workspace modules | Extensions, canvases, and platform capabilities become unified modules agents can list, inspect, invoke, and present. |
+| Evidence-first events | Connector output is normalized into Backbone events for streaming, replay, UI rendering, bounded artifacts, and audit. |
 
-`Project`、`Story`、`Task`、`Routine` 都是有用的业务入口，但它们不拥有 runtime truth。真正稳定的中心是 **Lifecycle 控制面、运行 surface、Connector 投递和事件流**。
+## Core Experience
 
-## 核心模块概览
+### For Teams
 
-| 模块 | 为什么存在 | 边界 |
-| --- | --- | --- |
-| Lifecycle 控制面 | 记录一次工作的业务归属、运行状态、Agent / Activity 和事件证据 | 不等同于聊天 session，也不是任务清单 |
-| AgentRun 工作台 | 让用户、Agent 和子 Agent 面向同一运行身份协作 | `RuntimeSession` 只承载消息流和 connector trace |
-| Runtime Surface / Frame | 在启动期把身份、guidelines、VFS、能力、SkillAsset 和上下文投影成执行空间 | 投影服务本次执行，不替代控制面事实 |
-| VFS / Surface Projector | 统一本机、云端、资产、Lifecycle、Skill、Canvas 等资源地址 | UI、API、tool、MCP adapter 使用同一种 mount 语言 |
-| Connector / Runtime Gateway | 把运行 surface 投递到云端 Agent、Function / Tool Activity 或外部执行适配器 | Connector 不拥有业务状态 |
-| Backbone 事件流 | 承载 runtime facts、工具调用、上下文用量、压缩和 UI reducer 所需的观察事实 | 事件是证据，不是业务对象本身 |
-| Story / Task Subject | Story 管主题和上下文；Task 管 `LifecycleRun.tasks` 内的 run-scoped 计划项 | 二者不拥有 runtime truth |
-| Asset / Workspace Module | Workflow、MCP Preset、Skill、VFS Mount、Canvas、Extension 等进入 runtime surface 的来源 | 资产定义能力，运行时由控制面投影和裁切 |
-| Permission / Backend Access | 管理 Project 授权、本机 backend 可用性、能力授权和 extension runtime 权限 | 授权事实由控制面与 permission grant 表达 |
+- Create a Project as the collaboration and permission boundary.
+- Share the Project with users or groups.
+- Attach workspace bindings and runner access.
+- Configure project agents, skills, MCP presets, VFS mounts, routines, canvases,
+  workflows, and extensions.
+- Start an AgentRun and keep the conversation, mailbox, runtime evidence,
+  artifacts, and workspace tools together.
 
-## VFS 空间
+### For Agent Operators
 
-AgentDash 让所有运行时资源拥有同一种地址形态：
+- Run agents against cloud-owned context while executing tools on authorized
+  local or server machines.
+- Route file, shell, MCP, VFS, extension, and terminal operations through a
+  single Relay boundary.
+- Recover from delivery failures through mailbox receipts, source identity,
+  claim tokens, and scheduler outcomes.
+- Inspect what context and capabilities were actually visible to the agent.
+
+### For Platform Builders
+
+- Package internal systems as AgentDash extensions.
+- Expose protocol adapters as typed channels instead of one-off scripts.
+- Promote canvas experiences into reusable workspace modules.
+- Add runtime operations that agents can invoke with structured permissions and
+  trace metadata.
+- Use generated contracts and a shared event protocol to keep frontend,
+  backend, local runtime, and extension surfaces aligned.
+
+## Platform Shape
 
 ```text
-surface_ref / mount_id / mount_relative_path
+Project
+  -> ProjectAgent / Story / Task / Routine / Workflow
+  -> AgentRun workspace
+  -> LifecycleRun + AgentFrame
+  -> Runtime surface
+       VFS mounts
+       MCP servers
+       Skills and memory
+       Context frames
+       Workspace modules
+       Extension operations
+  -> Connector / Runtime Gateway
+  -> Cloud agent, function activity, local runner, server runner, or extension host
+  -> Backbone events, artifacts, mailbox receipts, lifecycle evidence
 ```
 
-```mermaid
-flowchart TB
-    Surface["surface_ref<br/>哪一份运行空间？"]
-    Mount["mount_id<br/>哪个挂载根？"]
-    Path["mount_relative_path<br/>哪个资源？"]
+The important boundary is simple:
 
-    Surface --> Mount --> Path
+- The cloud server owns collaboration state, permissions, lifecycle facts,
+  runtime surfaces, session events, extension installation facts, and deployment
+  discovery.
+- Local and desktop runners own machine-near execution: filesystem, shell, MCP,
+  terminal, third-party agents, and extension host calls.
+- Relay connects the two without requiring inbound access to developer machines.
 
-    Mount --> RelayFs["relay_fs<br/>本机 workspace 文件"]
-    Mount --> InlineFs["inline_fs<br/>云端内联文件"]
-    Mount --> LifecycleFs["lifecycle_vfs<br/>运行、Activity、产物投影"]
-    Mount --> SkillFs["skill_asset_fs<br/>Skill 资产文件"]
-    Mount --> CanvasFs["canvas_fs<br/>Canvas 资源"]
-```
+## Extensibility
 
-关键点：UI、API、云端 Agent tool、MCP adapter 和 Lifecycle activity 都说同一种 mount 语言。
+AgentDash extensions are designed for real workspace integration rather than
+decorative plugin buttons.
 
-## Agent Connector
+An extension package can provide:
 
-AgentDash 的核心执行主体是云端 Agent Runtime。Connector 层负责把运行 surface 和 launch projection 生成的 `ExecutionContext` 投影到不同执行边界，而不是让产品主线绑定到某一种 Agent 进程形态。
+- runtime actions for agent or UI invocation;
+- protocol channels for reusable provider APIs;
+- workspace tabs and panels;
+- permissions and install-time metadata;
+- packaged TypeScript host bundles with artifact digests;
+- panel-to-runtime bridge calls through `@agentdash/extension-ui`.
 
-```mermaid
-flowchart LR
-    Runtime["云端 Agent Runtime"]
-    Context["ExecutionContext<br/>VFS、工具、身份、上下文"]
-    Connector["Agent Connector"]
-    CloudAgent["云端原生 Agent<br/>主路径"]
-    Function["Function / Tool Activity"]
-    External["外部 Agent 适配<br/>执行器桥接"]
-    Events["BackboneEnvelope"]
+Workspace Modules then turn extension operations, canvases, and built-ins into
+a single agent-facing catalog. An agent does not need to know whether a
+capability came from an extension, a canvas, or the platform. It can ask what
+modules are available, inspect schemas, invoke operations, and present UI.
 
-    Runtime --> Context --> Connector
-    Connector --> CloudAgent
-    Connector --> Function
-    Connector --> External
-    CloudAgent --> Events
-    Function --> Events
-    External --> Events
-```
+Start with:
 
-外部 Agent 可以被接入，但它只是 Connector 的一个适配方向。AgentDash 更重要的能力，是在云端 Agent Runtime 内直接使用 VFS、Lifecycle、Runtime Gateway 和事件流。
+- [Extension system](docs/extension-system.md)
+- [Protocol demo extension](examples/extensions/protocol-demo/README.md)
+- [Local hello extension](examples/extensions/local-hello/README.md)
 
-## Relay 信道
+## Enterprise Collaboration
 
-云端拥有状态和 Agent Runtime，本机拥有机器资源。Relay 是工具调用抵达本机的边界，不是产品中心。
+AgentDash is still pre-release, but the core architecture is already shaped
+around enterprise needs:
 
-```mermaid
-sequenceDiagram
-    participant A as 云端 Agent Runtime
-    participant C as Agent Connector
-    participant R as Relay WS
-    participant L as 本机 Runtime
-    participant FS as 本机 FS / Shell
+- personal and enterprise authentication modes;
+- Project-level user and group grants;
+- owner/editor/viewer access roles;
+- system, user, and project settings scopes;
+- project-scoped runner registration;
+- backend access and workspace routing;
+- server-issued relay credentials;
+- durable AgentRun mailbox receipts;
+- bounded Backbone events and lifecycle VFS artifacts;
+- cloud image, migration, doctor, version, and discovery endpoints.
 
-    L->>R: 注册机器、目录、能力
-    R->>C: backend online
+The goal is not to hide complexity behind a chat UI. The goal is to make agent
+work governable enough for teams while keeping it flexible enough for local,
+desktop, server, and extension-driven workflows.
 
-    A->>C: 请求工具执行
-    C->>R: command.tool.*
-    R->>L: 执行 VFS 工具调用
-    L->>FS: read / write / shell / MCP
-    FS-->>L: result
-    L-->>R: response.tool.*
-    R-->>C: tool result
-    C-->>A: 工具结果
-
-    A-->>C: runtime event
-    C-->>A: Backbone event persisted
-```
-
-## Lifecycle 控制面
-
-Lifecycle 不是任务清单，也不等同于单条聊天会话。它记录一次工作生命过程：谁发起、运行到哪里、当前 Agent 使用哪份能力和上下文、哪些事件构成执行证据。
-
-普通 Agent 会话不需要强行制造工作流图；复杂 SOP 可以展开为显式 Activity graph。两者都回到同一套控制面，因此 Dashboard、API、取消、恢复、审计和业务投影不需要从 session 标题或日志内容倒推归属。
-
-查询视图和真实 Agent 启动来自同一份控制面事实。启动期可以生成 `ExecutionContext` 等投递投影，但它们服务本次执行，不替代 Lifecycle 对业务归属、运行状态和事件证据的表达。
-
-```mermaid
-flowchart LR
-    Subject["业务入口<br/>Project / Story / Task / Routine"]
-    Control["Lifecycle 控制面<br/>Run / Agent / Activity"]
-    Surface["运行 surface<br/>能力、上下文、VFS、MCP"]
-    Runtime["Agent / Function / Human 执行"]
-    Evidence["事件、产物、状态投影"]
-
-    Subject --> Control --> Surface --> Runtime --> Evidence --> Control
-```
-
-## 产品界面
-
-| 界面 | 展示内容 |
-| --- | --- |
-| Agent 工作台 | ProjectAgent、Draft AgentRun、AgentRun Workspace、运行状态、mailbox、Task 状态、lineage 和运行时事件流 |
-| Story / Subject 视图 | 面向主题、上下文和运行投影的管理入口；执行事实回到 Lifecycle / AgentRun |
-| Assets | Workflow、Marketplace、Canvas、MCP Preset、Skill、VFS Mount、Extension 等项目级资产 |
-| Routine | 定时、Webhook 或插件事件触发的自动化入口，绑定 ProjectAgent 和运行模板 |
-| Lifecycle 编辑器 | Workflow / Activity graph、端口、edge、能力、注入、Hook rules 和运行状态 |
-| Workspace Panel | AgentRun 右侧运行空间，承载 Context、Inspector、Canvas、VFS、Terminal 和 Extension tab |
-| Project 设置 | Project 基础信息、Backend Access、Workspace binding、VFS 资源、Workspace Modules、共享、模板和 clone |
-| Settings / 本机 Runtime | 系统、用户和 desktop-only 本机 runtime 设置；包含机器身份、可访问目录、Relay 健康状态和本机能力 |
-
-## 其它能力
-
-这些能力围绕运行时主链展开，但不是 README 的叙事中心：
-
-| 能力 | 用途 |
-| --- | --- |
-| Shared Library / Marketplace | 管理可复用的 Agent、Workflow、Skill、MCP、VFS Mount、Extension 等资产来源与安装状态 |
-| Extension / Workspace Module | 让项目安装的扩展贡献 UI entry、runtime operation、Workspace Panel tab 和 Agent 可发现能力 |
-| MCP Preset / MCP Server | MCP Preset 组织 runtime surface 的外部工具入口；`agentdash-mcp` 提供协议入口 |
-| Canvas | 承载可运行的前端资产、可视化结果和可提升为 Extension 的模块 |
-| Task 工具集 | `task_read` / `task_write` 让 Agent 维护 `LifecycleRun.tasks`，UI、Story projection 和 agent-facing 工具同源 |
-| Permission Grant | 管理 Project、Backend、能力申请和 extension runtime 权限的授权事实 |
-| Backend Access | 管理项目可使用的本机 backend、workspace inventory、执行 lease 和 runtime health |
-| Hook Runtime | 在执行边界注入约束、上下文、完成判定和后续动作 |
-| Contract Generation | Rust contract crate 生成前端 TS DTO，并通过 `contracts:check` 防止跨层漂移 |
-| Background Workers | 驱动 routine scheduler、terminal effect replay、stall detector、auth cleanup 等云端后台过程 |
-| Desktop Shell | 通过 Tauri 托管 Dashboard 与本机 Runtime 管理面 |
-
-## 代码地图
-
-```text
-crates/
-  agentdash-domain           领域模型：Project、Story、Lifecycle、AgentRun、Permission、Asset
-  agentdash-application      用例编排、runtime surface、Session、VFS、Lifecycle、Runtime Gateway
-  agentdash-application-ports application 层外部端口
-  agentdash-api              REST、NDJSON、WebSocket endpoint
-  agentdash-infrastructure   PostgreSQL、migration、repository 实现
-  agentdash-contracts        Rust 到 TypeScript 的跨层契约生成
-  agentdash-spi              平台 SPI、Hook、MCP、Skill、Routine 等扩展边界
-  agentdash-relay            云端 / 本机共享 Relay 协议类型
-  agentdash-local            本机 Runtime、工具、MCP、Shell / 文件
-  agentdash-local-tauri      桌面端本机 Runtime 壳
-  agentdash-executor         Agent Connector 与执行适配
-  agentdash-mcp              MCP 服务层
-  agentdash-integration-api  外部集成 API
-  agentdash-first-party-integrations 一方集成
-  agentdash-agent-protocol   Backbone 事件协议
-  agentdash-agent            云端 Agent Runtime
-  agentdash-agent-types      Agent Runtime 共享类型
-
-packages/
-  app-web                    Web Dashboard，入口在 packages/app-web/src/App.tsx
-  app-tauri                  桌面端壳
-  core / ui / views          共享前端能力、设计系统和视图组件
-  extension-sdk / extension-ui / extension-dev  Extension 开发与运行时包
-```
-
-## 运行
+## Quick Start
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-`pnpm dev` 会编译 Rust binary，然后依次启动云端后端、本机 runtime 和 Web Dashboard。
+`pnpm dev` builds the Rust debug binaries, runs cloud migrations, starts the
+cloud backend, starts the local runtime, and starts the Web Dashboard.
 
-| 服务 | 地址 |
+| Service | URL |
 | --- | --- |
 | Cloud API | `http://127.0.0.1:3001` |
 | Web Dashboard | `http://127.0.0.1:5380` |
+| Relay WebSocket | `ws://127.0.0.1:3001/ws/backend` |
 
-Rust 后端修改后需要完整重启。
+Rust backend binaries do not hot reload. After changing Rust code, stop the
+previous dev process and start it again.
 
-## 检查
+Useful commands:
 
-```bash
-pnpm run check
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the default web profile: cloud backend, local runtime, Web Dashboard. |
+| `pnpm dev:desktop` | Start the desktop profile with the Tauri shell. |
+| `pnpm dev:web:no-local` | Start without the local runtime. |
+| `pnpm run check` | Run contracts, backend checks/tests, frontend checks/tests, and critical e2e. |
+| `pnpm run docker:cloud:build` | Build the cloud deployment image. |
+
+## Repository Map
+
+```text
+crates/
+  agentdash-api                         Cloud API, Relay endpoint, web serving
+  agentdash-domain                      Project, AgentRun, mailbox, permission, workflow facts
+  agentdash-application-*               Runtime session, VFS, lifecycle, workflow, hooks, skills
+  agentdash-workspace-module            Agent-facing modules from extensions and canvases
+  agentdash-agent / agentdash-executor  Agent runtime and connector execution
+  agentdash-relay / agentdash-local     Cloud/local protocol and runner
+  agentdash-contracts                   Rust-to-TypeScript DTO generation
+  agentdash-agent-protocol              Backbone event protocol
+
+packages/
+  app-web                               Web Dashboard
+  app-tauri                             Desktop shell frontend
+  core / ui / views                     Shared frontend foundations
+  extension-sdk / extension-ui          Extension authoring and panel bridge
+  extension-dev                         Extension dev, validate, pack, install tooling
+
+examples/extensions/
+  local-hello                           Minimal extension
+  protocol-demo                         Runtime action + channel + panel example
 ```
 
-常用分项：
+## Deeper Reading
 
-```bash
-pnpm run backend:check
-pnpm run backend:test
-pnpm run frontend:check
-pnpm run frontend:test
-```
+These documents are useful when you want to understand or extend the platform:
 
-## 延伸阅读
+- [Project overview](.trellis/spec/project-overview.md)
+- [Extension system](docs/extension-system.md)
+- [Local execution backend](docs/local-execution-backend.md)
+- [Backbone protocol](.trellis/spec/cross-layer/backbone-protocol.md)
+- [VFS access contract](.trellis/spec/backend/vfs/vfs-access.md)
+- [AgentRun mailbox](.trellis/spec/backend/session/agentrun-mailbox.md)
+- [Deployment entry](deploy/README.md)
 
-- [VFS 访问契约](.trellis/spec/backend/vfs/vfs-access.md)
-- [VFS 本机物化](.trellis/spec/backend/vfs/vfs-materialization.md)
-- [项目总览](.trellis/spec/project-overview.md)
-- [Workflow Architecture](.trellis/spec/backend/workflow/architecture.md)
-- [Lifecycle Subject Association](.trellis/spec/backend/workflow/lifecycle-run-link.md)
-- [Execution Context Frames](.trellis/spec/backend/session/execution-context-frames.md)
-- [Session 启动主链](.trellis/spec/backend/session/session-startup-pipeline.md)
-- [Activity Lifecycle](.trellis/spec/backend/workflow/activity-lifecycle.md)
-- [Lifecycle Edge 契约](.trellis/spec/backend/workflow/lifecycle-edge.md)
-- [Backbone Protocol](.trellis/spec/cross-layer/backbone-protocol.md)
-- [Relay Protocol](docs/relay-protocol.md)
+## Status
+
+AgentDash is under active research and product development. It is not yet a
+stable public product, and the project intentionally favors the correct
+architecture over compatibility with early assumptions.
 
 ## License
 

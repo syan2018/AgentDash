@@ -23,7 +23,8 @@ use agentdash_application_runtime_gateway::{
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
+    WorkspaceModuleOperationReadinessKind,
 };
 use agentdash_domain::canvas::{
     CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessProjection, CanvasDataBinding, CanvasRepository,
@@ -50,10 +51,15 @@ use crate::canvas::{
     load_canvas_by_project_mount_id, normalize_canvas_mount_id, upsert_canvas_data_binding,
     validate_canvas_data_bindings,
 };
-use crate::workspace_module::runtime_bridge::SharedWorkspaceModuleAgentRunBridgeHandle;
+use crate::workspace_module::runtime_bridge::{
+    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
+};
 use crate::workspace_module::{
-    ResolvedInvocationBackend, build_canvas_workspace_module, build_workspace_module_presentation,
-    request_existing_canvas_visibility_for_runtime, resolve_workspace_module_visibility,
+    ResolvedInvocationBackend, WorkspaceModuleOperationContext,
+    WorkspaceModuleRuntimeActionCatalog, build_canvas_workspace_module,
+    build_workspace_module_presentation, request_existing_canvas_visibility_for_runtime,
+    resolve_workspace_module_visibility,
+    resolve_workspace_module_visibility_with_operation_context,
     submit_canvas_runtime_surface_update, validate_input_against_schema,
 };
 
@@ -64,6 +70,128 @@ struct WorkspaceModuleVisibilitySource {
     current_user: Option<ProjectAuthorizationContext>,
     #[cfg(test)]
     effective_view: Option<AgentRunEffectiveCapabilityView>,
+}
+
+#[derive(Clone)]
+struct WorkspaceModuleOperationRuntimeSource {
+    runtime_gateway: Option<Arc<RuntimeGateway>>,
+    runtime_gateway_handle: Option<SharedWorkspaceModuleRuntimeGatewayHandle>,
+    delivery_runtime_session_id: Option<String>,
+    agent_id: Option<String>,
+    channel_transport_available: bool,
+    backend_readiness: WorkspaceModuleOperationReadiness,
+}
+
+impl Default for WorkspaceModuleOperationRuntimeSource {
+    fn default() -> Self {
+        Self {
+            runtime_gateway: None,
+            runtime_gateway_handle: None,
+            delivery_runtime_session_id: None,
+            agent_id: None,
+            channel_transport_available: false,
+            backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
+                "runtime backend anchor is not available in this workspace module context",
+            ),
+        }
+    }
+}
+
+impl WorkspaceModuleOperationRuntimeSource {
+    fn with_gateway_handle(
+        mut self,
+        runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+        delivery_runtime_session_id: impl Into<String>,
+        agent_id: Option<String>,
+        channel_transport_available: bool,
+        backend_readiness: WorkspaceModuleOperationReadiness,
+    ) -> Self {
+        self.runtime_gateway_handle = Some(runtime_gateway_handle);
+        self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
+        self.agent_id = agent_id;
+        self.channel_transport_available = channel_transport_available;
+        self.backend_readiness = backend_readiness;
+        self
+    }
+
+    fn with_gateway(
+        mut self,
+        runtime_gateway: Arc<RuntimeGateway>,
+        delivery_runtime_session_id: impl Into<String>,
+        agent_id: Option<String>,
+        channel_transport_available: bool,
+        backend_readiness: WorkspaceModuleOperationReadiness,
+    ) -> Self {
+        self.runtime_gateway = Some(runtime_gateway);
+        self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
+        self.agent_id = agent_id;
+        self.channel_transport_available = channel_transport_available;
+        self.backend_readiness = backend_readiness;
+        self
+    }
+
+    async fn operation_context(&self, project_id: Uuid) -> WorkspaceModuleOperationContext {
+        let runtime_actions = self.runtime_action_catalog(project_id).await;
+        WorkspaceModuleOperationContext {
+            runtime_actions,
+            channel_readiness: self.channel_readiness(),
+            backend_readiness: self.backend_readiness.clone(),
+        }
+    }
+
+    async fn runtime_action_catalog(
+        &self,
+        project_id: Uuid,
+    ) -> WorkspaceModuleRuntimeActionCatalog {
+        let Some(delivery_runtime_session_id) = self.delivery_runtime_session_id.as_ref() else {
+            return WorkspaceModuleRuntimeActionCatalog::unavailable(
+                "delivery runtime session id is unavailable for RuntimeGateway catalog discovery",
+            );
+        };
+        let runtime_gateway = match self.runtime_gateway.as_ref() {
+            Some(gateway) => Some(gateway.clone()),
+            None => match self.runtime_gateway_handle.as_ref() {
+                Some(handle) => handle.get().await,
+                None => None,
+            },
+        };
+        let Some(runtime_gateway) = runtime_gateway else {
+            return WorkspaceModuleRuntimeActionCatalog::missing_runtime_gateway(
+                "RuntimeGateway is not available for workspace module operation catalog discovery",
+            );
+        };
+        match runtime_gateway
+            .surface_for_actor(
+                RuntimeActor::AgentSession {
+                    session_id: delivery_runtime_session_id.clone(),
+                    agent_id: self.agent_id.clone(),
+                },
+                RuntimeContext::Session {
+                    session_id: delivery_runtime_session_id.clone(),
+                    project_id: Some(project_id),
+                    workspace_id: None,
+                },
+            )
+            .await
+        {
+            Ok(surface) => WorkspaceModuleRuntimeActionCatalog::from_descriptors(surface.actions),
+            Err(error) => WorkspaceModuleRuntimeActionCatalog::unavailable(format!(
+                "RuntimeGateway actor/context catalog is unavailable: {error}"
+            )),
+        }
+    }
+
+    fn channel_readiness(&self) -> WorkspaceModuleOperationReadiness {
+        if self.channel_transport_available {
+            WorkspaceModuleOperationReadiness::ready()
+        } else {
+            WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingChannelTransport,
+                "extension channel transport is not available in this runtime",
+            )
+        }
+    }
 }
 
 impl WorkspaceModuleVisibilitySource {
@@ -124,12 +252,19 @@ async fn resolve_visible_modules_for_tool(
     canvas_repo: &Arc<dyn CanvasRepository>,
     project_id: Uuid,
     visibility_source: &WorkspaceModuleVisibilitySource,
+    operation_runtime_source: &WorkspaceModuleOperationRuntimeSource,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, AgentToolError> {
     let view = visibility_source.effective_view().await?;
-    let projection =
-        resolve_workspace_module_visibility(installation_repo, canvas_repo, project_id, &view)
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+    let operation_context = operation_runtime_source.operation_context(project_id).await;
+    let projection = resolve_workspace_module_visibility_with_operation_context(
+        installation_repo,
+        canvas_repo,
+        project_id,
+        &view,
+        &operation_context,
+    )
+    .await
+    .map_err(AgentToolError::ExecutionFailed)?;
     for diagnostic in &projection.diagnostics {
         diag!(Warn, Subsystem::AgentRun,
 
@@ -225,6 +360,7 @@ pub struct WorkspaceModuleListTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
     visibility_source: WorkspaceModuleVisibilitySource,
+    operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
 }
 
 impl WorkspaceModuleListTool {
@@ -238,6 +374,7 @@ impl WorkspaceModuleListTool {
             canvas_repo,
             project_id,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
+            operation_runtime_source: WorkspaceModuleOperationRuntimeSource::default(),
         }
     }
 
@@ -254,6 +391,23 @@ impl WorkspaceModuleListTool {
 
     pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
         self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
+    }
+
+    pub fn with_runtime_dependencies(
+        mut self,
+        runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+        delivery_runtime_session_id: String,
+        channel_transport_available: bool,
+        backend_readiness: WorkspaceModuleOperationReadiness,
+    ) -> Self {
+        self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
+            runtime_gateway_handle,
+            delivery_runtime_session_id,
+            None,
+            channel_transport_available,
+            backend_readiness,
+        );
         self
     }
 
@@ -295,6 +449,7 @@ impl AgentTool for WorkspaceModuleListTool {
             &self.canvas_repo,
             self.project_id,
             &self.visibility_source,
+            &self.operation_runtime_source,
         )
         .await?;
 
@@ -348,6 +503,7 @@ pub struct WorkspaceModuleDescribeTool {
     canvas_repo: Arc<dyn CanvasRepository>,
     project_id: Uuid,
     visibility_source: WorkspaceModuleVisibilitySource,
+    operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
 }
 
 impl WorkspaceModuleDescribeTool {
@@ -361,6 +517,7 @@ impl WorkspaceModuleDescribeTool {
             canvas_repo,
             project_id,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
+            operation_runtime_source: WorkspaceModuleOperationRuntimeSource::default(),
         }
     }
 
@@ -377,6 +534,23 @@ impl WorkspaceModuleDescribeTool {
 
     pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
         self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
+    }
+
+    pub fn with_runtime_dependencies(
+        mut self,
+        runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+        delivery_runtime_session_id: String,
+        channel_transport_available: bool,
+        backend_readiness: WorkspaceModuleOperationReadiness,
+    ) -> Self {
+        self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
+            runtime_gateway_handle,
+            delivery_runtime_session_id,
+            None,
+            channel_transport_available,
+            backend_readiness,
+        );
         self
     }
 
@@ -424,6 +598,7 @@ impl AgentTool for WorkspaceModuleDescribeTool {
             &self.canvas_repo,
             self.project_id,
             &self.visibility_source,
+            &self.operation_runtime_source,
         )
         .await?;
 
@@ -1005,6 +1180,56 @@ fn structured_tool_error(
     }
 }
 
+fn readiness_error_code(readiness: &WorkspaceModuleOperationReadiness) -> &'static str {
+    match readiness.kind {
+        WorkspaceModuleOperationReadinessKind::Ready => "operation_ready",
+        WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway => "missing_runtime_gateway",
+        WorkspaceModuleOperationReadinessKind::MissingChannelTransport => {
+            "missing_channel_transport"
+        }
+        WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor => {
+            "missing_runtime_backend_anchor"
+        }
+        WorkspaceModuleOperationReadinessKind::BackendUnavailable => "backend_unavailable",
+        WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable => {
+            "runtime_action_unavailable"
+        }
+    }
+}
+
+fn operation_not_ready_error(
+    module_id: &str,
+    operation_key: &str,
+    operation: &WorkspaceModuleOperation,
+) -> AgentToolResult {
+    let code = readiness_error_code(&operation.readiness);
+    structured_tool_error(
+        code,
+        format!(
+            "operation `{operation_key}` on module `{module_id}` is not ready: {}",
+            operation.readiness.reason.as_deref().unwrap_or(code)
+        ),
+        serde_json::json!({
+            "module_id": module_id,
+            "operation_key": operation_key,
+            "readiness": operation.readiness,
+        }),
+    )
+}
+
+fn backend_readiness_for_optional_backend(
+    backend: &Option<ResolvedInvocationBackend>,
+) -> WorkspaceModuleOperationReadiness {
+    if backend.is_some() {
+        WorkspaceModuleOperationReadiness::ready()
+    } else {
+        WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::BackendUnavailable,
+            "runtime backend target is unavailable for this operation",
+        )
+    }
+}
+
 fn json_tool_result(output: serde_json::Value) -> AgentToolResult {
     let rendered = serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
     AgentToolResult {
@@ -1093,6 +1318,7 @@ pub struct WorkspaceModuleInvokeTool {
     gateway: Arc<RuntimeGateway>,
     channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     visibility_source: WorkspaceModuleVisibilitySource,
+    operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
     agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
     current_user: Option<ProjectAuthorizationContext>,
 }
@@ -1111,6 +1337,15 @@ impl WorkspaceModuleInvokeTool {
         gateway: Arc<RuntimeGateway>,
         channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
     ) -> Self {
+        let backend_readiness = backend_readiness_for_optional_backend(&backend);
+        let operation_runtime_source = WorkspaceModuleOperationRuntimeSource::default()
+            .with_gateway(
+                gateway.clone(),
+                delivery_runtime_session_id.clone(),
+                agent_id.clone(),
+                true,
+                backend_readiness,
+            );
         Self {
             installation_repo,
             canvas_repo,
@@ -1123,6 +1358,7 @@ impl WorkspaceModuleInvokeTool {
             gateway,
             channel_invoker,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
+            operation_runtime_source,
             agent_run_bridge_handle: None,
             current_user: None,
         }
@@ -1339,6 +1575,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
             &self.canvas_repo,
             self.project_id,
             &self.visibility_source,
+            &self.operation_runtime_source,
         )
         .await?;
 
@@ -1360,6 +1597,14 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                 return Ok(result);
             }
         };
+
+        if !operation.readiness.is_ready() {
+            return Ok(operation_not_ready_error(
+                module_id,
+                operation_key,
+                operation,
+            ));
+        }
 
         // input schema 校验（R2，describe 暴露的 schema 与此成对）。
         if let Some(schema) = operation.input_schema.as_ref()
@@ -1584,6 +1829,7 @@ pub struct WorkspaceModulePresentTool {
     delivery_runtime_session_id: String,
     turn_id: String,
     visibility_source: WorkspaceModuleVisibilitySource,
+    operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
 }
 
 impl WorkspaceModulePresentTool {
@@ -1610,11 +1856,28 @@ impl WorkspaceModulePresentTool {
             delivery_runtime_session_id,
             turn_id,
             visibility_source,
+            operation_runtime_source: WorkspaceModuleOperationRuntimeSource::default(),
         }
     }
 
     pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
         self.visibility_source = self.visibility_source.with_current_user(current_user);
+        self
+    }
+
+    pub fn with_runtime_dependencies(
+        mut self,
+        runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+        channel_transport_available: bool,
+        backend_readiness: WorkspaceModuleOperationReadiness,
+    ) -> Self {
+        self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
+            runtime_gateway_handle,
+            self.delivery_runtime_session_id.clone(),
+            None,
+            channel_transport_available,
+            backend_readiness,
+        );
         self
     }
 }
@@ -1657,6 +1920,7 @@ impl AgentTool for WorkspaceModulePresentTool {
             &self.canvas_repo,
             self.project_id,
             &self.visibility_source,
+            &self.operation_runtime_source,
         )
         .await?;
 
@@ -2422,6 +2686,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn describe_runtime_action_uses_gateway_catalog_descriptor() {
+        let (install_repo, canvas_repo, project_id) = fixtures().await;
+        let gateway_handle = SharedWorkspaceModuleRuntimeGatewayHandle::default();
+        gateway_handle
+            .set(Arc::new(RuntimeGateway::new().with_provider(Arc::new(
+                EchoActionProvider {
+                    action_key: RuntimeActionKey::parse("demo.profile").expect("valid action key"),
+                    invoke_count: Arc::new(AtomicUsize::new(0)),
+                },
+            ))))
+            .await;
+        let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
+            .with_effective_capability_view(test_effective_capability_view(
+                WorkspaceModuleDimension::all(),
+                Vec::new(),
+            ))
+            .with_runtime_dependencies(
+                gateway_handle,
+                "session-1".to_string(),
+                true,
+                WorkspaceModuleOperationReadiness::ready(),
+            );
+
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({"module_id": "ext:demo"}),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("describe");
+
+        assert!(!result.is_error);
+        let details = result.details.expect("details");
+        let operation = details
+            .get("operations")
+            .and_then(serde_json::Value::as_array)
+            .expect("operations")
+            .first()
+            .expect("runtime action operation");
+        assert_eq!(
+            operation
+                .pointer("/readiness/kind")
+                .and_then(serde_json::Value::as_str),
+            Some("ready")
+        );
+        assert_eq!(
+            operation
+                .get("description")
+                .and_then(serde_json::Value::as_str),
+            Some("gateway profile descriptor")
+        );
+        assert_eq!(
+            operation.pointer("/input_schema/type"),
+            Some(&serde_json::json!("object"))
+        );
+        assert_eq!(
+            operation
+                .get("permission_summary")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(serde_json::Value::as_str),
+            Some("gateway.profile.read")
+        );
+    }
+
+    #[tokio::test]
     async fn describe_canvas_exposes_inspect_operation() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
@@ -2677,7 +3009,8 @@ mod tests {
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
     };
     use agentdash_application_runtime_gateway::{
-        RuntimeActionKind, RuntimeInvocationOutput, RuntimeProvider,
+        RuntimeActionDescriptor, RuntimeActionKind, RuntimeInvocationOutput, RuntimePolicy,
+        RuntimeProvider,
     };
 
     struct EchoActionProvider {
@@ -2692,6 +3025,19 @@ mod tests {
         }
         fn action_kind(&self) -> RuntimeActionKind {
             RuntimeActionKind::SessionRuntime
+        }
+        fn describe_action(&self) -> RuntimeActionDescriptor {
+            RuntimeActionDescriptor {
+                action_key: self.action_key.clone(),
+                kind: RuntimeActionKind::SessionRuntime,
+                description: Some("gateway profile descriptor".to_string()),
+                input_schema: Some(serde_json::json!({"type": "object"})),
+                output_schema: Some(serde_json::json!({"type": "object"})),
+                default_policy: RuntimePolicy {
+                    required_capabilities: vec!["gateway.profile.read".to_string()],
+                    ..RuntimePolicy::default()
+                },
+            }
         }
         async fn invoke(
             &self,

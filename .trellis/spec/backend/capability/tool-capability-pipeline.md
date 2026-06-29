@@ -213,6 +213,9 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 - Canvas interaction diagnostics 表达为实例 operation：`operation_key="canvas.get_interaction_state"`；调用只读取 Canvas source 显式上报的 latest interaction snapshot，不写入模型历史。
 - Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{canvas_mount_id}"`。
 - Canvas 编辑 mount 表达为 VFS URI：`{canvas_mount_id}://...`。
+- Extension runtime action operation 由 `RuntimeGateway::surface_for_actor(actor, context)` 的 concrete action descriptor 投影，原因是 action schema、permission policy 与 actor/context support 必须和 Gateway invoke 使用同一事实源。
+- Extension runtime projection 在 WorkspaceModule 聚合中只提供 installation/module ownership、UI tab、protocol channel 和权限摘要事实，原因是 Project 安装投影描述资产，不描述当前 session actor 的可执行 action surface。
+- `WorkspaceModuleOperation.readiness` 表达 operation 调用就绪诊断，独立于 module visibility 与 renderer loadability，原因是缺少 Gateway、channel transport、runtime backend anchor 或 action catalog entry 时，`list` / `describe` / `present` 仍需要保留可见 module 与 UI entry。
 - ProjectAgent preset 中保存的 `canvas` capability directive 只作为 forward migration 输入；运行态普通 Agent capability 不再以 `canvas` 作为主入口。
 
 ### 4. Validation & Error Matrix
@@ -225,6 +228,8 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 | Canvas bind input 不满足 operation schema | BadRequest |
 | Canvas runtime observation 尚未上报 | `canvas.inspect` 返回 `observation=null` |
 | Canvas interaction snapshot 尚未上报 | `canvas.get_interaction_state` 返回 `snapshot=null` |
+| Extension runtime action 不在当前 Gateway catalog | operation readiness 为 `runtime_action_unavailable` |
+| RuntimeGateway / channel transport / runtime backend anchor 缺失 | operation readiness 携带对应结构化诊断，module 可见性不因此改变 |
 | `view_key` 不在 describe 返回的 UI entries 中 | NotFound |
 | `presentation_uri` 不是 renderer 可打开 URI | backend contract/test failure |
 

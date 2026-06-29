@@ -88,12 +88,6 @@ export async function handleExtensionWebviewBridgeRequest({
       if (!actionKey) {
         throw new Error("runtime.invoke_action 缺少 action_key");
       }
-      const action = workspaceData.extensionRuntime.projection.runtime_actions.find(
-        (item) => item.extension_key === tab.extension_key && item.action_key === actionKey,
-      );
-      if (!action) {
-        throw new Error(`Extension action 不可用: ${actionKey}`);
-      }
       const result = await services.invokeAction(projectId, {
         session_id: sessionId,
         action_key: actionKey,

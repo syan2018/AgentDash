@@ -242,8 +242,18 @@ describe("extension bridge message validation", () => {
     }]);
   });
 
-  it("为未知 method 和 admission error 保留可诊断错误", async () => {
-    const services = noopServices();
+  it("为未知 method 和 backend admission error 保留可诊断错误", async () => {
+    const actionCalls: Array<{
+      projectId: string;
+      request: ExtensionRuntimeInvokeActionRequest;
+    }> = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async invokeAction(projectId, request) {
+        actionCalls.push({ projectId, request });
+        throw new Error("ProviderUnavailable: action is not in RuntimeGateway catalog");
+      },
+    };
     const workspaceData = workspaceRuntimeData();
     const tab = webviewTab();
     const backend = { backend_id: "backend-1", label: "Local", online: true };
@@ -260,13 +270,30 @@ describe("extension bridge message validation", () => {
     await expect(handleExtensionWebviewBridgeRequest({
       message: bridgeRequest("runtime.invoke_action", {
         action_key: "other-extension.action",
+        input: { source: "panel" },
       }),
-      workspaceData,
+      workspaceData: workspaceRuntimeData({
+        extensionRuntime: {
+          ...workspaceData.extensionRuntime,
+          projection: {
+            ...workspaceData.extensionRuntime.projection,
+            runtime_actions: [],
+          },
+        },
+      }),
       tab,
       uri: "protocol-demo://panel",
       backend,
       services,
-    })).rejects.toThrow("Extension action 不可用: other-extension.action");
+    })).rejects.toThrow("ProviderUnavailable: action is not in RuntimeGateway catalog");
+    expect(actionCalls).toEqual([{
+      projectId: "project-1",
+      request: {
+        session_id: "session-1",
+        action_key: "other-extension.action",
+        input: { source: "panel" },
+      },
+    }]);
 
     expect(resolveExtensionWebviewAvailability(
       workspaceRuntimeData({

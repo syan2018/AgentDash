@@ -12,7 +12,7 @@ x-agentdash-cloud-env: &agentdash-cloud-env
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agentdash}
       POSTGRES_USER: ${POSTGRES_USER:-agentdash}

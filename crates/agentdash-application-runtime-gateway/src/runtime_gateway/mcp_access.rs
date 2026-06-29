@@ -102,6 +102,7 @@ fn discovery_request(surface: RuntimeGatewayMcpSurfaceWithBackend) -> McpToolDis
             tool_call_id: None,
             backend_anchor: Some(runtime_backend_anchor),
             vfs: Some(surface.vfs),
+            vfs_access_policy: Some(surface.vfs_access_policy),
             identity: surface.identity,
         }),
     }
@@ -164,8 +165,8 @@ mod tests {
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::{
-        CapabilityState, McpTransportConfig, RuntimeMcpServer, ToolCapability,
-        ToolCapabilityFilter, ToolCluster, Vfs,
+        CapabilityState, McpTransportConfig, RuntimeMcpServer, RuntimeVfsAccessPolicy,
+        ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs,
     };
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
@@ -347,11 +348,14 @@ mod tests {
         let backend_anchor =
             RuntimeBackendAnchor::new("backend-1", RuntimeBackendAnchorSource::System)
                 .expect("backend anchor");
+        let vfs = vfs();
+        let vfs_access_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         RuntimeGatewayMcpSurfaceWithBackend {
             surface: RuntimeGatewayMcpSurface {
                 runtime_session_id: "session-1".to_string(),
                 capability_state: capability_state(),
-                vfs: vfs(),
+                vfs,
+                vfs_access_policy,
                 mcp_servers: vec![RuntimeMcpServer {
                     name: "code-analyzer".to_string(),
                     transport: McpTransportConfig::Http {

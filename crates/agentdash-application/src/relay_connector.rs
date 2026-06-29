@@ -713,6 +713,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: Vec::new(),
                 vfs: Some(crate::session::local_workspace_vfs(root)),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),
@@ -755,6 +756,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: vec![mcp_server],
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),
@@ -865,6 +867,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: Vec::new(),
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),

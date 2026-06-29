@@ -1,5 +1,5 @@
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
-use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, Vfs};
+use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +20,7 @@ pub struct RuntimeGatewayMcpSurface {
     pub runtime_session_id: String,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
+    pub vfs_access_policy: RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub active_turn_id: Option<String>,
     pub identity: Option<AuthIdentity>,

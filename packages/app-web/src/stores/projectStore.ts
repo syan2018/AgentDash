@@ -39,7 +39,7 @@ interface ProjectState {
   deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;
 
   // Project VFS Mount Binding 失效信号：UI 操作后 bump 版本号，
-  // VfsAccessPicker 等订阅方据此重新 fetch
+  // ProjectVfsMountExposurePicker 等订阅方据此重新 fetch
   vfsMountsRevision: Record<string, number>;
   bumpVfsMountsRevision: (projectId: string) => void;
 

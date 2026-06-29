@@ -12,7 +12,7 @@ use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
-use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, Vfs};
+use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -339,6 +339,7 @@ impl AgentRunRuntimeSurfaceQuery {
                 field: "vfs",
             }
         })?;
+        let vfs_access_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         let projected_capability_state = project_capability_state_from_frame(&frame);
         let mcp_servers = frame.typed_mcp_servers();
         let runtime_backend_anchor = runtime_backend_anchor_from_vfs(
@@ -369,6 +370,7 @@ impl AgentRunRuntimeSurfaceQuery {
             surface_revision: frame.revision,
             capability_state: projected_capability_state,
             vfs,
+            vfs_access_policy,
             mcp_servers,
             runtime_backend_anchor,
             active_turn_id: None,
@@ -432,6 +434,7 @@ pub struct AgentRunRuntimeSurface {
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
+    pub vfs_access_policy: RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub active_turn_id: Option<String>,
@@ -972,6 +975,7 @@ impl From<AgentRunRuntimeSurfaceWithBackend> for RuntimeGatewayMcpSurfaceWithBac
                 runtime_session_id: surface.runtime_session_id,
                 capability_state: surface.capability_state,
                 vfs: surface.vfs,
+                vfs_access_policy: surface.vfs_access_policy,
                 mcp_servers: surface.mcp_servers,
                 active_turn_id: surface.active_turn_id,
                 identity: surface.identity,

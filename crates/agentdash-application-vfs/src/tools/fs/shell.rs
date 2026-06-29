@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
-    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, RuntimeVfsOperation,
+    ToolUpdateCallback,
 };
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -13,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use super::platform_shell::{PlatformShell, PlatformShellCwd};
 use crate::inline_persistence::InlineContentOverlay;
 use crate::rewrite::find_mount_uri_candidates;
-use crate::service::VfsService;
+use crate::service::{VfsService, ensure_runtime_vfs_access};
 use crate::tools::common::{SharedRuntimeVfs, resolve_uri_path};
 use crate::{
     ExecRequest, MaterializationRewrite, RewriteShellCommandOutput, VfsMaterializationService,
@@ -124,13 +125,16 @@ impl AgentTool for ShellExecTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: ShellExecParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let vfs = self.vfs.snapshot().await;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
         if let Some(platform_cwd) = PlatformShellCwd::from_param(params.cwd.as_deref())
             .map_err(AgentToolError::ExecutionFailed)?
         {
             let result = PlatformShell::new(
                 self.service.clone(),
                 &vfs,
+                &access_policy,
                 platform_cwd,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
@@ -173,25 +177,36 @@ impl AgentTool for ShellExecTool {
         let cwd = if target.path.is_empty() {
             ".".to_string()
         } else {
-            target.path
+            target.path.clone()
         };
         let display_cwd = format_mount_uri(&target.mount_id, &cwd_for_display(&cwd));
         let exec_mount =
             resolve_mount(&vfs, &target.mount_id, agentdash_spi::MountCapability::Exec)
                 .map_err(AgentToolError::ExecutionFailed)?;
+        ensure_runtime_vfs_access(
+            &access_policy,
+            &target.mount_id,
+            &target.path,
+            RuntimeVfsOperation::Exec,
+        )
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
         let rewrite_output = if let Some(materialization) = &self.materialization {
             materialization
-                .rewrite_shell_command(crate::RewriteShellCommandInput {
-                    vfs: &vfs,
-                    exec_mount_id: &target.mount_id,
-                    command: &params.command,
-                    session_id: &self.session_id,
-                    turn_id: self.turn_id.as_deref(),
-                    tool_call_id: Some(_tool_call_id),
-                    overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
-                    identity: self.identity.as_ref(),
-                })
+                .rewrite_shell_command_with_policy(
+                    crate::RewriteShellCommandInput {
+                        vfs: &vfs,
+                        exec_mount_id: &target.mount_id,
+                        command: &params.command,
+                        session_id: &self.session_id,
+                        turn_id: self.turn_id.as_deref(),
+                        tool_call_id: Some(_tool_call_id),
+                        overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+                        identity: self.identity.as_ref(),
+                    },
+                    &access_policy,
+                    &cwd,
+                )
                 .await
                 .map_err(AgentToolError::ExecutionFailed)?
         } else {
@@ -254,8 +269,9 @@ impl AgentTool for ShellExecTool {
 
         let result = self
             .service
-            .exec(
+            .exec_with_policy(
                 &vfs,
+                Some(&access_policy),
                 &ExecRequest {
                     mount_id: target.mount_id.clone(),
                     cwd: cwd.clone(),

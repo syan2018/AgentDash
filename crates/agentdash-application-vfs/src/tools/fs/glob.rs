@@ -83,7 +83,9 @@ impl AgentTool for FsGlobTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsGlobParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let vfs = self.vfs.snapshot().await;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
         let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
 
@@ -91,8 +93,9 @@ impl AgentTool for FsGlobTool {
         let recursive = params.pattern.contains("**");
         let result = self
             .service
-            .list(
+            .list_with_policy(
                 &vfs,
+                Some(&access_policy),
                 &target.mount_id,
                 ListOptions {
                     path: if target.path.is_empty() {

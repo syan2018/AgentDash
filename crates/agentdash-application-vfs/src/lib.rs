@@ -1,3 +1,4 @@
+pub mod access_policy;
 pub mod apply_patch;
 pub mod binding_resolver;
 pub mod inline_persistence;
@@ -23,8 +24,17 @@ pub mod surface_query;
 pub mod tools;
 pub mod types;
 
+pub use access_policy::{
+    compile_whole_mount_runtime_vfs_access_policy,
+    compile_whole_mount_runtime_vfs_access_policy_with_source, runtime_vfs_path_pattern_matches,
+    runtime_vfs_policy_admits,
+};
 pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use agentdash_application_ports::vfs_surface_runtime::VfsSurfaceRuntimeProjection;
+pub use agentdash_spi::{
+    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
+    RuntimeVfsPathPattern,
+};
 pub use apply_patch::{
     AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
     NormalizedPatchEntryTargets, ParseError as ApplyPatchParseError, PatchEntry, PatchPathTarget,
@@ -46,7 +56,7 @@ pub use mount_inline::{
     parse_inline_mount_owner,
 };
 pub use mount_project::{
-    append_agent_knowledge_mounts, apply_agent_vfs_access_grants, build_derived_vfs,
+    append_agent_knowledge_mounts, apply_project_vfs_mount_exposure_grants, build_derived_vfs,
     build_project_agent_knowledge_vfs, build_project_vfs_mount_mount, effective_context_containers,
 };
 pub use mount_routine::build_routine_mount;

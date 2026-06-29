@@ -9,7 +9,7 @@ use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
-use agentdash_domain::common::{AgentConfig, Vfs};
+use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -73,6 +73,7 @@ pub struct ExecutionSessionFrame {
     /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
+    pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
     /// Relay/backend execution placement resolved during session launch.
     ///
     /// This field is set only for remote backend executions. It is the connector-facing
@@ -92,6 +93,130 @@ pub struct ExecutionBackendPlacement {
     pub backend_id: String,
     pub lease_id: uuid::Uuid,
     pub selection_mode: BackendExecutionSelectionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsOperation {
+    Read,
+    List,
+    Search,
+    Write,
+    Exec,
+    ApplyPatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsPathPattern {
+    All,
+    Prefix(String),
+}
+
+impl RuntimeVfsPathPattern {
+    pub fn matches_normalized_path(&self, normalized_path: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Prefix(prefix) if prefix.is_empty() => true,
+            Self::Prefix(prefix) => {
+                normalized_path == prefix
+                    || normalized_path
+                        .strip_prefix(prefix)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsAccessSource {
+    ProjectPreset,
+    PermissionGrant,
+    SystemRuntimeProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessRule {
+    pub mount_id: String,
+    pub path_pattern: RuntimeVfsPathPattern,
+    pub operations: BTreeSet<RuntimeVfsOperation>,
+    pub source: RuntimeVfsAccessSource,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessPolicy {
+    pub rules: Vec<RuntimeVfsAccessRule>,
+}
+
+impl RuntimeVfsAccessPolicy {
+    pub fn whole_mounts_from_vfs(vfs: &Vfs) -> Self {
+        Self::whole_mounts_from_vfs_with_source(
+            vfs,
+            RuntimeVfsAccessSource::SystemRuntimeProjection,
+        )
+    }
+
+    pub fn whole_mounts_from_vfs_with_source(vfs: &Vfs, source: RuntimeVfsAccessSource) -> Self {
+        let rules = vfs
+            .mounts
+            .iter()
+            .filter_map(|mount| {
+                let operations = operations_for_mount_capabilities(&mount.capabilities);
+                if operations.is_empty() {
+                    return None;
+                }
+                Some(RuntimeVfsAccessRule {
+                    mount_id: mount.id.clone(),
+                    path_pattern: RuntimeVfsPathPattern::All,
+                    operations,
+                    source,
+                })
+            })
+            .collect();
+        Self { rules }
+    }
+
+    pub fn admits(
+        &self,
+        mount_id: &str,
+        normalized_path: &str,
+        operation: RuntimeVfsOperation,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.mount_id == mount_id
+                && rule.operations.contains(&operation)
+                && rule.path_pattern.matches_normalized_path(normalized_path)
+        })
+    }
+}
+
+fn operations_for_mount_capabilities(
+    capabilities: &[MountCapability],
+) -> BTreeSet<RuntimeVfsOperation> {
+    let mut operations = BTreeSet::new();
+    for capability in capabilities {
+        match capability {
+            MountCapability::Read => {
+                operations.insert(RuntimeVfsOperation::Read);
+            }
+            MountCapability::List => {
+                operations.insert(RuntimeVfsOperation::List);
+            }
+            MountCapability::Search => {
+                operations.insert(RuntimeVfsOperation::Search);
+            }
+            MountCapability::Write => {
+                operations.insert(RuntimeVfsOperation::Write);
+                operations.insert(RuntimeVfsOperation::ApplyPatch);
+            }
+            MountCapability::Exec => {
+                operations.insert(RuntimeVfsOperation::Exec);
+            }
+            MountCapability::Watch => {}
+        }
+    }
+    operations
 }
 
 /// Turn 级执行上下文（How + 运行时控制面）。

@@ -7,7 +7,7 @@ use crate::search::{TextSearchParams, format_search_matches, grep_inline};
 use crate::types::runtime_text_file_attributes;
 use crate::*;
 use agentdash_domain::common::Mount;
-use agentdash_spi::{MountCapability, Vfs};
+use agentdash_spi::{MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
 use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
@@ -28,6 +28,26 @@ struct MountDispatch {
     ctx: MountOperationContext,
 }
 
+pub(crate) fn ensure_runtime_vfs_access(
+    policy: &RuntimeVfsAccessPolicy,
+    mount_id: &str,
+    normalized_path: &str,
+    operation: RuntimeVfsOperation,
+) -> Result<(), MountError> {
+    if policy.admits(mount_id, normalized_path, operation) {
+        return Ok(());
+    }
+
+    let display_path = if normalized_path.is_empty() {
+        ".".to_string()
+    } else {
+        normalized_path.to_string()
+    };
+    Err(MountError::OperationFailed(format!(
+        "runtime VFS access policy denied {operation:?} for {mount_id}://{display_path}"
+    )))
+}
+
 pub struct BasicTextSearchRequest<'a> {
     pub mount_id: &'a str,
     pub path: &'a str,
@@ -35,6 +55,57 @@ pub struct BasicTextSearchRequest<'a> {
     pub max_results: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
     pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
+}
+
+fn admit_single_mount_patch_targets(
+    policy: &RuntimeVfsAccessPolicy,
+    mount_id: &str,
+    patch: &str,
+) -> Result<(), MountError> {
+    let entries = parse_patch_text(patch)
+        .map_err(|e| MountError::OperationFailed(format!("patch 解析失败: {e}")))?;
+    for entry in entries {
+        let primary_path = normalize_single_mount_patch_path(mount_id, entry.path())?;
+        ensure_runtime_vfs_access(
+            policy,
+            mount_id,
+            &primary_path,
+            RuntimeVfsOperation::ApplyPatch,
+        )?;
+        if let PatchEntry::UpdateFile {
+            move_path: Some(move_path),
+            ..
+        } = &entry
+        {
+            let move_path = normalize_single_mount_patch_path(mount_id, move_path)?;
+            ensure_runtime_vfs_access(
+                policy,
+                mount_id,
+                &move_path,
+                RuntimeVfsOperation::ApplyPatch,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn normalize_single_mount_patch_path(
+    mount_id: &str,
+    path: &std::path::Path,
+) -> Result<String, MountError> {
+    let raw = path.to_string_lossy();
+    if raw.contains("://") {
+        let target = parse_patch_path_target(&raw).map_err(MountError::OperationFailed)?;
+        if target.mount_id != mount_id {
+            return Err(MountError::OperationFailed(format!(
+                "single-mount patch target {}://{} does not match mount `{mount_id}`",
+                target.mount_id, target.relative_path
+            )));
+        }
+        return Ok(target.relative_path);
+    }
+
+    normalize_mount_relative_path(&raw, false).map_err(MountError::OperationFailed)
 }
 
 impl VfsService {
@@ -77,8 +148,10 @@ impl VfsService {
     fn resolve_provider_dispatch(
         &self,
         vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
         mount_id: &str,
         capability: MountCapability,
+        operation: RuntimeVfsOperation,
         raw_path: &str,
         allow_empty: bool,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
@@ -88,6 +161,14 @@ impl VfsService {
             .clone();
         let path = normalize_mount_relative_path(raw_path, allow_empty)
             .map_err(MountError::OperationFailed)?;
+        let compiled_policy;
+        let policy = if let Some(access_policy) = access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+            &compiled_policy
+        };
+        ensure_runtime_vfs_access(policy, &mount.id, &path, operation)?;
         let provider = self
             .mount_provider_registry
             .get(&mount.provider)
@@ -122,10 +203,26 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
+        self.read_text_range_with_policy(vfs, None, target, offset, limit, overlay, identity)
+            .await
+    }
+
+    pub async fn read_text_range_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        offset: usize,
+        limit: Option<usize>,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::Read,
+            RuntimeVfsOperation::Read,
             &target.path,
             false,
             identity,
@@ -178,10 +275,24 @@ impl VfsService {
         limit: usize,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<Vec<String>, MountError> {
+        self.suggest_paths_with_policy(vfs, None, target, limit, identity)
+            .await
+    }
+
+    pub async fn suggest_paths_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        limit: usize,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<Vec<String>, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::List,
+            RuntimeVfsOperation::List,
             &target.path,
             true,
             identity,
@@ -203,10 +314,24 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
+        self.read_text_with_policy(vfs, None, target, overlay, identity)
+            .await
+    }
+
+    pub async fn read_text_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::Read,
+            RuntimeVfsOperation::Read,
             &target.path,
             false,
             identity,
@@ -243,10 +368,24 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<BinaryReadResult, MountError> {
+        self.read_binary_with_policy(vfs, None, target, overlay, identity)
+            .await
+    }
+
+    pub async fn read_binary_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<BinaryReadResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::Read,
+            RuntimeVfsOperation::Read,
             &target.path,
             false,
             identity,
@@ -287,10 +426,25 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
+        self.write_text_with_policy(vfs, None, target, content, overlay, identity)
+            .await
+    }
+
+    pub async fn write_text_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        content: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::Write,
+            RuntimeVfsOperation::Write,
             &target.path,
             false,
             identity,
@@ -332,7 +486,23 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
-        match self.read_text(vfs, target, overlay, identity).await {
+        self.create_text_with_policy(vfs, None, target, content, overlay, identity)
+            .await
+    }
+
+    pub async fn create_text_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        content: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), MountError> {
+        match self
+            .read_text_with_policy(vfs, access_policy, target, overlay, identity)
+            .await
+        {
             Ok(_) => {
                 return Err(MountError::OperationFailed(format!(
                     "目标文件已存在: {}",
@@ -343,7 +513,7 @@ impl VfsService {
             Err(error) => return Err(error),
         }
 
-        self.write_text(vfs, target, content, overlay, identity)
+        self.write_text_with_policy(vfs, access_policy, target, content, overlay, identity)
             .await
     }
 
@@ -354,17 +524,32 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
+        self.delete_text_with_policy(vfs, None, target, overlay, identity)
+            .await
+    }
+
+    pub async fn delete_text_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::Write,
+            RuntimeVfsOperation::Write,
             &target.path,
             false,
             identity,
         )?;
 
-        self.read_text(
+        self.read_text_with_policy(
             vfs,
+            access_policy,
             &ResourceRef {
                 mount_id: target.mount_id.clone(),
                 path: dispatch.path.clone(),
@@ -411,10 +596,26 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<(), MountError> {
+        self.rename_text_with_policy(vfs, None, mount_id, from_path, to_path, overlay, identity)
+            .await
+    }
+
+    pub async fn rename_text_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        from_path: &str,
+        to_path: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<(), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             mount_id,
             MountCapability::Write,
+            RuntimeVfsOperation::Write,
             from_path,
             false,
             identity,
@@ -422,13 +623,22 @@ impl VfsService {
         let from_path = dispatch.path.clone();
         let to_path =
             normalize_mount_relative_path(to_path, false).map_err(MountError::OperationFailed)?;
+        let compiled_policy;
+        let policy = if let Some(access_policy) = access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+            &compiled_policy
+        };
+        ensure_runtime_vfs_access(policy, mount_id, &to_path, RuntimeVfsOperation::Write)?;
         if from_path == to_path {
             return Ok(());
         }
 
         let source = self
-            .read_text(
+            .read_text_with_policy(
                 vfs,
+                access_policy,
                 &ResourceRef {
                     mount_id: mount_id.to_string(),
                     path: from_path.clone(),
@@ -439,8 +649,9 @@ impl VfsService {
             .await?;
 
         if self
-            .read_text(
+            .read_text_with_policy(
                 vfs,
+                access_policy,
                 &ResourceRef {
                     mount_id: mount_id.to_string(),
                     path: to_path.clone(),
@@ -494,10 +705,24 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<RuntimeFileEntry, MountError> {
+        self.stat_with_policy(vfs, None, target, overlay, identity)
+            .await
+    }
+
+    pub async fn stat_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<RuntimeFileEntry, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &target.mount_id,
             MountCapability::List,
+            RuntimeVfsOperation::List,
             &target.path,
             true,
             identity,
@@ -543,8 +768,9 @@ impl VfsService {
             })
             .unwrap_or_else(|| ".".to_string());
         let listed = self
-            .list(
+            .list_with_policy(
                 vfs,
+                access_policy,
                 &target.mount_id,
                 ListOptions {
                     path: parent,
@@ -570,8 +796,29 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ApplyPatchResult, MountError> {
+        self.apply_patch_with_policy(vfs, None, mount_id, patch, overlay, identity)
+            .await
+    }
+
+    pub async fn apply_patch_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        patch: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ApplyPatchResult, MountError> {
         let mount = resolve_mount(vfs, mount_id, MountCapability::Write)
             .map_err(MountError::OperationFailed)?;
+        let compiled_policy;
+        let policy = if let Some(access_policy) = access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+            &compiled_policy
+        };
+        admit_single_mount_patch_targets(policy, mount_id, patch)?;
 
         if is_inline_mount(mount) {
             let ov = overlay.ok_or_else(|| {
@@ -643,6 +890,18 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<MultiMountPatchResult, MountError> {
+        self.apply_patch_multi_with_policy(vfs, None, patch, overlay, identity)
+            .await
+    }
+
+    pub async fn apply_patch_multi_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        patch: &str,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<MultiMountPatchResult, MountError> {
         let entries = parse_patch_text(patch)
             .map_err(|e| MountError::OperationFailed(format!("patch 解析失败: {e}")))?;
         if entries.is_empty() {
@@ -653,9 +912,30 @@ impl VfsService {
 
         // 按 mount 分组
         let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
+        let compiled_policy;
+        let policy = if let Some(access_policy) = access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+            &compiled_policy
+        };
         for mut entry in entries {
             let targets =
                 normalize_patch_entry_targets(&mut entry).map_err(MountError::OperationFailed)?;
+            ensure_runtime_vfs_access(
+                policy,
+                &targets.primary.mount_id,
+                &targets.primary.relative_path,
+                RuntimeVfsOperation::ApplyPatch,
+            )?;
+            if let Some(move_target) = &targets.move_target {
+                ensure_runtime_vfs_access(
+                    policy,
+                    &move_target.mount_id,
+                    &move_target.relative_path,
+                    RuntimeVfsOperation::ApplyPatch,
+                )?;
+            }
             grouped
                 .entry(targets.primary.mount_id)
                 .or_default()
@@ -756,10 +1036,25 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, MountError> {
+        self.list_with_policy(vfs, None, mount_id, options, overlay, identity)
+            .await
+    }
+
+    pub async fn list_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        options: ListOptions,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ListResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             mount_id,
             MountCapability::List,
+            RuntimeVfsOperation::List,
             &options.path,
             true,
             identity,
@@ -847,10 +1142,21 @@ impl VfsService {
     }
 
     pub async fn exec(&self, vfs: &Vfs, request: &ExecRequest) -> Result<ExecResult, MountError> {
+        self.exec_with_policy(vfs, None, request).await
+    }
+
+    pub async fn exec_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        request: &ExecRequest,
+    ) -> Result<ExecResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             &request.mount_id,
             MountCapability::Exec,
+            RuntimeVfsOperation::Exec,
             &request.cwd,
             true,
             None,
@@ -910,10 +1216,22 @@ impl VfsService {
         vfs: &Vfs,
         params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), MountError> {
+        self.search_text_extended_with_policy(vfs, None, params)
+            .await
+    }
+
+    pub async fn search_text_extended_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        params: &TextSearchParams<'_>,
+    ) -> Result<(Vec<String>, bool), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             params.mount_id,
             MountCapability::Search,
+            RuntimeVfsOperation::Search,
             params.path,
             true,
             params.identity,
@@ -970,10 +1288,21 @@ impl VfsService {
         vfs: &Vfs,
         params: &TextSearchParams<'_>,
     ) -> Result<(Vec<String>, bool), MountError> {
+        self.grep_text_extended_with_policy(vfs, None, params).await
+    }
+
+    pub async fn grep_text_extended_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        params: &TextSearchParams<'_>,
+    ) -> Result<(Vec<String>, bool), MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
+            access_policy,
             params.mount_id,
             MountCapability::Search,
+            RuntimeVfsOperation::Search,
             params.path,
             true,
             params.identity,
@@ -1212,8 +1541,89 @@ impl ApplyPatchTarget for InlineOverlayPatchTarget<'_> {
 mod tests {
     use super::*;
     use agentdash_spi::platform::auth::AuthIdentity;
+    use agentdash_spi::{RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern};
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
     use tokio::sync::Mutex;
+
+    fn policy_test_vfs(capabilities: Vec<MountCapability>) -> Vfs {
+        Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: "policy_test_provider".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "policy-test://root".to_string(),
+                capabilities,
+                default_write: false,
+                display_name: "Main".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
+    fn policy_test_service() -> VfsService {
+        VfsService::new(Arc::new(MountProviderRegistry::new()))
+    }
+
+    fn prefix_policy(
+        prefix: &str,
+        operations: BTreeSet<RuntimeVfsOperation>,
+    ) -> RuntimeVfsAccessPolicy {
+        RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix(prefix.to_string()),
+                operations,
+                source: RuntimeVfsAccessSource::SystemRuntimeProjection,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_policy_deny_uses_normalized_path_after_mount_capability_allows() {
+        let service = policy_test_service();
+        let vfs = policy_test_vfs(vec![MountCapability::Read]);
+        let policy = prefix_policy("docs", BTreeSet::from([RuntimeVfsOperation::Read]));
+        let target = ResourceRef {
+            mount_id: "main".to_string(),
+            path: "docs/../secret.txt".to_string(),
+        };
+
+        let err = service
+            .read_text_range_with_policy(&vfs, Some(&policy), &target, 0, None, None, None)
+            .await
+            .expect_err("policy deny");
+
+        let message = err.to_string();
+        assert!(message.contains("runtime VFS access policy denied"));
+        assert!(message.contains("main://secret.txt"));
+        assert!(!message.contains("docs/../secret.txt"));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_policy_deny_blocks_even_when_mount_supports_write() {
+        let service = policy_test_service();
+        let vfs = policy_test_vfs(vec![MountCapability::Write]);
+        let policy = prefix_policy("allowed", BTreeSet::from([RuntimeVfsOperation::ApplyPatch]));
+        let patch = "\
+*** Begin Patch
+*** Add File: main://blocked.txt
++blocked
+*** End Patch";
+
+        let err = service
+            .apply_patch_multi_with_policy(&vfs, Some(&policy), patch, None, None)
+            .await
+            .expect_err("policy deny");
+
+        let message = err.to_string();
+        assert!(message.contains("runtime VFS access policy denied"));
+        assert!(message.contains("main://blocked.txt"));
+    }
 
     struct IdentityCaptureProvider {
         provider_id: String,

@@ -9,7 +9,7 @@ use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, MemoryDiscoveryOutput,
-    RestoredSessionState, RuntimeMcpServer, SessionContextBundle,
+    RestoredSessionState, RuntimeMcpServer, RuntimeVfsAccessPolicy, SessionContextBundle,
 };
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -175,6 +175,11 @@ impl LaunchPlan {
         let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
         let vfs = input.launch_envelope.launch_vfs().clone();
         let has_vfs = !vfs.mounts.is_empty();
+        let vfs_access_policy = if has_vfs {
+            Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs))
+        } else {
+            None
+        };
         let identity = input.launch_envelope.intent.identity.clone();
         let runtime_backend_anchor = input.launch_envelope.runtime_backend_anchor.clone();
         let title_hint = input
@@ -287,6 +292,7 @@ impl LaunchPlan {
             executor_config,
             mcp_servers,
             vfs: if has_vfs { Some(vfs) } else { None },
+            vfs_access_policy,
             backend_execution: input
                 .backend_execution
                 .as_ref()
@@ -345,7 +351,7 @@ fn execution_backend_placement_from_plan(
 #[allow(deprecated)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::Vfs;
+    use agentdash_spi::{RuntimeVfsOperation, Vfs};
 
     use super::*;
     use crate::session::construction::{
@@ -562,6 +568,15 @@ mod tests {
             Some("construction.test")
         );
         assert!(execution.summary.has_vfs);
+        assert!(
+            execution
+                .context
+                .session
+                .vfs_access_policy
+                .as_ref()
+                .expect("launch VFS should project a runtime VFS access policy")
+                .admits("workspace", "", RuntimeVfsOperation::Read)
+        );
         assert!(!execution.summary.restored_executor_state);
         assert_eq!(execution.summary.session_id.as_str(), "sess-launch");
         assert_eq!(

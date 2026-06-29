@@ -196,7 +196,7 @@ Validation / errors：
 Tests required：
 
 - mount builder test asserts ProjectAgent runtime mount id is `agent` and inline storage container is `knowledge`.
-- VFS grant test asserts project VFS grants do not constrain Agent memory mount capabilities.
+- Project VFS mount exposure test asserts ProjectAgent preset exposure does not constrain Agent memory mount capabilities.
 - memory discovery projection test asserts provider receives sanitized mount summary, not `root_ref` or `backend_id`.
 - memory context test asserts only bounded `agent://MEMORY.md` index may enter connector context.
 
@@ -381,6 +381,13 @@ Project VFS Mount 是 Project 级单层实体，CRUD 路由为：
 - `ExternalService { service_id, root_ref }`
 
 `mount_id` 是外部路径标识；数据库 UUID 只服务持久化和 inline storage owner。Project VFS Mount 不持有 `default_write`，workspace `main` 才是隐式写入目标。
+
+ProjectAgent preset 中的 Project VFS mount exposure 是启动面裁剪输入：它只作用于带有
+Project VFS mount metadata 的 mount，并与 mount 自身 provider capability 取交集后决定该
+ProjectAgent frame 中可见的 Project VFS mount。Agent memory、lifecycle、routine、canvas、
+skill asset 和 workspace 等运行期 mount 由各自 projector/provider owner 暴露；通用 mount/path
+运行期准入由 `RuntimeVfsAccessPolicy` 表达。这样 ProjectAgent preset 配置只描述项目资料
+预设暴露，避免与 provider support 或 session runtime authorization 混成同一个事实源。
 
 ## Runtime Tools
 

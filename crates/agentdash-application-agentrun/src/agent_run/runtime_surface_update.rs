@@ -815,6 +815,7 @@ mod tests {
         vfs: Vfs,
         identity: Option<AuthIdentity>,
     ) -> AgentRunRuntimeSurface {
+        let vfs_access_policy = agentdash_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
             run_id,
@@ -830,6 +831,7 @@ mod tests {
             surface_revision: frame.revision,
             capability_state,
             vfs,
+            vfs_access_policy,
             mcp_servers: Vec::new(),
             runtime_backend_anchor: None,
             active_turn_id: None,

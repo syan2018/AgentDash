@@ -17,7 +17,7 @@ import {
   selectedMcpPresetKeysFromDirectives,
   type PresetFormState,
 } from "./form-state";
-import { VfsAccessPicker } from "./vfs-access-picker";
+import { ProjectVfsMountExposurePicker } from "./project-vfs-mount-exposure-picker";
 import { WorkspaceModuleVisibilityPicker } from "./workspace-module-visibility-picker";
 
 const WELL_KNOWN_CAPABILITY_KEYS = new Set<CapabilityKey>(
@@ -436,7 +436,7 @@ export function PresetFormFields({
   // ── Tab / 二级 Sidebar 元数据 ────────────────────────────
   const capabilityCount =
     form.capability_directives.length +
-    form.vfs_access_grants.length +
+    form.project_vfs_mount_exposure_grants.length +
     form.skill_asset_keys.length +
     form.visible_workspace_module_refs.length +
     form.extra_companions.length +
@@ -473,8 +473,10 @@ export function PresetFormFields({
     },
     {
       key: 'vfs',
-      label: 'VFS',
-      badge: form.vfs_access_grants.length > 0 ? String(form.vfs_access_grants.length) : undefined,
+      label: 'Project VFS',
+      badge: form.project_vfs_mount_exposure_grants.length > 0
+        ? String(form.project_vfs_mount_exposure_grants.length)
+        : undefined,
     },
     {
       key: 'skill',
@@ -620,10 +622,12 @@ export function PresetFormFields({
               />
             )}
             {activeCapability === 'vfs' && (
-              <VfsAccessPicker
+              <ProjectVfsMountExposurePicker
                 projectId={projectId}
-                grants={form.vfs_access_grants}
-                onChange={(vfs_access_grants) => patchForm({ vfs_access_grants })}
+                grants={form.project_vfs_mount_exposure_grants}
+                onChange={(project_vfs_mount_exposure_grants) =>
+                  patchForm({ project_vfs_mount_exposure_grants })
+                }
               />
             )}
             {activeCapability === 'skill' && (

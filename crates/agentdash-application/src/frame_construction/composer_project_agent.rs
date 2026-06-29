@@ -107,9 +107,9 @@ pub(super) async fn compose(
                     .skill_asset_keys
                     .clone()
                     .unwrap_or_default(),
-                agent_vfs_access_grants: agent_context
+                project_vfs_mount_exposure_grants: agent_context
                     .preset_config
-                    .vfs_access_grants
+                    .project_vfs_mount_exposure_grants
                     .clone()
                     .unwrap_or_default(),
                 request_mcp_servers: input

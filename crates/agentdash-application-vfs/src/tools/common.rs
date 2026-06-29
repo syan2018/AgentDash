@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_spi::{AgentToolResult, ContentPart, Vfs};
+use agentdash_spi::{AgentToolResult, ContentPart, RuntimeVfsAccessPolicy, Vfs};
 use tokio::sync::RwLock;
 
-use crate::{ResourceRef, parse_mount_uri};
+use crate::{ResourceRef, compile_whole_mount_runtime_vfs_access_policy, parse_mount_uri};
 
 /// Resolve a tool parameter path into a `ResourceRef`.
 ///
@@ -42,23 +42,47 @@ pub fn resolve_uri_path(vfs: &Vfs, path: &str) -> Result<ResourceRef, String> {
 
 #[derive(Clone)]
 pub struct SharedRuntimeVfs {
-    inner: Arc<RwLock<Vfs>>,
+    inner: Arc<RwLock<RuntimeVfsState>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeVfsState {
+    pub vfs: Vfs,
+    pub access_policy: RuntimeVfsAccessPolicy,
 }
 
 impl SharedRuntimeVfs {
     pub fn new(vfs: Vfs) -> Self {
+        let access_policy = compile_whole_mount_runtime_vfs_access_policy(&vfs);
+        Self::new_with_policy(vfs, access_policy)
+    }
+
+    pub fn new_with_policy(vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(vfs)),
+            inner: Arc::new(RwLock::new(RuntimeVfsState { vfs, access_policy })),
         }
     }
 
     pub async fn snapshot(&self) -> Vfs {
+        self.inner.read().await.vfs.clone()
+    }
+
+    pub async fn snapshot_state(&self) -> RuntimeVfsState {
         self.inner.read().await.clone()
     }
 
+    pub async fn access_policy_snapshot(&self) -> RuntimeVfsAccessPolicy {
+        self.inner.read().await.access_policy.clone()
+    }
+
     pub async fn replace(&self, vfs: Vfs) {
+        let access_policy = compile_whole_mount_runtime_vfs_access_policy(&vfs);
+        self.replace_with_policy(vfs, access_policy).await;
+    }
+
+    pub async fn replace_with_policy(&self, vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) {
         let mut guard = self.inner.write().await;
-        *guard = vfs;
+        *guard = RuntimeVfsState { vfs, access_policy };
     }
 }
 
@@ -86,6 +110,32 @@ mod tests {
             display_name: id.to_string(),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn shared_runtime_vfs_carries_compiled_access_policy() {
+        let vfs = Vfs {
+            mounts: vec![mount("main")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let shared = SharedRuntimeVfs::new(vfs);
+
+        let state = shared.snapshot_state().await;
+
+        assert_eq!(state.vfs.mounts[0].id, "main");
+        assert!(state.access_policy.admits(
+            "main",
+            "README.md",
+            agentdash_spi::RuntimeVfsOperation::Read
+        ));
+        assert!(!state.access_policy.admits(
+            "main",
+            "README.md",
+            agentdash_spi::RuntimeVfsOperation::Write
+        ));
     }
 
     #[test]

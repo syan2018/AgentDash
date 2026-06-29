@@ -65,9 +65,12 @@ pub struct AgentPresetConfig {
     /// 前端 → API → 存储 → Resolver 全链路使用相同的 `ToolCapabilityDirective` 表示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_directives: Option<Vec<ToolCapabilityDirective>>,
-    /// Agent 可访问的 Project VFS mount 及其权限。
+    /// ProjectAgent preset 暴露的 Project VFS mount 及其 capability 裁剪。
+    ///
+    /// 该字段只描述 Project VFS mount exposure 输入；运行期 mount/path 准入由
+    /// RuntimeVfsAccessPolicy 表达。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vfs_access_grants: Option<Vec<AgentVfsAccessGrant>>,
+    pub project_vfs_mount_exposure_grants: Option<Vec<ProjectVfsMountExposureGrant>>,
     /// Project SkillAsset key 引用列表（如 `["research", "writer"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_asset_keys: Option<Vec<String>>,
@@ -111,7 +114,7 @@ impl AgentPresetConfig {
             display_name,
             description,
             capability_directives,
-            vfs_access_grants,
+            project_vfs_mount_exposure_grants,
             skill_asset_keys,
             default_companion_enabled,
             extra_companions,
@@ -140,6 +143,14 @@ impl AgentPresetConfig {
 
     /// 从 DB JSON 反序列化为权威配置结构。
     pub fn from_json(value: &serde_json::Value) -> Result<Self, DomainError> {
+        if value
+            .as_object()
+            .is_some_and(|object| object.contains_key("vfs_access_grants"))
+        {
+            return Err(DomainError::InvalidConfig(
+                "`vfs_access_grants` 已收束为 `project_vfs_mount_exposure_grants`".to_string(),
+            ));
+        }
         serde_json::from_value::<Self>(value.clone()).map_err(DomainError::Serialization)
     }
 
@@ -221,7 +232,7 @@ struct AgentPresetConfigWire {
     description: Option<String>,
     capability_directives: Option<Vec<ToolCapabilityDirective>>,
     mcp_preset_keys: Option<Vec<String>>,
-    vfs_access_grants: Option<Vec<AgentVfsAccessGrant>>,
+    project_vfs_mount_exposure_grants: Option<Vec<ProjectVfsMountExposureGrant>>,
     skill_asset_keys: Option<Vec<String>>,
     default_companion_enabled: Option<bool>,
     extra_companions: Option<Vec<String>>,
@@ -246,7 +257,7 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
             display_name: wire.display_name,
             description: wire.description,
             capability_directives: wire.capability_directives,
-            vfs_access_grants: wire.vfs_access_grants,
+            project_vfs_mount_exposure_grants: wire.project_vfs_mount_exposure_grants,
             skill_asset_keys: wire.skill_asset_keys,
             default_companion_enabled: wire.default_companion_enabled,
             extra_companions: wire.extra_companions,
@@ -260,7 +271,7 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AgentVfsAccessGrant {
+pub struct ProjectVfsMountExposureGrant {
     pub mount_id: String,
     #[serde(default)]
     pub capabilities: Vec<MountCapability>,
@@ -331,7 +342,7 @@ mod tests {
             "display_name": "Reviewer",
             "description": "检查代码结构",
             "skill_asset_keys": ["research", "review"],
-            "vfs_access_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
+            "project_vfs_mount_exposure_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
             "default_companion_enabled": true,
             "extra_companions": ["deep-reviewer"],
             "capability_directives": [{ "add": "workflow_management" }]
@@ -345,11 +356,24 @@ mod tests {
             Some(["research".to_string(), "review".to_string()].as_slice())
         );
         assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
-        assert_eq!(config.vfs_access_grants.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            config
+                .project_vfs_mount_exposure_grants
+                .as_ref()
+                .map(Vec::len),
+            Some(1)
+        );
         assert_eq!(config.default_companion_enabled, Some(true));
         assert_eq!(
             config.extra_companions.as_deref(),
             Some(["deep-reviewer".to_string()].as_slice())
+        );
+
+        let serialized = serde_json::to_value(&config).expect("serialize config");
+        assert!(serialized.get("vfs_access_grants").is_none());
+        assert_eq!(
+            serialized["project_vfs_mount_exposure_grants"],
+            serde_json::json!([{ "mount_id": "brief", "capabilities": ["read", "list"] }])
         );
     }
 
@@ -382,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn preset_config_normalize_json_value_removes_legacy_field_and_preserves_unknown_fields() {
+    fn preset_config_normalize_json_value_preserves_unknown_fields() {
         let normalized = AgentPresetConfig::normalize_json_value(&serde_json::json!({
             "display_name": "Analyzer",
             "unknown_future_field": { "keep": true },
@@ -413,10 +437,19 @@ mod tests {
     }
 
     #[test]
+    fn preset_config_rejects_old_vfs_access_grants_field() {
+        let result = AgentPresetConfig::from_json(&serde_json::json!({
+            "vfs_access_grants": [{ "mount_id": "legacy", "capabilities": ["read"] }]
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn preset_config_merge_over_replaces_skill_asset_keys_when_present() {
         let base = AgentPresetConfig {
             skill_asset_keys: Some(vec!["base".to_string()]),
-            vfs_access_grants: Some(vec![AgentVfsAccessGrant {
+            project_vfs_mount_exposure_grants: Some(vec![ProjectVfsMountExposureGrant {
                 mount_id: "base".to_string(),
                 capabilities: vec![MountCapability::Read],
             }]),
@@ -424,7 +457,7 @@ mod tests {
         };
         let over = AgentPresetConfig {
             skill_asset_keys: Some(vec!["override".to_string()]),
-            vfs_access_grants: Some(vec![AgentVfsAccessGrant {
+            project_vfs_mount_exposure_grants: Some(vec![ProjectVfsMountExposureGrant {
                 mount_id: "override".to_string(),
                 capabilities: vec![MountCapability::Read, MountCapability::List],
             }]),
@@ -436,7 +469,7 @@ mod tests {
         assert_eq!(merged.skill_asset_keys, Some(vec!["override".to_string()]));
         assert_eq!(
             merged
-                .vfs_access_grants
+                .project_vfs_mount_exposure_grants
                 .as_ref()
                 .map(|items| items[0].mount_id.as_str()),
             Some("override")

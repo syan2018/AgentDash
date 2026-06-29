@@ -58,7 +58,6 @@ use crate::workspace_module::{
     ResolvedInvocationBackend, WorkspaceModuleOperationContext,
     WorkspaceModuleRuntimeActionCatalog, build_canvas_workspace_module,
     build_workspace_module_presentation, request_existing_canvas_visibility_for_runtime,
-    resolve_workspace_module_visibility,
     resolve_workspace_module_visibility_with_operation_context,
     submit_canvas_runtime_surface_update, validate_input_against_schema,
 };
@@ -3139,6 +3138,7 @@ mod tests {
                 executor_config: AgentConfig::default(),
                 mcp_servers: Vec::new(),
                 vfs: Some(vfs),
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,

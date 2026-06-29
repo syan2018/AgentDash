@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use agentdash_domain::common::AgentVfsAccessGrant;
+use agentdash_domain::common::ProjectVfsMountExposureGrant;
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
@@ -133,8 +133,11 @@ pub fn build_project_agent_knowledge_vfs(agent: &ProjectAgent) -> Result<Vfs, St
     Ok(vfs)
 }
 
-pub fn apply_agent_vfs_access_grants(vfs: &mut Vfs, grants: Option<&[AgentVfsAccessGrant]>) {
-    let grants_by_mount = grants
+pub fn apply_project_vfs_mount_exposure_grants(
+    vfs: &mut Vfs,
+    exposure_grants: Option<&[ProjectVfsMountExposureGrant]>,
+) {
+    let exposure_grants_by_mount = exposure_grants
         .unwrap_or_default()
         .iter()
         .map(|grant| (grant.mount_id.trim(), grant))
@@ -145,7 +148,7 @@ pub fn apply_agent_vfs_access_grants(vfs: &mut Vfs, grants: Option<&[AgentVfsAcc
         if !is_project_vfs_mount(mount) {
             continue;
         }
-        let Some(grant) = grants_by_mount.get(mount.id.as_str()) else {
+        let Some(grant) = exposure_grants_by_mount.get(mount.id.as_str()) else {
             mount.capabilities.clear();
             continue;
         };
@@ -477,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn project_agent_vfs_grants_do_not_constrain_agent_memory_mount() {
+    fn project_vfs_mount_exposure_grants_do_not_constrain_agent_memory_mount() {
         let project = Project::new("proj".to_string(), "desc".to_string());
         let mut vfs = build_derived_vfs(
             &project,
@@ -491,9 +494,9 @@ mod tests {
         let agent = project_agent(project.id, true);
         append_agent_knowledge_mounts(&mut vfs, &agent).expect("append agent mount");
 
-        apply_agent_vfs_access_grants(
+        apply_project_vfs_mount_exposure_grants(
             &mut vfs,
-            Some(&[AgentVfsAccessGrant {
+            Some(&[ProjectVfsMountExposureGrant {
                 mount_id: "docs".to_string(),
                 capabilities: vec![MountCapability::Read],
             }]),

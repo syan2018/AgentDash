@@ -59,7 +59,7 @@ use crate::context::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
-use agentdash_application_vfs::{VfsService, apply_agent_vfs_access_grants};
+use agentdash_application_vfs::{VfsService, apply_project_vfs_mount_exposure_grants};
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 1:内部 builder prompt 投影
@@ -296,12 +296,12 @@ impl<'a> FrameRequestAssembler<'a> {
             return Ok(None);
         };
         if let Some(vfs) = prepared.vfs.as_mut() {
-            apply_agent_vfs_access_grants(
+            apply_project_vfs_mount_exposure_grants(
                 vfs,
                 Some(
                     context
                         .preset_config
-                        .vfs_access_grants
+                        .project_vfs_mount_exposure_grants
                         .as_deref()
                         .unwrap_or_default(),
                 ),
@@ -854,12 +854,12 @@ async fn compose_companion_with_workflow(
     if let Some(context) = comp.selected_context.as_ref()
         && let Some(vfs) = slice.vfs.as_mut()
     {
-        apply_agent_vfs_access_grants(
+        apply_project_vfs_mount_exposure_grants(
             vfs,
             Some(
                 context
                     .preset_config
-                    .vfs_access_grants
+                    .project_vfs_mount_exposure_grants
                     .as_deref()
                     .unwrap_or_default(),
             ),

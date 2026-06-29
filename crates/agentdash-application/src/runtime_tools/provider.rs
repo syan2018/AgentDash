@@ -11,6 +11,7 @@ use crate::session::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionHookService,
     SessionLaunchService, SessionRuntimeTransitionService,
 };
+use crate::vfs::compile_whole_mount_runtime_vfs_access_policy;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 
 #[derive(Clone)]
@@ -92,7 +93,12 @@ pub(crate) fn shared_runtime_vfs_from_context(
     let vfs = context.session.vfs.clone().ok_or_else(|| {
         ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
     })?;
-    Ok(SharedRuntimeVfs::new(vfs))
+    let access_policy = context
+        .session
+        .vfs_access_policy
+        .clone()
+        .unwrap_or_else(|| compile_whole_mount_runtime_vfs_access_policy(&vfs));
+    Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
 pub(crate) fn runtime_session_id_from_context(context: &ExecutionContext) -> String {
@@ -185,6 +191,7 @@ mod tests {
                 executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: None,
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,

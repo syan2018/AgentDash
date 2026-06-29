@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"VFS ownership, runtime tool composition, provider capability, and tool module boundaries."}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"Address model, runtime mount, provider responsibility, runtime tools, and path normalization contracts."}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"Shell/materialization path constraints and local workspace guard behavior."}
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"PermissionGrant durable facts and active grant projection rules."}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"Session launch/runtime surface and AgentRun admission boundaries."}
+{"file":".trellis/tasks/06-30-design-backlog-review/design-review.md","reason":"D9 design decision and implementation shape."}
+{"file":".trellis/tasks/06-30-design-backlog-review/implementation-slices.md","reason":"Slice 7 ordering and validation notes."}

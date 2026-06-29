@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AgentVfsAccessGrant, ProjectVfsMount } from "../../../types";
+import type { ProjectVfsMount, ProjectVfsMountExposureGrant } from "../../../types";
 import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
 import { useProjectStore } from "../../../stores/projectStore";
 import { CapabilityPicker } from "./capability-picker";
@@ -13,14 +13,14 @@ const VFS_CAPS = [
 
 type VfsCap = typeof VFS_CAPS[number]["key"];
 
-export function VfsAccessPicker({
+export function ProjectVfsMountExposurePicker({
   projectId,
   grants,
   onChange,
 }: {
   projectId?: string;
-  grants: AgentVfsAccessGrant[];
-  onChange: (next: AgentVfsAccessGrant[]) => void;
+  grants: ProjectVfsMountExposureGrant[];
+  onChange: (next: ProjectVfsMountExposureGrant[]) => void;
 }) {
   const [items, setItems] = useState<ProjectVfsMount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -47,7 +47,7 @@ export function VfsAccessPicker({
   }, [load, mountsRevision]);
 
   const grantByMountId = useMemo(() => {
-    const map = new Map<string, AgentVfsAccessGrant>();
+    const map = new Map<string, ProjectVfsMountExposureGrant>();
     for (const grant of grants) map.set(grant.mount_id, grant);
     return map;
   }, [grants]);
@@ -84,12 +84,12 @@ export function VfsAccessPicker({
   };
 
   if (!projectId) {
-    return <p className="text-xs text-muted-foreground/70">保存到项目后即可分配 Project VFS。</p>;
+    return <p className="text-xs text-muted-foreground/70">保存到项目后即可配置 Project VFS mount exposure。</p>;
   }
 
   return (
     <CapabilityPicker
-      hint="给 Agent 分配项目 Filespace 的读写能力，下方按钮可精调每个 mount 的具体 cap。"
+      hint="选择该 Agent preset 暴露的 Project Filespace mount，下方按钮可裁剪每个 mount 的 provider capability。"
       isLoading={isLoading}
       error={error}
       items={sortedItems}
@@ -108,6 +108,7 @@ export function VfsAccessPicker({
                 <span className="text-[10px] text-muted-foreground/70">该 mount 未声明任何 cap</span>
               ) : (
                 allowed.map((cap) => {
+                  const selectedCaps: VfsCap[] = selected;
                   const active = selected.includes(cap.key);
                   return (
                     <button
@@ -115,9 +116,9 @@ export function VfsAccessPicker({
                       type="button"
                       onClick={() => {
                         const next = active
-                          ? selected.filter((c) => c !== cap.key)
-                          : [...selected, cap.key];
-                        setGrantCaps(it.mount_id, next as VfsCap[]);
+                          ? selectedCaps.filter((c) => c !== cap.key)
+                          : [...selectedCaps, cap.key];
+                        setGrantCaps(it.mount_id, next);
                       }}
                       className={`rounded-[6px] border px-2 py-0.5 text-[10px] font-medium transition-colors ${
                         active

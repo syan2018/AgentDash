@@ -46,10 +46,12 @@ pub use connector::{
     ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,
     DiscoveryContext, ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame,
     ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
-    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer, SetDelta,
-    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
-    VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
-    compute_capability_state_delta, partition_runtime_mcp_servers, workspace_path_from_context,
+    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
+    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
+    RuntimeVfsPathPattern, SetDelta, SkillDimension, ToolCapabilityFilter, ToolCluster,
+    ToolDimension, VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension,
+    WorkspaceModuleVisibilityMode, compute_capability_state_delta, partition_runtime_mcp_servers,
+    workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

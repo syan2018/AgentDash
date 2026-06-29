@@ -58,6 +58,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
             tool_call_id: None,
             backend_anchor: context.session.runtime_backend_anchor.clone(),
             vfs: context.session.vfs.clone(),
+            vfs_access_policy: context.session.vfs_access_policy.clone(),
             identity: context.session.identity.clone(),
         };
         match discovery
@@ -337,6 +338,7 @@ mod tests {
                     uses_relay: false,
                 }],
                 vfs: None,
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: Some(runtime_backend_anchor.clone()),
                 identity: None,
@@ -413,6 +415,7 @@ mod tests {
                     uses_relay: false,
                 }],
                 vfs: None,
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: Some(runtime_backend_anchor),
                 identity: None,
@@ -462,6 +465,7 @@ mod tests {
                 executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: None,
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,

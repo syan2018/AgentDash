@@ -170,14 +170,17 @@ export function resolveExtensionWebviewAvailability(
   if (!workspaceData.projectId || !workspaceData.sessionId) {
     return unavailable("Extension panel 不可用", "当前页面缺少 Project 或 Session context。");
   }
+  if (!tab.loadability.available) {
+    return unavailable(
+      "Extension panel 不可用",
+      tab.loadability.reason ?? "当前插件 tab 不满足 renderer loadability 条件。",
+    );
+  }
   const installation = workspaceData.extensionRuntime.projection.installations.find(
     (item) => item.extension_key === tab.extension_key,
   );
   if (!installation) {
     return unavailable("Extension 已停用", "当前 Project 没有启用这个插件。");
-  }
-  if (!installation.package_artifact) {
-    return unavailable("Extension bundle 缺失", "当前插件安装没有可加载的 package artifact。");
   }
   const backend = selectExtensionBackendTarget(workspaceData);
   if (!backend) {
@@ -190,9 +193,6 @@ export function resolveExtensionWebviewAvailability(
     };
   }
   const entry = tab.renderer.entry.trim();
-  if (!entry) {
-    return unavailable("Extension bundle 缺失", "插件 panel renderer 缺少 entry。");
-  }
 
   return {
     available: true,

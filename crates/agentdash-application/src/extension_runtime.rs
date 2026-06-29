@@ -5,7 +5,8 @@ pub use agentdash_workspace_module::extension_runtime::{
     ExtensionFlagProjection, ExtensionInstallationProjection, ExtensionMessageRendererProjection,
     ExtensionPermissionProjection, ExtensionProtocolChannelMethodProjection,
     ExtensionProtocolChannelProjection, ExtensionRuntimeActionProjection,
-    ExtensionRuntimeProjection, ExtensionWorkspaceTabProjection,
+    ExtensionRuntimeProjection, ExtensionWorkspaceTabLoadabilityMode,
+    ExtensionWorkspaceTabLoadabilityProjection, ExtensionWorkspaceTabProjection,
     UninstallExtensionInstallationInput, UninstallExtensionInstallationOutput,
     extension_runtime_projection_from_installations, uninstall_extension_installation_with_repo,
 };

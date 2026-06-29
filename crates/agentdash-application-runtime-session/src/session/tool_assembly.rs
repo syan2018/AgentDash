@@ -4,6 +4,7 @@ use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::RuntimeToolSchemaEntry;
+use std::collections::BTreeMap;
 
 use crate::session::dimension::tool_schema::{
     runtime_tool_schema_entries_from_mcp_tools, runtime_tool_schema_entries_from_tools,
@@ -49,11 +50,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 error = %error,
                 "MCP 工具发现跳过：缺少 runtime backend anchor"
             );
-            dedupe_tool_schemas(&mut all_schemas);
-            return AssembledToolSurface {
-                tools: all_tools,
-                schemas: all_schemas,
-            };
+            return finalize_tool_surface(session_id, all_tools, all_schemas);
         }
         let call_context = agentdash_spi::RelayMcpCallContext {
             session_id: session_id.to_string(),
@@ -83,16 +80,62 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
         }
     }
 
-    dedupe_tool_schemas(&mut all_schemas);
-    AssembledToolSurface {
-        tools: all_tools,
-        schemas: all_schemas,
+    finalize_tool_surface(session_id, all_tools, all_schemas)
+}
+
+fn finalize_tool_surface(
+    session_id: &str,
+    tools: Vec<DynAgentTool>,
+    mut schemas: Vec<RuntimeToolSchemaEntry>,
+) -> AssembledToolSurface {
+    dedupe_tool_schemas(&mut schemas);
+    if let Some(message) = duplicate_callable_tool_diagnostic(&tools, &schemas) {
+        diag!(Warn, Subsystem::AgentRun,
+            session_id = %session_id,
+            "runtime callable tool name 冲突，跳过本轮工具 surface: {message}"
+        );
+        return AssembledToolSurface::default();
     }
+
+    AssembledToolSurface { tools, schemas }
 }
 
 fn dedupe_tool_schemas(schemas: &mut Vec<RuntimeToolSchemaEntry>) {
     schemas.sort_by_key(schema_entry_key);
     schemas.dedup_by(|left, right| schema_entry_key(left) == schema_entry_key(right));
+}
+
+fn duplicate_callable_tool_diagnostic(
+    tools: &[DynAgentTool],
+    schemas: &[RuntimeToolSchemaEntry],
+) -> Option<String> {
+    let mut first_index_by_name: BTreeMap<&str, usize> = BTreeMap::new();
+    for (index, tool) in tools.iter().enumerate() {
+        let name = tool.name();
+        if let Some(first_index) = first_index_by_name.get(name) {
+            let provenance = schemas
+                .iter()
+                .filter(|schema| schema.name == name)
+                .map(|schema| {
+                    format!(
+                        "source=`{}` path=`{}`",
+                        schema.source.as_deref().unwrap_or("<unknown>"),
+                        schema.tool_path.as_deref().unwrap_or("<unknown>")
+                    )
+                })
+                .collect::<Vec<_>>();
+            let provenance = if provenance.is_empty() {
+                "schema provenance unavailable".to_string()
+            } else {
+                provenance.join(", ")
+            };
+            return Some(format!(
+                "tool `{name}` appears at callable indexes {first_index} and {index}; {provenance}"
+            ));
+        }
+        first_index_by_name.insert(name, index);
+    }
+    None
 }
 
 fn schema_entry_key(entry: &RuntimeToolSchemaEntry) -> String {
@@ -257,6 +300,20 @@ mod tests {
         }
     }
 
+    struct StaticRuntimeToolProvider {
+        tools: Vec<DynAgentTool>,
+    }
+
+    #[async_trait]
+    impl RuntimeToolProvider for StaticRuntimeToolProvider {
+        async fn build_tools(
+            &self,
+            _context: &ExecutionContext,
+        ) -> Result<Vec<DynAgentTool>, agentdash_spi::ConnectorError> {
+            Ok(self.tools.clone())
+        }
+    }
+
     #[tokio::test]
     async fn assembly_surface_preserves_project_mcp_schema_provenance() {
         let captured_anchor = Arc::new(Mutex::new(None));
@@ -393,5 +450,44 @@ mod tests {
         assert_eq!(tool_names, vec!["mcp_code_analyzer_allowed_tool"]);
         assert_eq!(schema_names, vec!["mcp_code_analyzer_allowed_tool"]);
         assert_eq!(schema_paths, vec!["mcp:code-analyzer::allowed_tool"]);
+    }
+
+    #[tokio::test]
+    async fn assembly_surface_rejects_duplicate_callable_tool_names() {
+        let context = ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory: std::path::PathBuf::from("."),
+                environment_variables: std::collections::HashMap::new(),
+                executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                mcp_servers: Vec::new(),
+                vfs: None,
+                backend_execution: None,
+                runtime_backend_anchor: None,
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame::default(),
+        };
+        let provider = StaticRuntimeToolProvider {
+            tools: vec![
+                Arc::new(NamedStubTool {
+                    name: "duplicate_tool".to_string(),
+                }),
+                Arc::new(NamedStubTool {
+                    name: "duplicate_tool".to_string(),
+                }),
+            ],
+        };
+
+        let surface = assemble_tool_surface_for_execution_context(
+            "session-1",
+            &context,
+            Some(&provider),
+            None,
+        )
+        .await;
+
+        assert!(surface.tools.is_empty());
+        assert!(surface.schemas.is_empty());
     }
 }

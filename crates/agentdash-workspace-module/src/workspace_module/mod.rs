@@ -3,6 +3,7 @@ pub mod runtime_tool_provider;
 mod tools;
 pub mod visibility;
 
+use agentdash_application_runtime_gateway::validate_json_schema_subset;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentation,
@@ -10,7 +11,7 @@ use agentdash_contracts::workspace_module::{
 };
 use agentdash_domain::canvas::{Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasScope};
 use agentdash_domain::shared_library::{
-    ExtensionPermissionDeclaration, ExtensionRuntimeActionKind,
+    ExtensionBundleKind, ExtensionPermissionDeclaration, ExtensionRuntimeActionKind,
     ExtensionWorkspaceTabRendererDeclaration,
 };
 use thiserror::Error;
@@ -46,63 +47,11 @@ pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
 pub const MODULE_ID_CANVAS_PREFIX: &str = CANVAS_MODULE_ID_PREFIX;
 pub const MODULE_ID_BUILTIN_PREFIX: &str = "builtin:";
 
-/// 轻量 input schema 校验（无外部 jsonschema 依赖）。
-///
-/// 覆盖 describe 出的 operation `input_schema` 的常见形态：顶层 `type` 与 `required`。
-/// 校验范围刻意保守，只拦截类型大类不符与缺必填字段这类明确违例。
 pub fn validate_input_against_schema(
     schema: &serde_json::Value,
     input: &serde_json::Value,
 ) -> Result<(), String> {
-    let serde_json::Value::Object(schema_obj) = schema else {
-        return Ok(());
-    };
-
-    if let Some(expected_type) = schema_obj.get("type").and_then(|t| t.as_str())
-        && !json_value_matches_type(input, expected_type)
-    {
-        return Err(format!(
-            "input 类型不匹配 schema：期望 `{expected_type}`，实际 `{}`",
-            json_value_type_name(input)
-        ));
-    }
-
-    if let Some(required) = schema_obj.get("required").and_then(|r| r.as_array()) {
-        let obj = input.as_object();
-        for field in required {
-            let Some(name) = field.as_str() else { continue };
-            let present = obj.is_some_and(|map| map.contains_key(name));
-            if !present {
-                return Err(format!("input 缺少 schema 要求的必填字段 `{name}`"));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn json_value_matches_type(value: &serde_json::Value, expected: &str) -> bool {
-    match expected {
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "string" => value.is_string(),
-        "number" => value.is_number(),
-        "integer" => value.is_i64() || value.is_u64(),
-        "boolean" => value.is_boolean(),
-        "null" => value.is_null(),
-        _ => true,
-    }
-}
-
-fn json_value_type_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
+    validate_json_schema_subset(schema, input)
 }
 
 pub fn build_workspace_modules(
@@ -277,6 +226,7 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                 .workspace_tabs
                 .iter()
                 .filter(|tab| tab.extension_key == extension_key)
+                .filter(|tab| tab.loadability.available)
                 .map(|tab| WorkspaceModuleUiEntry {
                     view_key: tab.type_id.clone(),
                     renderer_kind: tab_renderer_kind(&tab.renderer).to_string(),
@@ -293,14 +243,28 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                 .map(|permission| describe_permission(&permission.permission))
                 .collect();
 
-            let has_bundle = ext
-                .bundles
-                .iter()
-                .any(|bundle| bundle.extension_key == extension_key);
-            let status = if has_bundle {
+            let has_extension_host_runtime = installation.package_artifact.is_some()
+                && ext.bundles.iter().any(|bundle| {
+                    bundle.extension_key == extension_key
+                        && bundle.kind == ExtensionBundleKind::ExtensionHost
+                        && !bundle.entry.trim().is_empty()
+                });
+            let has_available_ui_only_tab = ext.workspace_tabs.iter().any(|tab| {
+                tab.extension_key == extension_key
+                    && tab.loadability.available
+                    && matches!(
+                        tab.loadability.mode,
+                        crate::extension_runtime::ExtensionWorkspaceTabLoadabilityMode::UiOnly
+                    )
+            });
+            let status = if has_extension_host_runtime
+                || (operations.is_empty() && has_available_ui_only_tab)
+            {
                 WorkspaceModuleStatus::ready()
             } else {
-                WorkspaceModuleStatus::unavailable("extension runtime bundle 缺失，模块无法加载")
+                WorkspaceModuleStatus::unavailable(
+                    "extension host bundle 缺失，runtime operation 无法加载",
+                )
             };
 
             let operation_summary = operations
@@ -515,5 +479,125 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
             channel_key,
             methods,
         } => format!("channel:{channel_key}[{}]", methods.join(",")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_contracts::workspace_module::WorkspaceModuleStatusKind;
+    use agentdash_domain::shared_library::{
+        ExtensionBundleKind, ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
+    };
+    use uuid::Uuid;
+
+    use crate::extension_runtime::{
+        ExtensionBundleProjection, ExtensionInstallationProjection,
+        ExtensionRuntimeActionProjection, ExtensionRuntimeProjection,
+        ExtensionWorkspaceTabLoadabilityMode, ExtensionWorkspaceTabLoadabilityProjection,
+        ExtensionWorkspaceTabProjection,
+    };
+
+    use super::{build_workspace_modules, validate_input_against_schema};
+
+    #[test]
+    fn workspace_module_accepts_ui_only_canvas_panel_without_extension_host_bundle() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "canvas-demo".to_string(),
+                extension_id: "canvas-demo".to_string(),
+                display_name: "Canvas Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            workspace_tabs: vec![ExtensionWorkspaceTabProjection {
+                extension_key: "canvas-demo".to_string(),
+                extension_id: "canvas-demo".to_string(),
+                type_id: "canvas-demo.panel".to_string(),
+                label: "Canvas Demo".to_string(),
+                uri_scheme: "canvas-demo".to_string(),
+                renderer: ExtensionWorkspaceTabRendererDeclaration::CanvasPanel {
+                    entry: "dist/canvas/runtime-snapshot.json".to_string(),
+                },
+                loadability: ExtensionWorkspaceTabLoadabilityProjection {
+                    available: true,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
+                    reason: None,
+                },
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules(&projection, &[]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0].summary.status.kind,
+            WorkspaceModuleStatusKind::Ready
+        );
+        assert_eq!(modules[0].ui_entries.len(), 1);
+    }
+
+    #[test]
+    fn workspace_module_schema_validator_rejects_additional_properties() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "alias": { "type": "string" }
+            },
+            "required": ["alias"],
+            "additionalProperties": false
+        });
+
+        assert!(
+            validate_input_against_schema(
+                &schema,
+                &serde_json::json!({
+                    "alias": "stats",
+                    "extra": true
+                })
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn workspace_module_operation_runtime_requires_package_artifact() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            runtime_actions: vec![ExtensionRuntimeActionProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                action_key: "ops-demo.run".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Run".to_string(),
+                input_schema: serde_json::json!(true),
+                output_schema: serde_json::json!(true),
+                permissions: vec![],
+            }],
+            bundles: vec![ExtensionBundleProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                kind: ExtensionBundleKind::ExtensionHost,
+                entry: "dist/extension.js".to_string(),
+                digest: "sha256:bundle".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules(&projection, &[]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0].summary.status.kind,
+            WorkspaceModuleStatusKind::Unavailable
+        );
     }
 }

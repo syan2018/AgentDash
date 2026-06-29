@@ -100,7 +100,7 @@ pub async fn derive_runtime_skill_baseline(
     let mut diagnostics = Vec::new();
 
     if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
-        let loaded = load_skills_from_vfs(vfs_service, active_vfs).await;
+        let loaded = load_skills_from_vfs(vfs_service, active_vfs, input.identity).await;
         let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
             loaded,
             WORKSPACE_SKILL_PROVIDER_KEY,

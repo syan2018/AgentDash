@@ -3,7 +3,7 @@
   "name": "architecture-quick-convergence",
   "title": "架构快速收束执行",
   "description": "承接模块对抗性审查中 Quick/Medium 可执行项，拆分为独立工作线并行收束。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

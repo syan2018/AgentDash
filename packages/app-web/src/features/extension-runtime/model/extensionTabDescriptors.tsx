@@ -14,7 +14,9 @@ interface CreateExtensionTabDescriptorsInput {
 export function createExtensionTabDescriptors({
   projection,
 }: CreateExtensionTabDescriptorsInput): TabTypeDescriptor[] {
-  return projection.workspace_tabs.map((tab, index) => createExtensionTabDescriptor(tab, index));
+  return projection.workspace_tabs
+    .filter((tab) => tab.loadability.available)
+    .map((tab, index) => createExtensionTabDescriptor(tab, index));
 }
 
 function createExtensionTabDescriptor(

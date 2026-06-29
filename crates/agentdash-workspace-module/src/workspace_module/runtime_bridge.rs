@@ -3,7 +3,9 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
-use agentdash_application_runtime_gateway::{ExtensionInvocationWorkspaceContext, RuntimeGateway};
+use agentdash_application_runtime_gateway::{
+    ExtensionInvocationWorkspaceContext, RuntimeGateway, resolve_extension_invocation_workspace,
+};
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
@@ -130,42 +132,12 @@ pub fn resolve_invocation_backend(
 ) -> Option<ResolvedInvocationBackend> {
     let anchor = runtime_backend_anchor?;
     let backend_id = anchor.backend_id().to_string();
-    let workspace = vfs.and_then(|vfs| select_invocation_workspace(vfs, anchor));
+    let workspace =
+        vfs.and_then(|vfs| resolve_extension_invocation_workspace(vfs, anchor).into_workspace());
     Some(ResolvedInvocationBackend {
         backend_id,
         workspace,
     })
-}
-
-fn select_invocation_workspace(
-    vfs: &Vfs,
-    anchor: &RuntimeBackendAnchor,
-) -> Option<ExtensionInvocationWorkspaceContext> {
-    if let Some(root_ref) = anchor
-        .root_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return vfs
-            .mounts
-            .iter()
-            .find(|mount| mount.root_ref.trim() == root_ref && !mount.root_ref.trim().is_empty())
-            .map(|mount| {
-                ExtensionInvocationWorkspaceContext::new(
-                    mount.id.clone(),
-                    mount.root_ref.trim().to_string(),
-                )
-            });
-    }
-    vfs.default_mount()
-        .filter(|mount| !mount.root_ref.trim().is_empty())
-        .map(|mount| {
-            ExtensionInvocationWorkspaceContext::new(
-                mount.id.clone(),
-                mount.root_ref.trim().to_string(),
-            )
-        })
 }
 
 pub async fn submit_canvas_runtime_surface_update(

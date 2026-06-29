@@ -51,7 +51,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "skill_assets",
     "state_changes",
     "stories",
-    "user_preferences",
     "users",
     "views",
     "workflow_graphs",

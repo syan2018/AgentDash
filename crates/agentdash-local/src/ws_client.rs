@@ -15,7 +15,7 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::LocalExtensionHostManager;
-use crate::handlers::LocalCommandRouter;
+use crate::handlers::{CommandExecutionMode, LocalCommandRouter};
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::runner_redaction::redact_secret;
@@ -370,7 +370,8 @@ async fn run_session(
                 match msg {
                     Some(Ok(ws_msg)) => {
                         if let Some(relay_msg) = parse_ws_message(&ws_msg) {
-                            if should_handle_in_background(&relay_msg) {
+                            let dispatch_plan = handler.dispatch_plan(&relay_msg);
+                            if dispatch_plan.execution_mode == CommandExecutionMode::Background {
                                 let handler = handler.clone();
                                 let outbound_tx = outbound_tx.clone();
                                 tokio::spawn(async move {
@@ -495,16 +496,6 @@ fn report_relay_status(config: &Config, status: RelayConnectionStatus) {
     }
 }
 
-fn should_handle_in_background(msg: &RelayMessage) -> bool {
-    matches!(
-        msg,
-        RelayMessage::CommandToolShellExec { .. }
-            | RelayMessage::CommandToolShellRead { .. }
-            | RelayMessage::CommandToolShellInput { .. }
-            | RelayMessage::CommandToolShellTerminate { .. }
-    )
-}
-
 fn build_capabilities(
     handler: &LocalCommandRouter,
     mcp_manager: &Option<Arc<McpClientManager>>,
@@ -575,7 +566,10 @@ mod tests {
             },
         };
 
-        assert!(should_handle_in_background(&msg));
+        assert_eq!(
+            crate::handlers::dispatch_plan_for_message(&msg).execution_mode,
+            CommandExecutionMode::Background
+        );
     }
 
     #[test]
@@ -585,7 +579,10 @@ mod tests {
             payload: PingPayload { server_time: 1 },
         };
 
-        assert!(!should_handle_in_background(&msg));
+        assert_eq!(
+            crate::handlers::dispatch_plan_for_message(&msg).execution_mode,
+            CommandExecutionMode::Inline
+        );
     }
 
     #[test]

@@ -192,7 +192,7 @@ impl SessionRuntimeInner {
         context: &ExecutionContext,
     ) -> AssembledToolSurface {
         let context = self
-            .execution_context_with_agent_run_admission_projection(session_id, context)
+            .execution_context_with_agent_run_effective_capability(session_id, context)
             .await;
         assemble_tool_surface_for_execution_context(
             session_id,
@@ -203,7 +203,7 @@ impl SessionRuntimeInner {
         .await
     }
 
-    async fn execution_context_with_agent_run_admission_projection(
+    async fn execution_context_with_agent_run_effective_capability(
         &self,
         session_id: &str,
         context: &ExecutionContext,
@@ -237,7 +237,7 @@ impl SessionRuntimeInner {
                     Warn,
                     Subsystem::AgentRun,
                     session_id,
-                    "AgentRun execution capability projection skipped: {error}"
+                    "AgentRun effective capability projection skipped: {error}"
                 );
                 capability_state.clone()
             }

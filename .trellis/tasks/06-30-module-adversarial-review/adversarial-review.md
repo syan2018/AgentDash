@@ -12,6 +12,18 @@
 
 优先级上，建议先处理 Authority & Capability Runtime 的两个 P0，然后按 P1 owner 分组拆后续实现任务。
 
+## Quick Convergence Status
+
+Follow-up task `.trellis/tasks/06-30-architecture-quick-convergence/` completed the bounded quick/medium cleanup set:
+
+- Issue 1/2: tool-level grant no longer expands visible `CapabilityState`; runtime projection uses frame-scoped grants. The remaining production execution guard is tracked in D1.
+- Issue 9: delegate and scheduler steering now share one delivery executor.
+- Issue 11/13/14: extension loadability, workspace resolver, and schema validation have a shared projection/validator/resolver path.
+- Issue 20: legacy `user_preferences` business consumption was migrated to scoped settings and the backend preference port was removed.
+- Issue 22/24/25/26: builtin VFS skill identity, runtime tool name uniqueness, handler-declared local relay scheduling, and shared workspace root guard were implemented.
+
+Design-class residuals remain in `followups/design-backlog.md`; the quick task intentionally did not implement owner changes such as RuntimeGateway dynamic action discovery, VFS per-mount/path authorization, AgentRuntimeDelegate split, or the full AgentRun effective/admission production boundary.
+
 ## P0
 
 ### 1. Tool-level PermissionGrant 被写回 CapabilityState，混淆模型可见能力与执行准入
@@ -453,4 +465,3 @@
 ## 验证说明
 
 本轮是只读架构审查，只写入 Trellis 任务文档和 research 产物；未修改业务代码，未运行全量测试。
-

@@ -1,8 +1,10 @@
 mod error;
 mod extension_actions;
+mod extension_workspace;
 mod gateway;
 mod mcp_access;
 mod provider;
+mod schema;
 mod session_actions;
 mod setup_actions;
 mod tool_adapter;
@@ -31,9 +33,14 @@ pub use extension_actions::{
     ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker,
     attach_extension_invocation_workspace,
 };
+pub use extension_workspace::{
+    ExtensionInvocationWorkspaceResolution, ExtensionInvocationWorkspaceUnavailableReason,
+    resolve_extension_invocation_workspace,
+};
 pub use gateway::RuntimeGateway;
 pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
 pub use provider::RuntimeProvider;
+pub use schema::validate_json_schema_subset;
 pub(crate) use session_actions::execute_runtime_mcp_tool;
 pub use session_actions::{
     MCP_CALL_TOOL_ACTION, MCP_LIST_TOOLS_ACTION, McpCallToolInput, McpCallToolProvider,

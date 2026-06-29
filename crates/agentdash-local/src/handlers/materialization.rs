@@ -1,6 +1,7 @@
 use agentdash_relay::{RelayError, RelayMessage, VfsMaterializePayload};
 use std::sync::Arc;
 
+use super::CommandDispatchPlan;
 use crate::materialization::MaterializationStore;
 
 #[derive(Clone)]
@@ -12,6 +13,13 @@ impl MaterializationCommandHandler {
     pub(super) fn new(materialization_store: Arc<MaterializationStore>) -> Self {
         Self {
             materialization_store,
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandVfsMaterialize { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
         }
     }
 

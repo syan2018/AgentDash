@@ -5,6 +5,7 @@ use std::sync::Arc;
 use agentdash_relay::*;
 use rmcp::transport::child_process::TokioChildProcess;
 
+use super::CommandDispatchPlan;
 use crate::mcp_client_manager::McpClientManager;
 
 /// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
@@ -18,6 +19,16 @@ pub(super) struct McpCommandHandler {
 impl McpCommandHandler {
     pub(super) fn new(mcp_manager: Option<Arc<McpClientManager>>) -> Self {
         Self { mcp_manager }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandMcpProbeTransport { .. }
+            | RelayMessage::CommandMcpListTools { .. }
+            | RelayMessage::CommandMcpCallTool { .. }
+            | RelayMessage::CommandMcpClose { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
+        }
     }
 
     /// 一次性 probe：临时连接指定 transport → tools/list → 关闭，不入连接池。

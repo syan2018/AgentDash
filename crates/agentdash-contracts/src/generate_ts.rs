@@ -81,6 +81,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
     ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
 };
@@ -869,6 +870,8 @@ fn main() {
             export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
             export_all::<ExtensionDependencyDeclarationResponse>(dir);
             export_all::<ExtensionDependencyProjectionResponse>(dir);
+            export_all::<ExtensionWorkspaceTabLoadabilityModeResponse>(dir);
+            export_all::<ExtensionWorkspaceTabLoadabilityResponse>(dir);
             export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);

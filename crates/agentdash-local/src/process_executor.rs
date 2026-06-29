@@ -3,9 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use crate::tool_executor::{
-    ToolError, canonicalize_workspace_roots, is_absolute_like, resolve_existing_path_with_root,
-};
+use crate::tool_executor::{ToolError, is_absolute_like, resolve_existing_path_with_root};
+use crate::workspace_root_guard::WorkspaceRootGuard;
 
 const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 30_000;
 
@@ -21,51 +20,16 @@ pub struct ProcessOutput {
 
 #[derive(Debug, Clone)]
 pub struct ProcessExecutor {
-    workspace_roots_configured: bool,
-    canonical_workspace_roots: Vec<PathBuf>,
+    workspace_guard: WorkspaceRootGuard,
 }
 
 impl ProcessExecutor {
-    pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
-        let workspace_roots_configured = !workspace_roots.is_empty();
-        let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
-        Self {
-            workspace_roots_configured,
-            canonical_workspace_roots,
-        }
+    pub(crate) fn new(workspace_guard: WorkspaceRootGuard) -> Self {
+        Self { workspace_guard }
     }
 
     pub fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
-        let trimmed = workspace_root.trim();
-        if trimmed.is_empty() {
-            return Err(ToolError::InvalidPath(
-                "workspace root 不能为空".to_string(),
-            ));
-        }
-
-        let ws_path = PathBuf::from(trimmed);
-        let canonical = std::fs::canonicalize(&ws_path)
-            .map_err(|_| ToolError::InvalidPath(workspace_root.to_string()))?;
-
-        if !canonical.is_dir() {
-            return Err(ToolError::InvalidPath(format!(
-                "workspace root 不是目录: {workspace_root}"
-            )));
-        }
-
-        if !self.workspace_roots_configured {
-            return Ok(canonical);
-        }
-
-        for root in &self.canonical_workspace_roots {
-            if canonical.starts_with(root) {
-                return Ok(canonical);
-            }
-        }
-
-        Err(ToolError::PathNotAccessible(format!(
-            "workspace root 未登记: {workspace_root}"
-        )))
+        self.workspace_guard.validate_workspace_root(workspace_root)
     }
 
     pub fn resolve_cwd(

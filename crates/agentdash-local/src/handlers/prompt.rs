@@ -12,6 +12,7 @@ use agentdash_application_runtime_session::session::{
 };
 use agentdash_spi::AgentConnector;
 
+use super::CommandDispatchPlan;
 use super::relay_mcp_servers::relay_mcp_servers_to_runtime;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::tool_executor::ToolExecutor;
@@ -60,6 +61,17 @@ impl PromptCommandHandler {
                 })
                 .collect(),
             None => vec![],
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandPrompt { .. }
+            | RelayMessage::CommandCancel { .. }
+            | RelayMessage::CommandSteer { .. }
+            | RelayMessage::CommandDiscover { .. }
+            | RelayMessage::CommandDiscoverOptions { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
         }
     }
 

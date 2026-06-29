@@ -2,7 +2,7 @@ use sqlx::PgPool;
 
 use agentdash_domain::backend::{
     BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
-    LocalBackendClaim, UserPreferences, ViewConfig,
+    LocalBackendClaim, ViewConfig,
 };
 use agentdash_domain::common::error::DomainError;
 
@@ -16,11 +16,7 @@ impl PostgresBackendRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        crate::migration::assert_postgres_tables_ready(
-            &self.pool,
-            &["backends", "views", "user_preferences"],
-        )
-        .await
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["backends", "views"]).await
     }
 }
 
@@ -285,33 +281,6 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(serde_json::to_string(&view.backend_ids)?)
         .bind(view.filters.to_string())
         .bind(&view.sort_by)
-        .execute(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        Ok(())
-    }
-
-    async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
-        let row = sqlx::query_as::<_, (String,)>(
-            "SELECT value FROM user_preferences WHERE key = 'prefs'",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(super::db_err)?;
-
-        match row {
-            Some((json,)) => Ok(serde_json::from_str(&json)?),
-            None => Ok(UserPreferences::default()),
-        }
-    }
-
-    async fn save_preferences(&self, prefs: &UserPreferences) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO user_preferences (key, value) VALUES ('prefs', $1)
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-        )
-        .bind(serde_json::to_string(prefs)?)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;

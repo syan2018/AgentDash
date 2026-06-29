@@ -27,10 +27,10 @@ use agentdash_application::extension_runtime::{
 };
 use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
 use agentdash_application_runtime_gateway::{
-    ExtensionInvocationWorkspaceContext, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult, RuntimeActionKey,
-    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
-    RuntimeTrace, attach_extension_invocation_workspace,
+    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
+    ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
+    attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
@@ -40,7 +40,6 @@ use agentdash_contracts::extension_runtime::{
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
-use agentdash_spi::{RuntimeBackendAnchor, Vfs};
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimePath {
@@ -143,7 +142,8 @@ pub async fn invoke_project_extension_runtime_action(
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor)
+            .into_workspace();
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -214,7 +214,8 @@ pub async fn invoke_project_extension_runtime_channel(
     }
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
     let workspace =
-        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor);
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor)
+            .into_workspace();
 
     let consumer = req
         .consumer_extension_key
@@ -316,150 +317,6 @@ pub async fn get_project_extension_webview_asset(
 
 fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
-}
-
-fn resolve_extension_invocation_workspace(
-    vfs: &Vfs,
-    backend_anchor: &RuntimeBackendAnchor,
-) -> Option<ExtensionInvocationWorkspaceContext> {
-    select_extension_invocation_workspace(vfs, backend_anchor)
-}
-
-fn select_extension_invocation_workspace(
-    vfs: &Vfs,
-    backend_anchor: &RuntimeBackendAnchor,
-) -> Option<ExtensionInvocationWorkspaceContext> {
-    if let Some(root_ref) = backend_anchor
-        .root_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return vfs
-            .mounts
-            .iter()
-            .find(|mount| mount.root_ref.trim() == root_ref && !mount.root_ref.trim().is_empty())
-            .map(|mount| {
-                ExtensionInvocationWorkspaceContext::new(
-                    mount.id.clone(),
-                    mount.root_ref.trim().to_string(),
-                )
-            });
-    }
-    vfs.default_mount()
-        .filter(|mount| !mount.root_ref.trim().is_empty())
-        .map(|mount| {
-            ExtensionInvocationWorkspaceContext::new(
-                mount.id.clone(),
-                mount.root_ref.trim().to_string(),
-            )
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::RuntimeBackendAnchorSource;
-
-    use super::*;
-
-    #[test]
-    fn extension_invocation_workspace_uses_backend_default_mount() {
-        let vfs = Vfs {
-            mounts: vec![mount("main", "backend-1", "D:/Workspaces/main")],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let workspace = select_extension_invocation_workspace(
-            &vfs,
-            &anchor("backend-1", Some("D:/Workspaces/main")),
-        )
-        .expect("workspace");
-
-        assert_eq!(workspace.mount_id, "main");
-        assert_eq!(workspace.root_ref, "D:/Workspaces/main");
-    }
-
-    #[test]
-    fn extension_invocation_workspace_falls_back_to_matching_backend_mount() {
-        let vfs = Vfs {
-            mounts: vec![
-                mount("main", "backend-2", "D:/Workspaces/other"),
-                mount("local", "backend-1", "D:/Workspaces/local"),
-            ],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let workspace = select_extension_invocation_workspace(
-            &vfs,
-            &anchor("backend-1", Some("D:/Workspaces/local")),
-        )
-        .expect("workspace");
-
-        assert_eq!(workspace.mount_id, "local");
-        assert_eq!(workspace.root_ref, "D:/Workspaces/local");
-    }
-
-    #[test]
-    fn extension_invocation_workspace_returns_none_when_anchor_root_missing() {
-        let vfs = Vfs {
-            mounts: vec![mount("main", "backend-2", "D:/Workspaces/other")],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        assert!(
-            select_extension_invocation_workspace(
-                &vfs,
-                &anchor("backend-1", Some("D:/Workspaces/missing"))
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn extension_invocation_workspace_uses_default_mount_when_anchor_has_no_root() {
-        let vfs = Vfs {
-            mounts: vec![mount("main", "backend-2", "D:/Workspaces/other")],
-            default_mount_id: Some("main".to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-
-        let workspace = select_extension_invocation_workspace(&vfs, &anchor("backend-1", None))
-            .expect("workspace");
-
-        assert_eq!(workspace.mount_id, "main");
-        assert_eq!(workspace.root_ref, "D:/Workspaces/other");
-    }
-
-    fn anchor(backend_id: &str, root_ref: Option<&str>) -> RuntimeBackendAnchor {
-        RuntimeBackendAnchor::new(backend_id, RuntimeBackendAnchorSource::System)
-            .expect("anchor")
-            .with_root_ref(root_ref.map(ToString::to_string))
-    }
-
-    fn mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
-        Mount {
-            id: id.to_string(),
-            provider: "relay_fs".to_string(),
-            backend_id: backend_id.to_string(),
-            root_ref: root_ref.to_string(),
-            capabilities: vec![MountCapability::Read, MountCapability::Write],
-            default_write: true,
-            display_name: id.to_string(),
-            metadata: serde_json::Value::Null,
-        }
-    }
 }
 
 fn extension_runtime_invoke_response(

@@ -24,6 +24,7 @@ mod tool_executor;
 mod workspace_identity_discovery;
 mod workspace_prepare;
 mod workspace_probe;
+mod workspace_root_guard;
 mod ws_client;
 
 pub mod runtime;

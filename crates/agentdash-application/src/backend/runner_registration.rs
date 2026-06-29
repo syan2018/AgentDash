@@ -384,7 +384,7 @@ mod tests {
 
     use agentdash_domain::backend::{
         BackendConfig, BackendType, BackendVisibility, LocalBackendClaim, ProjectBackendAccess,
-        ProjectBackendAccessStatus, UserPreferences, ViewConfig,
+        ProjectBackendAccessStatus, ViewConfig,
     };
     use agentdash_domain::project::{
         Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
@@ -729,14 +729,6 @@ mod tests {
         }
 
         async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
-            Ok(UserPreferences::default())
-        }
-
-        async fn save_preferences(&self, _prefs: &UserPreferences) -> Result<(), DomainError> {
             Ok(())
         }
     }

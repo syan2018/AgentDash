@@ -11,12 +11,16 @@
 ### D1. AgentRun visible capability 与 admission decision 的完整生产边界
 
 - 来源：`adversarial-review.md` Issue 1、2、15。
+- 快速收束状态：
+  - tool-level PermissionGrant 已不再写回 visible `CapabilityState`；
+  - runtime projection 已从 run-scoped active grant query 改为 frame-scoped active grant query；
+  - 当前剩余关键点是 tool invocation execution entry 尚未完整消费 `AgentRunEffectiveCapabilityPort::admit_tool`，`grant_projection_for_runtime_session` 的 admission decision 仍未成为 production tool execution guard。
 - 需要回答：
   - `AgentRunEffectiveCapabilityPort` 是否成为唯一 production runtime capability boundary？
   - tool schema exposure 与 tool invocation admission 的调用点分别在哪里？
   - PermissionGrant tool-level grant 是否只在 execution entry 做 admission？
 - 依赖：
-  - 快速任务 `authority-capability-admission-fix` 先修最危险的 P0 路径。
+  - 快速任务 `06-30-architecture-quick-convergence` 已修最危险的 P0 surface 污染和 frame-scope leak。
 - 建议后续任务：`agentrun-effective-capability-boundary-design`。
 
 ### D2. LifecycleDispatchService 内部 owner 拆分
@@ -64,11 +68,14 @@
 ### D7. RuntimeGateway dynamic extension action discovery owner
 
 - 来源：`adversarial-review.md` Issue 12、28。
+- 快速收束状态：
+  - extension loadability、schema validator、workspace resolver 已收束；
+  - dynamic action discovery owner 仍需单独定 owner，不应混入 WorkspaceModule quick fix。
 - 需要回答：
   - extension action discovery 到底属于 RuntimeGateway surface，还是 WorkspaceModule / Extension projection？
   - dynamic provider 是否需要 context-aware surface projection hook？
 - 依赖：
-  - 快速任务先完成 extension loadability、schema validator、workspace resolver 收束。
+  - 快速任务已完成 extension loadability、schema validator、workspace resolver 收束。
 - 建议后续任务：`runtime-gateway-extension-action-catalog-design`。
 
 ### D8. Runtime action availability 三层 owner 收束
@@ -120,4 +127,3 @@
 - 它们多数没有唯一局部修改点。
 - 多数会影响 API/contract、runtime launch、permission admission、gate continuation 或 local/desktop product shape。
 - 需要先定 owner 和 contract，再拆实现任务。
-

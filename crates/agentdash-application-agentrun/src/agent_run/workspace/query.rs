@@ -2,6 +2,10 @@ use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPo
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
+use agentdash_domain::common::error::DomainError;
+use agentdash_domain::settings::{
+    AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY, SettingScope, SettingsRepository,
+};
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
@@ -64,6 +68,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         &self,
         input: AgentRunWorkspaceQueryInput,
     ) -> Result<AgentRunWorkspaceSnapshot, WorkflowApplicationError> {
+        let viewer_user_id = input.viewer_user_id;
         let run = input.run;
         let agent = input.agent;
         let current_delivery = self.current_delivery_selection(&run, &agent).await?;
@@ -175,17 +180,17 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .get_state(run.id, agent.id)
             .await
             .map_err(WorkflowApplicationError::from)?;
-        let user_prefs = self
-            .repos
-            .backend_repo
-            .get_preferences()
-            .await
-            .unwrap_or_default();
+        let hide_system_steer_messages = load_hide_system_steer_messages_setting(
+            self.repos.settings_repo.as_ref(),
+            viewer_user_id.as_deref(),
+        )
+        .await
+        .map_err(WorkflowApplicationError::from)?;
         let mailbox = mailbox_state_model(
             mailbox_state.as_ref(),
             delivery_runtime_session_id.is_some() && !terminal_agent,
             mailbox_visible_message_count,
-            user_prefs.hide_system_steer_messages,
+            hide_system_steer_messages,
         );
         let visible_mailbox_messages = mailbox_messages
             .into_iter()
@@ -263,6 +268,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         &self,
         input: AgentRunWorkspaceQueryInput,
     ) -> Result<super::types::AgentRunListProjection, WorkflowApplicationError> {
+        let _viewer_user_id = input.viewer_user_id;
         let run = input.run;
         let agent = input.agent;
         let current_delivery = self.current_delivery_selection(&run, &agent).await?;
@@ -425,6 +431,29 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .get_by_project_and_id(run.project_id, project_agent_id)
             .await
             .map_err(WorkflowApplicationError::from)
+    }
+}
+
+pub async fn load_hide_system_steer_messages_setting(
+    settings_repo: &dyn SettingsRepository,
+    user_id: Option<&str>,
+) -> Result<bool, DomainError> {
+    let Some(user_id) = user_id else {
+        return Ok(false);
+    };
+    let setting = settings_repo
+        .get(
+            &SettingScope::user(user_id.to_string()),
+            AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY,
+        )
+        .await?;
+    match setting {
+        Some(setting) => setting.value.as_bool().ok_or_else(|| {
+            DomainError::InvalidConfig(format!(
+                "{AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY} 必须是 boolean"
+            ))
+        }),
+        None => Ok(false),
     }
 }
 
@@ -661,4 +690,107 @@ fn serialized_string<T: serde::Serialize>(value: &T) -> String {
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::settings::{Setting, SettingScopeKind};
+
+    struct StaticSettingsRepository {
+        value: Option<serde_json::Value>,
+    }
+
+    #[async_trait::async_trait]
+    impl SettingsRepository for StaticSettingsRepository {
+        async fn list(
+            &self,
+            _scope: &SettingScope,
+            _category_prefix: Option<&str>,
+        ) -> Result<Vec<Setting>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn get(
+            &self,
+            scope: &SettingScope,
+            key: &str,
+        ) -> Result<Option<Setting>, DomainError> {
+            if scope.kind != SettingScopeKind::User
+                || scope.scope_id.as_deref() != Some("alice")
+                || key != AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY
+            {
+                return Ok(None);
+            }
+            Ok(self.value.clone().map(|value| Setting {
+                scope_kind: SettingScopeKind::User,
+                scope_id: Some("alice".to_string()),
+                key: key.to_string(),
+                value,
+                updated_at: chrono::Utc::now(),
+            }))
+        }
+
+        async fn set(
+            &self,
+            _scope: &SettingScope,
+            _key: &str,
+            _value: serde_json::Value,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn set_batch(
+            &self,
+            _scope: &SettingScope,
+            _entries: &[(String, serde_json::Value)],
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _scope: &SettingScope, _key: &str) -> Result<bool, DomainError> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn hide_system_steer_setting_defaults_to_false_when_missing() {
+        let repo = StaticSettingsRepository { value: None };
+
+        let missing_user = load_hide_system_steer_messages_setting(&repo, None)
+            .await
+            .expect("missing user defaults");
+        let missing_setting = load_hide_system_steer_messages_setting(&repo, Some("alice"))
+            .await
+            .expect("missing setting defaults");
+
+        assert!(!missing_user);
+        assert!(!missing_setting);
+    }
+
+    #[tokio::test]
+    async fn hide_system_steer_setting_reads_user_scoped_boolean() {
+        let repo = StaticSettingsRepository {
+            value: Some(serde_json::json!(true)),
+        };
+
+        let value = load_hide_system_steer_messages_setting(&repo, Some("alice"))
+            .await
+            .expect("boolean setting should load");
+
+        assert!(value);
+    }
+
+    #[tokio::test]
+    async fn hide_system_steer_setting_rejects_non_boolean_value() {
+        let repo = StaticSettingsRepository {
+            value: Some(serde_json::json!("true")),
+        };
+
+        let err = load_hide_system_steer_messages_setting(&repo, Some("alice"))
+            .await
+            .expect_err("string setting should fail");
+
+        assert!(matches!(err, DomainError::InvalidConfig(_)));
+    }
 }

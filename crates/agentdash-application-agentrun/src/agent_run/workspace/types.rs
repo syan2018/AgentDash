@@ -13,6 +13,7 @@ use serde_json::Value;
 pub struct AgentRunWorkspaceQueryInput {
     pub run: LifecycleRun,
     pub agent: LifecycleAgent,
+    pub viewer_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -10,8 +10,7 @@ pub use entity::{
     ProjectBackendAccessMode, ProjectBackendAccessStatus, RUNNER_REGISTRATION_TOKEN_PREFIX,
     RunnerRegistrationToken, RunnerRegistrationTokenIssued, RunnerRegistrationTokenPlaintext,
     RunnerRegistrationTokenStatus, RuntimeHealth, RuntimeHealthOnlineUpdate, RuntimeHealthStatus,
-    UserPreferences, ViewConfig, hash_runner_registration_secret,
-    verify_runner_registration_secret,
+    ViewConfig, hash_runner_registration_secret, verify_runner_registration_secret,
 };
 pub use repository::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,

@@ -3,6 +3,17 @@ use super::policy::runtime_can_launch;
 use super::target::ensure_command_target;
 use super::*;
 
+#[derive(Clone, Copy)]
+enum SteeringDeliveryMode {
+    DelegateReturn,
+    LiveSteer,
+}
+
+struct SteeringDeliveryResult {
+    outcome: AgentRunMailboxScheduleOutcome,
+    agent_message: Option<AgentMessage>,
+}
+
 impl<'a> AgentRunMailboxService<'a> {
     pub async fn schedule(
         &self,
@@ -298,101 +309,9 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         message: AgentRunMailboxMessage,
     ) -> Result<Option<AgentMessage>, WorkflowApplicationError> {
-        let input = message_input(&message)?;
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&message.runtime_session_id)
-            .await?;
-        let active_turn_id = match self
-            .session_core
-            .inspect_session_execution_state(&message.runtime_session_id)
+        self.execute_steering_delivery(message, SteeringDeliveryMode::DelegateReturn)
             .await
-            .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
-        {
-            SessionExecutionState::Running {
-                turn_id: Some(turn_id),
-            } => turn_id,
-            SessionExecutionState::Running { turn_id: None } => {
-                let _ = self
-                    .block_claimed_message(message, "active_agent_run_turn_missing")
-                    .await?;
-                return Ok(None);
-            }
-            _ => {
-                let _ = self
-                    .block_claimed_message(message, "agent_run_not_running")
-                    .await?;
-                return Ok(None);
-            }
-        };
-        if let Some(expected) = message.expected_active_agent_run_turn_id.as_deref()
-            && expected != active_turn_id
-        {
-            let _ = self
-                .block_claimed_message(message, "expected_agent_run_turn_mismatch")
-                .await?;
-            return Ok(None);
-        }
-
-        let agent_message = AgentMessage::user_parts(user_input_blocks_to_content_parts(&input));
-        if let Err(error) = self
-            .session_eventing
-            .emit_user_input_submitted(
-                &message.runtime_session_id,
-                &active_turn_id,
-                &format!(
-                    "{}:mailbox_delegate:{}:{}",
-                    active_turn_id,
-                    message.id,
-                    Uuid::new_v4()
-                ),
-                UserInputSubmissionKind::Steer,
-                input,
-            )
-            .await
-        {
-            let error_message = format!("AgentRun mailbox delegate steering 事件写入失败: {error}");
-            let failed = self
-                .mailbox_repo
-                .mark_message_status(
-                    message.id,
-                    message.claim_token,
-                    MailboxMessageStatus::Failed,
-                    None,
-                    None,
-                    Some(error_message.clone()),
-                )
-                .await?;
-            self.mark_message_receipt_terminal_failed(
-                &failed,
-                WorkflowApplicationError::Internal(error_message),
-            )
-            .await;
-            return Ok(None);
-        }
-        let updated = self
-            .mailbox_repo
-            .mark_message_status(
-                message.id,
-                message.claim_token,
-                MailboxMessageStatus::Steered,
-                Some(active_turn_id.clone()),
-                None,
-                None,
-            )
-            .await?;
-        let refs = AgentRunAcceptedRefs {
-            run_id: run.id,
-            agent_id: agent.id,
-            frame_id: Some(frame.id),
-            frame_revision: Some(frame.revision),
-            runtime_session_id: Some(message.runtime_session_id.clone()),
-            agent_run_turn_id: Some(active_turn_id),
-            protocol_turn_id: None,
-        };
-        self.complete_message_receipt(&updated, AgentRunMailboxCommandOutcome::Steered, Some(refs))
-            .await?;
-        self.mailbox_repo.cleanup_user_payload(updated.id).await?;
-        Ok(Some(agent_message))
+            .map(|result| result.agent_message)
     }
 
     async fn consume_claimed_message(
@@ -557,6 +476,16 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         message: AgentRunMailboxMessage,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        self.execute_steering_delivery(message, SteeringDeliveryMode::LiveSteer)
+            .await
+            .map(|result| result.outcome)
+    }
+
+    async fn execute_steering_delivery(
+        &self,
+        message: AgentRunMailboxMessage,
+        mode: SteeringDeliveryMode,
+    ) -> Result<SteeringDeliveryResult, WorkflowApplicationError> {
         let input = message_input(&message)?;
         let (run, agent, frame) = self
             .resolve_control_plane_for_delivery(&message.runtime_session_id)
@@ -571,54 +500,92 @@ impl<'a> AgentRunMailboxService<'a> {
                 turn_id: Some(turn_id),
             } => turn_id,
             SessionExecutionState::Running { turn_id: None } => {
-                return self
+                let outcome = self
                     .block_claimed_message(message, "active_agent_run_turn_missing")
-                    .await;
+                    .await?;
+                return Ok(SteeringDeliveryResult {
+                    outcome,
+                    agent_message: None,
+                });
             }
             _ => {
-                return self
+                let outcome = self
                     .block_claimed_message(message, "agent_run_not_running")
-                    .await;
+                    .await?;
+                return Ok(SteeringDeliveryResult {
+                    outcome,
+                    agent_message: None,
+                });
             }
         };
         if let Some(expected) = message.expected_active_agent_run_turn_id.as_deref()
             && expected != active_turn_id
         {
-            return self
+            let outcome = self
                 .block_claimed_message(message, "expected_agent_run_turn_mismatch")
-                .await;
-        }
-        if !self
-            .session_control
-            .supports_session_steering(&message.runtime_session_id)
-            .await
-        {
-            return self
-                .block_claimed_message(message, "session_steering_unsupported")
-                .await;
+                .await?;
+            return Ok(SteeringDeliveryResult {
+                outcome,
+                agent_message: None,
+            });
         }
 
-        if let Err(error) = self
-            .session_control
-            .steer_session(SessionTurnSteerCommand {
-                session_id: message.runtime_session_id.clone(),
-                expected_turn_id: active_turn_id.clone(),
-                input: input.clone(),
-            })
-            .await
-        {
-            return self
-                .fail_claimed_message(message, format!("AgentRun mailbox steer 投递失败: {error}"))
-                .await;
-        }
+        let agent_message = match mode {
+            SteeringDeliveryMode::DelegateReturn => Some(AgentMessage::user_parts(
+                user_input_blocks_to_content_parts(&input),
+            )),
+            SteeringDeliveryMode::LiveSteer => {
+                if !self
+                    .session_control
+                    .supports_session_steering(&message.runtime_session_id)
+                    .await
+                {
+                    let outcome = self
+                        .block_claimed_message(message, "session_steering_unsupported")
+                        .await?;
+                    return Ok(SteeringDeliveryResult {
+                        outcome,
+                        agent_message: None,
+                    });
+                }
+
+                if let Err(error) = self
+                    .session_control
+                    .steer_session(SessionTurnSteerCommand {
+                        session_id: message.runtime_session_id.clone(),
+                        expected_turn_id: active_turn_id.clone(),
+                        input: input.clone(),
+                    })
+                    .await
+                {
+                    let outcome = self
+                        .fail_claimed_message(
+                            message,
+                            format!("AgentRun mailbox steer 投递失败: {error}"),
+                        )
+                        .await?;
+                    return Ok(SteeringDeliveryResult {
+                        outcome,
+                        agent_message: None,
+                    });
+                }
+                None
+            }
+        };
+
+        let event_route = match mode {
+            SteeringDeliveryMode::DelegateReturn => "delegate",
+            SteeringDeliveryMode::LiveSteer => "scheduler",
+        };
         let event_error = self
             .session_eventing
             .emit_user_input_submitted(
                 &message.runtime_session_id,
                 &active_turn_id,
                 &format!(
-                    "{}:mailbox:{}:{}",
+                    "{}:mailbox_steering:{}:{}:{}",
                     active_turn_id,
+                    event_route,
                     message.id,
                     Uuid::new_v4()
                 ),
@@ -627,13 +594,14 @@ impl<'a> AgentRunMailboxService<'a> {
             )
             .await
             .err()
-            .map(|error| format!("AgentRun mailbox steer 事件写入失败: {error}"));
+            .map(|error| format!("AgentRun mailbox steering 事件写入失败: {error}"));
         if let Some(error) = event_error.as_deref() {
             diag!(Warn, Subsystem::AgentRun,
                 runtime_session_id = %message.runtime_session_id,
                 mailbox_message_id = %message.id,
+                delivery_mode = event_route,
                 error = %error,
-                "AgentRun mailbox steer accepted but event projection failed"
+                "AgentRun mailbox steering accepted but event projection failed"
             );
         }
         let updated = self
@@ -663,10 +631,14 @@ impl<'a> AgentRunMailboxService<'a> {
         )
         .await?;
         self.mailbox_repo.cleanup_user_payload(updated.id).await?;
-        Ok(AgentRunMailboxScheduleOutcome {
+        let outcome = AgentRunMailboxScheduleOutcome {
             outcome: AgentRunMailboxCommandOutcome::Steered,
             mailbox_message: updated,
             accepted_refs: Some(refs),
+        };
+        Ok(SteeringDeliveryResult {
+            outcome,
+            agent_message,
         })
     }
 

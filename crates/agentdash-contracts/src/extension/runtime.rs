@@ -58,6 +58,21 @@ pub enum ExtensionWorkspaceTabRendererResponse {
     CanvasPanel { entry: String },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionWorkspaceTabLoadabilityModeResponse {
+    ExtensionHost,
+    UiOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionWorkspaceTabLoadabilityResponse {
+    pub available: bool,
+    pub mode: ExtensionWorkspaceTabLoadabilityModeResponse,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionPermissionDeclarationResponse {
@@ -199,6 +214,7 @@ pub struct ExtensionWorkspaceTabProjectionResponse {
     pub label: String,
     pub uri_scheme: String,
     pub renderer: ExtensionWorkspaceTabRendererResponse,
+    pub loadability: ExtensionWorkspaceTabLoadabilityResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

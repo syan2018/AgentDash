@@ -8,6 +8,8 @@ use std::sync::Arc;
 use crate::shell_session_manager::ShellSessionManager;
 use crate::tool_executor::{ToolError, ToolExecutor};
 
+use super::CommandDispatchPlan;
+
 #[derive(Clone)]
 pub(super) struct ToolCommandHandler {
     tool_executor: ToolExecutor,
@@ -23,6 +25,26 @@ impl ToolCommandHandler {
         Self {
             tool_executor,
             shell_sessions,
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandToolShellExec { .. }
+            | RelayMessage::CommandToolShellRead { .. }
+            | RelayMessage::CommandToolShellInput { .. }
+            | RelayMessage::CommandToolShellTerminate { .. } => {
+                Some(CommandDispatchPlan::BACKGROUND)
+            }
+            RelayMessage::CommandToolFileRead { .. }
+            | RelayMessage::CommandToolFileReadBinary { .. }
+            | RelayMessage::CommandToolFileWrite { .. }
+            | RelayMessage::CommandToolFileDelete { .. }
+            | RelayMessage::CommandToolFileRename { .. }
+            | RelayMessage::CommandToolApplyPatch { .. }
+            | RelayMessage::CommandToolFileList { .. }
+            | RelayMessage::CommandToolSearch { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
         }
     }
 }

@@ -9,7 +9,6 @@ use agentdash_domain::permission::{PermissionGrant, PermissionGrantRepository};
 use agentdash_domain::workflow::{
     AgentFrame, RuntimeSessionExecutionAnchorRepository, ToolCapabilityPath,
 };
-use agentdash_spi::platform::tool_capability::capability_to_tool_clusters;
 use agentdash_spi::{CapabilityState, RuntimeMcpServer, ToolCapability, ToolCluster, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -111,45 +110,6 @@ impl AgentRunGrantProjection {
         self.admitted_tools
             .get(&request.capability_key)
             .is_some_and(|tools| tools.contains(&request.tool_name))
-    }
-
-    pub fn apply_to_execution_capability_state(&self, state: &CapabilityState) -> CapabilityState {
-        if self.is_empty() {
-            return state.clone();
-        }
-
-        let mut next = state.clone();
-        for (capability_key, tool_names) in &self.admitted_tools {
-            let capability = ToolCapability::new(capability_key.clone());
-            let capability_was_visible = next.tool.capabilities.contains(&capability);
-            next.tool.capabilities.insert(capability.clone());
-            next.tool
-                .enabled_clusters
-                .extend(capability_to_tool_clusters(&capability));
-
-            if !capability_was_visible {
-                next.tool
-                    .tool_policy
-                    .entry(capability_key.clone())
-                    .or_default()
-                    .include_only
-                    .extend(tool_names.iter().cloned());
-                continue;
-            }
-
-            if let Some(filter) = next.tool.tool_policy.get_mut(capability_key) {
-                for tool_name in tool_names {
-                    filter.exclude.remove(tool_name);
-                    if !filter.include_only.is_empty() {
-                        filter.include_only.insert(tool_name.clone());
-                    }
-                }
-                if filter.is_empty() {
-                    next.tool.tool_policy.remove(capability_key);
-                }
-            }
-        }
-        next
     }
 }
 
@@ -309,17 +269,30 @@ impl AgentRunEffectiveCapabilityService {
         execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
         permission_grant_repo: &dyn PermissionGrantRepository,
     ) -> Result<CapabilityState, agentdash_domain::DomainError> {
+        let _projection = Self::grant_projection_for_runtime_session(
+            runtime_session_id,
+            execution_anchor_repo,
+            permission_grant_repo,
+        )
+        .await?;
+        Ok(base_state.clone())
+    }
+
+    pub async fn grant_projection_for_runtime_session(
+        runtime_session_id: &str,
+        execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        permission_grant_repo: &dyn PermissionGrantRepository,
+    ) -> Result<AgentRunGrantProjection, agentdash_domain::DomainError> {
         let Some(anchor) = execution_anchor_repo
             .find_by_session(runtime_session_id)
             .await?
         else {
-            return Ok(base_state.clone());
+            return Ok(AgentRunGrantProjection::empty());
         };
         let active_grants = permission_grant_repo
-            .list_active_by_run(anchor.run_id)
+            .list_active_by_frame(anchor.launch_frame_id)
             .await?;
-        let projection = AgentRunGrantProjection::from_active_grants(&active_grants);
-        Ok(projection.apply_to_execution_capability_state(base_state))
+        Ok(AgentRunGrantProjection::from_active_grants(&active_grants))
     }
 }
 
@@ -372,9 +345,13 @@ impl RuntimeSessionEffectiveCapabilityPort for AgentRunRuntimeSessionEffectiveCa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::permission::{GrantScope, PermissionGrant};
-    use agentdash_domain::workflow::ToolCapabilityPath;
+    use agentdash_domain::DomainError;
+    use agentdash_domain::permission::{GrantScope, PermissionGrant, PermissionGrantStatusFilter};
+    use agentdash_domain::workflow::{
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, ToolCapabilityPath,
+    };
     use agentdash_spi::ToolCapabilityFilter;
+    use tokio::sync::Mutex;
 
     fn target() -> AgentFrameRuntimeTarget {
         AgentFrameRuntimeTarget {
@@ -507,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn grant_projection_expands_execution_state_for_tool_surface_only() {
+    fn grant_projection_does_not_expand_execution_capability_state() {
         let path = ToolCapabilityPath::parse("workflow_management::upsert_workflow_tool")
             .expect("tool path");
         let mut grant = PermissionGrant::new(
@@ -529,15 +506,33 @@ mod tests {
         grant.mark_applied().expect("applied");
 
         let projection = AgentRunGrantProjection::from_active_grants(&[grant]);
-        let execution_state =
-            projection.apply_to_execution_capability_state(&CapabilityState::default());
+        let frame = frame_with_state(&CapabilityState::default());
+        let view = AgentRunEffectiveCapabilityService::effective_view_from_frame_with_projection(
+            target(),
+            &frame,
+            &projection,
+        );
 
-        assert!(execution_state.is_capability_tool_enabled(
-            "workflow_management",
-            "upsert_workflow_tool",
-            None
-        ));
-        assert!(!execution_state.is_capability_tool_enabled(
+        assert!(
+            !view.capability_state.is_capability_tool_enabled(
+                "workflow_management",
+                "upsert_workflow_tool",
+                None
+            ),
+            "tool-level grants must not alter schema-facing CapabilityState"
+        );
+        assert!(
+            AgentRunEffectiveCapabilityService::admit_tool(
+                &view,
+                &AgentRunAdmissionRequest::tool(
+                    "workflow_management",
+                    "upsert_workflow_tool",
+                    Some(ToolCluster::Workflow),
+                ),
+            )
+            .allowed
+        );
+        assert!(!view.capability_state.is_capability_tool_enabled(
             "workflow_management",
             "get_workflow",
             None
@@ -564,5 +559,378 @@ mod tests {
             surface_paths[0].to_qualified_string(),
             "workflow_management"
         );
+    }
+
+    #[derive(Default)]
+    struct MemoryGrantRepository {
+        grants: Mutex<Vec<PermissionGrant>>,
+        active_frame_queries: Mutex<Vec<Uuid>>,
+        active_run_queries: Mutex<Vec<Uuid>>,
+    }
+
+    impl MemoryGrantRepository {
+        async fn insert(&self, grant: PermissionGrant) {
+            self.grants.lock().await.push(grant);
+        }
+
+        async fn active_frame_queries(&self) -> Vec<Uuid> {
+            self.active_frame_queries.lock().await.clone()
+        }
+
+        async fn active_run_queries(&self) -> Vec<Uuid> {
+            self.active_run_queries.lock().await.clone()
+        }
+    }
+
+    #[async_trait]
+    impl PermissionGrantRepository for MemoryGrantRepository {
+        async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+            self.insert(grant.clone()).await;
+            Ok(())
+        }
+
+        async fn update(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+            let mut grants = self.grants.lock().await;
+            if let Some(existing) = grants.iter_mut().find(|item| item.id == grant.id) {
+                *existing = grant.clone();
+            }
+            Ok(())
+        }
+
+        async fn find_by_id(&self, id: Uuid) -> Result<Option<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .iter()
+                .find(|grant| grant.id == id)
+                .cloned())
+        }
+
+        async fn list_by_frame(
+            &self,
+            effect_frame_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .iter()
+                .filter(|grant| grant.effect_frame_id == Some(effect_frame_id))
+                .filter(|grant| status_filter.is_none_or(|filter| status_matches(grant, filter)))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .iter()
+                .filter(|grant| grant.run_id == run_id)
+                .filter(|grant| status_filter.is_none_or(|filter| status_matches(grant, filter)))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_frame(
+            &self,
+            effect_frame_id: Uuid,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            self.active_frame_queries.lock().await.push(effect_frame_id);
+            self.list_by_frame(effect_frame_id, Some(PermissionGrantStatusFilter::Active))
+                .await
+        }
+
+        async fn list_active_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            self.active_run_queries.lock().await.push(run_id);
+            self.list_by_run(run_id, Some(PermissionGrantStatusFilter::Active))
+                .await
+        }
+
+        async fn find_active_escalation_grant(
+            &self,
+            effect_frame_id: Uuid,
+            target_subject_kind: &str,
+        ) -> Result<Option<PermissionGrant>, DomainError> {
+            Ok(self
+                .list_active_by_frame(effect_frame_id)
+                .await?
+                .into_iter()
+                .find(|grant| {
+                    grant
+                        .scope_escalation_intent
+                        .as_ref()
+                        .is_some_and(|intent| intent.target_subject_kind == target_subject_kind)
+                }))
+        }
+
+        async fn list_overdue_active(
+            &self,
+            now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .iter()
+                .filter(|grant| grant.status.is_active())
+                .filter(|grant| grant.expires_at.is_some_and(|expires_at| expires_at < now))
+                .cloned()
+                .collect())
+        }
+    }
+
+    fn status_matches(grant: &PermissionGrant, filter: PermissionGrantStatusFilter) -> bool {
+        match filter {
+            PermissionGrantStatusFilter::Exact(status) => grant.status == status,
+            PermissionGrantStatusFilter::Pending => {
+                grant.status == agentdash_domain::permission::GrantStatus::PendingPolicy
+                    || grant.status
+                        == agentdash_domain::permission::GrantStatus::PendingUserApproval
+            }
+            PermissionGrantStatusFilter::Active => grant.status.is_active(),
+            PermissionGrantStatusFilter::Terminal => grant.status.is_terminal(),
+        }
+    }
+
+    fn active_tool_grant(
+        run_id: Uuid,
+        session_id: &str,
+        effect_frame_id: Uuid,
+        tool_path: &str,
+    ) -> PermissionGrant {
+        let mut grant = PermissionGrant::new(
+            run_id,
+            session_id,
+            vec![ToolCapabilityPath::parse(tool_path).expect("tool path")],
+            "temporary tool admission",
+            GrantScope::AgentFrame,
+            None,
+        )
+        .with_effect_frame(effect_frame_id);
+        grant.submit_for_policy().expect("submit");
+        grant
+            .apply_policy_decision(agentdash_domain::permission::PolicyDecision {
+                outcome: agentdash_domain::permission::PolicyOutcome::AutoApproved,
+                matched_rules: Vec::new(),
+                reason: "auto".to_string(),
+            })
+            .expect("policy");
+        grant.mark_applied().expect("applied");
+        grant
+    }
+
+    #[derive(Default)]
+    struct MemoryAnchorRepository {
+        anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    }
+
+    #[async_trait]
+    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepository {
+        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().await;
+            if let Some(existing) = anchors
+                .iter_mut()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                *existing = anchor.clone();
+            } else {
+                anchors.push(anchor.clone());
+            }
+            Ok(())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.anchors
+                .lock()
+                .await
+                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
+            Ok(())
+        }
+
+        async fn find_by_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_project_session_ids(
+            &self,
+            runtime_session_ids: &[String],
+        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn latest_updated_anchor_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            Ok(self
+                .anchors
+                .lock()
+                .await
+                .iter()
+                .filter(|anchor| anchor.agent_id == agent_id)
+                .max_by_key(|anchor| anchor.updated_at)
+                .cloned())
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_session_grant_projection_queries_effect_frame_not_run() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_a = Uuid::new_v4();
+        let frame_b = Uuid::new_v4();
+        let anchors = MemoryAnchorRepository::default();
+        anchors
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                "session-b",
+                run_id,
+                frame_b,
+                agent_id,
+            ))
+            .await
+            .expect("anchor");
+        let grants = MemoryGrantRepository::default();
+        grants
+            .insert(active_tool_grant(
+                run_id,
+                "session-a",
+                frame_a,
+                "workflow_management::upsert_workflow_tool",
+            ))
+            .await;
+        grants
+            .insert(active_tool_grant(
+                run_id,
+                "session-b",
+                frame_b,
+                "workflow_management::get_workflow",
+            ))
+            .await;
+
+        let projection = AgentRunEffectiveCapabilityService::grant_projection_for_runtime_session(
+            "session-b",
+            &anchors,
+            &grants,
+        )
+        .await
+        .expect("projection");
+
+        assert_eq!(grants.active_frame_queries().await, vec![frame_b]);
+        assert!(grants.active_run_queries().await.is_empty());
+        assert!(projection.admits_tool(&AgentRunAdmissionRequest::tool(
+            "workflow_management",
+            "get_workflow",
+            Some(ToolCluster::Workflow),
+        )));
+        assert!(!projection.admits_tool(&AgentRunAdmissionRequest::tool(
+            "workflow_management",
+            "upsert_workflow_tool",
+            Some(ToolCluster::Workflow),
+        )));
+    }
+
+    #[tokio::test]
+    async fn runtime_session_execution_capability_state_keeps_tool_grant_invisible() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+        let anchors = MemoryAnchorRepository::default();
+        anchors
+            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+                "session-a",
+                run_id,
+                frame_id,
+                agent_id,
+            ))
+            .await
+            .expect("anchor");
+        let grants = MemoryGrantRepository::default();
+        grants
+            .insert(active_tool_grant(
+                run_id,
+                "session-a",
+                frame_id,
+                "workflow_management::upsert_workflow_tool",
+            ))
+            .await;
+
+        let state =
+            AgentRunEffectiveCapabilityService::execution_capability_state_for_runtime_session(
+                "session-a",
+                &CapabilityState::default(),
+                &anchors,
+                &grants,
+            )
+            .await
+            .expect("state");
+
+        assert_eq!(grants.active_frame_queries().await, vec![frame_id]);
+        assert!(grants.active_run_queries().await.is_empty());
+        assert!(
+            !state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new("workflow_management"))
+        );
+        assert!(!state.is_capability_tool_enabled(
+            "workflow_management",
+            "upsert_workflow_tool",
+            Some(ToolCluster::Workflow),
+        ));
     }
 }

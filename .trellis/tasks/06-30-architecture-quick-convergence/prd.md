@@ -55,8 +55,12 @@
 
 ## Acceptance Criteria
 
-- [ ] 每个工作项具备足够指导开发的范围、证据、要求和验收标准。
-- [ ] 每个工作项只修改其 own scope 内的文件。
-- [ ] 每个工作项完成 targeted verification。
-- [ ] 最终复核所有工作项互相不冲突。
-- [ ] 更新 `06-30-module-adversarial-review` 中对应问题的 resolved/residual 状态。
+- [x] 每个工作项具备足够指导开发的范围、证据、要求和验收标准。
+- [x] 每个工作项只修改其 own scope 内的文件。
+- [x] 每个工作项完成 targeted verification。
+- [x] 最终复核所有工作项互相不冲突。
+- [x] 更新 `06-30-module-adversarial-review` 中对应问题的 resolved/residual 状态。
+
+## Completion Notes
+
+本任务完成 Issue 1/2 的 quick boundary 修复、Issue 9/11/13/14/20/22/24/25/26 的收束实现。Issue 1 仍保留 D1 residual：tool invocation execution entry 尚未完整消费 `AgentRunEffectiveCapabilityPort::admit_tool`，需要在后续设计任务中处理 production boundary。

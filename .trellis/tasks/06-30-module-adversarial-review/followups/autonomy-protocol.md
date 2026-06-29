@@ -42,7 +42,10 @@ The execution model is:
    - group later implementation follow-ups by meaningful behavior changes.
 8. Task metadata, status notes, and single-file tracking edits are accumulated into nearby meaningful commits instead of becoming standalone commits.
 9. User involvement is reserved for serious design/product choices. When the codebase and specs imply a clear answer, document and proceed. When there are multiple viable long-term owners or public contract shapes, record the decision options and recommendation for the user.
-10. Context compaction recovery must restore, in this order: active goal, Trellis current task and source, workflow phase, branch, worktree status, recent commits, in-flight subagent state, and the next executable step.
+10. Subagent work must prefer first-principles cleanup over additive feature work. The review objective is convergence: remove wrong paths, duplicated facts, and concept forks when the scope is acceptable; do not satisfy a work item by layering another abstraction on top of the old split unless the old path is also removed or explicitly documented as a larger design residual.
+11. Implementation subagents should not run large Rust builds or broad compile suites on their own. They may run narrow searches, formatting, small focused tests when cheap, or inspect existing test names. Expensive Rust compilation and broad verification belong to the check/integration phase unless a worker needs one targeted command to validate a small local change.
+12. While subagents are running, the main session should not do anxious overlapping implementation or repeatedly interrupt them. It may wait, do non-overlapping coordination/documentation, or send one concise status/addendum message when requirements change.
+13. Context compaction recovery must restore, in this order: active goal, Trellis current task and source, workflow phase, branch, worktree status, recent commits, in-flight subagent state, and the next executable step.
 
 ## Recovery Checklist After Context Compaction
 
@@ -74,10 +77,10 @@ Never infer phase from memory alone. Use task status and artifacts.
 
 ## Branch And Commit State
 
-The review/planning artifacts were committed on:
+The review/planning artifacts are on:
 
 - Branch: `codex/module-adversarial-review-cleanup`
-- Commit: `536e8fb4 docs(trellis): 记录模块对抗审查与快速收束规划`
+- Planning commit at the time this protocol addendum was written: `5540671f docs(trellis): 记录模块对抗审查与快速收束规划`
 
 Continue work on this branch unless the user explicitly asks otherwise.
 
@@ -117,6 +120,8 @@ Each implement subagent must:
 - read `implement.md`;
 - read the assigned `work-items/<name>.md`;
 - modify only its assigned work item scope;
+- prioritize deleting or converging wrong/duplicate paths over adding parallel new feature paths;
+- avoid large Rust compilation or broad check commands; leave expensive verification for check/integration unless a narrow local command is necessary;
 - not revert unrelated changes;
 - report files changed and checks run.
 

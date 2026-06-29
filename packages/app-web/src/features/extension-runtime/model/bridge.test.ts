@@ -283,6 +283,47 @@ describe("extension bridge message validation", () => {
     });
   });
 
+  it("webview availability 消费后端 loadability 投影", () => {
+    const tab = webviewTab();
+    const workspaceData = workspaceRuntimeData({
+      extensionRuntime: {
+        ...workspaceRuntimeData().extensionRuntime,
+        projection: {
+          ...workspaceRuntimeData().extensionRuntime.projection,
+          installations: [{
+            installation_id: "installation-1",
+            extension_key: "protocol-demo",
+            extension_id: "protocol-demo",
+            display_name: "Protocol Demo",
+            installed_source: null,
+            package_artifact: null,
+          }],
+        },
+      },
+    });
+
+    expect(resolveExtensionWebviewAvailability(workspaceData, tab)).toMatchObject({
+      available: true,
+      src: "/api/projects/project-1/extension-runtime/webviews/protocol-demo/dist/panel/index.html",
+    });
+
+    expect(resolveExtensionWebviewAvailability(
+      workspaceRuntimeData(),
+      {
+        ...tab,
+        loadability: {
+          available: false,
+          mode: "extension_host",
+          reason: "extension host bundle 缺失",
+        },
+      },
+    )).toMatchObject({
+      available: false,
+      title: "Extension panel 不可用",
+      detail: "extension host bundle 缺失",
+    });
+  });
+
   it("为 Canvas-like consumer 组装 extension channel request", async () => {
     const calls: Array<{
       projectId: string;
@@ -515,6 +556,11 @@ function webviewTab(): ExtensionWorkspaceTabProjectionResponse {
       kind: "webview",
       entry: "dist/panel/index.html",
     },
+    loadability: {
+      available: true,
+      mode: "extension_host",
+      reason: null,
+    },
   };
 }
 
@@ -524,6 +570,11 @@ function canvasTab(): ExtensionWorkspaceTabProjectionResponse {
     renderer: {
       kind: "canvas_panel",
       entry: "dist/canvas/runtime.json",
+    },
+    loadability: {
+      available: true,
+      mode: "ui_only",
+      reason: null,
     },
   };
 }

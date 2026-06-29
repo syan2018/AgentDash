@@ -6,14 +6,14 @@ use agentdash_spi::connector::ConnectorError;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BackendSelectionRequest {
+pub struct BackendSelectionRequest {
     pub executor_id: String,
     pub intent: BackendSelectionIntent,
     pub reason: Option<String>,
 }
 
 impl BackendSelectionRequest {
-    pub(crate) fn auto_idle(executor_id: impl Into<String>, reason: Option<String>) -> Self {
+    pub fn auto_idle(executor_id: impl Into<String>, reason: Option<String>) -> Self {
         Self {
             executor_id: executor_id.into(),
             intent: BackendSelectionIntent::AutoIdle,
@@ -21,7 +21,7 @@ impl BackendSelectionRequest {
         }
     }
 
-    pub(crate) fn explicit(
+    pub fn explicit(
         executor_id: impl Into<String>,
         backend_id: impl Into<String>,
         reason: Option<String>,
@@ -35,7 +35,7 @@ impl BackendSelectionRequest {
         }
     }
 
-    pub(crate) fn workspace_binding(
+    pub fn workspace_binding(
         executor_id: impl Into<String>,
         backend_id: impl Into<String>,
         reason: Option<String>,
@@ -51,7 +51,7 @@ impl BackendSelectionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BackendSelectionIntent {
+pub enum BackendSelectionIntent {
     Explicit { backend_id: String },
     AutoIdle,
     WorkspaceBinding { backend_id: String },
@@ -88,7 +88,7 @@ impl ExecutionPlacementPlan {
     }
 }
 
-pub(crate) fn has_available_relay_executor(
+pub fn has_available_relay_executor(
     transport: &dyn RelayPromptTransport,
     executor_id: &str,
 ) -> bool {
@@ -97,7 +97,7 @@ pub(crate) fn has_available_relay_executor(
     })
 }
 
-pub(crate) async fn resolve_backend_execution_placement(
+pub async fn resolve_backend_execution_placement(
     transport: &dyn RelayPromptTransport,
     lease_repo: &dyn BackendExecutionLeaseRepository,
     request: &BackendSelectionRequest,

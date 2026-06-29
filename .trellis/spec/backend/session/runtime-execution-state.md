@@ -61,6 +61,12 @@ execution lease，并把 `backend_id + lease_id + selection_mode` 投影到
 accepted 后 activate，terminal/cancel/prompt failure 后 release 或 fail。lease 只描述
 backend 占用，不替代 session event terminal 持久化。
 
+Backend execution placement 的 request model、executor availability 判定、固定 backend 校验、
+auto-idle 排序和错误语义归 `agentdash-application-runtime-session::backend_execution_placement`。
+需要在 `agentdash-application` 暴露同一能力时只 re-export 该模块的公开 API，原因是 session
+launch 与其它 application 入口必须共享同一套 backend 选择事实，才能让 active lease count、executor
+availability 和 selection mode 在执行路径与调试/测试路径中保持一致。
+
 ## Tool And Context Hot Update
 
 Workflow phase、lifecycle hot update 或 MCP preset 变更从 active turn 读取当前

@@ -216,9 +216,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (!currentUser) return;
     if (!getDesktopLocalRuntimeClient()) return;
     ensureDesktopLocalRuntimeStarted(getStoredToken() ?? "")
-      .catch((error: unknown) => {
-        console.warn("desktop local runtime auto-start failed", error);
-      });
+      .catch(() => undefined);
   }, [currentUser]);
 
   // ── 渲染状态机 ──

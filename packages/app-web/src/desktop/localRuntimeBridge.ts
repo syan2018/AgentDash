@@ -30,7 +30,14 @@ interface DesktopAppBridge {
   quit(): Promise<void>;
 }
 
-let desktopRuntimeAutoConnectAttempted = false;
+const DESKTOP_RUNTIME_AUTO_CONNECT_MAX_ATTEMPTS = 8;
+const DESKTOP_RUNTIME_AUTO_CONNECT_RETRY_MS = 2000;
+
+let desktopRuntimeAutoConnectCompleted = false;
+let desktopRuntimeAutoConnectInFlight: Promise<void> | null = null;
+let desktopRuntimeAutoConnectRetryTimer: number | null = null;
+let desktopRuntimeAutoConnectAttempts = 0;
+let desktopRuntimeAutoConnectLastToken = '';
 
 export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
   if (typeof window === 'undefined') return null;
@@ -47,28 +54,86 @@ export function getDesktopBrowseDirectory(): ((path?: string) => Promise<BrowseD
   return window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__;
 }
 
-export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {
+export function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {
+  const token = accessToken.trim();
+  if (!token) {
+    desktopRuntimeAutoConnectCompleted = false;
+    desktopRuntimeAutoConnectAttempts = 0;
+    desktopRuntimeAutoConnectLastToken = '';
+    clearDesktopRuntimeAutoConnectRetry();
+    return Promise.resolve();
+  }
+
+  if (token !== desktopRuntimeAutoConnectLastToken) {
+    desktopRuntimeAutoConnectCompleted = false;
+    desktopRuntimeAutoConnectAttempts = 0;
+    clearDesktopRuntimeAutoConnectRetry();
+  }
+  desktopRuntimeAutoConnectLastToken = token;
+  if (desktopRuntimeAutoConnectCompleted) return Promise.resolve();
+  if (desktopRuntimeAutoConnectInFlight) return desktopRuntimeAutoConnectInFlight;
+
+  desktopRuntimeAutoConnectInFlight = runDesktopLocalRuntimeAutoConnect(token)
+    .then((started) => {
+      if (started) {
+        desktopRuntimeAutoConnectCompleted = true;
+        clearDesktopRuntimeAutoConnectRetry();
+      }
+    })
+    .catch((error: unknown) => {
+      scheduleDesktopRuntimeAutoConnectRetry();
+      throw error;
+    })
+    .finally(() => {
+      desktopRuntimeAutoConnectInFlight = null;
+    });
+
+  return desktopRuntimeAutoConnectInFlight;
+}
+
+async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<boolean> {
   const client = getDesktopLocalRuntimeClient();
   const desktopApp = getDesktopAppBridge();
   const token = accessToken.trim();
-  if (!client || !desktopApp) return;
-  if (desktopRuntimeAutoConnectAttempted) return;
-  desktopRuntimeAutoConnectAttempted = true;
+  if (!client || !desktopApp) return false;
+  desktopRuntimeAutoConnectAttempts += 1;
 
   const settings = await desktopApp.loadSettings();
-  if (!settings.auto_connect_local_runtime) return;
+  if (!settings.auto_connect_local_runtime) return false;
 
   const snapshot = await client.runtimeSnapshot().catch(() => null);
-  if (snapshot?.state === 'starting' || snapshot?.state === 'running') return;
+  if (snapshot?.state === 'starting' || snapshot?.state === 'running') return true;
 
   await ensureDesktopDefaultsLoaded();
   const profile = await loadOrCreateAutoConnectProfile(client, token);
 
-  await client.runtimeStart({
+  const started = await client.runtimeStart({
     ...profile,
     access_token: token,
     server_url: resolveDesktopServerUrl(profile.server_url),
   });
+  if (started.state === 'error') {
+    throw new Error(started.message ?? 'Desktop local runtime auto-connect failed');
+  }
+  return true;
+}
+
+function scheduleDesktopRuntimeAutoConnectRetry(): void {
+  if (typeof window === 'undefined') return;
+  if (!getDesktopLocalRuntimeClient() || !getDesktopAppBridge()) return;
+  if (desktopRuntimeAutoConnectRetryTimer !== null) return;
+  if (desktopRuntimeAutoConnectAttempts >= DESKTOP_RUNTIME_AUTO_CONNECT_MAX_ATTEMPTS) return;
+
+  desktopRuntimeAutoConnectRetryTimer = window.setTimeout(() => {
+    desktopRuntimeAutoConnectRetryTimer = null;
+    ensureDesktopLocalRuntimeStarted(desktopRuntimeAutoConnectLastToken).catch(() => undefined);
+  }, DESKTOP_RUNTIME_AUTO_CONNECT_RETRY_MS);
+}
+
+function clearDesktopRuntimeAutoConnectRetry(): void {
+  if (typeof window === 'undefined' || desktopRuntimeAutoConnectRetryTimer === null) return;
+  window.clearTimeout(desktopRuntimeAutoConnectRetryTimer);
+  desktopRuntimeAutoConnectRetryTimer = null;
 }
 
 async function loadOrCreateAutoConnectProfile(

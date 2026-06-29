@@ -9,10 +9,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
-    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot,
-    LocalRuntimeState, McpProbeResult, StopReason, browse_directory,
-    load_or_create_machine_identity, local_mcp_servers_path, local_runtime_config_dir,
-    local_runtime_profile_path, probe_mcp_server,
+    DesktopRunnerHost, LocalLogEvent, LocalRuntimeConfig, LocalRuntimeSnapshot, McpProbeResult,
+    StopReason, browse_directory, load_or_create_machine_identity, local_mcp_servers_path,
+    local_runtime_config_dir, local_runtime_profile_path, probe_mcp_server,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
@@ -40,7 +39,7 @@ const TRAY_MENU_QUIT: &str = "quit_agentdash";
 
 #[derive(Clone)]
 struct DesktopState {
-    runtime: LocalRuntimeManager,
+    runtime: DesktopRunnerHost,
     api: DesktopApiManager,
     lifecycle: Arc<DesktopLifecycleState>,
 }
@@ -48,7 +47,7 @@ struct DesktopState {
 impl Default for DesktopState {
     fn default() -> Self {
         Self {
-            runtime: LocalRuntimeManager::new(),
+            runtime: DesktopRunnerHost::new(),
             api: DesktopApiManager::from_snapshot(default_desktop_api_snapshot()),
             lifecycle: Arc::new(DesktopLifecycleState::default()),
         }
@@ -637,32 +636,21 @@ async fn start_runtime_from_request(
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
-    if let Some(snapshot) = state.runtime.snapshot().await
-        && matches!(
-            snapshot.state,
-            LocalRuntimeState::Starting | LocalRuntimeState::Running
-        )
-    {
-        state
-            .runtime
-            .record_log("info", "runtime", "runtime 已在启动或运行，复用现有状态")
-            .await;
-        return Ok(snapshot);
-    }
-
     let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
-    let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
-    let config = LocalRuntimeConfig::new(
-        claim.relay_ws_url,
-        claim.auth_token,
-        claim.backend_id,
-        claim.name,
-        request.workspace_roots,
-        request.executor_enabled,
-    );
-
-    let handle = state.runtime.start(config).await?;
-    Ok(handle.status_rx.borrow().clone())
+    state
+        .runtime
+        .ensure_started_with(|| async move {
+            let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
+            Ok(LocalRuntimeConfig::new(
+                claim.relay_ws_url,
+                claim.auth_token,
+                claim.backend_id,
+                claim.name,
+                request.workspace_roots,
+                request.executor_enabled,
+            ))
+        })
+        .await
 }
 
 async fn claim_local_runtime(
@@ -868,6 +856,9 @@ fn main() {
     let state_for_window_events = state.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            restore_main_window(app);
+        }))
         .manage(state)
         .on_window_event(move |window, event| {
             if window.label() != MAIN_WINDOW_LABEL {

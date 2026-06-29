@@ -125,7 +125,7 @@ async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<b
   const started = await client.runtimeStart({
     ...profile,
     access_token: token,
-    server_url: resolveDesktopServerUrl(profile.server_url),
+    server_url: resolveDesktopServerUrl(),
   });
   if (started.state === 'error') {
     throw new Error(started.message ?? 'Desktop local runtime auto-connect failed');
@@ -160,7 +160,7 @@ async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promi
     const normalized = {
       ...current,
       access_token: '',
-      server_url: resolveDesktopServerUrl(current.server_url),
+      server_url: resolveDesktopServerUrl(),
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
       machine_id: current.machine_id || '',
       machine_label: current.machine_label ?? null,
@@ -170,7 +170,7 @@ async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promi
   }
 
   const created: LocalRuntimeProfile = {
-    server_url: resolveDesktopServerUrl(''),
+    server_url: resolveDesktopServerUrl(),
     access_token: '',
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
@@ -185,18 +185,6 @@ async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promi
   return client.profileSave(created);
 }
 
-function resolveDesktopServerUrl(value: string): string {
-  const explicit = value.trim().replace(/\/+$/, '');
-  const fallback = resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
-  if (!explicit) return fallback;
-  if (isBundledDevelopmentDefaultServerUrl(explicit)) return fallback;
-  return explicit;
-}
-
-function isBundledDevelopmentDefaultServerUrl(value: string): boolean {
-  try {
-    return new URL(value).origin === new URL(DEFAULT_LOCAL_RUNTIME_SERVER_URL).origin;
-  } catch {
-    return value === DEFAULT_LOCAL_RUNTIME_SERVER_URL;
-  }
+function resolveDesktopServerUrl(): string {
+  return resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
 }

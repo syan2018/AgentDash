@@ -28,7 +28,6 @@ const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
 const DEFAULT_PROFILE_ID: &str = "default";
 const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
 const DESKTOP_AUTOSTART_ENTRY_NAME: &str = "AgentDash";
-const DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL: &str = "http://127.0.0.1:3001";
 #[cfg(target_os = "windows")]
 const WINDOWS_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -833,31 +832,14 @@ fn normalize_server_origin(value: &str) -> String {
     normalize_server_origin_with_default(value, &default_local_runtime_server_origin())
 }
 
-fn normalize_server_origin_with_default(value: &str, default_origin: &str) -> String {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() || is_development_local_runtime_server_origin(trimmed) {
-        default_origin.to_string()
-    } else {
-        trimmed.to_string()
-    }
+fn normalize_server_origin_with_default(_value: &str, default_origin: &str) -> String {
+    default_origin.trim().trim_end_matches('/').to_string()
 }
 
 fn default_local_runtime_server_origin() -> String {
     desktop_api_config()
         .map(|config| config.origin)
         .unwrap_or_else(|_| desktop_api_origin(DESKTOP_API_PORT))
-}
-
-fn is_development_local_runtime_server_origin(value: &str) -> bool {
-    match (
-        reqwest::Url::parse(value),
-        reqwest::Url::parse(DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL),
-    ) {
-        (Ok(actual), Ok(default)) => {
-            actual.origin().ascii_serialization() == default.origin().ascii_serialization()
-        }
-        _ => value.trim_end_matches('/') == DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL,
-    }
 }
 
 fn normalize_profile_id(value: String) -> String {
@@ -1912,7 +1894,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_server_origin_replaces_development_default_with_packaged_origin() {
+    fn normalize_server_origin_uses_desktop_dashboard_origin_for_development_default() {
         assert_eq!(
             normalize_server_origin_with_default(
                 "http://127.0.0.1:3001/",
@@ -1923,13 +1905,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_server_origin_preserves_explicit_non_default_origin() {
+    fn normalize_server_origin_uses_desktop_dashboard_origin_for_old_profile_origin() {
         assert_eq!(
             normalize_server_origin_with_default(
                 "http://192.168.1.9:9000/",
                 "http://10.22.71.7:8080"
             ),
-            "http://192.168.1.9:9000"
+            "http://10.22.71.7:8080"
         );
     }
 

@@ -22,7 +22,7 @@ export function getDefaultCloudOrigin(): string {
 }
 
 export function resolveDefaultLocalRuntimeServerUrl(): string {
-  return getDefaultCloudOrigin() || API_ORIGIN || DEFAULT_DESKTOP_API_ORIGIN;
+  return API_ORIGIN || getDefaultCloudOrigin() || DEFAULT_DESKTOP_API_ORIGIN;
 }
 
 export function subscribeDesktopDefaults(listener: Listener): () => void {

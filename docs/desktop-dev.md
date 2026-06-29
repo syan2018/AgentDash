@@ -66,7 +66,8 @@ Tauri 壳启动后会初始化 embedded `DesktopRunnerHost`。`AGENTDASH_DESKTOP
 
 - `desktop-app-settings.json` 中 `auto_connect_local_runtime=true` 是全局自动连接开关。
 - `local-runtime-profile.json` 中 `auto_start=true` 表示这份 profile 参与 native 启动期自动连接。
-- profile 里的 `server_url`、`workspace_roots`、`executor_enabled` 继续是启动配置事实源；profile 不保存 access token，用户登录后 Web bridge 只传当前 access token 并请求同一个 native 启动服务。
+- desktop embedded runner 的 enrollment origin 跟随当前 Desktop Dashboard API origin。开发期 `pnpm dev:desktop` 通过 `AGENTDASH_DESKTOP_API_ORIGIN` / `VITE_API_ORIGIN` 指向本机 `agentdash-server`，因此 runner ensure 也连接同一个本机 origin；release external 包的 Dashboard API origin 指向远端时，runner ensure 也连接同一个远端 origin。
+- profile 里的 `workspace_roots`、`executor_enabled` 继续是启动配置事实源；`server_url` 会被规范化到当前 Dashboard API origin。profile 不保存 access token，用户登录后 Web bridge 只传当前 access token 并请求同一个 native 启动服务。
 
 设置页的本机运行时诊断会展示 `idle`、`disabled`、`waiting_for_auth`、`waiting_for_api`、`claiming`、`starting`、`running`、`retrying`、`error`、`stopping`、`stopped` 等 native supervisor 状态，以及 `last_error`、retry count、next retry 和 relay 状态。诊断区只展示脱敏后的错误与日志；`desktop_access_token` 表示桌面登录授权路径，`runner_registration_token` 表示独立 runner 注册路径。
 
@@ -162,7 +163,7 @@ $env:AGENTDASH_DEFAULT_CLOUD_ORIGIN = "https://agentdash.example.com"
 pnpm run desktop:bundle
 ```
 
-`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `external` API mode，也就是打出的桌面壳连接配置好的远端 server。`AGENTDASH_DEFAULT_CLOUD_ORIGIN` 会同时作为 Dashboard API origin 和 Local Runtime 默认 server URL 写入安装包 defaults。
+`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `external` API mode，也就是打出的桌面壳连接配置好的远端 server。desktop embedded runner 的 ensure origin 跟随 Desktop Dashboard API origin；未单独指定 `--api-origin` 时，`AGENTDASH_DEFAULT_CLOUD_ORIGIN` 会作为这个 Dashboard API origin。
 
 ```powershell
 pnpm run desktop:build -- --default-cloud-origin https://agentdash.example.com

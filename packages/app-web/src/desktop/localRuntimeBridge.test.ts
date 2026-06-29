@@ -155,7 +155,7 @@ describe("desktop local runtime bridge", () => {
     }));
   });
 
-  it("保留用户显式配置的非默认 server URL", async () => {
+  it("旧 profile 的非默认 server URL 不会覆盖当前 Dashboard API origin", async () => {
     const runtimeStart = vi.fn(async () => createStatus("running"));
     const client = createClient(runtimeStart);
     vi.mocked(client.profileLoad).mockResolvedValue(createProfile(true, "http://192.168.1.9:9000"));
@@ -165,7 +165,7 @@ describe("desktop local runtime bridge", () => {
     await ensureDesktopLocalRuntimeStarted("token-current");
 
     expect(runtimeStart).toHaveBeenCalledWith(expect.objectContaining({
-      server_url: "http://192.168.1.9:9000",
+      server_url: "http://10.22.71.7:8080",
     }));
   });
 });

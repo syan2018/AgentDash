@@ -32,7 +32,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 - standalone `agentdash-local` 入口必须显式接收已领取的 `backend_id`，原因是本机 runtime 只能消费 server claim 结果，不能在本地创建正式 backend identity
 - server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capability_slot` 定位 local backend，原因是机器级身份与共享 scope 共同决定本机执行面的唯一归属
 - `machine_label` / hostname 只用于展示；profile load/save/start 都由 `agentdash-local` 持久化身份覆盖 canonical machine id
-- profile 保存当前 server、profile、workspace roots、backend claim 结果和启动偏好；机器身份事实由 `agentdash-local machine-identity` 独立持有
+- profile 保存 profile id、workspace roots、backend claim 结果和启动偏好；desktop embedded runner 的 enrollment origin 来自当前 Desktop Dashboard API origin，机器身份事实由 `agentdash-local machine-identity` 独立持有
 - `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议，通过 `agentdash-local machine-identity` 读取身份
 
 ## Scenario: Runner Registration Token Enrollment
@@ -346,7 +346,7 @@ Desktop defaults JSON:
 - Default desktop packaging uses `external` API mode. `AGENTDASH_DEFAULT_CLOUD_ORIGIN`, `--api-origin`, or `--default-cloud-origin` must provide the remote server origin that the dashboard uses for business HTTP API calls.
 - `--desktop-defaults` carries a non-secret JSON defaults file into the desktop frontend bundle as `agentdash-desktop-defaults.json`; the desktop frontend reads this file at runtime before creating an auto-connect profile.
 - `--default-cloud-origin` is a shortcut that produces the same carried `default_cloud_origin` value without hand-writing a defaults file.
-- `default_cloud_origin` pre-fills the Local Runtime profile server URL and, when no separate `--api-origin` is provided, also acts as the packaged dashboard API origin. It does not create a `backend_id`, and does not embed access/registration/relay tokens.
+- `default_cloud_origin` 在没有单独 `--api-origin` 时作为 packaged Dashboard API origin。desktop embedded runner 的 Local Runtime profile server URL 会被规范化为当前 Dashboard API origin；`default_cloud_origin` 不创建 `backend_id`，也不嵌入 access/registration/relay token。
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
 - Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
 - Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
@@ -354,10 +354,10 @@ Desktop defaults JSON:
 - `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
 - Desktop runner snapshot state is `idle | disabled | waiting_for_auth | waiting_for_api | claiming | starting | running | retrying | error | stopping | stopped`. The host uses `idle/disabled/waiting_*` before a runtime handle exists, `claiming` while calling `/api/local-runtime/ensure`, and projects relay reconnects as `retrying`, so settings UI can explain both supervisor and relay phases without parsing logs.
 - `LocalRuntimeStatus.owner = "desktop_embedded_runner"` and `registration_source = "desktop_access_token"` for the desktop embedded host. Standalone service runner rows remain identified by backend projection `registration_source = "runner_registration_token"`, so UI can keep lifecycle owner and enrollment source separate.
-- `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as server URL、workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
+- `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
 - `external` Desktop API mode only chooses the Dashboard API origin. It does not disable the embedded desktop runner host, because cloud API authority and local execution lifecycle are separate facts.
 - Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It uses current-user availability as the authenticated intent gate, passes the current bearer token only when one exists, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures. If the Dashboard has a current user but no bearer token, the bridge still calls the same native ensure path so `/api/local-runtime/ensure` can either accept another configured auth source or return an actionable auth/API error in the native snapshot.
-- The development default Local Runtime server URL `http://127.0.0.1:3001` is a replaceable placeholder in desktop profiles. Packaged/external desktop builds must resolve an empty or placeholder profile server URL to the current Desktop API/default cloud origin, while preserving a user-entered non-default origin.
+- Desktop embedded runner enrollment origin follows the current Desktop Dashboard API origin. In release external builds that origin is provided by `AGENTDASH_DEFAULT_CLOUD_ORIGIN` / `--api-origin`; in `pnpm dev:desktop` it is provided by `VITE_API_ORIGIN` and `AGENTDASH_DESKTOP_API_ORIGIN` pointing at the local dev `agentdash-server`. Frontend defaults resolve Local Runtime server URL as `API_ORIGIN -> default_cloud_origin -> 127.0.0.1:17301`, and Tauri normalizes profile/start request `server_url` to `desktop_api_config().origin`; persisted profile values never override the current Dashboard API origin.
 - Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
 ### 4. Validation & Error Matrix
@@ -378,6 +378,7 @@ Desktop defaults JSON:
 | Auto-connect has current user but no bearer token | call the native ensure path with an empty bearer field; if the server rejects it, snapshot/logs report an auth/API error rather than staying in `waiting_for_auth` |
 | Native startup has `auto_connect_local_runtime=false` | report `state=disabled` and do not claim until an explicit manual start/retry request arrives |
 | Native startup has no auto-start profile | report `state=idle` and wait for login bridge/profile save or manual start |
+| Profile contains an old remote or old development `server_url` while Dashboard API origin changed | normalize saved profile and runtime start request to the current Desktop Dashboard API origin |
 | Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
 | Auto-connect disabled or bridge unavailable | return without scheduling retry |
 
@@ -390,6 +391,7 @@ Desktop defaults JSON:
 - Single-instance ownership keeps Desktop API port binding, tray ownership, and embedded runner claim/start state in one process, which makes package launch behavior match the user expectation of one resident desktop app.
 - The embedded host boundary keeps claim/start serialization next to `LocalRuntimeManager`, while Tauri stays focused on desktop lifecycle and the web app stays focused on intent and status display.
 - Canonical auto-connect flow: authenticated Dashboard resolves current user -> desktop bridge ensures defaults/profile and passes the current bearer token when available -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
+- Canonical origin flow: deployment or dev script selects Desktop Dashboard API origin -> Web Dashboard HTTP calls and desktop embedded runner ensure both use that origin -> relay credentials returned by that server decide the backend connection target.
 - Canonical flow: window close hides; explicit quit exits.
 
 ### 6. Tests Required
@@ -399,9 +401,10 @@ Desktop defaults JSON:
 - Rust tests assert tray runtime actions call the existing runtime manager/profile path and do not create ad hoc identities.
 - Rust checks assert Tauri single-instance plugin registration remains before setup-managed process initialization.
 - Rust tests assert `DesktopRunnerHost` reuses `starting/running` snapshots and serializes concurrent ensure calls around config construction and runtime start.
+- Rust tests assert Tauri profile/start normalization always uses current Desktop Dashboard API origin even when profile `server_url` contains an old remote origin.
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
-- Frontend tests assert auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
+- Frontend tests assert Local Runtime defaults prefer current `API_ORIGIN` over packaged `default_cloud_origin`; auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, normalizes old profile `server_url` to current Dashboard API origin, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
 - Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 
@@ -411,6 +414,7 @@ Desktop defaults JSON:
 CloseRequested -> prevent default -> hide main window
 desktop_quit_request/tray quit -> stop runtime -> app.exit(0)
 Authenticated web intent -> runtime_start -> DesktopRunnerHost.ensure_started_with -> LocalRuntimeSnapshot
+Desktop Dashboard API origin -> local-runtime/ensure origin -> relay credentials
 ```
 
 ## Scenario: Runtime Diagnostics Snapshot And Relay State

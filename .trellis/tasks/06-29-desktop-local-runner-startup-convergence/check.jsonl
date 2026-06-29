@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "最终检查桌面、前端、云端状态和本机 runner lifecycle 是否仍以同一事实源解释。"}
+{"file": ".trellis/tasks/06-26-local-runtime-distribution/implement.md", "reason": "核对发布验收矩阵中桌面安装包、后台运行、自启动和 runner/service 生命周期要求。"}
+{"file": ".trellis/tasks/06-27-local-backend-enrollment-convergence/design.md", "reason": "确认没有破坏 Desktop access-token enrollment 与 Runner registration-token enrollment 的既定边界。"}
+{"file": "docs/desktop-dev.md", "reason": "检查桌面启动、构建和验收说明是否与实现后的行为一致。"}
+{"file": "docs/local-execution-backend.md", "reason": "检查用户文档中 Desktop Local Runtime 与 Standalone Local Runner 的关系是否准确。"}

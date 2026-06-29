@@ -106,10 +106,14 @@ impl RelayConnectionStatus {
     }
 
     fn reconnecting(config: &Config, retry_count: u32, error: impl AsRef<str>) -> Self {
+        let next_retry_at = chrono::Duration::from_std(reconnect_delay(retry_count))
+            .ok()
+            .map(|delay| (Utc::now() + delay).to_rfc3339());
         Self {
             last_disconnected_at: Some(Utc::now().to_rfc3339()),
             last_error: Some(redact_secret(error.as_ref())),
             retry_count: Some(retry_count),
+            next_retry_at,
             ..Self::for_config(config, RelayConnectionState::Reconnecting)
         }
     }

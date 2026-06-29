@@ -189,8 +189,7 @@ export function LocalRuntimeView({
     [desktopSettings, diagnosticsContext, logs, snapshot],
   )
 
-  async function handleStart(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function startRuntimeFromCurrentProfile() {
     setIsBusy(true)
     setError(null)
     try {
@@ -209,6 +208,11 @@ export function LocalRuntimeView({
     } finally {
       setIsBusy(false)
     }
+  }
+
+  async function handleStart(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await startRuntimeFromCurrentProfile()
   }
 
   async function handleSaveProfile() {
@@ -389,7 +393,11 @@ export function LocalRuntimeView({
 
   return (
     <div className="space-y-4">
-      <RuntimeDiagnosticsOverview diagnostics={diagnostics} />
+      <RuntimeDiagnosticsOverview
+        diagnostics={diagnostics}
+        manualRetryDisabled={isBusy}
+        onManualRetry={() => void startRuntimeFromCurrentProfile()}
+      />
 
       {/* ── 状态概览 ── */}
       <Card>
@@ -414,6 +422,9 @@ export function LocalRuntimeView({
         <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
           <Button size="sm" onClick={() => void client.runtimeSnapshot().then(setSnapshot)} disabled={isBusy}>
             刷新状态
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => void startRuntimeFromCurrentProfile()} disabled={isBusy}>
+            启动/重试
           </Button>
           <Button size="sm" onClick={() => void handleRestart()} disabled={isBusy || !isRunning}>
             重启
@@ -753,7 +764,15 @@ export function LocalRuntimeView({
   )
 }
 
-function RuntimeDiagnosticsOverview({ diagnostics }: { diagnostics: RuntimeDiagnosticsSnapshot }) {
+function RuntimeDiagnosticsOverview({
+  diagnostics,
+  manualRetryDisabled,
+  onManualRetry,
+}: {
+  diagnostics: RuntimeDiagnosticsSnapshot
+  manualRetryDisabled: boolean
+  onManualRetry: () => void
+}) {
   const relayState = diagnostics.relay_connection?.state ?? 'not_configured'
   const chain = [
     diagnostics.cloud_api,
@@ -781,7 +800,14 @@ function RuntimeDiagnosticsOverview({ diagnostics }: { diagnostics: RuntimeDiagn
   return (
     <Card>
       <CardHeader
-        actions={<Badge variant={layerBadgeVariant(worst)}>{layerStateText(worst)}</Badge>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={onManualRetry} disabled={manualRetryDisabled}>
+              手动重试
+            </Button>
+            <Badge variant={layerBadgeVariant(worst)}>{layerStateText(worst)}</Badge>
+          </div>
+        }
       >
         <h2 className="text-base font-semibold text-foreground">运行状态诊断</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
@@ -811,7 +837,22 @@ function RuntimeDiagnosticsOverview({ diagnostics }: { diagnostics: RuntimeDiagn
         ))}
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
+          <p className="text-xs font-medium text-muted-foreground">原生 Supervisor</p>
+          {diagnostics.local_runtime ? (
+            <div className="mt-2 grid grid-cols-[96px_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              <DiagnosticsRow label="状态" value={runtimeStateText(diagnostics.local_runtime.raw_state)} />
+              <DiagnosticsRow label="宿主" value={diagnostics.local_runtime.owner ?? '-'} mono />
+              <DiagnosticsRow label="最后错误" value={diagnostics.local_runtime.last_error ?? '-'} />
+              <DiagnosticsRow label="重试" value={retryText(diagnostics.local_runtime.retry_count, diagnostics.local_runtime.next_retry_at)} />
+              <DiagnosticsRow label="上次尝试" value={formatOptionalTimestamp(diagnostics.local_runtime.last_attempt_at)} />
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">等待桌面宿主上报本机 runtime snapshot。</p>
+          )}
+        </div>
+
         <div className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
           <p className="text-xs font-medium text-muted-foreground">注册与身份</p>
           {diagnostics.registration ? (
@@ -989,10 +1030,22 @@ function buildStartRequest(
 
 function stateText(state: LocalRuntimeStatus['state']) {
   switch (state) {
+    case 'idle':
+      return '待命'
+    case 'disabled':
+      return '未启用'
+    case 'waiting_for_auth':
+      return '等待登录'
+    case 'waiting_for_api':
+      return '等待 API'
+    case 'claiming':
+      return '领取凭据中'
     case 'starting':
       return '启动中'
     case 'running':
       return '运行中'
+    case 'retrying':
+      return '重试中'
     case 'stopping':
       return '停止中'
     case 'error':
@@ -1006,7 +1059,11 @@ function stateBadgeVariant(state?: LocalRuntimeStatus['state']): 'success' | 'pr
   switch (state) {
     case 'running':
       return 'success'
+    case 'waiting_for_auth':
+    case 'waiting_for_api':
+    case 'claiming':
     case 'starting':
+    case 'retrying':
     case 'stopping':
       return 'primary'
     case 'error':
@@ -1015,6 +1072,16 @@ function stateBadgeVariant(state?: LocalRuntimeStatus['state']): 'success' | 'pr
     default:
       return 'neutral'
   }
+}
+
+function runtimeStateText(state: LocalRuntimeStatus['state'] | null): string {
+  return state ? stateText(state) : '-'
+}
+
+function retryText(retryCount: number | null, nextRetryAt: string | null): string {
+  if (retryCount === null && !nextRetryAt) return '-'
+  const countText = retryCount === null ? '未知次数' : `${retryCount} 次`
+  return `${countText} · 下次 ${formatOptionalTimestamp(nextRetryAt)}`
 }
 
 function layerSeverity(state: LayerState): number {

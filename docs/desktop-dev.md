@@ -62,6 +62,14 @@ pnpm dev:desktop
 
 开发期 `pnpm dev` 与 `pnpm dev:desktop` 都复用 `agentdash-local` crate 的机器身份逻辑。Tauri 壳不再维护第二套开发态 machine identity，避免同一台机器在 Web 联合调试和桌面调试中被 server 识别成两个 personal local runtime。
 
+Tauri 壳启动后会初始化 embedded `DesktopRunnerHost`。`AGENTDASH_DESKTOP_API_MODE=external` 只表示 Dashboard API 指向外部 server，不会关闭桌面内嵌本机执行面。native host 的自动启动判断为：
+
+- `desktop-app-settings.json` 中 `auto_connect_local_runtime=true` 是全局自动连接开关。
+- `local-runtime-profile.json` 中 `auto_start=true` 表示这份 profile 参与 native 启动期自动连接。
+- profile 里的 `server_url`、`workspace_roots`、`executor_enabled` 继续是启动配置事实源；profile 不保存 access token，用户登录后 Web bridge 只传当前 access token 并请求同一个 native 启动服务。
+
+设置页的本机运行时诊断会展示 `idle`、`disabled`、`waiting_for_auth`、`waiting_for_api`、`claiming`、`starting`、`running`、`retrying`、`error`、`stopping`、`stopped` 等 native supervisor 状态，以及 `last_error`、retry count、next retry 和 relay 状态。诊断区只展示脱敏后的错误与日志；`desktop_access_token` 表示桌面登录授权路径，`runner_registration_token` 表示独立 runner 注册路径。
+
 直接执行 `pnpm run dev:desktop-shell` 时不会自动设置 external 模式；这种方式会走 Tauri 壳的默认行为，由壳进程内托管 Dashboard API。需要调试独立后端时优先使用 `pnpm dev:desktop`。
 
 Web 与 Desktop profile 都复用 `scripts/lib/dev-process.js` 中的开发进程基础设施：

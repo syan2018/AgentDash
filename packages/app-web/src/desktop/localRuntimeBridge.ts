@@ -30,7 +30,19 @@ interface DesktopAppBridge {
   quit(): Promise<void>;
 }
 
-let desktopRuntimeAutoConnectAttempted = false;
+const DESKTOP_RUNTIME_AUTO_CONNECT_MAX_ATTEMPTS = 8;
+const DESKTOP_RUNTIME_AUTO_CONNECT_RETRY_MS = 2000;
+
+let desktopRuntimeAutoConnectCompleted = false;
+let desktopRuntimeAutoConnectInFlight: Promise<void> | null = null;
+let desktopRuntimeAutoConnectRetryTimer: number | null = null;
+let desktopRuntimeAutoConnectAttempts = 0;
+let desktopRuntimeAutoConnectLastToken = '';
+let desktopRuntimeAutoConnectLastCurrentUserAvailable = false;
+
+interface DesktopRuntimeAuthState {
+  currentUserAvailable: boolean;
+}
 
 export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
   if (typeof window === 'undefined') return null;
@@ -47,39 +59,107 @@ export function getDesktopBrowseDirectory(): ((path?: string) => Promise<BrowseD
   return window.__AGENTDASH_DESKTOP_BROWSE_DIRECTORY__;
 }
 
-export async function ensureDesktopLocalRuntimeStarted(accessToken: string): Promise<void> {
+export function ensureDesktopLocalRuntimeStarted(
+  accessToken: string,
+  authState?: DesktopRuntimeAuthState,
+): Promise<void> {
+  const token = accessToken.trim();
+  const currentUserAvailable = authState?.currentUserAvailable ?? token.length > 0;
+  if (!currentUserAvailable) {
+    desktopRuntimeAutoConnectCompleted = false;
+    desktopRuntimeAutoConnectAttempts = 0;
+    desktopRuntimeAutoConnectLastToken = '';
+    desktopRuntimeAutoConnectLastCurrentUserAvailable = false;
+    clearDesktopRuntimeAutoConnectRetry();
+    return Promise.resolve();
+  }
+
+  if (
+    token !== desktopRuntimeAutoConnectLastToken
+    || currentUserAvailable !== desktopRuntimeAutoConnectLastCurrentUserAvailable
+  ) {
+    desktopRuntimeAutoConnectCompleted = false;
+    desktopRuntimeAutoConnectAttempts = 0;
+    clearDesktopRuntimeAutoConnectRetry();
+  }
+  desktopRuntimeAutoConnectLastToken = token;
+  desktopRuntimeAutoConnectLastCurrentUserAvailable = currentUserAvailable;
+  if (desktopRuntimeAutoConnectCompleted) return Promise.resolve();
+  if (desktopRuntimeAutoConnectInFlight) return desktopRuntimeAutoConnectInFlight;
+
+  desktopRuntimeAutoConnectInFlight = runDesktopLocalRuntimeAutoConnect(token)
+    .then((started) => {
+      if (started) {
+        desktopRuntimeAutoConnectCompleted = true;
+        clearDesktopRuntimeAutoConnectRetry();
+      }
+    })
+    .catch((error: unknown) => {
+      scheduleDesktopRuntimeAutoConnectRetry();
+      throw error;
+    })
+    .finally(() => {
+      desktopRuntimeAutoConnectInFlight = null;
+    });
+
+  return desktopRuntimeAutoConnectInFlight;
+}
+
+async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<boolean> {
   const client = getDesktopLocalRuntimeClient();
   const desktopApp = getDesktopAppBridge();
   const token = accessToken.trim();
-  if (!client || !desktopApp) return;
-  if (desktopRuntimeAutoConnectAttempted) return;
-  desktopRuntimeAutoConnectAttempted = true;
+  if (!client || !desktopApp) return false;
+  desktopRuntimeAutoConnectAttempts += 1;
 
   const settings = await desktopApp.loadSettings();
-  if (!settings.auto_connect_local_runtime) return;
+  if (!settings.auto_connect_local_runtime) return false;
 
   const snapshot = await client.runtimeSnapshot().catch(() => null);
-  if (snapshot?.state === 'starting' || snapshot?.state === 'running') return;
+  if (snapshot?.state === 'starting' || snapshot?.state === 'running') return true;
 
   await ensureDesktopDefaultsLoaded();
-  const profile = await loadOrCreateAutoConnectProfile(client, token);
+  const profile = await loadOrCreateAutoConnectProfile(client);
+  if (!profile.auto_start) return false;
 
-  await client.runtimeStart({
+  const started = await client.runtimeStart({
     ...profile,
     access_token: token,
     server_url: resolveDesktopServerUrl(profile.server_url),
   });
+  if (started.state === 'error') {
+    throw new Error(started.message ?? 'Desktop local runtime auto-connect failed');
+  }
+  return true;
 }
 
-async function loadOrCreateAutoConnectProfile(
-  client: LocalRuntimeClient,
-  accessToken: string,
-): Promise<LocalRuntimeProfile> {
+function scheduleDesktopRuntimeAutoConnectRetry(): void {
+  if (typeof window === 'undefined') return;
+  if (!getDesktopLocalRuntimeClient() || !getDesktopAppBridge()) return;
+  if (desktopRuntimeAutoConnectRetryTimer !== null) return;
+  if (desktopRuntimeAutoConnectAttempts >= DESKTOP_RUNTIME_AUTO_CONNECT_MAX_ATTEMPTS) return;
+
+  desktopRuntimeAutoConnectRetryTimer = window.setTimeout(() => {
+    desktopRuntimeAutoConnectRetryTimer = null;
+    ensureDesktopLocalRuntimeStarted(
+      desktopRuntimeAutoConnectLastToken,
+      { currentUserAvailable: desktopRuntimeAutoConnectLastCurrentUserAvailable },
+    ).catch(() => undefined);
+  }, DESKTOP_RUNTIME_AUTO_CONNECT_RETRY_MS);
+}
+
+function clearDesktopRuntimeAutoConnectRetry(): void {
+  if (typeof window === 'undefined' || desktopRuntimeAutoConnectRetryTimer === null) return;
+  window.clearTimeout(desktopRuntimeAutoConnectRetryTimer);
+  desktopRuntimeAutoConnectRetryTimer = null;
+}
+
+async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promise<LocalRuntimeProfile> {
   const current = await client.profileLoad().catch(() => null);
   if (current) {
     const normalized = {
       ...current,
-      access_token: accessToken,
+      access_token: '',
       server_url: resolveDesktopServerUrl(current.server_url),
       profile_id: current.profile_id || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
       machine_id: current.machine_id || '',
@@ -91,14 +171,14 @@ async function loadOrCreateAutoConnectProfile(
 
   const created: LocalRuntimeProfile = {
     server_url: resolveDesktopServerUrl(''),
-    access_token: accessToken,
+    access_token: '',
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
     machine_label: null,
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     workspace_roots: [],
     executor_enabled: true,
-    auto_start: false,
+    auto_start: true,
     backend_id: null,
     relay_ws_url: null,
   };
@@ -107,6 +187,16 @@ async function loadOrCreateAutoConnectProfile(
 
 function resolveDesktopServerUrl(value: string): string {
   const explicit = value.trim().replace(/\/+$/, '');
-  if (explicit) return explicit;
-  return resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
+  const fallback = resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
+  if (!explicit) return fallback;
+  if (isBundledDevelopmentDefaultServerUrl(explicit)) return fallback;
+  return explicit;
+}
+
+function isBundledDevelopmentDefaultServerUrl(value: string): boolean {
+  try {
+    return new URL(value).origin === new URL(DEFAULT_LOCAL_RUNTIME_SERVER_URL).origin;
+  } catch {
+    return value === DEFAULT_LOCAL_RUNTIME_SERVER_URL;
+  }
 }

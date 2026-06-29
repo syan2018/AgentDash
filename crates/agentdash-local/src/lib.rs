@@ -2,6 +2,7 @@
 //!
 //! CLI 与后续 Tauri desktop 都应把这里作为本机能力入口；二进制入口只负责参数解析和宿主启动。
 
+mod desktop_runner_host;
 mod extensions;
 mod file_discovery_policy;
 mod handlers;
@@ -28,6 +29,7 @@ mod ws_client;
 pub mod runtime;
 pub mod runtime_paths;
 
+pub use desktop_runner_host::DesktopRunnerHost;
 pub use extensions::{
     ExtensionArtifactCacheEntry, ExtensionArtifactCacheError, ExtensionArtifactDownloadRequest,
     LocalExtensionHostActivation, LocalExtensionHostError, LocalExtensionHostHealth,

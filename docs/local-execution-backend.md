@@ -20,6 +20,10 @@ AgentDash 的「本机执行面」是指真正在某台机器上承载 agent 执
 
 你**不需要**理解或复制任何 token；设置页「运行环境」会把这台机器标为「本机（这台设备）」。
 
+桌面包内的本机执行面由 native `DesktopRunnerHost` 托管，而不是由 Web 页面生命周期托管。桌面设置里的 `auto_connect_local_runtime` 是全局自动连接开关；本机 profile 里的 `auto_start` 表示这份 profile 参与 native 启动期自动连接。profile 中的 `server_url`、`workspace_roots`、`executor_enabled` 是启动配置事实源，不保存 access token；Web 登录态只提供当前 access token 并请求同一个 native 启动服务。
+
+诊断状态来自 native snapshot：`waiting_for_auth` 表示等待桌面登录授权，`waiting_for_api` 表示 server 暂不可达或 ensure 暂时失败，`claiming` 表示正在领取 relay credentials，`retrying` 表示 supervisor 或 relay 正在重试。`desktop_access_token` 与 `runner_registration_token` 只表示 enrollment 来源；relay 连接仍只使用 server 返回的 `auth_token`。
+
 ---
 
 ## 路径 B：Standalone Local Runner（服务器）

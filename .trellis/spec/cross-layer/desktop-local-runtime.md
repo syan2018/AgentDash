@@ -281,6 +281,23 @@ async fn desktop_autostart_set_enabled(enabled: bool) -> Result<DesktopAutostart
 async fn desktop_quit_request(app: tauri::AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String>;
 ```
 
+Embedded runner host:
+
+```rust
+pub struct DesktopRunnerHost;
+
+impl DesktopRunnerHost {
+    pub async fn ensure_started_with<F, Fut>(&self, build_config: F) -> anyhow::Result<LocalRuntimeSnapshot>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<LocalRuntimeConfig>>;
+
+    pub async fn stop(&self, reason: StopReason) -> anyhow::Result<()>;
+    pub async fn restart(&self) -> anyhow::Result<LocalRuntimeSnapshot>;
+    pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot>;
+}
+```
+
 Frontend bridge:
 
 ```ts
@@ -332,6 +349,16 @@ Desktop defaults JSON:
 - `default_cloud_origin` pre-fills the Local Runtime profile server URL and, when no separate `--api-origin` is provided, also acts as the packaged dashboard API origin. It does not create a `backend_id`, and does not embed access/registration/relay tokens.
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
 - Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
+- Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
+- `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands normalize desktop profile/request data and call the host; `agentdash-local` owns runtime reuse, serialized ensure/start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
+- `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
+- Desktop runner snapshot state is `idle | disabled | waiting_for_auth | waiting_for_api | claiming | starting | running | retrying | error | stopping | stopped`. The host uses `idle/disabled/waiting_*` before a runtime handle exists, `claiming` while calling `/api/local-runtime/ensure`, and projects relay reconnects as `retrying`, so settings UI can explain both supervisor and relay phases without parsing logs.
+- `LocalRuntimeStatus.owner = "desktop_embedded_runner"` and `registration_source = "desktop_access_token"` for the desktop embedded host. Standalone service runner rows remain identified by backend projection `registration_source = "runner_registration_token"`, so UI can keep lifecycle owner and enrollment source separate.
+- `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as server URL、workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
+- `external` Desktop API mode only chooses the Dashboard API origin. It does not disable the embedded desktop runner host, because cloud API authority and local execution lifecycle are separate facts.
+- Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It uses current-user availability as the authenticated intent gate, passes the current bearer token only when one exists, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures. If the Dashboard has a current user but no bearer token, the bridge still calls the same native ensure path so `/api/local-runtime/ensure` can either accept another configured auth source or return an actionable auth/API error in the native snapshot.
+- The development default Local Runtime server URL `http://127.0.0.1:3001` is a replaceable placeholder in desktop profiles. Packaged/external desktop builds must resolve an empty or placeholder profile server URL to the current Desktop API/default cloud origin, while preserving a user-entered non-default origin.
+- Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
 ### 4. Validation & Error Matrix
 
@@ -345,6 +372,14 @@ Desktop defaults JSON:
 | Windows autostart enabled | write HKCU Run value for installed/current app exe, persist `launch_at_login=true`, and reject setup/installer exe paths |
 | Autostart unsupported on non-Windows platform | return `supported=false`, stable message, and no OS registry/service mutation |
 | Desktop API port unavailable | app reports Desktop API error state; Dashboard waits for `/api/health` before rendering |
+| Second desktop instance launched | restore/focus the existing main window and keep the original process as the only Desktop API/runtime owner |
+| Runtime ensure requested concurrently | serialize claim/config/start and return the active `starting` or `running` snapshot to later callers |
+| Auto-connect has no current user | wait for login availability, clear retry state, and skip profile writes or runtime claim |
+| Auto-connect has current user but no bearer token | call the native ensure path with an empty bearer field; if the server rejects it, snapshot/logs report an auth/API error rather than staying in `waiting_for_auth` |
+| Native startup has `auto_connect_local_runtime=false` | report `state=disabled` and do not claim until an explicit manual start/retry request arrives |
+| Native startup has no auto-start profile | report `state=idle` and wait for login bridge/profile save or manual start |
+| Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
+| Auto-connect disabled or bridge unavailable | return without scheduling retry |
 
 ### 5. Operational Rationale
 
@@ -352,6 +387,9 @@ Desktop defaults JSON:
 - The tray `Quit AgentDash` item performs an intentional shutdown and stops the managed runtime before process exit.
 - `start_minimized_to_tray=true` gives a resident launch path for users who want AgentDash available without opening the dashboard.
 - Window visibility and process lifetime are separate because background execution should not depend on whether the dashboard surface is visible.
+- Single-instance ownership keeps Desktop API port binding, tray ownership, and embedded runner claim/start state in one process, which makes package launch behavior match the user expectation of one resident desktop app.
+- The embedded host boundary keeps claim/start serialization next to `LocalRuntimeManager`, while Tauri stays focused on desktop lifecycle and the web app stays focused on intent and status display.
+- Canonical auto-connect flow: authenticated Dashboard resolves current user -> desktop bridge ensures defaults/profile and passes the current bearer token when available -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
 - Canonical flow: window close hides; explicit quit exits.
 
 ### 6. Tests Required
@@ -359,15 +397,20 @@ Desktop defaults JSON:
 - Rust tests assert settings default/load/save behavior and malformed file error behavior.
 - Rust tests assert close request is prevented unless the explicit quit flag is set.
 - Rust tests assert tray runtime actions call the existing runtime manager/profile path and do not create ad hoc identities.
+- Rust checks assert Tauri single-instance plugin registration remains before setup-managed process initialization.
+- Rust tests assert `DesktopRunnerHost` reuses `starting/running` snapshots and serializes concurrent ensure calls around config construction and runtime start.
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
+- Frontend tests assert auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
+- Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 
 ### 7. Canonical Lifecycle
 
 ```text
 CloseRequested -> prevent default -> hide main window
 desktop_quit_request/tray quit -> stop runtime -> app.exit(0)
+Authenticated web intent -> runtime_start -> DesktopRunnerHost.ensure_started_with -> LocalRuntimeSnapshot
 ```
 
 ## Scenario: Runtime Diagnostics Snapshot And Relay State
@@ -384,12 +427,18 @@ Rust desktop runtime snapshot:
 ```rust
 pub struct LocalRuntimeStatus {
     pub state: LocalRuntimeState,
+    pub owner: String,
+    pub registration_source: Option<String>,
     pub backend_id: String,
     pub name: String,
     pub workspace_roots: Vec<String>,
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
     pub message: Option<String>,
+    pub last_error: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub next_retry_at: Option<String>,
+    pub retry_count: Option<u32>,
     pub relay_connection: Option<ws_client::RelayConnectionStatus>,
 }
 
@@ -430,6 +479,7 @@ registration_source: string | null
 ### 3. Contracts
 
 - `ws_client` writes `RelayConnectionStatus` at `connecting`、`registered`、`reconnecting`、`disconnected` lifecycle points through a watch channel owned by `LocalRuntimeManager`。
+- `DesktopRunnerHost` writes supervisor facts into `LocalRuntimeStatus` even before `LocalRuntimeManager` has a running handle. `owner` and `registration_source` identify the desktop embedded host and desktop access-token enrollment path; `last_error`、`last_attempt_at`、`next_retry_at` and `retry_count` explain claim/API/auth retry phases.
 - `registered_backend_id` is only set after relay `RegisterAck` confirms the backend registration. Reconnecting/disconnected snapshots preserve the last confirmed `last_connected_at` and `registered_backend_id` so the UI can show the last healthy relay fact.
 - `target` and `last_error` must be redacted before entering local runtime snapshots or logs.
 - Frontend `createRuntimeDiagnosticsSnapshot()` consumes structured facts only. It must not parse logs to infer state and must not treat `backend.online` as relay handshake state.
@@ -445,6 +495,7 @@ registration_source: string | null
 | Relay receives `RegisterAck` | `state = registered`, `last_connected_at` set, `registered_backend_id` set |
 | Relay disconnects after successful registration | `state = reconnecting/disconnected`, last confirmed `last_connected_at` and `registered_backend_id` retained |
 | Relay error includes token-bearing URL/header/message | snapshot/log/copy output redacts token-bearing values |
+| Supervisor error includes token-bearing URL/header/message | `last_error` redacts token-bearing values before UI display |
 | Runtime snapshot is absent | local runtime layer is `disabled`; UI may show runner projection separately |
 | Backend has `registration_source=desktop_access_token` and runtime is stopped | UI does not classify it as independent runner |
 | Backend has `registration_source=runner_registration_token` | UI may show it as service-managed/read-only runner |

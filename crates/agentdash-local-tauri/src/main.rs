@@ -9,10 +9,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
-    LocalLogEvent, LocalRuntimeConfig, LocalRuntimeManager, LocalRuntimeSnapshot,
-    LocalRuntimeState, McpProbeResult, StopReason, browse_directory,
-    load_or_create_machine_identity, local_mcp_servers_path, local_runtime_config_dir,
-    local_runtime_profile_path, probe_mcp_server,
+    DesktopRunnerHost, LocalLogEvent, LocalRuntimeConfig, LocalRuntimeSnapshot, McpProbeResult,
+    StopReason, browse_directory, load_or_create_machine_identity, local_mcp_servers_path,
+    local_runtime_config_dir, local_runtime_profile_path, probe_mcp_server,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
@@ -29,6 +28,7 @@ const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
 const DEFAULT_PROFILE_ID: &str = "default";
 const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
 const DESKTOP_AUTOSTART_ENTRY_NAME: &str = "AgentDash";
+const DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL: &str = "http://127.0.0.1:3001";
 #[cfg(target_os = "windows")]
 const WINDOWS_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -40,7 +40,7 @@ const TRAY_MENU_QUIT: &str = "quit_agentdash";
 
 #[derive(Clone)]
 struct DesktopState {
-    runtime: LocalRuntimeManager,
+    runtime: DesktopRunnerHost,
     api: DesktopApiManager,
     lifecycle: Arc<DesktopLifecycleState>,
 }
@@ -48,7 +48,7 @@ struct DesktopState {
 impl Default for DesktopState {
     fn default() -> Self {
         Self {
-            runtime: LocalRuntimeManager::new(),
+            runtime: DesktopRunnerHost::new(),
             api: DesktopApiManager::from_snapshot(default_desktop_api_snapshot()),
             lifecycle: Arc::new(DesktopLifecycleState::default()),
         }
@@ -193,7 +193,7 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
     fn from(profile: LocalRuntimeProfile) -> Self {
         Self {
             server_url: profile.server_url,
-            access_token: profile.access_token,
+            access_token: String::new(),
             profile_id: profile.profile_id,
             machine_id: profile.machine_id,
             machine_label: profile.machine_label,
@@ -455,6 +455,10 @@ struct EnsureLocalRuntimeResponse {
     share_scope_kind: String,
     share_scope_id: Option<String>,
     capability_slot: String,
+    #[serde(default)]
+    registration_source: Option<String>,
+    #[serde(default)]
+    claimed_at: Option<String>,
 }
 
 fn desktop_settings_load_internal() -> Result<DesktopAppSettings, String> {
@@ -637,35 +641,27 @@ async fn start_runtime_from_request(
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
-    if let Some(snapshot) = state.runtime.snapshot().await
-        && matches!(
-            snapshot.state,
-            LocalRuntimeState::Starting | LocalRuntimeState::Running
-        )
-    {
-        state
-            .runtime
-            .record_log("info", "runtime", "runtime 已在启动或运行，复用现有状态")
-            .await;
-        return Ok(snapshot);
-    }
-
     let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
-    let claim = claim_local_runtime(&request, retry_until_server_ready).await?;
-    let config = LocalRuntimeConfig::new(
-        claim.relay_ws_url,
-        claim.auth_token,
-        claim.backend_id,
-        claim.name,
-        request.workspace_roots,
-        request.executor_enabled,
-    );
-
-    let handle = state.runtime.start(config).await?;
-    Ok(handle.status_rx.borrow().clone())
+    let runtime_for_claim = state.runtime.clone();
+    state
+        .runtime
+        .ensure_started_with(|| async move {
+            let claim =
+                claim_local_runtime(&runtime_for_claim, &request, retry_until_server_ready).await?;
+            Ok(LocalRuntimeConfig::new(
+                claim.relay_ws_url,
+                claim.auth_token,
+                claim.backend_id,
+                claim.name,
+                request.workspace_roots,
+                request.executor_enabled,
+            ))
+        })
+        .await
 }
 
 async fn claim_local_runtime(
+    runtime: &DesktopRunnerHost,
     request: &RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<EnsureLocalRuntimeResponse> {
@@ -695,6 +691,16 @@ async fn claim_local_runtime(
                 return Ok(response);
             }
             Err(error) if retry_until_server_ready && attempts < 30 => {
+                let next_retry_at =
+                    (chrono::Utc::now() + chrono::Duration::seconds(1)).to_rfc3339();
+                runtime
+                    .mark_waiting_for_api(
+                        "Dashboard API 暂不可用，等待后继续领取本机 runtime",
+                        Some(error.to_string()),
+                        Some(attempts),
+                        Some(next_retry_at),
+                    )
+                    .await;
                 diag!(Warn, Subsystem::Api,
 
                     attempt = attempts,
@@ -734,6 +740,12 @@ fn validate_claim_response(
             response.capability_slot
         );
     }
+    if let Some(source) = response.registration_source.as_deref()
+        && source != "desktop_access_token"
+    {
+        anyhow::bail!("桌面端 ensure 返回了非桌面注册来源: {source}");
+    }
+    let _claimed_at = response.claimed_at.as_deref();
     let _personal_scope = response.share_scope_id.as_deref().unwrap_or("current-user");
     Ok(())
 }
@@ -759,6 +771,11 @@ async fn post_local_runtime_claim(
 
     let status = response.status();
     if !status.is_success() {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!(
+                "本机 runtime 领取被 server 拒绝: HTTP {status}。请重新登录桌面端，或确认当前登录态提供了可用于 /api/local-runtime/ensure 的 access token"
+            );
+        }
         let text = response.text().await.unwrap_or_default();
         anyhow::bail!("本机 runtime 领取失败: HTTP {status} {text}");
     }
@@ -779,7 +796,7 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
 
     Ok(LocalRuntimeProfile {
         server_url: normalize_server_origin(&profile.server_url),
-        access_token: profile.access_token.trim().to_string(),
+        access_token: String::new(),
         profile_id: normalize_profile_id(profile.profile_id),
         machine_id,
         machine_label: Some(machine_label),
@@ -813,11 +830,33 @@ fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartR
 }
 
 fn normalize_server_origin(value: &str) -> String {
+    normalize_server_origin_with_default(value, &default_local_runtime_server_origin())
+}
+
+fn normalize_server_origin_with_default(value: &str, default_origin: &str) -> String {
     let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        desktop_api_origin(DESKTOP_API_PORT)
+    if trimmed.is_empty() || is_development_local_runtime_server_origin(trimmed) {
+        default_origin.to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn default_local_runtime_server_origin() -> String {
+    desktop_api_config()
+        .map(|config| config.origin)
+        .unwrap_or_else(|_| desktop_api_origin(DESKTOP_API_PORT))
+}
+
+fn is_development_local_runtime_server_origin(value: &str) -> bool {
+    match (
+        reqwest::Url::parse(value),
+        reqwest::Url::parse(DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL),
+    ) {
+        (Ok(actual), Ok(default)) => {
+            actual.origin().ascii_serialization() == default.origin().ascii_serialization()
+        }
+        _ => value.trim_end_matches('/') == DEVELOPMENT_LOCAL_RUNTIME_SERVER_URL,
     }
 }
 
@@ -856,6 +895,60 @@ fn local_hostname() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn initialize_desktop_runner_host(state: DesktopState) {
+    tauri::async_runtime::spawn(async move {
+        let settings = match desktop_settings_load_internal() {
+            Ok(settings) => settings,
+            Err(error) => {
+                state
+                    .runtime
+                    .mark_error("读取桌面设置失败，无法判断 runtime 自动连接策略", error)
+                    .await;
+                return;
+            }
+        };
+
+        if !settings.auto_connect_local_runtime {
+            state
+                .runtime
+                .mark_disabled("桌面设置已关闭启动后自动连接 runtime")
+                .await;
+            return;
+        }
+
+        let profile = match profile_load().await {
+            Ok(Some(profile)) => profile,
+            Ok(None) => {
+                state
+                    .runtime
+                    .mark_idle("等待登录后创建桌面本机 runtime profile")
+                    .await;
+                return;
+            }
+            Err(error) => {
+                state
+                    .runtime
+                    .mark_error("读取桌面本机 runtime profile 失败", error)
+                    .await;
+                return;
+            }
+        };
+
+        if !profile.auto_start {
+            state
+                .runtime
+                .mark_idle("profile 未开启自动启动，等待登录桥接或手动启动")
+                .await;
+            return;
+        }
+
+        state
+            .runtime
+            .mark_waiting_for_auth("profile 已允许自动启动，等待 Web bridge 提供当前 access token")
+            .await;
+    });
+}
+
 fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -868,6 +961,9 @@ fn main() {
     let state_for_window_events = state.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            restore_main_window(app);
+        }))
         .manage(state)
         .on_window_event(move |window, event| {
             if window.label() != MAIN_WINDOW_LABEL {
@@ -889,9 +985,10 @@ fn main() {
         .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
             configure_tray(app.handle(), state.clone())?;
+            let state_for_api = state.clone();
             match desktop_api_config() {
                 Ok(api_config) => match api_config.mode {
-                    DesktopApiMode::Builtin => start_desktop_api(state),
+                    DesktopApiMode::Builtin => start_desktop_api(state_for_api),
                     DesktopApiMode::External => {
                         diag!(Info, Subsystem::Api,
 
@@ -899,21 +996,23 @@ fn main() {
                             "Tauri 桌面端复用外部 Dashboard API"
                         );
                     }
-                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
+                    DesktopApiMode::Sidecar => start_desktop_api_sidecar(state_for_api, api_config),
                 },
                 Err(message) => {
                     diag!(Error, Subsystem::Api,
                         error = %message,
                         "桌面端 API 配置无效"
                     );
+                    let state_for_error = state.clone();
                     tauri::async_runtime::spawn(async move {
-                        state
+                        state_for_error
                             .api
                             .mark_error_origin(desktop_api_origin(DESKTOP_API_PORT), message)
                             .await;
                     });
                 }
             }
+            initialize_desktop_runner_host(state);
             apply_startup_window_visibility(app.handle());
             Ok(())
         })
@@ -1791,6 +1890,47 @@ mod tests {
         assert!(settings.launch_at_login);
         assert!(settings.start_minimized_to_tray);
         assert!(!settings.auto_connect_local_runtime);
+    }
+
+    #[test]
+    fn runtime_start_request_from_profile_does_not_reuse_persisted_access_token() {
+        let request = RuntimeStartRequest::from(LocalRuntimeProfile {
+            server_url: "https://agentdash.example".to_string(),
+            access_token: "old-access-token".to_string(),
+            profile_id: "default".to_string(),
+            machine_id: "machine-local".to_string(),
+            machine_label: Some("Desktop".to_string()),
+            backend_id: None,
+            relay_ws_url: None,
+            name: Some("Desktop Local Runtime".to_string()),
+            workspace_roots: Vec::new(),
+            executor_enabled: true,
+            auto_start: true,
+        });
+
+        assert_eq!(request.access_token, "");
+    }
+
+    #[test]
+    fn normalize_server_origin_replaces_development_default_with_packaged_origin() {
+        assert_eq!(
+            normalize_server_origin_with_default(
+                "http://127.0.0.1:3001/",
+                "http://10.22.71.7:8080"
+            ),
+            "http://10.22.71.7:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_server_origin_preserves_explicit_non_default_origin() {
+        assert_eq!(
+            normalize_server_origin_with_default(
+                "http://192.168.1.9:9000/",
+                "http://10.22.71.7:8080"
+            ),
+            "http://192.168.1.9:9000"
+        );
     }
 
     #[test]

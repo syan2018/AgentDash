@@ -62,7 +62,7 @@ impl RuntimeGateway {
         RuntimeSurface { context, actions }
     }
 
-    pub fn surface_for_actor(
+    pub async fn surface_for_actor(
         &self,
         actor: RuntimeActor,
         context: RuntimeContext,
@@ -70,12 +70,24 @@ impl RuntimeGateway {
         let trace = None;
         validate_actor_context(context.action_kind(), &actor, &context, trace)?;
 
-        let actions = self
+        let mut actions = self
             .providers
             .values()
             .filter(|provider| provider.action_kind() == context.action_kind())
             .map(|provider| provider.describe_action())
-            .collect();
+            .collect::<Vec<_>>();
+
+        for provider in &self.dynamic_providers {
+            if provider.action_kind() == context.action_kind() {
+                actions.extend(
+                    provider
+                        .discover_actions(&actor, &context)
+                        .await?
+                        .into_iter(),
+                );
+            }
+        }
+        actions.sort_by(|left, right| left.action_key.cmp(&right.action_key));
 
         Ok(RuntimeSurface { context, actions })
     }
@@ -87,24 +99,34 @@ impl RuntimeGateway {
         let trace = request.trace.clone();
         let action_key = request.action_key.clone();
 
-        let provider = self
-            .providers
-            .get(&request.action_key)
-            .cloned()
-            .or_else(|| {
-                self.dynamic_providers
-                    .iter()
-                    .find(|provider| provider.supports(&request.action_key, &request.context))
-                    .cloned()
-            })
-            .ok_or_else(|| RuntimeInvocationError::ProviderUnavailable {
-                action_key: request.action_key.clone(),
-                trace: Some(Box::new(trace.clone())),
-            })?;
+        let provider = match self.providers.get(&request.action_key).cloned() {
+            Some(provider) => provider,
+            None => {
+                let mut provider = None;
+                for candidate in &self.dynamic_providers {
+                    if candidate
+                        .supports_action(&request.action_key, &request.context)
+                        .await
+                        .map_err(|error| error.with_trace_if_missing(trace.clone()))?
+                    {
+                        provider = Some(candidate.clone());
+                        break;
+                    }
+                }
+                provider.ok_or_else(|| RuntimeInvocationError::ProviderUnavailable {
+                    action_key: request.action_key.clone(),
+                    trace: Some(Box::new(trace.clone())),
+                })?
+            }
+        };
 
         validate_request(provider.as_ref(), &request)?;
 
-        if !provider.supports(&request.action_key, &request.context) {
+        if !provider
+            .supports_action(&request.action_key, &request.context)
+            .await
+            .map_err(|error| error.with_trace_if_missing(trace.clone()))?
+        {
             return Err(RuntimeInvocationError::capability_denied(
                 format!(
                     "provider 不支持当前上下文中的 action: {}",
@@ -392,8 +414,8 @@ mod tests {
         assert_eq!(result.action_key.as_str(), "session.echo");
     }
 
-    #[test]
-    fn actor_aware_surface_returns_session_actions_for_bound_session_actor() {
+    #[tokio::test]
+    async fn actor_aware_surface_returns_session_actions_for_bound_session_actor() {
         let gateway = RuntimeGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
@@ -416,6 +438,7 @@ mod tests {
                     workspace_id: None,
                 },
             )
+            .await
             .expect("session actor should see session runtime actions");
         let keys = surface
             .actions
@@ -426,8 +449,43 @@ mod tests {
         assert_eq!(keys, vec!["session.echo"]);
     }
 
-    #[test]
-    fn actor_aware_surface_rejects_mismatched_session_actor() {
+    #[tokio::test]
+    async fn actor_aware_surface_merges_static_and_dynamic_actions() {
+        let gateway = RuntimeGateway::new()
+            .with_provider(Arc::new(FakeProvider::new(
+                "session.echo",
+                RuntimeActionKind::SessionRuntime,
+            )))
+            .with_dynamic_provider(Arc::new(FakeProvider::new(
+                "session.dynamic",
+                RuntimeActionKind::SessionRuntime,
+            )));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::AgentSession {
+                    session_id: "session-1".to_string(),
+                    agent_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: None,
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect("session actor should see static and dynamic runtime actions");
+        let keys = surface
+            .actions
+            .iter()
+            .map(|action| action.action_key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["session.dynamic", "session.echo"]);
+    }
+
+    #[tokio::test]
+    async fn actor_aware_surface_rejects_mismatched_session_actor() {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(FakeProvider::new(
             "session.echo",
             RuntimeActionKind::SessionRuntime,
@@ -445,13 +503,14 @@ mod tests {
                     workspace_id: None,
                 },
             )
+            .await
             .expect_err("mismatched session actor should not receive a surface");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
 
-    #[test]
-    fn actor_aware_surface_returns_setup_actions_for_setup_actor() {
+    #[tokio::test]
+    async fn actor_aware_surface_returns_setup_actions_for_setup_actor() {
         let gateway = RuntimeGateway::new()
             .with_provider(Arc::new(FakeProvider::new(
                 "session.echo",
@@ -472,6 +531,7 @@ mod tests {
                     root_ref: None,
                 },
             )
+            .await
             .expect("setup actor should see setup actions");
         let keys = surface
             .actions
@@ -482,8 +542,8 @@ mod tests {
         assert_eq!(keys, vec!["workspace.detect"]);
     }
 
-    #[test]
-    fn actor_aware_surface_rejects_session_actor_for_setup_context() {
+    #[tokio::test]
+    async fn actor_aware_surface_rejects_session_actor_for_setup_context() {
         let gateway = RuntimeGateway::new().with_provider(Arc::new(FakeProvider::new(
             "workspace.detect",
             RuntimeActionKind::Setup,
@@ -502,6 +562,7 @@ mod tests {
                     root_ref: None,
                 },
             )
+            .await
             .expect_err("session actor should not receive setup surface");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);

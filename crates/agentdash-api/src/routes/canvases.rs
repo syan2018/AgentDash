@@ -523,7 +523,7 @@ pub async fn get_canvas_runtime_snapshot(
     .await;
     if let Some(session_id) = query.session_id.as_deref() {
         snapshot.runtime_bridge =
-            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id)?;
+            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id).await?;
     }
 
     Ok(Json(canvas_runtime_snapshot_to_contract(snapshot)))
@@ -721,7 +721,8 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
         state.as_ref(),
         &context.canvas,
         &context.runtime_session_id,
-    )?;
+    )
+    .await?;
     Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
         snapshot,
     )))
@@ -769,7 +770,8 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
         state.as_ref(),
         &context.canvas,
         &context.runtime_session_id,
-    )?;
+    )
+    .await?;
     Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
         snapshot,
     )))
@@ -1239,22 +1241,26 @@ fn runtime_action_kind_to_contract(kind: RuntimeActionKind) -> RuntimeActionKind
     }
 }
 
-fn build_canvas_runtime_bridge_surface(
+async fn build_canvas_runtime_bridge_surface(
     state: &AppState,
     canvas: &agentdash_domain::canvas::Canvas,
     session_id: &str,
 ) -> Result<CanvasRuntimeBridgeSnapshot, ApiError> {
-    let surface = state.services.runtime_gateway.surface_for_actor(
-        RuntimeActor::UserCanvas {
-            session_id: session_id.to_string(),
-            canvas_id: Some(canvas.id),
-        },
-        RuntimeContext::Session {
-            session_id: session_id.to_string(),
-            project_id: Some(canvas.project_id),
-            workspace_id: None,
-        },
-    )?;
+    let surface = state
+        .services
+        .runtime_gateway
+        .surface_for_actor(
+            RuntimeActor::UserCanvas {
+                session_id: session_id.to_string(),
+                canvas_id: Some(canvas.id),
+            },
+            RuntimeContext::Session {
+                session_id: session_id.to_string(),
+                project_id: Some(canvas.project_id),
+                workspace_id: None,
+            },
+        )
+        .await?;
 
     Ok(CanvasRuntimeBridgeSnapshot::enabled(surface))
 }

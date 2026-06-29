@@ -30,7 +30,7 @@ The execution model is:
    - use `trellis-check` for post-change review and verification;
    - use `trellis-research` for design backlog investigation when isolated code archaeology or option analysis can run independently.
 3. Subagents are a parallel execution mechanism, not a coordination ceremony. Parallel review and redundant findings are acceptable; the main session synthesizes conflicts and overlap after workers report back.
-4. Every subagent dispatch prompt starts with `Active task: <task path from task.py current>`, then instructs the agent to read jsonl context, `prd.md`, `design.md` when present, `implement.md` when present, and the assigned work-item or design backlog section.
+4. Every subagent dispatch prompt starts with `Active task: <task path from task.py current>`, then instructs the agent to read jsonl context, `prd.md`, `design.md` when present, `implement.md` when present, and the assigned work-item or design backlog section. Every dispatch must also repeat the cleanup-first constraint: this review exists to converge first-principles architecture, so removing wrong paths, duplicated facts, and concept forks is more important than adding new feature surface.
 5. Work items under `.trellis/tasks/06-30-architecture-quick-convergence/work-items/` are implementation briefs inside one parent task. They are not Trellis child tasks, because the desired unit of management is one convergence task with independently assignable work items.
 6. File-overlap is handled pragmatically:
    - when scopes are independent, dispatch in parallel;
@@ -42,9 +42,9 @@ The execution model is:
    - group later implementation follow-ups by meaningful behavior changes.
 8. Task metadata, status notes, and single-file tracking edits are accumulated into nearby meaningful commits instead of becoming standalone commits.
 9. User involvement is reserved for serious design/product choices. When the codebase and specs imply a clear answer, document and proceed. When there are multiple viable long-term owners or public contract shapes, record the decision options and recommendation for the user.
-10. Subagent work must prefer first-principles cleanup over additive feature work. The review objective is convergence: remove wrong paths, duplicated facts, and concept forks when the scope is acceptable; do not satisfy a work item by layering another abstraction on top of the old split unless the old path is also removed or explicitly documented as a larger design residual.
-11. Implementation subagents should not run large Rust builds or broad compile suites on their own. They may run narrow searches, formatting, small focused tests when cheap, or inspect existing test names. Expensive Rust compilation and broad verification belong to the check/integration phase unless a worker needs one targeted command to validate a small local change.
-12. While subagents are running, the main session should not do anxious overlapping implementation or repeatedly interrupt them. It may wait, do non-overlapping coordination/documentation, or send one concise status/addendum message when requirements change.
+10. Subagent work must prefer first-principles cleanup over additive feature work. The review objective is convergence: remove wrong paths, duplicated facts, and concept forks when the scope is acceptable; do not satisfy a work item by layering another abstraction on top of the old split unless the old path is also removed or explicitly documented as a larger design residual. A worker that only adds a new feature-shaped path while leaving the old split intact has not completed the assignment.
+11. Implementation subagents must not run large Rust builds or broad compile suites on their own. They may run narrow searches, formatting, small focused tests when cheap, or inspect existing test names. Expensive Rust compilation and broad verification belong to the check/integration phase unless a worker needs one targeted command to validate a small local change.
+12. While subagents are running, the main session should not do anxious overlapping implementation or repeatedly interrupt them. It may wait, do non-overlapping coordination/documentation, or send at most one concise status/addendum message when requirements change or a worker appears stuck.
 13. Context compaction recovery must restore, in this order: active goal, Trellis current task and source, workflow phase, branch, worktree status, recent commits, in-flight subagent state, and the next executable step.
 
 ## Recovery Checklist After Context Compaction
@@ -122,8 +122,15 @@ Each implement subagent must:
 - modify only its assigned work item scope;
 - prioritize deleting or converging wrong/duplicate paths over adding parallel new feature paths;
 - avoid large Rust compilation or broad check commands; leave expensive verification for check/integration unless a narrow local command is necessary;
+- treat cleanup of old architectural mistakes as higher priority than feature completion when the two conflict inside the assigned scope;
 - not revert unrelated changes;
 - report files changed and checks run.
+
+Each check subagent must:
+
+- verify that the implementation actually removed or converged the old split instead of adding a parallel path;
+- keep verification targeted to the touched crates/modules unless the main session explicitly asks for broader integration checks;
+- report any large or risky check it intentionally skipped so the main session can decide whether to run it.
 
 Parallelism strategy:
 

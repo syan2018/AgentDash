@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check cross-layer discovery/invocation ownership."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check catalog and invoke share a resolver."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeGateway surface and runtime session boundary."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Check visibility/admission/action availability are not conflated."}
+{"file": ".trellis/tasks/06-30-runtime-gateway-dynamic-action-catalog/prd.md", "reason": "Task requirements and acceptance criteria."}
+{"file": ".trellis/tasks/06-30-runtime-gateway-dynamic-action-catalog/design.md", "reason": "Technical design and scope boundary."}
+{"file": ".trellis/tasks/06-30-runtime-gateway-dynamic-action-catalog/implement.md", "reason": "Execution and validation plan."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/02-extension-action-availability.md", "reason": "D7 evidence and residual constraints."}

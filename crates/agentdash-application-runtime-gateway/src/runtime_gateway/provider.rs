@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::error::RuntimeInvocationError;
 use super::types::{
-    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
+    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext,
     RuntimeInvocationOutput, RuntimeInvocationRequest,
 };
 
@@ -18,6 +18,26 @@ pub trait RuntimeProvider: Send + Sync {
 
     fn supports(&self, action_key: &RuntimeActionKey, context: &RuntimeContext) -> bool {
         self.action_key() == action_key && self.action_kind() == context.action_kind()
+    }
+
+    async fn supports_action(
+        &self,
+        action_key: &RuntimeActionKey,
+        context: &RuntimeContext,
+    ) -> Result<bool, RuntimeInvocationError> {
+        Ok(self.supports(action_key, context))
+    }
+
+    async fn discover_actions(
+        &self,
+        _actor: &RuntimeActor,
+        context: &RuntimeContext,
+    ) -> Result<Vec<RuntimeActionDescriptor>, RuntimeInvocationError> {
+        if self.action_kind() == context.action_kind() {
+            Ok(vec![self.describe_action()])
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     async fn invoke(

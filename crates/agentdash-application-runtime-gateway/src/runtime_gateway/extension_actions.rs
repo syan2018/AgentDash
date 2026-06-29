@@ -20,9 +20,9 @@ use uuid::Uuid;
 
 use super::schema::validate_json_schema_subset as validate_shared_json_schema_subset;
 use super::{
-    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
-    RuntimeInvocationError, RuntimeInvocationOutput, RuntimeInvocationRequest, RuntimeProvider,
-    RuntimeTarget,
+    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext,
+    RuntimeInvocationError, RuntimeInvocationOutput, RuntimeInvocationRequest, RuntimePolicy,
+    RuntimeProvider, RuntimeTarget,
 };
 
 pub const EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY: &str = "extension_invocation_workspace";
@@ -113,8 +113,37 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
     }
 
     fn supports(&self, action_key: &RuntimeActionKey, context: &RuntimeContext) -> bool {
-        action_key.as_str().contains('.')
-            && context.action_kind() == RuntimeActionKind::SessionRuntime
+        &self.marker_key == action_key && context.action_kind() == RuntimeActionKind::SessionRuntime
+    }
+
+    async fn supports_action(
+        &self,
+        action_key: &RuntimeActionKey,
+        context: &RuntimeContext,
+    ) -> Result<bool, RuntimeInvocationError> {
+        if context.action_kind() != RuntimeActionKind::SessionRuntime {
+            return Ok(false);
+        }
+        let project_id = session_project_id_for_invoke(context)?;
+        Ok(self
+            .resolve_project_action(project_id, action_key.as_str(), None)
+            .await?
+            .is_some())
+    }
+
+    async fn discover_actions(
+        &self,
+        _actor: &RuntimeActor,
+        context: &RuntimeContext,
+    ) -> Result<Vec<RuntimeActionDescriptor>, RuntimeInvocationError> {
+        let Some(project_id) = session_project_id_for_catalog(context) else {
+            return Ok(Vec::new());
+        };
+        self.resolve_project_action_catalog(project_id, None)
+            .await?
+            .iter()
+            .map(|resolved| extension_action_descriptor(&resolved.action))
+            .collect()
     }
 
     async fn invoke(
@@ -123,63 +152,32 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
     ) -> Result<RuntimeInvocationOutput, RuntimeInvocationError> {
         let (session_id, project_id) = session_project(&request)?;
         let backend_id = backend_target(&request)?;
-        let installations = self
-            .installations
-            .list_enabled_by_project(project_id)
-            .await
-            .map_err(|error| {
-                RuntimeInvocationError::provider_failed(
-                    format!("读取 Project extension installation 失败: {error}"),
-                    Some(request.trace.clone()),
-                )
-            })?;
-
         let action_key = request.action_key.as_str();
-        let (installation, action) = installations
-            .iter()
-            .find_map(|installation| {
-                installation
-                    .manifest
-                    .runtime_actions
-                    .iter()
-                    .find(|action| action.action_key == action_key)
-                    .map(|action| (installation, action))
-            })
-            .ok_or_else(|| {
-                RuntimeInvocationError::capability_denied(
-                    format!("extension runtime action 未启用或不可见: {action_key}"),
-                    Some(request.trace.clone()),
-                )
+        let resolved = self
+            .resolve_project_action(project_id, action_key, Some(request.trace.clone()))
+            .await?
+            .ok_or_else(|| RuntimeInvocationError::ProviderUnavailable {
+                action_key: request.action_key.clone(),
+                trace: Some(Box::new(request.trace.clone())),
             })?;
-
-        if action.kind != ExtensionRuntimeActionKind::SessionRuntime {
-            return Err(RuntimeInvocationError::capability_denied(
-                format!("extension action 不是 Session Runtime action: {action_key}"),
-                Some(request.trace.clone()),
-            ));
-        }
-        let artifact = installation.package_artifact.as_ref().ok_or_else(|| {
-            RuntimeInvocationError::conflict(
-                format!(
-                    "extension runtime action `{action_key}` 所属安装 `{}` 缺少 package artifact",
-                    installation.extension_key
-                ),
-                Some(request.trace.clone()),
-            )
-        })?;
-        let permission_decisions = validate_action_permissions(action, &request)?;
+        let artifact = resolved
+            .installation
+            .package_artifact
+            .as_ref()
+            .expect("resolved extension runtime action should include package artifact");
+        let permission_decisions = validate_action_permissions(&resolved.action, &request)?;
         validate_json_schema_subset(
-            &action.input_schema,
+            &resolved.action.input_schema,
             &request.input,
-            &format!("extension action `{}` input", action.action_key),
+            &format!("extension action `{}` input", resolved.action.action_key),
             &request.trace,
         )?;
         let workspace = extension_invocation_workspace_from_metadata(&request)?;
 
         let transport_request = ExtensionActionInvokeRequest {
-            extension_key: installation.extension_key.clone(),
-            extension_id: installation.manifest.extension_id.clone(),
-            action_key: action.action_key.clone(),
+            extension_key: resolved.installation.extension_key.clone(),
+            extension_id: resolved.installation.manifest.extension_id.clone(),
+            action_key: resolved.action.action_key.clone(),
             project_id: project_id.to_string(),
             session_id,
             input: request.input.clone(),
@@ -187,7 +185,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
                 artifact_id: artifact.artifact_id.to_string(),
                 archive_digest: artifact.archive_digest.clone(),
             }),
-            runtime_extensions: runtime_host_payloads(&installations),
+            runtime_extensions: runtime_host_payloads(&resolved.installations),
             workspace: workspace.map(ExtensionInvocationWorkspaceContext::into_payload),
             trace_id: request.trace.trace_id.clone(),
             invocation_id: request.trace.invocation_id.clone(),
@@ -228,6 +226,126 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
             output: response.output,
             metadata,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedExtensionRuntimeAction {
+    installations: Vec<ProjectExtensionInstallation>,
+    installation: ProjectExtensionInstallation,
+    action: ExtensionRuntimeActionDefinition,
+}
+
+impl ExtensionRuntimeActionProvider {
+    async fn list_enabled_installations(
+        &self,
+        project_id: Uuid,
+        trace: Option<super::RuntimeTrace>,
+    ) -> Result<Vec<ProjectExtensionInstallation>, RuntimeInvocationError> {
+        self.installations
+            .list_enabled_by_project(project_id)
+            .await
+            .map_err(|error| {
+                RuntimeInvocationError::provider_failed(
+                    format!("读取 Project extension installation 失败: {error}"),
+                    trace,
+                )
+            })
+    }
+
+    async fn resolve_project_action_catalog(
+        &self,
+        project_id: Uuid,
+        trace: Option<super::RuntimeTrace>,
+    ) -> Result<Vec<ResolvedExtensionRuntimeAction>, RuntimeInvocationError> {
+        let installations = self.list_enabled_installations(project_id, trace).await?;
+        let mut catalog = BTreeMap::<String, ResolvedExtensionRuntimeAction>::new();
+        for installation in &installations {
+            if installation.package_artifact.is_none() {
+                continue;
+            }
+            for action in installation
+                .manifest
+                .runtime_actions
+                .iter()
+                .filter(|action| action.kind == ExtensionRuntimeActionKind::SessionRuntime)
+            {
+                catalog.entry(action.action_key.clone()).or_insert_with(|| {
+                    ResolvedExtensionRuntimeAction {
+                        installations: installations.clone(),
+                        installation: installation.clone(),
+                        action: action.clone(),
+                    }
+                });
+            }
+        }
+        Ok(catalog.into_values().collect())
+    }
+
+    async fn resolve_project_action(
+        &self,
+        project_id: Uuid,
+        action_key: &str,
+        trace: Option<super::RuntimeTrace>,
+    ) -> Result<Option<ResolvedExtensionRuntimeAction>, RuntimeInvocationError> {
+        Ok(self
+            .resolve_project_action_catalog(project_id, trace)
+            .await?
+            .into_iter()
+            .find(|resolved| resolved.action.action_key == action_key))
+    }
+}
+
+fn extension_action_descriptor(
+    action: &ExtensionRuntimeActionDefinition,
+) -> Result<RuntimeActionDescriptor, RuntimeInvocationError> {
+    let action_key = RuntimeActionKey::parse(action.action_key.clone()).map_err(|error| {
+        RuntimeInvocationError::provider_failed(
+            format!("extension runtime action key 非法: {error}"),
+            None,
+        )
+    })?;
+    Ok(RuntimeActionDescriptor {
+        action_key,
+        kind: RuntimeActionKind::SessionRuntime,
+        description: Some(action.description.clone()),
+        input_schema: Some(action.input_schema.clone()),
+        output_schema: Some(action.output_schema.clone()),
+        default_policy: RuntimePolicy {
+            required_capabilities: action.permissions.clone(),
+            ..RuntimePolicy::default()
+        },
+    })
+}
+
+fn session_project_id_for_catalog(context: &RuntimeContext) -> Option<Uuid> {
+    match context {
+        RuntimeContext::Session {
+            session_id,
+            project_id: Some(project_id),
+            ..
+        } if !session_id.trim().is_empty() => Some(*project_id),
+        _ => None,
+    }
+}
+
+fn session_project_id_for_invoke(context: &RuntimeContext) -> Result<Uuid, RuntimeInvocationError> {
+    match context {
+        RuntimeContext::Session {
+            session_id,
+            project_id: Some(project_id),
+            ..
+        } if !session_id.trim().is_empty() => Ok(*project_id),
+        RuntimeContext::Session {
+            project_id: None, ..
+        } => Err(RuntimeInvocationError::invalid_request(
+            "extension runtime action 必须绑定 Project scoped Session context",
+            None,
+        )),
+        _ => Err(RuntimeInvocationError::invalid_request(
+            "extension runtime action 必须使用 Session context",
+            None,
+        )),
     }
 }
 
@@ -1097,7 +1215,119 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_extension_action_is_capability_denied() {
+    async fn surface_includes_concrete_extension_actions_without_marker() {
+        let project_id = Uuid::new_v4();
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![installation(project_id, true, true)],
+                }),
+                Arc::new(FakeTransport {
+                    result: Ok(response_payload(json!({}))),
+                    last_payload: StdMutex::new(None),
+                }),
+            ),
+        ));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::SessionUser {
+                    session_id: "session-1".to_string(),
+                    user_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: Some(project_id),
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect("extension catalog should resolve");
+
+        let keys = surface
+            .actions
+            .iter()
+            .map(|action| action.action_key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["local-hello.profile"]);
+        let descriptor = surface.actions.first().expect("descriptor");
+        assert_eq!(descriptor.description.as_deref(), Some("Read profile"));
+        assert_eq!(descriptor.input_schema.as_ref(), Some(&json!({})));
+        assert_eq!(descriptor.output_schema.as_ref(), Some(&json!({})));
+        assert_eq!(
+            descriptor.default_policy.required_capabilities,
+            vec!["local.profile.read".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn surface_omits_extension_actions_without_project_context() {
+        let project_id = Uuid::new_v4();
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![installation(project_id, true, true)],
+                }),
+                Arc::new(FakeTransport {
+                    result: Ok(response_payload(json!({}))),
+                    last_payload: StdMutex::new(None),
+                }),
+            ),
+        ));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::SessionUser {
+                    session_id: "session-1".to_string(),
+                    user_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: None,
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect("missing project context should produce an empty extension catalog");
+
+        assert!(surface.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn surface_omits_extension_actions_without_package_artifact() {
+        let project_id = Uuid::new_v4();
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![missing_package_installation(project_id)],
+                }),
+                Arc::new(FakeTransport {
+                    result: Ok(response_payload(json!({}))),
+                    last_payload: StdMutex::new(None),
+                }),
+            ),
+        ));
+
+        let surface = gateway
+            .surface_for_actor(
+                RuntimeActor::SessionUser {
+                    session_id: "session-1".to_string(),
+                    user_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: Some(project_id),
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect("catalog should skip non-executable extension actions");
+
+        assert!(surface.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_extension_action_is_provider_unavailable() {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
@@ -1114,7 +1344,7 @@ mod tests {
             .await
             .expect_err("missing action");
 
-        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::ProviderUnavailable);
     }
 
     #[tokio::test]
@@ -1138,7 +1368,7 @@ mod tests {
             .await
             .expect_err("missing artifact");
 
-        assert_eq!(err.kind(), RuntimeInvocationErrorKind::Conflict);
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::ProviderUnavailable);
         assert!(transport.last_payload.lock().expect("lock").is_none());
     }
 
@@ -1456,23 +1686,30 @@ mod tests {
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
     }
 
-    #[test]
-    fn provider_supports_session_extension_action_shape() {
+    #[tokio::test]
+    async fn provider_supports_enabled_session_extension_action() {
+        let project_id = Uuid::new_v4();
         let provider = ExtensionRuntimeActionProvider::new(
-            Arc::new(FakeInstallationRepo::default()),
+            Arc::new(FakeInstallationRepo {
+                installations: vec![installation(project_id, true, true)],
+            }),
             Arc::new(FakeTransport {
                 result: Ok(response_payload(json!({}))),
                 last_payload: StdMutex::new(None),
             }),
         );
-        assert!(provider.supports(
-            &RuntimeActionKey::parse("local-hello.profile").expect("key"),
-            &RuntimeContext::Session {
-                session_id: "session-1".to_string(),
-                project_id: Some(Uuid::new_v4()),
-                workspace_id: None,
-            },
-        ));
+        let supported = provider
+            .supports_action(
+                &RuntimeActionKey::parse("local-hello.profile").expect("key"),
+                &RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: Some(project_id),
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect("supports lookup");
+        assert!(supported);
     }
 
     fn request(project_id: Uuid, action_key: &str) -> RuntimeInvocationRequest {

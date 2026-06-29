@@ -1,0 +1,16 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point for design package check."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index for checking evidence quality."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer owner and source-of-truth check guide."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check guide for whether design package converges duplicate paths instead of adding parallel abstractions."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend architecture baseline for checking owner conclusions."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer contract baseline for checking public contract decisions."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability/admission baseline for D1/D8 check."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "Permission and grant baseline for D1/D9 check."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS and mount authority baseline for D9/D10 check."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session/AgentRun baseline for D1/D4/D5/D6/D12 check."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Desktop/local runtime baseline for D11/D12 check."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Workspace placement routing baseline for D10/D11 check."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/design-backlog.md", "reason": "Canonical D1-D12 source for coverage check."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/prd.md", "reason": "Task requirements and acceptance criteria."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design.md", "reason": "Design review approach and ordering."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/implement.md", "reason": "Execution and validation plan for design review."}

@@ -255,7 +255,7 @@ pub async fn enroll_local_backend(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| default_local_runtime_name(&machine_label, share_scope_kind));
+        .unwrap_or_else(|| default_local_runtime_name(&machine_label));
     let backend_id = stable_local_backend_id(
         &machine_id,
         share_scope_kind,
@@ -473,16 +473,8 @@ fn default_machine_label(machine_id: &str) -> String {
     format!("Desktop {suffix}")
 }
 
-fn default_local_runtime_name(
-    machine_label: &str,
-    share_scope_kind: BackendShareScopeKind,
-) -> String {
-    let scope_label = match share_scope_kind {
-        BackendShareScopeKind::User => "Personal",
-        BackendShareScopeKind::Project => "Project Shared",
-        BackendShareScopeKind::System => "System Shared",
-    };
-    format!("{machine_label} / {scope_label}")
+fn default_local_runtime_name(machine_label: &str) -> String {
+    machine_label.to_string()
 }
 
 pub(crate) fn stable_local_backend_id(
@@ -705,5 +697,21 @@ mod tests {
 
         assert_eq!(first.backend.id, second.backend.id);
         assert!(first.backend.id.starts_with("local_"));
+    }
+
+    #[tokio::test]
+    async fn desktop_enrollment_defaults_backend_name_to_machine_label() {
+        let repo = CaptureBackendRepository::default();
+        let result = enroll_local_backend(
+            &repo,
+            EnrollmentSource::DesktopAccessToken {
+                user_id: "alice".to_string(),
+            },
+            desktop_request(),
+        )
+        .await
+        .expect("desktop enroll should succeed");
+
+        assert_eq!(result.backend.name, "Workstation");
     }
 }

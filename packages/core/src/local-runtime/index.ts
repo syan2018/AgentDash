@@ -254,7 +254,6 @@ export interface LocalRuntimeClient {
 
 export const DEFAULT_LOCAL_RUNTIME_SERVER_URL = 'http://127.0.0.1:3001'
 export const DEFAULT_LOCAL_RUNTIME_PROFILE_ID = 'default'
-export const DEFAULT_LOCAL_RUNTIME_BACKEND_NAME = 'desktop-local-backend'
 
 export function parseRuntimeLines(value: string) {
   return value

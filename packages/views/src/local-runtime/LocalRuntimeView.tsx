@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
-  DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
   createRuntimeDiagnosticsSnapshot,
@@ -72,7 +71,7 @@ export function LocalRuntimeView({
   defaultServerUrl = DEFAULT_LOCAL_RUNTIME_SERVER_URL,
   defaultAccessToken = '',
   defaultProfileId = DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
-  defaultBackendName = DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
+  defaultBackendName = '',
 }: LocalRuntimeViewProps) {
   const [snapshot, setSnapshot] = useState<LocalRuntimeStatus | null>(null)
   const [serverUrl, setServerUrl] = useState(defaultServerUrl)
@@ -233,7 +232,7 @@ export function LocalRuntimeView({
     setProfileId(profile.profile_id || defaultProfileId)
     setMachineId(profile.machine_id || '')
     setMachineLabel(profile.machine_label ?? '')
-    setBackendName(profile.name ?? defaultBackendName)
+    setBackendName(profile.name ?? profile.machine_label ?? defaultBackendName)
     setWorkspaceRoots(profile.workspace_roots)
     setExecutorEnabled(profile.executor_enabled)
     setAutoStart(profile.auto_start)
@@ -559,6 +558,7 @@ export function LocalRuntimeView({
               <TextInput
                 value={backendName}
                 onChange={(event) => setBackendName(event.target.value)}
+                placeholder="默认使用机器标签"
                 readOnly={!isEditing}
               />
             </Field>
@@ -1022,7 +1022,7 @@ function buildStartRequest(
     profile_id: profileId.trim() || DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
     machine_label: machineLabel.trim() || null,
-    name: backendName.trim() || undefined,
+    name: backendName.trim() || machineLabel.trim() || undefined,
     workspace_roots: roots.map((root) => root.trim()).filter(Boolean),
     executor_enabled: executorEnabled,
   }

@@ -1,5 +1,4 @@
 import {
-  DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
 } from '@agentdash/core/local-runtime';
@@ -175,7 +174,6 @@ async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promi
     profile_id: DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
     machine_id: '',
     machine_label: null,
-    name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
     workspace_roots: [],
     executor_enabled: true,
     auto_start: true,

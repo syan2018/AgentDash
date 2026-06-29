@@ -285,7 +285,7 @@ impl RelayPromptTransport for BackendRegistry {
             payload: Box::new(CommandPromptPayload {
                 session_id: payload.session_id,
                 follow_up_session_id: payload.follow_up_session_id,
-                prompt_blocks: payload.prompt_blocks,
+                input: payload.input,
                 mount_root_ref: payload.mount_root_ref,
                 workspace_identity_kind: payload.workspace_identity_kind.map(|kind| match kind {
                     agentdash_domain::workspace::WorkspaceIdentityKind::GitRepo => {

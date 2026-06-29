@@ -18,7 +18,7 @@
 - [x] 在 `agentdash-local` 抽出可嵌入的 desktop runner host / supervisor 状态模型。
 - [x] Host 复用现有 claim、`LocalRuntimeConfig`、relay connection、status reporter、token redaction 逻辑。
 - [x] Host 暴露清晰 API：`ensure_started(input)`、`stop(reason)`、`snapshot()`、`record_auth_state(...)` 或等价接口。
-- [ ] Host 状态覆盖：`idle`、`disabled`、`waiting_for_auth`、`waiting_for_api`、`claiming`、`starting`、`running`、`retrying`、`error`、`stopping`、`stopped`。
+- [x] Host 状态覆盖：`idle`、`disabled`、`waiting_for_auth`、`waiting_for_api`、`claiming`、`starting`、`running`、`retrying`、`error`、`stopping`、`stopped`。
 - [x] Host 避免重复 claim、重复 profile 写入或重复 relay connect。
 
 ## Phase 3 - Tauri/Web Startup Bridge
@@ -31,21 +31,21 @@
 
 ## Phase 4 - Settings/Profile Semantics
 
-- [ ] 明确 `DesktopAppSettings.auto_connect_local_runtime` 与 `LocalRuntimeProfile.auto_start` 的关系。
-- [ ] 让 profile 里的 server URL、workspace roots、executor_enabled 仍作为启动配置事实源。
-- [ ] `external` API mode 只决定 Dashboard API origin，不关闭 desktop embedded runner host。
+- [x] 明确 `DesktopAppSettings.auto_connect_local_runtime` 与 `LocalRuntimeProfile.auto_start` 的关系。
+- [x] 让 profile 里的 server URL、workspace roots、executor_enabled 仍作为启动配置事实源。
+- [x] `external` API mode 只决定 Dashboard API origin，不关闭 desktop embedded runner host。
 
 ## Phase 5 - Diagnostics/UI
 
-- [ ] 扩展 desktop runtime snapshot 或新增 desktop runner snapshot。
-- [ ] 设置页展示 native supervisor state、last error、retry 状态和 manual retry。
-- [ ] 保持 cloud diagnostics 中 `desktop_access_token` / `runner_registration_token` 的区分。
-- [ ] 确保日志和 UI 不泄漏 token-bearing 字段。
+- [x] 扩展 desktop runtime snapshot 或新增 desktop runner snapshot。
+- [x] 设置页展示 native supervisor state、last error、retry 状态和 manual retry。
+- [x] 保持 cloud diagnostics 中 `desktop_access_token` / `runner_registration_token` 的区分。
+- [x] 确保日志和 UI 不泄漏 token-bearing 字段。
 
 ## Phase 6 - Release Validation
 
 - [x] `pnpm run desktop:check`
-- [ ] 必要时 `pnpm run desktop:bundle`
+- [x] 必要时 `pnpm run desktop:bundle`
 - [ ] Windows 手工验收：
   - [ ] 全新安装后启动 UI。
   - [ ] 登录后自动拉起本机执行面。
@@ -53,6 +53,23 @@
   - [ ] 关闭窗口到托盘后 runtime 保持在线。
   - [ ] 显式退出停止桌面托管 runner/runtime。
   - [ ] 云端不可达时进入可诊断状态，恢复后可重试上线。
+
+### 本轮验证记录
+
+- `pnpm run desktop:check` 通过。
+- `pnpm run desktop:bundle` 通过，生成安装包：`target/release/bundle/nsis/AgentDash_0.1.0_x64-setup.exe`。
+- `cargo test -p agentdash-local desktop_runner_host --lib` 通过，覆盖 native supervisor 非网络态与 claim 失败脱敏。
+- `pnpm --filter app-web test -- runtimeDiagnostics.test.ts` 通过，覆盖 registration source、native retry facts 和前端诊断脱敏。
+- Review 修复后复跑：`pnpm run desktop:check`、`pnpm run frontend:lint`、`cargo clippy -p agentdash-local -p agentdash-local-tauri -- -D warnings ...`、`cargo test -p agentdash-local`、`cargo test -p agentdash-local-tauri`、`pnpm --filter app-web test -- runtimeDiagnostics.test.ts`、`pnpm run desktop:bundle` 均通过。
+- Review 收束修复：desktop profile 不再保存 access token，native 启动期在 settings/profile gate 通过后进入 `waiting_for_auth`，等待 Web bridge 传当前 access token 后再 claim；Web bridge 尊重已有 profile 的 `auto_start=false`，只为新建默认 profile 开启 auto-start。
+
+### Windows 半自动验收步骤
+
+1. 安装 `target/release/bundle/nsis/AgentDash_0.1.0_x64-setup.exe`，启动安装后的 AgentDash。
+2. 登录后打开设置页本机运行时，确认 native supervisor 从 `waiting_for_auth/claiming/starting` 收敛到 `running` 或 relay `retrying`，且注册来源显示为 `桌面登录授权`。
+3. 连续启动安装后的 AgentDash 两次，执行 `Get-Process agentdash-local-tauri | Select-Object Id,Path`，确认只保留一个桌面壳进程，第二次启动恢复/聚焦主窗口。
+4. 关闭主窗口后确认托盘仍在，设置页或云端 backend 仍显示本机执行面在线；通过托盘或设置页显式退出后确认进程退出。
+5. 用不可达 server origin 启动 release exe（例如设置 `AGENTDASH_DESKTOP_API_MODE=external`、`AGENTDASH_DESKTOP_API_ORIGIN=http://127.0.0.1:9`），确认设置页展示 `waiting_for_api`、`last_error`、retry count、next retry，并可点击“手动重试”。
 
 ## Review Gates
 

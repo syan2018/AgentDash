@@ -186,26 +186,13 @@ export function buildRuntimeSessionCommandState(input: {
   projectionStatus: string;
   projectionError: string | null;
 }): SessionChatCommandState {
-  if (input.projectionStatus !== "ready") {
-    const reason = input.projectionError ?? "当前 AgentRun 工作台投影正在刷新。";
-    return {
-      mode: "runtime",
-      executionStatus: input.projectionStatus,
-      commands: emptyCommandSet(),
-      modelConfig: {
-        status: "model_required",
-        missing_fields: [],
-        message: reason,
-      },
-      helperText: reason,
-    };
-  }
-
   if (!input.conversation) {
-    const reason = "当前 AgentRun 尚未返回 conversation snapshot。";
+    const reason = input.projectionStatus !== "ready"
+      ? input.projectionError ?? "当前 AgentRun 工作台投影正在刷新。"
+      : "当前 AgentRun 尚未返回 conversation snapshot。";
     return {
       mode: "runtime",
-      executionStatus: "delivery_missing",
+      executionStatus: input.projectionStatus !== "ready" ? input.projectionStatus : "delivery_missing",
       commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",

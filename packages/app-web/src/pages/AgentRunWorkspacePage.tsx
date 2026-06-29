@@ -416,7 +416,6 @@ export function AgentRunWorkspacePage({
   } = useAgentRunWorkspaceCommands({
     currentRunId,
     currentAgentId,
-    workspaceStatus: agentRunWorkspaceState.status,
     chatCommandState,
     conversationMailbox,
     draftProjectId: draftProjectIdValue,

@@ -48,7 +48,6 @@ type CreateProjectAgentRun = (
 export interface UseAgentRunWorkspaceCommandsOptions {
   currentRunId: string | null;
   currentAgentId: string | null;
-  workspaceStatus: string;
   chatCommandState: SessionChatCommandState;
   conversationMailbox: ConversationMailboxSnapshotView | undefined;
   draftProjectId: string | null;
@@ -149,7 +148,6 @@ export function useAgentRunWorkspaceCommands(
   const {
     currentRunId,
     currentAgentId,
-    workspaceStatus,
     chatCommandState,
     conversationMailbox,
     draftProjectId,
@@ -247,9 +245,6 @@ export function useAgentRunWorkspaceCommands(
         return;
       }
 
-      if (workspaceStatus !== "ready") {
-        throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
-      }
       if (!currentRunId || !currentAgentId) {
         throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
       }
@@ -289,15 +284,11 @@ export function useAgentRunWorkspaceCommands(
     refreshWorkspaceProjection,
     resolveExecutorConfig,
     scheduleHookRuntimeRefresh,
-    workspaceStatus,
   ]);
 
   const handleCancelAgentRun = useCallback(async () => {
     if (!currentRunId || !currentAgentId) {
       throw new Error("当前 AgentRun 尚未就绪。");
-    }
-    if (workspaceStatus !== "ready") {
-      throw new Error("当前 AgentRun 工作台投影正在刷新，无法执行控制动作。");
     }
     const cancelCommand = chatCommandState.commands.commands.find((command) => command.kind === "cancel");
     if (!cancelCommand?.enabled) {
@@ -318,12 +309,10 @@ export function useAgentRunWorkspaceCommands(
     refreshAfterStaleAgentRunCommandError,
     refreshWorkspaceProjection,
     scheduleHookRuntimeRefresh,
-    workspaceStatus,
   ]);
 
   const handlePromoteMailboxMessage = useCallback(async (messageId: string) => {
     if (!currentRunId || !currentAgentId) return;
-    if (workspaceStatus !== "ready") return;
     const promoteCommand = mailboxRowCommand(chatCommandState.commands.commands, "promote_mailbox_message");
     if (!promoteCommand?.enabled) return;
     try {
@@ -346,7 +335,6 @@ export function useAgentRunWorkspaceCommands(
     refreshAfterStaleAgentRunCommandError,
     refreshWorkspaceProjection,
     scheduleHookRuntimeRefresh,
-    workspaceStatus,
   ]);
 
   const handleDeleteMailboxMessage = useCallback(async (messageId: string) => {
@@ -377,7 +365,6 @@ export function useAgentRunWorkspaceCommands(
 
   const handleResumeMailbox = useCallback(async () => {
     if (!currentRunId || !currentAgentId) return;
-    if (workspaceStatus !== "ready") return;
     const resumeCommand = conversationMailbox?.resume_command;
     if (!resumeCommand?.enabled) return;
     let response: Awaited<ReturnType<typeof resumeAgentRunMailbox>>;
@@ -405,7 +392,6 @@ export function useAgentRunWorkspaceCommands(
     refreshAfterStaleAgentRunCommandError,
     refreshWorkspaceProjection,
     scheduleHookRuntimeRefresh,
-    workspaceStatus,
   ]);
 
   const handleRecallMailboxMessage = useCallback(async (messageId: string) => {

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check command availability and display status ownership."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check frontend command handler changes preserve type safety."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "Check D5 acceptance and old-path cleanup coverage."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "Check D5 code evidence and intended owner split."}
+{"file": ".trellis/tasks/06-30-command-availability-cleanup/design.md", "reason": "Task-local technical design for implementation review."}
+{"file": ".trellis/tasks/06-30-command-availability-cleanup/implement.md", "reason": "Task-local execution plan and validation expectations."}

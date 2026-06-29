@@ -375,13 +375,14 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
   });
 
-  it("does not fabricate commands while projection is refreshing", () => {
+  it("keeps backend commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
-    expect(state.commands.keyboard.enter).toBeUndefined();
-    expect(state.commands.commands).toHaveLength(0);
+    expect(state.executionStatus).toBe("running_active");
+    expect(state.commands.keyboard.enter).toBe("cmd-submit");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.enabled).toBe(true);
   });
 
   it("requires conversation snapshot before exposing commands", () => {

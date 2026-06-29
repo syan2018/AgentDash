@@ -496,54 +496,12 @@ fn ensure_composer_command_precondition_matches_availability(
         })
     };
 
-    if command.stale_guard.run_id != context.run.id.to_string()
-        || command.stale_guard.agent_id != context.agent.id.to_string()
-    {
-        return Err(stale_command_conflict(
-            &availability_execution_state(availability),
-            availability.terminal_agent,
-            serde_json::json!({
-                "reason": "agent_run_identity_mismatch",
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": context.runtime_session_id,
-                "state": availability.execution_status,
-                "submitted_run_id": &command.stale_guard.run_id,
-                "submitted_agent_id": &command.stale_guard.agent_id,
-                "snapshot_refresh_required": true,
-            }),
-        ));
-    }
-
-    if command.command_kind != ConversationCommandKindModel::SubmitMessage {
-        return Err(conflict(
-            "当前输入提交只能使用 submit_message 命令意图。",
-            "command_unavailable",
-            replacement_command_for_availability(availability),
-            detail(),
-        ));
-    }
-
-    if command.command_id
-        != conversation_command_id_for(ConversationCommandKindModel::SubmitMessage)
-    {
-        return Err(stale_command_conflict(
-            &availability_execution_state(availability),
-            availability.terminal_agent,
-            serde_json::json!({
-                "reason": "command_id_mismatch",
-                "run_id": context.run.id.to_string(),
-                "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": context.runtime_session_id,
-                "state": availability.execution_status,
-                "expected_command_kind": ConversationCommandKindModel::SubmitMessage,
-                "submitted_command_kind": command.command_kind,
-                "expected_command_id": conversation_command_id_for(ConversationCommandKindModel::SubmitMessage),
-                "submitted_command_id": command.command_id,
-                "snapshot_refresh_required": true,
-            }),
-        ));
-    }
+    ensure_command_submission_matches_availability(
+        command,
+        ConversationCommandKindModel::SubmitMessage,
+        context,
+        availability,
+    )?;
 
     ensure_availability_command_enabled(
         availability,
@@ -684,27 +642,17 @@ mod tests {
         }
     }
 
-    fn command(
-        kind: ConversationCommandKindModel,
-        context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    ) -> AgentRunCommandPreconditionModel {
-        AgentRunCommandPreconditionModel {
-            command_id: conversation_command_id_for(kind).to_string(),
-            command_kind: kind,
-            stale_guard: crate::agent_run::ConversationCommandStaleGuardModel {
-                snapshot_id: "stale-snapshot".to_string(),
-                run_id: context.run.id.to_string(),
-                agent_id: context.agent.id.to_string(),
-                frame_id: Some(Uuid::new_v4().to_string()),
-                runtime_session_id: Some("old-session".to_string()),
-                active_turn_id: Some("old-turn".to_string()),
-            },
-        }
-    }
-
     fn availability(
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         execution_state: SessionExecutionState,
+    ) -> ConversationCommandAvailability {
+        availability_with(context, execution_state, false)
+    }
+
+    fn availability_with(
+        context: AgentRunWorkspaceCommandPolicyContext<'_>,
+        execution_state: SessionExecutionState,
+        terminal_agent: bool,
     ) -> ConversationCommandAvailability {
         ConversationCommandAvailabilityResolver::resolve(ConversationCommandAvailabilityInput {
             run_id: context.run.id,
@@ -712,7 +660,7 @@ mod tests {
             frame_ref: Some((Uuid::new_v4(), 1)),
             delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
             execution_state,
-            terminal_agent: false,
+            terminal_agent,
             supports_steering: true,
             mailbox_paused: false,
             mailbox_visible_message_count: 0,
@@ -720,18 +668,49 @@ mod tests {
         })
     }
 
+    fn command_from_availability(
+        availability: &ConversationCommandAvailability,
+        kind: ConversationCommandKindModel,
+    ) -> AgentRunCommandPreconditionModel {
+        let command = availability
+            .commands
+            .commands
+            .iter()
+            .find(|command| command.kind == kind)
+            .expect("resolver should expose requested command");
+        AgentRunCommandPreconditionModel {
+            command_id: command.command_id.clone(),
+            command_kind: command.kind,
+            stale_guard: command.stale_guard.clone(),
+        }
+    }
+
+    fn assert_conflict_code(
+        error: AgentRunWorkspaceCommandPolicyError,
+        expected_code: &str,
+    ) -> AgentRunWorkspaceCommandConflict {
+        match error {
+            AgentRunWorkspaceCommandPolicyError::Conflict(payload) => {
+                assert_eq!(payload.error_code, expected_code);
+                *payload
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
     #[test]
-    fn composer_submit_accepts_single_submit_message_intent_after_terminal() {
+    fn composer_submit_accepts_fresh_submit_message_intent_after_completed_turn() {
         let completed = SessionExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKindModel::SubmitMessage, context);
         let availability = availability(context, completed);
+        let command =
+            command_from_availability(&availability, ConversationCommandKindModel::SubmitMessage);
 
         ensure_composer_command_precondition_matches_availability(&command, context, &availability)
-            .expect("composer input should not require stale frame or turn guard");
+            .expect("fresh submit message command should be accepted");
     }
 
     #[test]
@@ -741,8 +720,9 @@ mod tests {
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKindModel::Cancel, context);
         let availability = availability(context, running);
+        let command =
+            command_from_availability(&availability, ConversationCommandKindModel::Cancel);
 
         let error = ensure_composer_command_precondition_matches_availability(
             &command,
@@ -751,12 +731,11 @@ mod tests {
         )
         .expect_err("cancel is not a composer input command");
 
-        match error {
-            AgentRunWorkspaceCommandPolicyError::Conflict(payload) => {
-                assert_eq!(payload.error_code, "command_unavailable");
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
+        let payload = assert_conflict_code(error, "stale_command");
+        assert_eq!(
+            payload.detail.expect("stale detail")["reason"],
+            "command_kind_mismatch"
+        );
     }
 
     #[test]
@@ -766,10 +745,111 @@ mod tests {
         };
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let command = command(ConversationCommandKindModel::SubmitMessage, context);
         let availability = availability(context, running);
+        let command =
+            command_from_availability(&availability, ConversationCommandKindModel::SubmitMessage);
 
         ensure_composer_command_precondition_matches_availability(&command, context, &availability)
             .expect("scheduler owns running submit policy");
+    }
+
+    #[test]
+    fn composer_submit_rejects_stale_guard_mismatch() {
+        let running = SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        };
+        let (run, agent) = test_context();
+        let context = policy_context(&run, &agent);
+        let availability = availability(context, running);
+        let mut command =
+            command_from_availability(&availability, ConversationCommandKindModel::SubmitMessage);
+        command.stale_guard.active_turn_id = Some("old-turn".to_string());
+
+        let error = ensure_composer_command_precondition_matches_availability(
+            &command,
+            context,
+            &availability,
+        )
+        .expect_err("composer submit should reject stale active turn guard");
+
+        let payload = assert_conflict_code(error, "stale_command");
+        assert_eq!(
+            payload.detail.expect("stale detail")["reason"],
+            "active_turn_mismatch"
+        );
+    }
+
+    #[test]
+    fn command_policy_rejects_stale_guard_mismatch() {
+        let running = SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        };
+        let (run, agent) = test_context();
+        let context = policy_context(&run, &agent);
+        let current = availability(context, running);
+        let mut command = command_from_availability(&current, ConversationCommandKindModel::Cancel);
+        command.stale_guard.snapshot_id = "old-snapshot".to_string();
+
+        let error = ensure_command_submission_matches_availability(
+            &command,
+            ConversationCommandKindModel::Cancel,
+            context,
+            &current,
+        )
+        .expect_err("stale guard should reject an old active turn");
+
+        let payload = assert_conflict_code(error, "stale_command");
+        let detail = payload.detail.expect("stale detail");
+        assert_eq!(detail["reason"], "snapshot_id_mismatch");
+        assert_eq!(detail["snapshot_refresh_required"], true);
+    }
+
+    #[test]
+    fn command_policy_rejects_disabled_resolver_command() {
+        let (run, agent) = test_context();
+        let context = policy_context(&run, &agent);
+        let availability = availability(context, SessionExecutionState::Idle);
+        let command =
+            command_from_availability(&availability, ConversationCommandKindModel::Cancel);
+
+        ensure_command_submission_matches_availability(
+            &command,
+            ConversationCommandKindModel::Cancel,
+            context,
+            &availability,
+        )
+        .expect("fresh disabled command still has a matching stale guard");
+
+        let error = ensure_availability_command_enabled(
+            &availability,
+            ConversationCommandKindModel::Cancel,
+            || serde_json::json!({ "state": availability.execution_status }),
+        )
+        .expect_err("resolver-disabled cancel should be rejected");
+
+        assert_conflict_code(error, "command_unavailable");
+    }
+
+    #[test]
+    fn composer_submit_rejects_terminal_availability() {
+        let completed = SessionExecutionState::Completed {
+            turn_id: "turn-1".to_string(),
+        };
+        let (run, mut agent) = test_context();
+        agent.status = "completed".to_string();
+        let context = policy_context(&run, &agent);
+        let availability = availability_with(context, completed, true);
+        let command =
+            command_from_availability(&availability, ConversationCommandKindModel::SubmitMessage);
+
+        let error = ensure_composer_command_precondition_matches_availability(
+            &command,
+            context,
+            &availability,
+        )
+        .expect_err("terminal AgentRun should reject submit_message");
+
+        let payload = assert_conflict_code(error, "terminal");
+        assert_eq!(payload.replacement_command, None);
     }
 }

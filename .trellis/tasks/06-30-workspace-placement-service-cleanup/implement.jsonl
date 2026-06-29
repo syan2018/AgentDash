@@ -1,0 +1,9 @@
+{"name":"D10 design review","file":".trellis/tasks/06-30-design-backlog-review/design-review.md","reason":"Source design item D10 with owner boundary and acceptance expectations."}
+{"name":"Implementation slices","file":".trellis/tasks/06-30-design-backlog-review/implementation-slices.md","reason":"D10 ordering and dependency context."}
+{"name":"Cross-layer workspace routing spec","file":".trellis/spec/cross-layer/project-backend-workspace-routing.md","reason":"Defines workspace.detect, inventory registration and binding transaction contracts."}
+{"name":"Backend architecture","file":".trellis/spec/backend/architecture.md","reason":"API route vs application use case ownership rules."}
+{"name":"Workspace route current implementation","file":"crates/agentdash-api/src/routes/workspaces.rs","reason":"Current route-local create/update/bind-discovered detect and fact transaction paths."}
+{"name":"Backend access route current implementation","file":"crates/agentdash-api/src/routes/backend_access.rs","reason":"Current route-local manual inventory register detect path."}
+{"name":"Workspace application helpers","file":"crates/agentdash-application/src/workspace/backend_sync.rs","reason":"Existing directory fact and inventory helper functions to consolidate into service."}
+{"name":"Workspace detection helper","file":"crates/agentdash-application/src/workspace/detection.rs","reason":"Existing detect result model and backend transport-based detector."}
+{"name":"Application repository set","file":"crates/agentdash-application/src/repository_set.rs","reason":"Service dependency injection and repository access pattern."}

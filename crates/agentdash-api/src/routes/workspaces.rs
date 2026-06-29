@@ -1,15 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use serde_json::{Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
 use agentdash_application::workspace::{
-    WorkspaceDetectionResult, WorkspaceDirectoryFact, WorkspaceDirectoryFactApplyResult,
-    apply_workspace_directory_fact, derive_workspace_status_from_bindings,
-    directory_fact_matches_identity, workspace_directory_fact_from_detection,
+    BindDiscoveredWorkspaceBindingCommand, BindDiscoveredWorkspaceBindingsInput,
+    CreateWorkspacePlacementInput, UpdateWorkspacePlacementInput, WorkspaceDetectionResult,
+    WorkspacePlacementService,
 };
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
@@ -25,13 +25,9 @@ use agentdash_contracts::workspace::{
     DiscoverLocalWorkspaceBindingsRequest, DiscoverLocalWorkspaceBindingsResponse,
     DiscoveredWorkspaceBindingCandidate, WorkspaceIdentityDiscoverySkipped,
 };
-use agentdash_domain::backend::{
-    BackendType, BackendWorkspaceInventory, BackendWorkspaceInventorySource,
-};
+use agentdash_domain::backend::BackendType;
 use agentdash_domain::workspace::{
-    P4WorkspaceIdentityContract, P4WorkspaceMatchMode, Workspace, WorkspaceBinding,
-    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
-    identity_payload_matches, normalize_identity_payload,
+    WorkspaceBinding, WorkspaceBindingStatus, WorkspaceResolutionPolicy, identity_payload_matches,
 };
 
 use crate::app_state::AppState;
@@ -46,6 +42,7 @@ use crate::dto::{
 };
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
+use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
 
 pub async fn list_workspaces(
     State(state): State<Arc<AppState>>,
@@ -121,46 +118,35 @@ pub async fn create_workspace(
     .await?;
 
     let workspace_name = normalize_workspace_name(&req.name)?;
-    let (identity_kind, identity_payload, initial_bindings, initial_inventory_items) =
-        derive_workspace_shape(
-            &state,
+    let raw_bindings = if let Some(bindings) = req.bindings {
+        bindings
+    } else if let Some(shortcut_binding) = req.shortcut_binding {
+        vec![shortcut_binding]
+    } else {
+        Vec::new()
+    };
+    let bindings = raw_bindings
+        .into_iter()
+        .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
+        .collect::<Result<Vec<_>, _>>()?;
+    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
+        state.services.runtime_gateway.clone(),
+    ));
+    let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
+        .create_workspace(CreateWorkspacePlacementInput {
             project_id,
-            Some(current_user.user_id.as_str()),
-            req.identity_kind,
-            req.identity_payload,
-            req.bindings,
-            req.shortcut_binding,
-        )
+            user_id: Some(current_user.user_id),
+            name: workspace_name,
+            identity_kind: req.identity_kind,
+            identity_payload: req.identity_payload,
+            resolution_policy: req
+                .resolution_policy
+                .unwrap_or(WorkspaceResolutionPolicy::PreferOnline),
+            default_binding_id: req.default_binding_id,
+            bindings,
+            mount_capabilities: req.mount_capabilities.unwrap_or_default(),
+        })
         .await?;
-
-    let mut workspace = Workspace::new(
-        project_id,
-        workspace_name,
-        identity_kind,
-        identity_payload,
-        req.resolution_policy
-            .unwrap_or(WorkspaceResolutionPolicy::PreferOnline),
-    );
-    workspace.set_bindings(initial_bindings);
-    workspace.default_binding_id = req.default_binding_id.or(workspace.default_binding_id);
-    workspace.mount_capabilities = req.mount_capabilities.unwrap_or_default();
-    workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
-    workspace.refresh_default_binding();
-
-    if !initial_inventory_items.is_empty() {
-        state
-            .repos
-            .backend_workspace_inventory_repo
-            .upsert_many(&initial_inventory_items)
-            .await?;
-    }
-    state.repos.workspace_repo.create(&workspace).await?;
-    let stored = state
-        .repos
-        .workspace_repo
-        .get_by_id(workspace.id)
-        .await?
-        .ok_or_else(|| ApiError::Internal("Workspace 创建后读取失败".into()))?;
     Ok(Json(WorkspaceResponse::from(stored)))
 }
 
@@ -188,7 +174,7 @@ pub async fn update_workspace(
     Json(req): Json<UpdateWorkspaceRequest>,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
     let workspace_id = parse_workspace_id(&id)?;
-    let (mut workspace, _) = load_workspace_and_project_with_permission(
+    let (workspace, _) = load_workspace_and_project_with_permission(
         state.as_ref(),
         &current_user,
         workspace_id,
@@ -196,63 +182,35 @@ pub async fn update_workspace(
     )
     .await?;
 
-    if let Some(name) = req.name {
-        workspace.name = normalize_workspace_name(&name)?;
-    }
-    if let Some(identity_kind) = req.identity_kind {
-        workspace.identity_kind = identity_kind;
-    }
-    if let Some(identity_payload) = req.identity_payload {
-        workspace.identity_payload = normalize_workspace_identity_payload(
-            workspace.identity_kind.clone(),
-            identity_payload,
-        )?;
-    }
-    if let Some(resolution_policy) = req.resolution_policy {
-        workspace.resolution_policy = resolution_policy;
-    }
-    let mut inventory_items = Vec::new();
-    if let Some(bindings) = req.bindings {
-        let next_bindings = bindings
-            .into_iter()
-            .map(|binding| binding_input_to_binding(workspace.id, binding))
-            .collect::<Result<Vec<_>, _>>()?;
-        ensure_unique_bindings(&next_bindings)?;
-        let (hydrated_bindings, next_inventory_items) = hydrate_workspace_bindings(
-            &state,
-            workspace.project_id,
-            Some(current_user.user_id.as_str()),
-            workspace.identity_kind.clone(),
-            &workspace.identity_payload,
-            next_bindings,
-        )
+    let name = req
+        .name
+        .map(|name| normalize_workspace_name(&name))
+        .transpose()?;
+    let bindings = req
+        .bindings
+        .map(|bindings| {
+            bindings
+                .into_iter()
+                .map(|binding| binding_input_to_binding(workspace.id, binding))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
+        state.services.runtime_gateway.clone(),
+    ));
+    let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
+        .update_workspace(UpdateWorkspacePlacementInput {
+            workspace,
+            user_id: Some(current_user.user_id),
+            name,
+            identity_kind: req.identity_kind,
+            identity_payload: req.identity_payload,
+            resolution_policy: req.resolution_policy,
+            default_binding_id: req.default_binding_id,
+            bindings,
+            mount_capabilities: req.mount_capabilities,
+        })
         .await?;
-        inventory_items = next_inventory_items;
-        workspace.set_bindings(hydrated_bindings);
-    }
-    if let Some(default_binding_id) = req.default_binding_id {
-        workspace.default_binding_id = Some(default_binding_id);
-    }
-    if let Some(mount_capabilities) = req.mount_capabilities {
-        workspace.mount_capabilities = mount_capabilities;
-    }
-    workspace.status = derive_workspace_status_from_bindings(&workspace.bindings);
-    workspace.refresh_default_binding();
-
-    if !inventory_items.is_empty() {
-        state
-            .repos
-            .backend_workspace_inventory_repo
-            .upsert_many(&inventory_items)
-            .await?;
-    }
-    state.repos.workspace_repo.update(&workspace).await?;
-    let stored = state
-        .repos
-        .workspace_repo
-        .get_by_id(workspace.id)
-        .await?
-        .ok_or_else(|| ApiError::Internal("Workspace 更新后读取失败".into()))?;
     Ok(Json(WorkspaceResponse::from(stored)))
 }
 
@@ -311,7 +269,7 @@ pub async fn detect_workspace(
     .await?;
 
     ensure_project_backend_access(&state, project_id, &req.backend_id).await?;
-    let detected = invoke_workspace_detect(
+    let detected = invoke_workspace_setup_detect(
         &state,
         Some(current_user.user_id.as_str()),
         project_id,
@@ -358,7 +316,7 @@ pub async fn detect_git(
     }
 
     let backend_id = require_backend_id(req.backend_id.as_deref())?;
-    let result = invoke_workspace_detect_git(&state, backend_id, root_ref).await?;
+    let result = invoke_workspace_setup_detect_git(&state, backend_id, root_ref).await?;
 
     Ok(Json(DetectGitResponse {
         resolved_root_ref: result.resolved_root_ref,
@@ -485,141 +443,50 @@ pub async fn bind_discovered(
     )
     .await?;
 
-    if req.bindings.is_empty() {
-        return Err(ApiError::BadRequest("bindings 不能为空".into()));
-    }
-    let mut commands = Vec::new();
-    let mut seen = HashSet::new();
-    for binding in req.bindings {
-        let workspace_id = parse_workspace_id(&binding.workspace_id)?;
-        let backend_id = normalize_required_string("binding.backend_id", &binding.backend_id)?;
-        let root_ref = normalize_required_string("binding.root_ref", &binding.root_ref)?;
-        let key = (workspace_id, binding_unique_key(&backend_id, &root_ref));
-        if seen.insert(key) {
-            commands.push(BindDiscoveredCommand {
-                workspace_id,
-                backend_id,
-                root_ref,
-            });
-        }
-    }
-
-    let backend_id = commands
-        .first()
-        .map(|command| command.backend_id.clone())
-        .ok_or_else(|| ApiError::BadRequest("bindings 不能为空".into()))?;
-    if commands
-        .iter()
-        .any(|command| command.backend_id != backend_id)
-    {
-        return Err(ApiError::BadRequest(
-            "bind-discovered 单次请求只能绑定同一个 backend".into(),
-        ));
-    }
-    let access = ensure_local_project_backend_access(&state, project_id, &backend_id).await?;
-
-    let mut workspaces = state
-        .repos
-        .workspace_repo
-        .list_by_project(project_id)
-        .await?
+    let bindings = req
+        .bindings
         .into_iter()
-        .map(|workspace| (workspace.id, workspace))
-        .collect::<HashMap<_, _>>();
-    let mut touched_workspace_ids = HashSet::new();
-    let mut created_bindings = 0;
-    let mut updated_bindings = 0;
-    let mut inventory_items = Vec::new();
-    let mut warnings = Vec::new();
-
-    for command in commands {
-        let workspace = workspaces
-            .get_mut(&command.workspace_id)
-            .ok_or_else(|| ApiError::NotFound("Workspace 不存在或不属于当前 Project".into()))?;
-        let detected = invoke_workspace_detect(
-            &state,
-            Some(current_user.user_id.as_str()),
+        .map(|binding| {
+            let workspace_id = parse_workspace_id(&binding.workspace_id)?;
+            Ok(BindDiscoveredWorkspaceBindingCommand {
+                workspace_id,
+                backend_id: binding.backend_id,
+                root_ref: binding.root_ref,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
+        state.services.runtime_gateway.clone(),
+    ));
+    let result = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
+        .bind_discovered(BindDiscoveredWorkspaceBindingsInput {
             project_id,
-            &command.backend_id,
-            &command.root_ref,
-        )
+            user_id: Some(current_user.user_id),
+            bindings,
+        })
         .await?;
 
-        warnings.extend(detected.warnings.clone());
-        let seed_binding = WorkspaceBinding::new(
-            workspace.id,
-            command.backend_id.clone(),
-            command.root_ref.clone(),
-            json!({}),
-        );
-        let fact = workspace_directory_fact_from_detection(
-            &seed_binding,
-            &detected,
-            BackendWorkspaceInventorySource::IdentityDiscovery,
-        );
-        if detected.identity_kind != workspace.identity_kind
-            || !discovery_identity_payload_matches(
-                workspace.identity_kind.clone(),
-                &workspace.identity_payload,
-                &fact.inventory.identity_payload,
-                Some(&fact.inventory.detected_facts),
-            )
-        {
-            return Err(ApiError::BadRequest(format!(
-                "目录 `{}` 与 Workspace `{}` 的 identity 不匹配",
-                command.root_ref, workspace.name
-            )));
-        }
-        state
-            .repos
-            .backend_workspace_inventory_repo
-            .upsert(&fact.inventory)
-            .await?;
-
-        match apply_workspace_directory_fact(workspace, fact.clone(), access.priority) {
-            WorkspaceDirectoryFactApplyResult::Created => created_bindings += 1,
-            WorkspaceDirectoryFactApplyResult::Updated => updated_bindings += 1,
-        };
-        touched_workspace_ids.insert(workspace.id);
-        inventory_items.push(BackendWorkspaceInventoryResponse::from(fact.inventory));
-    }
-
-    let mut stored_workspaces = Vec::new();
-    let mut bound_workspace_ids = touched_workspace_ids.into_iter().collect::<Vec<_>>();
-    bound_workspace_ids.sort_unstable();
-    for workspace_id in &bound_workspace_ids {
-        let workspace = workspaces
-            .get(workspace_id)
-            .ok_or_else(|| ApiError::Internal("Workspace 更新缓存缺失".into()))?;
-        state.repos.workspace_repo.update(workspace).await?;
-        let stored = state
-            .repos
-            .workspace_repo
-            .get_by_id(*workspace_id)
-            .await?
-            .ok_or_else(|| ApiError::Internal("Workspace 更新后读取失败".into()))?;
-        stored_workspaces.push(WorkspaceResponse::from(stored));
-    }
-
     Ok(Json(BindDiscoveredWorkspaceBindingsResponse {
-        backend_id,
-        workspaces: stored_workspaces,
-        bound_workspace_ids: bound_workspace_ids
+        backend_id: result.backend_id,
+        workspaces: result
+            .workspaces
+            .into_iter()
+            .map(WorkspaceResponse::from)
+            .collect(),
+        bound_workspace_ids: result
+            .bound_workspace_ids
             .into_iter()
             .map(|id| id.to_string())
             .collect(),
-        created_bindings,
-        updated_bindings,
-        inventory_items,
-        warnings,
+        created_bindings: result.created_bindings,
+        updated_bindings: result.updated_bindings,
+        inventory_items: result
+            .inventory_items
+            .into_iter()
+            .map(BackendWorkspaceInventoryResponse::from)
+            .collect(),
+        warnings: result.warnings,
     }))
-}
-
-#[derive(Debug)]
-struct BindDiscoveredCommand {
-    workspace_id: Uuid,
-    backend_id: String,
-    root_ref: String,
 }
 
 async fn ensure_local_project_backend_access(
@@ -691,200 +558,6 @@ async fn invoke_workspace_discover_by_identity(
     )
 }
 
-fn discovery_identity_payload_matches(
-    kind: WorkspaceIdentityKind,
-    expected_payload: &Value,
-    actual_payload: &Value,
-    actual_binding_facts: Option<&Value>,
-) -> bool {
-    if identity_payload_matches(
-        kind.clone(),
-        expected_payload,
-        actual_payload,
-        actual_binding_facts,
-    ) {
-        return true;
-    }
-
-    if kind != WorkspaceIdentityKind::P4Workspace {
-        return false;
-    }
-    let Some(relaxed_payload) = relaxed_p4_discovery_payload(expected_payload) else {
-        return false;
-    };
-    identity_payload_matches(
-        WorkspaceIdentityKind::P4Workspace,
-        &relaxed_payload,
-        actual_payload,
-        actual_binding_facts,
-    )
-}
-
-fn relaxed_p4_discovery_payload(expected_payload: &Value) -> Option<Value> {
-    let normalized =
-        normalize_identity_payload(WorkspaceIdentityKind::P4Workspace, expected_payload).ok()?;
-    let mut contract = serde_json::from_value::<P4WorkspaceIdentityContract>(normalized).ok()?;
-    if contract.match_mode != P4WorkspaceMatchMode::ServerStreamClient {
-        return None;
-    }
-    contract.match_mode = P4WorkspaceMatchMode::ServerStream;
-    contract.client_name = None;
-    serde_json::to_value(contract).ok()
-}
-
-async fn derive_workspace_shape(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    user_id: Option<&str>,
-    identity_kind: Option<WorkspaceIdentityKind>,
-    identity_payload: Option<Value>,
-    bindings: Option<Vec<WorkspaceBindingInput>>,
-    shortcut_binding: Option<WorkspaceBindingInput>,
-) -> Result<
-    (
-        WorkspaceIdentityKind,
-        Value,
-        Vec<WorkspaceBinding>,
-        Vec<BackendWorkspaceInventory>,
-    ),
-    ApiError,
-> {
-    let raw_bindings = if let Some(bindings) = bindings {
-        bindings
-    } else if let Some(shortcut_binding) = shortcut_binding {
-        vec![shortcut_binding]
-    } else {
-        Vec::new()
-    };
-
-    let parsed_bindings = raw_bindings
-        .into_iter()
-        .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
-        .collect::<Result<Vec<_>, _>>()?;
-    ensure_unique_bindings(&parsed_bindings)?;
-
-    if let Some(identity_kind) = identity_kind {
-        let identity_payload = identity_payload.ok_or_else(|| {
-            ApiError::BadRequest("显式提供 identity_kind 时，identity_payload 不能为空".into())
-        })?;
-        let normalized_payload =
-            normalize_workspace_identity_payload(identity_kind.clone(), identity_payload)?;
-        let (parsed_bindings, inventory_items) = hydrate_workspace_bindings(
-            state,
-            project_id,
-            user_id,
-            identity_kind.clone(),
-            &normalized_payload,
-            parsed_bindings,
-        )
-        .await?;
-        return Ok((
-            identity_kind.clone(),
-            normalized_payload,
-            parsed_bindings,
-            inventory_items,
-        ));
-    }
-
-    let Some(first_binding) = parsed_bindings.first().cloned() else {
-        return Err(ApiError::BadRequest(
-            "创建 Workspace 时，必须提供 identity 或至少一个 binding".into(),
-        ));
-    };
-
-    let (first_fact, detected) =
-        detect_workspace_binding_fact(state, user_id, project_id, &first_binding).await?;
-
-    let detected_identity_kind = detected.identity_kind.clone();
-    let identity_payload = identity_payload
-        .map(|payload| {
-            normalize_workspace_identity_payload(detected_identity_kind.clone(), payload)
-        })
-        .transpose()?
-        .unwrap_or(detected.identity_payload);
-    if !directory_fact_matches_identity(
-        detected.identity_kind.clone(),
-        &identity_payload,
-        &first_fact,
-    ) {
-        return Err(ApiError::BadRequest(format!(
-            "目录 `{}` 与 Workspace identity 不匹配",
-            first_binding.root_ref
-        )));
-    }
-
-    let mut hydrated_bindings = vec![first_fact.binding];
-    let mut inventory_items = vec![first_fact.inventory];
-    let (remaining_bindings, remaining_inventory_items) = hydrate_workspace_bindings(
-        state,
-        project_id,
-        user_id,
-        detected.identity_kind.clone(),
-        &identity_payload,
-        parsed_bindings.into_iter().skip(1).collect(),
-    )
-    .await?;
-    hydrated_bindings.extend(remaining_bindings);
-    inventory_items.extend(remaining_inventory_items);
-    ensure_unique_bindings(&hydrated_bindings)?;
-    Ok((
-        detected.identity_kind,
-        identity_payload,
-        hydrated_bindings,
-        inventory_items,
-    ))
-}
-
-async fn hydrate_workspace_bindings(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    user_id: Option<&str>,
-    identity_kind: WorkspaceIdentityKind,
-    identity_payload: &Value,
-    bindings: Vec<WorkspaceBinding>,
-) -> Result<(Vec<WorkspaceBinding>, Vec<BackendWorkspaceInventory>), ApiError> {
-    let mut hydrated_bindings = Vec::with_capacity(bindings.len());
-    let mut inventory_items = Vec::new();
-    for binding in bindings {
-        let (fact, _detected) =
-            detect_workspace_binding_fact(state, user_id, project_id, &binding).await?;
-        if !directory_fact_matches_identity(identity_kind.clone(), identity_payload, &fact) {
-            return Err(ApiError::BadRequest(format!(
-                "目录 `{}` 与 Workspace identity 不匹配",
-                binding.root_ref
-            )));
-        }
-        hydrated_bindings.push(fact.binding);
-        inventory_items.push(fact.inventory);
-    }
-    Ok((hydrated_bindings, inventory_items))
-}
-
-async fn detect_workspace_binding_fact(
-    state: &Arc<AppState>,
-    user_id: Option<&str>,
-    project_id: Uuid,
-    binding: &WorkspaceBinding,
-) -> Result<(WorkspaceDirectoryFact, WorkspaceDetectionResult), ApiError> {
-    if project_id != Uuid::nil() {
-        ensure_project_backend_access(state, project_id, &binding.backend_id).await?;
-    }
-    let detected = invoke_workspace_detect(
-        state,
-        user_id,
-        project_id,
-        &binding.backend_id,
-        &binding.root_ref,
-    )
-    .await?;
-    let fact = workspace_directory_fact_from_detection(
-        binding,
-        &detected,
-        BackendWorkspaceInventorySource::ManualRegister,
-    );
-    Ok((fact, detected))
-}
-
 fn binding_input_to_binding(
     workspace_id: Uuid,
     binding: WorkspaceBindingInput,
@@ -912,33 +585,7 @@ fn binding_input_to_binding(
     Ok(created)
 }
 
-fn ensure_unique_bindings(bindings: &[WorkspaceBinding]) -> Result<(), ApiError> {
-    let mut seen = HashSet::new();
-    for binding in bindings {
-        let key = binding_unique_key(&binding.backend_id, &binding.root_ref);
-        if !seen.insert(key) {
-            return Err(ApiError::BadRequest(
-                "同一个 Workspace 中不能重复绑定相同 backend/root".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn binding_unique_key(backend_id: &str, root_ref: &str) -> String {
-    let root = root_ref.trim().replace('\\', "/");
-    let root = root.trim_end_matches('/');
-    format!("{}:{root}", backend_id.trim())
-}
-
-fn normalize_workspace_identity_payload(
-    kind: WorkspaceIdentityKind,
-    payload: Value,
-) -> Result<Value, ApiError> {
-    normalize_identity_payload(kind, &payload).map_err(ApiError::BadRequest)
-}
-
-async fn invoke_workspace_detect(
+async fn invoke_workspace_setup_detect(
     state: &Arc<AppState>,
     user_id: Option<&str>,
     project_id: Uuid,
@@ -992,7 +639,7 @@ fn require_backend_id(raw: Option<&str>) -> Result<&str, ApiError> {
         .ok_or_else(|| ApiError::BadRequest("detect_git 必须显式提供 backend_id".into()))
 }
 
-async fn invoke_workspace_detect_git(
+async fn invoke_workspace_setup_detect_git(
     state: &Arc<AppState>,
     backend_id: &str,
     root_ref: &str,

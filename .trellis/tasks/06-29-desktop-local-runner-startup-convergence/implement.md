@@ -8,26 +8,26 @@
 
 ## Phase 1 - Single Instance
 
-- [ ] 在 `agentdash-local-tauri` 加入单实例能力，优先评估 Tauri v2 single-instance 插件。
-- [ ] 第二实例启动时恢复/聚焦主窗口。
-- [ ] 确认第二实例不会初始化 Desktop API、runtime manager、runner supervisor。
-- [ ] 增加最小 Rust/desktop check，必要时补手工验收步骤。
+- [x] 在 `agentdash-local-tauri` 加入单实例能力，优先评估 Tauri v2 single-instance 插件。
+- [x] 第二实例启动时恢复/聚焦主窗口。
+- [x] 确认第二实例不会初始化 Desktop API、runtime manager、runner supervisor。
+- [x] 增加最小 Rust/desktop check，必要时补手工验收步骤。
 
 ## Phase 2 - `agentdash-local` Embedded Runner Host
 
-- [ ] 在 `agentdash-local` 抽出可嵌入的 desktop runner host / supervisor 状态模型。
-- [ ] Host 复用现有 claim、`LocalRuntimeConfig`、relay connection、status reporter、token redaction 逻辑。
-- [ ] Host 暴露清晰 API：`ensure_started(input)`、`stop(reason)`、`snapshot()`、`record_auth_state(...)` 或等价接口。
+- [x] 在 `agentdash-local` 抽出可嵌入的 desktop runner host / supervisor 状态模型。
+- [x] Host 复用现有 claim、`LocalRuntimeConfig`、relay connection、status reporter、token redaction 逻辑。
+- [x] Host 暴露清晰 API：`ensure_started(input)`、`stop(reason)`、`snapshot()`、`record_auth_state(...)` 或等价接口。
 - [ ] Host 状态覆盖：`idle`、`disabled`、`waiting_for_auth`、`waiting_for_api`、`claiming`、`starting`、`running`、`retrying`、`error`、`stopping`、`stopped`。
-- [ ] Host 避免重复 claim、重复 profile 写入或重复 relay connect。
+- [x] Host 避免重复 claim、重复 profile 写入或重复 relay connect。
 
 ## Phase 3 - Tauri/Web Startup Bridge
 
-- [ ] Tauri `DesktopState` 持有 local-owned host，并在 setup 后初始化 host snapshot。
-- [ ] Tauri 通过 `ensure_started/stop/snapshot` 调用 local-owned host。
-- [ ] Web app 的 auto-connect effect 改为通知 token/请求 native ensure，移除“失败后永久跳过”的一次性标记。
-- [ ] 自动启动、托盘启动、设置页启动收束到同一 native service。
-- [ ] Dashboard API 未就绪、未登录、claim 失败、relay 失败时进入可诊断和可重试状态。
+- [x] Tauri `DesktopState` 持有 local-owned host，并在 setup 后初始化 host snapshot。
+- [x] Tauri 通过 `ensure_started/stop/snapshot` 调用 local-owned host。
+- [x] Web app 的 auto-connect effect 改为通知 token/请求 native ensure，移除“失败后永久跳过”的一次性标记。
+- [x] 自动启动、托盘启动、设置页启动收束到同一 native service。
+- [x] Dashboard API 未就绪、未登录、claim 失败、relay 失败时进入可诊断和可重试状态。
 
 ## Phase 4 - Settings/Profile Semantics
 
@@ -44,7 +44,7 @@
 
 ## Phase 6 - Release Validation
 
-- [ ] `pnpm run desktop:check`
+- [x] `pnpm run desktop:check`
 - [ ] 必要时 `pnpm run desktop:bundle`
 - [ ] Windows 手工验收：
   - [ ] 全新安装后启动 UI。

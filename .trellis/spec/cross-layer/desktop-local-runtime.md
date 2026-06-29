@@ -281,6 +281,23 @@ async fn desktop_autostart_set_enabled(enabled: bool) -> Result<DesktopAutostart
 async fn desktop_quit_request(app: tauri::AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String>;
 ```
 
+Embedded runner host:
+
+```rust
+pub struct DesktopRunnerHost;
+
+impl DesktopRunnerHost {
+    pub async fn ensure_started_with<F, Fut>(&self, build_config: F) -> anyhow::Result<LocalRuntimeSnapshot>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<LocalRuntimeConfig>>;
+
+    pub async fn stop(&self, reason: StopReason) -> anyhow::Result<()>;
+    pub async fn restart(&self) -> anyhow::Result<LocalRuntimeSnapshot>;
+    pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot>;
+}
+```
+
 Frontend bridge:
 
 ```ts
@@ -332,6 +349,11 @@ Desktop defaults JSON:
 - `default_cloud_origin` pre-fills the Local Runtime profile server URL and, when no separate `--api-origin` is provided, also acts as the packaged dashboard API origin. It does not create a `backend_id`, and does not embed access/registration/relay tokens.
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
 - Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
+- Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
+- `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands normalize desktop profile/request data and call the host; `agentdash-local` owns runtime reuse, serialized ensure/start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
+- `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
+- Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It requires a non-empty user access token before saving an auto-connect profile or calling `runtime_start`, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures.
+- Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
 ### 4. Validation & Error Matrix
 
@@ -345,6 +367,11 @@ Desktop defaults JSON:
 | Windows autostart enabled | write HKCU Run value for installed/current app exe, persist `launch_at_login=true`, and reject setup/installer exe paths |
 | Autostart unsupported on non-Windows platform | return `supported=false`, stable message, and no OS registry/service mutation |
 | Desktop API port unavailable | app reports Desktop API error state; Dashboard waits for `/api/health` before rendering |
+| Second desktop instance launched | restore/focus the existing main window and keep the original process as the only Desktop API/runtime owner |
+| Runtime ensure requested concurrently | serialize claim/config/start and return the active `starting` or `running` snapshot to later callers |
+| Auto-connect sees no access token | wait for login/token availability, clear retry state, and skip profile writes or runtime claim |
+| Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
+| Auto-connect disabled or bridge unavailable | return without scheduling retry |
 
 ### 5. Operational Rationale
 
@@ -352,6 +379,9 @@ Desktop defaults JSON:
 - The tray `Quit AgentDash` item performs an intentional shutdown and stops the managed runtime before process exit.
 - `start_minimized_to_tray=true` gives a resident launch path for users who want AgentDash available without opening the dashboard.
 - Window visibility and process lifetime are separate because background execution should not depend on whether the dashboard surface is visible.
+- Single-instance ownership keeps Desktop API port binding, tray ownership, and embedded runner claim/start state in one process, which makes package launch behavior match the user expectation of one resident desktop app.
+- The embedded host boundary keeps claim/start serialization next to `LocalRuntimeManager`, while Tauri stays focused on desktop lifecycle and the web app stays focused on intent and status display.
+- Canonical auto-connect flow: authenticated Dashboard obtains an access token -> desktop bridge ensures defaults/profile -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
 - Canonical flow: window close hides; explicit quit exits.
 
 ### 6. Tests Required
@@ -359,15 +389,20 @@ Desktop defaults JSON:
 - Rust tests assert settings default/load/save behavior and malformed file error behavior.
 - Rust tests assert close request is prevented unless the explicit quit flag is set.
 - Rust tests assert tray runtime actions call the existing runtime manager/profile path and do not create ad hoc identities.
+- Rust checks assert Tauri single-instance plugin registration remains before setup-managed process initialization.
+- Rust tests assert `DesktopRunnerHost` reuses `starting/running` snapshots and serializes concurrent ensure calls around config construction and runtime start.
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
+- Frontend tests assert auto-connect skips empty token, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
+- Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 
 ### 7. Canonical Lifecycle
 
 ```text
 CloseRequested -> prevent default -> hide main window
 desktop_quit_request/tray quit -> stop runtime -> app.exit(0)
+Authenticated web intent -> runtime_start -> DesktopRunnerHost.ensure_started_with -> LocalRuntimeSnapshot
 ```
 
 ## Scenario: Runtime Diagnostics Snapshot And Relay State

@@ -1,0 +1,18 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point for architecture review context."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer ownership, projection, and runtime boundary rules."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Thinking guide for facts, sources of truth, and runtime projections across layers."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Thinking guide for duplicate paths, repeated helpers, and concept forks."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend architectural boundaries for domain/application/infrastructure separation."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Workflow, lifecycle, orchestration, and task boundary context."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "AgentRun/session/runtime surface architectural context."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability ownership and runtime capability pipeline context."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "PermissionGrant and authorization lifecycle architecture context."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS mount/provider ownership context."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Local runtime, relay, desktop, and runner architecture context."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Project/workspace/backend placement and routing ownership context."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Frontend feature and state ownership context for cross-layer review."}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/overdesign-review.md", "reason": "Historical baseline for previous overdesign review findings."}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/research/01-lifecycle-workflow-task.md", "reason": "Historical Lifecycle/Workflow/Task research baseline."}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/research/02-agentrun-session-runtime.md", "reason": "Historical AgentRun/Session/Runtime research baseline."}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/research/03-vfs-local-relay-extension.md", "reason": "Historical VFS/Local/Relay/Extension research baseline."}
+{"file": ".trellis/tasks/06-14-module-overdesign-review/research/04-frontend-contracts-permission.md", "reason": "Historical Frontend/Contracts/Permission research baseline."}

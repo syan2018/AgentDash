@@ -23,6 +23,10 @@ import {
   WorkspaceStatusBadge,
 } from "./badges";
 import { WorkspaceEditorDrawer } from "./WorkspaceListEditor";
+import {
+  applyBackendRuntimeSummaries,
+  backendAvailabilitySignature,
+} from "../../../utils/backendAvailability";
 interface WorkspaceListProps {
   projectId: string;
   workspaces: Workspace[];
@@ -41,7 +45,13 @@ export function WorkspaceList({
   onInventoryChanged,
 }: WorkspaceListProps) {
   const backends = useCoordinatorStore((state) => state.backends);
+  const backendRuntimeSummaries = useCoordinatorStore((state) => state.backendRuntimeSummaries);
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
+  const fetchBackendRuntimeSummaries = useCoordinatorStore((state) => state.fetchBackendRuntimeSummaries);
+  const effectiveBackends = useMemo(
+    () => applyBackendRuntimeSummaries(backends, backendRuntimeSummaries),
+    [backends, backendRuntimeSummaries],
+  );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
@@ -63,23 +73,17 @@ export function WorkspaceList({
 
   useEffect(() => {
     void fetchBackends();
+    void fetchBackendRuntimeSummaries();
     const timer = window.setTimeout(() => {
       void loadRoutingInputs();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [fetchBackends, loadRoutingInputs]);
+  }, [fetchBackends, fetchBackendRuntimeSummaries, loadRoutingInputs]);
 
   // 跟随 backend 上下线 / 健康变化重载目录绑定输入，与 BackendAccessPanel 保持一致刷新。
   const backendRuntimeSignature = useMemo(
-    () => backends
-      .map((backend) => [
-        backend.id,
-        backend.online ? "online" : "offline",
-        backend.runtime_health?.status ?? "",
-        backend.runtime_health?.updated_at ?? "",
-      ].join(":"))
-      .join("|"),
-    [backends],
+    () => backendAvailabilitySignature(backends, backendRuntimeSummaries),
+    [backends, backendRuntimeSummaries],
   );
   const hasObservedBackendRuntimeRef = useRef(false);
   useEffect(() => {
@@ -151,9 +155,9 @@ export function WorkspaceList({
         )}
 
         {workspaces.map((workspace) => {
-          const availability = summarizeAvailability(workspace, backends, accesses);
-          const resolution = summarizeResolution(workspace, backends, accesses);
-          const machineAvailability = workspaceMachineAvailability(workspace, backends, accesses);
+          const availability = summarizeAvailability(workspace, effectiveBackends, accesses);
+          const resolution = summarizeResolution(workspace, effectiveBackends, accesses);
+          const machineAvailability = workspaceMachineAvailability(workspace, effectiveBackends, accesses);
           const primaryBinding = resolution.binding ?? findWorkspaceBinding(workspace);
           const isDefault = defaultWorkspaceId === workspace.id;
           return (

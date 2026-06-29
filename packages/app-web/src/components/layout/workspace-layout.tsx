@@ -11,6 +11,7 @@ import type { Project } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
 import { AgentRunShortcutList } from "./AgentRunShortcutList";
 import { AppErrorBoundary } from "../error/AppErrorBoundary";
+import { applyBackendRuntimeSummaries } from "../../utils/backendAvailability";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
 type NavKey = "agent" | "story" | "assets" | "routine";
@@ -88,7 +89,7 @@ export function WorkspaceLayout() {
   const location = useLocation();
   const { projects, currentProjectId, selectProject } = useProjectStore();
   const { fetchWorkspaces } = useWorkspaceStore();
-  const { backends } = useCoordinatorStore();
+  const { backends, backendRuntimeSummaries } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
 
@@ -127,6 +128,10 @@ export function WorkspaceLayout() {
     assets: !!assetsDashboardMatch || !!unifiedWorkflowEditorMatch,
     routine: !!routineDashboardMatch,
   };
+  const effectiveBackends = useMemo(
+    () => applyBackendRuntimeSummaries(backends, backendRuntimeSummaries),
+    [backends, backendRuntimeSummaries],
+  );
 
   const navTargets = useMemo<Record<NavKey, string>>(() => {
     const result = {} as Record<NavKey, string>;
@@ -196,7 +201,7 @@ export function WorkspaceLayout() {
           activePanel={activeFooterPanel}
           onTogglePanel={toggleFooterPanel}
           onClosePanel={() => setActiveFooterPanel(null)}
-          backends={backends}
+          backends={effectiveBackends}
           connectionState={connectionState}
           currentUser={currentUser}
           rememberedPath={rememberedPath}

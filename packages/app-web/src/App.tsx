@@ -266,13 +266,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   const { fetchProjects, currentProjectId } = useProjectStore();
-  const { fetchBackends } = useCoordinatorStore();
+  const { fetchBackends, fetchBackendRuntimeSummaries } = useCoordinatorStore();
   const { connect, disconnect } = useEventStore();
   const handleStateChange = useStoryStore((state) => state.handleStateChange);
 
   useEffect(() => {
-    void Promise.allSettled([fetchBackends(), fetchProjects()]);
-  }, [fetchBackends, fetchProjects]);
+    void Promise.allSettled([fetchBackends(), fetchBackendRuntimeSummaries(), fetchProjects()]);
+  }, [fetchBackends, fetchBackendRuntimeSummaries, fetchProjects]);
 
   useEffect(() => {
     let backendRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -288,6 +288,7 @@ function AppContent() {
         case "Connected":
         case "BackendRuntimeChanged":
           scheduleBackendRefresh();
+          void fetchBackendRuntimeSummaries();
           break;
         case "StateChanged":
           handleStateChange(event.data);
@@ -302,7 +303,7 @@ function AppContent() {
         clearTimeout(backendRefreshTimer);
       }
     };
-  }, [fetchBackends, handleStateChange]);
+  }, [fetchBackends, fetchBackendRuntimeSummaries, handleStateChange]);
 
   useEffect(() => {
     if (!currentProjectId) {

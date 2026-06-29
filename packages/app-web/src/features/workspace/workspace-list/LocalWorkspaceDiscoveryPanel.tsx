@@ -10,6 +10,10 @@ import {
 } from "../../../services/backendAccess";
 import { useCoordinatorStore } from "../../../stores/coordinatorStore";
 import type { ProjectBackendAccess, Workspace } from "../../../types";
+import {
+  applyBackendRuntimeSummaries,
+  backendAvailabilitySignature,
+} from "../../../utils/backendAvailability";
 import { IDENTITY_KIND_LABELS } from "../model/workspaceTerms";
 
 interface LocalWorkspaceDiscoveryPanelProps {
@@ -35,7 +39,13 @@ export function LocalWorkspaceDiscoveryPanel({
   onBound,
 }: LocalWorkspaceDiscoveryPanelProps) {
   const backends = useCoordinatorStore((state) => state.backends);
+  const backendRuntimeSummaries = useCoordinatorStore((state) => state.backendRuntimeSummaries);
   const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
+  const fetchBackendRuntimeSummaries = useCoordinatorStore((state) => state.fetchBackendRuntimeSummaries);
+  const effectiveBackends = useMemo(
+    () => applyBackendRuntimeSummaries(backends, backendRuntimeSummaries),
+    [backends, backendRuntimeSummaries],
+  );
   const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
   const [selectedBackendId, setSelectedBackendId] = useState("");
   const [result, setResult] = useState<DiscoverLocalWorkspaceBindingsResponse | null>(null);
@@ -54,6 +64,7 @@ export function LocalWorkspaceDiscoveryPanel({
       const [nextAccesses] = await Promise.all([
         listProjectBackendAccess(projectId),
         fetchBackends(),
+        fetchBackendRuntimeSummaries(),
       ]);
       setAccesses(nextAccesses);
     } catch (loadError) {
@@ -61,7 +72,7 @@ export function LocalWorkspaceDiscoveryPanel({
     } finally {
       setIsLoadingAccesses(false);
     }
-  }, [fetchBackends, projectId]);
+  }, [fetchBackends, fetchBackendRuntimeSummaries, projectId]);
 
   useEffect(() => {
     void loadAccesses();
@@ -73,18 +84,8 @@ export function LocalWorkspaceDiscoveryPanel({
   }, [loadAccesses, refreshKey]);
 
   const backendRuntimeSignature = useMemo(
-    () =>
-      backends
-        .map((backend) =>
-          [
-            backend.id,
-            backend.online ? "online" : "offline",
-            backend.runtime_health?.status ?? "",
-            backend.runtime_health?.updated_at ?? "",
-          ].join(":"),
-        )
-        .join("|"),
-    [backends],
+    () => backendAvailabilitySignature(backends, backendRuntimeSummaries),
+    [backends, backendRuntimeSummaries],
   );
 
   useEffect(() => {
@@ -100,7 +101,7 @@ export function LocalWorkspaceDiscoveryPanel({
     return accesses
       .filter((access) => access.status === "active")
       .map((access) => {
-        const backend = backends.find((item) => item.id === access.backend_id);
+        const backend = effectiveBackends.find((item) => item.id === access.backend_id);
         if (!backend || backend.backend_type !== "local") return null;
         return {
           access,
@@ -111,7 +112,7 @@ export function LocalWorkspaceDiscoveryPanel({
       })
       .filter((item): item is DiscoverableBackend => item !== null)
       .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
-  }, [accesses, backends]);
+  }, [accesses, effectiveBackends]);
 
   const onlineDiscoverableBackends = useMemo(
     () => discoverableBackends.filter((backend) => backend.online),

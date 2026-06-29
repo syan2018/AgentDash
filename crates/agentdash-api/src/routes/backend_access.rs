@@ -4,7 +4,10 @@ use axum::Json;
 use axum::extract::{Path, State};
 use uuid::Uuid;
 
-use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
+use agentdash_application::backend::{
+    BackendAuthorizationService, BackendPermission, EnsureProjectBackendAccessGrantInput,
+    ProjectBackendAccessGrantSource, ensure_project_backend_access_grant,
+};
 use agentdash_application::workspace::{
     WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult, WorkspaceDetectionResult,
     WorkspaceInventoryCandidate as ApplicationWorkspaceInventoryCandidate,
@@ -122,55 +125,21 @@ pub async fn create_project_backend_access(
     .require_config(&current_user, &backend, BackendPermission::Manage)
     .await?;
 
-    let existing = state
-        .repos
-        .project_backend_access_repo
-        .list_by_project(project_id)
-        .await?
-        .into_iter()
-        .find(|access| access.backend_id == backend_id);
-    if let Some(mut access) = existing {
-        access.status = ProjectBackendAccessStatus::Active;
-        access.priority = req.priority.unwrap_or(access.priority);
-        if let Some(root_policy) = req.root_policy {
-            access.root_policy = root_policy;
-        }
-        if let Some(capability_policy) = req.capability_policy {
-            access.capability_policy = capability_policy;
-        }
-        if let Some(note) = req.note {
-            access.note = normalize_optional(note);
-        }
-        state
-            .repos
-            .project_backend_access_repo
-            .update(&access)
-            .await?;
-        let stored = state
-            .repos
-            .project_backend_access_repo
-            .get_by_id(access.id)
-            .await?
-            .ok_or_else(|| ApiError::Internal("ProjectBackendAccess 更新后读取失败".into()))?;
-        return Ok(Json(ProjectBackendAccessResponse::from(stored)));
-    }
-
-    let mut access =
-        ProjectBackendAccess::new(project_id, backend_id, Some(current_user.user_id.clone()));
-    access.priority = req.priority.unwrap_or_default();
-    if let Some(root_policy) = req.root_policy {
-        access.root_policy = root_policy;
-    }
-    if let Some(capability_policy) = req.capability_policy {
-        access.capability_policy = capability_policy;
-    }
-    access.note = req.note.and_then(normalize_optional);
-    state
-        .repos
-        .project_backend_access_repo
-        .create(&access)
-        .await?;
-    Ok(Json(ProjectBackendAccessResponse::from(access)))
+    let result = ensure_project_backend_access_grant(
+        state.repos.project_backend_access_repo.as_ref(),
+        EnsureProjectBackendAccessGrantInput {
+            project_id,
+            backend_id,
+            source: ProjectBackendAccessGrantSource::UserGrant,
+            created_by_user_id: Some(current_user.user_id.clone()),
+            priority: req.priority,
+            root_policy: req.root_policy,
+            capability_policy: req.capability_policy,
+            note: req.note,
+        },
+    )
+    .await?;
+    Ok(Json(ProjectBackendAccessResponse::from(result.access)))
 }
 
 pub async fn update_project_backend_access(

@@ -3,15 +3,17 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
-    BackendRepository, BackendShareScopeKind, ProjectBackendAccess, ProjectBackendAccessRepository,
-    ProjectBackendAccessStatus, RunnerRegistrationToken, RunnerRegistrationTokenPlaintext,
-    RunnerRegistrationTokenRepository, RunnerRegistrationTokenStatus,
-    verify_runner_registration_secret,
+    BackendRepository, BackendShareScopeKind, ProjectBackendAccessRepository,
+    RunnerRegistrationToken, RunnerRegistrationTokenPlaintext, RunnerRegistrationTokenRepository,
+    RunnerRegistrationTokenStatus, verify_runner_registration_secret,
 };
 use agentdash_domain::project::ProjectRepository;
 
 use crate::ApplicationError;
-use crate::backend::{EnrollLocalBackendRequest, EnrollmentSource, enroll_local_backend};
+use crate::backend::{
+    EnrollLocalBackendRequest, EnrollmentSource, EnsureProjectBackendAccessGrantInput,
+    ProjectBackendAccessGrantSource, enroll_local_backend, ensure_project_backend_access_grant,
+};
 use crate::repository_set::RepositorySet;
 
 const DEFAULT_TOKEN_TTL_DAYS: i64 = 30;
@@ -254,11 +256,18 @@ async fn claim_runner_registration_token_with_ports(
     .await
     .map_err(claim_error_from_application)?;
 
-    ensure_active_project_backend_access(
+    ensure_project_backend_access_grant(
         project_backend_access_repo,
-        token.project_id,
-        &enrolled.backend.id,
-        &token.created_by_user_id,
+        EnsureProjectBackendAccessGrantInput {
+            project_id: token.project_id,
+            backend_id: enrolled.backend.id.clone(),
+            source: ProjectBackendAccessGrantSource::RunnerRegistrationToken,
+            created_by_user_id: Some(token.created_by_user_id.clone()),
+            priority: None,
+            root_policy: None,
+            capability_policy: None,
+            note: None,
+        },
     )
     .await
     .map_err(claim_error_from_application)?;
@@ -302,59 +311,6 @@ async fn load_project_token(
         ));
     }
     Ok(token)
-}
-
-async fn ensure_active_project_backend_access(
-    project_backend_access_repo: &dyn ProjectBackendAccessRepository,
-    project_id: Uuid,
-    backend_id: &str,
-    created_by_user_id: &str,
-) -> Result<(), ApplicationError> {
-    if project_backend_access_repo
-        .get_active_for_project_backend(project_id, backend_id)
-        .await?
-        .is_some()
-    {
-        return Ok(());
-    }
-
-    if let Some(existing) = project_backend_access_repo
-        .list_by_project(project_id)
-        .await?
-        .into_iter()
-        .find(|access| access.backend_id == backend_id)
-    {
-        if existing.status != ProjectBackendAccessStatus::Active {
-            project_backend_access_repo
-                .set_status(existing.id, ProjectBackendAccessStatus::Active)
-                .await?;
-        }
-        return Ok(());
-    }
-
-    let mut access = ProjectBackendAccess::new(
-        project_id,
-        backend_id.to_string(),
-        Some(created_by_user_id.to_string()),
-    );
-    access.note = Some("runner_registration_token".to_string());
-    match project_backend_access_repo.create(&access).await {
-        Ok(()) => Ok(()),
-        Err(DomainError::Conflict { .. }) => {
-            if project_backend_access_repo
-                .get_active_for_project_backend(project_id, backend_id)
-                .await?
-                .is_some()
-            {
-                Ok(())
-            } else {
-                Err(ApplicationError::Conflict(
-                    "ProjectBackendAccess 并发创建冲突".to_string(),
-                ))
-            }
-        }
-        Err(error) => Err(ApplicationError::from(error)),
-    }
 }
 
 fn normalize_required(field: &str, raw: &str) -> Result<String, ApplicationError> {
@@ -427,8 +383,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use agentdash_domain::backend::{
-        BackendConfig, BackendType, BackendVisibility, LocalBackendClaim, UserPreferences,
-        ViewConfig,
+        BackendConfig, BackendType, BackendVisibility, LocalBackendClaim, ProjectBackendAccess,
+        ProjectBackendAccessStatus, UserPreferences, ViewConfig,
     };
     use agentdash_domain::project::{
         Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,

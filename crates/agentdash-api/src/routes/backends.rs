@@ -27,9 +27,11 @@ use crate::relay::registry::OnlineBackendInfo;
 use crate::routes::release_info;
 use crate::rpc::ApiError;
 use agentdash_application::backend::{
-    BackendAuthorizationService, BackendPermission, CreateBackendInput, EnsureLocalRuntimeInput,
-    LocalRuntimeScopeInput, add_backend_record, can_manage_global_backend_scope,
-    ensure_local_runtime_record, remove_backend_record,
+    BackendAuthorizationService, BackendPermission, BackendRuntimeExecutorSnapshot,
+    BackendRuntimeOnlineSnapshot, BackendRuntimeSummary, CreateBackendInput,
+    EnsureLocalRuntimeInput, LocalRuntimeScopeInput, add_backend_record,
+    can_manage_global_backend_scope, ensure_local_runtime_record, list_backend_runtime_summaries,
+    remove_backend_record,
 };
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
@@ -224,80 +226,27 @@ pub async fn list_runtime_summary(
     CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<BackendRuntimeSummaryResponse>>, ApiError> {
     let backend_authz = backend_authz(state.as_ref());
-    let mut backends = backend_authz
+    let backends = backend_authz
         .filter_backends(
             &current_user,
             state.repos.backend_repo.list_backends().await?,
         )
         .await?;
     let online_list = state.services.backend_registry.list_online().await;
-    let runtime_health_by_backend = state
-        .repos
-        .runtime_health_repo
-        .list_runtime_health()
-        .await?
-        .into_iter()
-        .map(|health| (health.backend_id.clone(), health))
-        .collect::<HashMap<_, _>>();
-    let active_leases = state
-        .repos
-        .backend_execution_lease_repo
-        .list_active()
-        .await?;
-    let active_leases_by_backend = active_leases.into_iter().fold(
-        HashMap::<String, Vec<BackendExecutionLease>>::new(),
-        |mut acc, lease| {
-            acc.entry(lease.backend_id.clone()).or_default().push(lease);
-            acc
-        },
-    );
-
-    let mut seen_ids = backends
-        .iter()
-        .map(|backend| backend.id.clone())
-        .collect::<HashSet<_>>();
-    if can_manage_global_backend_scope(&current_user) {
-        for online in &online_list {
-            if seen_ids.insert(online.backend_id.clone()) {
-                backends.push(online_backend_config(online));
-            }
-        }
-    }
-
-    let summaries = backends
-        .into_iter()
-        .map(|backend| {
-            let online_info = online_list
-                .iter()
-                .find(|online| online.backend_id == backend.id);
-            let online = online_info.is_some();
-            let runtime_health = runtime_health_by_backend
-                .get(&backend.id)
-                .cloned()
-                .map(|health| runtime_health_response(health, online));
-            let active_sessions = active_leases_by_backend
-                .get(&backend.id)
-                .cloned()
-                .unwrap_or_default();
-            let executors = backend_runtime_executors(online_info, &active_sessions);
-            let allocatable =
-                backend.enabled && online && executors.iter().any(|executor| executor.allocatable);
-            BackendRuntimeSummaryResponse {
-                backend_id: backend.id,
-                name: backend.name,
-                enabled: backend.enabled,
-                online,
-                runtime_health,
-                active_session_count: active_sessions.len(),
-                active_sessions: active_sessions
-                    .into_iter()
-                    .map(active_session_response)
-                    .collect(),
-                executors,
-                allocatable,
-            }
-        })
-        .collect();
+    let summaries = list_backend_runtime_summaries(
+        state.repos.runtime_health_repo.as_ref(),
+        state.repos.backend_execution_lease_repo.as_ref(),
+        backends,
+        online_list
+            .into_iter()
+            .map(online_backend_snapshot)
+            .collect(),
+        can_manage_global_backend_scope(&current_user),
+    )
+    .await?
+    .into_iter()
+    .map(backend_runtime_summary_response)
+    .collect();
     Ok(Json(summaries))
 }
 
@@ -334,56 +283,6 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
     }
 }
 
-fn online_backend_config(online: &OnlineBackendInfo) -> BackendConfig {
-    BackendConfig {
-        id: online.backend_id.clone(),
-        name: online.name.clone(),
-        endpoint: String::new(),
-        auth_token: None,
-        enabled: true,
-        backend_type: BackendType::Remote,
-        owner_user_id: None,
-        profile_id: None,
-        device_id: None,
-        machine_id: None,
-        machine_label: None,
-        visibility: BackendVisibility::Private,
-        share_scope_kind: BackendShareScopeKind::User,
-        share_scope_id: None,
-        capability_slot: "default".to_string(),
-        device: serde_json::json!({}),
-        last_claimed_at: None,
-    }
-}
-
-fn backend_runtime_executors(
-    online_info: Option<&OnlineBackendInfo>,
-    active_sessions: &[BackendExecutionLease],
-) -> Vec<BackendRuntimeExecutorResponse> {
-    let Some(online_info) = online_info else {
-        return Vec::new();
-    };
-    online_info
-        .capabilities
-        .executors
-        .iter()
-        .map(|executor| {
-            let active_session_count = active_sessions
-                .iter()
-                .filter(|lease| lease.executor_id.eq_ignore_ascii_case(&executor.id))
-                .count();
-            BackendRuntimeExecutorResponse {
-                executor_id: executor.id.clone(),
-                name: executor.name.clone(),
-                variants: executor.variants.clone(),
-                available: executor.available,
-                active_session_count,
-                allocatable: executor.available,
-            }
-        })
-        .collect()
-}
-
 fn active_session_response(lease: BackendExecutionLease) -> BackendActiveSessionResponse {
     BackendActiveSessionResponse {
         lease_id: lease.id,
@@ -397,6 +296,57 @@ fn active_session_response(lease: BackendExecutionLease) -> BackendActiveSession
         claimed_at: lease.claimed_at,
         activated_at: lease.activated_at,
         last_seen_at: lease.last_seen_at,
+    }
+}
+
+fn online_backend_snapshot(online: OnlineBackendInfo) -> BackendRuntimeOnlineSnapshot {
+    BackendRuntimeOnlineSnapshot {
+        backend_id: online.backend_id,
+        name: online.name,
+        executors: online
+            .capabilities
+            .executors
+            .into_iter()
+            .map(|executor| BackendRuntimeExecutorSnapshot {
+                executor_id: executor.id,
+                name: executor.name,
+                variants: executor.variants,
+                available: executor.available,
+            })
+            .collect(),
+    }
+}
+
+fn backend_runtime_summary_response(
+    summary: BackendRuntimeSummary,
+) -> BackendRuntimeSummaryResponse {
+    BackendRuntimeSummaryResponse {
+        backend_id: summary.backend_id,
+        name: summary.name,
+        enabled: summary.enabled,
+        online: summary.online,
+        runtime_health: summary
+            .runtime_health
+            .map(|health| runtime_health_response(health, summary.online)),
+        active_session_count: summary.active_session_count,
+        active_sessions: summary
+            .active_sessions
+            .into_iter()
+            .map(active_session_response)
+            .collect(),
+        executors: summary
+            .executors
+            .into_iter()
+            .map(|executor| BackendRuntimeExecutorResponse {
+                executor_id: executor.executor_id,
+                name: executor.name,
+                variants: executor.variants,
+                available: executor.available,
+                active_session_count: executor.active_session_count,
+                allocatable: executor.allocatable,
+            })
+            .collect(),
+        allocatable: summary.allocatable,
     }
 }
 

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
@@ -8,11 +8,18 @@ use agentdash_application_ports::runtime_gateway_mcp_surface::{
     RuntimeGatewayMcpSurfaceWithBackend,
 };
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
+use agentdash_domain::permission::{
+    PermissionGrant, PermissionGrantRepository, PermissionGrantVfsOperation,
+    PermissionGrantVfsPathScope,
+};
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
-use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
+use agentdash_spi::{
+    AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -52,6 +59,7 @@ pub struct AgentRunRuntimeSurfaceQuery {
     run_repo: Arc<dyn LifecycleRunRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
+    permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
 #[derive(Clone)]
@@ -60,6 +68,7 @@ pub struct AgentRunRuntimeSurfaceQueryDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
 #[async_trait]
@@ -211,6 +220,7 @@ impl AgentRunRuntimeSurfaceQuery {
             run_repo: deps.run_repo,
             agent_repo: deps.agent_repo,
             frame_repo: deps.frame_repo,
+            permission_grant_repo: deps.permission_grant_repo,
         }
     }
 
@@ -339,7 +349,17 @@ impl AgentRunRuntimeSurfaceQuery {
                 field: "vfs",
             }
         })?;
-        let vfs_access_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
+        let active_grants = self
+            .permission_grant_repo
+            .list_active_by_frame(anchor.launch_frame_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
+                purpose: purpose.clone(),
+                operation: "active permission grants",
+                message: error.to_string(),
+            })?;
+        let vfs_access_policy =
+            runtime_vfs_access_policy_for_grants(&vfs, runtime_session_id, &active_grants);
         let projected_capability_state = project_capability_state_from_frame(&frame);
         let mcp_servers = frame.typed_mcp_servers();
         let runtime_backend_anchor = runtime_backend_anchor_from_vfs(
@@ -387,6 +407,56 @@ impl AgentRunRuntimeSurfaceQuery {
                 mcp_field_present: frame.mcp_surface_json.is_some(),
             },
         })
+    }
+}
+
+fn runtime_vfs_access_policy_for_grants(
+    vfs: &Vfs,
+    runtime_session_id: &str,
+    active_grants: &[PermissionGrant],
+) -> RuntimeVfsAccessPolicy {
+    let mut policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+    for grant in active_grants
+        .iter()
+        .filter(|grant| grant.status.is_active())
+    {
+        for rule in &grant.requested_vfs_access {
+            if rule
+                .surface_ref
+                .as_ref()
+                .is_some_and(|surface_ref| surface_ref != runtime_session_id)
+            {
+                continue;
+            }
+            policy.rules.push(RuntimeVfsAccessRule {
+                mount_id: rule.mount_id.clone(),
+                path_pattern: match &rule.path_scope {
+                    PermissionGrantVfsPathScope::All => RuntimeVfsPathPattern::All,
+                    PermissionGrantVfsPathScope::Prefix(prefix) => {
+                        RuntimeVfsPathPattern::Prefix(prefix.clone())
+                    }
+                },
+                operations: rule
+                    .operations
+                    .iter()
+                    .copied()
+                    .map(runtime_vfs_operation_from_grant)
+                    .collect::<BTreeSet<_>>(),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            });
+        }
+    }
+    policy
+}
+
+fn runtime_vfs_operation_from_grant(operation: PermissionGrantVfsOperation) -> RuntimeVfsOperation {
+    match operation {
+        PermissionGrantVfsOperation::Read => RuntimeVfsOperation::Read,
+        PermissionGrantVfsOperation::List => RuntimeVfsOperation::List,
+        PermissionGrantVfsOperation::Search => RuntimeVfsOperation::Search,
+        PermissionGrantVfsOperation::Write => RuntimeVfsOperation::Write,
+        PermissionGrantVfsOperation::Exec => RuntimeVfsOperation::Exec,
+        PermissionGrantVfsOperation::ApplyPatch => RuntimeVfsOperation::ApplyPatch,
     }
 }
 
@@ -1024,10 +1094,16 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::backend::RuntimeBackendAnchorSource;
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::permission::{
+        GrantScope, GrantStatus, PermissionGrant, PermissionGrantRepository,
+        PermissionGrantStatusFilter, PermissionGrantVfsAccessRule, PermissionGrantVfsOperation,
+        PermissionGrantVfsPathScope, PolicyDecision, PolicyOutcome,
+    };
     use agentdash_domain::workflow::{
         AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
     use agentdash_spi::{AgentConfig, McpTransportConfig, ToolCluster};
+    use chrono::{DateTime, Utc};
     use tokio::sync::Mutex;
 
     use super::*;
@@ -1246,6 +1322,118 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct TestPermissionGrantRepo {
+        grants: Mutex<HashMap<Uuid, PermissionGrant>>,
+    }
+
+    #[async_trait::async_trait]
+    impl PermissionGrantRepository for TestPermissionGrantRepo {
+        async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+            self.grants.lock().await.insert(grant.id, grant.clone());
+            Ok(())
+        }
+
+        async fn update(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
+            self.grants.lock().await.insert(grant.id, grant.clone());
+            Ok(())
+        }
+
+        async fn find_by_id(&self, id: Uuid) -> Result<Option<PermissionGrant>, DomainError> {
+            Ok(self.grants.lock().await.get(&id).cloned())
+        }
+
+        async fn list_by_frame(
+            &self,
+            effect_frame_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .values()
+                .filter(|grant| grant.effect_frame_id == Some(effect_frame_id))
+                .filter(|grant| matches_status_filter(grant.status, status_filter))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+            status_filter: Option<PermissionGrantStatusFilter>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .values()
+                .filter(|grant| grant.run_id == run_id)
+                .filter(|grant| matches_status_filter(grant.status, status_filter))
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_frame(
+            &self,
+            effect_frame_id: Uuid,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            self.list_by_frame(effect_frame_id, Some(PermissionGrantStatusFilter::Active))
+                .await
+        }
+
+        async fn list_active_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            self.list_by_run(run_id, Some(PermissionGrantStatusFilter::Active))
+                .await
+        }
+
+        async fn find_active_escalation_grant(
+            &self,
+            _effect_frame_id: Uuid,
+            _target_subject_kind: &str,
+        ) -> Result<Option<PermissionGrant>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_overdue_active(
+            &self,
+            now: DateTime<Utc>,
+        ) -> Result<Vec<PermissionGrant>, DomainError> {
+            Ok(self
+                .grants
+                .lock()
+                .await
+                .values()
+                .filter(|grant| grant.status.is_active())
+                .filter(|grant| grant.expires_at.is_some_and(|expires_at| expires_at < now))
+                .cloned()
+                .collect())
+        }
+    }
+
+    fn matches_status_filter(
+        status: GrantStatus,
+        status_filter: Option<PermissionGrantStatusFilter>,
+    ) -> bool {
+        match status_filter {
+            Some(PermissionGrantStatusFilter::Exact(expected)) => status == expected,
+            Some(PermissionGrantStatusFilter::Pending) => matches!(
+                status,
+                GrantStatus::Created
+                    | GrantStatus::PendingPolicy
+                    | GrantStatus::PendingUserApproval
+                    | GrantStatus::Approved
+            ),
+            Some(PermissionGrantStatusFilter::Active) => status.is_active(),
+            Some(PermissionGrantStatusFilter::Terminal) => status.is_terminal(),
+            None => true,
+        }
+    }
+
+    #[derive(Default)]
     struct TestLifecycleSurfaceProjection;
 
     #[async_trait::async_trait]
@@ -1297,6 +1485,7 @@ mod tests {
         run_repo: Arc<TestRunRepo>,
         agent_repo: Arc<TestAgentRepo>,
         frame_repo: Arc<TestFrameRepo>,
+        permission_grant_repo: Arc<TestPermissionGrantRepo>,
         run_id: Uuid,
         project_id: Uuid,
         agent_id: Uuid,
@@ -1308,6 +1497,7 @@ mod tests {
         let run_repo = Arc::new(TestRunRepo::default());
         let agent_repo = Arc::new(TestAgentRepo::default());
         let frame_repo = Arc::new(TestFrameRepo::default());
+        let permission_grant_repo = Arc::new(TestPermissionGrantRepo::default());
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let run_id = run.id;
@@ -1336,6 +1526,7 @@ mod tests {
             run_repo: run_repo.clone(),
             agent_repo: agent_repo.clone(),
             frame_repo: frame_repo.clone(),
+            permission_grant_repo: permission_grant_repo.clone(),
         });
         Fixture {
             query,
@@ -1343,6 +1534,7 @@ mod tests {
             run_repo,
             agent_repo,
             frame_repo,
+            permission_grant_repo,
             run_id,
             project_id,
             agent_id,
@@ -1643,6 +1835,7 @@ mod tests {
                 run_repo: fixture.run_repo.clone(),
                 agent_repo: fixture.agent_repo.clone(),
                 frame_repo: fixture.frame_repo.clone(),
+                permission_grant_repo: fixture.permission_grant_repo.clone(),
             },
         ));
         let resource_query: Arc<dyn ports_agent_run_surface::AgentRunResourceSurfaceQueryPort> =
@@ -1676,6 +1869,87 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some(current_frame_id.to_string().as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn active_permission_grant_vfs_rule_is_projected_into_runtime_policy() {
+        let fixture = fixture().await;
+        let grant = active_vfs_grant(
+            fixture.run_id,
+            fixture.launch_frame_id,
+            None,
+            PermissionGrantVfsPathScope::Prefix("src".to_string()),
+            vec![PermissionGrantVfsOperation::Read],
+        );
+        fixture
+            .permission_grant_repo
+            .create(&grant)
+            .await
+            .expect("grant");
+
+        let surface = fixture
+            .query
+            .current_runtime_surface("session-1", "resource_browser".into())
+            .await
+            .expect("surface");
+
+        assert!(
+            surface
+                .vfs_access_policy
+                .rules
+                .iter()
+                .any(
+                    |rule| rule.source == RuntimeVfsAccessSource::PermissionGrant
+                        && rule.mount_id == "workspace"
+                        && rule.operations.contains(&RuntimeVfsOperation::Read)
+                        && rule.path_pattern.matches_normalized_path("src/lib.rs")
+                )
+        );
+        assert!(
+            !surface
+                .vfs_access_policy
+                .rules
+                .iter()
+                .filter(|rule| rule.source == RuntimeVfsAccessSource::PermissionGrant)
+                .any(|rule| rule.path_pattern.matches_normalized_path("tests/lib.rs")),
+            "grant path rule remains path-scoped instead of changing provider mount capability"
+        );
+    }
+
+    fn active_vfs_grant(
+        run_id: Uuid,
+        effect_frame_id: Uuid,
+        surface_ref: Option<String>,
+        path_scope: PermissionGrantVfsPathScope,
+        operations: Vec<PermissionGrantVfsOperation>,
+    ) -> PermissionGrant {
+        let mut grant = PermissionGrant::new(
+            run_id,
+            "session-1",
+            Vec::new(),
+            "allow vfs access",
+            GrantScope::AgentFrame,
+            None,
+        )
+        .with_effect_frame(effect_frame_id)
+        .with_requested_vfs_access(vec![PermissionGrantVfsAccessRule {
+            surface_ref,
+            mount_id: "workspace".to_string(),
+            path_scope,
+            operations,
+        }])
+        .expect("vfs access");
+        grant.submit_for_policy().expect("submit");
+        grant
+            .apply_policy_decision(PolicyDecision {
+                outcome: PolicyOutcome::NeedsUserApproval,
+                matched_rules: Vec::new(),
+                reason: "manual".to_string(),
+            })
+            .expect("policy");
+        grant.user_approve("user-1").expect("approve");
+        grant.mark_applied().expect("applied");
+        grant
     }
 
     #[test]

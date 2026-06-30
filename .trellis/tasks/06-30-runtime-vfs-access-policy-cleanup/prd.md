@@ -28,16 +28,17 @@
 - [x] 存在一个 runtime VFS access policy model/compiler，当前从 runtime `Vfs` 编译 whole-mount policy。
 - [x] VFS read/list/search/write/apply_patch/shell tool resolution 在 normalize 后检查 runtime policy。
 - [x] Tests 覆盖 path normalize 后 allow/deny、mount supports operation 但 policy deny、tool capability grant 不扩大 mount/path access。
-- [ ] PermissionGrant VFS path rules 能进入 runtime policy，且不写入 provider mount capability。
+- [x] PermissionGrant VFS path rules 能进入 runtime policy，且不写入 provider mount capability。
 - [x] Shell/materialization 对 mount/path/exec 的拒绝语义清晰。
 - [x] Specs 更新记录 provider capability、tool visibility、runtime VFS policy 三者分工。
 
 ## Acceptance Review
 
-PermissionGrant 的 VFS path-level 投影未在本 slice 实现。研究确认当前
-`PermissionGrant.requested_paths` 是 `ToolCapabilityPath`，没有 typed mount/path/operation contract；
-因此本轮只落地 policy model/carrier/enforcement，并把 PermissionGrant VFS path rule 作为后续
-domain contract 设计项，而不是通过字符串解析制造临时授权语义。
+PermissionGrant 的 VFS path-level 投影已通过独立 typed contract 收束：`requested_paths`
+继续表达 tool capability path，`requested_vfs_access` 表达 mount/path/operation runtime
+policy contribution。Active Grant 在 AgentRun runtime surface 查询时投影为
+`RuntimeVfsAccessSource::PermissionGrant` 规则，provider mount capability 仍只表达 provider
+support。
 
 ## Notes
 

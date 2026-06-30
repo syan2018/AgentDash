@@ -27,6 +27,7 @@ pub struct PermissionGrant {
     pub source_turn_id: Option<String>,
     pub source_tool_call_id: Option<String>,
     pub requested_paths: Vec<ToolCapabilityPath>,
+    pub requested_vfs_access: Vec<PermissionGrantVfsAccessRule>,
     pub reason: String,
     pub grant_scope: GrantScope,
     pub expires_at: Option<DateTime<Utc>>,
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS permission_grants (
     source_turn_id TEXT,
     source_tool_call_id TEXT,
     requested_paths TEXT NOT NULL,     -- JSON array: ["story_management", "task::read"]
+    requested_vfs_access JSONB NOT NULL DEFAULT '[]'::jsonb,
     reason TEXT NOT NULL,
     grant_scope TEXT NOT NULL,         -- enum: turn / agent_frame / activity
     expires_at TEXT,                   -- ISO 8601
@@ -123,6 +125,7 @@ CREATE INDEX idx_permission_grants_status
 | effect_frame_id | Option\<String\> | AgentFrame UUID when grant is frame-scoped |
 | source_runtime_session_id | String | Runtime trace audit ref |
 | requested_paths | Vec\<String\> | e.g. `["story_management", "task::read"]` |
+| requested_vfs_access | Vec\<PermissionGrantVfsAccessRuleDto\> | mount/path/operation scoped runtime VFS policy contribution |
 | reason | String | Agent-provided justification |
 | grant_scope | String | `turn` / `agent_frame` / `activity` |
 | expires_at | Option\<String\> | ISO 8601 |
@@ -136,6 +139,10 @@ CREATE INDEX idx_permission_grants_status
 #### Platform Broker Boundary
 
 `target=platform` 的 capability grant request 进入 broker 后，request identity、policy decision、审批状态和 capability effect 以 `PermissionGrant` 为事实源。Broker response 只有在需要让某个 AgentRun 继续处理授权结果时，才创建 AgentRun mailbox message，并以 `permission_grant_id` 作为 `MailboxSourceIdentity.source_ref`。这样 permission audit、runtime capability transition 和 AgentRun continuation 可以独立恢复与重放。
+
+#### VFS Path-Level Grant Boundary
+
+`requested_paths` 表达 tool capability path；`requested_vfs_access` 表达运行期 VFS mount/path/operation 规则。VFS 规则进入 `RuntimeVfsAccessPolicy` 时保留 `PermissionGrant` source，原因是 provider mount capability 只描述 mount 支持的操作集合，而运行期访问授权需要独立审计、撤销和按 path 收束。
 
 ### 4. Validation & Error Matrix
 
@@ -199,6 +206,7 @@ Agent requests unknown_capability
 | Integration | `list_overdue_active` finds old grants | Applied + ScopeEscalated grants with overdue TTL are returned without mutating status |
 | Application | `PermissionGrantService::expire_overdue_with_agent_run_effects` | Reuses single-grant expiry classification; admission-only grants do not write AgentFrame revisions, surface-changing grants do |
 | Application | runtime tool assembly consumes tool-level grants | Approved tool-level Grant is projected through AgentRun admission into runtime tool surface without writing AgentFrame revision |
+| Application | runtime VFS policy consumes VFS path-level grants | Active Grant `requested_vfs_access` appears as `RuntimeVfsAccessSource::PermissionGrant` without changing mount provider capability |
 | API | approve/revoke active-runtime adoption failure | Returns visible API error instead of reporting complete success |
 | API | `GET /permission-grants` without params | 400 error |
 | API | `POST /permission-grants/:id/approve` on Applied grant | 400 error |

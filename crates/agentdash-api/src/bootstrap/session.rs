@@ -260,6 +260,7 @@ pub(crate) async fn build_session_runtime(
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
+            permission_grant_repo: repos.permission_grant_repo.clone(),
         },
     ));
     let session_runtime_surface_query: Arc<dyn PortsAgentRunRuntimeSurfaceQueryPort> =

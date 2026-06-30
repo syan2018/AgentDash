@@ -409,6 +409,20 @@ Agent 工具使用 mount-relative 参数模型：
 
 `shell.exec` 只能作用于声明了 `exec` 能力的 mount。VFS URI 物化成本机路径时遵守 [VFS Materialization](./vfs-materialization.md)。
 
+## Runtime VFS Access Policy
+
+运行期 VFS 准入由三类事实取交集：
+
+| 事实 | 表达 |
+| --- | --- |
+| Tool capability / tool policy | 当前 Agent 能看见并调用哪个 VFS 工具 |
+| Provider mount capability | mount provider 支持 read/list/search/write/exec/apply_patch 中哪些操作 |
+| `RuntimeVfsAccessPolicy` | 当前 runtime surface 对 mount/path/operation 的授权规则 |
+
+`RuntimeVfsAccessPolicy` 的 rule source 至少区分 Project preset、PermissionGrant 和 system/runtime projection。`PermissionGrant.requested_vfs_access` 投影到 policy 时保留 mount id、mount-relative path scope、operation set 和 source，原因是 PermissionGrant 是运行期授权事实；provider mount capability 仍只表达 provider support。
+
+Policy matching 只接收 normalize 后的 mount-relative path。绝对路径和 `..` escape 在进入 matching 前失败，避免把本机路径解析和授权判断耦合。
+
 ## Search Discovery Policy
 
 Agent-facing glob / grep 从 mount root 进行默认扫描时，工作区文件发现应尊重 workspace ignore 文件与内置依赖、构建、缓存目录排除规则。这样默认搜索结果表达项目可维护内容，避免依赖包和生成产物挤占 Agent 上下文。

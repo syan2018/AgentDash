@@ -109,8 +109,9 @@ use agentdash_contracts::mcp_preset::{
 };
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
-    ScopeEscalationIntentDto,
+    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PermissionGrantVfsAccessRuleDto,
+    PermissionGrantVfsOperationDto, PermissionGrantVfsPathScopeDto, PolicyDecisionDto,
+    PolicyOutcomeDto, ScopeEscalationIntentDto,
 };
 use agentdash_contracts::project::{
     AgentPreset, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse, ProjectConfig,
@@ -610,6 +611,9 @@ fn main() {
             export_all::<PolicyOutcomeDto>(dir);
             export_all::<PolicyDecisionDto>(dir);
             export_all::<ScopeEscalationIntentDto>(dir);
+            export_all::<PermissionGrantVfsOperationDto>(dir);
+            export_all::<PermissionGrantVfsPathScopeDto>(dir);
+            export_all::<PermissionGrantVfsAccessRuleDto>(dir);
             export_all::<ListPermissionGrantsQuery>(dir);
             export_all::<PermissionGrantResponse>(dir);
         },

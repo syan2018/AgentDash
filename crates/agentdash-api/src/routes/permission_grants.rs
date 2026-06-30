@@ -10,11 +10,13 @@ use agentdash_application::permission::PermissionGrantService;
 use agentdash_application_agentrun::agent_run::AgentRunPermissionRuntimeSurfaceUpdateService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
-    ScopeEscalationIntentDto,
+    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PermissionGrantVfsAccessRuleDto,
+    PermissionGrantVfsOperationDto, PermissionGrantVfsPathScopeDto, PolicyDecisionDto,
+    PolicyOutcomeDto, ScopeEscalationIntentDto,
 };
 use agentdash_domain::permission::{
-    GrantStatus, PermissionGrant, PermissionGrantStatusFilter, PolicyOutcome,
+    GrantStatus, PermissionGrant, PermissionGrantStatusFilter, PermissionGrantVfsAccessRule,
+    PermissionGrantVfsOperation, PermissionGrantVfsPathScope, PolicyOutcome,
 };
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
@@ -83,6 +85,40 @@ fn policy_outcome_to_dto(outcome: PolicyOutcome) -> PolicyOutcomeDto {
     }
 }
 
+fn vfs_operation_to_dto(operation: PermissionGrantVfsOperation) -> PermissionGrantVfsOperationDto {
+    match operation {
+        PermissionGrantVfsOperation::Read => PermissionGrantVfsOperationDto::Read,
+        PermissionGrantVfsOperation::List => PermissionGrantVfsOperationDto::List,
+        PermissionGrantVfsOperation::Search => PermissionGrantVfsOperationDto::Search,
+        PermissionGrantVfsOperation::Write => PermissionGrantVfsOperationDto::Write,
+        PermissionGrantVfsOperation::Exec => PermissionGrantVfsOperationDto::Exec,
+        PermissionGrantVfsOperation::ApplyPatch => PermissionGrantVfsOperationDto::ApplyPatch,
+    }
+}
+
+fn vfs_path_scope_to_dto(scope: &PermissionGrantVfsPathScope) -> PermissionGrantVfsPathScopeDto {
+    match scope {
+        PermissionGrantVfsPathScope::All => PermissionGrantVfsPathScopeDto::All,
+        PermissionGrantVfsPathScope::Prefix(prefix) => {
+            PermissionGrantVfsPathScopeDto::Prefix(prefix.clone())
+        }
+    }
+}
+
+fn vfs_access_rule_to_dto(rule: &PermissionGrantVfsAccessRule) -> PermissionGrantVfsAccessRuleDto {
+    PermissionGrantVfsAccessRuleDto {
+        surface_ref: rule.surface_ref.clone(),
+        mount_id: rule.mount_id.clone(),
+        path_scope: vfs_path_scope_to_dto(&rule.path_scope),
+        operations: rule
+            .operations
+            .iter()
+            .copied()
+            .map(vfs_operation_to_dto)
+            .collect(),
+    }
+}
+
 fn status_filter_from_query(
     query: &ListPermissionGrantsQuery,
 ) -> Result<Option<PermissionGrantStatusFilter>, ApiError> {
@@ -108,6 +144,11 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantResponse {
             .requested_paths
             .iter()
             .map(|p| p.to_qualified_string())
+            .collect(),
+        requested_vfs_access: grant
+            .requested_vfs_access
+            .iter()
+            .map(vfs_access_rule_to_dto)
             .collect(),
         reason: grant.reason.clone(),
         grant_scope: grant_scope_to_dto(grant.grant_scope),

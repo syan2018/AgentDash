@@ -10,5 +10,6 @@ mod value_objects;
 pub use entity::PermissionGrant;
 pub use repository::{PermissionGrantRepository, PermissionGrantStatusFilter};
 pub use value_objects::{
-    GrantScope, GrantStatus, PolicyDecision, PolicyOutcome, ScopeEscalationIntent,
+    GrantScope, GrantStatus, PermissionGrantVfsAccessRule, PermissionGrantVfsOperation,
+    PermissionGrantVfsPathScope, PolicyDecision, PolicyOutcome, ScopeEscalationIntent,
 };

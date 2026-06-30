@@ -3,9 +3,9 @@ mod outcome;
 mod resolver;
 
 pub use commands::{
-    CompleteChildResultGateCommand, LifecycleGateCommand, OpenParentRequestGateCommand,
-    OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand,
-    RespondHumanGateCommand,
+    CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
+    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand,
+    ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 pub use outcome::{
     CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,

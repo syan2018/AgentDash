@@ -4,12 +4,23 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub enum LifecycleGateCommand {
+    OpenCompanionGate(OpenCompanionGateCommand),
     OpenWorkflowHumanGate(OpenWorkflowHumanGateCommand),
     ResolveWorkflowHumanGate(ResolveWorkflowHumanGateCommand),
     RespondHuman(RespondHumanGateCommand),
     OpenParentRequest(OpenParentRequestGateCommand),
     ResolveParentRequest(ResolveParentRequestGateCommand),
     CompleteChildResult(CompleteChildResultGateCommand),
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenCompanionGateCommand {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Option<Uuid>,
+    pub gate_kind: String,
+    pub correlation_id: String,
+    pub payload: Option<Value>,
 }
 
 #[derive(Debug, Clone)]

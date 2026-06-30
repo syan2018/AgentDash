@@ -2,22 +2,22 @@
 
 ## Stage 0. Planning Gate
 
-- [ ] User reviews and approves `prd.md`, `design.md`, and `implement.md`.
-- [ ] Curate `implement.jsonl` and `check.jsonl` with real spec/research entries.
-- [ ] Run `python ./.trellis/scripts/task.py start 06-30-lifecycle-gate-launch-owner-convergence` only after approval.
+- [x] User reviews and approves `prd.md`, `design.md`, and `implement.md`.
+- [x] Curate `implement.jsonl` and `check.jsonl` with real spec/research entries.
+- [x] Run `python ./.trellis/scripts/task.py start 06-30-lifecycle-gate-launch-owner-convergence` only after approval.
 
 ## Stage 1. D4 Canonical Launch Command
 
-- [ ] Add canonical launch command module in `agentdash-application-ports`.
-- [ ] Create `agentdash-application-ports/src/launch/` with `mod.rs`, `command.rs`, and `modifier.rs`; do not add root-level launch files.
-- [ ] Move source-specific launch payloads out of `frame_launch_envelope.rs` into `launch/modifier.rs`.
-- [ ] Change `FrameLaunchEnvelopeRequest` to accept canonical `LaunchCommand`.
-- [ ] Add `LaunchPlanningInput` and move `backend_selection` into planner-only input.
-- [ ] Convert AgentRun launch boundary and RuntimeSession launch command path to pass canonical command directly.
-- [ ] Remove AgentRun-local and RuntimeSession-local production launch command/source/modifier types.
-- [ ] Remove FrameLaunch command/source/modifier production model and mapping functions.
-- [ ] Remove or repurpose `session/launch/command.rs` so RuntimeSession does not keep a command wrapper; move runtime-specific outcome/result types to `service.rs` or `outcome.rs`.
-- [ ] Update tests for AgentRun, Companion, Workflow/Routine, Hook resume, and Local relay launch sources.
+- [x] Add canonical launch command module in `agentdash-application-ports`.
+- [x] Create `agentdash-application-ports/src/launch/` with `mod.rs`, `command.rs`, and `modifier.rs`; do not add root-level launch files.
+- [x] Move source-specific launch payloads out of `frame_launch_envelope.rs` into `launch/modifier.rs`.
+- [x] Change `FrameLaunchEnvelopeRequest` to accept canonical `LaunchCommand`.
+- [x] Add `LaunchPlanningInput` and move `backend_selection` into planner-only input.
+- [x] Convert AgentRun launch boundary and RuntimeSession launch command path to pass canonical command directly.
+- [x] Remove AgentRun-local and RuntimeSession-local production launch command/source/modifier types.
+- [x] Remove FrameLaunch command/source/modifier production model and mapping functions.
+- [x] Remove or repurpose `session/launch/command.rs` so RuntimeSession does not keep a command wrapper; move runtime-specific outcome/result types to `service.rs` or `outcome.rs`.
+- [x] Update tests for AgentRun, Companion, Workflow/Routine, Hook resume, and Local relay launch sources.
 
 Validation:
 
@@ -38,14 +38,14 @@ Exit criteria:
 
 ## Stage 2. D3 Shared LifecycleGateResolver
 
-- [ ] Add shared resolver types: `LifecycleGateResolver`, `GateTransitionOutcome`, `GateDeliveryIntent`, `GateNotificationIntent`.
-- [ ] Move pure gate validation/transition from Companion gate control into resolver.
-- [ ] Add Companion context resolver for parent/child/human runtime context lookup.
-- [ ] Move mailbox delivery into delivery adapters that consume resolver intents.
-- [ ] Move session notification into notification adapter and treat failures as diagnostics, not gate transition facts.
-- [ ] Convert Workflow HumanGate to call shared resolver.
-- [ ] Thin `CompanionGateControlService` into facade over resolver + adapters.
-- [ ] Update API route for simple human response to call the narrow use case instead of constructing full delivery service graph where possible.
+- [x] Add shared resolver types: `LifecycleGateResolver`, `GateTransitionOutcome`, `GateDeliveryIntent`, `GateNotificationIntent`.
+- [x] Move pure gate validation/transition from Companion gate control into resolver.
+- [x] Add Companion context resolver for parent/child/human runtime context lookup.
+- [x] Move mailbox delivery into delivery adapters that consume resolver intents.
+- [x] Move session notification into notification adapter and treat failures as diagnostics, not gate transition facts.
+- [x] Convert Workflow HumanGate to call shared resolver.
+- [x] Thin `CompanionGateControlService` into facade over resolver + adapters.
+- [x] Update API route for simple human response to call the narrow use case instead of constructing full delivery service graph where possible.
 
 Validation:
 
@@ -62,13 +62,13 @@ Exit criteria:
 
 ## Stage 3. D2 LifecycleDispatchService Owner Split
 
-- [ ] Extract `RunOrchestrationStarter` from lifecycle start, graph planning, run/orchestration creation and reuse.
-- [ ] Extract `AgentRuntimeMaterializer` for LifecycleAgent, RuntimeSession, AgentFrame, anchor, and delivery binding materialization.
-- [ ] Extract `SubjectAssociationWriter`.
-- [ ] Extract `LifecycleRelationWriter`; gate opening calls the D3 resolver/opening port.
-- [ ] Extract `OrchestrationReducerBridge` for `NodeStarted` reducer and updated run persistence.
-- [ ] Reduce `dispatch_common` to a coordinator over these owners.
-- [ ] Collapse duplicate plain/graph helper names once materialization owns the distinction.
+- [x] Extract `RunOrchestrationStarter` from lifecycle start, graph planning, run/orchestration creation and reuse.
+- [x] Extract `AgentRuntimeMaterializer` for LifecycleAgent, RuntimeSession, AgentFrame, anchor, and delivery binding materialization.
+- [x] Extract `SubjectAssociationWriter`.
+- [x] Extract `LifecycleRelationWriter`; gate opening calls the D3 resolver/opening port.
+- [x] Extract `OrchestrationReducerBridge` for `NodeStarted` reducer and updated run persistence.
+- [x] Reduce `dispatch_common` to a coordinator over these owners.
+- [x] Collapse duplicate plain/graph helper names once materialization owns the distinction.
 
 Validation:
 
@@ -85,9 +85,9 @@ Exit criteria:
 
 ## Final Check
 
-- [ ] Run all stage static gates again.
-- [ ] Run focused cargo checks from all stages.
-- [ ] Run contract/codegen checks if any exported DTO changes require generated TS updates.
-- [ ] Run migration guard if a DB migration was introduced.
-- [ ] Update `.trellis/spec/` only for final owner contracts learned during implementation.
-- [ ] Commit in stage-sized commits using the project commit format.
+- [x] Run all stage static gates again.
+- [x] Run focused cargo checks from all stages.
+- [x] Run contract/codegen checks if any exported DTO changes require generated TS updates; no exported TS DTO generation was required.
+- [x] Run migration guard if a DB migration was introduced; no migration was introduced, and commit hooks passed migration history guard.
+- [x] Update `.trellis/spec/` only for final owner contracts learned during implementation.
+- [x] Commit in stage-sized commits using the project commit format.

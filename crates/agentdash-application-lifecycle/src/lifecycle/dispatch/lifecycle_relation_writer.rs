@@ -1,7 +1,8 @@
 use uuid::Uuid;
 
+use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 use agentdash_domain::workflow::{
-    AgentLineage, AgentLineageRepository, AgentPolicy, GatePolicy, LifecycleAgent, LifecycleGate,
+    AgentLineage, AgentLineageRepository, AgentPolicy, GatePolicy, LifecycleAgent,
     LifecycleGateRepository, LifecycleRun,
 };
 
@@ -68,17 +69,19 @@ impl<'a> LifecycleRelationWriter<'a> {
             .correlation_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let gate = LifecycleGate::open(
-            run.id,
-            Some(agent.id),
-            Some(frame_id),
-            &policy.gate_kind,
-            correlation,
-            policy.payload.clone(),
-        );
-        let gate_id = gate.id;
-        self.gate_repo.create(&gate).await?;
-        Ok(gate_id)
+        let outcome = LifecycleGateResolver::open_companion_gate_with_repo(
+            self.gate_repo,
+            OpenCompanionGateCommand {
+                run_id: run.id,
+                agent_id: agent.id,
+                frame_id: Some(frame_id),
+                gate_kind: policy.gate_kind.clone(),
+                correlation_id: correlation,
+                payload: policy.payload.clone(),
+            },
+        )
+        .await?;
+        Ok(outcome.gate.id)
     }
 }
 

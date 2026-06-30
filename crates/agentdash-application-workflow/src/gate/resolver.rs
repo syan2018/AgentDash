@@ -7,9 +7,9 @@ use uuid::Uuid;
 use crate::WorkflowApplicationError;
 
 use super::commands::{
-    CompleteChildResultGateCommand, LifecycleGateCommand, OpenParentRequestGateCommand,
-    OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand,
-    RespondHumanGateCommand,
+    CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
+    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand,
+    ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 use super::outcome::{
     CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,
@@ -36,6 +36,9 @@ impl LifecycleGateResolver {
         command: LifecycleGateCommand,
     ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
         match command {
+            LifecycleGateCommand::OpenCompanionGate(command) => {
+                self.open_companion_gate(command).await
+            }
             LifecycleGateCommand::OpenWorkflowHumanGate(command) => {
                 self.open_workflow_human_gate(command).await
             }
@@ -53,6 +56,41 @@ impl LifecycleGateResolver {
                 self.complete_child_result(command).await
             }
         }
+    }
+
+    pub async fn open_companion_gate(
+        &self,
+        command: OpenCompanionGateCommand,
+    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
+        Self::open_companion_gate_with_repo(self.gate_repo.as_ref(), command).await
+    }
+
+    pub async fn open_companion_gate_with_repo(
+        gate_repo: &dyn LifecycleGateRepository,
+        command: OpenCompanionGateCommand,
+    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
+        if !command.gate_kind.starts_with("companion_") {
+            return Err(WorkflowApplicationError::BadRequest(format!(
+                "companion gate kind 必须以 companion_ 开头: {}",
+                command.gate_kind
+            )));
+        }
+        let gate = LifecycleGate::open(
+            command.run_id,
+            Some(command.agent_id),
+            command.frame_id,
+            command.gate_kind,
+            command.correlation_id,
+            command.payload,
+        );
+        gate_repo.create(&gate).await?;
+
+        Ok(GateTransitionOutcome {
+            gate,
+            transition: GateTransitionKind::Opened,
+            delivery_intents: Vec::new(),
+            notification_intents: Vec::new(),
+        })
     }
 
     pub async fn open_workflow_human_gate(
@@ -450,7 +488,9 @@ mod tests {
     use agentdash_domain::{DomainError, workflow::LifecycleGateRepository};
 
     use super::*;
-    use crate::gate::{OpenParentRequestGateCommand, RespondHumanGateCommand};
+    use crate::gate::{
+        OpenCompanionGateCommand, OpenParentRequestGateCommand, RespondHumanGateCommand,
+    };
 
     #[derive(Default)]
     struct MemoryGateRepo {
@@ -533,6 +573,51 @@ mod tests {
                 .as_ref()
                 .and_then(|payload| payload.get("human_mailbox_delivery"))
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn open_companion_gate_creates_request_fact_without_delivery_intents() {
+        let repo = Arc::new(MemoryGateRepo::default());
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+
+        let outcome = LifecycleGateResolver::new(repo.clone())
+            .open_companion_gate(OpenCompanionGateCommand {
+                run_id,
+                agent_id,
+                frame_id: Some(frame_id),
+                gate_kind: "companion_human_request".to_string(),
+                correlation_id: "human-request".to_string(),
+                payload: Some(json!({
+                    "session_id": "requesting-session",
+                    "turn_id": "turn-1",
+                    "request_type": "review",
+                })),
+            })
+            .await
+            .expect("open companion gate");
+
+        assert_eq!(outcome.transition, GateTransitionKind::Opened);
+        assert!(outcome.delivery_intents.is_empty());
+        assert!(outcome.notification_intents.is_empty());
+        assert_eq!(outcome.gate.run_id, run_id);
+        assert_eq!(outcome.gate.agent_id, Some(agent_id));
+        assert_eq!(outcome.gate.frame_id, Some(frame_id));
+        assert_eq!(outcome.gate.gate_kind, "companion_human_request");
+        let stored = repo
+            .get(outcome.gate.id)
+            .await
+            .expect("load gate")
+            .expect("gate");
+        assert!(stored.is_open());
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("human_mailbox_delivery")),
+            None
         );
     }
 

@@ -15,8 +15,9 @@ use super::tool_result::{
     AgentToolResultCacheWrite, AgentToolResultInlineKind, approval_rejected_tool_result,
     bound_agent_tool_result_text, error_tool_result,
 };
-use super::{
-    AgentEventSink, AgentLoopConfig, ToolResultCacheWrite, ToolResultRefContext, emit_event,
+use super::{AgentEventSink, AgentLoopConfig, ToolResultRefContext, emit_event};
+use crate::tool_result_ref::{
+    ReadableToolResultRef, ToolResultCacheWrite, ephemeral_tool_result_ref,
 };
 
 pub(super) async fn execute_tool_calls(
@@ -764,13 +765,10 @@ fn bound_tool_result_for_call_with_context(
     let readable_ref = ref_context
         .map(|context| {
             context
-                .readable_ids
+                .address_provider
                 .tool_result_ref(&context.raw_turn_id, tool_call_id, tool_name)
         })
-        .unwrap_or_else(|| {
-            let fallback_registry = super::ReadableIdRegistry::default();
-            fallback_registry.tool_result_ref("turn", tool_call_id, tool_name)
-        });
+        .unwrap_or_else(|| ephemeral_tool_result_ref(tool_call_id, tool_name));
     let item_id = readable_ref.item_id.as_str();
     let lifecycle_path = readable_ref.lifecycle_path.as_str();
     let bounded =
@@ -794,7 +792,7 @@ fn bound_tool_result_for_call_with_context(
 
 fn attach_readable_ref_details(
     mut result: AgentToolResult,
-    readable_ref: &super::ReadableToolResultRef,
+    readable_ref: &ReadableToolResultRef,
     tool_name: &str,
 ) -> AgentToolResult {
     let mut details = match result.details.take() {
@@ -830,7 +828,7 @@ fn attach_readable_ref_details(
 
 fn record_agent_tool_result_cache_write(
     ref_context: Option<&ToolResultRefContext>,
-    readable_ref: Option<&super::ReadableToolResultRef>,
+    readable_ref: Option<&ReadableToolResultRef>,
     tool_name: &str,
     write: AgentToolResultCacheWrite<'_>,
 ) {

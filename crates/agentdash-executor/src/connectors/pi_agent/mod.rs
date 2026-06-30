@@ -1,6 +1,7 @@
 mod bridges;
 mod connector;
 pub(crate) mod factory;
+mod session_item_identity;
 mod slash_commands;
 mod stream_mapper;
 pub mod system_prompt;

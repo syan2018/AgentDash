@@ -230,7 +230,7 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
   `truncated: bool`、`original_bytes: usize`、`inline_bytes: usize`、
   `omitted_bytes: usize`、`policy: string`。
 - PiAgent readable runtime address:
-  session scoped `ReadableIdRegistry` 为 raw `turn_id`、raw `tool_call_id` 和 raw `terminal_id`
+  session scoped `SessionItemIdentity` 为 raw `turn_id`、raw `tool_call_id` 和 raw `terminal_id`
   分配 `turn_001`、`tool_001` / `cmd_001`、`term_001` 这类可见 alias。工具结果
   `item_id = {turn_alias}:{body_alias}`，该 id 必须同时用于 `AgentToolResult` lifecycle ref、
   `SessionToolResultCache` key、Backbone ThreadItem id 和 lifecycle VFS 分段路径。`entry_index`
@@ -253,16 +253,21 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
 
 - Producer boundary owns bounding. Final result, partial update and terminal live output must be
   bounded before they become `AgentEvent` / `BackboneEnvelope`.
-- PiAgent 每轮 prompt 必须刷新 `ToolResultRefContext(session_id, raw_turn_id, readable_ids, cache_writer)`。
+- PiAgent 每轮 prompt 必须刷新
+  `ToolResultRefContext(session_id, raw_turn_id, address_provider, cache_writer)`。
   hot agent 复用时也使用当前 turn 的 context，避免 lifecycle ref 和 cache write 落到上一轮
-  raw `turn_id`，同时复用同一 session 的 alias registry。
-- PiAgent 冷启动仓储恢复创建新 in-process runtime 时，必须先从
+  raw `turn_id`，同时复用同一 session 的 identity allocator。
+- PiAgent 冷启动仓储恢复创建新 in-process runtime 时，必须先通过 session identity 模块从
   `RestoredSessionState.messages` 中的历史 `Assistant.tool_calls[].id`、
   `ToolResult.tool_call_id`、`ToolResult.details.readable_ref.item_id` 与
   `ToolResult.details.lifecycle_path` 观测已有 `{turn_alias}:{body_alias}`，并推进
-  `ReadableIdRegistry` 的 `turn/tool/cmd` 计数器。原因是 repository rehydrate 会恢复模型上下文，
-  但进程内 registry 已丢失；从 restored transcript 推进计数器可让重启后的新 tool card
-  继续生成 session 内唯一 readable item id。
+  `SessionItemIdentity` 的 `turn/tool/cmd` 水位。原因是 repository rehydrate 恢复的是模型上下文
+  和持久化 transcript，而 session scoped readable id 是运行时投影身份；从 restored transcript
+  派生水位可让重启后的新 tool card 继续生成 session 内唯一 readable item id。
+- AgentLoop 只通过注入的 address provider 获取 `ReadableToolResultRef`，并把返回的
+  `item_id`、`lifecycle_path`、raw trace 与 alias 写入 bounded result / cache metadata。AgentLoop
+  不拥有 alias 格式、历史恢复或 lifecycle path 组装规则，原因是这些规则同时服务 Backbone
+  projection、cache key 和 lifecycle VFS。
 - Oversized `AgentToolResult` 写入 `SessionToolResultCache` 时，cache key 使用
   `(session_id, readable_item_id)`；bounded preview 与 `details.lifecycle_path` 使用同一个
   readable item id。cache metadata 保留 raw trace。lifecycle provider 必须读取同一个共享 cache 实例。
@@ -280,7 +285,7 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
 | --- | --- |
 | Tool result text exceeds inline cap | Write bounded preview, set `details.truncation`, attach `lifecycle_path` |
 | Non-text tool content serializes above inline cap | Replace content with bounded text preview and ref metadata |
-| PiAgent hot agent starts a new turn | Refresh `ToolResultRefContext`; new lifecycle paths use the session registry's next readable `turn_###` alias |
+| PiAgent hot agent starts a new turn | Refresh `ToolResultRefContext`; new lifecycle paths use the session identity allocator's next readable `turn_###` alias |
 | Stream mapper maps tool start/update/end | ThreadItem id equals the item id embedded in `details.lifecycle_path` |
 | Lifecycle provider reads tool result body | Use shared `SessionToolResultCache` keyed by `(session_id, {turn_alias}:{body_alias})` |
 | Cache body missing or expired | lifecycle read returns bounded miss/expired status |
@@ -305,7 +310,7 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
   original body with `(session_id, {turn_alias}:{body_alias})` and raw trace metadata.
 - Executor mapping tests assert bounded content remains bounded after `stream_mapper`, and parse
   `lifecycle_path` to prove the embedded item id equals ThreadItem id.
-- Executor connector tests assert repository-restored readable ids advance `ReadableIdRegistry`
+- Executor connector tests assert repository-restored readable ids advance `SessionItemIdentity`
   before a new cold-start prompt allocates the next tool/command item id.
 - Application tests assert append/backlog, lifecycle VFS read, projection, continuation and repository
   rehydrate do not re-inline sentinel.

@@ -1,9 +1,11 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
-use crate::connectors::pi_agent::stream_mapper::convert_event_to_envelopes;
+use crate::connectors::pi_agent::stream_mapper::{
+    StreamMapperEventState, convert_event_to_envelopes,
+};
 use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
-    TokenUsage,
+    TokenUsage, ToolResultAddressProvider,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
@@ -84,8 +86,8 @@ fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
 }
 
 #[test]
-fn restored_state_hydrates_readable_id_registry_counters() {
-    let registry = ReadableIdRegistry::new();
+fn restored_state_hydrates_session_item_identity_counters() {
+    let identity = SessionItemIdentity::new();
     let restored_state = agentdash_spi::RestoredSessionState {
         messages: vec![
             AgentMessage::Assistant {
@@ -119,12 +121,12 @@ fn restored_state_hydrates_readable_id_registry_counters() {
         message_refs: Vec::new(),
     };
 
-    hydrate_readable_ids_from_restored_state(&registry, Some(&restored_state));
+    identity.observe_restored_state(Some(&restored_state));
 
-    let tool_ref = registry.tool_result_ref("raw-turn-new", "raw-tool-new", "fs_read");
+    let tool_ref = identity.tool_result_ref("raw-turn-new", "raw-tool-new", "fs_read");
     assert_eq!(tool_ref.item_id, "turn_003:tool_005");
 
-    let command_ref = registry.tool_result_ref("raw-turn-new", "raw-cmd-new", "shell_exec");
+    let command_ref = identity.tool_result_ref("raw-turn-new", "raw-cmd-new", "shell_exec");
     assert_eq!(command_ref.item_id, "turn_003:cmd_003");
 }
 
@@ -1190,13 +1192,15 @@ fn message_end_with_usage_emits_token_usage_update_with_context_window() {
         "session-usage",
         &test_source(),
         "turn-usage",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         StreamMapperRuntimeContext {
             model_context_window: Some(200_000),
             reserve_tokens: 16_384,
-            readable_ids: None,
+            session_identity: None,
         },
     );
 
@@ -1565,6 +1569,13 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             "ok": true,
             "raw_sentinel_for_regression": raw_sentinel,
             "lifecycle_path": lifecycle_path,
+            "readable_ref": {
+                "item_id": stable_item_id,
+                "turn_alias": "turn_001",
+                "body_alias": "tool_001",
+                "body_kind": "tool_result",
+                "lifecycle_path": lifecycle_path
+            },
             "truncation": {
                 "truncated": true,
                 "original_bytes": 131072,
@@ -1593,11 +1604,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let runtime_context = StreamMapperRuntimeContext {
-        readable_ids: Some(ReadableIdRegistry::new()),
-        ..StreamMapperRuntimeContext::default()
-    };
-    let update_envelopes = convert_event_to_envelopes_with_runtime_context(
+    let update_envelopes = convert_event_to_envelopes(
         &update_event,
         "session-1",
         &test_source(),
@@ -1605,9 +1612,8 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
-        runtime_context.clone(),
     );
-    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
+    let end_envelopes = convert_event_to_envelopes(
         &end_event,
         "session-1",
         &test_source(),
@@ -1615,7 +1621,6 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
-        runtime_context,
     );
 
     assert_eq!(update_envelopes.len(), 1);
@@ -1722,7 +1727,7 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
     let runtime_context = StreamMapperRuntimeContext {
-        readable_ids: Some(ReadableIdRegistry::new()),
+        session_identity: Some(SessionItemIdentity::new()),
         ..StreamMapperRuntimeContext::default()
     };
     let _ = convert_event_to_envelopes_with_runtime_context(
@@ -1730,9 +1735,11 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         "session-1",
         &test_source(),
         "turn-1",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         runtime_context.clone(),
     );
     let end_envelopes = convert_event_to_envelopes_with_runtime_context(
@@ -1740,9 +1747,11 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         "session-1",
         &test_source(),
         "turn-1",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         runtime_context,
     );
 
@@ -2856,7 +2865,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
 }
 
 #[tokio::test]
-async fn prompt_hydrates_readable_id_registry_from_restored_messages() {
+async fn prompt_hydrates_session_item_identity_from_restored_messages() {
     let bridge = Arc::new(RecordingBridge::default());
     let connector = PiAgentConnector::new(bridge, "系统提示");
     let session_id = "session-readable-restore";
@@ -2924,14 +2933,14 @@ async fn prompt_hydrates_readable_id_registry_from_restored_messages() {
 
     let agents = connector.agents.lock().await;
     let runtime = agents.get(session_id).expect("runtime should be retained");
-    let tool_ref = runtime.readable_ids.tool_result_ref(
+    let tool_ref = runtime.session_identity.tool_result_ref(
         "raw-turn-after-restore",
         "raw-tool-after-restore",
         "fs_read",
     );
     assert_eq!(tool_ref.item_id, "turn_003:tool_005");
 
-    let command_ref = runtime.readable_ids.tool_result_ref(
+    let command_ref = runtime.session_identity.tool_result_ref(
         "raw-turn-after-restore",
         "raw-cmd-after-restore",
         "shell_exec",
@@ -3035,26 +3044,28 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
         next.expect("stream item should succeed");
     }
 
-    let requests = bridge
-        .requests
-        .lock()
-        .expect("recording bridge lock poisoned");
-    assert_eq!(requests.len(), 3, "应记录三次 bridge 请求");
-    assert_eq!(
-        requests[0].system_prompt.as_deref(),
-        Some("SP_A"),
-        "turn 1 应落入 SP_A"
-    );
-    assert_eq!(
-        requests[1].system_prompt.as_deref(),
-        Some("SP_B"),
-        "identity prompt 变化后 turn 2 应切到 SP_B"
-    );
-    assert_eq!(
-        requests[2].system_prompt.as_deref(),
-        Some("SP_B"),
-        "identity prompt 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
-    );
+    {
+        let requests = bridge
+            .requests
+            .lock()
+            .expect("recording bridge lock poisoned");
+        assert_eq!(requests.len(), 3, "应记录三次 bridge 请求");
+        assert_eq!(
+            requests[0].system_prompt.as_deref(),
+            Some("SP_A"),
+            "turn 1 应落入 SP_A"
+        );
+        assert_eq!(
+            requests[1].system_prompt.as_deref(),
+            Some("SP_B"),
+            "identity prompt 变化后 turn 2 应切到 SP_B"
+        );
+        assert_eq!(
+            requests[2].system_prompt.as_deref(),
+            Some("SP_B"),
+            "identity prompt 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
+        );
+    }
 
     let agents = connector.agents.lock().await;
     let runtime = agents
@@ -3263,7 +3274,7 @@ async fn update_session_tools_replaces_all_tools() {
                 model_id: None,
             },
             model_context_window: Some(CONTEXT_WINDOW_STANDARD),
-            readable_ids: ReadableIdRegistry::new(),
+            session_identity: SessionItemIdentity::new(),
         },
     );
 

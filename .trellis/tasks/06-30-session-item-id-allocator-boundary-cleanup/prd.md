@@ -27,11 +27,11 @@
 
 ## Acceptance Criteria
 
-- [ ] `ReadableIdRegistry` 或其继任类型不再定义在 `agent_loop.rs`，AgentLoop 文件中不再包含 `{turn_alias}:{body_alias}` 的格式化/解析职责。
-- [ ] `ToolResultRefContext` 或等价上下文通过 allocator/address provider 注入 tool result ref，AgentLoop 只使用返回的 `item_id` 与 `lifecycle_path`。
-- [ ] Pi connector 的 prompt 冷启动路径不再直接扫描 `AgentMessage.details` JSON；恢复逻辑位于 session restore / identity 模块，并暴露 typed runtime state。
-- [ ] repository-restored prompt 测试覆盖历史 `turn_001:tool_004`、`turn_002:cmd_002` 后继续生成 `turn_003:tool_005`、`turn_003:cmd_003`。
-- [ ] stream mapper 测试继续证明 tool result `ThreadItem.id` 与 `lifecycle_path` 内嵌 item id 一致。
-- [ ] lifecycle VFS / `SessionToolResultCache` 测试继续证明 cache key 与 readable item id 同源。
-- [ ] 相关 backend session 与 cross-layer specs 更新为新的 ownership 描述。
-- [ ] `cargo fmt`、聚焦 Rust 测试和 `git diff --check` 通过。
+- [x] `ReadableIdRegistry` 或其继任类型不再定义在 `agent_loop.rs`，AgentLoop 文件中不再包含 `{turn_alias}:{body_alias}` 的格式化/解析职责。
+- [x] `ToolResultRefContext` 或等价上下文通过 allocator/address provider 注入 tool result ref，AgentLoop 只使用返回的 `item_id` 与 `lifecycle_path`。
+- [x] Pi connector 的 prompt 冷启动路径不再直接扫描 `AgentMessage.details` JSON；恢复逻辑位于 session restore / identity 模块，并暴露 typed runtime state。
+- [x] repository-restored prompt 测试覆盖历史 `turn_001:tool_004`、`turn_002:cmd_002` 后继续生成 `turn_003:tool_005`、`turn_003:cmd_003`。
+- [x] stream mapper 测试继续证明 tool result `ThreadItem.id` 与 `lifecycle_path` 内嵌 item id 一致。
+- [x] lifecycle VFS / `SessionToolResultCache` 测试继续证明 cache key 与 readable item id 同源。
+- [x] 相关 backend session 与 cross-layer specs 更新为新的 ownership 描述。
+- [x] `cargo fmt`、聚焦 Rust 测试和 `git diff --check` 通过。

@@ -14,8 +14,8 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ReadableIdRegistry,
-    ToolResultCacheWriter, ToolResultRefContext,
+    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ToolResultCacheWriter,
+    ToolResultRefContext,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -30,8 +30,10 @@ use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::build_hook_trace_envelope;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload, RestoredSessionState,
+    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
 };
+
+use super::session_item_identity::SessionItemIdentity;
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -61,8 +63,8 @@ struct PiAgentSessionRuntime {
     model_selection: PiAgentModelSelection,
     /// 当前执行模型的真实上下文窗口，来自 provider catalog/model profile。
     model_context_window: Option<u64>,
-    /// Session-scoped readable runtime address registry.
-    readable_ids: Arc<ReadableIdRegistry>,
+    /// Session-scoped runtime identity allocator for readable item addresses.
+    session_identity: Arc<SessionItemIdentity>,
 }
 
 struct ResolvedExecutionBridge {
@@ -83,75 +85,6 @@ impl PiAgentModelSelection {
             model_id: normalize_model_selector_value(config.model_id.as_deref()),
         }
     }
-}
-
-fn hydrate_readable_ids_from_restored_state(
-    readable_ids: &Arc<ReadableIdRegistry>,
-    restored_state: Option<&RestoredSessionState>,
-) {
-    let Some(restored_state) = restored_state else {
-        return;
-    };
-    for message in &restored_state.messages {
-        observe_readable_ids_from_message(readable_ids, message);
-    }
-}
-
-fn observe_readable_ids_from_message(
-    readable_ids: &Arc<ReadableIdRegistry>,
-    message: &AgentMessage,
-) {
-    match message {
-        AgentMessage::Assistant { tool_calls, .. } => {
-            for tool_call in tool_calls {
-                readable_ids.observe_tool_result_item_id(&tool_call.id);
-            }
-        }
-        AgentMessage::ToolResult {
-            tool_call_id,
-            details,
-            ..
-        } => {
-            readable_ids.observe_tool_result_item_id(tool_call_id);
-            if let Some(details) = details {
-                observe_readable_ids_from_tool_result_details(readable_ids, details);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn observe_readable_ids_from_tool_result_details(
-    readable_ids: &Arc<ReadableIdRegistry>,
-    details: &serde_json::Value,
-) {
-    if let Some(item_id) = details
-        .get("readable_ref")
-        .and_then(|value| value.get("item_id"))
-        .and_then(serde_json::Value::as_str)
-    {
-        readable_ids.observe_tool_result_item_id(item_id);
-    }
-    if let Some(item_id) = details
-        .get("lifecycle_path")
-        .and_then(serde_json::Value::as_str)
-        .and_then(tool_result_item_id_from_lifecycle_path)
-    {
-        readable_ids.observe_tool_result_item_id(&item_id);
-    }
-}
-
-fn tool_result_item_id_from_lifecycle_path(path: &str) -> Option<String> {
-    let remainder = path
-        .strip_prefix("lifecycle://session/tool-results/")?
-        .strip_suffix("/result.txt")?;
-    let mut parts = remainder.split('/');
-    let turn_alias = parts.next()?;
-    let body_alias = parts.next()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(format!("{turn_alias}:{body_alias}"))
 }
 
 struct ProviderRuntimeState {
@@ -769,12 +702,12 @@ impl AgentConnector for PiAgentConnector {
             "Pi Agent prompt resolved runtime reuse state"
         );
         let incoming_system_prompt = assemble_system_prompt(&context.turn.context_frames);
-        let readable_ids = existing_runtime
+        let session_identity = existing_runtime
             .as_ref()
-            .map(|runtime| runtime.readable_ids.clone())
-            .unwrap_or_else(ReadableIdRegistry::new);
+            .map(|runtime| runtime.session_identity.clone())
+            .unwrap_or_else(SessionItemIdentity::new);
         if existing_runtime.is_none() {
-            hydrate_readable_ids_from_restored_state(&readable_ids, restored_state.as_ref());
+            session_identity.observe_restored_state(restored_state.as_ref());
         }
         let mut cached_system_prompt = existing_runtime
             .as_ref()
@@ -917,7 +850,7 @@ impl AgentConnector for PiAgentConnector {
         agent.set_tool_result_ref_context(Some(ToolResultRefContext {
             session_id: session_id.to_string(),
             raw_turn_id: context.session.turn_id.clone(),
-            readable_ids: readable_ids.clone(),
+            address_provider: session_identity.clone(),
             cache_writer: self.tool_result_cache_writer.clone(),
         }));
 
@@ -947,7 +880,7 @@ impl AgentConnector for PiAgentConnector {
                 last_system_prompt: cached_system_prompt,
                 model_selection: requested_model_selection,
                 model_context_window: current_model_context_window,
-                readable_ids: readable_ids.clone(),
+                session_identity: session_identity.clone(),
             },
         );
 
@@ -961,7 +894,7 @@ impl AgentConnector for PiAgentConnector {
         let stream_runtime_context = StreamMapperRuntimeContext {
             model_context_window: current_model_context_window,
             reserve_tokens: 0,
-            readable_ids: Some(readable_ids),
+            session_identity: Some(session_identity),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
@@ -986,9 +919,11 @@ impl AgentConnector for PiAgentConnector {
                                 &session_id_owned,
                                 &source,
                                 &turn_id,
-                                &mut entry_index,
-                                &mut chunk_emit_states,
-                                &mut tool_call_states,
+                                StreamMapperEventState {
+                                    entry_index: &mut entry_index,
+                                    chunk_emit_states: &mut chunk_emit_states,
+                                    tool_call_states: &mut tool_call_states,
+                                },
                                 stream_runtime_context.clone(),
                             );
 
@@ -1024,9 +959,11 @@ impl AgentConnector for PiAgentConnector {
                     &session_id_owned,
                     &source,
                     &turn_id,
-                    &mut entry_index,
-                    &mut chunk_emit_states,
-                    &mut tool_call_states,
+                    StreamMapperEventState {
+                        entry_index: &mut entry_index,
+                        chunk_emit_states: &mut chunk_emit_states,
+                        tool_call_states: &mut tool_call_states,
+                    },
                     stream_runtime_context.clone(),
                 );
 
@@ -1238,7 +1175,7 @@ async fn emit_pending_hook_trace_envelopes(
 }
 
 use super::stream_mapper::{
-    ChunkEmitState, StreamMapperRuntimeContext, ToolCallEmitState,
+    ChunkEmitState, StreamMapperEventState, StreamMapperRuntimeContext, ToolCallEmitState,
     convert_event_to_envelopes_with_runtime_context,
 };
 

@@ -2,33 +2,32 @@
 
 ## Checklist
 
-- [ ] Load relevant specs from `implement.jsonl` and inspect current call sites for `ReadableIdRegistry`, `ToolResultRefContext`, `readable_ref`, `lifecycle_path`, `terminal_ref`, and stream mapper `tool_result_item_id`.
-- [ ] Add focused characterization tests around current allocator behavior:
+- [x] Load relevant specs from `implement.jsonl` and inspect current call sites for `ReadableIdRegistry`, `ToolResultRefContext`, `readable_ref`, `lifecycle_path`, `terminal_ref`, and stream mapper `tool_result_item_id`.
+- [x] Add focused characterization tests around current allocator behavior:
   - restored history advances turn/tool/cmd counters;
   - hot runtime keeps allocating from the same session allocator;
   - `ThreadItem.id` equals the item id embedded in `lifecycle_path`;
   - lifecycle cache key uses the same item id.
-- [ ] Introduce a session item identity module with:
+- [x] Introduce a session item identity module with:
   - allocator state;
   - alias formatting/parsing;
   - tool/cmd/terminal allocation;
   - restored transcript observation;
   - typed watermark/restored state where useful.
-- [ ] Introduce or revise the AgentLoop-facing abstraction so tool result bounding receives a `ToolResultRef` from an injected provider instead of owning readable id state.
-- [ ] Move `ReadableIdRegistry` behavior out of `agent_loop.rs`; update exports and imports.
-- [ ] Move Pi connector restored-state hydration out of connector glue into the identity module.
-- [ ] Update PiAgent runtime state to hold the session identity allocator/provider and refresh only per-turn context values on prompt.
-- [ ] Update stream mapper and connector tests to use the new module names and typed restore entry points.
-- [ ] Update backend session and cross-layer specs with the final ownership model.
-- [ ] Run validation commands and inspect diff for accidental unrelated churn.
+- [x] Introduce or revise the AgentLoop-facing abstraction so tool result bounding receives a `ToolResultRef` from an injected provider instead of owning readable id state.
+- [x] Move `ReadableIdRegistry` behavior out of `agent_loop.rs`; update exports and imports.
+- [x] Move Pi connector restored-state hydration out of connector glue into the identity module.
+- [x] Update PiAgent runtime state to hold the session identity allocator/provider and refresh only per-turn context values on prompt.
+- [x] Update stream mapper and connector tests to use the new module names and typed restore entry points.
+- [x] Update backend session and cross-layer specs with the final ownership model.
+- [x] Run validation commands and inspect diff for accidental unrelated churn.
 
 ## Validation Commands
 
 ```bash
 cargo fmt
-cargo test -p agentdash-agent readable_id_registry_reserves_history_item_ids_after_restore
-cargo test -p agentdash-executor restored_state_hydrates_readable_id_registry_counters
-cargo test -p agentdash-executor prompt_hydrates_readable_id_registry_from_restored_messages
+cargo test -p agentdash-executor restored_state_hydrates_session_item_identity_counters
+cargo test -p agentdash-executor prompt_hydrates_session_item_identity_from_restored_messages
 cargo test -p agentdash-executor prompt_restores_repository_messages_before_new_user_prompt
 cargo test -p agentdash-executor tool_result
 git diff --check

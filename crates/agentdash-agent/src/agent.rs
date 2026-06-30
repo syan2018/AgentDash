@@ -17,10 +17,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::{
     self, AfterToolCallFn, AgentEventSink, AgentLoopConfig, AwaitToolApprovalFn, BeforeToolCallFn,
-    ToolResultRefContext, TransformContextFn,
+    TransformContextFn,
 };
 use crate::bridge::LlmBridge;
 use crate::event_stream::{self, EventReceiver};
+use crate::tool_result_ref::ToolResultRefContext;
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentRuntimeDelegateSet, AgentState,
     DynAgentTool, ThinkingLevel, ToolApprovalOutcome, ToolApprovalRequest, ToolExecutionMode,

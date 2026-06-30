@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{
     Arc, Mutex as StdMutex,
@@ -11,15 +11,95 @@ use agentdash_agent::types::TokenUsage;
 use agentdash_agent::{
     Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
     AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
-    BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, ReadableIdRegistry,
-    StopDecision, StopReason, ToolApprovalOutcome, ToolCallInfo, ToolDefinition,
-    ToolResultCacheWrite, ToolResultRefContext, agent_loop::AgentEventSink,
+    BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, ReadableBodyKind,
+    ReadableToolResultRef, StopDecision, StopReason, ToolApprovalOutcome, ToolCallInfo,
+    ToolDefinition, ToolResultAddressProvider, ToolResultCacheWrite, ToolResultRefContext,
+    agent_loop::AgentEventSink,
 };
 use async_trait::async_trait;
 use futures::Stream;
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
+
+#[derive(Default)]
+struct TestToolResultAddressProvider {
+    state: StdMutex<TestToolResultAddressState>,
+}
+
+#[derive(Default)]
+struct TestToolResultAddressState {
+    turn_aliases: HashMap<String, String>,
+    body_aliases: HashMap<(ReadableBodyKind, String), String>,
+    next_turn: usize,
+    next_tool: usize,
+    next_command: usize,
+}
+
+impl TestToolResultAddressProvider {
+    fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+}
+
+impl ToolResultAddressProvider for TestToolResultAddressProvider {
+    fn tool_result_ref(
+        &self,
+        raw_turn_id: &str,
+        raw_tool_call_id: &str,
+        tool_name: &str,
+    ) -> ReadableToolResultRef {
+        let body_kind = if tool_name == "shell_exec" {
+            ReadableBodyKind::Command
+        } else {
+            ReadableBodyKind::Tool
+        };
+        let mut state = self
+            .state
+            .lock()
+            .expect("test address provider lock poisoned");
+        let turn_alias = if let Some(alias) = state.turn_aliases.get(raw_turn_id) {
+            alias.clone()
+        } else {
+            state.next_turn += 1;
+            let alias = format!("turn_{:03}", state.next_turn);
+            state
+                .turn_aliases
+                .insert(raw_turn_id.to_string(), alias.clone());
+            alias
+        };
+        let key = (body_kind, raw_tool_call_id.to_string());
+        let body_alias = if let Some(alias) = state.body_aliases.get(&key) {
+            alias.clone()
+        } else {
+            let (prefix, next) = match body_kind {
+                ReadableBodyKind::Tool => {
+                    state.next_tool += 1;
+                    ("tool", state.next_tool)
+                }
+                ReadableBodyKind::Command => {
+                    state.next_command += 1;
+                    ("cmd", state.next_command)
+                }
+            };
+            let alias = format!("{prefix}_{next:03}");
+            state.body_aliases.insert(key, alias.clone());
+            alias
+        };
+        let item_id = format!("{turn_alias}:{body_alias}");
+        let lifecycle_path =
+            format!("lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt");
+        ReadableToolResultRef {
+            raw_turn_id: raw_turn_id.to_string(),
+            raw_tool_call_id: raw_tool_call_id.to_string(),
+            turn_alias,
+            body_alias,
+            body_kind,
+            item_id,
+            lifecycle_path,
+        }
+    }
+}
 
 #[derive(Clone)]
 enum ScriptStep {
@@ -1163,7 +1243,7 @@ async fn small_tool_result_with_readable_context_does_not_attach_lifecycle_ref()
         tool_result_ref_context: Some(ToolResultRefContext {
             session_id: "session-small".to_string(),
             raw_turn_id: "turn-small".to_string(),
-            readable_ids: ReadableIdRegistry::new(),
+            address_provider: TestToolResultAddressProvider::new(),
             cache_writer: Some(Arc::new(move |write| {
                 cache_writes_for_writer
                     .lock()
@@ -1244,13 +1324,12 @@ async fn large_final_tool_result_is_bounded_before_events_and_next_request() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let cache_writes = Arc::new(StdMutex::new(Vec::<ToolResultCacheWrite>::new()));
     let cache_writes_for_writer = cache_writes.clone();
-    let readable_ids = ReadableIdRegistry::new();
     let stable_item_id = "turn_001:tool_001".to_string();
     let config = AgentLoopConfig {
         tool_result_ref_context: Some(ToolResultRefContext {
             session_id: "session-large".to_string(),
             raw_turn_id: "turn-large".to_string(),
-            readable_ids,
+            address_provider: TestToolResultAddressProvider::new(),
             cache_writer: Some(Arc::new(move |write| {
                 cache_writes_for_writer
                     .lock()

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Defines Backbone ThreadItem identity and lifecycle VFS protocol constraints consumed by UI projection."}
+{"file": ".trellis/spec/backend/session/pi-agent-streaming.md", "reason": "Defines current PiAgent readable item id, lifecycle path, cache key, restore, and stream mapping contracts."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend layer ownership reference for moving session identity out of low-level agent loop code."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Defines ExecutionTurnFrame and RestoredSessionState handoff boundaries for runtime restoration."}

@@ -60,6 +60,12 @@
 - 相关 app-web stream parser 单元测试
 - 必要时运行 `pnpm --filter app-web typecheck`
 
+### Implementation Record
+
+- Workstream B 采用 contract generator 内的小型 NDJSON validator schema AST，生成 `packages/app-web/src/generated/ndjson-stream-validators.ts`。这样 stream branch、字段必填性、JSON object payload 与 cursor 字段校验由 `agentdash-contracts` 输出，并被 `pnpm run contracts:check` 覆盖。
+- `Session` 与 `Project` 前端 validator 只把 generated failure 映射为 stream-local `Error`，并保留 `SessionEventEnvelope` view-model 投影；transport 不再持有分支 shape 判断。
+- `notification: BackboneEnvelope` 做最小结构校验（`event/sessionId/source/trace/observedAt` 存在），原因是完整 Backbone event union 已由独立 Backbone protocol 生成类型和 TypeScript 编译约束；在 NDJSON validator 中深拷一套 Backbone 运行时 union 会制造第二个大型协议事实源。
+
 ## Phase C: WorkspaceModule Pure Outcome
 
 ### Files To Inspect

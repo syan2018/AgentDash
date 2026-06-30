@@ -28,6 +28,7 @@ Rust contract type
 - Frontend service 对内部 API response 信任 generated wire type；字段名、enum 值和 union 形态不在前端重新定义。Mapper 只用于 UI view model 转换、外部/用户输入、第三方 payload，或尚未进入 contract crate 的 route-local 过渡 DTO。
 - Route-local DTO 只用于极小的 transport wrapper；跨 feature 复用、前端消费或流式传输的 DTO 必须进入 contract crate。
 - NDJSON stream 的 `connected` / `event` / `heartbeat` envelope 也属于 contract，原因是续传游标、事件事实和 reducer 输入需要跨后端与前端共同演进。
+- NDJSON stream 的运行时 envelope validator 由 `agentdash-contracts` 生成到 `packages/app-web/src/generated/ndjson-stream-validators.ts`，原因是流式网络边界需要运行时 shape 校验，而校验字段、tag 分支和生成 TypeScript union 必须共享同一个 contract generator 事实源。
 - Session turn 控制面复用 Codex app-server protocol 的 input 形态，且 message（新轮）与 steer（运行中注入）入参**同形** `Vec<UserInput>`（canonical，后端封名 `UserInputBlock`），原因是 Codex `turn/start` 与 `turn/steer` 本就共用同一 `Vec<UserInput>`，分裂成两套输入表示是历史负债。浏览器发起运行中 steer 时后端服务继续携带 `expected_turn_id` 进入 session control / relay / connector，因为 Codex `turn/steer` 的幂等前置条件必须由前端可见的实际运行状态一路传递到执行器。
 - 用户输入的多模态形态结构化直达：前端把图片以 data URL 放进 `UserInput::Image`，经唯一映射成为 `ContentPart::Image{mime_type,data}` 投递给模型，不再拍平成占位文本。ACP `ContentBlock` 仅存在于 relay 远程边界（单处双向转换），不进入业务 HTTP 入参，也不在内部投递链路透传。
 
@@ -66,6 +67,7 @@ packages/app-web/src/generated/
   shared-library-contracts.ts
   mcp-preset-contracts.ts
   project-agent-contracts.ts
+  ndjson-stream-validators.ts
 ```
 
 ## Current Baseline

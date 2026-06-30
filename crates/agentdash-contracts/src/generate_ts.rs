@@ -60,7 +60,8 @@ use agentdash_contracts::context::{
     SessionRequiredContextBlock, VfsCapabilityDto,
 };
 use agentdash_contracts::contract_generation::{
-    GeneratedTsFile, render_common_json_value, render_domain_file,
+    GeneratedTsFile, NDJSON_STREAM_VALIDATORS_FILENAME, render_common_json_value,
+    render_domain_file, render_ndjson_stream_validators,
 };
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
@@ -993,6 +994,11 @@ fn main() {
             export_all::<UpdateSettingsResponse>(dir);
         },
     );
+
+    write_ndjson_stream_validators(
+        &generated_dir.join(NDJSON_STREAM_VALIDATORS_FILENAME),
+        check,
+    );
 }
 
 /// Emit a single domain file, register its exported types into the upstream registry.
@@ -1039,6 +1045,16 @@ fn write_domain_dedup(
 fn write_common_json_value(out: &std::path::Path, check: bool) {
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
     let rendered = render_common_json_value();
+    check_or_write_rendered(out, &rendered, check);
+
+    if !check {
+        eprintln!("Wrote {}", out.display());
+    }
+}
+
+fn write_ndjson_stream_validators(out: &std::path::Path, check: bool) {
+    fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
+    let rendered = render_ndjson_stream_validators();
     check_or_write_rendered(out, &rendered, check);
 
     if !check {

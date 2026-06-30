@@ -8,6 +8,7 @@ pub const GENERATED_HEADER: &[&str] = &[
 pub const COMMON_CONTRACTS_FILENAME: &str = "common-contracts.ts";
 pub const COMMON_CONTRACTS_IMPORT_SOURCE: &str = "./common-contracts";
 pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
+pub const NDJSON_STREAM_VALIDATORS_FILENAME: &str = "ndjson-stream-validators.ts";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedTsFile {
@@ -70,6 +71,469 @@ pub fn render_common_json_value() -> GeneratedTsFile {
         contents: lines.join("\n"),
         exported_types: BTreeSet::from([JSON_VALUE_TYPE_NAME.to_string()]),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldValidationRule {
+    Object,
+    FiniteNumber,
+    NonEmptyString,
+    OptionalString,
+    OptionalFiniteNumber,
+    NullableString,
+    JsonObject,
+    BackboneEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldValidationSpec {
+    path: Vec<&'static str>,
+    rule: FieldValidationRule,
+    expected: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NdjsonEnvelopeBranchSpec {
+    type_literal: &'static str,
+    type_alias: &'static str,
+    guard_function: &'static str,
+    failure_function: &'static str,
+    fields: Vec<FieldValidationSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NdjsonEnvelopeValidatorSpec {
+    envelope_type: &'static str,
+    parse_function: &'static str,
+    validate_function: &'static str,
+    branches: Vec<NdjsonEnvelopeBranchSpec>,
+}
+
+pub fn render_ndjson_stream_validators() -> GeneratedTsFile {
+    let mut lines = header_lines();
+    lines.push(String::new());
+    lines.push("import type { BackboneEnvelope } from \"./backbone-protocol\";".to_string());
+    lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
+    lines.push(
+        "import type { ProjectEventStreamEnvelope } from \"./project-contracts\";".to_string(),
+    );
+    lines.push("import type { SessionNdjsonEnvelope } from \"./session-contracts\";".to_string());
+    lines.push(String::new());
+
+    push_ts_block(
+        &mut lines,
+        r#"
+export type GeneratedNdjsonEnvelopeValidationFailure =
+  | { reason: "not_object" }
+  | { reason: "unknown_type"; actual_type: string }
+  | { reason: "invalid_branch"; branch: string; field_path: string; expected: string };
+
+export type GeneratedNdjsonEnvelopeParseResult<TEnvelope extends { type: string }> =
+  | {
+    [TKind in TEnvelope["type"]]: {
+      ok: true;
+      kind: TKind;
+      envelope: Extract<TEnvelope, { type: TKind }>;
+    };
+  }[TEnvelope["type"]]
+  | { ok: false; failure: GeneratedNdjsonEnvelopeValidationFailure };
+
+function invalidBranch(
+  branch: string,
+  fieldPath: string,
+  expected: string,
+): GeneratedNdjsonEnvelopeValidationFailure {
+  return { reason: "invalid_branch", branch, field_path: fieldPath, expected };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalFiniteNumber(value: unknown): value is number | undefined {
+  return value === undefined || isFiniteNumber(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (isRecord(value)) return Object.values(value).every(isJsonValue);
+  return false;
+}
+
+function isJsonObject(value: unknown): value is Record<string, JsonValue> {
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
+function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
+  return isRecord(value) &&
+    isRecord(value.event) &&
+    typeof value.sessionId === "string" &&
+    isRecord(value.source) &&
+    isRecord(value.trace) &&
+    typeof value.observedAt === "string";
+}
+"#,
+    );
+
+    for spec in ndjson_validator_specs() {
+        render_ndjson_validator_spec(&mut lines, &spec);
+    }
+
+    GeneratedTsFile {
+        filename: NDJSON_STREAM_VALIDATORS_FILENAME.to_string(),
+        contents: lines.join("\n"),
+        exported_types: BTreeSet::from([
+            "GeneratedNdjsonEnvelopeValidationFailure".to_string(),
+            "GeneratedNdjsonEnvelopeParseResult".to_string(),
+        ]),
+    }
+}
+
+fn ndjson_validator_specs() -> Vec<NdjsonEnvelopeValidatorSpec> {
+    vec![
+        NdjsonEnvelopeValidatorSpec {
+            envelope_type: "ProjectEventStreamEnvelope",
+            parse_function: "parseGeneratedProjectEventStreamEnvelope",
+            validate_function: "isGeneratedProjectEventStreamEnvelope",
+            branches: vec![
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "Connected",
+                    type_alias: "GeneratedProjectEventStreamConnectedEnvelope",
+                    guard_function: "isGeneratedProjectEventStreamConnectedEnvelope",
+                    failure_function: "readGeneratedProjectEventStreamConnectedFailure",
+                    fields: vec![
+                        field(&["data"], FieldValidationRule::Object, "object"),
+                        field(
+                            &["data", "last_event_id"],
+                            FieldValidationRule::FiniteNumber,
+                            "finite number",
+                        ),
+                    ],
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "StateChanged",
+                    type_alias: "GeneratedProjectEventStreamStateChangedEnvelope",
+                    guard_function: "isGeneratedProjectEventStreamStateChangedEnvelope",
+                    failure_function: "readGeneratedProjectEventStreamStateChangedFailure",
+                    fields: vec![
+                        field(&["data"], FieldValidationRule::Object, "object"),
+                        field(
+                            &["data", "id"],
+                            FieldValidationRule::FiniteNumber,
+                            "finite number",
+                        ),
+                        field(
+                            &["data", "project_id"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                        field(
+                            &["data", "entity_id"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                        field(
+                            &["data", "kind"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                        field(
+                            &["data", "payload"],
+                            FieldValidationRule::JsonObject,
+                            "JSON object",
+                        ),
+                        field(
+                            &["data", "backend_id"],
+                            FieldValidationRule::NullableString,
+                            "string or null",
+                        ),
+                        field(
+                            &["data", "created_at"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                    ],
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "BackendRuntimeChanged",
+                    type_alias: "GeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
+                    guard_function: "isGeneratedProjectEventStreamBackendRuntimeChangedEnvelope",
+                    failure_function: "readGeneratedProjectEventStreamBackendRuntimeChangedFailure",
+                    fields: vec![
+                        field(&["data"], FieldValidationRule::Object, "object"),
+                        field(
+                            &["data", "backend_id"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                    ],
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "Heartbeat",
+                    type_alias: "GeneratedProjectEventStreamHeartbeatEnvelope",
+                    guard_function: "isGeneratedProjectEventStreamHeartbeatEnvelope",
+                    failure_function: "readGeneratedProjectEventStreamHeartbeatFailure",
+                    fields: vec![
+                        field(&["data"], FieldValidationRule::Object, "object"),
+                        field(
+                            &["data", "timestamp"],
+                            FieldValidationRule::FiniteNumber,
+                            "finite number",
+                        ),
+                    ],
+                },
+            ],
+        },
+        NdjsonEnvelopeValidatorSpec {
+            envelope_type: "SessionNdjsonEnvelope",
+            parse_function: "parseGeneratedSessionNdjsonEnvelope",
+            validate_function: "isGeneratedSessionNdjsonEnvelope",
+            branches: vec![
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "connected",
+                    type_alias: "GeneratedSessionNdjsonConnectedEnvelope",
+                    guard_function: "isGeneratedSessionNdjsonConnectedEnvelope",
+                    failure_function: "readGeneratedSessionNdjsonConnectedFailure",
+                    fields: vec![
+                        field(
+                            &["last_event_id"],
+                            FieldValidationRule::FiniteNumber,
+                            "finite number",
+                        ),
+                        field(
+                            &["ephemeral_epoch"],
+                            FieldValidationRule::FiniteNumber,
+                            "finite number",
+                        ),
+                    ],
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "event",
+                    type_alias: "GeneratedSessionNdjsonEventEnvelope",
+                    guard_function: "isGeneratedSessionNdjsonEventEnvelope",
+                    failure_function: "readGeneratedSessionNdjsonEventFailure",
+                    fields: session_event_fields(),
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "ephemeral_event",
+                    type_alias: "GeneratedSessionNdjsonEphemeralEventEnvelope",
+                    guard_function: "isGeneratedSessionNdjsonEphemeralEventEnvelope",
+                    failure_function: "readGeneratedSessionNdjsonEphemeralEventFailure",
+                    fields: session_event_fields(),
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "heartbeat",
+                    type_alias: "GeneratedSessionNdjsonHeartbeatEnvelope",
+                    guard_function: "isGeneratedSessionNdjsonHeartbeatEnvelope",
+                    failure_function: "readGeneratedSessionNdjsonHeartbeatFailure",
+                    fields: vec![field(
+                        &["timestamp"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    )],
+                },
+            ],
+        },
+    ]
+}
+
+fn session_event_fields() -> Vec<FieldValidationSpec> {
+    vec![
+        field(
+            &["session_id"],
+            FieldValidationRule::NonEmptyString,
+            "non-empty string",
+        ),
+        field(
+            &["event_seq"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["occurred_at_ms"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["committed_at_ms"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["session_update_type"],
+            FieldValidationRule::NonEmptyString,
+            "non-empty string",
+        ),
+        field(
+            &["turn_id"],
+            FieldValidationRule::OptionalString,
+            "string or undefined",
+        ),
+        field(
+            &["entry_index"],
+            FieldValidationRule::OptionalFiniteNumber,
+            "finite number or undefined",
+        ),
+        field(
+            &["tool_call_id"],
+            FieldValidationRule::OptionalString,
+            "string or undefined",
+        ),
+        field(
+            &["notification"],
+            FieldValidationRule::BackboneEnvelope,
+            "BackboneEnvelope",
+        ),
+    ]
+}
+
+fn field(
+    path: &[&'static str],
+    rule: FieldValidationRule,
+    expected: &'static str,
+) -> FieldValidationSpec {
+    FieldValidationSpec {
+        path: path.to_vec(),
+        rule,
+        expected,
+    }
+}
+
+fn render_ndjson_validator_spec(lines: &mut Vec<String>, spec: &NdjsonEnvelopeValidatorSpec) {
+    for branch in &spec.branches {
+        lines.push(String::new());
+        lines.push(format!(
+            "export type {} = Extract<{}, {{ type: \"{}\" }}>;",
+            branch.type_alias, spec.envelope_type, branch.type_literal
+        ));
+        lines.push(String::new());
+        render_branch_guard(lines, branch);
+        lines.push(String::new());
+        render_branch_failure_reader(lines, branch);
+    }
+
+    lines.push(String::new());
+    lines.push(format!(
+        "export function {}(payload: unknown): GeneratedNdjsonEnvelopeParseResult<{}> {{",
+        spec.parse_function, spec.envelope_type
+    ));
+    lines.push("  if (!isRecord(payload)) {".to_string());
+    lines.push("    return { ok: false, failure: { reason: \"not_object\" } };".to_string());
+    lines.push("  }".to_string());
+    lines.push(String::new());
+    lines.push("  switch (payload.type) {".to_string());
+    for branch in &spec.branches {
+        lines.push(format!("    case \"{}\": {{", branch.type_literal));
+        lines.push(format!("      if ({}(payload)) {{", branch.guard_function));
+        lines.push(format!(
+            "        return {{ ok: true, kind: \"{}\", envelope: payload }};",
+            branch.type_literal
+        ));
+        lines.push("      }".to_string());
+        lines.push(format!(
+            "      return {{ ok: false, failure: {}(payload) ?? invalidBranch(\"{}\", \"<root>\", \"valid {} envelope\") }};",
+            branch.failure_function, branch.type_literal, branch.type_literal
+        ));
+        lines.push("    }".to_string());
+    }
+    lines.push("    default:".to_string());
+    lines.push(
+        "      return { ok: false, failure: { reason: \"unknown_type\", actual_type: String(payload.type) } };"
+            .to_string(),
+    );
+    lines.push("  }".to_string());
+    lines.push("}".to_string());
+    lines.push(String::new());
+    lines.push(format!(
+        "export function {}(payload: unknown): payload is {} {{",
+        spec.validate_function, spec.envelope_type
+    ));
+    lines.push(format!("  return {}(payload).ok;", spec.parse_function));
+    lines.push("}".to_string());
+}
+
+fn render_branch_guard(lines: &mut Vec<String>, branch: &NdjsonEnvelopeBranchSpec) {
+    lines.push(format!(
+        "function {}(value: unknown): value is {} {{",
+        branch.guard_function, branch.type_alias
+    ));
+    let mut conditions = vec![
+        "isRecord(value)".to_string(),
+        format!("value.type === \"{}\"", branch.type_literal),
+    ];
+    conditions.extend(branch.fields.iter().map(field_condition));
+    lines.push(format!("  return {};", conditions.join(" &&\n    ")));
+    lines.push("}".to_string());
+}
+
+fn render_branch_failure_reader(lines: &mut Vec<String>, branch: &NdjsonEnvelopeBranchSpec) {
+    lines.push(format!(
+        "function {}(value: Record<string, unknown>): GeneratedNdjsonEnvelopeValidationFailure | null {{",
+        branch.failure_function
+    ));
+    for field in &branch.fields {
+        lines.push(format!("  if (!{}) {{", field_condition(field)));
+        lines.push(format!(
+            "    return invalidBranch(\"{}\", \"{}\", \"{}\");",
+            branch.type_literal,
+            field.path.join("."),
+            field.expected
+        ));
+        lines.push("  }".to_string());
+    }
+    lines.push("  return null;".to_string());
+    lines.push("}".to_string());
+}
+
+fn field_condition(field: &FieldValidationSpec) -> String {
+    let value = ts_path("value", &field.path);
+    match field.rule {
+        FieldValidationRule::Object => format!("isRecord({value})"),
+        FieldValidationRule::FiniteNumber => format!("isFiniteNumber({value})"),
+        FieldValidationRule::NonEmptyString => format!("isNonEmptyString({value})"),
+        FieldValidationRule::OptionalString => format!("isOptionalString({value})"),
+        FieldValidationRule::OptionalFiniteNumber => format!("isOptionalFiniteNumber({value})"),
+        FieldValidationRule::NullableString => format!("isNullableString({value})"),
+        FieldValidationRule::JsonObject => format!("isJsonObject({value})"),
+        FieldValidationRule::BackboneEnvelope => format!("isBackboneEnvelope({value})"),
+    }
+}
+
+fn ts_path(root: &str, path: &[&str]) -> String {
+    let mut expr = root.to_string();
+    for segment in path {
+        expr.push('.');
+        expr.push_str(segment);
+    }
+    expr
+}
+
+fn push_ts_block(lines: &mut Vec<String>, block: &str) {
+    lines.extend(
+        block
+            .trim_matches('\n')
+            .lines()
+            .map(|line| line.to_string()),
+    );
 }
 
 pub fn render_domain_file(
@@ -274,6 +738,47 @@ mod tests {
                 .contents
                 .contains("export type JsonBackedDto = { payload: JsonValue };")
         );
+    }
+
+    #[test]
+    fn ndjson_stream_validators_render_generated_runtime_parsers() {
+        let rendered = render_ndjson_stream_validators();
+
+        assert_eq!(rendered.filename, NDJSON_STREAM_VALIDATORS_FILENAME);
+        assert!(
+            rendered
+                .contents
+                .contains("export function parseGeneratedSessionNdjsonEnvelope(payload: unknown)")
+        );
+        assert!(rendered.contents.contains(
+            "export function parseGeneratedProjectEventStreamEnvelope(payload: unknown)"
+        ));
+        assert!(
+            rendered
+                .contents
+                .contains("isJsonObject(value.data.payload)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isBackboneEnvelope(value.notification)")
+        );
+        assert!(rendered.contents.contains(
+            "export type GeneratedProjectEventStreamStateChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"StateChanged\" }>;"
+        ));
+    }
+
+    #[test]
+    fn ndjson_stream_validators_do_not_duplicate_backend_enum_allowlists() {
+        let rendered = render_ndjson_stream_validators();
+
+        assert!(
+            rendered
+                .contents
+                .contains("isNonEmptyString(value.data.kind)")
+        );
+        assert!(!rendered.contents.contains("story_created"));
+        assert!(!rendered.contents.contains("story_updated"));
     }
 
     #[test]

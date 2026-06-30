@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
-use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
+use agentdash_application_runtime_gateway::{
+    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+    RuntimeInvocationResult,
+};
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModuleOperationReadiness,
@@ -33,10 +36,22 @@ use crate::workspace_module::runtime_bridge::{
 };
 use crate::workspace_module::{
     ResolvedInvocationBackend, WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
+    WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
     WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
     WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
-    WorkspaceModuleResolveContext, WorkspaceModuleVisibilitySource,
+    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
 };
+
+fn surface_error_to_tool_error(error: WorkspaceModuleSurfaceError) -> AgentToolError {
+    match error {
+        WorkspaceModuleSurfaceError::InvalidArguments(message) => {
+            AgentToolError::InvalidArguments(message)
+        }
+        WorkspaceModuleSurfaceError::ExecutionFailed(message) => {
+            AgentToolError::ExecutionFailed(message)
+        }
+    }
+}
 
 async fn resolve_surface_modules_for_adapter(
     installation_repo: &Arc<dyn ProjectExtensionInstallationRepository>,
@@ -53,7 +68,8 @@ async fn resolve_surface_modules_for_adapter(
             visibility_source,
             operation_runtime_source,
         })
-        .await?
+        .await
+        .map_err(surface_error_to_tool_error)?
         .modules,
     )
 }
@@ -433,7 +449,8 @@ impl AgentTool for WorkspaceModuleOperateTool {
                     input,
                 },
             ))
-            .await?,
+            .await
+            .map_err(surface_error_to_tool_error)?,
         )
     }
 }
@@ -465,7 +482,37 @@ fn project_operation_outcome(
                 details: Some(details),
             })
         }
-        WorkspaceModuleOperationOutcome::InvokeResult { result } => Ok(result),
+        WorkspaceModuleOperationOutcome::RuntimeActionInvoked { result, provenance } => {
+            Ok(runtime_action_invocation_to_tool_result(result, provenance))
+        }
+        WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance } => Ok(
+            protocol_channel_invocation_to_tool_result(result, provenance),
+        ),
+        WorkspaceModuleOperationOutcome::CanvasBindingApplied { result, provenance } => {
+            Ok(canvas_binding_to_tool_result(result, provenance))
+        }
+        WorkspaceModuleOperationOutcome::CanvasRuntimeObservationRead {
+            canvas_mount_id,
+            run_id,
+            agent_id,
+            observation,
+        } => Ok(json_output_tool_result(serde_json::json!({
+            "canvas_mount_id": canvas_mount_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "observation": observation,
+        }))),
+        WorkspaceModuleOperationOutcome::CanvasInteractionSnapshotRead {
+            canvas_mount_id,
+            run_id,
+            agent_id,
+            snapshot,
+        } => Ok(json_output_tool_result(serde_json::json!({
+            "canvas_mount_id": canvas_mount_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "snapshot": snapshot,
+        }))),
         WorkspaceModuleOperationOutcome::Presented { presentation } => {
             let value = serde_json::to_value(&presentation).map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
@@ -482,8 +529,108 @@ fn project_operation_outcome(
             })
         }
         WorkspaceModuleOperationOutcome::Diagnostic(diagnostic) => {
-            Ok(diagnostic.into_tool_result())
+            Ok(diagnostic_to_tool_result(diagnostic))
         }
+    }
+}
+
+fn runtime_action_invocation_to_tool_result(
+    result: RuntimeInvocationResult,
+    provenance: serde_json::Value,
+) -> AgentToolResult {
+    let trace = serde_json::to_value(&result.trace).unwrap_or(serde_json::Value::Null);
+    let action_key = serde_json::to_value(&result.action_key).unwrap_or(serde_json::Value::Null);
+
+    if let Ok(mut tool_result) =
+        serde_json::from_value::<AgentToolResult>(result.output.output.clone())
+    {
+        let provider_details = tool_result.details.take();
+        tool_result.details = Some(serde_json::json!({
+            "provenance": provenance,
+            "runtime_action": action_key,
+            "runtime_trace": trace,
+            "provider_details": provider_details,
+        }));
+        return tool_result;
+    }
+
+    let rendered = serde_json::to_string_pretty(&result.output.output)
+        .unwrap_or_else(|_| result.output.output.to_string());
+    AgentToolResult {
+        content: vec![ContentPart::text(rendered)],
+        is_error: false,
+        details: Some(serde_json::json!({
+            "provenance": provenance,
+            "runtime_action": action_key,
+            "runtime_trace": trace,
+            "output": result.output.output,
+        })),
+    }
+}
+
+fn protocol_channel_invocation_to_tool_result(
+    result: ExtensionRuntimeChannelInvokeResult,
+    provenance: serde_json::Value,
+) -> AgentToolResult {
+    let trace = serde_json::to_value(&result.trace).unwrap_or(serde_json::Value::Null);
+    let rendered = serde_json::to_string_pretty(&result.output.output)
+        .unwrap_or_else(|_| result.output.output.to_string());
+    AgentToolResult {
+        content: vec![ContentPart::text(rendered)],
+        is_error: false,
+        details: Some(serde_json::json!({
+            "provenance": provenance,
+            "runtime_trace": trace,
+            "output": result.output.output,
+        })),
+    }
+}
+
+fn canvas_binding_to_tool_result(
+    result: WorkspaceModuleCanvasBindingResult,
+    provenance: serde_json::Value,
+) -> AgentToolResult {
+    let content = format!(
+        "canvas_id={}\ncanvas_mount_id={}\nvfs_mount={}://\nalias={}\nsource_uri={}\ncontent_type={}",
+        result.canvas_id,
+        result.canvas_mount_id,
+        result.vfs_mount_id,
+        result.alias,
+        result.source_uri,
+        result.content_type
+    );
+    AgentToolResult {
+        content: vec![ContentPart::text(content)],
+        is_error: false,
+        details: Some(serde_json::json!({
+            "provenance": provenance,
+            "output": result,
+        })),
+    }
+}
+
+fn json_output_tool_result(output: serde_json::Value) -> AgentToolResult {
+    let rendered = serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string());
+    AgentToolResult {
+        content: vec![ContentPart::text(rendered)],
+        is_error: false,
+        details: Some(serde_json::json!({ "output": output })),
+    }
+}
+
+fn diagnostic_to_tool_result(diagnostic: WorkspaceModuleCommandDiagnostic) -> AgentToolResult {
+    let mut details = diagnostic.details;
+    if let Some(obj) = details.as_object_mut() {
+        obj.insert("error".to_string(), serde_json::json!(diagnostic.code));
+        obj.insert(
+            "message".to_string(),
+            serde_json::json!(diagnostic.message.clone()),
+        );
+    }
+    AgentToolResult {
+        content: vec![ContentPart::text(diagnostic.message)],
+        is_error: true,
+        details: Some(details),
     }
 }
 
@@ -656,7 +803,8 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     input: params.input,
                 },
             ))
-            .await?,
+            .await
+            .map_err(surface_error_to_tool_error)?,
         )
     }
 }
@@ -791,7 +939,8 @@ impl AgentTool for WorkspaceModulePresentTool {
                     payload: params.payload,
                 },
             ))
-            .await?,
+            .await
+            .map_err(surface_error_to_tool_error)?,
         )
     }
 }

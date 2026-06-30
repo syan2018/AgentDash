@@ -11,7 +11,7 @@ use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::common::Vfs;
 use agentdash_domain::project::ProjectAuthorizationContext;
-use agentdash_spi::{AgentToolError, AuthIdentity, ConnectorError, ExecutionContext};
+use agentdash_spi::{AuthIdentity, ConnectorError, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -70,6 +70,24 @@ impl SharedWorkspaceModuleAgentRunBridgeHandle {
         self.inner.read().await.clone()
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceModuleRuntimeBridgeError {
+    InvalidArguments(String),
+    ExecutionFailed(String),
+}
+
+impl std::fmt::Display for WorkspaceModuleRuntimeBridgeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidArguments(message) | Self::ExecutionFailed(message) => {
+                formatter.write_str(message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceModuleRuntimeBridgeError {}
 
 pub fn project_authorization_context_from_identity(
     identity: &AuthIdentity,
@@ -152,15 +170,15 @@ pub async fn submit_canvas_runtime_surface_update(
     current_user: Option<&ProjectAuthorizationContext>,
     canvas: &Canvas,
     request: RuntimeSurfaceUpdateRequest,
-) -> Result<(), AgentToolError> {
+) -> Result<(), WorkspaceModuleRuntimeBridgeError> {
     ensure_canvas_surface_request_targets_canvas(&request, canvas)?;
     let bridge = agent_run_bridge_handle.get().await.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(format!(
+        WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
             "Workspace module AgentRun bridge 尚未完成初始化，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
     let delivery_runtime_session_id = delivery_runtime_session_id.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(format!(
+        WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
             "当前工具调用缺少 AgentRun delivery runtime id，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
@@ -173,7 +191,7 @@ pub async fn submit_canvas_runtime_surface_update(
         )
         .await
         .map_err(|error| {
-            AgentToolError::ExecutionFailed(format!(
+            WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
                 "Canvas runtime surface request `{request:?}` 写入 AgentFrame 失败: {error}"
             ))
         })?;
@@ -192,7 +210,7 @@ pub async fn request_existing_canvas_visibility_for_runtime(
     agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
     delivery_runtime_session_id: Option<&str>,
     current_user: Option<&ProjectAuthorizationContext>,
-) -> Result<Canvas, AgentToolError> {
+) -> Result<Canvas, WorkspaceModuleRuntimeBridgeError> {
     let canvas = load_canvas_by_project_mount_id(canvas_repo, project_id, canvas_mount_id).await?;
     submit_canvas_runtime_surface_update(
         vfs,
@@ -212,7 +230,7 @@ pub async fn request_existing_canvas_visibility_for_runtime(
 fn ensure_canvas_surface_request_targets_canvas(
     request: &RuntimeSurfaceUpdateRequest,
     canvas: &Canvas,
-) -> Result<(), AgentToolError> {
+) -> Result<(), WorkspaceModuleRuntimeBridgeError> {
     let canvas_mount_id = match request {
         RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
             canvas_mount_id, ..
@@ -221,7 +239,7 @@ fn ensure_canvas_surface_request_targets_canvas(
             canvas_mount_id, ..
         } => canvas_mount_id,
         _ => {
-            return Err(AgentToolError::ExecutionFailed(format!(
+            return Err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
                 "Canvas adapter received non-Canvas runtime surface request: {request:?}"
             )));
         }
@@ -229,7 +247,7 @@ fn ensure_canvas_surface_request_targets_canvas(
     if canvas_mount_id == &canvas.mount_id {
         Ok(())
     } else {
-        Err(AgentToolError::ExecutionFailed(format!(
+        Err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
             "Canvas runtime surface request target `{canvas_mount_id}` does not match Canvas `{}`",
             canvas.mount_id
         )))
@@ -240,19 +258,21 @@ async fn load_canvas_by_project_mount_id(
     canvas_repo: &dyn CanvasRepository,
     expected_project_id: Uuid,
     raw_canvas_mount_id: &str,
-) -> Result<Canvas, AgentToolError> {
+) -> Result<Canvas, WorkspaceModuleRuntimeBridgeError> {
     let canvas_mount_id = normalize_canvas_mount_id(raw_canvas_mount_id)
-        .map_err(|error| AgentToolError::InvalidArguments(error.to_string()))?;
+        .map_err(|error| WorkspaceModuleRuntimeBridgeError::InvalidArguments(error.to_string()))?;
 
     let canvas = canvas_repo
         .get_by_mount_id(expected_project_id, &canvas_mount_id)
         .await
-        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        .map_err(|error| WorkspaceModuleRuntimeBridgeError::ExecutionFailed(error.to_string()))?;
     let canvas = canvas.ok_or_else(|| {
-        AgentToolError::ExecutionFailed(format!("Canvas 不存在: {canvas_mount_id}"))
+        WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
+            "Canvas 不存在: {canvas_mount_id}"
+        ))
     })?;
     if canvas.project_id != expected_project_id {
-        return Err(AgentToolError::ExecutionFailed(
+        return Err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
             "当前 session 无权操作其它 Project 的 Canvas".to_string(),
         ));
     }

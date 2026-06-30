@@ -232,7 +232,7 @@ describe("AgentRun control-plane model", () => {
         target: {
           typeId: "canvas",
           uri: "canvas://canvas-1",
-          options: { refreshContent: true },
+          options: { refreshContent: false },
         },
       },
     });

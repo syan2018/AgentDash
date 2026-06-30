@@ -30,8 +30,8 @@ import {
 } from "./SessionChatViewParts";
 import {
   collectAllPlatformEvents,
+  collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
-  extractTurnLifecycleEventType,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -277,6 +277,7 @@ export function SessionChatView({
     turnSegments,
     rawEntries,
     rawEvents,
+    historyReplayBoundarySeq,
     isConnected,
     isLoading,
     error: wsError,
@@ -290,6 +291,15 @@ export function SessionChatView({
     () => computeProjectionRefreshKey(rawEvents),
     [rawEvents],
   );
+  const rawEventsBelongToCurrentSession = useMemo(
+    () => !sessionId || rawEvents.every((event) => event.session_id === sessionId),
+    [rawEvents, sessionId],
+  );
+  const canApplyLiveEventSideEffects =
+    hasSession &&
+    rawEventsBelongToCurrentSession &&
+    rawEvents.length > 0 &&
+    historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
@@ -344,52 +354,55 @@ export function SessionChatView({
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
   const onSystemEventRef = useRef(onSystemEvent);
-  const lastSystemEventSeqRef = useRef(0);
+  const lastSystemEventSeqRef = useRef<number | null>(null);
   useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
   const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
-  const lastTaskToolEventSeqRef = useRef(0);
+  const lastTaskToolEventSeqRef = useRef<number | null>(null);
+  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
   useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
   useEffect(() => {
-    lastSystemEventSeqRef.current = 0;
-    lastTaskToolEventSeqRef.current = 0;
+    lastSystemEventSeqRef.current = null;
+    lastTaskToolEventSeqRef.current = null;
+    lastTurnLifecycleEventSeqRef.current = null;
   }, [sessionId]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    for (let i = rawEvents.length - 1; i >= 0; i -= 1) {
-      const event = rawEvents[i];
-      if (!event) continue;
-      const bbEvent = event.notification.event;
-      const eventType = extractTurnLifecycleEventType(bbEvent);
-      if (eventType === "turn_started") {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTurnLifecycleEventSeqRef.current = afterSeq;
+    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
+    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
+    for (const item of result.items) {
+      if (item.eventType === "turn_started") {
         setOptimisticRunning(false);
-        return;
-      }
-      if (eventType === "turn_completed" || eventType === "turn_failed" || eventType === "turn_interrupted") {
+      } else {
         optimisticRunningUntilRef.current = 0;
         setOptimisticRunning(false);
         onTurnEndRef.current?.();
-        return;
       }
     }
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    const result = collectAllPlatformEvents(rawEvents, lastSystemEventSeqRef.current);
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastSystemEventSeqRef.current = afterSeq;
+    const result = collectAllPlatformEvents(rawEvents, afterSeq);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
       onSystemEventRef.current?.(item.eventType, item.event);
     }
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    let lastSeenSeq = lastTaskToolEventSeqRef.current;
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTaskToolEventSeqRef.current = afterSeq;
+    let lastSeenSeq = afterSeq;
     let changed = false;
     for (const event of rawEvents) {
-      if (!event || event.event_seq <= lastTaskToolEventSeqRef.current) continue;
+      if (!event || event.event_seq <= afterSeq) continue;
       lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
       const bbEvent = event.notification.event;
       if (bbEvent.type !== "item_completed") continue;
@@ -405,7 +418,7 @@ export function SessionChatView({
     }
     lastTaskToolEventSeqRef.current = lastSeenSeq;
     if (changed) onTaskPlanChangedRef.current?.();
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 

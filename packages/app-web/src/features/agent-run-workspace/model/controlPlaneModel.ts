@@ -101,6 +101,7 @@ function planWorkspaceModulePresented(
   );
   const target = workspaceModulePresentedTabTarget(data);
   if (!target) return {};
+  const refreshContent = target.typeId === "canvas" ? false : target.refreshRuntime;
   return {
     refreshWorkspaceState: target.refreshRuntime,
     refreshWorkspaceModuleCatalog: target.refreshRuntime,
@@ -109,7 +110,7 @@ function planWorkspaceModulePresented(
       target: {
         typeId: target.typeId,
         uri: target.uri,
-        options: { refreshContent: target.refreshRuntime },
+        options: { refreshContent },
       },
     },
   };

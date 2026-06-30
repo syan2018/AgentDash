@@ -1604,3 +1604,38 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 45: Session item id allocator 边界清理
+
+**Date**: 2026-06-30
+**Task**: Session item id allocator 边界清理
+**Branch**: `codex/module-adversarial-review-cleanup`
+
+### Summary
+
+修复重启恢复后工具卡片 readable item id 复用，并将 PiAgent 工具结果 item identity 分配从 AgentLoop/Pi connector glue 收束到 session runtime identity 边界。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af8498111` | (see git log) |
+| `8c64df53f` | (see git log) |
+| `c904134e3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

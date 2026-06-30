@@ -72,8 +72,8 @@ export function DialogFrame({
 
   return (
     <>
-      <div className="fixed inset-0 z-[90] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="fixed inset-0 z-[91] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed left-0 top-0 z-[90] h-dvh w-dvw bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed left-0 top-0 z-[91] flex h-dvh w-dvw items-center justify-center p-4" onClick={onClose}>
         <section
           role="dialog"
           aria-modal="true"

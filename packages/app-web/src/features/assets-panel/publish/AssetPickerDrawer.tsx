@@ -67,9 +67,9 @@ export function AssetPickerDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 z-[80] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed left-0 top-0 z-[80] h-dvh w-dvw bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <aside
-        className="fixed right-0 top-0 z-[81] flex h-full w-[480px] max-w-full flex-col border-l border-border bg-background shadow-2xl"
+        className="fixed right-0 top-0 z-[81] flex h-dvh max-h-dvh w-[480px] max-w-full flex-col overflow-hidden border-l border-border bg-background shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
@@ -89,7 +89,7 @@ export function AssetPickerDrawer({
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {kind === null ? (
             <KindStep onPick={setKind} />
           ) : (

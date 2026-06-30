@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseProjectEventStreamEnvelope,
   readProjectEventStreamCursor,
 } from "./eventStream";
+import {
+  parseProjectEventStreamEnvelope,
+  parseProjectEventStreamEnvelopeResult,
+} from "./projectEventStreamEnvelopeValidator";
 
 describe("project event stream route-local envelope", () => {
   it("parses Connected and advances the stream cursor", () => {
@@ -53,17 +56,45 @@ describe("project event stream route-local envelope", () => {
     expect(event ? readProjectEventStreamCursor(event) : null).toBe(7);
   });
 
-  it("keeps Project stream isolated from Session NDJSON envelope shape", () => {
-    const event = parseProjectEventStreamEnvelope({
-      type: "connected",
-      last_event_id: 42,
+  it("does not duplicate the generated ProjectStateChangeKind union as a runtime allowlist", () => {
+    const result = parseProjectEventStreamEnvelopeResult({
+      type: "StateChanged",
+      data: {
+        id: 9,
+        project_id: "project-1",
+        entity_id: "story-1",
+        kind: "future_backend_kind",
+        payload: {},
+        backend_id: null,
+        created_at: "2026-06-21T00:00:00Z",
+      },
     });
 
-    expect(event).toBeNull();
+    if (!result.ok) {
+      throw result.error;
+    }
+    if (result.kind !== "StateChanged") {
+      throw new Error(`Expected StateChanged envelope, got ${result.kind}`);
+    }
+
+    expect(result.envelope.data.kind).toBe("future_backend_kind");
+  });
+
+  it("keeps Project stream isolated from Session NDJSON envelope shape", () => {
+    const result = parseProjectEventStreamEnvelopeResult({
+      type: "connected",
+      last_event_id: 42,
+      ephemeral_epoch: 1,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("未知 Project event stream 类型");
+    }
   });
 
   it("rejects malformed StateChanged payloads", () => {
-    const event = parseProjectEventStreamEnvelope({
+    const result = parseProjectEventStreamEnvelopeResult({
       type: "StateChanged",
       data: {
         id: 7,
@@ -73,6 +104,39 @@ describe("project event stream route-local envelope", () => {
       },
     });
 
-    expect(event).toBeNull();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("StateChanged");
+    }
+  });
+
+  it("parses Heartbeat without advancing the stream cursor", () => {
+    const result = parseProjectEventStreamEnvelopeResult({
+      type: "Heartbeat",
+      data: { timestamp: 100 },
+    });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+
+    expect(result.kind).toBe("Heartbeat");
+    expect(result.envelope).toEqual({
+      type: "Heartbeat",
+      data: { timestamp: 100 },
+    });
+    expect(readProjectEventStreamCursor(result.envelope)).toBeNull();
+  });
+
+  it("rejects unknown Project stream envelope types", () => {
+    const result = parseProjectEventStreamEnvelopeResult({
+      type: "Unknown",
+      data: { timestamp: 100 },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("未知 Project event stream 类型");
+    }
   });
 });

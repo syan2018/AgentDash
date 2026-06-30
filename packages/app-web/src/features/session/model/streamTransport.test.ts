@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
-import { parseSessionEventEnvelopePayload } from "./streamTransport";
+import {
+  parseSessionEventEnvelopePayload,
+  parseSessionNdjsonEnvelope,
+} from "./sessionNdjsonEnvelopeValidator";
 
 function envelope(): BackboneEnvelope {
   return {
@@ -94,5 +97,102 @@ describe("parseSessionEventEnvelopePayload", () => {
 
     expect(result.event).toBeNull();
     expect(result.error?.message).toContain("notification");
+  });
+});
+
+describe("parseSessionNdjsonEnvelope", () => {
+  it("接受合法 connected envelope", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "connected",
+      last_event_id: 12,
+      ephemeral_epoch: 3,
+    });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+    if (result.kind !== "connected") {
+      throw new Error(`Expected connected envelope, got ${result.kind}`);
+    }
+    expect(result.envelope.last_event_id).toBe(12);
+    expect(result.envelope.ephemeral_epoch).toBe(3);
+  });
+
+  it("接受合法 event envelope", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "event",
+      session_id: "s1",
+      event_seq: 7,
+      occurred_at_ms: 10,
+      committed_at_ms: 11,
+      session_update_type: "agent_message_delta",
+      notification: envelope(),
+    });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+    if (result.kind !== "event") {
+      throw new Error(`Expected event envelope, got ${result.kind}`);
+    }
+    expect(result.envelope.session_id).toBe("s1");
+    expect(result.envelope.notification.event.type).toBe("agent_message_delta");
+  });
+
+  it("接受合法 heartbeat envelope", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "heartbeat",
+      timestamp: 100,
+    });
+
+    if (!result.ok) {
+      throw result.error;
+    }
+    if (result.kind !== "heartbeat") {
+      throw new Error(`Expected heartbeat envelope, got ${result.kind}`);
+    }
+    expect(result.envelope.timestamp).toBe(100);
+  });
+
+  it("拒绝 invalid session-shape", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "event",
+      session_id: "s1",
+      event_seq: "7",
+      occurred_at_ms: 10,
+      committed_at_ms: 11,
+      session_update_type: "agent_message_delta",
+      notification: envelope(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("event_seq");
+    }
+  });
+
+  it("不误收 Project stream connected shape", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "connected",
+      project_id: "project-1",
+      last_event_id: 12,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("ephemeral_epoch");
+    }
+  });
+
+  it("未知 type 返回错误", () => {
+    const result = parseSessionNdjsonEnvelope({
+      type: "mystery",
+      timestamp: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("未知 Session NDJSON 类型");
+    }
   });
 });

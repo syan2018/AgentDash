@@ -1,18 +1,16 @@
 import { resolveApiUrl } from "../../../api/origin";
 import { authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
-import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
-import type { SessionNdjsonEnvelope } from "../../../generated/session-contracts";
+import {
+  parseSessionNdjsonEnvelope,
+  toSessionEventEnvelope,
+} from "./sessionNdjsonEnvelopeValidator";
 import type { SessionEventEnvelope } from "./types";
 
 const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
 
 export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
-type SessionNdjsonEventEnvelope = Extract<
-  SessionNdjsonEnvelope,
-  { type: "event" } | { type: "ephemeral_event" }
->;
 
 export interface SessionStreamTransportOptions {
   sessionId: string;
@@ -54,93 +52,6 @@ function normalizeError(error: unknown, fallbackMessage: string): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
-  if (!isRecord(value)) return false;
-  const record = value;
-  return typeof record.event === "object" && record.event !== null &&
-    typeof record.sessionId === "string";
-}
-
-function isSessionNdjsonEventEnvelope(value: unknown): value is SessionNdjsonEventEnvelope {
-  return isRecord(value) && (value.type === "event" || value.type === "ephemeral_event");
-}
-
-function readRequiredNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function readOptionalString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function readOptionalNumber(value: unknown): number | undefined {
-  if (value == null) return undefined;
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-export function parseSessionEventEnvelopePayload(
-  payload: unknown,
-): { event: SessionEventEnvelope | null; error: Error | null } {
-  if (!isRecord(payload)) {
-    return { event: null, error: new Error("Session stream event 必须是对象") };
-  }
-
-  if (!isSessionNdjsonEventEnvelope(payload)) {
-    return { event: null, error: new Error("Session stream payload 不是 event 分支") };
-  }
-
-  const eventSeq = readRequiredNumber(payload.event_seq);
-  if (eventSeq == null) {
-    return { event: null, error: new Error("Session stream event 缺少合法 event_seq") };
-  }
-
-  const sessionId = readOptionalString(payload.session_id);
-  if (!sessionId) {
-    return { event: null, error: new Error("Session stream event 缺少 session_id") };
-  }
-
-  const occurredAtMs = readRequiredNumber(payload.occurred_at_ms);
-  if (occurredAtMs == null) {
-    return { event: null, error: new Error("Session stream event 缺少 occurred_at_ms") };
-  }
-
-  const committedAtMs = readRequiredNumber(payload.committed_at_ms);
-  if (committedAtMs == null) {
-    return { event: null, error: new Error("Session stream event 缺少 committed_at_ms") };
-  }
-
-  const sessionUpdateType = readOptionalString(payload.session_update_type);
-  if (!sessionUpdateType) {
-    return { event: null, error: new Error("Session stream event 缺少 session_update_type") };
-  }
-
-  if (!isBackboneEnvelope(payload.notification)) {
-    return { event: null, error: new Error("Session stream event 缺少合法 notification") };
-  }
-
-  return {
-    event: {
-      session_id: sessionId,
-      event_seq: eventSeq,
-      occurred_at_ms: occurredAtMs,
-      committed_at_ms: committedAtMs,
-      session_update_type: sessionUpdateType,
-      turn_id: readOptionalString(payload.turn_id) ?? undefined,
-      entry_index: readOptionalNumber(payload.entry_index),
-      tool_call_id: readOptionalString(payload.tool_call_id) ?? undefined,
-      notification: payload.notification,
-      ephemeral: payload.type === "ephemeral_event",
-    },
-    error: null,
-  };
 }
 
 class FetchNdjsonTransport implements SessionStreamTransport {
@@ -243,44 +154,33 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       return;
     }
 
-    if (!isRecord(payload)) {
-      this.options.onError(new Error("NDJSON 消息必须是对象"));
-      return;
-    }
-    const type = payload.type;
-
-    if (type === "connected") {
-      const lastEventId = readRequiredNumber(payload.last_event_id);
-      if (lastEventId != null && lastEventId > this.sinceId) {
-        this.sinceId = lastEventId;
-      }
-      const epoch = readRequiredNumber(payload.ephemeral_epoch);
-      if (epoch != null) {
-        this.options.onEphemeralEpoch?.(epoch);
-      }
+    const result = parseSessionNdjsonEnvelope(payload);
+    if (!result.ok) {
+      this.options.onError(result.error);
       return;
     }
 
-    if (type === "event" || type === "ephemeral_event") {
-      const result = parseSessionEventEnvelopePayload(payload);
-      if (result.error) {
-        this.options.onError(result.error);
-        return;
+    if (result.kind === "connected") {
+      if (result.envelope.last_event_id > this.sinceId) {
+        this.sinceId = result.envelope.last_event_id;
       }
-      if (!result.event) return;
+      this.options.onEphemeralEpoch?.(result.envelope.ephemeral_epoch);
+      return;
+    }
+
+    if (result.kind === "event" || result.kind === "ephemeral_event") {
+      const event = toSessionEventEnvelope(result.envelope);
       // ephemeral 事件 event_seq=0、live-only：不推进 resume 游标。
-      if (!result.event.ephemeral && result.event.event_seq > this.sinceId) {
-        this.sinceId = result.event.event_seq;
+      if (!event.ephemeral && event.event_seq > this.sinceId) {
+        this.sinceId = event.event_seq;
       }
-      this.options.onEvent(result.event);
+      this.options.onEvent(event);
       return;
     }
 
-    if (type === "heartbeat") {
+    if (result.kind === "heartbeat") {
       return;
     }
-
-    this.options.onError(new Error(`未知 Session NDJSON 类型: ${String(type)}`));
   }
 
   private scheduleReconnect(): void {

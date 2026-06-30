@@ -69,10 +69,10 @@
 - generated contract files
 
 清单：
-- [ ] Choose one stream as pilot: Project event stream or Session stream.
-- [ ] Decide validator generation shape: metadata, generated parser, or shared guard helpers.
-- [ ] Add acceptance tests for valid/invalid envelope parsing.
-- [ ] Replace one hand-written parser path only after generated validator proves stable.
+- [x] Choose stream pilot scope: Session stream and Project event stream were both included because both generated envelope unions already exist and frontend guard drift was local to current stream consumers.
+- [x] Decide validator generation shape: use frontend shared guard helpers plus per-stream generated-union validators; generator-derived metadata/parser is deferred because it is not necessary to remove the current scattered guard paths.
+- [x] Add acceptance tests for valid/invalid envelope parsing: Session connected/event/heartbeat/unknown/project-shape rejection; Project Connected/StateChanged/Heartbeat/session-shape rejection/unknown rejection.
+- [x] Replace hand-written parser paths in `streamTransport.ts` and `eventStream.ts`; transport files now keep fetch/reader/cursor/lifecycle responsibilities while validator modules own envelope branch validation.
 
 ## Work Group E - Quality Gates And Route Shim Follow-up
 

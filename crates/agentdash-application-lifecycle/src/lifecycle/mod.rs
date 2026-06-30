@@ -1,5 +1,6 @@
 pub(crate) mod activity_activation;
 mod completion;
+mod dispatch;
 mod dispatch_facade;
 pub mod dispatch_service;
 pub mod execution_log;

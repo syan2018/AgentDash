@@ -2,6 +2,7 @@ use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityPort;
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
     SharedFrameLaunchEnvelopePort,
@@ -48,6 +49,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
+    agent_run_effective_capability_port: Option<Arc<dyn AgentRunEffectiveCapabilityPort>>,
     pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     pub(super) mailbox_runtime_port:
@@ -74,6 +76,7 @@ impl SessionLaunchDeps {
             settings_repo: inner.settings_repo.clone(),
             runtime_tool_provider: inner.runtime_tool_provider.clone(),
             mcp_tool_discovery: inner.mcp_tool_discovery.clone(),
+            agent_run_effective_capability_port: inner.agent_run_effective_capability_port.clone(),
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             mailbox_runtime_port: inner.mailbox_runtime_port.clone(),
@@ -115,6 +118,7 @@ impl SessionLaunchDeps {
             mcp_tool_discovery: self.mcp_tool_discovery.clone(),
             hooks: self.hooks.clone(),
             runtime_transition: self.runtime_transition.clone(),
+            agent_run_effective_capability_port: self.agent_run_effective_capability_port.clone(),
         }
     }
 
@@ -211,6 +215,8 @@ pub(super) struct TurnPreparationDeps {
     pub(super) settings_repo: Option<Arc<dyn SettingsRepository>>,
     pub(super) hooks: SessionHookService,
     pub(super) runtime_transition: SessionRuntimeTransitionService,
+    pub(super) agent_run_effective_capability_port:
+        Option<Arc<dyn AgentRunEffectiveCapabilityPort>>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     mcp_tool_discovery: Option<Arc<dyn McpToolDiscovery>>,
 }

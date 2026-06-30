@@ -1,13 +1,20 @@
 use std::sync::Arc;
 
+use agentdash_agent_types::{AgentRuntimeDelegateSet, DynRuntimeToolPolicyDelegate};
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, TerminalHookEffectBinding,
 };
+use agentdash_application_ports::launch::{
+    BackendSelectionInput, BackendSelectionInputMode, LaunchCommand, LaunchPlanningInput,
+};
 use agentdash_domain::backend::{BackendExecutionLease, RuntimeBackendAnchor};
-use agentdash_spi::{ConnectorError, DynAgentRuntimeDelegate, RestoredSessionState, Vfs};
+use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
-use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
+use super::{
+    LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode,
+    RuntimeDelegateCompositionPlan, RuntimeDelegateFacetPlan,
+};
 use crate::backend_execution_placement::{
     BackendSelectionIntent, BackendSelectionRequest, ExecutionPlacementPlan,
     has_available_relay_executor, resolve_backend_execution_placement,
@@ -19,8 +26,8 @@ use crate::session::hook_injection_sink::{
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
-    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, PromptLaunchPath,
-    RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, resolve_prompt_launch_path,
+    HookSnapshotReloadTrigger, PromptLaunchPath, RuntimeTraceLaunchState,
+    SessionRepositoryRehydrateMode, resolve_launch_prompt_payload, resolve_prompt_launch_path,
 };
 
 pub(in crate::session) struct LaunchPlanner<'a> {
@@ -32,6 +39,7 @@ pub(in crate::session) struct LaunchPlannerInput<'a> {
     pub session_id: &'a str,
     pub turn_id: &'a str,
     pub command: &'a LaunchCommand,
+    pub planning_input: LaunchPlanningInput,
     pub had_existing_runtime: bool,
     pub runtime_trace_state: RuntimeTraceLaunchState,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
@@ -67,7 +75,7 @@ impl<'a> LaunchPlanner<'a> {
         let input_blocks = input.launch_envelope.intent.input.clone();
         let base_capability_override = input.launch_envelope.base_capability_state.clone();
 
-        let mut prompt_input = command.user_input().clone();
+        let mut prompt_input = command.prompt().clone();
         if let Some(blocks) = input_blocks.clone() {
             prompt_input.input = Some(blocks);
         }
@@ -75,10 +83,9 @@ impl<'a> LaunchPlanner<'a> {
             prompt_input.executor_config = Some(config);
         }
         if !environment_variables.is_empty() {
-            prompt_input.env = environment_variables.clone();
+            prompt_input.environment_variables = environment_variables.clone();
         }
-        let resolved_payload = prompt_input
-            .resolve_prompt_payload()
+        let resolved_payload = resolve_launch_prompt_payload(&prompt_input)
             .map_err(|e| ConnectorError::InvalidConfig(e.to_string()))?;
         let pending_capability_transitions = input
             .requested_runtime_commands
@@ -144,26 +151,38 @@ impl<'a> LaunchPlanner<'a> {
         // context_bundle 在 hook contribution merge 后直接传递给 LaunchPlanInput
 
         let context_audit_bus = self.deps.current_context_audit_bus().await;
-        let hook_runtime_delegate: Option<DynAgentRuntimeDelegate> =
-            hook_runtime.as_ref().map(|hs| {
-                let injection_sink: DynRuntimeHookInjectionSink =
-                    Arc::new(SessionRuntimeHookInjectionSink::new(
-                        self.deps.runtime_registry.clone(),
-                        context_audit_bus.clone(),
-                    ));
-                HookRuntimeDelegate::new_with_mount_root_audit_and_sink(
-                    hs.clone(),
-                    Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+        let hook_runtime_delegate = hook_runtime.as_ref().map(|hs| {
+            let injection_sink: DynRuntimeHookInjectionSink =
+                Arc::new(SessionRuntimeHookInjectionSink::new(
+                    self.deps.runtime_registry.clone(),
                     context_audit_bus.clone(),
-                    Some(injection_sink),
-                )
-            });
-        let runtime_delegate = match self.deps.current_mailbox_runtime_port().await {
-            Some(mailbox_port) => Some(
-                mailbox_port.runtime_delegate(input.session_id.to_string(), hook_runtime_delegate),
-            ),
-            None => hook_runtime_delegate,
+                ));
+            HookRuntimeDelegate::new_facets(
+                hs.clone(),
+                Some(default_mount_root.to_string_lossy().replace('\\', "/")),
+                context_audit_bus.clone(),
+                Some(injection_sink),
+            )
+        });
+        let hook_tool_policy: Option<DynRuntimeToolPolicyDelegate> = hook_runtime_delegate
+            .as_ref()
+            .map(|delegate| delegate.clone() as DynRuntimeToolPolicyDelegate);
+        let mut runtime_delegates = hook_runtime_delegate
+            .as_ref()
+            .map(|delegate| AgentRuntimeDelegateSet::from_all_facets(delegate.clone()))
+            .unwrap_or_default();
+        let mut runtime_delegate_composition = RuntimeDelegateCompositionPlan {
+            hook_facets: hook_runtime_delegate.is_some(),
+            mailbox_turn_boundary: false,
+            admission_tool_policy: false,
         };
+        if let Some(mailbox_port) = self.deps.current_mailbox_runtime_port().await {
+            runtime_delegate_composition.mailbox_turn_boundary = true;
+            runtime_delegates.turn_boundary = Some(mailbox_port.turn_boundary_delegate(
+                input.session_id.to_string(),
+                runtime_delegates.turn_boundary.take(),
+            ));
+        }
         let restore_mode = match prompt_launch_path {
             PromptLaunchPath::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
@@ -225,7 +244,7 @@ impl<'a> LaunchPlanner<'a> {
             .resolve_backend_execution_placement(
                 input.session_id,
                 input.turn_id,
-                &prompt_input,
+                &input.planning_input,
                 Some(&typed_vfs),
                 input.launch_envelope.runtime_backend_anchor.as_ref(),
                 &executor_config.executor,
@@ -249,10 +268,14 @@ impl<'a> LaunchPlanner<'a> {
             requested_runtime_commands: input.requested_runtime_commands,
             pending_capability_transitions,
             base_capability_state,
-            environment_variables: prompt_input.env.clone(),
+            environment_variables: prompt_input.environment_variables.clone(),
             hook_runtime: hook_runtime.clone(),
             capability_state: capability_state.clone(),
-            runtime_delegate,
+            runtime_delegates,
+            runtime_delegate_facets: RuntimeDelegateFacetPlan {
+                composition: runtime_delegate_composition,
+                hook_tool_policy,
+            },
             restored_session_state,
             post_turn_handler,
             backend_execution,
@@ -265,14 +288,14 @@ impl<'a> LaunchPlanner<'a> {
         &self,
         session_id: &str,
         turn_id: &str,
-        prompt_input: &crate::session::types::UserPromptInput,
+        planning_input: &LaunchPlanningInput,
         typed_vfs: Option<&Vfs>,
         runtime_backend_anchor: Option<&RuntimeBackendAnchor>,
         executor_id: &str,
         reason_tag: &str,
     ) -> Result<Option<ExecutionPlacementPlan>, ConnectorError> {
         let Some(transport) = self.deps.backend_execution_transport.as_ref() else {
-            if prompt_input.backend_selection.is_some() {
+            if planning_input.backend_selection.is_some() {
                 return Err(ConnectorError::InvalidConfig(
                     "backend selection 已指定，但 session runtime 未注入 backend execution placement transport"
                         .to_string(),
@@ -281,7 +304,7 @@ impl<'a> LaunchPlanner<'a> {
             return Ok(None);
         };
         let Some(lease_repo) = self.deps.backend_execution_lease_repo.as_ref() else {
-            if prompt_input.backend_selection.is_some() {
+            if planning_input.backend_selection.is_some() {
                 return Err(ConnectorError::InvalidConfig(
                     "backend selection 已指定，但 session runtime 未注入 backend execution lease repository"
                         .to_string(),
@@ -290,7 +313,7 @@ impl<'a> LaunchPlanner<'a> {
             return Ok(None);
         };
 
-        let request = match prompt_input.backend_selection.as_ref() {
+        let request = match planning_input.backend_selection.as_ref() {
             Some(selection) => Some(selection_request_from_input(
                 executor_id,
                 selection,

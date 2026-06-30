@@ -30,7 +30,6 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.33.3
           run_install: false
 
       - name: Setup Node.js
@@ -61,14 +60,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Backend clippy
-        run: pnpm run backend:clippy
-
-      - name: Backend tests
-        run: pnpm run backend:test
-
-      - name: Frontend tests
-        run: pnpm run frontend:test
+      - name: Heavy quality gate
+        run: node scripts/quality-gates.js run heavy_check
 
       - name: Install Playwright browsers
         if: inputs.run_e2e == 'true'
@@ -76,4 +69,4 @@ jobs:
 
       - name: Critical e2e
         if: inputs.run_e2e == 'true'
-        run: pnpm run e2e:test:critical
+        run: node scripts/quality-gates.js run-step critical_e2e

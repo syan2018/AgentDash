@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
 use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
+use agentdash_contracts::workspace_module::{
+    WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
+};
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
@@ -183,6 +186,8 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             .identity
             .as_ref()
             .map(project_authorization_context_from_identity);
+        let channel_transport_available = self.extension_channel_transport.is_some();
+        let backend_readiness = operation_backend_readiness(context, &delivery_runtime_session_id);
         let mut tools: Vec<DynAgentTool> = Vec::new();
 
         if flow.is_capability_tool_enabled(
@@ -200,6 +205,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_agent_run_visibility(
                     self.agent_run_bridge_handle.clone(),
                     delivery_runtime_session_id.clone(),
+                )
+                .with_runtime_dependencies(
+                    self.runtime_gateway_handle.clone(),
+                    delivery_runtime_session_id.clone(),
+                    channel_transport_available,
+                    backend_readiness.clone(),
                 ),
             ));
         }
@@ -219,6 +230,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_agent_run_visibility(
                     self.agent_run_bridge_handle.clone(),
                     delivery_runtime_session_id.clone(),
+                )
+                .with_runtime_dependencies(
+                    self.runtime_gateway_handle.clone(),
+                    delivery_runtime_session_id.clone(),
+                    channel_transport_available,
+                    backend_readiness.clone(),
                 ),
             ));
         }
@@ -272,11 +289,41 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     delivery_runtime_session_id,
                     context.session.turn_id.clone(),
                 )
-                .with_current_user(current_user.clone()),
+                .with_current_user(current_user.clone())
+                .with_runtime_dependencies(
+                    self.runtime_gateway_handle.clone(),
+                    channel_transport_available,
+                    backend_readiness.clone(),
+                ),
             ));
         }
 
         Ok(tools)
+    }
+}
+
+fn operation_backend_readiness(
+    context: &ExecutionContext,
+    delivery_runtime_session_id: &str,
+) -> WorkspaceModuleOperationReadiness {
+    match context.session.require_runtime_backend_anchor(
+        "workspace_module_operations",
+        Some(delivery_runtime_session_id),
+    ) {
+        Ok(anchor) => {
+            if resolve_invocation_backend(context.session.vfs.as_ref(), Some(anchor)).is_some() {
+                WorkspaceModuleOperationReadiness::ready()
+            } else {
+                WorkspaceModuleOperationReadiness::unavailable(
+                    WorkspaceModuleOperationReadinessKind::BackendUnavailable,
+                    "runtime backend target could not be resolved for workspace module operations",
+                )
+            }
+        }
+        Err(error) => WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
+            error.to_string(),
+        ),
     }
 }
 

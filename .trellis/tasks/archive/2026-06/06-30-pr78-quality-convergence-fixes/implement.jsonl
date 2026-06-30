@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/archive/2026-06/06-30-module-adversarial-review/post-pr-quality-review.md", "reason": "Source review findings and file anchors for PR78 quality convergence."}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Runtime VFS policy, PermissionGrant VFS access, mount/provider capability boundary."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ExecutionSessionFrame vfs_access_policy contract for runtime tool providers."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "AgentRun effective capability and admission boundary."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway dynamic action catalog owner and surface_for_actor contract."}
+{"file": ".trellis/spec/backend/permission/grant-lifecycle.md", "reason": "PermissionGrant effect_frame_id and requested_vfs_access lifecycle contract."}

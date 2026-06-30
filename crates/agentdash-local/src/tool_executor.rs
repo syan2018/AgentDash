@@ -16,11 +16,11 @@ use crate::process_executor::ProcessExecutor;
 pub use crate::process_executor::ProcessOutput as ShellResult;
 use crate::search_executor::SearchExecutor;
 pub(crate) use crate::search_executor::SearchParams;
+use crate::workspace_root_guard::WorkspaceRootGuard;
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
-    workspace_roots_configured: bool,
-    canonical_workspace_roots: Vec<PathBuf>,
+    workspace_guard: WorkspaceRootGuard,
     process_executor: ProcessExecutor,
     search_executor: SearchExecutor,
 }
@@ -49,29 +49,13 @@ pub enum ToolError {
     PatchApply(String),
 }
 
-pub(crate) fn canonicalize_workspace_roots(workspace_roots: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut canonical_roots = Vec::new();
-    for root in workspace_roots {
-        let Ok(canonical) = std::fs::canonicalize(root) else {
-            continue;
-        };
-        if !canonical.is_dir() || canonical_roots.contains(&canonical) {
-            continue;
-        }
-        canonical_roots.push(canonical);
-    }
-    canonical_roots
-}
-
 impl ToolExecutor {
     pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
-        let workspace_roots_configured = !workspace_roots.is_empty();
-        let process_executor = ProcessExecutor::new(workspace_roots.clone());
+        let workspace_guard = WorkspaceRootGuard::new(workspace_roots);
+        let process_executor = ProcessExecutor::new(workspace_guard.clone());
         let search_executor = SearchExecutor::new();
-        let canonical_workspace_roots = canonicalize_workspace_roots(workspace_roots);
         Self {
-            workspace_roots_configured,
-            canonical_workspace_roots,
+            workspace_guard,
             process_executor,
             search_executor,
         }
@@ -79,36 +63,7 @@ impl ToolExecutor {
 
     /// 验证执行类操作的 workspace root，并在配置了 workspace roots 时检查其归属。
     pub fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
-        let trimmed = workspace_root.trim();
-        if trimmed.is_empty() {
-            return Err(ToolError::InvalidPath(
-                "workspace root 不能为空".to_string(),
-            ));
-        }
-
-        let ws_path = PathBuf::from(trimmed);
-        let canonical = std::fs::canonicalize(&ws_path)
-            .map_err(|_| ToolError::InvalidPath(workspace_root.to_string()))?;
-
-        if !canonical.is_dir() {
-            return Err(ToolError::InvalidPath(format!(
-                "workspace root 不是目录: {workspace_root}"
-            )));
-        }
-
-        if !self.workspace_roots_configured {
-            return Ok(canonical);
-        }
-
-        for root in &self.canonical_workspace_roots {
-            if canonical.starts_with(root) {
-                return Ok(canonical);
-            }
-        }
-
-        Err(ToolError::PathNotAccessible(format!(
-            "workspace root 未登记: {workspace_root}"
-        )))
+        self.workspace_guard.validate_workspace_root(workspace_root)
     }
 
     pub fn resolve_existing_path(
@@ -610,10 +565,10 @@ mod tests {
         let duplicate = workspace.path().join(".");
         let executor = ToolExecutor::new(vec![workspace.path().to_path_buf(), duplicate]);
 
-        assert!(executor.workspace_roots_configured);
-        assert_eq!(executor.canonical_workspace_roots.len(), 1);
+        assert!(executor.workspace_guard.is_configured());
+        assert_eq!(executor.workspace_guard.canonical_roots().len(), 1);
         assert_eq!(
-            executor.canonical_workspace_roots[0],
+            executor.workspace_guard.canonical_roots()[0],
             std::fs::canonicalize(workspace.path()).expect("canonical workspace")
         );
     }
@@ -626,8 +581,8 @@ mod tests {
         let executor = ToolExecutor::new(vec![unavailable_root]);
         let root = workspace.path().to_string_lossy().to_string();
 
-        assert!(executor.workspace_roots_configured);
-        assert!(executor.canonical_workspace_roots.is_empty());
+        assert!(executor.workspace_guard.is_configured());
+        assert!(executor.workspace_guard.canonical_roots().is_empty());
 
         let error = executor
             .validate_workspace_root(&root)

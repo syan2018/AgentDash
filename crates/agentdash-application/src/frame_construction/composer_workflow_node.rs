@@ -86,7 +86,7 @@ pub(super) async fn compose(
         .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
         .or(snapshot_label);
     let inherited_executor_config = command
-        .user_input()
+        .prompt()
         .executor_config
         .clone()
         .or_else(|| frame.typed_execution_profile());

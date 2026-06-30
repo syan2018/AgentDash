@@ -44,6 +44,27 @@ use crate::tool_executor::ToolExecutor;
 use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandExecutionMode {
+    Inline,
+    Background,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CommandDispatchPlan {
+    pub execution_mode: CommandExecutionMode,
+}
+
+impl CommandDispatchPlan {
+    pub(crate) const INLINE: Self = Self {
+        execution_mode: CommandExecutionMode::Inline,
+    };
+
+    pub(crate) const BACKGROUND: Self = Self {
+        execution_mode: CommandExecutionMode::Background,
+    };
+}
+
 /// 本机命令 router，只负责 relay envelope 分发。
 #[derive(Clone)]
 pub struct LocalCommandRouter {
@@ -111,6 +132,10 @@ impl LocalCommandRouter {
 
     pub fn list_executors(&self) -> Vec<AgentInfoRelay> {
         self.prompt.list_executors()
+    }
+
+    pub(crate) fn dispatch_plan(&self, msg: &RelayMessage) -> CommandDispatchPlan {
+        dispatch_plan_for_message(msg)
     }
 
     /// 处理一条云端消息，返回零或多条同步响应。
@@ -261,4 +286,15 @@ impl LocalCommandRouter {
             }
         }
     }
+}
+
+pub(crate) fn dispatch_plan_for_message(msg: &RelayMessage) -> CommandDispatchPlan {
+    PromptCommandHandler::dispatch_plan(msg)
+        .or_else(|| WorkspaceCommandHandler::dispatch_plan(msg))
+        .or_else(|| ToolCommandHandler::dispatch_plan(msg))
+        .or_else(|| MaterializationCommandHandler::dispatch_plan(msg))
+        .or_else(|| McpCommandHandler::dispatch_plan(msg))
+        .or_else(|| ExtensionCommandHandler::dispatch_plan(msg))
+        .or_else(|| TerminalCommandHandler::dispatch_plan(msg))
+        .unwrap_or(CommandDispatchPlan::INLINE)
 }

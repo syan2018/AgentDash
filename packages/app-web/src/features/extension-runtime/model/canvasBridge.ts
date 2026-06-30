@@ -67,14 +67,11 @@ export function resolveExtensionCanvasAvailability(
   if (!workspaceData.projectId) {
     return unavailable("Canvas extension 不可用", "当前页面缺少 Project context。");
   }
-  const installation = workspaceData.extensionRuntime.projection.installations.find(
-    (item) => item.extension_key === tab.extension_key,
-  );
-  if (!installation) {
-    return unavailable("Extension 已停用", "当前 Project 没有启用这个插件。");
-  }
-  if (!installation.package_artifact) {
-    return unavailable("Extension bundle 缺失", "当前插件安装没有可加载的 package artifact。");
+  if (!tab.loadability.available) {
+    return unavailable(
+      "Canvas extension 不可用",
+      tab.loadability.reason ?? "当前插件 tab 不满足 renderer loadability 条件。",
+    );
   }
   if (tab.renderer.kind !== "canvas_panel") {
     return unavailable("Canvas renderer 不匹配", "当前插件 tab 不是 Canvas renderer。");

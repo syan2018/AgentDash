@@ -1497,3 +1497,145 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 42: PR78质量风险快速收口
+
+**Date**: 2026-06-30
+**Task**: PR78质量风险快速收口
+**Branch**: `codex/module-adversarial-review-cleanup`
+
+### Summary
+
+修复 PR78 post-review 中的运行态 VFS policy、AgentRun current/effect frame capability projection、RuntimeGateway duplicate action owner 收束，并完成 focused tests 与 range whitespace check。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04cdd1646` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 43: Lifecycle gate launch owner convergence
+
+**Date**: 2026-06-30
+**Task**: Lifecycle gate launch owner convergence
+**Branch**: `codex/module-adversarial-review-cleanup`
+
+### Summary
+
+在单个 Trellis task 内完成 D4 canonical LaunchCommand、D3 shared LifecycleGateResolver、D2 LifecycleDispatchService owner split，并沉淀 launch/gate/dispatch owner 规范。最终补齐 companion gate opening 进入 resolver，删除旧 LifecycleGateService，完成 focused check 与任务归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5768ee592` | (see git log) |
+| `13a12d26c` | (see git log) |
+| `2a9f0371a` | (see git log) |
+| `c959974d1` | (see git log) |
+| `791f10c27` | (see git log) |
+| `7766e2e94` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 44: 架构最终彻底收口
+
+**Date**: 2026-06-30
+**Task**: 架构最终彻底收口
+**Branch**: `codex/module-adversarial-review-cleanup`
+
+### Summary
+
+完成质量门 CI 事实源收束、NDJSON generated runtime validators、WorkspaceModule pure outcome 与 AgentRun control-plane direct tests；独立检查确认旧错误路径已清理。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a060c570f` | (see git log) |
+| `7bbf0d6d6` | (see git log) |
+| `7f4ad320f` | (see git log) |
+| `1de3a4dc8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 45: Session item id allocator 边界清理
+
+**Date**: 2026-06-30
+**Task**: Session item id allocator 边界清理
+**Branch**: `codex/module-adversarial-review-cleanup`
+
+### Summary
+
+修复重启恢复后工具卡片 readable item id 复用，并将 PiAgent 工具结果 item identity 分配从 AgentLoop/Pi connector glue 收束到 session runtime identity 边界。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af8498111` | (see git log) |
+| `8c64df53f` | (see git log) |
+| `c904134e3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

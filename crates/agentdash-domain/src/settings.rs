@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub const AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY: &str =
+    "agent.mailbox.hide_system_steer_messages";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingScopeKind {

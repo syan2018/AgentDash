@@ -1,9 +1,9 @@
 pub(crate) mod activity_activation;
 mod completion;
+mod dispatch;
 mod dispatch_facade;
 pub mod dispatch_service;
 pub mod execution_log;
-pub mod gate_service;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
@@ -28,7 +28,6 @@ pub use execution_log::{
     RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,
 };
-pub use gate_service::LifecycleGateService;
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,

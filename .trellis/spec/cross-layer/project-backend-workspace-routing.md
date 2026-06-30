@@ -41,6 +41,7 @@ registerBackendWorkspaceInventory(
 - detect 成功后 upsert `BackendWorkspaceInventory`，`source` 使用 `manual_register`。
 - detect 成功登记的 `root_ref` 是后续 Workspace Inventory / Workspace Binding 的目录事实；目录不可访问时由 detect 失败返回。
 - `workspace.detect` 的成功结果进入后端后统一投影为 Workspace directory fact，同时维护 `BackendWorkspaceInventory` 与 `WorkspaceBinding`，原因是机器详情、候选目录和 Workspace 运行落点必须共享同一份目录事实，不能让不同入口分别拼装 binding / inventory 状态。
+- `WorkspacePlacementService` 是 `workspace.detect -> WorkspaceDirectoryFact -> BackendWorkspaceInventory / WorkspaceBinding` 写事务的 application owner。API routes 只负责 auth、DTO parsing 和 response mapping；manual register、Workspace create/update binding hydration、bind-discovered redetect/apply 都必须通过该 service 或同一 application workspace fact owner 执行，原因是 detect 输出、inventory snapshot 和 binding 状态必须在同一层收束，避免 route 各自复制 identity match、priority apply 与 inventory source 语义。
 - UI 登记成功后必须刷新 workspace candidates；如果 Backend Access 面板已有展开的 Inventory，也要重新拉取对应快照。
 - Workspace binding 维护不等于 backend inventory 登记；Advanced Maintenance 只改 Workspace 自身 bindings。
 - Workspace binding / inventory 只表达目录事实与已确认 workspace root，不表达执行空闲状态。session 执行 backend placement 由 backend execution lease / allocator 维护，原因是同一个 workspace root 的 backend 可能正在执行其它 session。

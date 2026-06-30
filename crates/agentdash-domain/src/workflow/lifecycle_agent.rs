@@ -26,7 +26,7 @@ pub enum AgentSource {
     Subagent,
     /// orchestration workflow activity 节点 agent。
     WorkflowAgent,
-    /// 兜底：未识别 / 历史遗留 / 已废弃来源。唯一的非具体来源变体。
+    /// 通用来源：未识别或不再具备具体分类的来源。唯一的非具体来源变体。
     #[default]
     Unknown,
 }

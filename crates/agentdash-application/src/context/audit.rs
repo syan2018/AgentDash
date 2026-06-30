@@ -101,7 +101,7 @@ pub trait ContextAuditBus: Send + Sync {
 
 /// 进程内环形缓冲实现。
 ///
-/// - 每个 session 持有独立 VecDeque，满员时按 FIFO 淘汰最旧事件；
+/// - 每个 session 持有独立 VecDeque，满员时按 FIFO 淘汰队首事件；
 /// - `capacity_per_session` 构造时确定（典型 2000）。
 pub struct InMemoryContextAuditBus {
     capacity_per_session: usize,

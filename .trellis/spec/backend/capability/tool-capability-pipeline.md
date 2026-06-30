@@ -118,11 +118,20 @@ projection 输出。
 工具 schema 构建使用 AgentRun 输出的 final visible capability view；单个工具执行使用 AgentRun
 admission decision。
 
+RuntimeSession 的 schema-visible capability projection 只服务工具 schema assembly，不是 Grant
+authorization。工具执行准入必须在 `tool.execute` 前通过 AgentRun admission bridge 执行，原因是
+tool-level PermissionGrant 需要同时依赖 runtime session anchor、anchored AgentFrame surface 与
+frame-scoped grant projection，provider-local `CapabilityState` guard 不具备这些业务坐标。
+
 Application tool assembly 必须保留 MCP discovery provenance 并生成 `RuntimeToolSchemaEntry`。
 Project MCP 的 `server_name/tool_name/runtime_name/description/parameters_schema` 来自 discovery 结果，
 不能依赖平台静态 catalog 事后猜测。`DynAgentTool` 只服务执行，`RuntimeToolSchemaEntry` 服务
 `tool_schema_delta`、`ContextFrame.rendered_text` 与 Agent 可见 PromptText；两者在 assembly
 边界同源产出，原因是平台需要全局掌握 Agent 实际可见的能力说明。
+
+AgentRun admission bridge 必须从 `RuntimeToolSchemaEntry.capability_key` 和 `tool_path` 构造
+`AgentRunAdmissionRequest`。缺少 provenance 的工具不能绕过 AgentRun admission，原因是该工具没有
+可审计的 capability ownership，不能被视作已授权的 runtime surface。
 
 ## Companion Agent Roster Surface
 
@@ -158,7 +167,7 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 - runtime capability transition 必须把 `SetCompanionAgentRosterEffect` 产生的变化写入 `CapabilityStateDelta.companion_agents`，并由 CAP delta frame 渲染为 `companion_agent_roster_delta` section，原因是动态 roster 变化属于能力事实变化。
 - `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 selected ProjectAgent identity。
 - companion child launch source 必须携带 selected ProjectAgent id 和 canonical agent_key；child `LifecycleAgent.project_agent_id` 绑定 selected ProjectAgent。这样 frame construction、AgentRun 展示与实际 child executor/capability/VFS/skill facts 使用同一个身份来源。
-- companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、VFS grants、skill assets 与 companion return-channel baseline。
+- companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、Project VFS mount exposure、skill assets 与 companion return-channel baseline。
 - `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
 - `AuthorityState.companion.dispatch` 是 roster 投影与 `companion_request(target="sub")` 执行 guard 的上游事实；`AuthorityState.companion.respond` 由 child lineage / gate runtime channel 提供，不依赖 parent dispatch authority。这样禁止发起新 sub companion 不会切断已启动 child 的 `companion_respond` 回流通道。
 - `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 是当前已接入 capability projection 的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent。
@@ -213,6 +222,9 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 - Canvas interaction diagnostics 表达为实例 operation：`operation_key="canvas.get_interaction_state"`；调用只读取 Canvas source 显式上报的 latest interaction snapshot，不写入模型历史。
 - Canvas presentation 表达为 UI entry：`presentation_uri="canvas://{canvas_mount_id}"`。
 - Canvas 编辑 mount 表达为 VFS URI：`{canvas_mount_id}://...`。
+- Extension runtime action operation 由 `RuntimeGateway::surface_for_actor(actor, context)` 的 concrete action descriptor 投影，原因是 action schema、permission policy 与 actor/context support 必须和 Gateway invoke 使用同一事实源。
+- Extension runtime projection 在 WorkspaceModule 聚合中只提供 installation/module ownership、UI tab、protocol channel 和权限摘要事实，原因是 Project 安装投影描述资产，不描述当前 session actor 的可执行 action surface。
+- `WorkspaceModuleOperation.readiness` 表达 operation 调用就绪诊断，独立于 module visibility 与 renderer loadability，原因是缺少 Gateway、channel transport、runtime backend anchor 或 action catalog entry 时，`list` / `describe` / `present` 仍需要保留可见 module 与 UI entry。
 - ProjectAgent preset 中保存的 `canvas` capability directive 只作为 forward migration 输入；运行态普通 Agent capability 不再以 `canvas` 作为主入口。
 
 ### 4. Validation & Error Matrix
@@ -225,6 +237,8 @@ Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `wo
 | Canvas bind input 不满足 operation schema | BadRequest |
 | Canvas runtime observation 尚未上报 | `canvas.inspect` 返回 `observation=null` |
 | Canvas interaction snapshot 尚未上报 | `canvas.get_interaction_state` 返回 `snapshot=null` |
+| Extension runtime action 不在当前 Gateway catalog | operation readiness 为 `runtime_action_unavailable` |
+| RuntimeGateway / channel transport / runtime backend anchor 缺失 | operation readiness 携带对应结构化诊断，module 可见性不因此改变 |
 | `view_key` 不在 describe 返回的 UI entries 中 | NotFound |
 | `presentation_uri` 不是 renderer 可打开 URI | backend contract/test failure |
 
@@ -298,7 +312,7 @@ task_write(mode = patch | snapshot, operations[], snapshot[], return_mode = ...)
 | `run_id` 不属于当前 project | tool execution failed |
 | `task_id` 不属于目标 run | invalid arguments / not found |
 | context ref enum 值未知 | invalid arguments |
-| snapshot `drop_missing=true` | 未出现在 snapshot 的旧 Task 软归档为 dropped |
+| snapshot `drop_missing=true` | 未出现在 snapshot 的既有 Task 软归档为 dropped |
 
 ### 5. Good/Base/Bad Cases
 

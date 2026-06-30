@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { CanvasRuntimeSnapshot } from "../../types";
 import { buildPreviewFailureObservation } from "./CanvasRuntimePreview.observation";
 import {
+  areCanvasRuntimeSnapshotsEquivalent,
+  buildCanvasRuntimeSnapshotFingerprint,
   buildPreviewDocument,
   createRuntimeAssetUrlCache,
   parseVfsAssetUri,
@@ -36,6 +38,97 @@ function snapshot(): CanvasRuntimeSnapshot {
 }
 
 describe("CanvasRuntimePreview VFS image assets", () => {
+  it("builds stable runtime snapshot fingerprints for equivalent snapshots", () => {
+    const first = snapshot();
+    const second = snapshot();
+
+    expect(buildCanvasRuntimeSnapshotFingerprint(first)).toBe(
+      buildCanvasRuntimeSnapshotFingerprint(second),
+    );
+    expect(areCanvasRuntimeSnapshotsEquivalent(first, second)).toBe(true);
+  });
+
+  it("keeps fingerprint stable across file, binding, import map, and library order", () => {
+    const first: CanvasRuntimeSnapshot = {
+      ...snapshot(),
+      files: [
+        { path: "src/b.ts", content: "export const b = 1;", file_type: "code" },
+        { path: "src/a.ts", content: "export const a = 1;", file_type: "code" },
+      ],
+      bindings: [
+        {
+          alias: "zeta",
+          source_uri: "lifecycle://session/zeta.json",
+          data_path: "bindings/zeta.json",
+          content_type: "application/json",
+          resolved: true,
+        },
+        {
+          alias: "alpha",
+          source_uri: "lifecycle://session/alpha.json",
+          data_path: "bindings/alpha.json",
+          content_type: "application/json",
+          resolved: true,
+        },
+      ],
+      import_map: {
+        imports: {
+          zeta: "https://example.test/zeta.js",
+          alpha: "https://example.test/alpha.js",
+        },
+      },
+      libraries: ["zeta", "alpha"],
+    };
+    const second: CanvasRuntimeSnapshot = {
+      ...first,
+      files: [...first.files].reverse(),
+      bindings: [...first.bindings].reverse(),
+      import_map: {
+        imports: {
+          alpha: "https://example.test/alpha.js",
+          zeta: "https://example.test/zeta.js",
+        },
+      },
+      libraries: ["alpha", "zeta"],
+    };
+
+    expect(buildCanvasRuntimeSnapshotFingerprint(first)).toBe(
+      buildCanvasRuntimeSnapshotFingerprint(second),
+    );
+  });
+
+  it("changes fingerprint when runtime-affecting snapshot fields change", () => {
+    const base = snapshot();
+    const firstFile = base.files[0];
+    if (!firstFile) throw new Error("snapshot fixture missing first file");
+
+    expect(buildCanvasRuntimeSnapshotFingerprint({
+      ...base,
+      entry: "src/other.tsx",
+    })).not.toBe(buildCanvasRuntimeSnapshotFingerprint(base));
+    expect(buildCanvasRuntimeSnapshotFingerprint({
+      ...base,
+      files: [{ ...firstFile, content: "console.log('changed');" }],
+    })).not.toBe(buildCanvasRuntimeSnapshotFingerprint(base));
+    expect(buildCanvasRuntimeSnapshotFingerprint({
+      ...base,
+      bindings: [{
+        alias: "data",
+        source_uri: "lifecycle://session/data.json",
+        data_path: "bindings/data.json",
+        content_type: "application/json",
+        resolved: true,
+      }],
+    })).not.toBe(buildCanvasRuntimeSnapshotFingerprint(base));
+    expect(buildCanvasRuntimeSnapshotFingerprint({
+      ...base,
+      runtime_bridge: {
+        enabled: false,
+        disabled_reason: "changed",
+      },
+    })).not.toBe(buildCanvasRuntimeSnapshotFingerprint(base));
+  });
+
   it("builds an error observation for preview document build failures", () => {
     const observation = buildPreviewFailureObservation(
       "frame-build-failed",

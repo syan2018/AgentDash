@@ -1,6 +1,6 @@
 use agentdash_application_agentrun::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome,
-    AgentRunMailboxCommandResult, workspace as app_workspace,
+    AgentRunMailboxCommandResult, SessionExecutionState,
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
@@ -18,11 +18,7 @@ pub(crate) fn agent_run_message_command_response(
         outcome: mailbox_command_outcome_view(result.outcome),
         mailbox_message: result.mailbox_message.map(mailbox_message_view),
         accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
-        runtime_state: result.runtime_state.map(|state| {
-            runtime_command_state_dto(
-                app_workspace::AgentRunWorkspaceProjection::runtime_command_state(&state),
-            )
-        }),
+        runtime_state: result.runtime_state.map(runtime_session_state_dto),
     }
 }
 
@@ -75,13 +71,45 @@ pub(crate) fn mailbox_command_outcome_view(
     }
 }
 
-pub(crate) fn runtime_command_state_dto(
-    state: app_workspace::AgentRunWorkspaceRuntimeCommandStateModel,
+pub(crate) fn runtime_session_state_dto(
+    state: SessionExecutionState,
 ) -> RuntimeSessionCommandStateDto {
-    RuntimeSessionCommandStateDto {
-        status: state.status.as_str().to_string(),
-        turn_id: state.turn_id,
-        message: state.message,
+    match state {
+        SessionExecutionState::Idle => RuntimeSessionCommandStateDto {
+            status: "idle".to_string(),
+            turn_id: None,
+            message: None,
+        },
+        SessionExecutionState::Running { turn_id } => RuntimeSessionCommandStateDto {
+            status: "running".to_string(),
+            turn_id,
+            message: None,
+        },
+        SessionExecutionState::Cancelling { turn_id } => RuntimeSessionCommandStateDto {
+            status: "cancelling".to_string(),
+            turn_id,
+            message: Some("当前执行正在取消中。".to_string()),
+        },
+        SessionExecutionState::Completed { turn_id } => RuntimeSessionCommandStateDto {
+            status: "completed".to_string(),
+            turn_id: Some(turn_id),
+            message: None,
+        },
+        SessionExecutionState::Failed { turn_id, message } => RuntimeSessionCommandStateDto {
+            status: "failed".to_string(),
+            turn_id: Some(turn_id),
+            message,
+        },
+        SessionExecutionState::Interrupted { turn_id, message } => RuntimeSessionCommandStateDto {
+            status: "interrupted".to_string(),
+            turn_id,
+            message,
+        },
+        SessionExecutionState::Lost { turn_id, message } => RuntimeSessionCommandStateDto {
+            status: "lost".to_string(),
+            turn_id,
+            message,
+        },
     }
 }
 

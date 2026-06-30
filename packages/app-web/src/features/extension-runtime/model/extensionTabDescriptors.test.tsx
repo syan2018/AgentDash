@@ -20,6 +20,7 @@ describe("createExtensionTabDescriptors", () => {
         label: "Hello",
         uri_scheme: "local-hello",
         renderer: { kind: "webview", entry: "dist/panel/index.html" },
+        loadability: { available: true, mode: "extension_host", reason: null },
       }, {
         extension_key: "canvas-demo",
         extension_id: "canvas-demo",
@@ -27,6 +28,19 @@ describe("createExtensionTabDescriptors", () => {
         label: "Canvas Demo",
         uri_scheme: "canvas-demo",
         renderer: { kind: "canvas_panel", entry: "dist/canvas/runtime-snapshot.json" },
+        loadability: { available: true, mode: "ui_only", reason: null },
+      }, {
+        extension_key: "broken",
+        extension_id: "broken",
+        type_id: "broken.panel",
+        label: "Broken",
+        uri_scheme: "broken",
+        renderer: { kind: "webview", entry: "dist/panel/index.html" },
+        loadability: {
+          available: false,
+          mode: "extension_host",
+          reason: "extension host bundle 缺失",
+        },
       }],
       permissions: [],
       bundles: [],

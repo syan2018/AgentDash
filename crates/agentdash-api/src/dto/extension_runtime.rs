@@ -1,4 +1,5 @@
 use agentdash_application::extension_runtime::ExtensionRuntimeProjection;
+use agentdash_application::extension_runtime::ExtensionWorkspaceTabLoadabilityMode;
 use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
     ExtensionFlagType, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
@@ -18,6 +19,7 @@ pub use agentdash_contracts::extension_runtime::{
     ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
     ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
 };
 
@@ -169,6 +171,18 @@ pub fn extension_runtime_projection_response(
                     ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
                         ExtensionWorkspaceTabRendererResponse::CanvasPanel { entry }
                     }
+                },
+                loadability: ExtensionWorkspaceTabLoadabilityResponse {
+                    available: tab.loadability.available,
+                    mode: match tab.loadability.mode {
+                        ExtensionWorkspaceTabLoadabilityMode::ExtensionHost => {
+                            ExtensionWorkspaceTabLoadabilityModeResponse::ExtensionHost
+                        }
+                        ExtensionWorkspaceTabLoadabilityMode::UiOnly => {
+                            ExtensionWorkspaceTabLoadabilityModeResponse::UiOnly
+                        }
+                    },
+                    reason: tab.loadability.reason,
                 },
             })
             .collect(),

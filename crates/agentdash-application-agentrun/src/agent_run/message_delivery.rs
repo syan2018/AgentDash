@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 
 use agentdash_agent_protocol::UserInputBlock;
-use agentdash_spi::AgentConfig;
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 use agentdash_spi::platform::auth::AuthIdentity;
+use agentdash_spi::{AgentConfig, PromptPayload};
 
-use crate::agent_run::runtime_session_boundary::{
-    LaunchCommand, SessionLaunchService, UserPromptInput,
-};
+use crate::agent_run::runtime_session_boundary::SessionLaunchService;
 use crate::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
@@ -42,19 +41,42 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
         &self,
         delivery: AgentRunMessageDelivery,
     ) -> Result<String, WorkflowApplicationError> {
-        let user_input = UserPromptInput {
+        let user_input = LaunchPromptInput {
             input: Some(delivery.input),
-            env: Default::default(),
+            environment_variables: Default::default(),
             executor_config: delivery.executor_config,
-            backend_selection: None,
         };
-        user_input
-            .resolve_prompt_payload()
-            .map_err(WorkflowApplicationError::BadRequest)?;
+        validate_launch_prompt_input(&user_input)?;
         let command =
             LaunchCommand::lifecycle_agent_user_message_input(user_input, delivery.identity);
         self.session_launch
-            .launch_command_in_task(delivery.delivery_runtime_session_id.clone(), command)
+            .launch_command_in_task(
+                delivery.delivery_runtime_session_id.clone(),
+                command,
+                LaunchPlanningInput::default(),
+            )
             .await
     }
+}
+
+fn validate_launch_prompt_input(input: &LaunchPromptInput) -> Result<(), WorkflowApplicationError> {
+    let blocks = input
+        .input
+        .as_ref()
+        .ok_or_else(|| WorkflowApplicationError::BadRequest("必须提供 input".to_string()))?;
+    if blocks.is_empty() {
+        return Err(WorkflowApplicationError::BadRequest(
+            "input 不能为空数组".to_string(),
+        ));
+    }
+    if PromptPayload::Input(blocks.clone())
+        .to_fallback_text()
+        .trim()
+        .is_empty()
+    {
+        return Err(WorkflowApplicationError::BadRequest(
+            "input 中没有有效内容".to_string(),
+        ));
+    }
+    Ok(())
 }

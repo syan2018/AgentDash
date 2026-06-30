@@ -76,6 +76,10 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 
 `agentdash-application-ports` 只承载 API/local 实现、application 消费的纯端口，原因是 transport trait 需要被 interface/runtime composition root 实现，同时又不能让 API 反向依赖 application 内部编排模块。Domain 仍不依赖 contracts、protocol DTO 或 application ports。
 
+跨多个 application 入口共享的 command / intent / typed modifier 应放入 `agentdash-application-ports` 的业务 namespace，并在 namespace 内按主合同、modifier、outcome 或 error 拆文件。`launch` namespace 使用 `command.rs` 与 `modifier.rs`，原因是启动来源入口很多，但进入 frame construction / launch planning 前应共享同一套边界合同。
+
+大型 application facade 拆 owner 时，owner 文件放在 facade 同级的业务子目录，并由 `mod.rs` 做 crate-private re-export。`agentdash-application-lifecycle/src/lifecycle/dispatch/` 使用这种布局，原因是 public facade 需要保持用例入口清晰，而 run/orchestration、runtime materialization、subject association、relation/gate 和 reducer bridge 的副作用策略需要各自拥有可 review 的文件边界。
+
 `agentdash-domain::canvas` 承载 Canvas 实体、值对象、repository trait、runtime observation / interaction snapshot contract 与 embedded Canvas skill bundle。这样 infrastructure 可以只实现 domain trait，不需要依赖 workspace-module。
 
 `agentdash-workspace-module` 是 Workspace Module 业务边界：Canvas 作为 `agentdash-workspace-module::canvas` 子模块承载 mount/module/presentation identity、Canvas 管理/runtime/VFS/visibility 业务服务、operation keys、runtime tool provider 与 Workspace Module descriptor/presentation 组装。它通过 domain repository trait 和 application ports 连接外部能力。

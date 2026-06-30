@@ -32,7 +32,6 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.33.3
           run_install: false
 
       - name: Setup Node.js
@@ -40,39 +39,5 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Compose config
-        run: docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env.example config
-
-      - name: Managed PostgreSQL compose config
-        run: >
-          docker compose
-          -f deploy/compose/docker-compose.yml
-          -f deploy/compose/docker-compose.managed-postgres.yml
-          --env-file deploy/compose/.env.example
-          config
-
-      - name: Compose update dry run
-        run: node deploy/compose/update.mjs --env-file deploy/compose/.env.example --dry-run --skip-pull
-
-      - name: Managed PostgreSQL update dry run
-        run: >
-          node deploy/compose/update.mjs
-          --env-file deploy/compose/.env.example
-          --managed-postgres
-          --skip-backup
-          --dry-run
-          --skip-pull
-
-      - name: Managed PostgreSQL backup boundary
-        shell: bash
-        run: |
-          if node deploy/compose/update.mjs --env-file deploy/compose/.env.example --managed-postgres --dry-run --skip-pull; then
-            echo "managed PostgreSQL update must require --skip-backup"
-            exit 1
-          fi
-
-      - name: Release metadata
-        run: pnpm run release:metadata
-
-      - name: Cloud image build dry run
-        run: pnpm run docker:cloud:build -- --dry-run
+      - name: Deployment contract quality gate
+        run: node scripts/quality-gates.js run deployment_contract

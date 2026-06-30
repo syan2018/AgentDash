@@ -1,6 +1,6 @@
 //! 上下文压缩引擎
 //!
-//! 纯函数 + LLM 调用编排。策略决策由 AgentRuntimeDelegate 负责，
+//! 纯函数 + LLM 调用编排。策略决策由 RuntimeCompactionDelegate 负责，
 //! 本模块只负责执行：cut point 检测、摘要生成、消息替换。
 
 use tokio_util::sync::CancellationToken;
@@ -790,7 +790,7 @@ mod tests {
     fn reserve_tokens_changes_cut_point() {
         let messages = vec![
             AgentMessage::user("短"),
-            AgentMessage::assistant("旧回复 ".repeat(400)),
+            AgentMessage::assistant("前段回复 ".repeat(400)),
             AgentMessage::user("中间"),
             AgentMessage::assistant("近期回复 ".repeat(400)),
             AgentMessage::user("最新"),

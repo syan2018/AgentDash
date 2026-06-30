@@ -6,6 +6,7 @@ import { computeProjectionRefreshKey, extractTurnLifecycleEventType } from "./Se
 import {
   collectAllPlatformEvents,
   collectRenderableSystemEvents,
+  collectTurnLifecycleEvents,
 } from "./SessionChatViewModel";
 import {
   isSessionComposerSubmitDisabled,
@@ -213,6 +214,65 @@ describe("collectRenderableSystemEvents", () => {
     expect(result.items.map((item) => item.eventType)).toEqual([
       "system_message",
       "unknown_meta",
+    ]);
+  });
+
+  it("全量 platform 收集函数可用历史边界跳过 hydrate 事件", () => {
+    const events = [
+      eventEnvelope(9, platformMetaEvent("workspace_module_presented", {
+        module_id: "canvas:history",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://history",
+        title: "History Canvas",
+      })),
+      eventEnvelope(10, platformMetaEvent("session_meta_updated", { title: "历史标题" })),
+      eventEnvelope(11, platformMetaEvent("workspace_module_presented", {
+        module_id: "canvas:live",
+        view_key: "preview",
+        renderer_kind: "canvas",
+        presentation_uri: "canvas://live",
+        title: "Live Canvas",
+      })),
+      eventEnvelope(12, platformMetaEvent("session_meta_updated", { title: "新标题" })),
+    ];
+
+    const result = collectAllPlatformEvents(events, 10);
+
+    expect(result.lastSeenSeq).toBe(12);
+    expect(result.items.map((item) => item.eventType)).toEqual([
+      "workspace_module_presented",
+      "session_meta_updated",
+    ]);
+    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
+  });
+});
+
+describe("collectTurnLifecycleEvents", () => {
+  it("按边界只收集 live turn lifecycle 并推进 lastSeenSeq", () => {
+    const events = [
+      eventEnvelope(8, {
+        type: "turn_completed",
+        payload: { threadId: "thread-1", turn: completedTurn },
+      }),
+      eventEnvelope(10, turnTerminalMetaEvent("turn_completed")),
+      eventEnvelope(11, {
+        type: "turn_started",
+        payload: {
+          threadId: "thread-1",
+          turn: { ...completedTurn, id: "turn-2", status: "inProgress" },
+        },
+      }),
+      eventEnvelope(12, turnTerminalMetaEvent("turn_failed")),
+    ];
+
+    const result = collectTurnLifecycleEvents(events, 10);
+
+    expect(result.lastSeenSeq).toBe(12);
+    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
+    expect(result.items.map((item) => item.eventType)).toEqual([
+      "turn_started",
+      "turn_failed",
     ]);
   });
 });

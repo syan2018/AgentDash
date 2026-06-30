@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated validators and AgentRun control-plane tests must preserve frontend type narrowing and runtime validation ownership."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated stream contracts and validator ownership cross the Rust contract generator and frontend parser boundary."}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "AgentRun control-plane direct tests may extract or formalize hook projection boundaries."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Quality gate CI adoption changes how local and CI frontend checks are selected and verified."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "WorkspaceModule surface outcome changes affect the workspace module backend boundary."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "All four workstreams remove duplicated cross-layer interpretation surfaces."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "The task centers on replacing repeated shallow handling with shared manifests, generated validators, and deep outcome APIs."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-architecture-tier23-convergence/implement.md", "reason": "Prior convergence task documents A-E context and why these four lines remain as final hardening."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-workspace-module-agent-surface/design.md", "reason": "WorkspaceModule surface design provides the immediate context for removing AgentToolResult leakage."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-agentrun-workspace-control-plane/design.md", "reason": "AgentRun control-plane design provides the intended model boundary for direct tests."}

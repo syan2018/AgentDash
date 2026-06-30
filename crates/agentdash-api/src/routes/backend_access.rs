@@ -9,17 +9,18 @@ use agentdash_application::backend::{
     ProjectBackendAccessGrantSource, ensure_project_backend_access_grant,
 };
 use agentdash_application::workspace::{
-    WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult, WorkspaceDetectionResult,
+    RegisterBackendInventoryInput,
+    WorkspaceBindingSyncResult as ApplicationWorkspaceBindingSyncResult,
     WorkspaceInventoryCandidate as ApplicationWorkspaceInventoryCandidate,
-    workspace_inventory_from_detection,
+    WorkspacePlacementService,
 };
 use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceDetectInput,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput,
 };
 use agentdash_contracts::backend::{
     BackendWorkspaceInventoryResponse, CreateProjectBackendAccessRequest,
@@ -30,8 +31,7 @@ use agentdash_contracts::backend::{
 use agentdash_contracts::common_response::RevokedIdResponse;
 use agentdash_contracts::workspace::{WorkspaceBindingSyncResult, WorkspaceInventoryCandidate};
 use agentdash_domain::backend::{
-    BackendWorkspaceInventorySource, ProjectBackendAccess, ProjectBackendAccessMode,
-    ProjectBackendAccessStatus,
+    ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
 };
 
 use crate::app_state::AppState;
@@ -40,6 +40,7 @@ use crate::dto::{
     BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse, BrowseDirectoryResponse,
 };
 use crate::rpc::ApiError;
+use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
 
 pub async fn list_project_backend_access(
     State(state): State<Arc<AppState>>,
@@ -258,31 +259,16 @@ pub async fn register_project_backend_inventory(
         ProjectPermission::Edit,
     )
     .await?;
-    let access = load_access_for_project(&state, project_id, access_id).await?;
-    if !access.is_active() {
-        return Err(ApiError::Conflict("ProjectBackendAccess 当前未启用".into()));
-    }
-
-    let root_ref = normalize_required("root_ref", &req.root_ref)?;
-    let detected = invoke_workspace_detect(
-        &state,
-        Some(current_user.user_id.as_str()),
-        project_id,
-        &access.backend_id,
-        &root_ref,
-    )
-    .await?;
-    let item = workspace_inventory_from_detection(
-        access.backend_id,
-        root_ref,
-        &detected,
-        BackendWorkspaceInventorySource::ManualRegister,
-        None,
-    );
-    state
-        .repos
-        .backend_workspace_inventory_repo
-        .upsert(&item)
+    let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
+        state.services.runtime_gateway.clone(),
+    ));
+    let item = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
+        .register_backend_inventory(RegisterBackendInventoryInput {
+            project_id,
+            access_id,
+            user_id: Some(current_user.user_id),
+            root_ref: req.root_ref,
+        })
         .await?;
     Ok(Json(BackendWorkspaceInventoryResponse::from(item)))
 }
@@ -421,38 +407,6 @@ async fn load_access_for_project(
         return Err(ApiError::NotFound("ProjectBackendAccess 不存在".into()));
     }
     Ok(access)
-}
-
-async fn invoke_workspace_detect(
-    state: &Arc<AppState>,
-    user_id: Option<&str>,
-    project_id: Uuid,
-    backend_id: &str,
-    root_ref: &str,
-) -> Result<WorkspaceDetectionResult, ApiError> {
-    let input = serde_json::to_value(WorkspaceDetectInput {
-        backend_id: backend_id.to_string(),
-        root_ref: root_ref.to_string(),
-    })
-    .map_err(|error| ApiError::BadRequest(format!("workspace.detect 输入非法: {error}")))?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_DETECT_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: user_id.map(str::to_string),
-        },
-        RuntimeContext::Setup {
-            project_id: Some(project_id),
-            workspace_id: None,
-            backend_id: Some(backend_id.to_string()),
-            root_ref: Some(root_ref.to_string()),
-        },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output)
-        .map_err(|error| ApiError::Internal(format!("workspace.detect 返回值解析失败: {error}")))
 }
 
 fn workspace_binding_sync_response(

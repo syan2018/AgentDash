@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(buffer.len(), 3);
         let records = buffer.query(&DiagnosticFilter::default());
         let messages: Vec<&str> = records.iter().map(|r| r.message.as_str()).collect();
-        // 最旧的 "1" 被丢弃；倒序应为 4,3,2。
+        // 最早的 "1" 被丢弃；倒序应为 4,3,2。
         assert_eq!(messages, vec!["4", "3", "2"]);
     }
 

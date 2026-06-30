@@ -46,6 +46,7 @@ use crate::runtime_session_agent_run_bridge::{
     agent_run_session_launch,
 };
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
+use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -1225,29 +1226,31 @@ impl CompanionRequestTool {
             })
             .unwrap_or_default();
 
-        if wait {
-            // 创建 durable LifecycleGate 代替 in-memory channel
-            let gate_meta = serde_json::json!({
-                "session_id": current_session_id.clone(),
-                "turn_id": self.tool_context.turn_id(),
-                "request_type": payload_type,
-            });
-            let gate = agentdash_domain::workflow::LifecycleGate::open(
-                anchor.run_id,
-                Some(anchor.agent_id),
-                Some(anchor.frame_id),
-                "companion_wait",
-                &request_id,
-                Some(gate_meta),
-            );
-            let gate_id = gate.id;
-            self.repos
-                .lifecycle_gate_repo
-                .create(&gate)
-                .await
-                .map_err(|e| AgentToolError::ExecutionFailed(format!("创建等待 gate 失败: {e}")))?;
-            let request_id = gate_id.to_string();
+        let gate_meta = serde_json::json!({
+            "session_id": current_session_id.clone(),
+            "turn_id": self.tool_context.turn_id(),
+            "request_type": payload_type,
+        });
+        let gate_kind = if wait {
+            "companion_wait"
+        } else {
+            "companion_human_request"
+        };
+        let outcome = LifecycleGateResolver::new(self.repos.lifecycle_gate_repo.clone())
+            .open_companion_gate(OpenCompanionGateCommand {
+                run_id: anchor.run_id,
+                agent_id: anchor.agent_id,
+                frame_id: Some(anchor.frame_id),
+                gate_kind: gate_kind.to_string(),
+                correlation_id: request_id,
+                payload: Some(gate_meta),
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        let gate_id = outcome.gate.id;
+        let request_id = gate_id.to_string();
 
+        if wait {
             let notification = build_companion_event_notification(
                 &current_session_id,
                 self.tool_context.turn_id(),
@@ -1329,29 +1332,6 @@ impl CompanionRequestTool {
                 })),
             })
         } else {
-            let gate_meta = serde_json::json!({
-                "session_id": current_session_id.clone(),
-                "turn_id": self.tool_context.turn_id(),
-                "request_type": payload_type,
-            });
-            let gate = agentdash_domain::workflow::LifecycleGate::open(
-                anchor.run_id,
-                Some(anchor.agent_id),
-                Some(anchor.frame_id),
-                "companion_human_request",
-                &request_id,
-                Some(gate_meta),
-            );
-            let gate_id = gate.id;
-            self.repos
-                .lifecycle_gate_repo
-                .create(&gate)
-                .await
-                .map_err(|e| {
-                    AgentToolError::ExecutionFailed(format!("创建非阻塞请求 gate 失败: {e}"))
-                })?;
-            let request_id = gate_id.to_string();
-
             let notification = build_companion_event_notification(
                 &current_session_id,
                 self.tool_context.turn_id(),

@@ -30,12 +30,12 @@ import {
 } from "./SessionChatViewParts";
 import {
   collectAllPlatformEvents,
+  collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
-  extractTurnLifecycleEventType,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type { SessionChatCommand, SessionChatViewProps } from "./SessionChatViewTypes";
+import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
@@ -55,30 +55,12 @@ function isSilentCommandRefreshError(error: unknown): boolean {
 }
 
 export function SessionChatView({
-  sessionId,
-  workspaceId,
+  model,
+  intents,
   onMessageSent,
   onTurnEnd,
   onSystemEvent,
   onTaskPlanChanged,
-  executorHint,
-  agentDefaults,
-  executorStateKey,
-  showExecutorSelector = true,
-  commandState,
-  onCommand,
-  onCancelAction,
-  onExecutorConfigOverrideChange,
-  mailboxSnapshot,
-  onPromoteMailboxMessage,
-  onDeleteMailboxMessage,
-  onResumeMailbox,
-  onRecallMailboxMessage,
-  onMoveMailboxMessage,
-  statusBarRunId,
-  statusBarAgentId,
-  injectedInputValue,
-  onInjectedInputConsumed,
   headerSlot,
   inputPrefix,
   streamPrefixContent,
@@ -86,6 +68,30 @@ export function SessionChatView({
   promptTemplates,
   initialInputValue,
 }: SessionChatViewProps) {
+  const {
+    sessionId,
+    workspaceId,
+    executorHint,
+    agentDefaults,
+    executorStateKey,
+    showExecutorSelector = true,
+    commandState,
+    mailbox,
+    statusBarRunId,
+    statusBarAgentId,
+    injectedInputValue,
+  } = model;
+  const {
+    submitComposer,
+    cancelAction,
+    setExecutorConfigOverride,
+    promoteMailboxMessage,
+    deleteMailboxMessage,
+    resumeMailbox,
+    recallMailboxMessage,
+    moveMailboxMessage,
+    injectedInputConsumed,
+  } = intents;
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
@@ -126,9 +132,9 @@ export function SessionChatView({
     if (injectedInputValue != null && injectedInputValue !== "") {
       richInputRef.current?.setValue(injectedInputValue);
       setInputValue(injectedInputValue);
-      onInjectedInputConsumed?.();
+      injectedInputConsumed?.();
     }
-  }, [injectedInputValue, onInjectedInputConsumed]);
+  }, [injectedInputConsumed, injectedInputValue]);
 
   // sessionId 变更时重置内部状态
   useEffect(() => {
@@ -249,17 +255,17 @@ export function SessionChatView({
   }) => {
     const executor = execConfig.executor.trim();
     if (!executor) {
-      onExecutorConfigOverrideChange?.(null);
+      setExecutorConfigOverride?.(null);
       return;
     }
-    onExecutorConfigOverrideChange?.({
+    setExecutorConfigOverride?.({
       executor,
       provider_id: config.providerId.trim() || undefined,
       model_id: config.modelId.trim() || undefined,
       thinking_level: (config.thinkingLevel.trim() as ExecutorConfig["thinking_level"]) || undefined,
       permission_policy: (config.permissionPolicy.trim() as ExecutorConfig["permission_policy"]) || undefined,
     });
-  }, [execConfig.executor, onExecutorConfigOverrideChange]);
+  }, [execConfig.executor, setExecutorConfigOverride]);
 
   // ─── 会话流 ──────────────────────────────────────────
 
@@ -271,6 +277,7 @@ export function SessionChatView({
     turnSegments,
     rawEntries,
     rawEvents,
+    historyReplayBoundarySeq,
     isConnected,
     isLoading,
     error: wsError,
@@ -284,6 +291,15 @@ export function SessionChatView({
     () => computeProjectionRefreshKey(rawEvents),
     [rawEvents],
   );
+  const rawEventsBelongToCurrentSession = useMemo(
+    () => !sessionId || rawEvents.every((event) => event.session_id === sessionId),
+    [rawEvents, sessionId],
+  );
+  const canApplyLiveEventSideEffects =
+    hasSession &&
+    rawEventsBelongToCurrentSession &&
+    rawEvents.length > 0 &&
+    historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
@@ -338,52 +354,55 @@ export function SessionChatView({
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
   const onSystemEventRef = useRef(onSystemEvent);
-  const lastSystemEventSeqRef = useRef(0);
+  const lastSystemEventSeqRef = useRef<number | null>(null);
   useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
   const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
-  const lastTaskToolEventSeqRef = useRef(0);
+  const lastTaskToolEventSeqRef = useRef<number | null>(null);
+  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
   useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
   useEffect(() => {
-    lastSystemEventSeqRef.current = 0;
-    lastTaskToolEventSeqRef.current = 0;
+    lastSystemEventSeqRef.current = null;
+    lastTaskToolEventSeqRef.current = null;
+    lastTurnLifecycleEventSeqRef.current = null;
   }, [sessionId]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    for (let i = rawEvents.length - 1; i >= 0; i -= 1) {
-      const event = rawEvents[i];
-      if (!event) continue;
-      const bbEvent = event.notification.event;
-      const eventType = extractTurnLifecycleEventType(bbEvent);
-      if (eventType === "turn_started") {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTurnLifecycleEventSeqRef.current = afterSeq;
+    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
+    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
+    for (const item of result.items) {
+      if (item.eventType === "turn_started") {
         setOptimisticRunning(false);
-        return;
-      }
-      if (eventType === "turn_completed" || eventType === "turn_failed" || eventType === "turn_interrupted") {
+      } else {
         optimisticRunningUntilRef.current = 0;
         setOptimisticRunning(false);
         onTurnEndRef.current?.();
-        return;
       }
     }
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    const result = collectAllPlatformEvents(rawEvents, lastSystemEventSeqRef.current);
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastSystemEventSeqRef.current = afterSeq;
+    const result = collectAllPlatformEvents(rawEvents, afterSeq);
     lastSystemEventSeqRef.current = result.lastSeenSeq;
     if (result.items.length === 0) return;
     for (const item of result.items) {
       onSystemEventRef.current?.(item.eventType, item.event);
     }
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   useEffect(() => {
-    if (!hasSession || rawEvents.length === 0) return;
-    let lastSeenSeq = lastTaskToolEventSeqRef.current;
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTaskToolEventSeqRef.current = afterSeq;
+    let lastSeenSeq = afterSeq;
     let changed = false;
     for (const event of rawEvents) {
-      if (!event || event.event_seq <= lastTaskToolEventSeqRef.current) continue;
+      if (!event || event.event_seq <= afterSeq) continue;
       lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
       const bbEvent = event.notification.event;
       if (bbEvent.type !== "item_completed") continue;
@@ -399,7 +418,7 @@ export function SessionChatView({
     }
     lastTaskToolEventSeqRef.current = lastSeenSeq;
     if (changed) onTaskPlanChangedRef.current?.();
-  }, [hasSession, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 
@@ -416,10 +435,10 @@ export function SessionChatView({
 
   // ─── 控制动作 ───────────────────────────────────────
 
-  const commandActionRef = useRef(onCommand);
-  useEffect(() => { commandActionRef.current = onCommand; }, [onCommand]);
+  const commandActionRef = useRef(submitComposer);
+  useEffect(() => { commandActionRef.current = submitComposer; }, [submitComposer]);
 
-  const handleSubmit = useCallback(async (command: SessionChatCommand | undefined, deliveryIntent?: string) => {
+  const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -445,14 +464,14 @@ export function SessionChatView({
     setIsSending(true);
 
     try {
-      await commandActionRef.current(
-        command,
+      await commandActionRef.current({
+        command_id: command.command_id,
         sessionId,
-        trimmed,
+        prompt: trimmed,
         executorConfig,
-        images.length > 0 ? images : undefined,
+        imageAttachments: images.length > 0 ? images : undefined,
         deliveryIntent,
-      );
+      });
 
       execConfig.recordUsage();
       clearInput();
@@ -480,16 +499,13 @@ export function SessionChatView({
     sessionId,
   ]);
 
-  const commandById = useCallback((commandId: string | undefined): SessionChatCommand | undefined => {
+  const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {
     if (!commandId) return undefined;
-    if (commandState.localDraftAction?.command_id === commandId) {
-      return commandState.localDraftAction;
-    }
-    return commandState.commands.commands.find((command) => command.command_id === commandId);
-  }, [commandState.commands.commands, commandState.localDraftAction]);
+    return commandState.commands.find((command) => command.command_id === commandId);
+  }, [commandState.commands]);
 
   const handleCancel = useCallback(async () => {
-    const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
+    const cancelCommand = commandState.cancelCommand;
     if (!cancelCommand?.enabled) return;
     if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
@@ -497,8 +513,8 @@ export function SessionChatView({
     setSendError(null);
     setIsCancelling(true);
     try {
-      if (onCancelAction) {
-        await onCancelAction();
+      if (cancelAction) {
+        await cancelAction();
       } else {
         await sendCancel();
       }
@@ -508,7 +524,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [commandState.commands.commands, hasSession, onCancelAction, sendCancel, sessionId]);
+  }, [cancelAction, commandState.cancelCommand, hasSession, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -526,16 +542,15 @@ export function SessionChatView({
 
       const isSteer = e.ctrlKey || e.metaKey;
       const keyboardCommandId = isSteer
-        ? commandState.commands.keyboard.ctrl_enter
-        : commandState.commands.keyboard.enter;
-      const command = commandById(keyboardCommandId)
-        ?? (!isSteer ? commandState.localDraftAction : undefined);
+        ? commandState.keyboard.ctrl_enter
+        : commandState.keyboard.enter;
+      const command = commandById(keyboardCommandId);
       if (!command) return;
 
       e.preventDefault();
       void handleSubmit(command, isSteer ? "steer" : undefined);
     },
-    [commandById, commandState.commands.keyboard.ctrl_enter, commandState.commands.keyboard.enter, commandState.localDraftAction, fileRef, handleSubmit],
+    [commandById, commandState.keyboard.ctrl_enter, commandState.keyboard.enter, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）
@@ -612,8 +627,7 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
-  const mailboxMessages = mailboxSnapshot?.messages ?? [];
-  const mailboxState = mailboxSnapshot?.state;
+  const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -673,19 +687,12 @@ export function SessionChatView({
           runId={statusBarRunId}
           agentId={statusBarAgentId}
           messages={mailboxMessages}
-          mailbox={mailboxSnapshot}
-          mailboxState={mailboxState}
-          promoteCommand={commandState.commands.commands.find(
-            (command) => command.kind === "promote_mailbox_message" && command.placement.includes("mailbox_row"),
-          )}
-          deleteCommand={commandState.commands.commands.find(
-            (command) => command.kind === "delete_mailbox_message" && command.placement.includes("mailbox_row"),
-          )}
-          onPromote={onPromoteMailboxMessage ?? (() => {})}
-          onDelete={onDeleteMailboxMessage ?? (() => {})}
-          onResume={onResumeMailbox}
-          onRecall={onRecallMailboxMessage}
-          onMove={onMoveMailboxMessage}
+          mailbox={mailbox}
+          onPromote={promoteMailboxMessage ?? (() => {})}
+          onDelete={deleteMailboxMessage ?? (() => {})}
+          onResume={resumeMailbox}
+          onRecall={recallMailboxMessage}
+          onMove={moveMailboxMessage}
         />
 
         <SessionChatComposer

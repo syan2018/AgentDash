@@ -39,6 +39,7 @@ pub struct ExecutionSessionFrame {
     pub executor_config: AgentConfig,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
+    pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
     pub identity: Option<AuthIdentity>,
 }
 ```
@@ -51,6 +52,7 @@ pub struct ExecutionSessionFrame {
 | `executor_config` | `FrameLaunchEnvelope.launch_surface.execution_profile` | 所有 connector |
 | `mcp_servers` | `FrameLaunchEnvelope.launch_surface.mcp_servers` | Relay 透传；PiAgent 通过 assembled tools 消费 |
 | `vfs` | `FrameLaunchEnvelope.launch_surface.vfs` | Relay、vibe_kanban、PiAgent tools |
+| `vfs_access_policy` | `FrameLaunchEnvelope.launch_surface.vfs_access_policy` | VFS runtime tools、shell/materialization policy check |
 | `identity` | `FrameLaunchEnvelope` identity projection | Relay、审计、permission 决策 |
 
 一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由

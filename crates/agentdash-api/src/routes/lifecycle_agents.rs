@@ -234,7 +234,7 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 /// 递归内联某节点的直接子 Agent 子树，每个节点携带真实 shell 状态。
 ///
 /// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅投影是新增异步调用。
-/// 深度上限兜底防 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
+/// 深度上限保护 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
 fn build_inline_children<'a>(
     state: &'a AppState,
     run: &'a LifecycleRun,
@@ -288,8 +288,9 @@ pub async fn get_agent_run_workspace(
         ProjectPermission::View,
     )
     .await?;
-    let mut view =
-        agent_run_workspace_view(load_agent_run_workspace_snapshot(&state, &context).await?);
+    let mut view = agent_run_workspace_view(
+        load_agent_run_workspace_snapshot(&state, &context, &current_user.user_id).await?,
+    );
     let (parent, children) =
         resolve_agent_run_lineage(&state, &context.run, &context.agent).await?;
     view.parent = parent;
@@ -502,7 +503,7 @@ async fn get_agent_run_mailbox(
     )
     .await?;
     Ok(Json(
-        build_agent_run_mailbox_view(state.as_ref(), &context).await?,
+        build_agent_run_mailbox_view(state.as_ref(), &context, &current_user.user_id).await?,
     ))
 }
 
@@ -852,6 +853,7 @@ fn delivery_runtime_selection_error(error: DeliveryRuntimeSelectionError) -> Api
 async fn load_agent_run_workspace_snapshot(
     state: &AppState,
     context: &AgentRunContext,
+    viewer_user_id: &str,
 ) -> Result<app_workspace::AgentRunWorkspaceSnapshot, ApiError> {
     let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
         state.services.backend_registry.clone(),
@@ -872,6 +874,7 @@ async fn load_agent_run_workspace_snapshot(
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {
             run: context.run.clone(),
             agent: context.agent.clone(),
+            viewer_user_id: Some(viewer_user_id.to_string()),
         })
         .await
         .map_err(ApiError::from)
@@ -899,7 +902,11 @@ async fn load_agent_run_list_projection(
         state.services.lifecycle_read_model_query.as_ref(),
     );
     service
-        .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput { run, agent })
+        .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput {
+            run,
+            agent,
+            viewer_user_id: None,
+        })
         .await
         .map_err(ApiError::from)
 }
@@ -1523,7 +1530,7 @@ fn frame_runtime_to_contract(
 
 /// 统计控制树某 root 子树（传递闭包）下的 subagent 总数。
 ///
-/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限兜底，
+/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限保护，
 /// 超限截断并 warn（不静默丢弃）。root 自身不计入。
 fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32 {
     const MAX_DEPTH: usize = 64;
@@ -1557,6 +1564,7 @@ fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32
 async fn build_agent_run_mailbox_view(
     state: &AppState,
     context: &AgentRunContext,
+    viewer_user_id: &str,
 ) -> Result<AgentRunMailboxView, ApiError> {
     let messages = state
         .repos
@@ -1580,13 +1588,11 @@ async fn build_agent_run_mailbox_view(
             context.delivery_runtime_session_id.is_some()
                 && !app_workspace::is_terminal_agent_status(&context.agent.status),
             visible_message_count,
-            state
-                .repos
-                .backend_repo
-                .get_preferences()
-                .await
-                .unwrap_or_default()
-                .hide_system_steer_messages,
+            app_workspace::load_hide_system_steer_messages_setting(
+                state.repos.settings_repo.as_ref(),
+                Some(viewer_user_id),
+            )
+            .await?,
         ),
         messages: messages
             .into_iter()

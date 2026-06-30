@@ -64,12 +64,12 @@ pub(super) async fn compose(
         .as_ref()
         .and_then(|assignment| assignment.workspace.as_ref());
     let executor_config = merge_user_executor_config(
-        input.command.user_input().executor_config.clone(),
+        input.command.prompt().executor_config.clone(),
         &agent_context.executor_config,
     );
     let launch_path =
         owner_prompt_launch_path(svc.prompt_launch_path(Some(&executor_config), input));
-    let user_input = required_user_input(input.command.user_input())?;
+    let user_input = required_user_input(input.command.prompt())?;
     let identity = input.command.identity();
     let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
         input.session_id.as_str(),
@@ -107,9 +107,9 @@ pub(super) async fn compose(
                     .skill_asset_keys
                     .clone()
                     .unwrap_or_default(),
-                agent_vfs_access_grants: agent_context
+                project_vfs_mount_exposure_grants: agent_context
                     .preset_config
-                    .vfs_access_grants
+                    .project_vfs_mount_exposure_grants
                     .clone()
                     .unwrap_or_default(),
                 request_mcp_servers: input

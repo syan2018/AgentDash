@@ -75,7 +75,7 @@ Project 内运行资源使用 Project 前缀或既有项目资源名：
 ## Payload Contract
 
 - API 可以返回 `payload`，但保存/安装前后端都必须按 `asset_type` 做类型化校验。
-- 前端 mapper 不做旧字段兼容兜底；后端 DTO 是权威契约。
+- 前端 mapper 按后端 DTO 的字段契约解析；后端 DTO 是权威契约。
 - 运行页面优先展示安装后的 Project 资源，不直接把 `LibraryAsset.payload` 当运行配置编辑。
 - 前端 `LibraryAssetDto.payload` 类型为 `unknown`：纯展示时防御式解析，未知形状降级为原始 JSON；安装时原样转发后端。
 

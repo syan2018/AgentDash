@@ -37,7 +37,6 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.33.3
           run_install: false
 
       - name: Setup Node.js
@@ -68,11 +67,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Backend check
-        run: pnpm run backend:check
-
-      - name: Frontend check
-        run: pnpm run frontend:check
+      - name: Cloud image preflight quality gate
+        run: node scripts/quality-gates.js run cloud_image_preflight
 
       - name: Compute build time
         shell: bash

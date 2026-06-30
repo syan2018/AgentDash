@@ -242,8 +242,18 @@ describe("extension bridge message validation", () => {
     }]);
   });
 
-  it("为未知 method 和 admission error 保留可诊断错误", async () => {
-    const services = noopServices();
+  it("为未知 method 和 backend admission error 保留可诊断错误", async () => {
+    const actionCalls: Array<{
+      projectId: string;
+      request: ExtensionRuntimeInvokeActionRequest;
+    }> = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async invokeAction(projectId, request) {
+        actionCalls.push({ projectId, request });
+        throw new Error("ProviderUnavailable: action is not in RuntimeGateway catalog");
+      },
+    };
     const workspaceData = workspaceRuntimeData();
     const tab = webviewTab();
     const backend = { backend_id: "backend-1", label: "Local", online: true };
@@ -260,13 +270,30 @@ describe("extension bridge message validation", () => {
     await expect(handleExtensionWebviewBridgeRequest({
       message: bridgeRequest("runtime.invoke_action", {
         action_key: "other-extension.action",
+        input: { source: "panel" },
       }),
-      workspaceData,
+      workspaceData: workspaceRuntimeData({
+        extensionRuntime: {
+          ...workspaceData.extensionRuntime,
+          projection: {
+            ...workspaceData.extensionRuntime.projection,
+            runtime_actions: [],
+          },
+        },
+      }),
       tab,
       uri: "protocol-demo://panel",
       backend,
       services,
-    })).rejects.toThrow("Extension action 不可用: other-extension.action");
+    })).rejects.toThrow("ProviderUnavailable: action is not in RuntimeGateway catalog");
+    expect(actionCalls).toEqual([{
+      projectId: "project-1",
+      request: {
+        session_id: "session-1",
+        action_key: "other-extension.action",
+        input: { source: "panel" },
+      },
+    }]);
 
     expect(resolveExtensionWebviewAvailability(
       workspaceRuntimeData({
@@ -280,6 +307,47 @@ describe("extension bridge message validation", () => {
       available: false,
       title: "Backend 不可用",
       backend: null,
+    });
+  });
+
+  it("webview availability 消费后端 loadability 投影", () => {
+    const tab = webviewTab();
+    const workspaceData = workspaceRuntimeData({
+      extensionRuntime: {
+        ...workspaceRuntimeData().extensionRuntime,
+        projection: {
+          ...workspaceRuntimeData().extensionRuntime.projection,
+          installations: [{
+            installation_id: "installation-1",
+            extension_key: "protocol-demo",
+            extension_id: "protocol-demo",
+            display_name: "Protocol Demo",
+            installed_source: null,
+            package_artifact: null,
+          }],
+        },
+      },
+    });
+
+    expect(resolveExtensionWebviewAvailability(workspaceData, tab)).toMatchObject({
+      available: true,
+      src: "/api/projects/project-1/extension-runtime/webviews/protocol-demo/dist/panel/index.html",
+    });
+
+    expect(resolveExtensionWebviewAvailability(
+      workspaceRuntimeData(),
+      {
+        ...tab,
+        loadability: {
+          available: false,
+          mode: "extension_host",
+          reason: "extension host bundle 缺失",
+        },
+      },
+    )).toMatchObject({
+      available: false,
+      title: "Extension panel 不可用",
+      detail: "extension host bundle 缺失",
     });
   });
 
@@ -515,6 +583,11 @@ function webviewTab(): ExtensionWorkspaceTabProjectionResponse {
       kind: "webview",
       entry: "dist/panel/index.html",
     },
+    loadability: {
+      available: true,
+      mode: "extension_host",
+      reason: null,
+    },
   };
 }
 
@@ -524,6 +597,11 @@ function canvasTab(): ExtensionWorkspaceTabProjectionResponse {
     renderer: {
       kind: "canvas_panel",
       entry: "dist/canvas/runtime.json",
+    },
+    loadability: {
+      available: true,
+      mode: "ui_only",
+      reason: null,
     },
   };
 }

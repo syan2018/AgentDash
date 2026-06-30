@@ -42,7 +42,7 @@ pub struct AgentFrameHookRuntime {
     pub agent_id: Uuid,
     pub frame_id: Uuid,
     pub frame_revision: i32,
-    /// provider query / trace 兼容用 session_id
+    /// provider query / trace 使用的 session_id
     runtime_session_id: String,
     provider: Arc<dyn ExecutionHookProvider>,
     snapshot: RwLock<AgentFrameHookSnapshot>,

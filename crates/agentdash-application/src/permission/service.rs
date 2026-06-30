@@ -13,7 +13,8 @@ use crate::agent_run::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::permission::{
-    GrantScope, PermissionGrant, PermissionGrantRepository, PolicyOutcome, ScopeEscalationIntent,
+    GrantScope, PermissionGrant, PermissionGrantRepository, PermissionGrantVfsAccessRule,
+    PolicyOutcome, ScopeEscalationIntent,
 };
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, ToolCapabilityPath};
 use agentdash_spi::RuntimeCapabilityTransition;
@@ -28,6 +29,7 @@ pub struct GrantRequest {
     pub source_turn_id: Option<String>,
     pub source_tool_call_id: Option<String>,
     pub requested_paths: Vec<ToolCapabilityPath>,
+    pub requested_vfs_access: Vec<PermissionGrantVfsAccessRule>,
     pub reason: String,
     pub grant_scope: GrantScope,
     pub ttl_seconds: Option<u64>,
@@ -94,6 +96,9 @@ impl PermissionGrantService {
             req.ttl_seconds,
         )
         .with_source(req.source_turn_id, req.source_tool_call_id);
+        grant = grant
+            .with_requested_vfs_access(req.requested_vfs_access.clone())
+            .map_err(map_grant_transition_error)?;
 
         if let Some(frame_id) = req.effect_frame_id {
             grant = grant.with_effect_frame(frame_id);
@@ -109,8 +114,9 @@ impl PermissionGrantService {
             .map_err(map_grant_transition_error)?;
 
         // Evaluate policy
-        let decision = PermissionPolicyService::evaluate(
+        let decision = PermissionPolicyService::evaluate_request(
             &req.requested_paths,
+            &req.requested_vfs_access,
             agent_auto_grantable,
             lifecycle_requestable,
         );

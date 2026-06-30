@@ -30,12 +30,12 @@ export function DetailPanel({
   return (
     <>
       <div
-        className={cn('fixed inset-0 bg-foreground/18 backdrop-blur-[2px]', overlayClassName)}
+        className={cn('fixed left-0 top-0 h-dvh w-dvw bg-foreground/18 backdrop-blur-[2px]', overlayClassName)}
         onClick={onClose}
       />
       <aside
         className={cn(
-          'fixed inset-y-0 right-0 flex w-full flex-col border-l border-border bg-background shadow-2xl',
+          'fixed right-0 top-0 flex h-dvh max-h-dvh w-full flex-col overflow-hidden border-l border-border bg-background shadow-2xl',
           widthClassName,
           panelClassName,
         )}
@@ -61,7 +61,7 @@ export function DetailPanel({
             </button>
           </div>
         </header>
-        <div className="flex-1 overflow-y-auto">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </aside>
     </>
   )
@@ -215,8 +215,8 @@ export function DangerConfirmDialog({
 
   return (
     <>
-      <div className="fixed inset-0 z-[90] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="fixed inset-0 z-[91] flex items-center justify-center p-4">
+      <div className="fixed left-0 top-0 z-[90] h-dvh w-dvw bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed left-0 top-0 z-[91] flex h-dvh w-dvw items-center justify-center p-4">
         <div className="w-full max-w-lg rounded-[12px] border border-border bg-background shadow-2xl">
           <div className="border-b border-border px-5 py-4">
             <span className="agentdash-panel-header-tag">Danger</span>

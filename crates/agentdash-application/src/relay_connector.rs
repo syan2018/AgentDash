@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
 use agentdash_spi::AgentConnector;
@@ -109,13 +108,9 @@ impl AgentConnector for RelayAgentConnector {
         let lease_id = backend_execution.lease_id;
         let turn_id = context.session.turn_id.clone();
 
-        // relay 边界仍按 ACP ContentBlock JSON 与远程后端互通（远程 resolve_prompt_payload
-        // 仍按 ContentBlock 反序列化）。canonical 输入在此投影为 ContentBlock 形态。
-        // 注意：结构化图片透传到 relay（ContentBlock Image{mimeType,data}）属于 S6 relay 收敛范围；
-        // 本批先保证文本链路不回归，非文本输入降级为文本占位 ContentBlock。
-        let prompt_blocks = match prompt {
-            PromptPayload::Text(text) => Some(serde_json::json!([{"type": "text", "text": text}])),
-            PromptPayload::Input(input) => Some(user_input_blocks_to_relay_content_blocks(input)),
+        let input = match prompt {
+            PromptPayload::Text(text) => agentdash_agent_protocol::text_user_input_blocks(text),
+            PromptPayload::Input(input) => input.clone(),
         };
 
         let executor_config = context.session.executor_config.clone();
@@ -141,7 +136,7 @@ impl AgentConnector for RelayAgentConnector {
         let payload = RelayPromptRequest {
             session_id: session_id.to_string(),
             follow_up_session_id: _follow_up_session_id.map(ToString::to_string),
-            prompt_blocks,
+            input,
             mount_root_ref: mount_root_ref.to_string(),
             workspace_identity_kind: workspace_identity_kind_from_mount(default_mount),
             workspace_identity_payload: workspace_identity_payload_from_mount(default_mount),
@@ -428,60 +423,6 @@ fn workspace_identity_payload_from_mount(
     mount: &agentdash_domain::common::Mount,
 ) -> Option<serde_json::Value> {
     mount.metadata.get("workspace_identity_payload").cloned()
-}
-
-/// 把 canonical 用户输入投影为 relay 远程后端可识别的 ACP ContentBlock JSON。
-///
-/// 远程后端的 `resolve_prompt_payload` 仍按 ACP ContentBlock 反序列化（前端/relay 入参形态
-/// 由 S5/S6 统一），因此 relay 边界把 `UserInputBlock` 映射回 ContentBlock JSON：
-/// - `Text` -> ACP text block（保留文本链路不回归）；
-/// - `Image{url=data URL}` -> ACP image block（结构化透传，mimeType+data）；
-/// - 其余（远程 url / LocalImage / Skill / Mention）-> 文本占位 block（与本批前行为一致，
-///   结构化透传留给 S6 relay 收敛）。
-fn user_input_blocks_to_relay_content_blocks(
-    input: &[agentdash_agent_protocol::UserInputBlock],
-) -> serde_json::Value {
-    let blocks: Vec<serde_json::Value> = input
-        .iter()
-        .map(|item| match item {
-            codex::UserInput::Text { text, .. } => {
-                serde_json::json!({ "type": "text", "text": text })
-            }
-            codex::UserInput::Image { url, .. } => {
-                match parse_relay_data_url(url) {
-                    Some((mime_type, data)) => serde_json::json!({
-                        "type": "image",
-                        "mimeType": mime_type,
-                        "data": data,
-                    }),
-                    None => serde_json::json!({ "type": "text", "text": format!("[引用图片: {url}]") }),
-                }
-            }
-            codex::UserInput::LocalImage { path, .. } => {
-                serde_json::json!({ "type": "text", "text": format!("[引用本地图片: {}]", path.display()) })
-            }
-            codex::UserInput::Skill { name, path } => {
-                serde_json::json!({ "type": "text", "text": format!("[引用 Skill: {name} ({})]", path.display()) })
-            }
-            codex::UserInput::Mention { name, path } => {
-                serde_json::json!({ "type": "text", "text": format!("[引用: {name} ({path})]") })
-            }
-        })
-        .collect();
-    serde_json::Value::Array(blocks)
-}
-
-/// 解析 `data:<mime>;base64,<data>`，返回 `(mime_type, base64_data)`；非 base64 data URL 返回 `None`。
-fn parse_relay_data_url(url: &str) -> Option<(String, String)> {
-    let rest = url.strip_prefix("data:")?;
-    let (meta, data) = rest.split_once(',')?;
-    let mut meta_parts = meta.split(';');
-    let mime_type = meta_parts.next().unwrap_or("").trim();
-    let is_base64 = meta_parts.any(|part| part.trim().eq_ignore_ascii_case("base64"));
-    if mime_type.is_empty() || !is_base64 {
-        return None;
-    }
-    Some((mime_type.to_string(), data.to_string()))
 }
 
 #[cfg(test)]
@@ -772,6 +713,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: Vec::new(),
                 vfs: Some(crate::session::local_workspace_vfs(root)),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),
@@ -814,6 +756,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: vec![mcp_server],
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),
@@ -844,6 +787,10 @@ mod tests {
             .await
             .clone()
             .expect("payload should be captured");
+        assert_eq!(
+            payload.input,
+            agentdash_agent_protocol::text_user_input_blocks("hello")
+        );
         assert_eq!(payload.working_dir.as_deref(), Some("crates/app"));
         assert_eq!(payload.mcp_servers.len(), 1);
         let server = &payload.mcp_servers[0];
@@ -867,6 +814,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn relay_prompt_payload_passes_typed_input_without_content_block_conversion() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
+        let root = tempfile::tempdir().expect("workspace");
+        let input = vec![
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Text {
+                text: "see image".to_string(),
+                text_elements: Vec::new(),
+            },
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+            agentdash_agent_protocol::codex_app_server_protocol::UserInput::Mention {
+                name: "main.rs".to_string(),
+                path: "file://src/main.rs".to_string(),
+            },
+        ];
+
+        let _stream = connector
+            .prompt(
+                "session-typed-input",
+                None,
+                &PromptPayload::Input(input.clone()),
+                relay_context(root.path(), "turn-typed-input"),
+            )
+            .await
+            .expect("relay prompt should succeed");
+
+        let payload = transport
+            .payload
+            .lock()
+            .await
+            .clone()
+            .expect("payload should be captured");
+        assert_eq!(payload.input, input);
+    }
+
+    #[tokio::test]
     async fn relay_prompt_registers_sink_before_remote_prompt_can_emit_notification() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
@@ -880,6 +867,7 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: Vec::new(),
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                vfs_access_policy: None,
                 backend_execution: Some(ExecutionBackendPlacement {
                     backend_id: "local".to_string(),
                     lease_id: Uuid::new_v4(),
@@ -1261,72 +1249,5 @@ mod tests {
         assert!(lease_repo.releases.lock().unwrap().is_empty());
         assert!(transport.has_session_sink("session-steer"));
         drop(stream);
-    }
-
-    /// relay 边界往返：canonical -> relay ContentBlock JSON（forward，本 crate）
-    /// -> canonical（reverse，本机接收侧通过 `content_blocks_to_codex_user_input`）。
-    /// 文本与 data URL 图片保真往返；非 data URL / mention 等降级为文本占位（不回归）。
-    #[test]
-    fn relay_content_block_round_trip_preserves_text_and_data_url_image() {
-        let original = vec![
-            codex::UserInput::Text {
-                text: "请分析这张图".to_string(),
-                text_elements: Vec::new(),
-            },
-            codex::UserInput::Image {
-                detail: None,
-                url: "data:image/png;base64,AAAA".to_string(),
-            },
-        ];
-
-        // forward：canonical -> relay ContentBlock JSON
-        let forward = user_input_blocks_to_relay_content_blocks(&original);
-        let blocks = forward.as_array().expect("relay content blocks is array");
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["type"], "text");
-        assert_eq!(blocks[0]["text"], "请分析这张图");
-        assert_eq!(blocks[1]["type"], "image");
-        assert_eq!(blocks[1]["mimeType"], "image/png");
-        assert_eq!(blocks[1]["data"], "AAAA");
-
-        // reverse：relay ContentBlock JSON -> canonical（与本机接收侧同一实现）
-        let parsed_blocks = blocks
-            .iter()
-            .map(|item| {
-                serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item.clone())
-                    .expect("valid ACP content block")
-            })
-            .collect::<Vec<_>>();
-        let round_tripped =
-            agentdash_agent_protocol::content_blocks_to_codex_user_input(&parsed_blocks)
-                .expect("reverse conversion");
-        assert_eq!(round_tripped.len(), 2);
-        assert!(matches!(
-            &round_tripped[0],
-            codex::UserInput::Text { text, .. } if text == "请分析这张图"
-        ));
-        // 图片保真：data URL 经 ContentBlock(image) 还原为 Image{data URL}。
-        assert!(matches!(
-            &round_tripped[1],
-            codex::UserInput::Image { url, .. }
-                if url == "data:image/png;base64,AAAA"
-        ));
-    }
-
-    #[test]
-    fn relay_content_block_degrades_non_data_url_image_to_text() {
-        let original = vec![codex::UserInput::Image {
-            detail: None,
-            url: "https://example.com/cat.png".to_string(),
-        }];
-        let forward = user_input_blocks_to_relay_content_blocks(&original);
-        let blocks = forward.as_array().expect("array");
-        assert_eq!(blocks[0]["type"], "text");
-        assert!(
-            blocks[0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("https://example.com/cat.png")
-        );
     }
 }

@@ -1,0 +1,7 @@
+{"name":"Task PRD","file":".trellis/tasks/06-30-workspace-placement-service-cleanup/prd.md","reason":"Acceptance criteria for D10 check."}
+{"name":"Task design","file":".trellis/tasks/06-30-workspace-placement-service-cleanup/design.md","reason":"Boundary and non-goals for implementation review."}
+{"name":"Task implementation plan","file":".trellis/tasks/06-30-workspace-placement-service-cleanup/implement.md","reason":"Validation commands and expected old-path removal."}
+{"name":"Cross-layer workspace routing spec","file":".trellis/spec/cross-layer/project-backend-workspace-routing.md","reason":"Spec compliance for placement transaction."}
+{"name":"Backend architecture","file":".trellis/spec/backend/architecture.md","reason":"Route/application ownership check."}
+{"name":"Workspace route","file":"crates/agentdash-api/src/routes/workspaces.rs","reason":"Ensure route no longer owns placement transaction."}
+{"name":"Backend access route","file":"crates/agentdash-api/src/routes/backend_access.rs","reason":"Ensure manual register route no longer owns detect/inventory transaction."}

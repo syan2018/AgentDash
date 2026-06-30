@@ -1,8 +1,8 @@
 import type {
   AgentPreset,
-  AgentVfsAccessGrant,
   CapabilityDirective,
   CapabilityKey,
+  ProjectVfsMountExposureGrant,
   SystemPromptMode,
   ThinkingLevel,
 } from "../../../types";
@@ -21,9 +21,10 @@ import {
 
 const MCP_CAPABILITY_PREFIX = "mcp:";
 const TOOL_PATH_SEPARATOR = "::";
-const WELL_KNOWN_CAPABILITY_KEYS = new Set<CapabilityKey>(
+const WELL_KNOWN_CAPABILITY_KEYS = new Set<string>(
   CAPABILITY_OPTIONS.map((option) => option.value),
 );
+const PROJECT_VFS_MOUNT_CAPABILITIES = new Set<string>(["read", "write", "list", "search"]);
 
 export interface PresetFormState {
   name: string;
@@ -37,7 +38,7 @@ export interface PresetFormState {
   permission_policy: string;
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
-  vfs_access_grants: AgentVfsAccessGrant[];
+  project_vfs_mount_exposure_grants: ProjectVfsMountExposureGrant[];
   skill_asset_keys: string[];
   capability_directives: CapabilityDirective[];
   default_companion_enabled: boolean;
@@ -74,16 +75,32 @@ export function extractMcpPresetKey(value: string): string | null {
   return key.trim() ? key : null;
 }
 
-function isCapabilityDirective(value: unknown): value is CapabilityDirective {
+function isRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  const hasAdd = typeof record.add === "string";
-  const hasRemove = typeof record.remove === "string";
+  return true;
+}
+
+function stringArrayField(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isCapabilityDirective(value: unknown): value is CapabilityDirective {
+  if (!isRecord(value)) return false;
+  const hasAdd = typeof value.add === "string";
+  const hasRemove = typeof value.remove === "string";
   return hasAdd !== hasRemove;
 }
 
 function isCapabilityKey(value: string): value is CapabilityKey {
-  return WELL_KNOWN_CAPABILITY_KEYS.has(value as CapabilityKey);
+  return WELL_KNOWN_CAPABILITY_KEYS.has(value);
+}
+
+function isProjectVfsMountExposureGrant(value: unknown): value is ProjectVfsMountExposureGrant {
+  if (!isRecord(value)) return false;
+  if (typeof value.mount_id !== "string" || !Array.isArray(value.capabilities)) return false;
+  return value.capabilities.every(
+    (capability) => typeof capability === "string" && PROJECT_VFS_MOUNT_CAPABILITIES.has(capability),
+  );
 }
 
 function isOwnedWellKnownCapabilityDirective(directive: CapabilityDirective): boolean {
@@ -154,23 +171,17 @@ export function replaceWellKnownCapabilitySelection(
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
-  const cfg = (preset?.config && typeof preset.config === "object" && !Array.isArray(preset.config)
-    ? preset.config
-    : {}) as Record<string, unknown>;
-  const rawSkillAssetKeys = Array.isArray(cfg.skill_asset_keys)
-    ? (cfg.skill_asset_keys as string[])
-    : [];
-  const rawVfsAccessGrants = Array.isArray(cfg.vfs_access_grants)
-    ? (cfg.vfs_access_grants as AgentVfsAccessGrant[])
+  const cfg = isRecord(preset?.config) ? preset.config : {};
+  const rawSkillAssetKeys = stringArrayField(cfg.skill_asset_keys);
+  const rawProjectVfsMountExposureGrants = Array.isArray(cfg.project_vfs_mount_exposure_grants)
+    ? cfg.project_vfs_mount_exposure_grants.filter(isProjectVfsMountExposureGrant)
     : [];
   const rawDirectives = Array.isArray(cfg.capability_directives)
     ? cfg.capability_directives.filter(isCapabilityDirective)
     : [];
   const capabilityDirectives = normalizeDirectives(rawDirectives);
-  const rawCompanions = Array.isArray(cfg.extra_companions) ? (cfg.extra_companions as string[]) : [];
-  const rawVisibleModuleRefs = Array.isArray(cfg.visible_workspace_module_refs)
-    ? (cfg.visible_workspace_module_refs as string[])
-    : [];
+  const rawCompanions = stringArrayField(cfg.extra_companions);
+  const rawVisibleModuleRefs = stringArrayField(cfg.visible_workspace_module_refs);
   return {
     name: preset?.name ?? "",
     display_name: String(cfg.display_name ?? ""),
@@ -183,7 +194,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
-    vfs_access_grants: rawVfsAccessGrants,
+    project_vfs_mount_exposure_grants: rawProjectVfsMountExposureGrants,
     skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capabilityDirectives,
     default_companion_enabled: cfg.default_companion_enabled === true,
@@ -193,7 +204,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
 }
 
 export function formToPreset(form: PresetFormState): AgentPreset {
-  const config: Record<string, unknown> = {};
+  const config: AgentPreset["config"] = {};
   if (form.display_name.trim()) config.display_name = form.display_name.trim();
   if (form.description.trim()) config.description = form.description.trim();
   if (form.provider_id.trim()) config.provider_id = form.provider_id.trim();
@@ -203,7 +214,9 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
-  if (form.vfs_access_grants.length > 0) config.vfs_access_grants = form.vfs_access_grants;
+  if (form.project_vfs_mount_exposure_grants.length > 0) {
+    config.project_vfs_mount_exposure_grants = form.project_vfs_mount_exposure_grants;
+  }
   if (form.skill_asset_keys.length > 0) config.skill_asset_keys = form.skill_asset_keys;
   if (form.capability_directives.length > 0) {
     config.capability_directives = normalizeDirectives(form.capability_directives);
@@ -217,7 +230,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   return {
     name: form.name.trim(),
     agent_type: form.agent_type.trim(),
-    config: config as AgentPreset["config"],
+    config,
   };
 }
 
@@ -234,9 +247,7 @@ export function validateForm(form: PresetFormState, existingNames: string[], edi
 }
 
 export function formatPresetSummary(preset: AgentPreset): string {
-  const cfg = (preset.config && typeof preset.config === "object" && !Array.isArray(preset.config)
-    ? preset.config
-    : {}) as Record<string, unknown>;
+  const cfg = isRecord(preset.config) ? preset.config : {};
   const displayName = String(cfg.display_name ?? "").trim();
   const parts: string[] = [preset.agent_type];
   if (displayName && displayName !== preset.name) parts.unshift(displayName);
@@ -247,9 +258,11 @@ export function formatPresetSummary(preset: AgentPreset): string {
     : [];
   const presetKeys = selectedMcpPresetKeysFromDirectives(directives);
   if (presetKeys.length > 0) parts.push(`${presetKeys.length} MCP Preset`);
-  const skillKeys = Array.isArray(cfg.skill_asset_keys) ? (cfg.skill_asset_keys as string[]) : [];
+  const skillKeys = stringArrayField(cfg.skill_asset_keys);
   if (skillKeys.length > 0) parts.push(`${skillKeys.length} Skill`);
-  const vfsGrants = Array.isArray(cfg.vfs_access_grants) ? (cfg.vfs_access_grants as AgentVfsAccessGrant[]) : [];
-  if (vfsGrants.length > 0) parts.push(`${vfsGrants.length} VFS`);
+  const projectVfsMountExposureGrants = Array.isArray(cfg.project_vfs_mount_exposure_grants)
+    ? cfg.project_vfs_mount_exposure_grants.filter(isProjectVfsMountExposureGrant)
+    : [];
+  if (projectVfsMountExposureGrants.length > 0) parts.push(`${projectVfsMountExposureGrants.length} Project VFS`);
   return parts.join(" · ");
 }

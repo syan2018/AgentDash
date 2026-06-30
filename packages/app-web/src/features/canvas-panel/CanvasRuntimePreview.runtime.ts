@@ -41,6 +41,52 @@ export function createRuntimeAssetUrlCache(): RuntimeAssetUrlCache {
   };
 }
 
+export function buildCanvasRuntimeSnapshotFingerprint(snapshot: CanvasRuntimeSnapshot): string {
+  return stableJsonStringify({
+    canvas_id: snapshot.canvas_id,
+    canvas_mount_id: snapshot.canvas_mount_id,
+    vfs_mount_id: snapshot.vfs_mount_id,
+    resource_surface_ref: snapshot.resource_surface_ref ?? null,
+    entry: snapshot.entry,
+    files: [...snapshot.files]
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map((file) => ({
+        path: file.path,
+        content: file.content,
+        file_type: file.file_type,
+      })),
+    bindings: [...snapshot.bindings]
+      .sort((a, b) => {
+        const alias = a.alias.localeCompare(b.alias);
+        if (alias !== 0) return alias;
+        const source = a.source_uri.localeCompare(b.source_uri);
+        if (source !== 0) return source;
+        return a.data_path.localeCompare(b.data_path);
+      })
+      .map((binding) => ({
+        alias: binding.alias,
+        source_uri: binding.source_uri,
+        data_path: binding.data_path,
+        content_type: binding.content_type,
+        resolved: binding.resolved,
+      })),
+    import_map: {
+      imports: sortRecord(snapshot.import_map.imports),
+    },
+    libraries: [...snapshot.libraries].sort(),
+    runtime_bridge: snapshot.runtime_bridge,
+  });
+}
+
+export function areCanvasRuntimeSnapshotsEquivalent(
+  prev: CanvasRuntimeSnapshot | null,
+  next: CanvasRuntimeSnapshot | null,
+): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  return buildCanvasRuntimeSnapshotFingerprint(prev) === buildCanvasRuntimeSnapshotFingerprint(next);
+}
+
 export async function resolveRuntimeAssetUrl(options: {
   surfaceRef: string;
   uri: string;
@@ -811,6 +857,37 @@ function isAbsoluteLikePath(value: string): boolean {
 
 function isImageBlob(blob: Blob): boolean {
   return blob.type.startsWith("image/");
+}
+
+function sortRecord(record: Record<string, string | undefined>): Record<string, string> {
+  const sorted: Record<string, string> = {};
+  for (const key of Object.keys(record).sort()) {
+    sorted[key] = record[key] ?? "";
+  }
+  return sorted;
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return Number.isFinite(value) ? JSON.stringify(value) : "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  if (!isRecord(value)) {
+    return "null";
+  }
+
+  const pairs = Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`);
+  return `{${pairs.join(",")}}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isLocalSpecifier(specifier: string): boolean {

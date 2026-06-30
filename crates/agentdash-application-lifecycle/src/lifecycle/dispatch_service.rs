@@ -4,16 +4,9 @@ use agentdash_application_ports::agent_frame_materialization as agent_frame_mate
 use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
-use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
-use agentdash_application_ports::workflow_graph_planning::WorkflowGraphPlanningPort;
-use agentdash_application_workflow::ApplicationWorkflowGraphPlanner;
-use agentdash_application_workflow::orchestration::{
-    OrchestrationRuntimeEvent, ROOT_ORCHESTRATION_ROLE, activate_orchestration,
-    apply_orchestration_event_to_run,
-};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -23,18 +16,17 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
-    AgentLaunchDispatchResult, AgentLaunchIntent, AgentLineage, AgentPolicy,
-    AgentProcedureContract, AgentRuntimeRefs, AgentSource, DeliveryBindingStatus,
-    ExecutionDispatchResult, ExecutionIntent, ExecutionSource, ExecutorRunRef, GatePolicy,
-    InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate,
-    LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
-    LifecycleSubjectAssociation, OrchestrationBindingRefs, OrchestrationInstance,
-    OrchestrationPlanSnapshot, OrchestrationSourceRef, RunPolicy, RuntimePolicy,
-    RuntimeSessionExecutionAnchor, SubjectExecutionDispatchResult, SubjectExecutionIntent,
-    SubjectExecutionRef, SubjectRef, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
+    AgentLaunchDispatchResult, AgentLaunchIntent, ExecutionDispatchResult, ExecutionIntent,
+    ExecutionSource, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    LifecycleRunStartDispatchResult, LifecycleRunStartIntent, SubjectExecutionDispatchResult,
+    SubjectExecutionIntent,
 };
 
 use super::WorkflowApplicationError;
+use super::dispatch::{
+    AgentRuntimeMaterializer, DispatchFacts, DispatchPlan, LifecycleRelationWriter,
+    OrchestrationReducerBridge, RunOrchestrationStarter, SubjectAssociationWriter,
+};
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
@@ -118,92 +110,6 @@ pub struct LifecycleDispatchService<'a> {
     workflow_agent_frame_materialization:
         Option<&'a dyn workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort>,
     workflow_graph_planner: Option<&'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort>,
-}
-
-#[derive(Debug, Clone)]
-struct DispatchPlan {
-    project_id: Uuid,
-    source: ExecutionSource,
-    subject_ref: Option<SubjectRef>,
-    parent_run_id: Option<Uuid>,
-    parent_agent_id: Option<Uuid>,
-    workflow_graph_ref: Option<WorkflowGraphRef>,
-    run_policy: RunPolicy,
-    agent_policy: AgentPolicy,
-    runtime_policy: RuntimePolicy,
-    gate_policy: Option<GatePolicy>,
-}
-
-struct DispatchFacts {
-    run: LifecycleRun,
-    orchestration_binding: Option<OrchestrationBindingRefs>,
-    agent: LifecycleAgent,
-    frame_id: Uuid,
-    runtime_session_ref: Option<Uuid>,
-    gate_ref: Option<Uuid>,
-    subject_execution_ref: Option<SubjectExecutionRef>,
-}
-
-impl DispatchFacts {
-    fn runtime_refs(&self) -> AgentRuntimeRefs {
-        AgentRuntimeRefs::new(
-            self.run.id,
-            self.agent.id,
-            self.frame_id,
-            self.orchestration_binding.clone(),
-        )
-    }
-}
-
-impl From<&AgentLaunchIntent> for DispatchPlan {
-    fn from(intent: &AgentLaunchIntent) -> Self {
-        Self {
-            project_id: intent.project_id,
-            source: intent.source.clone(),
-            subject_ref: intent.subject_ref.clone(),
-            parent_run_id: intent.parent_run_id,
-            parent_agent_id: intent.parent_agent_id,
-            workflow_graph_ref: intent.workflow_graph_ref.clone(),
-            run_policy: intent.run_policy.clone(),
-            agent_policy: intent.agent_policy.clone(),
-            runtime_policy: intent.runtime_policy.clone(),
-            gate_policy: None,
-        }
-    }
-}
-
-impl From<&SubjectExecutionIntent> for DispatchPlan {
-    fn from(intent: &SubjectExecutionIntent) -> Self {
-        Self {
-            project_id: intent.project_id,
-            source: intent.source.clone(),
-            subject_ref: Some(intent.subject_ref.clone()),
-            parent_run_id: intent.parent_run_id,
-            parent_agent_id: intent.parent_agent_id,
-            workflow_graph_ref: intent.workflow_graph_ref.clone(),
-            run_policy: intent.run_policy.clone(),
-            agent_policy: intent.agent_policy.clone(),
-            runtime_policy: intent.runtime_policy.clone(),
-            gate_policy: None,
-        }
-    }
-}
-
-impl From<&InteractionDispatchIntent> for DispatchPlan {
-    fn from(intent: &InteractionDispatchIntent) -> Self {
-        Self {
-            project_id: intent.project_id,
-            source: intent.source.clone(),
-            subject_ref: None,
-            parent_run_id: Some(intent.parent_run_id),
-            parent_agent_id: Some(intent.parent_agent_id),
-            workflow_graph_ref: intent.workflow_graph_ref.clone(),
-            run_policy: RunPolicy::AppendGraph,
-            agent_policy: AgentPolicy::SpawnChild,
-            runtime_policy: intent.runtime_policy.clone(),
-            gate_policy: Some(intent.gate_policy.clone()),
-        }
-    }
 }
 
 impl<'a> LifecycleDispatchService<'a> {
@@ -313,12 +219,12 @@ impl<'a> LifecycleDispatchService<'a> {
         diag!(
             Info,
             Subsystem::Lifecycle,
-            run_id = %facts.run.id,
-            agent_id = %facts.agent.id,
+            run_id = %facts.runtime_refs.run_ref,
+            agent_id = %facts.runtime_refs.agent_ref,
             "dispatch: launch_agent 完成"
         );
         Ok(AgentLaunchDispatchResult {
-            runtime_refs: facts.runtime_refs(),
+            runtime_refs: facts.runtime_refs,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
     }
@@ -336,7 +242,7 @@ impl<'a> LifecycleDispatchService<'a> {
             "dispatch: execute_subject 进入"
         );
         let facts = self.dispatch_common(DispatchPlan::from(intent)).await?;
-        let runtime_refs = facts.runtime_refs();
+        let runtime_refs = facts.runtime_refs;
         let subject_execution_ref = facts.subject_execution_ref.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "SubjectExecutionIntent 未创建 subject_execution_ref".to_string(),
@@ -369,7 +275,7 @@ impl<'a> LifecycleDispatchService<'a> {
             )
         })?;
         Ok(InteractionGateOpenedDispatchResult {
-            runtime_refs: facts.runtime_refs(),
+            runtime_refs: facts.runtime_refs,
             gate_ref,
             delivery_runtime_ref: facts.runtime_session_ref,
         })
@@ -379,151 +285,77 @@ impl<'a> LifecycleDispatchService<'a> {
         &self,
         intent: &LifecycleRunStartIntent,
     ) -> Result<LifecycleRunStartDispatchResult, WorkflowApplicationError> {
-        let planned_graph = self
-            .plan_workflow_graph(intent.project_id, &intent.workflow_graph_ref)
+        let result = self
+            .run_orchestration_starter()
+            .start_lifecycle_run(intent)
             .await?;
-        let workflow_graph = planned_graph.graph;
-        let plan_snapshot = planned_graph.plan_snapshot;
-        let mut run = create_lifecycle_run(intent.project_id);
-        let orchestration_binding = ensure_workflow_graph_orchestration(
-            &mut run,
-            &workflow_graph,
-            ROOT_ORCHESTRATION_ROLE,
-            plan_snapshot,
-        )?;
-        self.run_repo.create(&run).await?;
 
         diag!(
             Info,
             Subsystem::Lifecycle,
             project_id = %intent.project_id,
-            run_id = %run.id,
-            orchestration_id = %orchestration_binding.orchestration_ref,
+            run_id = %result.run_ref,
+            orchestration_id = %result.orchestration_ref,
             "dispatch: start_lifecycle_run 创建 root orchestration"
         );
 
-        Ok(LifecycleRunStartDispatchResult {
-            run_ref: run.id,
-            orchestration_ref: orchestration_binding.orchestration_ref,
-        })
+        Ok(result)
     }
 
     pub async fn materialize_workflow_agent_node(
         &self,
         request: WorkflowAgentNodeMaterializationRequest,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
-        let run = self
-            .run_repo
-            .get_by_id(request.run_id)
-            .await?
-            .ok_or_else(|| {
-                WorkflowApplicationError::BadRequest(format!(
-                    "LifecycleRun {} 不存在",
-                    request.run_id
-                ))
-            })?;
-        ensure_orchestration_node_binding(&run, &request.orchestration_binding)?;
-        let orchestration = orchestration_for_binding(&run, &request.orchestration_binding)?;
-        let plan_node = orchestration
-            .plan_snapshot
-            .nodes
-            .iter()
-            .find(|node| node.node_path == request.orchestration_binding.node_path)
-            .ok_or_else(|| {
-                WorkflowApplicationError::Internal(format!(
-                    "orchestration {} 中不存在 node_path {}",
-                    request.orchestration_binding.orchestration_ref,
-                    request.orchestration_binding.node_path
-                ))
-            })?;
-        let lifecycle_identity =
-            lifecycle_surface_port::lifecycle_identity_from_orchestration(orchestration);
-        let activity = lifecycle_surface_port::activity_definition_from_plan_node(plan_node);
-
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
-            .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
-        self.agent_repo.create(&agent).await?;
-
-        let runtime_session_ref = match request.runtime_policy {
-            RuntimePolicy::CreateRuntimeSession => {
-                let creator = self.runtime_session_creator.ok_or_else(|| {
-                    WorkflowApplicationError::Internal(
-                        "Workflow AgentCall materialization 缺少 RuntimeSessionCreationPort"
-                            .to_string(),
-                    )
-                })?;
-                creator
-                    .create_runtime_session(
-                        runtime_session_delivery_port::RuntimeSessionCreationRequest {
-                            project_id: run.project_id,
-                            run_id: run.id,
-                            agent_id: agent.id,
-                            source: ExecutionSource::ParentAgent,
-                        },
-                    )
-                    .await
-                    .map_err(workflow_error_from_runtime_session_delivery_error)?
-                    .runtime_session_id
-            }
-            RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => id,
-        };
-
-        let frame_id = self
-            .materialize_workflow_agent_node_frame(
-                &run,
-                &agent,
-                runtime_session_ref,
-                request.frame_created_by_id.clone(),
-                request.orchestration_binding.clone(),
-                lifecycle_identity.key,
-                activity,
-                request.workflow_contract.clone(),
-            )
+        let context = self
+            .run_orchestration_starter()
+            .workflow_agent_node_context(request.run_id, &request.orchestration_binding)
             .await?;
-
-        let mut agent = agent;
-        let anchor_repo = self.anchor_repo.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Workflow AgentCall materialization 缺少 RuntimeSessionExecutionAnchorRepository"
-                    .to_string(),
-            )
-        })?;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            runtime_session_ref.to_string(),
-            run.id,
-            frame_id,
-            agent.id,
-            request.orchestration_binding.orchestration_ref,
-            request.orchestration_binding.node_path.clone(),
-            request.orchestration_binding.attempt,
-        );
-        anchor_repo.upsert(&anchor).await?;
-        agent.bind_current_delivery_from_anchor(
-            &anchor,
-            DeliveryBindingStatus::Ready,
-            chrono::Utc::now(),
-        );
-        self.agent_repo.update(&agent).await?;
+        let result = self
+            .agent_runtime_materializer()
+            .materialize_workflow_agent_node(context, request)
+            .await?;
 
         diag!(
             Info,
             Subsystem::Lifecycle,
-            run_id = %run.id,
-            agent_id = %agent.id,
-            orchestration_id = %request.orchestration_binding.orchestration_ref,
-            node_path = %request.orchestration_binding.node_path,
+            run_id = %result.runtime_refs.run_ref,
+            agent_id = %result.runtime_refs.agent_ref,
+            orchestration_id = ?result.runtime_refs.orchestration_ref(),
+            node_path = ?result.runtime_refs.node_path(),
             "dispatch: workflow agent node materialized，已绑定 delivery anchor"
         );
 
-        Ok(WorkflowAgentNodeMaterializationResult {
-            runtime_refs: AgentRuntimeRefs::new(
-                run.id,
-                agent.id,
-                frame_id,
-                Some(request.orchestration_binding),
-            ),
-            delivery_runtime_ref: runtime_session_ref,
-        })
+        Ok(result)
+    }
+
+    fn run_orchestration_starter(&self) -> RunOrchestrationStarter<'_> {
+        RunOrchestrationStarter::new(
+            self.run_repo,
+            self.workflow_graph_repo,
+            self.workflow_graph_planner,
+        )
+    }
+
+    fn agent_runtime_materializer(&self) -> AgentRuntimeMaterializer<'_> {
+        AgentRuntimeMaterializer::new(
+            self.agent_repo,
+            self.anchor_repo,
+            self.runtime_session_creator,
+            self.frame_construction,
+            self.workflow_agent_frame_materialization,
+        )
+    }
+
+    fn subject_association_writer(&self) -> SubjectAssociationWriter<'_> {
+        SubjectAssociationWriter::new(self.association_repo)
+    }
+
+    fn lifecycle_relation_writer(&self) -> LifecycleRelationWriter<'_> {
+        LifecycleRelationWriter::new(self.gate_repo, self.lineage_repo)
+    }
+
+    fn orchestration_reducer_bridge(&self) -> OrchestrationReducerBridge<'_> {
+        OrchestrationReducerBridge::new(self.run_repo)
     }
 
     async fn dispatch_common(
@@ -538,657 +370,70 @@ impl<'a> LifecycleDispatchService<'a> {
             .workflow_graph_ref
             .as_ref()
             .expect("checked workflow graph ref");
-        let planned_graph = self
-            .plan_workflow_graph(plan.project_id, workflow_graph_ref)
+        let prepared = self
+            .run_orchestration_starter()
+            .prepare_graph_dispatch(&plan, workflow_graph_ref)
             .await?;
-        let workflow_graph = planned_graph.graph;
-        let plan_snapshot = planned_graph.plan_snapshot;
-        let mut run = self.resolve_or_create_run(&plan, &workflow_graph).await?;
-        let orchestration_binding = ensure_workflow_graph_orchestration(
-            &mut run,
-            &workflow_graph,
-            orchestration_role_for_dispatch(&plan),
-            plan_snapshot,
-        )?;
-        self.run_repo.update(&run).await?;
-        let agent = self.resolve_or_create_agent(&run, &plan).await?;
-        let association = if let Some(subject_ref) = &plan.subject_ref {
-            Some(
-                self.create_subject_association(run.id, agent.id, subject_ref, &plan.source)
-                    .await?,
+        let materialized = self
+            .agent_runtime_materializer()
+            .materialize_dispatch_runtime(
+                &prepared.run,
+                &plan,
+                Some(prepared.orchestration_binding.clone()),
             )
-        } else {
-            None
-        };
-        let runtime_session_ref = self
-            .resolve_or_create_runtime_session(&plan, &run, &agent)
             .await?;
-        let frame_id = self
-            .create_initial_frame(&agent, runtime_session_ref)
+        let subject_result = self
+            .subject_association_writer()
+            .write_for_dispatch(prepared.run.id, materialized.agent.id, &plan)
             .await?;
-        let mut agent = agent;
-
-        if let Some(parent_agent_id) = plan.parent_agent_id {
-            let lineage = AgentLineage::new(
-                run.id,
-                Some(parent_agent_id),
-                agent.id,
-                lineage_relation_kind(&plan.agent_policy),
-                Some(frame_id),
-                None,
-            );
-            self.lineage_repo.create(&lineage).await?;
-        }
-
-        let gate_ref = if let Some(gate_policy) = &plan.gate_policy {
-            Some(
-                self.create_gate(&run, &agent, frame_id, gate_policy)
-                    .await?,
+        let relation_result = self
+            .lifecycle_relation_writer()
+            .write_for_dispatch(
+                &prepared.run,
+                &materialized.agent,
+                materialized.frame_id,
+                &plan,
             )
-        } else {
-            None
-        };
-        if let (Some(anchor_repo), Some(session_id)) = (self.anchor_repo, runtime_session_ref) {
-            let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-                session_id.to_string(),
-                run.id,
-                frame_id,
-                agent.id,
-                orchestration_binding.orchestration_ref,
-                orchestration_binding.node_path.clone(),
-                orchestration_binding.attempt,
-            );
-            anchor_repo.upsert(&anchor).await?;
-            agent.bind_current_delivery_from_anchor(
-                &anchor,
-                DeliveryBindingStatus::Ready,
-                chrono::Utc::now(),
-            );
-            self.agent_repo.update(&agent).await?;
-        }
-        let session_id = runtime_session_ref.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Graph-backed dispatch 缺少 RuntimeSession，无法 materialize entry NodeStarted"
-                    .to_string(),
-            )
-        })?;
-        let (updated_run, _) = apply_orchestration_event_to_run(
-            run,
-            orchestration_binding.orchestration_ref,
-            OrchestrationRuntimeEvent::NodeStarted {
-                node_path: orchestration_binding.node_path.clone(),
-                attempt: orchestration_binding.attempt,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession {
-                    session_id: session_id.to_string(),
-                }),
-                timestamp: chrono::Utc::now(),
-            },
-        )
-        .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
-        run = updated_run;
-        self.run_repo.update(&run).await?;
-
-        let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
-            subject_ref: plan
-                .subject_ref
-                .clone()
-                .expect("association requires subject"),
-            association_id: assoc.id,
-        });
+            .await?;
+        self.orchestration_reducer_bridge()
+            .mark_node_started(prepared.run, &prepared.orchestration_binding, &materialized)
+            .await?;
 
         Ok(DispatchFacts {
-            run,
-            orchestration_binding: Some(orchestration_binding),
-            agent,
-            frame_id,
-            runtime_session_ref,
-            gate_ref,
-            subject_execution_ref,
+            runtime_refs: materialized.runtime_refs,
+            runtime_session_ref: materialized.runtime_session_ref,
+            gate_ref: relation_result.gate_ref,
+            subject_execution_ref: subject_result.subject_execution_ref,
         })
-    }
-
-    async fn plan_workflow_graph(
-        &self,
-        project_id: Uuid,
-        workflow_graph_ref: &WorkflowGraphRef,
-    ) -> Result<workflow_graph_planning_port::PlannedWorkflowGraph, WorkflowApplicationError> {
-        let request = workflow_graph_planning_port::WorkflowGraphPlanningRequest {
-            project_id,
-            workflow_graph_ref: workflow_graph_ref.clone(),
-        };
-        match self.workflow_graph_planner {
-            Some(planner) => planner.plan_workflow_graph(request).await,
-            None => {
-                ApplicationWorkflowGraphPlanner::new(self.workflow_graph_repo)
-                    .plan_workflow_graph(request)
-                    .await
-            }
-        }
-        .map_err(workflow_error_from_workflow_graph_planning_error)
     }
 
     async fn dispatch_plain(
         &self,
         plan: DispatchPlan,
     ) -> Result<DispatchFacts, WorkflowApplicationError> {
-        let run = self.resolve_or_create_plain_run(&plan).await?;
-        let agent = self.resolve_or_create_agent(&run, &plan).await?;
-        let association = if let Some(subject_ref) = &plan.subject_ref {
-            Some(
-                self.create_subject_association(run.id, agent.id, subject_ref, &plan.source)
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let runtime_session_ref = self
-            .resolve_or_create_runtime_session(&plan, &run, &agent)
+        let run = self
+            .run_orchestration_starter()
+            .resolve_or_create_plain_run(&plan)
             .await?;
-        let frame_id = self
-            .create_plain_initial_frame(&agent, runtime_session_ref)
+        let materialized = self
+            .agent_runtime_materializer()
+            .materialize_dispatch_runtime(&run, &plan, None)
             .await?;
-        let mut agent = agent;
-
-        if let Some(parent_agent_id) = plan.parent_agent_id {
-            let lineage = AgentLineage::new(
-                run.id,
-                Some(parent_agent_id),
-                agent.id,
-                lineage_relation_kind(&plan.agent_policy),
-                Some(frame_id),
-                None,
-            );
-            self.lineage_repo.create(&lineage).await?;
-        }
-
-        let gate_ref = if let Some(gate_policy) = &plan.gate_policy {
-            Some(
-                self.create_gate(&run, &agent, frame_id, gate_policy)
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-        if let (Some(anchor_repo), Some(session_id)) = (self.anchor_repo, runtime_session_ref) {
-            let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                session_id.to_string(),
-                run.id,
-                frame_id,
-                agent.id,
-            );
-            anchor_repo.upsert(&anchor).await?;
-            agent.bind_current_delivery_from_anchor(
-                &anchor,
-                DeliveryBindingStatus::Ready,
-                chrono::Utc::now(),
-            );
-            self.agent_repo.update(&agent).await?;
-        }
-
-        let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
-            subject_ref: plan
-                .subject_ref
-                .clone()
-                .expect("association requires subject"),
-            association_id: assoc.id,
-        });
+        let subject_result = self
+            .subject_association_writer()
+            .write_for_dispatch(run.id, materialized.agent.id, &plan)
+            .await?;
+        let relation_result = self
+            .lifecycle_relation_writer()
+            .write_for_dispatch(&run, &materialized.agent, materialized.frame_id, &plan)
+            .await?;
 
         Ok(DispatchFacts {
-            run,
-            orchestration_binding: None,
-            agent,
-            frame_id,
-            runtime_session_ref,
-            gate_ref,
-            subject_execution_ref,
+            runtime_refs: materialized.runtime_refs,
+            runtime_session_ref: materialized.runtime_session_ref,
+            gate_ref: relation_result.gate_ref,
+            subject_execution_ref: subject_result.subject_execution_ref,
         })
-    }
-
-    // ─── Run Resolution ──────────────────────────────────────────────────
-
-    async fn resolve_or_create_run(
-        &self,
-        plan: &DispatchPlan,
-        _workflow_graph: &WorkflowGraph,
-    ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        match (&plan.run_policy, plan.parent_run_id) {
-            // same-run: 复用现有 run 或追加 graph
-            (RunPolicy::ReuseExisting | RunPolicy::AppendGraph, Some(run_id)) => {
-                let run = self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
-                    WorkflowApplicationError::BadRequest(format!("parent_run_id {run_id} 不存在"))
-                })?;
-                Ok(run)
-            }
-            (RunPolicy::ReuseExisting, None) => Err(WorkflowApplicationError::BadRequest(
-                "RunPolicy::ReuseExisting 需要 parent_run_id".to_string(),
-            )),
-            (RunPolicy::AppendGraph, None) => Err(WorkflowApplicationError::BadRequest(
-                "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
-            )),
-            // 创建新 run
-            _ => {
-                let run = create_lifecycle_run(plan.project_id);
-                self.run_repo.create(&run).await?;
-                Ok(run)
-            }
-        }
-    }
-
-    async fn resolve_or_create_plain_run(
-        &self,
-        plan: &DispatchPlan,
-    ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        match (&plan.run_policy, plan.parent_run_id) {
-            (RunPolicy::ReuseExisting | RunPolicy::AppendGraph, Some(run_id)) => {
-                let run = self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
-                    WorkflowApplicationError::BadRequest(format!("parent_run_id {run_id} 不存在"))
-                })?;
-                Ok(run)
-            }
-            (RunPolicy::ReuseExisting, None) => Err(WorkflowApplicationError::BadRequest(
-                "RunPolicy::ReuseExisting 需要 parent_run_id".to_string(),
-            )),
-            (RunPolicy::AppendGraph, None) => Err(WorkflowApplicationError::BadRequest(
-                "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
-            )),
-            _ => {
-                let run = LifecycleRun::new_plain(plan.project_id);
-                self.run_repo.create(&run).await?;
-                Ok(run)
-            }
-        }
-    }
-
-    // ─── Subject Association ─────────────────────────────────────────────
-
-    async fn create_subject_association(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        subject_ref: &SubjectRef,
-        source: &ExecutionSource,
-    ) -> Result<LifecycleSubjectAssociation, WorkflowApplicationError> {
-        let role = association_role_from_source(source);
-        let assoc = if matches!(subject_ref.kind.as_str(), "task" | "story") {
-            LifecycleSubjectAssociation::new_agent_scoped(run_id, agent_id, subject_ref, role, None)
-        } else {
-            LifecycleSubjectAssociation::new_run_scoped(run_id, subject_ref, role, None)
-        };
-        self.association_repo.create(&assoc).await?;
-        Ok(assoc)
-    }
-
-    // ─── Agent Resolution ────────────────────────────────────────────────
-
-    async fn resolve_or_create_agent(
-        &self,
-        run: &LifecycleRun,
-        plan: &DispatchPlan,
-    ) -> Result<LifecycleAgent, WorkflowApplicationError> {
-        match plan.agent_policy {
-            AgentPolicy::Reuse | AgentPolicy::Resume => {
-                if let Some(agent_id) = plan.parent_agent_id {
-                    return self.resolve_explicit_reuse_agent(run, plan, agent_id).await;
-                }
-                let agents = self.agent_repo.list_by_run(run.id).await?;
-                if let Some(existing) = agents.into_iter().find(|a| a.status == "active") {
-                    return Ok(existing);
-                }
-                Ok(self.create_agent(run, plan).await?)
-            }
-            AgentPolicy::Create | AgentPolicy::SpawnChild => {
-                Ok(self.create_agent(run, plan).await?)
-            }
-        }
-    }
-
-    async fn resolve_explicit_reuse_agent(
-        &self,
-        run: &LifecycleRun,
-        plan: &DispatchPlan,
-        agent_id: Uuid,
-    ) -> Result<LifecycleAgent, WorkflowApplicationError> {
-        let agent = self.agent_repo.get(agent_id).await?.ok_or_else(|| {
-            WorkflowApplicationError::BadRequest(format!("parent_agent_id {agent_id} 不存在"))
-        })?;
-        if agent.run_id != run.id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "parent_agent_id {} 属于 run {}，不能复用到 run {}",
-                agent.id, agent.run_id, run.id
-            )));
-        }
-        if agent.project_id != plan.project_id {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "parent_agent_id {} 属于 project {}，不能复用到 project {}",
-                agent.id, agent.project_id, plan.project_id
-            )));
-        }
-        if agent.status != "active" {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "parent_agent_id {} 当前不是 active",
-                agent.id
-            )));
-        }
-        Ok(agent)
-    }
-
-    async fn create_agent(
-        &self,
-        run: &LifecycleRun,
-        plan: &DispatchPlan,
-    ) -> Result<LifecycleAgent, WorkflowApplicationError> {
-        let source = agent_source_from_execution_source(&plan.source);
-        let agent = LifecycleAgent::new_root(run.id, plan.project_id, source);
-        self.agent_repo.create(&agent).await?;
-        Ok(agent)
-    }
-
-    // ─── Frame Creation ──────────────────────────────────────────────────
-
-    async fn create_initial_frame(
-        &self,
-        agent: &LifecycleAgent,
-        runtime_session_ref: Option<Uuid>,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        self.construct_launch_anchor_frame(agent, runtime_session_ref)
-            .await
-    }
-
-    async fn create_plain_initial_frame(
-        &self,
-        agent: &LifecycleAgent,
-        runtime_session_ref: Option<Uuid>,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        self.construct_launch_anchor_frame(agent, runtime_session_ref)
-            .await
-    }
-
-    async fn construct_launch_anchor_frame(
-        &self,
-        agent: &LifecycleAgent,
-        runtime_session_ref: Option<Uuid>,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        self.construct_launch_anchor_frame_with_created_by(
-            agent,
-            runtime_session_ref,
-            runtime_session_ref.map(|value| value.to_string()),
-        )
-        .await
-    }
-
-    async fn construct_launch_anchor_frame_with_created_by(
-        &self,
-        agent: &LifecycleAgent,
-        runtime_session_ref: Option<Uuid>,
-        created_by_id: Option<String>,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        let frame_construction = self.frame_construction.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Lifecycle dispatch 缺少 AgentRunFrameConstructionPort".to_string(),
-            )
-        })?;
-        let runtime_session_ref = runtime_session_ref.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Lifecycle launch anchor frame construction 缺少 RuntimeSession ref".to_string(),
-            )
-        })?;
-        let outcome = frame_construction
-            .execute_frame_construction_command(
-                agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
-                    run_id: agent.run_id,
-                    agent_id: agent.id,
-                    runtime_session_id: runtime_session_ref.to_string(),
-                    created_by_id,
-                },
-            )
-            .await
-            .map_err(workflow_error_from_agent_frame_materialization_error)?;
-        outcome.frame_id.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "AgentRunFrameConstructionPort 未返回 frame_id".to_string(),
-            )
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn materialize_workflow_agent_node_frame(
-        &self,
-        run: &LifecycleRun,
-        agent: &LifecycleAgent,
-        runtime_session_ref: Uuid,
-        created_by_id: Option<String>,
-        orchestration_binding: OrchestrationBindingRefs,
-        lifecycle_key: String,
-        activity: agentdash_domain::workflow::ActivityDefinition,
-        workflow_contract: Option<AgentProcedureContract>,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        let frame_materialization = self.workflow_agent_frame_materialization.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Workflow AgentCall materialization 缺少 WorkflowAgentNodeFrameMaterializationPort"
-                    .to_string(),
-            )
-        })?;
-        let outcome = frame_materialization
-            .materialize_workflow_agent_node_frame(
-                workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationInput {
-                    run_id: run.id,
-                    project_id: run.project_id,
-                    agent_id: agent.id,
-                    runtime_session_id: runtime_session_ref.to_string(),
-                    created_by_id,
-                    orchestration_id: orchestration_binding.orchestration_ref,
-                    node_path: orchestration_binding.node_path,
-                    attempt: orchestration_binding.attempt,
-                    lifecycle_key,
-                    activity,
-                    workflow_contract,
-                    base_vfs: None,
-                    inherited_executor_config: None,
-                    ready_port_keys: Default::default(),
-                },
-            )
-            .await
-            .map_err(workflow_error_from_agent_frame_materialization_error)?;
-        outcome.frame_id.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "WorkflowAgentNodeFrameMaterializationPort 未返回 frame_id".to_string(),
-            )
-        })
-    }
-
-    async fn resolve_or_create_runtime_session(
-        &self,
-        plan: &DispatchPlan,
-        run: &LifecycleRun,
-        agent: &LifecycleAgent,
-    ) -> Result<Option<Uuid>, WorkflowApplicationError> {
-        match plan.runtime_policy {
-            RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => Ok(Some(id)),
-            RuntimePolicy::CreateRuntimeSession => {
-                let creator = self.runtime_session_creator.ok_or_else(|| {
-                    WorkflowApplicationError::Internal(
-                        "RuntimePolicy::CreateRuntimeSession 缺少 RuntimeSessionCreationPort"
-                            .to_string(),
-                    )
-                })?;
-                let request = runtime_session_delivery_port::RuntimeSessionCreationRequest {
-                    project_id: plan.project_id,
-                    run_id: run.id,
-                    agent_id: agent.id,
-                    source: plan.source.clone(),
-                };
-                let result = creator
-                    .create_runtime_session(request)
-                    .await
-                    .map_err(workflow_error_from_runtime_session_delivery_error)?;
-                Ok(Some(result.runtime_session_id))
-            }
-        }
-    }
-
-    // ─── Gate Creation ───────────────────────────────────────────────────
-
-    async fn create_gate(
-        &self,
-        run: &LifecycleRun,
-        agent: &LifecycleAgent,
-        frame_id: Uuid,
-        policy: &GatePolicy,
-    ) -> Result<Uuid, WorkflowApplicationError> {
-        let correlation = policy
-            .correlation_id
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let gate = LifecycleGate::open(
-            run.id,
-            Some(agent.id),
-            Some(frame_id),
-            &policy.gate_kind,
-            correlation,
-            policy.payload.clone(),
-        );
-        let gate_id = gate.id;
-        self.gate_repo.create(&gate).await?;
-        Ok(gate_id)
-    }
-}
-
-// ─── Helper Functions ────────────────────────────────────────────────────────
-
-fn create_lifecycle_run(project_id: Uuid) -> LifecycleRun {
-    LifecycleRun::new_control(project_id)
-}
-
-fn blocking_planning_diagnostics_message(
-    workflow_graph_id: Uuid,
-    diagnostics: &[workflow_graph_planning_port::WorkflowGraphPlanningDiagnostic],
-) -> String {
-    let details = diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.severity == ValidationSeverity::Error)
-        .map(|diagnostic| {
-            format!(
-                "{} at {}: {}",
-                diagnostic.code, diagnostic.source_path, diagnostic.message
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    format!(
-        "WorkflowGraph {} 无法编译为 OrchestrationPlanSnapshot: {}",
-        workflow_graph_id, details
-    )
-}
-
-fn ensure_workflow_graph_orchestration(
-    run: &mut LifecycleRun,
-    workflow_graph: &WorkflowGraph,
-    role: &str,
-    plan_snapshot: OrchestrationPlanSnapshot,
-) -> Result<OrchestrationBindingRefs, WorkflowApplicationError> {
-    if let Some(existing) = run.orchestrations.iter().find(|orchestration| {
-        orchestration.role == role
-            && orchestration.plan_snapshot.plan_digest == plan_snapshot.plan_digest
-    }) {
-        return orchestration_entry_binding(existing);
-    }
-
-    let source_ref = OrchestrationSourceRef::WorkflowGraph {
-        graph_id: workflow_graph.id,
-        graph_version: Some(workflow_graph.version),
-    };
-    let orchestration = activate_orchestration(role.to_string(), source_ref, plan_snapshot);
-    let binding = orchestration_entry_binding(&orchestration)?;
-    run.add_orchestration(orchestration);
-    Ok(binding)
-}
-
-fn orchestration_entry_binding(
-    orchestration: &OrchestrationInstance,
-) -> Result<OrchestrationBindingRefs, WorkflowApplicationError> {
-    let entry_node_id = orchestration
-        .activation
-        .ready_node_ids
-        .first()
-        .or_else(|| orchestration.plan_snapshot.entry_node_ids.first())
-        .ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "OrchestrationInstance {} 缺少 entry runtime node",
-                orchestration.orchestration_id
-            ))
-        })?;
-    let node = orchestration
-        .node_tree
-        .iter()
-        .find(|node| node.node_id == *entry_node_id)
-        .ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "OrchestrationInstance {} entry node {} 尚未 materialize",
-                orchestration.orchestration_id, entry_node_id
-            ))
-        })?;
-    Ok(OrchestrationBindingRefs::new(
-        orchestration.orchestration_id,
-        node.node_path.clone(),
-        node.attempt,
-    ))
-}
-
-fn ensure_orchestration_node_binding(
-    run: &LifecycleRun,
-    binding: &OrchestrationBindingRefs,
-) -> Result<(), WorkflowApplicationError> {
-    let orchestration = orchestration_for_binding(run, binding)?;
-    let exists = orchestration
-        .node_tree
-        .iter()
-        .any(|node| node.node_path == binding.node_path && node.attempt == binding.attempt);
-    if exists {
-        Ok(())
-    } else {
-        Err(WorkflowApplicationError::Internal(format!(
-            "Orchestration {} 中不存在节点 {}#{}",
-            binding.orchestration_ref, binding.node_path, binding.attempt
-        )))
-    }
-}
-
-fn orchestration_for_binding<'a>(
-    run: &'a LifecycleRun,
-    binding: &OrchestrationBindingRefs,
-) -> Result<&'a OrchestrationInstance, WorkflowApplicationError> {
-    run.orchestrations
-        .iter()
-        .find(|item| item.orchestration_id == binding.orchestration_ref)
-        .ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "LifecycleRun {} 中不存在 orchestration {}",
-                run.id, binding.orchestration_ref
-            ))
-        })
-}
-
-fn orchestration_role_for_dispatch(plan: &DispatchPlan) -> &str {
-    if matches!(plan.run_policy, RunPolicy::AppendGraph) {
-        append_orchestration_role_from_source(&plan.source)
-    } else {
-        ROOT_ORCHESTRATION_ROLE
-    }
-}
-
-fn append_orchestration_role_from_source(source: &ExecutionSource) -> &'static str {
-    match source {
-        ExecutionSource::ParentAgent => "task_execution",
-        ExecutionSource::Routine => "routine_execution",
-        _ => "append",
-    }
-}
-
-fn association_role_from_source(source: &ExecutionSource) -> &'static str {
-    match source {
-        ExecutionSource::Routine => "source",
-        _ => "subject",
     }
 }
 
@@ -1204,91 +449,11 @@ fn runtime_session_title(
     format!("{kind_label} · {now}")
 }
 
-fn workflow_error_from_runtime_session_delivery_error(
-    error: runtime_session_delivery_port::RuntimeSessionDeliveryError,
-) -> WorkflowApplicationError {
-    match error {
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::NotFound { .. } => {
-            WorkflowApplicationError::NotFound(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Rejected { .. } => {
-            WorkflowApplicationError::Conflict(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Unavailable { .. } => {
-            WorkflowApplicationError::Internal(error.to_string())
-        }
-        runtime_session_delivery_port::RuntimeSessionDeliveryError::Internal { message } => {
-            WorkflowApplicationError::Internal(message)
-        }
-    }
-}
-
-fn workflow_error_from_agent_frame_materialization_error(
-    error: agent_frame_materialization_port::AgentRunFrameSurfaceError,
-) -> WorkflowApplicationError {
-    match error {
-        agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
-            message,
-        }
-        | agent_frame_materialization_port::AgentRunFrameSurfaceError::RuntimeSurfaceUpdateRejected {
-            message,
-        }
-        | agent_frame_materialization_port::AgentRunFrameSurfaceError::ProjectionContextUnavailable {
-            message,
-        } => WorkflowApplicationError::Internal(message),
-        agent_frame_materialization_port::AgentRunFrameSurfaceError::RoleMismatch { .. } => {
-            WorkflowApplicationError::Internal(error.to_string())
-        }
-    }
-}
-
-fn workflow_error_from_workflow_graph_planning_error(
-    error: workflow_graph_planning_port::WorkflowGraphPlanningError,
-) -> WorkflowApplicationError {
-    match error {
-        workflow_graph_planning_port::WorkflowGraphPlanningError::BadRequest { message } => {
-            WorkflowApplicationError::BadRequest(message)
-        }
-        workflow_graph_planning_port::WorkflowGraphPlanningError::NotFound { message } => {
-            WorkflowApplicationError::NotFound(message)
-        }
-        workflow_graph_planning_port::WorkflowGraphPlanningError::BlockingDiagnostics {
-            workflow_graph_id,
-            diagnostics,
-        } => WorkflowApplicationError::BadRequest(blocking_planning_diagnostics_message(
-            workflow_graph_id,
-            &diagnostics,
-        )),
-        workflow_graph_planning_port::WorkflowGraphPlanningError::Internal { message } => {
-            WorkflowApplicationError::Internal(message)
-        }
-    }
-}
-
-/// 把「触发 dispatch 的 [`ExecutionSource`]」映射到「Agent 创建来源 [`AgentSource`]」。
-fn agent_source_from_execution_source(source: &ExecutionSource) -> AgentSource {
-    match source {
-        ExecutionSource::User | ExecutionSource::ProjectAgent | ExecutionSource::Api => {
-            AgentSource::ProjectAgent
-        }
-        ExecutionSource::Routine => AgentSource::Routine,
-        ExecutionSource::ParentAgent => AgentSource::Subagent,
-    }
-}
-
-fn lineage_relation_kind(policy: &AgentPolicy) -> &'static str {
-    match policy {
-        AgentPolicy::SpawnChild => "spawn",
-        AgentPolicy::Create => "delegation",
-        AgentPolicy::Resume => "resume",
-        AgentPolicy::Reuse => "reuse",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
+    use agentdash_application_workflow::orchestration::ROOT_ORCHESTRATION_ROLE;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::*;
 
@@ -2271,7 +1436,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         seed_test_workflow_graph(&workflow_repo, project_id);
-        let existing_run = create_lifecycle_run(project_id);
+        let existing_run = LifecycleRun::new_control(project_id);
         let first_agent =
             LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
         let target_agent =

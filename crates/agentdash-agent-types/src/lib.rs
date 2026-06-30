@@ -27,7 +27,13 @@ pub use runtime::decisions::{
     StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
     TurnControlDecision,
 };
-pub use runtime::delegate::{AgentRuntimeDelegate, AgentRuntimeError, DynAgentRuntimeDelegate};
+pub use runtime::delegate::{
+    AgentRuntimeDelegateSet, AgentRuntimeError, DynRuntimeCompactionDelegate,
+    DynRuntimeContextTransformDelegate, DynRuntimeProviderObserverDelegate,
+    DynRuntimeToolPolicyDelegate, DynRuntimeTurnBoundaryDelegate, RuntimeCompactionDelegate,
+    RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,
+    RuntimeTurnBoundaryDelegate,
+};
 pub use runtime::hooks_io::{
     AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, BeforeToolCallResult,
     ToolApprovalOutcome, ToolApprovalRequest,

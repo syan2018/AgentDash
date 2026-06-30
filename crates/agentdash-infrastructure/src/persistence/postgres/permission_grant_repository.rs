@@ -1,7 +1,8 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::permission::{
     GrantScope, GrantStatus, PermissionGrant, PermissionGrantRepository,
-    PermissionGrantStatusFilter, PolicyDecision, ScopeEscalationIntent,
+    PermissionGrantStatusFilter, PermissionGrantVfsAccessRule, PolicyDecision,
+    ScopeEscalationIntent,
 };
 use agentdash_domain::workflow::ToolCapabilityPath;
 use chrono::{DateTime, Utc};
@@ -29,10 +30,10 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
             "INSERT INTO permission_grants \
              (id, run_id, effect_frame_id, source_runtime_session_id, \
               source_turn_id, source_tool_call_id, \
-              requested_paths, reason, grant_scope, expires_at, \
+              requested_paths, requested_vfs_access, reason, grant_scope, expires_at, \
               scope_escalation_intent, status, policy_decision, approved_by, \
               created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
         )
         .bind(grant.id.to_string())
         .bind(grant.run_id.to_string())
@@ -41,6 +42,10 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         .bind(&grant.source_turn_id)
         .bind(&grant.source_tool_call_id)
         .bind(serde_json::to_value(&grant.requested_paths).map_err(DomainError::Serialization)?)
+        .bind(
+            serde_json::to_value(&grant.requested_vfs_access)
+                .map_err(DomainError::Serialization)?,
+        )
         .bind(&grant.reason)
         .bind(grant.grant_scope.as_str())
         .bind(grant.expires_at)
@@ -74,7 +79,7 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         sqlx::query(
             "UPDATE permission_grants SET \
              status=$2, policy_decision=$3, approved_by=$4, \
-             scope_escalation_intent=$5, updated_at=$6 \
+             scope_escalation_intent=$5, requested_vfs_access=$6, updated_at=$7 \
              WHERE id=$1",
         )
         .bind(grant.id.to_string())
@@ -94,6 +99,10 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
                 .as_ref()
                 .map(serde_json::to_value)
                 .transpose()
+                .map_err(DomainError::Serialization)?,
+        )
+        .bind(
+            serde_json::to_value(&grant.requested_vfs_access)
                 .map_err(DomainError::Serialization)?,
         )
         .bind(grant.updated_at)
@@ -247,6 +256,7 @@ struct GrantRow {
     source_turn_id: Option<String>,
     source_tool_call_id: Option<String>,
     requested_paths: serde_json::Value,
+    requested_vfs_access: serde_json::Value,
     reason: String,
     grant_scope: String,
     expires_at: Option<DateTime<Utc>>,
@@ -271,6 +281,10 @@ impl TryFrom<GrantRow> for PermissionGrant {
             .transpose()?;
         let requested_paths: Vec<ToolCapabilityPath> = serde_json::from_value(row.requested_paths)
             .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.requested_paths: {e}")))?;
+        let requested_vfs_access: Vec<PermissionGrantVfsAccessRule> =
+            serde_json::from_value(row.requested_vfs_access).map_err(|e| {
+                DomainError::InvalidConfig(format!("{TABLE}.requested_vfs_access: {e}"))
+            })?;
         let grant_scope = GrantScope::parse(&row.grant_scope).ok_or_else(|| {
             DomainError::InvalidConfig(format!(
                 "{TABLE}.grant_scope: unknown value `{}`",
@@ -301,6 +315,7 @@ impl TryFrom<GrantRow> for PermissionGrant {
             source_turn_id: row.source_turn_id,
             source_tool_call_id: row.source_tool_call_id,
             requested_paths,
+            requested_vfs_access,
             reason: row.reason,
             grant_scope,
             expires_at: row.expires_at,

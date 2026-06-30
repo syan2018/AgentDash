@@ -59,7 +59,11 @@ export type ExtensionRuntimeProjectionResponse = { installations: Array<Extensio
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 
-export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, extension_id: string, type_id: string, label: string, uri_scheme: string, renderer: ExtensionWorkspaceTabRendererResponse, };
+export type ExtensionWorkspaceTabLoadabilityModeResponse = "extension_host" | "ui_only";
+
+export type ExtensionWorkspaceTabLoadabilityResponse = { available: boolean, mode: ExtensionWorkspaceTabLoadabilityModeResponse, reason?: string | null, };
+
+export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, extension_id: string, type_id: string, label: string, uri_scheme: string, renderer: ExtensionWorkspaceTabRendererResponse, loadability: ExtensionWorkspaceTabLoadabilityResponse, };
 
 export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, } | { "kind": "canvas_panel", entry: string, };
 

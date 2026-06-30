@@ -350,7 +350,7 @@ Desktop defaults JSON:
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
 - Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
 - Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
-- `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands normalize desktop profile/request data and call the host; `agentdash-local` owns runtime reuse, serialized ensure/start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
+- `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands only adapt command payloads, shell-selected Dashboard API origin, retry status updates and `Result<_, String>` errors; `agentdash-local` owns desktop profile/request normalization, profile/settings file IO, desktop access-token ensure, response validation, `LocalRuntimeConfig` projection, runtime reuse, serialized start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
 - `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
 - Desktop runner snapshot state is `idle | disabled | waiting_for_auth | waiting_for_api | claiming | starting | running | retrying | error | stopping | stopped`. The host uses `idle/disabled/waiting_*` before a runtime handle exists, `claiming` while calling `/api/local-runtime/ensure`, and projects relay reconnects as `retrying`, so settings UI can explain both supervisor and relay phases without parsing logs.
 - `LocalRuntimeStatus.owner = "desktop_embedded_runner"` and `registration_source = "desktop_access_token"` for the desktop embedded host. Standalone service runner rows remain identified by backend projection `registration_source = "runner_registration_token"`, so UI can keep lifecycle owner and enrollment source separate.
@@ -390,7 +390,7 @@ Desktop defaults JSON:
 - Window visibility and process lifetime are separate because background execution should not depend on whether the dashboard surface is visible.
 - Single-instance ownership keeps Desktop API port binding, tray ownership, and embedded runner claim/start state in one process, which makes package launch behavior match the user expectation of one resident desktop app.
 - The embedded host boundary keeps claim/start serialization next to `LocalRuntimeManager`, while Tauri stays focused on desktop lifecycle and the web app stays focused on intent and status display.
-- Canonical auto-connect flow: authenticated Dashboard resolves current user -> desktop bridge ensures defaults/profile and passes the current bearer token when available -> Tauri command normalizes request -> `DesktopRunnerHost` serializes claim/config/start -> runtime snapshot/logs report outcome.
+- Canonical auto-connect flow: authenticated Dashboard resolves current user -> desktop bridge ensures defaults/profile and passes the current bearer token when available -> Tauri command passes the shell-selected Dashboard API origin into `agentdash-local` -> `agentdash-local` normalizes the request, performs desktop ensure, projects `LocalRuntimeConfig`, and `DesktopRunnerHost` serializes start -> runtime snapshot/logs report outcome.
 - Canonical origin flow: deployment or dev script selects Desktop Dashboard API origin -> Web Dashboard HTTP calls and desktop embedded runner ensure both use that origin -> relay credentials returned by that server decide the backend connection target.
 - Canonical flow: window close hides; explicit quit exits.
 
@@ -544,6 +544,7 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 
 - `agentdash-local::runtime_paths` 是本机 runtime 路径事实源；数据库、机器身份、extension artifact cache、runtime profile 和本机 MCP servers 配置都从同一个 `local-runtime` data root 派生，原因是这些文件共同服务本机后端生命周期，Tauri 壳只负责通过 command 调用本机 runtime。
 - `LocalRuntimeProfile` 持久化在 `local-runtime/config/local-runtime-profile.json`（snake_case）。
+- `DesktopAppSettings` 持久化在 `local-runtime/config/desktop-app-settings.json`（snake_case），由 `agentdash-local` 读写；Tauri autostart command 只负责 OS 登录项变更，并把变更后的 `launch_at_login` 写回 local settings API。
 - 本机 MCP servers 配置持久化在 `local-runtime/config/local-mcp-servers.json`。
 - 每次 profile load/save/start 都必须用 `agentdash-local` 机器身份覆盖 canonical machine id
 - `access_token` 可以为空，server 在无 token 时通过自身认证 provider 解析当前用户

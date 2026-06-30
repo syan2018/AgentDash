@@ -1,9 +1,11 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
-use crate::connectors::pi_agent::stream_mapper::convert_event_to_envelopes;
+use crate::connectors::pi_agent::stream_mapper::{
+    StreamMapperEventState, convert_event_to_envelopes,
+};
 use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
-    TokenUsage,
+    TokenUsage, ToolResultAddressProvider,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
@@ -81,6 +83,51 @@ fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
         .expect("lifecycle_path should use tool-results result.txt shape");
     let normalized_item_id = path_item_id.replace('/', ":");
     assert_eq!(normalized_item_id, item_id);
+}
+
+#[test]
+fn restored_state_hydrates_session_item_identity_counters() {
+    let identity = SessionItemIdentity::new();
+    let restored_state = agentdash_spi::RestoredSessionState {
+        messages: vec![
+            AgentMessage::Assistant {
+                content: Vec::new(),
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "turn_001:tool_004".to_string(),
+                    call_id: None,
+                    name: "fs_read".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+            AgentMessage::ToolResult {
+                tool_call_id: "legacy-raw-tool-call-id".to_string(),
+                call_id: None,
+                tool_name: Some("shell_exec".to_string()),
+                content: Vec::new(),
+                details: Some(serde_json::json!({
+                    "readable_ref": {
+                        "item_id": "turn_002:cmd_002"
+                    },
+                    "lifecycle_path": "lifecycle://session/tool-results/turn_002/cmd_002/result.txt"
+                })),
+                is_error: false,
+                timestamp: None,
+            },
+        ],
+        message_refs: Vec::new(),
+    };
+
+    identity.observe_restored_state(Some(&restored_state));
+
+    let tool_ref = identity.tool_result_ref("raw-turn-new", "raw-tool-new", "fs_read");
+    assert_eq!(tool_ref.item_id, "turn_003:tool_005");
+
+    let command_ref = identity.tool_result_ref("raw-turn-new", "raw-cmd-new", "shell_exec");
+    assert_eq!(command_ref.item_id, "turn_003:cmd_003");
 }
 
 #[derive(Default)]
@@ -462,6 +509,7 @@ fn execution_context_with_config(executor_config: agentdash_spi::AgentConfig) ->
             executor_config,
             mcp_servers: Vec::new(),
             vfs: Some(test_vfs("/tmp/test-workspace")),
+            vfs_access_policy: None,
             backend_execution: None,
             runtime_backend_anchor: None,
             identity: None,
@@ -1144,13 +1192,15 @@ fn message_end_with_usage_emits_token_usage_update_with_context_window() {
         "session-usage",
         &test_source(),
         "turn-usage",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         StreamMapperRuntimeContext {
             model_context_window: Some(200_000),
             reserve_tokens: 16_384,
-            readable_ids: None,
+            session_identity: None,
         },
     );
 
@@ -1519,6 +1569,13 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
             "ok": true,
             "raw_sentinel_for_regression": raw_sentinel,
             "lifecycle_path": lifecycle_path,
+            "readable_ref": {
+                "item_id": stable_item_id,
+                "turn_alias": "turn_001",
+                "body_alias": "tool_001",
+                "body_kind": "tool_result",
+                "lifecycle_path": lifecycle_path
+            },
             "truncation": {
                 "truncated": true,
                 "original_bytes": 131072,
@@ -1547,11 +1604,7 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
 
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
-    let runtime_context = StreamMapperRuntimeContext {
-        readable_ids: Some(ReadableIdRegistry::new()),
-        ..StreamMapperRuntimeContext::default()
-    };
-    let update_envelopes = convert_event_to_envelopes_with_runtime_context(
+    let update_envelopes = convert_event_to_envelopes(
         &update_event,
         "session-1",
         &test_source(),
@@ -1559,9 +1612,8 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
-        runtime_context.clone(),
     );
-    let end_envelopes = convert_event_to_envelopes_with_runtime_context(
+    let end_envelopes = convert_event_to_envelopes(
         &end_event,
         "session-1",
         &test_source(),
@@ -1569,7 +1621,6 @@ fn tool_execution_updates_and_final_items_use_bounded_tool_result_content() {
         &mut entry_index,
         &mut chunk_emit_states,
         &mut tool_call_states,
-        runtime_context,
     );
 
     assert_eq!(update_envelopes.len(), 1);
@@ -1676,7 +1727,7 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
     let mut chunk_emit_states = HashMap::new();
     let mut tool_call_states = HashMap::new();
     let runtime_context = StreamMapperRuntimeContext {
-        readable_ids: Some(ReadableIdRegistry::new()),
+        session_identity: Some(SessionItemIdentity::new()),
         ..StreamMapperRuntimeContext::default()
     };
     let _ = convert_event_to_envelopes_with_runtime_context(
@@ -1684,9 +1735,11 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         "session-1",
         &test_source(),
         "turn-1",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         runtime_context.clone(),
     );
     let end_envelopes = convert_event_to_envelopes_with_runtime_context(
@@ -1694,9 +1747,11 @@ fn shell_exec_final_uses_bounded_output_and_structured_details() {
         "session-1",
         &test_source(),
         "turn-1",
-        &mut entry_index,
-        &mut chunk_emit_states,
-        &mut tool_call_states,
+        StreamMapperEventState {
+            entry_index: &mut entry_index,
+            chunk_emit_states: &mut chunk_emit_states,
+            tool_call_states: &mut tool_call_states,
+        },
         runtime_context,
     );
 
@@ -2389,6 +2444,7 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
@@ -2500,6 +2556,7 @@ async fn prompt_selected_unavailable_provider_reports_credential_mode() {
                     executor_config,
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
@@ -2567,6 +2624,7 @@ async fn prompt_selected_user_required_provider_reports_byok_when_identity_exist
                     executor_config,
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: Some(agentdash_spi::AuthIdentity {
@@ -2771,6 +2829,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                     executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                     mcp_servers: Vec::new(),
                     vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
@@ -2803,6 +2862,90 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
     assert_eq!(request.messages[0].first_text(), Some("历史用户消息"));
     assert_eq!(request.messages[1].first_text(), Some("历史助手消息"));
     assert_eq!(request.messages[2].first_text(), Some("新的用户消息"));
+}
+
+#[tokio::test]
+async fn prompt_hydrates_session_item_identity_from_restored_messages() {
+    let bridge = Arc::new(RecordingBridge::default());
+    let connector = PiAgentConnector::new(bridge, "系统提示");
+    let session_id = "session-readable-restore";
+
+    let mut stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("新的用户消息".to_string()),
+            ExecutionContext {
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "raw-turn-new".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
+                    backend_execution: None,
+                    runtime_backend_anchor: None,
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame {
+                    restored_session_state: Some(agentdash_spi::RestoredSessionState {
+                        messages: vec![
+                            AgentMessage::Assistant {
+                                content: Vec::new(),
+                                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                                    id: "turn_001:tool_004".to_string(),
+                                    call_id: None,
+                                    name: "fs_read".to_string(),
+                                    arguments: serde_json::json!({}),
+                                }],
+                                stop_reason: None,
+                                error_message: None,
+                                usage: None,
+                                timestamp: None,
+                            },
+                            AgentMessage::ToolResult {
+                                tool_call_id: "legacy-raw-tool-call-id".to_string(),
+                                call_id: None,
+                                tool_name: Some("shell_exec".to_string()),
+                                content: Vec::new(),
+                                details: Some(serde_json::json!({
+                                    "readable_ref": {
+                                        "item_id": "turn_002:cmd_002"
+                                    }
+                                })),
+                                is_error: false,
+                                timestamp: None,
+                            },
+                        ],
+                        message_refs: Vec::new(),
+                    }),
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .expect("prompt should start");
+
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    let agents = connector.agents.lock().await;
+    let runtime = agents.get(session_id).expect("runtime should be retained");
+    let tool_ref = runtime.session_identity.tool_result_ref(
+        "raw-turn-after-restore",
+        "raw-tool-after-restore",
+        "fs_read",
+    );
+    assert_eq!(tool_ref.item_id, "turn_003:tool_005");
+
+    let command_ref = runtime.session_identity.tool_result_ref(
+        "raw-turn-after-restore",
+        "raw-cmd-after-restore",
+        "shell_exec",
+    );
+    assert_eq!(command_ref.item_id, "turn_003:cmd_003");
 }
 
 #[tokio::test]
@@ -2849,6 +2992,7 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                 executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
@@ -2900,26 +3044,28 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
         next.expect("stream item should succeed");
     }
 
-    let requests = bridge
-        .requests
-        .lock()
-        .expect("recording bridge lock poisoned");
-    assert_eq!(requests.len(), 3, "应记录三次 bridge 请求");
-    assert_eq!(
-        requests[0].system_prompt.as_deref(),
-        Some("SP_A"),
-        "turn 1 应落入 SP_A"
-    );
-    assert_eq!(
-        requests[1].system_prompt.as_deref(),
-        Some("SP_B"),
-        "identity prompt 变化后 turn 2 应切到 SP_B"
-    );
-    assert_eq!(
-        requests[2].system_prompt.as_deref(),
-        Some("SP_B"),
-        "identity prompt 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
-    );
+    {
+        let requests = bridge
+            .requests
+            .lock()
+            .expect("recording bridge lock poisoned");
+        assert_eq!(requests.len(), 3, "应记录三次 bridge 请求");
+        assert_eq!(
+            requests[0].system_prompt.as_deref(),
+            Some("SP_A"),
+            "turn 1 应落入 SP_A"
+        );
+        assert_eq!(
+            requests[1].system_prompt.as_deref(),
+            Some("SP_B"),
+            "identity prompt 变化后 turn 2 应切到 SP_B"
+        );
+        assert_eq!(
+            requests[2].system_prompt.as_deref(),
+            Some("SP_B"),
+            "identity prompt 未变时 turn 3 应保持 SP_B（set_system_prompt 未被调用）"
+        );
+    }
 
     let agents = connector.agents.lock().await;
     let runtime = agents
@@ -3013,6 +3159,7 @@ async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
                 executor_config,
                 mcp_servers: Vec::new(),
                 vfs: Some(test_vfs("/tmp/test-workspace")),
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
@@ -3127,7 +3274,7 @@ async fn update_session_tools_replaces_all_tools() {
                 model_id: None,
             },
             model_context_window: Some(CONTEXT_WINDOW_STANDARD),
-            readable_ids: ReadableIdRegistry::new(),
+            session_identity: SessionItemIdentity::new(),
         },
     );
 

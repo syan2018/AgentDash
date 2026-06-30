@@ -4,7 +4,7 @@ use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthIdentity, ConnectorError, RuntimeMcpServer, Vfs};
+use crate::{AuthIdentity, ConnectorError, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
 
 /// relay MCP 工具描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +32,7 @@ pub struct RelayMcpCallContext {
     pub tool_call_id: Option<String>,
     pub backend_anchor: Option<RuntimeBackendAnchor>,
     pub vfs: Option<Vfs>,
+    pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
     pub identity: Option<AuthIdentity>,
 }
 
@@ -108,6 +109,7 @@ mod tests {
             tool_call_id: None,
             backend_anchor: anchor,
             vfs: None,
+            vfs_access_policy: None,
             identity: None,
         }
     }

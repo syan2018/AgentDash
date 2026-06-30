@@ -8,6 +8,7 @@ use agentdash_relay::{
 };
 use serde_json::{Map, json};
 
+use super::CommandDispatchPlan;
 use crate::{
     ExtensionArtifactDownloadRequest, LocalExtensionHostActivation, LocalExtensionHostManager,
     download_and_cache_extension_artifact,
@@ -41,6 +42,16 @@ impl ExtensionCommandHandler {
             artifact_api_base_url: config.artifact_api_base_url,
             artifact_access_token: config.artifact_access_token,
             artifact_cache_root: config.artifact_cache_root,
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandExtensionActionInvoke { .. }
+            | RelayMessage::CommandExtensionChannelInvoke { .. } => {
+                Some(CommandDispatchPlan::INLINE)
+            }
+            _ => None,
         }
     }
 

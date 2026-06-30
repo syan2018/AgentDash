@@ -121,15 +121,18 @@ impl AgentTool for FsApplyPatchTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsApplyPatchParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let vfs = self.vfs.snapshot().await;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
         let mutation_keys = fs_apply_patch_mutation_keys(&params.patch)
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         let result = self
             .mutation_queue
             .with_locks(
                 mutation_keys,
-                self.service.apply_patch_multi(
+                self.service.apply_patch_multi_with_policy(
                     &vfs,
+                    Some(&access_policy),
                     &params.patch,
                     self.overlay.as_ref().map(|arc| arc.as_ref()),
                     self.identity.as_ref(),

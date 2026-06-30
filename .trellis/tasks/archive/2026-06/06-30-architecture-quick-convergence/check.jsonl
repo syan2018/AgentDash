@@ -1,0 +1,23 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point for check agents validating implementation against applicable guidance."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared Trellis guide index required before review and verification."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer review guide for checking ownership, data flow, and source-of-truth convergence."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Review guide for detecting remaining duplicated validators, resolvers, guards, or preference sources."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend architecture rules for checking changed application/domain/infrastructure/runtime boundaries."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer architecture rules for final integration review."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability/runtime tool surface rules for authority and runtime tool checks."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "Permission semantics for checking tool-level grant and effect-frame admission behavior."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS identity and workspace mount rules for VFS/local and extension workspace checks."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Runtime session and mailbox guidance for checking tool builder and steering changes."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Desktop/local runtime guidance for checking local relay scheduling and root validation."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Routing and placement guidance for checking workspace resolver and settings changes."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/adversarial-review.md", "reason": "Original issue evidence for confirming quick fixes address intended problems without expanding into design backlog."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/cleanup-scope-triage.md", "reason": "Scope boundary for deciding whether changed behavior stayed inside quick convergence."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Execution protocol and validation discipline for this long-running goal."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/prd.md", "reason": "Parent task requirements and acceptance criteria for final check."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/design.md", "reason": "Batch design and integration risks for final check."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/implement.md", "reason": "Execution order and validation plan for check agents."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/01-authority-capability-admission.md", "reason": "Acceptance criteria for Authority capability admission work item."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/02-extension-workspace-module-consistency.md", "reason": "Acceptance criteria for Extension/WorkspaceModule consistency work item."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/03-vfs-local-guard-rails.md", "reason": "Acceptance criteria for VFS/local guard rails work item."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/04-mailbox-steering-consistency.md", "reason": "Acceptance criteria for mailbox steering semantics work item."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/05-settings-preference-convergence.md", "reason": "Acceptance criteria for scoped settings preference convergence work item."}

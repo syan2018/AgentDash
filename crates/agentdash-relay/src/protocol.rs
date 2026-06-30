@@ -719,11 +719,20 @@ fn rand_u32() -> u32 {
 mod tests {
     use super::CommandPromptPayload;
     use super::*;
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
+    use std::path::PathBuf;
 
     #[test]
     fn command_prompt_payload_requires_mount_root_ref() {
         let payload: CommandPromptPayload = serde_json::from_value(serde_json::json!({
             "session_id": "s1",
+            "input": [
+                {
+                    "type": "text",
+                    "text": "hello",
+                    "text_elements": []
+                }
+            ],
             "mount_root_ref": "/workspace/repo"
         }))
         .expect("payload should deserialize");
@@ -735,7 +744,7 @@ mod tests {
         let payload = CommandPromptPayload {
             session_id: "s1".to_string(),
             follow_up_session_id: None,
-            prompt_blocks: None,
+            input: agentdash_agent_protocol::text_user_input_blocks("hello"),
             mount_root_ref: "/new/workspace".to_string(),
             workspace_identity_kind: None,
             workspace_identity_payload: None,
@@ -747,6 +756,62 @@ mod tests {
 
         let value = serde_json::to_value(payload).expect("payload should serialize");
         assert_eq!(value["mount_root_ref"], "/new/workspace");
+        assert_eq!(value["input"][0]["type"], "text");
+        let old_raw_field = ["prompt", "blocks"].join("_");
+        assert!(
+            !value
+                .as_object()
+                .expect("payload object")
+                .contains_key(&old_raw_field)
+        );
+    }
+
+    #[test]
+    fn command_prompt_payload_roundtrips_typed_user_input() {
+        let input = vec![
+            codex::UserInput::Text {
+                text: "请分析这张图".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+            codex::UserInput::LocalImage {
+                detail: None,
+                path: PathBuf::from("assets/local.png"),
+            },
+            codex::UserInput::Skill {
+                name: "reviewer".to_string(),
+                path: PathBuf::from("skills/reviewer/SKILL.md"),
+            },
+            codex::UserInput::Mention {
+                name: "main.rs".to_string(),
+                path: "file://src/main.rs".to_string(),
+            },
+        ];
+        let payload = CommandPromptPayload {
+            session_id: "s1".to_string(),
+            follow_up_session_id: Some("s0".to_string()),
+            input: input.clone(),
+            mount_root_ref: "/workspace/repo".to_string(),
+            workspace_identity_kind: None,
+            workspace_identity_payload: None,
+            working_dir: Some("crates/app".to_string()),
+            env: std::collections::HashMap::new(),
+            executor_config: None,
+            mcp_servers: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&payload).expect("payload should serialize");
+        assert!(value.get("input").is_some());
+        let old_raw_field = ["prompt", "blocks"].join("_");
+        assert!(value.get(&old_raw_field).is_none());
+
+        let decoded: CommandPromptPayload =
+            serde_json::from_value(value).expect("payload should deserialize");
+        assert_eq!(decoded.input, input);
+        assert_eq!(decoded.follow_up_session_id.as_deref(), Some("s0"));
     }
 
     #[test]

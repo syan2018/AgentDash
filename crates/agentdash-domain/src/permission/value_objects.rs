@@ -1,6 +1,77 @@
 use serde::{Deserialize, Serialize};
 
+use crate::common::error::DomainError;
 use crate::workflow::ToolCapabilityPath;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGrantVfsOperation {
+    Read,
+    List,
+    Search,
+    Write,
+    Exec,
+    ApplyPatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGrantVfsPathScope {
+    All,
+    Prefix(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionGrantVfsAccessRule {
+    pub surface_ref: Option<String>,
+    pub mount_id: String,
+    pub path_scope: PermissionGrantVfsPathScope,
+    pub operations: Vec<PermissionGrantVfsOperation>,
+}
+
+impl PermissionGrantVfsAccessRule {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.mount_id.trim().is_empty() {
+            return Err(DomainError::InvalidConfig(
+                "permission grant VFS access rule mount_id cannot be empty".to_string(),
+            ));
+        }
+        if self
+            .surface_ref
+            .as_ref()
+            .is_some_and(|surface_ref| surface_ref.trim().is_empty())
+        {
+            return Err(DomainError::InvalidConfig(
+                "permission grant VFS access rule surface_ref cannot be empty".to_string(),
+            ));
+        }
+        if self.operations.is_empty() {
+            return Err(DomainError::InvalidConfig(
+                "permission grant VFS access rule operations cannot be empty".to_string(),
+            ));
+        }
+        if let PermissionGrantVfsPathScope::Prefix(prefix) = &self.path_scope {
+            validate_vfs_prefix(prefix)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_vfs_prefix(prefix: &str) -> Result<(), DomainError> {
+    if prefix.starts_with('/') || prefix.starts_with('\\') {
+        return Err(DomainError::InvalidConfig(
+            "permission grant VFS prefix must be mount-relative".to_string(),
+        ));
+    }
+    for segment in prefix.replace('\\', "/").split('/') {
+        if segment == ".." {
+            return Err(DomainError::InvalidConfig(
+                "permission grant VFS prefix cannot escape the mount root".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Grant 的生效范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

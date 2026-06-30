@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check cross-layer contract consistency."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check old duplicate conversion path is removed."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check canonical UserInputBlock contract."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Check local relay protocol boundary."}
+{"file": ".trellis/tasks/06-30-relay-prompt-typed-payload/prd.md", "reason": "Task requirements and acceptance criteria."}
+{"file": ".trellis/tasks/06-30-relay-prompt-typed-payload/design.md", "reason": "Technical design."}
+{"file": ".trellis/tasks/06-30-relay-prompt-typed-payload/implement.md", "reason": "Execution and validation plan."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "D12 evidence and residual constraints."}

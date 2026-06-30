@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_agent_types::DynAgentRuntimeDelegate;
+use agentdash_agent_types::{AgentRuntimeDelegateSet, DynRuntimeToolPolicyDelegate};
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
@@ -9,7 +9,7 @@ use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, MemoryDiscoveryOutput,
-    RestoredSessionState, RuntimeMcpServer, SessionContextBundle,
+    RestoredSessionState, RuntimeMcpServer, RuntimeVfsAccessPolicy, SessionContextBundle,
 };
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -20,6 +20,7 @@ use crate::session::types::{
     ResolvedPromptPayload,
 };
 use agentdash_application_ports::frame_launch_envelope::FrameLaunchEnvelope;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -75,6 +76,19 @@ pub struct HookLaunchPlan {
     pub snapshot_contribution: Option<Vec<ContextFragment>>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeDelegateCompositionPlan {
+    pub hook_facets: bool,
+    pub mailbox_turn_boundary: bool,
+    pub admission_tool_policy: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct RuntimeDelegateFacetPlan {
+    pub composition: RuntimeDelegateCompositionPlan,
+    pub hook_tool_policy: Option<DynRuntimeToolPolicyDelegate>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCommandLaunchPlan {
     pub requested_commands: Vec<RuntimeCommandRecord>,
@@ -119,6 +133,7 @@ pub struct LaunchPlan {
     pub launch_path: PromptLaunchPathPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
+    pub runtime_delegate_facets: RuntimeDelegateFacetPlan,
     pub runtime_commands: RuntimeCommandLaunchPlan,
     pub terminal_effects: TerminalEffectPlan,
     pub connector_input: ConnectorInputPlan,
@@ -145,7 +160,8 @@ pub struct LaunchPlanInput {
     pub environment_variables: HashMap<String, String>,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub capability_state: CapabilityState,
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    pub runtime_delegates: AgentRuntimeDelegateSet,
+    pub runtime_delegate_facets: RuntimeDelegateFacetPlan,
     pub restored_session_state: Option<RestoredSessionState>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
     pub backend_execution: Option<ExecutionPlacementPlan>,
@@ -159,6 +175,11 @@ impl LaunchPlan {
         let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
         let vfs = input.launch_envelope.launch_vfs().clone();
         let has_vfs = !vfs.mounts.is_empty();
+        let vfs_access_policy = if has_vfs {
+            Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs))
+        } else {
+            None
+        };
         let identity = input.launch_envelope.intent.identity.clone();
         let runtime_backend_anchor = input.launch_envelope.runtime_backend_anchor.clone();
         let title_hint = input
@@ -225,6 +246,7 @@ impl LaunchPlan {
             snapshot_reload: input.hook_snapshot_reload,
             snapshot_contribution: input.hook_snapshot_contribution,
         };
+        let runtime_delegate_facets = input.runtime_delegate_facets;
         let runtime_commands = RuntimeCommandLaunchPlan {
             requested_commands: input.requested_runtime_commands,
             pending_capability_transitions: input.pending_capability_transitions,
@@ -270,6 +292,7 @@ impl LaunchPlan {
             executor_config,
             mcp_servers,
             vfs: if has_vfs { Some(vfs) } else { None },
+            vfs_access_policy,
             backend_execution: input
                 .backend_execution
                 .as_ref()
@@ -282,7 +305,7 @@ impl LaunchPlan {
         let turn = ExecutionTurnFrame {
             hook_runtime: input.hook_runtime,
             capability_state: input.capability_state,
-            runtime_delegate: input.runtime_delegate,
+            runtime_delegates: input.runtime_delegates,
             restored_session_state: input.restored_session_state,
             context_frames: Vec::new(),
             assembled_tools: Vec::new(),
@@ -300,6 +323,7 @@ impl LaunchPlan {
             launch_path,
             restore,
             hooks,
+            runtime_delegate_facets,
             runtime_commands,
             terminal_effects,
             connector_input,
@@ -327,21 +351,21 @@ fn execution_backend_placement_from_plan(
 #[allow(deprecated)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::Vfs;
+    use agentdash_spi::{RuntimeVfsOperation, Vfs};
 
     use super::*;
     use crate::session::construction::{
         ConstructionResolutionPlan, FrameSurfaceDraft, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
     };
-    use crate::session::launch::{LaunchCommand, LaunchSource};
     use crate::session::types::{
-        RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
+        RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, resolve_launch_prompt_payload,
     };
     use agentdash_application_ports::frame_launch_envelope::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
         LaunchResolutionTrace,
     };
+    use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput, LaunchSource};
     use std::path::{Path, PathBuf};
 
     fn input_for(launch_path: PromptLaunchPath) -> LaunchPlanInput {
@@ -395,9 +419,9 @@ mod tests {
             pending_overlay_applied: false,
             runtime_base_capability_state: None,
         };
-        let resolved_payload = UserPromptInput::from_text("hello")
-            .resolve_prompt_payload()
-            .expect("resolved payload");
+        let resolved_payload =
+            resolve_launch_prompt_payload(&LaunchPromptInput::from_text("hello"))
+                .expect("resolved payload");
         let launch_envelope = envelope_from_construction(construction);
         LaunchPlanInput {
             resolved_payload,
@@ -437,7 +461,8 @@ mod tests {
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
             hook_runtime: None,
             capability_state: CapabilityState::default(),
-            runtime_delegate: None,
+            runtime_delegates: AgentRuntimeDelegateSet::default(),
+            runtime_delegate_facets: RuntimeDelegateFacetPlan::default(),
             restored_session_state: None,
             post_turn_handler: None,
             backend_execution: None,
@@ -543,6 +568,15 @@ mod tests {
             Some("construction.test")
         );
         assert!(execution.summary.has_vfs);
+        assert!(
+            execution
+                .context
+                .session
+                .vfs_access_policy
+                .as_ref()
+                .expect("launch VFS should project a runtime VFS access policy")
+                .admits("workspace", "", RuntimeVfsOperation::Read)
+        );
         assert!(!execution.summary.restored_executor_state);
         assert_eq!(execution.summary.session_id.as_str(), "sess-launch");
         assert_eq!(
@@ -559,7 +593,7 @@ mod tests {
     #[test]
     fn launch_command_carries_source_intent_and_follow_up() {
         let command = LaunchCommand::local_relay_prompt_input(
-            UserPromptInput::from_text("ping"),
+            LaunchPromptInput::from_text("ping"),
             Vec::new(),
             PathBuf::from("/workspace"),
         )

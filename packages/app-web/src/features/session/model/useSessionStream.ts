@@ -39,6 +39,7 @@ export interface UseSessionStreamOptions {
 export interface UseSessionStreamResult {
   entries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
+  historyReplayBoundarySeq: number | null;
   providerWaitingSeqs: ReadonlyMap<string, number>;
   isConnected: boolean;
   isLoading: boolean;
@@ -74,6 +75,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   const [isReceiving, setIsReceiving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [connectKey, setConnectKey] = useState(0);
+  const [historyReplayBoundarySeq, setHistoryReplayBoundarySeq] = useState<number | null>(null);
 
   const transportRef = useRef<SessionStreamTransport | null>(null);
   const mountedRef = useRef(true);
@@ -170,6 +172,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       setIsLoading(false);
       setError(null);
       setIsConnected(false);
+      setHistoryReplayBoundarySeq(null);
       return () => {
         mountedRef.current = false;
       };
@@ -186,6 +189,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     if (shouldResetState) {
       setStreamState(baseState);
       ephemeralEpochRef.current = null;
+      setHistoryReplayBoundarySeq(null);
     }
 
     setIsLoading(true);
@@ -217,6 +221,9 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         }
 
         if (cancelled || !mountedRef.current) return;
+        if (shouldResetState) {
+          setHistoryReplayBoundarySeq(nextState.lastAppliedSeq);
+        }
 
         transportRef.current = createSessionStreamTransport({
           sessionId,
@@ -323,6 +330,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   return {
     entries: streamState.entries,
     rawEvents: streamState.rawEvents,
+    historyReplayBoundarySeq,
     providerWaitingSeqs: streamState.providerWaitingSeqs,
     isConnected,
     isLoading,

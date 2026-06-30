@@ -3,13 +3,19 @@
 
 export type ListPermissionGrantsQuery = { effect_frame_id?: string, run_id?: string, status?: PermissionGrantStatusDto, status_group?: PermissionGrantStatusGroupDto, };
 
-export type PermissionGrantResponse = { id: string, run_id: string, effect_frame_id?: string, source_runtime_session_id: string, requested_paths: Array<string>, reason: string, grant_scope: PermissionGrantScopeDto, expires_at?: string, scope_escalation_intent?: ScopeEscalationIntentDto, status: PermissionGrantStatusDto, policy_decision?: PolicyDecisionDto, approved_by?: string, created_at: string, updated_at: string, };
+export type PermissionGrantResponse = { id: string, run_id: string, effect_frame_id?: string, source_runtime_session_id: string, requested_paths: Array<string>, requested_vfs_access?: Array<PermissionGrantVfsAccessRuleDto>, reason: string, grant_scope: PermissionGrantScopeDto, expires_at?: string, scope_escalation_intent?: ScopeEscalationIntentDto, status: PermissionGrantStatusDto, policy_decision?: PolicyDecisionDto, approved_by?: string, created_at: string, updated_at: string, };
 
 export type PermissionGrantScopeDto = "turn" | "agent_frame" | "activity";
 
 export type PermissionGrantStatusDto = "created" | "pending_policy" | "pending_user_approval" | "approved" | "rejected" | "applied" | "failed" | "expired" | "revoked" | "scope_escalated";
 
 export type PermissionGrantStatusGroupDto = "pending" | "active" | "terminal";
+
+export type PermissionGrantVfsAccessRuleDto = { surface_ref?: string, mount_id: string, path_scope: PermissionGrantVfsPathScopeDto, operations: Array<PermissionGrantVfsOperationDto>, };
+
+export type PermissionGrantVfsOperationDto = "read" | "list" | "search" | "write" | "exec" | "apply_patch";
+
+export type PermissionGrantVfsPathScopeDto = "all" | { "prefix": string };
 
 export type PolicyDecisionDto = { outcome: PolicyOutcomeDto, matched_rules: Array<string>, reason: string, };
 

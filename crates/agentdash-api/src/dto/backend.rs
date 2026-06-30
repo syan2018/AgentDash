@@ -1,15 +1,11 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use agentdash_contracts::backend::{
     BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
     BackendWithStatusResponse,
 };
-use agentdash_domain::backend::{
-    BackendConfig, BackendExecutionLeaseState, BackendExecutionSelectionMode,
-    BackendShareScopeKind, BackendVisibility,
-};
+use agentdash_domain::backend::{BackendConfig, BackendShareScopeKind, BackendVisibility};
 
 #[derive(Deserialize)]
 pub struct CreateBackendRequest {
@@ -66,44 +62,6 @@ pub struct EnsureLocalRuntimeResponse {
 
 pub type BackendWithStatus = BackendWithStatusResponse;
 pub type RuntimeHealthResponse = BackendRuntimeHealthResponse;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BackendRuntimeSummaryResponse {
-    pub backend_id: String,
-    pub name: String,
-    pub enabled: bool,
-    pub online: bool,
-    pub runtime_health: Option<RuntimeHealthResponse>,
-    pub executors: Vec<BackendRuntimeExecutorResponse>,
-    pub active_session_count: usize,
-    pub active_sessions: Vec<BackendActiveSessionResponse>,
-    pub allocatable: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BackendRuntimeExecutorResponse {
-    pub executor_id: String,
-    pub name: String,
-    pub variants: Vec<String>,
-    pub available: bool,
-    pub active_session_count: usize,
-    pub allocatable: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BackendActiveSessionResponse {
-    pub lease_id: Uuid,
-    pub session_id: String,
-    pub turn_id: String,
-    pub executor_id: String,
-    pub workspace_id: Option<Uuid>,
-    pub root_ref: Option<String>,
-    pub selection_mode: BackendExecutionSelectionMode,
-    pub state: BackendExecutionLeaseState,
-    pub claimed_at: chrono::DateTime<chrono::Utc>,
-    pub activated_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_seen_at: chrono::DateTime<chrono::Utc>,
-}
 
 #[derive(Deserialize)]
 pub struct BrowseDirectoryRequest {

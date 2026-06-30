@@ -3,10 +3,22 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_relay::*;
 
+use super::CommandDispatchPlan;
+
 #[derive(Clone, Copy)]
 pub(super) struct WorkspaceCommandHandler;
 
 impl WorkspaceCommandHandler {
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandWorkspaceDetect { .. }
+            | RelayMessage::CommandWorkspaceDetectGit { .. }
+            | RelayMessage::CommandWorkspaceDiscoverByIdentity { .. }
+            | RelayMessage::CommandBrowseDirectory { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
+        }
+    }
+
     pub(super) async fn handle_workspace_detect(
         &self,
         id: String,

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check launch/runtime/session changes against single launch pipeline and RuntimeSession boundary."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check D4 implementation preserves source adapter, frame construction and planner ownership."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check D2/D3 implementation preserves LifecycleRun, reducer and Workflow HumanGate contracts."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Check dispatch owner split preserves RuntimeSessionExecutionAnchor and subject association lookup."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check exported contract changes and generated frontend DTO updates when launch/gate API shapes change."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-design-backlog-review/implementation-slices.md", "reason": "Check final implementation follows D4 -> D3 -> D2 dependency order and validation gates."}

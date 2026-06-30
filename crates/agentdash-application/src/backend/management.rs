@@ -514,7 +514,7 @@ fn hex_prefix(bytes: &[u8], chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::backend::{UserPreferences, ViewConfig};
+    use agentdash_domain::backend::ViewConfig;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -610,14 +610,6 @@ mod tests {
         }
 
         async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn save_preferences(&self, _prefs: &UserPreferences) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
     }

@@ -30,8 +30,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 /// GET /stories/{story_id}/runs
 ///
-/// 返回 Story 对应的 SubjectExecutionView。旧 StoryRunOverview/run-link shape
-/// 已从 public contract 删除；这里保留 route 入口，响应体切换为目标投影。
+/// 返回 Story 对应的 SubjectExecutionView。该 route 入口统一响应目标执行投影。
 pub async fn list_story_runs(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

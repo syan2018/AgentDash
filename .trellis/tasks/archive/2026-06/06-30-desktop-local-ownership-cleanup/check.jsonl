@@ -1,0 +1,7 @@
+{"name":"Task PRD","file":".trellis/tasks/06-30-desktop-local-ownership-cleanup/prd.md","reason":"Acceptance criteria for D11 check."}
+{"name":"Task design","file":".trellis/tasks/06-30-desktop-local-ownership-cleanup/design.md","reason":"Boundary and non-goals for implementation review."}
+{"name":"Task implementation plan","file":".trellis/tasks/06-30-desktop-local-ownership-cleanup/implement.md","reason":"Validation commands and expected old-path removal."}
+{"name":"Cross-layer desktop local runtime spec","file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"Spec compliance for desktop shell/local crate ownership."}
+{"name":"Tauri main","file":"crates/agentdash-local-tauri/src/main.rs","reason":"Ensure Tauri main is shell adapter only after changes."}
+{"name":"Local runtime library","file":"crates/agentdash-local/src/lib.rs","reason":"Ensure moved APIs are exported from local crate."}
+{"name":"Local runtime config","file":"crates/agentdash-local/src/runtime.rs","reason":"Review runtime config projection and tests after profile/settings/claim move."}

@@ -17,11 +17,8 @@ use agentdash_domain::workflow::{
     LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
-    AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
-    AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
-    CompactionFailureInput, CompactionParams, CompactionResult, DynAgentRuntimeDelegate,
-    EvaluateCompactionInput, StopDecision, ToolCallDecision, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    AfterTurnInput, AgentMessage, AgentRuntimeError, BeforeStopInput,
+    DynRuntimeTurnBoundaryDelegate, RuntimeTurnBoundaryDelegate, StopDecision, TurnControlDecision,
 };
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -69,11 +66,11 @@ impl AgentRunMailboxRuntimeAdapter {
         }
     }
 
-    pub fn runtime_delegate(
+    pub fn turn_boundary_delegate(
         &self,
         runtime_session_id: String,
-        inner: Option<DynAgentRuntimeDelegate>,
-    ) -> DynAgentRuntimeDelegate {
+        inner: Option<DynRuntimeTurnBoundaryDelegate>,
+    ) -> DynRuntimeTurnBoundaryDelegate {
         Arc::new(AgentRunMailboxRuntimeDelegate::new(
             runtime_session_id,
             inner,
@@ -115,12 +112,12 @@ pub fn mailbox_runtime_port(
 
 #[async_trait]
 impl RuntimeSessionMailboxRuntimePort for AgentRunMailboxRuntimeAdapter {
-    fn runtime_delegate(
+    fn turn_boundary_delegate(
         &self,
         runtime_session_id: String,
-        inner: Option<DynAgentRuntimeDelegate>,
-    ) -> DynAgentRuntimeDelegate {
-        AgentRunMailboxRuntimeAdapter::runtime_delegate(self, runtime_session_id, inner)
+        inner: Option<DynRuntimeTurnBoundaryDelegate>,
+    ) -> DynRuntimeTurnBoundaryDelegate {
+        AgentRunMailboxRuntimeAdapter::turn_boundary_delegate(self, runtime_session_id, inner)
     }
 
     async fn accept_hook_auto_resume_effect(
@@ -144,14 +141,14 @@ impl RuntimeSessionMailboxRuntimePort for AgentRunMailboxRuntimeAdapter {
 
 struct AgentRunMailboxRuntimeDelegate {
     runtime_session_id: String,
-    inner: Option<Arc<dyn AgentRuntimeDelegate>>,
+    inner: Option<DynRuntimeTurnBoundaryDelegate>,
     deps: Arc<AgentRunMailboxRuntimeBoundaryDeps>,
 }
 
 impl AgentRunMailboxRuntimeDelegate {
     fn new(
         runtime_session_id: String,
-        inner: Option<Arc<dyn AgentRuntimeDelegate>>,
+        inner: Option<DynRuntimeTurnBoundaryDelegate>,
         deps: Arc<AgentRunMailboxRuntimeBoundaryDeps>,
     ) -> Self {
         Self {
@@ -354,73 +351,7 @@ async fn route_hook_delivery_not_found(
 }
 
 #[async_trait]
-impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
-    async fn evaluate_compaction(
-        &self,
-        input: EvaluateCompactionInput,
-        cancel: CancellationToken,
-    ) -> Result<Option<CompactionParams>, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.evaluate_compaction(input, cancel).await,
-            None => Ok(None),
-        }
-    }
-
-    async fn after_compaction(
-        &self,
-        result: CompactionResult,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_compaction(result, cancel).await,
-            None => Ok(()),
-        }
-    }
-
-    async fn after_compaction_failed(
-        &self,
-        input: CompactionFailureInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_compaction_failed(input, cancel).await,
-            None => Ok(()),
-        }
-    }
-
-    async fn transform_context(
-        &self,
-        input: TransformContextInput,
-        cancel: CancellationToken,
-    ) -> Result<TransformContextOutput, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.transform_context(input, cancel).await,
-            None => Ok(preserve_transform_context(input)),
-        }
-    }
-
-    async fn before_tool_call(
-        &self,
-        input: BeforeToolCallInput,
-        cancel: CancellationToken,
-    ) -> Result<ToolCallDecision, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.before_tool_call(input, cancel).await,
-            None => Ok(ToolCallDecision::Allow),
-        }
-    }
-
-    async fn after_tool_call(
-        &self,
-        input: AfterToolCallInput,
-        cancel: CancellationToken,
-    ) -> Result<AfterToolCallEffects, AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.after_tool_call(input, cancel).await,
-            None => Ok(AfterToolCallEffects::default()),
-        }
-    }
-
+impl RuntimeTurnBoundaryDelegate for AgentRunMailboxRuntimeDelegate {
     async fn after_turn(
         &self,
         input: AfterTurnInput,
@@ -517,24 +448,6 @@ impl AgentRuntimeDelegate for AgentRunMailboxRuntimeDelegate {
             }
         }
     }
-
-    async fn on_before_provider_request(
-        &self,
-        input: BeforeProviderRequestInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        match &self.inner {
-            Some(inner) => inner.on_before_provider_request(input, cancel).await,
-            None => Ok(()),
-        }
-    }
-}
-
-fn preserve_transform_context(input: TransformContextInput) -> TransformContextOutput {
-    TransformContextOutput {
-        steering_messages: input.context.messages,
-        blocked: None,
-    }
 }
 
 fn stop_after_mailbox_boundary_drain(mailbox_messages: Vec<AgentMessage>) -> StopDecision {
@@ -578,27 +491,6 @@ mod tests {
     use super::*;
     use crate::test_support::MemoryRuntimeSessionExecutionAnchorRepository;
     use agentdash_domain::workflow::RuntimeSessionExecutionAnchor;
-    use agentdash_spi::AgentContext;
-
-    #[test]
-    fn no_inner_transform_context_preserves_provider_visible_messages() {
-        let messages = vec![
-            AgentMessage::user("用户输入"),
-            AgentMessage::assistant("已有上下文"),
-        ];
-
-        let output = preserve_transform_context(TransformContextInput {
-            context: AgentContext {
-                system_prompt: "system".to_string(),
-                messages: messages.clone(),
-                message_refs: vec![],
-                tools: vec![],
-            },
-        });
-
-        assert_eq!(output.steering_messages, messages);
-        assert!(output.blocked.is_none());
-    }
 
     #[test]
     fn mailbox_boundary_drain_requires_non_empty_continue() {
@@ -625,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_delegate_keeps_session_id_as_adapter_ref() {
+    fn turn_boundary_delegate_keeps_session_id_as_adapter_ref() {
         let adapter_ref = runtime_session_mailbox_adapter_ref("runtime-session-1");
 
         assert_eq!(
@@ -639,7 +531,7 @@ mod tests {
     #[tokio::test]
     async fn hook_not_found_on_unbound_trace_keeps_direct_messages() {
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        let messages = vec![AgentMessage::user("legacy direct")];
+        let messages = vec![AgentMessage::user("direct message")];
 
         let routing = route_hook_delivery_not_found(
             &anchor_repo,
@@ -648,7 +540,7 @@ mod tests {
             "runtime_session 缺少 RuntimeSessionExecutionAnchor".to_string(),
         )
         .await
-        .expect("unbound trace can use direct fallback");
+        .expect("unbound trace keeps direct messages");
 
         assert_eq!(routing.direct_messages, messages);
     }

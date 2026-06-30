@@ -83,6 +83,8 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `agentdash-infrastructure::workflow_scripts` | Rhai workflow builder adapter；只注册 workflow helper surface，并复用公共 `RhaiScriptRuntime` |
 | `agentdash-application-workflow::script` | typed workflow script builder document、preflight service 与 pathful diagnostics |
 | `agentdash-application-workflow::orchestration::ScriptCompiler` | workflow script builder document -> `OrchestrationPlanSnapshot` compiler frontend |
+| `agentdash-application-workflow::gate` | shared lifecycle gate transition resolver、gate command、delivery/notification intent |
+| `agentdash-application-lifecycle::lifecycle::dispatch` | lifecycle dispatch owner services，分别拥有 run/orchestration、runtime materialization、subject association、relation/gate 与 reducer bridge |
 
 ## Local Decisions
 
@@ -109,6 +111,8 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
   node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeStarted` reducer event
   和返回 executor refs；原因是 LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和
   plain / ProjectAgent dispatch 共享同一套控制面事实闭包。
+- `LifecycleGateResolver` 是 gate transition 的 application owner。resolver 只推进 gate durable fact，并返回 delivery / notification intent；Companion mailbox、session event、Workflow HumanGate response 等外部投递由 adapter 消费 intent，原因是 gate state、human decision fact 与通知投递需要保持同一状态语言但不共享同一个 transport。
+- `LifecycleDispatchService` 保持 public facade，内部通过 `lifecycle::dispatch` owner services 编排。`RunOrchestrationStarter` 拥有 graph planning 与 run/orchestration start，`AgentRuntimeMaterializer` 拥有 LifecycleAgent / RuntimeSession / AgentFrame / anchor materialization，`SubjectAssociationWriter` 拥有 subject refs，`LifecycleRelationWriter` 拥有 lineage 与 gate opening，`OrchestrationReducerBridge` 拥有 reducer event 持久化。这样 dispatch facade 可以保持业务入口稳定，同时让每类副作用只有一个内部 owner。
 
 ## Scenario: Lifecycle Orchestration Contract
 

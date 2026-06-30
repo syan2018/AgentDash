@@ -18,9 +18,9 @@
 
 ## 类型化改造模式
 
-### 枚举 + 兜底变体
+### 枚举 + 通用变体
 
-使用 `#[serde(tag = "kind")]` 内部标签，保持 JSON 兼容。`Generic { data: Value }` 变体保留兜底能力，逐步收窄。每次新增具体变体时从 `Generic` 中提取。
+使用 `#[serde(tag = "kind")]` 内部标签，保持 JSON wire 形状稳定。`Generic { data: Value }` 变体承载未类型化 payload，并随具体变体增加逐步收窄。每次新增具体变体时从 `Generic` 中提取。
 
 ### 结构化错误
 

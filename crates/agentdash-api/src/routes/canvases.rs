@@ -523,7 +523,7 @@ pub async fn get_canvas_runtime_snapshot(
     .await;
     if let Some(session_id) = query.session_id.as_deref() {
         snapshot.runtime_bridge =
-            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id)?;
+            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id).await?;
     }
 
     Ok(Json(canvas_runtime_snapshot_to_contract(snapshot)))
@@ -721,7 +721,8 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
         state.as_ref(),
         &context.canvas,
         &context.runtime_session_id,
-    )?;
+    )
+    .await?;
     Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
         snapshot,
     )))
@@ -744,7 +745,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
     .await?;
     let current_user_context = project_authorization_context(&current_user);
     let binding = CanvasDataBinding::with_content_type(alias, req.source_uri, req.content_type);
-    let active_vfs = state
+    let active_vfs_state = state
         .services
         .runtime_surface_update
         .apply_canvas_runtime_surface_update(
@@ -761,7 +762,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &context.canvas,
         None,
-        Some(&active_vfs),
+        Some(&active_vfs_state.vfs),
         state.services.vfs_service.as_ref(),
     )
     .await;
@@ -769,7 +770,8 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
         state.as_ref(),
         &context.canvas,
         &context.runtime_session_id,
-    )?;
+    )
+    .await?;
     Ok(Json(canvas_agent_run_runtime_snapshot_to_contract(
         snapshot,
     )))
@@ -1239,22 +1241,26 @@ fn runtime_action_kind_to_contract(kind: RuntimeActionKind) -> RuntimeActionKind
     }
 }
 
-fn build_canvas_runtime_bridge_surface(
+async fn build_canvas_runtime_bridge_surface(
     state: &AppState,
     canvas: &agentdash_domain::canvas::Canvas,
     session_id: &str,
 ) -> Result<CanvasRuntimeBridgeSnapshot, ApiError> {
-    let surface = state.services.runtime_gateway.surface_for_actor(
-        RuntimeActor::UserCanvas {
-            session_id: session_id.to_string(),
-            canvas_id: Some(canvas.id),
-        },
-        RuntimeContext::Session {
-            session_id: session_id.to_string(),
-            project_id: Some(canvas.project_id),
-            workspace_id: None,
-        },
-    )?;
+    let surface = state
+        .services
+        .runtime_gateway
+        .surface_for_actor(
+            RuntimeActor::UserCanvas {
+                session_id: session_id.to_string(),
+                canvas_id: Some(canvas.id),
+            },
+            RuntimeContext::Session {
+                session_id: session_id.to_string(),
+                project_id: Some(canvas.project_id),
+                workspace_id: None,
+            },
+        )
+        .await?;
 
     Ok(CanvasRuntimeBridgeSnapshot::enabled(surface))
 }

@@ -8,7 +8,9 @@ use agentdash_spi::WorkspaceModuleDimension;
 use uuid::Uuid;
 
 use crate::extension_runtime::extension_runtime_projection_from_installations;
-use crate::workspace_module::build_workspace_modules;
+use crate::workspace_module::{
+    WorkspaceModuleOperationContext, build_workspace_modules_with_operation_context,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceModuleVisibilityDiagnostic {
@@ -31,6 +33,23 @@ pub async fn resolve_workspace_module_visibility(
     project_id: Uuid,
     view: &AgentRunEffectiveCapabilityView,
 ) -> Result<WorkspaceModuleVisibilityProjection, String> {
+    resolve_workspace_module_visibility_with_operation_context(
+        installation_repo,
+        canvas_repo,
+        project_id,
+        view,
+        &WorkspaceModuleOperationContext::default(),
+    )
+    .await
+}
+
+pub async fn resolve_workspace_module_visibility_with_operation_context(
+    installation_repo: &Arc<dyn ProjectExtensionInstallationRepository>,
+    canvas_repo: &Arc<dyn CanvasRepository>,
+    project_id: Uuid,
+    view: &AgentRunEffectiveCapabilityView,
+    operation_context: &WorkspaceModuleOperationContext,
+) -> Result<WorkspaceModuleVisibilityProjection, String> {
     let installations = installation_repo
         .list_enabled_by_project(project_id)
         .await
@@ -47,7 +66,8 @@ pub async fn resolve_workspace_module_visibility(
     let base_visibility = view.capability_state.workspace_module.clone();
     let runtime_refs = view.visible_workspace_module_refs.clone();
     let mut diagnostics = Vec::new();
-    let modules = build_workspace_modules(&projection, &canvases);
+    let modules =
+        build_workspace_modules_with_operation_context(&projection, &canvases, operation_context);
     let visible_modules = modules
         .into_iter()
         .filter(|module| {

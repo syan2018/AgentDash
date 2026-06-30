@@ -17,6 +17,7 @@ pub mod stream;
 mod vfs_access;
 pub mod vfs_materialization;
 mod vfs_surface_runtime;
+pub mod workspace_placement_runtime;
 pub mod workspace_resolution;
 
 use agentdash_diagnostics::{Subsystem, diag};

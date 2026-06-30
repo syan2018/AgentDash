@@ -53,6 +53,34 @@ pub struct ScopeEscalationIntentDto {
     pub unlocked_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGrantVfsOperationDto {
+    Read,
+    List,
+    Search,
+    Write,
+    Exec,
+    ApplyPatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGrantVfsPathScopeDto {
+    All,
+    Prefix(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct PermissionGrantVfsAccessRuleDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub surface_ref: Option<String>,
+    pub mount_id: String,
+    pub path_scope: PermissionGrantVfsPathScopeDto,
+    pub operations: Vec<PermissionGrantVfsOperationDto>,
+}
+
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct ListPermissionGrantsQuery {
     #[serde(default)]
@@ -78,6 +106,8 @@ pub struct PermissionGrantResponse {
     pub effect_frame_id: Option<String>,
     pub source_runtime_session_id: String,
     pub requested_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_vfs_access: Vec<PermissionGrantVfsAccessRuleDto>,
     pub reason: String,
     pub grant_scope: PermissionGrantScopeDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]

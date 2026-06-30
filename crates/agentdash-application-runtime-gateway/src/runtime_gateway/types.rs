@@ -315,6 +315,8 @@ pub struct RuntimeActionDescriptor {
     pub output_schema: Option<Value>,
     #[serde(default)]
     pub default_policy: RuntimePolicy,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
 }
 
 impl RuntimeActionDescriptor {
@@ -326,6 +328,7 @@ impl RuntimeActionDescriptor {
             input_schema: None,
             output_schema: None,
             default_policy: RuntimePolicy::default(),
+            metadata: BTreeMap::new(),
         }
     }
 }

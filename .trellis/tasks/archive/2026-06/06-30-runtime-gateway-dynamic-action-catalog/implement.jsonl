@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Runtime action discovery crosses backend, local runtime, workspace module and frontend surfaces."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Use one catalog/invoke resolver instead of adding a parallel extension catalog."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeGateway and AgentRun runtime surface boundary context."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability visibility vs runtime action availability separation."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Local extension host and runtime action relay contract."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "D7 target design and D8 out-of-scope boundary."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/implementation-slices.md", "reason": "Slice 2 requirements and ordering."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/02-extension-action-availability.md", "reason": "D7 evidence and implementation slice details."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/implement.md", "reason": "Quick convergence results: schema/resolver/loadability already fixed."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Long-running goal execution and subagent discipline."}

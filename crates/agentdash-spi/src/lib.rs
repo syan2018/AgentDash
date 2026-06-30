@@ -11,13 +11,17 @@ pub mod workflow;
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentContextEnvelope, AgentInputMessage, AgentMessage,
-    AgentRuntimeDelegate, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
+    AgentRuntimeDelegateSet, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
-    CompactionParams, CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate,
-    EvaluateCompactionInput, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
-    ProjectionOrigin, ProjectionSourceRange, ProviderVisibleContextStats, StopDecision, StopReason,
-    TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo,
-    TransformContextInput, TransformContextOutput, TurnControlDecision, now_millis,
+    CompactionParams, CompactionResult, CompactionTriggerStats, DynRuntimeCompactionDelegate,
+    DynRuntimeContextTransformDelegate, DynRuntimeProviderObserverDelegate,
+    DynRuntimeToolPolicyDelegate, DynRuntimeTurnBoundaryDelegate, EvaluateCompactionInput,
+    MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind, ProjectionOrigin,
+    ProjectionSourceRange, ProviderVisibleContextStats, RuntimeCompactionDelegate,
+    RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,
+    RuntimeTurnBoundaryDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
+    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
+    TransformContextOutput, TurnControlDecision, now_millis,
 };
 pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
@@ -42,10 +46,12 @@ pub use connector::{
     ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,
     DiscoveryContext, ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame,
     ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
-    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer, SetDelta,
-    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
-    VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
-    compute_capability_state_delta, partition_runtime_mcp_servers, workspace_path_from_context,
+    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
+    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
+    RuntimeVfsPathPattern, SetDelta, SkillDimension, ToolCapabilityFilter, ToolCluster,
+    ToolDimension, VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension,
+    WorkspaceModuleVisibilityMode, compute_capability_state_delta, partition_runtime_mcp_servers,
+    workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

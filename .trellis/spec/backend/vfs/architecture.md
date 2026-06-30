@@ -15,6 +15,7 @@ VFS 子系统给 Agent、前端和业务用例提供统一地址模型，屏蔽 
 - binary bytes 不内联进 JSON DTO；通过 `read_binary` / blob 通道读取。
 - Agent-facing VFS tools 按职责拆分：共享 runtime VFS handle 与 URI resolution 在 `vfs/tools/common.rs`，mount discovery 在 `vfs/tools/mounts.rs`，`vfs/tools/fs.rs` 只保留 file/search/patch/shell tool facade，具体 handler 位于 `vfs/tools/fs/`。共享 session state 和具体工具分离，原因是工具集合会继续扩展，但 runtime VFS address 语义必须集中。
 - Session runtime tool surface 由 `SessionRuntimeToolComposer` 组合多个 domain provider；VFS bootstrap 只构建 VFS service/materialization/registry，session bootstrap 负责注入 runtime tool composer，原因是 Agent-facing tool surface 同时消费 VFS、workflow、collaboration 和 workspace module runtime facts，不能归属于单一 VFS service。
+- Workspace module runtime surface 以 `WorkspaceModuleAgentSurface` 的 domain outcome / surface error 作为业务边界，`AgentToolResult`、`AgentToolError` 和 `ContentPart` 只出现在 `workspace_module/tools.rs` 等 AgentTool adapter 层。Canvas runtime bridge helpers 使用 workspace-module bridge error，再由 surface 显式映射为 surface error，原因是 surface 需要表达 Canvas binding、runtime action、protocol channel、diagnostic 和 presentation 语义，而工具协议投影只是 Agent-facing adapter 的输出格式。
 
 ## Current Baseline
 
@@ -35,7 +36,7 @@ Tool module baseline：
 | --- | --- |
 | `vfs/tools/common.rs` | `SharedRuntimeVfs`、tool path resolution、text result helper |
 | `vfs/tools/mounts.rs` | `mounts_list` discovery tool |
-| `vfs/tools/fs.rs` | FS tool facade 与旧 public import 路径 |
+| `vfs/tools/fs.rs` | FS tool facade 与既有 public import 路径 |
 | `vfs/tools/fs/read.rs` | `fs.read` text/binary/image read handler |
 | `vfs/tools/fs/apply_patch.rs` | `fs.apply_patch` handler 与 mutation key locking |
 | `vfs/tools/fs/glob.rs` | `fs.glob` list/pattern handler |
@@ -107,6 +108,7 @@ pub trait RuntimeToolProvider {
 
 - `agentdash-application vfs::tools` 测试 mounts/fs/shell 工具 schema、capability gating 与 VFS 缺失错误。
 - `agentdash-application workspace_module::tools` 测试 module list/describe/create/invoke/present 装配和 Gateway 延迟注入。
+- `agentdash-workspace-module workspace_module::surface` 测试 typed outcome，例如 Canvas binding 返回 `CanvasBindingApplied`、Canvas present 返回 `Presented` 并注入 notification；adapter 测试再覆盖 outcome 到 `AgentToolResult` 的投影。
 - `agentdash-api bootstrap::tests::bootstrap_modules_do_not_depend_on_routes` 断言 bootstrap 不反向依赖 routes。
 - `agentdash-api vfs_access::tests::runtime_tool_schemas_are_openai_compatible` 覆盖最终 tool schema 兼容性。
 

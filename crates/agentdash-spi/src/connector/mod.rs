@@ -5,11 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
-use agentdash_domain::common::{AgentConfig, Vfs};
+use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::BoxStream;
@@ -18,8 +18,6 @@ use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
 use crate::hooks::{ContextFrame, HookRuntimeAccess};
-use agentdash_agent_types::DynAgentRuntimeDelegate;
-
 pub mod capability_delta;
 
 pub use capability_delta::{
@@ -75,6 +73,7 @@ pub struct ExecutionSessionFrame {
     /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub vfs: Option<Vfs>,
+    pub vfs_access_policy: Option<RuntimeVfsAccessPolicy>,
     /// Relay/backend execution placement resolved during session launch.
     ///
     /// This field is set only for remote backend executions. It is the connector-facing
@@ -96,15 +95,139 @@ pub struct ExecutionBackendPlacement {
     pub selection_mode: BackendExecutionSelectionMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsOperation {
+    Read,
+    List,
+    Search,
+    Write,
+    Exec,
+    ApplyPatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsPathPattern {
+    All,
+    Prefix(String),
+}
+
+impl RuntimeVfsPathPattern {
+    pub fn matches_normalized_path(&self, normalized_path: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Prefix(prefix) if prefix.is_empty() => true,
+            Self::Prefix(prefix) => {
+                normalized_path == prefix
+                    || normalized_path
+                        .strip_prefix(prefix)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeVfsAccessSource {
+    ProjectPreset,
+    PermissionGrant,
+    SystemRuntimeProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessRule {
+    pub mount_id: String,
+    pub path_pattern: RuntimeVfsPathPattern,
+    pub operations: BTreeSet<RuntimeVfsOperation>,
+    pub source: RuntimeVfsAccessSource,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeVfsAccessPolicy {
+    pub rules: Vec<RuntimeVfsAccessRule>,
+}
+
+impl RuntimeVfsAccessPolicy {
+    pub fn whole_mounts_from_vfs(vfs: &Vfs) -> Self {
+        Self::whole_mounts_from_vfs_with_source(
+            vfs,
+            RuntimeVfsAccessSource::SystemRuntimeProjection,
+        )
+    }
+
+    pub fn whole_mounts_from_vfs_with_source(vfs: &Vfs, source: RuntimeVfsAccessSource) -> Self {
+        let rules = vfs
+            .mounts
+            .iter()
+            .filter_map(|mount| {
+                let operations = operations_for_mount_capabilities(&mount.capabilities);
+                if operations.is_empty() {
+                    return None;
+                }
+                Some(RuntimeVfsAccessRule {
+                    mount_id: mount.id.clone(),
+                    path_pattern: RuntimeVfsPathPattern::All,
+                    operations,
+                    source,
+                })
+            })
+            .collect();
+        Self { rules }
+    }
+
+    pub fn admits(
+        &self,
+        mount_id: &str,
+        normalized_path: &str,
+        operation: RuntimeVfsOperation,
+    ) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.mount_id == mount_id
+                && rule.operations.contains(&operation)
+                && rule.path_pattern.matches_normalized_path(normalized_path)
+        })
+    }
+}
+
+fn operations_for_mount_capabilities(
+    capabilities: &[MountCapability],
+) -> BTreeSet<RuntimeVfsOperation> {
+    let mut operations = BTreeSet::new();
+    for capability in capabilities {
+        match capability {
+            MountCapability::Read => {
+                operations.insert(RuntimeVfsOperation::Read);
+            }
+            MountCapability::List => {
+                operations.insert(RuntimeVfsOperation::List);
+            }
+            MountCapability::Search => {
+                operations.insert(RuntimeVfsOperation::Search);
+            }
+            MountCapability::Write => {
+                operations.insert(RuntimeVfsOperation::Write);
+                operations.insert(RuntimeVfsOperation::ApplyPatch);
+            }
+            MountCapability::Exec => {
+                operations.insert(RuntimeVfsOperation::Exec);
+            }
+            MountCapability::Watch => {}
+        }
+    }
+    operations
+}
+
 /// Turn 级执行上下文（How + 运行时控制面）。
 ///
-/// per-turn 动态：工具集、hook runtime、runtime delegate、系统 prompt 产出等；
+/// per-turn 动态：工具集、hook runtime、runtime delegate facets、系统 prompt 产出等；
 /// 会随 session hot-update 或 hook 触发而重建。
 #[derive(Clone, Default)]
 pub struct ExecutionTurnFrame {
     pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
     pub capability_state: CapabilityState,
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    pub runtime_delegates: AgentRuntimeDelegateSet,
     /// 当 session 生命周期层判定为"冷启动仓储恢复"且执行器支持原生恢复时，
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
@@ -167,8 +290,14 @@ impl std::fmt::Debug for ExecutionContext {
             .field("executor_config", &self.session.executor_config)
             .field("hook_runtime", &self.turn.hook_runtime)
             .field(
-                "runtime_delegate",
-                &self.turn.runtime_delegate.as_ref().map(|_| ".."),
+                "runtime_delegates",
+                &[
+                    self.turn.runtime_delegates.compaction.is_some(),
+                    self.turn.runtime_delegates.context_transform.is_some(),
+                    self.turn.runtime_delegates.tool_policy.is_some(),
+                    self.turn.runtime_delegates.turn_boundary.is_some(),
+                    self.turn.runtime_delegates.provider_observer.is_some(),
+                ],
             )
             .field(
                 "restored_session_state",
@@ -399,7 +528,7 @@ impl CapabilityState {
 
     /// 检查指定工具是否可用（cluster 启用）。
     ///
-    /// 该方法仅保留给没有 capability 维度的旧调用点；新代码应使用
+    /// 该方法仅服务尚未接入 capability 维度的调用点；优先使用
     /// `is_capability_tool_enabled`。
     pub fn is_tool_enabled(&self, tool_name: &str, cluster: ToolCluster) -> bool {
         let _ = tool_name;
@@ -581,7 +710,7 @@ pub fn partition_runtime_mcp_servers(
 pub enum PromptPayload {
     Text(String),
     /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
-    /// 取代旧 `Blocks(Vec<ContentBlock>)`，让图片等多模态内容结构化直达模型而不拍平。
+    /// 以结构化输入表达图片等多模态内容，让它们直达模型而不拍平。
     Input(Vec<agentdash_agent_protocol::UserInputBlock>),
 }
 
@@ -704,7 +833,7 @@ mod tests {
 
         assert!(
             !flow.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
-            "MCP 工具没有 cluster 兜底，必须先由 canonical CapabilityState 授予 capability"
+            "MCP 工具必须先由 canonical CapabilityState 授予 capability"
         );
     }
 }

@@ -17,7 +17,9 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort;
+use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
+};
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
@@ -90,6 +92,8 @@ pub struct SessionRuntimeInner {
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub(super) execution_anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
     pub(super) runtime_surface_query: Option<Arc<dyn AgentRunRuntimeSurfaceQueryPort>>,
+    pub(super) agent_run_effective_capability_port:
+        Option<Arc<dyn AgentRunEffectiveCapabilityPort>>,
     /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
     pub(super) lifecycle_agent_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,

@@ -6,7 +6,8 @@ use crate::common::error::DomainError;
 use crate::workflow::ToolCapabilityPath;
 
 use super::value_objects::{
-    GrantScope, GrantStatus, PolicyDecision, PolicyOutcome, ScopeEscalationIntent,
+    GrantScope, GrantStatus, PermissionGrantVfsAccessRule, PolicyDecision, PolicyOutcome,
+    ScopeEscalationIntent,
 };
 
 /// Agent 权限授予记录 — Permission System 的核心聚合根。
@@ -28,6 +29,8 @@ pub struct PermissionGrant {
     pub source_tool_call_id: Option<String>,
     /// 申请的 capability paths
     pub requested_paths: Vec<ToolCapabilityPath>,
+    /// 申请的运行期 VFS path-level access rules。
+    pub requested_vfs_access: Vec<PermissionGrantVfsAccessRule>,
     /// Agent 给出的申请理由
     pub reason: String,
     /// 生效范围
@@ -67,6 +70,7 @@ impl PermissionGrant {
             source_turn_id: None,
             source_tool_call_id: None,
             requested_paths,
+            requested_vfs_access: Vec::new(),
             reason: reason.into(),
             grant_scope,
             expires_at,
@@ -93,6 +97,17 @@ impl PermissionGrant {
     pub fn with_escalation_intent(mut self, intent: ScopeEscalationIntent) -> Self {
         self.scope_escalation_intent = Some(intent);
         self
+    }
+
+    pub fn with_requested_vfs_access(
+        mut self,
+        rules: Vec<PermissionGrantVfsAccessRule>,
+    ) -> Result<Self, DomainError> {
+        for rule in &rules {
+            rule.validate()?;
+        }
+        self.requested_vfs_access = rules;
+        Ok(self)
     }
 
     // ── 状态转换方法（强制校验） ──
@@ -205,6 +220,7 @@ impl PermissionGrant {
 
 #[cfg(test)]
 mod tests {
+    use super::super::value_objects::{PermissionGrantVfsOperation, PermissionGrantVfsPathScope};
     use super::*;
 
     fn sample_grant() -> PermissionGrant {
@@ -216,6 +232,44 @@ mod tests {
             GrantScope::AgentFrame,
             Some(3600),
         )
+    }
+
+    fn sample_vfs_rule(prefix: &str) -> PermissionGrantVfsAccessRule {
+        PermissionGrantVfsAccessRule {
+            surface_ref: None,
+            mount_id: "workspace".to_string(),
+            path_scope: PermissionGrantVfsPathScope::Prefix(prefix.to_string()),
+            operations: vec![PermissionGrantVfsOperation::Read],
+        }
+    }
+
+    #[test]
+    fn new_grant_defaults_to_no_vfs_access_rules() {
+        let grant = sample_grant();
+        assert!(grant.requested_vfs_access.is_empty());
+    }
+
+    #[test]
+    fn requested_vfs_access_accepts_mount_relative_prefix() {
+        let grant = sample_grant()
+            .with_requested_vfs_access(vec![sample_vfs_rule("src")])
+            .expect("valid vfs access");
+
+        assert_eq!(grant.requested_vfs_access.len(), 1);
+    }
+
+    #[test]
+    fn requested_vfs_access_rejects_absolute_or_escaping_prefix() {
+        assert!(
+            sample_grant()
+                .with_requested_vfs_access(vec![sample_vfs_rule("/src")])
+                .is_err()
+        );
+        assert!(
+            sample_grant()
+                .with_requested_vfs_access(vec![sample_vfs_rule("../src")])
+                .is_err()
+        );
     }
 
     #[test]

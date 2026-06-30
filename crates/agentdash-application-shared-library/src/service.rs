@@ -702,7 +702,7 @@ mod tests {
         let payload = json!({
             "config": {
                 "executor": "PI_AGENT",
-                "system_prompt": "旧 payload",
+                "system_prompt": "seed 前 payload",
                 "system_prompt_mode": "append",
                 "capability_directives": []
             }

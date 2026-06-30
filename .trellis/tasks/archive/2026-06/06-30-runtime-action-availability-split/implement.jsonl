@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for runtime gateway, capability, VFS and workspace module-adjacent boundaries."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway actor/context catalog and extension runtime action ownership."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "AgentRun effective capability visibility/admission boundary."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "WorkspaceModule capability and tool exposure contract."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Runtime tool provider declaration and delayed RuntimeGateway injection rules."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated contract and WorkspaceModule/Canvas/Extension bridge cross-layer rules."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend generated DTO and runtime projection consumption rules."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer availability and runtime surface fact-source guide."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Search-first guidance for shared contract/helper changes."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/02-extension-action-availability.md", "reason": "D7/D8 evidence, wrong paths and recommended owner split."}
+{"file": ".trellis/tasks/06-30-runtime-gateway-dynamic-action-catalog/prd.md", "reason": "Completed D7 prerequisite and residual D8 scope boundary."}
+{"file": ".trellis/tasks/06-30-runtime-gateway-dynamic-action-catalog/design.md", "reason": "Dynamic catalog design that D8 must consume rather than duplicate."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Durable subagent cleanup-first and targeted-check constraints."}

@@ -609,7 +609,7 @@ async fn fetch_skills_sh_skill_files(
         }
     }
 
-    // Try root-level SKILL.md as fallback
+    // Also support repositories where SKILL.md lives at the root.
     if skill_md_content.is_none() {
         let url = format!("{raw_prefix}/SKILL.md");
         if let Ok(content) = fetch_raw_text_file(client, &url).await {

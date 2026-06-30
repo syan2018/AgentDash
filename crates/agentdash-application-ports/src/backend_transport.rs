@@ -119,7 +119,7 @@ pub trait RelayPromptTransport: BackendTransport {
 pub struct RelayPromptRequest {
     pub session_id: String,
     pub follow_up_session_id: Option<String>,
-    pub prompt_blocks: Option<serde_json::Value>,
+    pub input: Vec<UserInputBlock>,
     pub mount_root_ref: String,
     pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
     pub workspace_identity_payload: Option<serde_json::Value>,

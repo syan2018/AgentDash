@@ -775,8 +775,7 @@ impl IntoResponse for AuthResponseError {
 mod tests {
     use super::*;
     use agentdash_domain::backend::{
-        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim, UserPreferences,
-        ViewConfig,
+        BackendShareScopeKind, BackendType, BackendVisibility, LocalBackendClaim, ViewConfig,
     };
 
     enum MockTokenResult {
@@ -843,14 +842,6 @@ mod tests {
         }
 
         async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn save_preferences(&self, _prefs: &UserPreferences) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
     }

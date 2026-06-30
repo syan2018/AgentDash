@@ -493,6 +493,7 @@ mod tests {
             tool_call_id: None,
             backend_anchor: Some(runtime_anchor(backend_id)),
             vfs: None,
+            vfs_access_policy: None,
             identity: None,
         }
     }
@@ -504,6 +505,7 @@ mod tests {
             tool_call_id: None,
             backend_anchor: None,
             vfs: None,
+            vfs_access_policy: None,
             identity: None,
         }
     }

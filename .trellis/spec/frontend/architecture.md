@@ -6,7 +6,7 @@
 
 ## Invariants
 
-- API 字段直接使用后端 `snake_case`，前端不做 camelCase/snake_case 双风格兼容。
+- API 字段以后端 `snake_case` 契约为准，前端不引入 camelCase/snake_case 双风格解析。
 - API 响应必须经 mapper 从 `unknown` 转换为 typed object。
 - Story / Task / AgentRun / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
 - Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` / `AgentRunWorkspaceView` 为准；用户可见执行工作台展示 AgentRun Workspace，`RuntimeSession` trace view 只展示 trace，不作为业务执行归属事实源。

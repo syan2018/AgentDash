@@ -100,7 +100,7 @@ pub async fn derive_runtime_skill_baseline(
     let mut diagnostics = Vec::new();
 
     if let (Some(vfs_service), Some(active_vfs)) = (input.vfs_service, input.active_vfs) {
-        let loaded = load_skills_from_vfs(vfs_service, active_vfs).await;
+        let loaded = load_skills_from_vfs(vfs_service, active_vfs, input.identity).await;
         let (cluster, cluster_diagnostics) = load_skills_result_to_provider_cluster(
             loaded,
             WORKSPACE_SKILL_PROVIDER_KEY,
@@ -1539,11 +1539,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_provider_keeps_absolute_skill_paths_for_compatibility() {
+    fn provider_keeps_absolute_skill_paths_when_vfs_paths_not_required() {
         let output = SkillDiscoveryOutput {
             clusters: vec![SkillDiscoveryCluster {
-                provider_key: "legacy".to_string(),
-                display_name: "Legacy".to_string(),
+                provider_key: "local".to_string(),
+                display_name: "Local".to_string(),
                 skills: vec![discovered_skill("old", "/workspace/SKILL.md")],
                 ..Default::default()
             }],

@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::platform::tool_capability::{CAP_FILE_READ, CAP_FILE_WRITE};
-use agentdash_spi::{CapabilityState, ToolCluster, Vfs};
+use agentdash_spi::{
+    CapabilityState, RuntimeVfsAccessPolicy, RuntimeVfsOperation, ToolCluster, Vfs,
+};
 use serde_json::json;
 
 use crate::inline_persistence::InlineContentOverlay;
@@ -55,6 +57,7 @@ impl PlatformShellCwd {
 pub(super) struct PlatformShell<'a> {
     service: Arc<VfsService>,
     vfs: &'a Vfs,
+    access_policy: &'a RuntimeVfsAccessPolicy,
     cwd: PlatformShellCwd,
     overlay: Option<&'a InlineContentOverlay>,
     identity: Option<&'a AuthIdentity>,
@@ -101,6 +104,7 @@ impl<'a> PlatformShell<'a> {
     pub(super) fn new(
         service: Arc<VfsService>,
         vfs: &'a Vfs,
+        access_policy: &'a RuntimeVfsAccessPolicy,
         cwd: PlatformShellCwd,
         overlay: Option<&'a InlineContentOverlay>,
         identity: Option<&'a AuthIdentity>,
@@ -109,6 +113,7 @@ impl<'a> PlatformShell<'a> {
         Self {
             service,
             vfs,
+            access_policy,
             cwd,
             overlay,
             identity,
@@ -180,6 +185,10 @@ impl<'a> PlatformShell<'a> {
                 .vfs
                 .mounts
                 .iter()
+                .filter(|mount| {
+                    self.access_policy
+                        .admits(&mount.id, "", RuntimeVfsOperation::List)
+                })
                 .map(|mount| format!("{}://", mount.id))
                 .collect::<Vec<_>>();
             mounts.sort();
@@ -191,8 +200,9 @@ impl<'a> PlatformShell<'a> {
         let target = self.resolve_arg(argv.get(1).map(String::as_str).unwrap_or("."))?;
         let result = self
             .service
-            .list(
+            .list_with_policy(
                 self.vfs,
+                Some(self.access_policy),
                 &target.mount_id,
                 ListOptions {
                     path: if target.path.is_empty() {
@@ -294,8 +304,9 @@ impl<'a> PlatformShell<'a> {
         let destination = self.resolve_arg(&argv[2])?;
         if source.mount_id == destination.mount_id {
             self.service
-                .rename_text(
+                .rename_text_with_policy(
                     self.vfs,
+                    Some(self.access_policy),
                     &source.mount_id,
                     &source.path,
                     &destination.path,
@@ -388,7 +399,13 @@ impl<'a> PlatformShell<'a> {
 
     async fn read_text(&self, target: &ResourceRef) -> Result<String, String> {
         self.service
-            .read_text(self.vfs, target, self.overlay, self.identity)
+            .read_text_with_policy(
+                self.vfs,
+                Some(self.access_policy),
+                target,
+                self.overlay,
+                self.identity,
+            )
             .await
             .map(|result| result.content)
             .map_err(|error| error.to_string())
@@ -396,14 +413,27 @@ impl<'a> PlatformShell<'a> {
 
     async fn write_text(&self, target: &ResourceRef, content: &str) -> Result<(), String> {
         self.service
-            .write_text(self.vfs, target, content, self.overlay, self.identity)
+            .write_text_with_policy(
+                self.vfs,
+                Some(self.access_policy),
+                target,
+                content,
+                self.overlay,
+                self.identity,
+            )
             .await
             .map_err(|error| error.to_string())
     }
 
     async fn delete_text(&self, target: &ResourceRef) -> Result<(), String> {
         self.service
-            .delete_text(self.vfs, target, self.overlay, self.identity)
+            .delete_text_with_policy(
+                self.vfs,
+                Some(self.access_policy),
+                target,
+                self.overlay,
+                self.identity,
+            )
             .await
             .map_err(|error| error.to_string())
     }
@@ -694,10 +724,14 @@ mod tests {
             links: Vec::new(),
         });
         let vfs_ref: &'static Vfs = Box::leak(vfs);
+        let access_policy = Box::leak(Box::new(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(
+            vfs_ref,
+        )));
         let state_ref: &'static CapabilityState = Box::leak(Box::new(state));
         PlatformShell::new(
             service,
             vfs_ref,
+            access_policy,
             PlatformShellCwd::Root,
             None,
             None,

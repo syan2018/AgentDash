@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use agentdash_relay::*;
 
+use super::CommandDispatchPlan;
 use crate::shell_session_manager::ShellSessionManager;
 use crate::tool_executor::ToolExecutor;
 
@@ -29,6 +30,16 @@ impl TerminalCommandHandler {
         Self {
             tool_executor,
             shell_sessions,
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandTerminalSpawn { .. }
+            | RelayMessage::CommandTerminalInput { .. }
+            | RelayMessage::CommandTerminalResize { .. }
+            | RelayMessage::CommandTerminalKill { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
         }
     }
 

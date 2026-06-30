@@ -119,8 +119,9 @@ pub(super) async fn stream_assistant_response(
     // pending steering/follow-up。字段名从 `messages` 改为 `steering_messages`
     // 以强调语义：静态任务语义应通过 ContextFrame 投递，此字段只承 per-turn
     // 动态 steering。
-    let mut messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
-        let output = delegate
+    let mut messages_for_llm = if config.runtime_delegates.context_transform.is_some() {
+        let output = config
+            .runtime_delegates
             .transform_context(
                 TransformContextInput {
                     context: context.clone(),
@@ -152,9 +153,10 @@ pub(super) async fn stream_assistant_response(
     let mut compaction_context_window = 0_u64;
     let mut compaction_reserve_tokens = 0_u64;
 
-    if let Some(delegate) = config.runtime_delegate.as_ref() {
+    {
         let draft_stats = provider_visible_stats(&request);
-        let params = delegate
+        let params = config
+            .runtime_delegates
             .evaluate_compaction(
                 EvaluateCompactionInput {
                     context: AgentContext {
@@ -213,7 +215,8 @@ pub(super) async fn stream_assistant_response(
                             },
                         )
                         .await;
-                        delegate
+                        config
+                            .runtime_delegates
                             .after_compaction(result, cancel.clone())
                             .await
                             .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
@@ -231,7 +234,8 @@ pub(super) async fn stream_assistant_response(
                         )
                         .await;
                         if !is_cancelled {
-                            delegate
+                            config
+                                .runtime_delegates
                                 .after_compaction_failed(
                                     CompactionFailureInput {
                                         item_id,
@@ -252,9 +256,10 @@ pub(super) async fn stream_assistant_response(
     }
 
     // BeforeProviderRequest 观测 hook
-    if let Some(delegate) = config.runtime_delegate.as_ref() {
+    {
         let final_stats = provider_visible_stats(&request);
-        let _ = delegate
+        let _ = config
+            .runtime_delegates
             .on_before_provider_request(
                 BeforeProviderRequestInput {
                     system_prompt_len: context.system_prompt.len(),

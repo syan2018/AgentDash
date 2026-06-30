@@ -45,9 +45,9 @@ pub use delivery_runtime_selection::{
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
 pub use effective_capability::{
-    AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityRequest,
+    AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
-    runtime_session_effective_capability_port,
+    agent_run_effective_capability_port, runtime_session_effective_capability_port,
 };
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
@@ -129,12 +129,11 @@ pub use runtime_capability_projection::{
     merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
 };
 pub use runtime_session_boundary::{
-    LaunchCommand, LaunchSource, PromptLaunchPath, RuntimeCommandRecord, RuntimeSessionControlPort,
-    RuntimeSessionCorePort, RuntimeSessionEventingPort, RuntimeSessionLaunchPort,
-    RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
-    SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
-    SessionRepositoryRehydrateMode, SessionTurnSteerCommand, TerminalHookEffectBinding,
-    TitleSource, UserPromptInput, resolve_prompt_launch_path,
+    PromptLaunchPath, RuntimeCommandRecord, RuntimeSessionControlPort, RuntimeSessionCorePort,
+    RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeTraceLaunchState,
+    SessionControlService, SessionCoreService, SessionEventPage, SessionEventingService,
+    SessionExecutionState, SessionLaunchService, SessionMeta, SessionRepositoryRehydrateMode,
+    SessionTurnSteerCommand, TerminalHookEffectBinding, TitleSource, resolve_prompt_launch_path,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,

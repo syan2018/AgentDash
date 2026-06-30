@@ -1,18 +1,11 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::{io, sync::Arc};
 
-use agentdash_agent_protocol::{
-    BackboneEnvelope, UserInputBlock, UserInputSubmissionKind, text_user_input_blocks,
-};
-use agentdash_application_ports::frame_launch_envelope::{
-    CompanionLaunchSource, FrameLaunchCommand, FrameLaunchLocalRelayPayload, FrameLaunchModifier,
-    FrameLaunchSource, FrameLaunchUserInput, RoutineLaunchSource,
-};
+use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock, UserInputSubmissionKind};
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
+use agentdash_spi::ConnectorError;
 use agentdash_spi::context::capability::{
     SessionBaselineCapabilities, SkillEntry, SkillProviderCluster,
 };
-use agentdash_spi::{AgentConfig, AuthIdentity, ConnectorError, PromptPayload, RuntimeMcpServer};
 use async_trait::async_trait;
 
 use crate::error::WorkflowApplicationError;
@@ -21,52 +14,6 @@ pub use agentdash_spi::session_persistence::{
     ExecutionStatus, RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError,
     TitleSource,
 };
-
-#[derive(Debug, Clone)]
-pub struct UserPromptInput {
-    pub input: Option<Vec<UserInputBlock>>,
-    pub env: HashMap<String, String>,
-    pub executor_config: Option<AgentConfig>,
-    pub backend_selection: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedPromptPayload {
-    pub text_prompt: String,
-    pub prompt_payload: PromptPayload,
-    pub input: Vec<UserInputBlock>,
-}
-
-impl UserPromptInput {
-    pub fn resolve_prompt_payload(&self) -> Result<ResolvedPromptPayload, String> {
-        let input = self
-            .input
-            .as_ref()
-            .ok_or_else(|| "必须提供 input".to_string())?;
-        if input.is_empty() {
-            return Err("input 不能为空数组".to_string());
-        }
-        let prompt_payload = PromptPayload::Input(input.clone());
-        let text_prompt = prompt_payload.to_fallback_text();
-        if text_prompt.trim().is_empty() {
-            return Err("input 中没有有效内容".to_string());
-        }
-        Ok(ResolvedPromptPayload {
-            text_prompt,
-            prompt_payload,
-            input: input.clone(),
-        })
-    }
-
-    pub fn from_text(text: impl AsRef<str>) -> Self {
-        Self {
-            input: Some(text_user_input_blocks(text.as_ref().trim())),
-            env: HashMap::new(),
-            executor_config: None,
-            backend_selection: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionExecutionState {
@@ -153,241 +100,6 @@ pub fn resolve_prompt_launch_path(
     }
 
     PromptLaunchPath::Plain
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchSource {
-    HttpPrompt,
-    LifecycleAgentUserMessage,
-    HookAutoResume,
-    CompanionDispatch,
-    CompanionParentResume,
-    WorkflowOrchestrator,
-    RoutineExecutor,
-    LocalRelayPrompt,
-}
-
-#[derive(Clone)]
-pub struct LaunchCommand {
-    user_input: UserPromptInput,
-    source: LaunchSource,
-    follow_up_session_id: Option<String>,
-    identity: Option<AuthIdentity>,
-    modifiers: Vec<LaunchModifier>,
-}
-
-#[derive(Clone)]
-pub enum LaunchModifier {
-    Companion(Box<CompanionLaunchSource>),
-    Routine(RoutineLaunchSource),
-    LocalRelay(LocalRelayLaunchPayload),
-    HookAutoResume,
-}
-
-#[derive(Clone)]
-pub struct LocalRelayLaunchPayload {
-    pub mcp_servers: Vec<RuntimeMcpServer>,
-    pub workspace_root: PathBuf,
-}
-
-impl LaunchCommand {
-    fn new(user_input: UserPromptInput, source: LaunchSource) -> Self {
-        Self {
-            user_input,
-            source,
-            follow_up_session_id: None,
-            identity: None,
-            modifiers: Vec::new(),
-        }
-    }
-
-    pub fn with_follow_up(mut self, session_id: Option<impl Into<String>>) -> Self {
-        self.follow_up_session_id = session_id.map(Into::into);
-        self
-    }
-
-    pub fn user_input(&self) -> &UserPromptInput {
-        &self.user_input
-    }
-
-    pub fn identity(&self) -> Option<AuthIdentity> {
-        self.identity.clone()
-    }
-
-    pub fn companion_modifier(&self) -> Option<CompanionLaunchSource> {
-        self.modifiers.iter().find_map(|modifier| match modifier {
-            LaunchModifier::Companion(companion) => Some(companion.as_ref().clone()),
-            _ => None,
-        })
-    }
-
-    pub fn routine_modifier(&self) -> Option<RoutineLaunchSource> {
-        self.modifiers.iter().find_map(|modifier| match modifier {
-            LaunchModifier::Routine(routine) => Some(routine.clone()),
-            _ => None,
-        })
-    }
-
-    pub fn local_relay_modifier(&self) -> Option<&LocalRelayLaunchPayload> {
-        self.modifiers.iter().find_map(|modifier| match modifier {
-            LaunchModifier::LocalRelay(payload) => Some(payload),
-            _ => None,
-        })
-    }
-
-    pub fn modifiers(&self) -> &[LaunchModifier] {
-        &self.modifiers
-    }
-
-    pub fn source(&self) -> LaunchSource {
-        self.source
-    }
-
-    pub fn follow_up_session_id(&self) -> Option<&str> {
-        self.follow_up_session_id.as_deref()
-    }
-
-    pub fn reason_tag(&self) -> &'static str {
-        match self.source {
-            LaunchSource::HttpPrompt => "http_prompt",
-            LaunchSource::LifecycleAgentUserMessage => "lifecycle_agent_user_message",
-            LaunchSource::HookAutoResume => "hook_auto_resume",
-            LaunchSource::CompanionDispatch => "companion_dispatch",
-            LaunchSource::CompanionParentResume => "companion_parent_resume",
-            LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
-            LaunchSource::RoutineExecutor => "routine_executor",
-            LaunchSource::LocalRelayPrompt => "local_relay_prompt",
-        }
-    }
-
-    pub fn to_frame_launch_command(&self) -> FrameLaunchCommand {
-        let modifiers = self
-            .modifiers
-            .iter()
-            .map(|modifier| match modifier {
-                LaunchModifier::Companion(companion) => {
-                    FrameLaunchModifier::Companion(Box::new(companion.as_ref().clone()))
-                }
-                LaunchModifier::Routine(routine) => FrameLaunchModifier::Routine(routine.clone()),
-                LaunchModifier::LocalRelay(payload) => {
-                    FrameLaunchModifier::LocalRelay(FrameLaunchLocalRelayPayload {
-                        mcp_servers: payload.mcp_servers.clone(),
-                        workspace_root: payload.workspace_root.clone(),
-                    })
-                }
-                LaunchModifier::HookAutoResume => FrameLaunchModifier::HookAutoResume,
-            })
-            .collect();
-        FrameLaunchCommand {
-            user_input: FrameLaunchUserInput {
-                input: self.user_input.input.clone(),
-                environment_variables: self.user_input.env.clone(),
-                executor_config: self.user_input.executor_config.clone(),
-            },
-            source: match self.source {
-                LaunchSource::HttpPrompt => FrameLaunchSource::HttpPrompt,
-                LaunchSource::LifecycleAgentUserMessage => {
-                    FrameLaunchSource::LifecycleAgentUserMessage
-                }
-                LaunchSource::HookAutoResume => FrameLaunchSource::HookAutoResume,
-                LaunchSource::CompanionDispatch => FrameLaunchSource::CompanionDispatch,
-                LaunchSource::CompanionParentResume => FrameLaunchSource::CompanionParentResume,
-                LaunchSource::WorkflowOrchestrator => FrameLaunchSource::WorkflowOrchestrator,
-                LaunchSource::RoutineExecutor => FrameLaunchSource::RoutineExecutor,
-                LaunchSource::LocalRelayPrompt => FrameLaunchSource::LocalRelayPrompt,
-            },
-            follow_up_session_id: self.follow_up_session_id.clone(),
-            identity: self.identity.clone(),
-            modifiers,
-        }
-    }
-
-    fn command_with(
-        input: UserPromptInput,
-        identity: Option<AuthIdentity>,
-        modifiers: Vec<LaunchModifier>,
-        source: LaunchSource,
-    ) -> Self {
-        let mut command = Self::new(input, source);
-        command.identity = identity;
-        command.modifiers = modifiers;
-        command
-    }
-
-    pub fn http_prompt_input(input: UserPromptInput, identity: Option<AuthIdentity>) -> Self {
-        Self::command_with(input, identity, Vec::new(), LaunchSource::HttpPrompt)
-    }
-
-    pub fn lifecycle_agent_user_message_input(
-        input: UserPromptInput,
-        identity: Option<AuthIdentity>,
-    ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            Vec::new(),
-            LaunchSource::LifecycleAgentUserMessage,
-        )
-    }
-
-    pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
-        Self::command_with(
-            input,
-            None,
-            vec![LaunchModifier::HookAutoResume],
-            LaunchSource::HookAutoResume,
-        )
-    }
-
-    pub fn companion_parent_resume_input(input: UserPromptInput) -> Self {
-        Self::new(input, LaunchSource::CompanionParentResume)
-    }
-
-    pub fn companion_dispatch_input(
-        input: UserPromptInput,
-        identity: Option<AuthIdentity>,
-        companion: CompanionLaunchSource,
-    ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            vec![LaunchModifier::Companion(Box::new(companion))],
-            LaunchSource::CompanionDispatch,
-        )
-    }
-
-    pub fn workflow_orchestrator_input(input: UserPromptInput) -> Self {
-        Self::new(input, LaunchSource::WorkflowOrchestrator)
-    }
-
-    pub fn routine_executor_input(
-        input: UserPromptInput,
-        identity: Option<AuthIdentity>,
-        routine: RoutineLaunchSource,
-    ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            vec![LaunchModifier::Routine(routine)],
-            LaunchSource::RoutineExecutor,
-        )
-    }
-
-    pub fn local_relay_prompt_input(
-        input: UserPromptInput,
-        mcp_servers: Vec<RuntimeMcpServer>,
-        workspace_root: PathBuf,
-    ) -> Self {
-        Self::command_with(
-            input,
-            None,
-            vec![LaunchModifier::LocalRelay(LocalRelayLaunchPayload {
-                mcp_servers,
-                workspace_root,
-            })],
-            LaunchSource::LocalRelayPrompt,
-        )
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -550,6 +262,7 @@ pub trait RuntimeSessionLaunchPort: Send + Sync {
         &self,
         session_id: String,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<String, WorkflowApplicationError>;
 }
 
@@ -567,8 +280,11 @@ impl SessionLaunchService {
         &self,
         session_id: String,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<String, WorkflowApplicationError> {
-        self.port.launch_command_in_task(session_id, command).await
+        self.port
+            .launch_command_in_task(session_id, command, planning_input)
+            .await
     }
 }
 

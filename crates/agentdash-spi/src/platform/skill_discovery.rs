@@ -225,7 +225,7 @@ pub trait SkillDiscoveryProvider: Send + Sync {
 
     /// 声明 provider 需要宿主通过 active VFS 扫描的文件。
     ///
-    /// 返回空列表表示沿用 legacy `discover(context)` 路径。返回非空列表时，
+    /// 返回空列表表示 provider 不声明 VFS-first 文件规则。返回非空列表时，
     /// 宿主应先通过 VFS 扫描文件，再调用 `discover_from_vfs`。
     fn vfs_discovery_rules(&self) -> Vec<SkillDiscoveryVfsRule> {
         Vec::new()
@@ -233,8 +233,7 @@ pub trait SkillDiscoveryProvider: Send + Sync {
 
     /// VFS-first discovery 入口。
     ///
-    /// 默认实现回落到 legacy `discover(context)`，保证已有 provider 在新增
-    /// trait method 后无需立即迁移。声明了 VFS rules 的 provider 应覆盖此方法。
+    /// 默认实现调用 `discover(context)`。声明了 VFS rules 的 provider 应覆盖此方法。
     async fn discover_from_vfs(
         &self,
         context: SkillDiscoveryContext,

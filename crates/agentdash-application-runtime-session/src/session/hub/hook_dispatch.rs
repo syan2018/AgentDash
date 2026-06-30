@@ -13,14 +13,13 @@ use super::super::hook_injection_sink::{
 };
 use super::super::hook_messages as msg;
 use super::super::hub_support::session_hook_trace_decision;
-use super::super::launch::LaunchCommand;
 use super::super::terminal_effects::{
     TerminalAutoResumePort, TerminalAutoResumeRequest, TerminalHookTriggerPort,
     TerminalHookTriggerRequest,
 };
-use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
 use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxAutoResumeRequest;
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::hooks::SharedHookRuntime;
@@ -287,7 +286,7 @@ impl SessionRuntimeInner {
         let hub = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let command = LaunchCommand::hook_auto_resume_input(UserPromptInput::from_text(
+            let command = LaunchCommand::hook_auto_resume_input(LaunchPromptInput::from_text(
                 msg::AUTO_RESUME_PROMPT,
             ));
             if let Some(frame) = build_auto_resume_context_frame(
@@ -299,7 +298,7 @@ impl SessionRuntimeInner {
 
             if let Err(e) = hub
                 .launch_service()
-                .launch_command(&session_id, command)
+                .launch_command(&session_id, command, LaunchPlanningInput::default())
                 .await
             {
                 diag!(Warn, Subsystem::Hooks,

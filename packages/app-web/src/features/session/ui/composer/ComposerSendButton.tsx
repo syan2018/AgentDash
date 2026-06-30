@@ -1,4 +1,4 @@
-import type { SessionChatCommand } from "../SessionChatViewTypes";
+import type { SessionChatCommandModel } from "../SessionChatViewTypes";
 
 interface ComposerSendButtonProps {
   isRunning: boolean;
@@ -6,12 +6,12 @@ interface ComposerSendButtonProps {
   isSending: boolean;
   isCancelling: boolean;
   cancelDisabled: boolean;
-  submitCommand?: SessionChatCommand;
-  onSubmit: (command: SessionChatCommand) => void;
+  submitCommand?: SessionChatCommandModel;
+  onSubmit: (command: SessionChatCommandModel) => void;
   onCancel: () => void;
 }
 
-function commandTitle(command: SessionChatCommand, fallback: string): string {
+function commandTitle(command: SessionChatCommandModel, fallback: string): string {
   if (!command.enabled) return command.unavailable_reason ?? fallback;
   switch (command.kind) {
     case "submit_message":
@@ -23,7 +23,7 @@ function commandTitle(command: SessionChatCommand, fallback: string): string {
 }
 
 function optionalCommandTitle(
-  command: SessionChatCommand | undefined,
+  command: SessionChatCommandModel | undefined,
   fallback: string,
 ): string {
   return command ? commandTitle(command, fallback) : fallback;

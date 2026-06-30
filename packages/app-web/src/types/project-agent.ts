@@ -1,4 +1,5 @@
 import type { CapabilityDirective } from "./workflow";
+import type { JsonValue } from "../generated/common-contracts";
 import type {
   CreateProjectAgentRunRequest as GeneratedCreateProjectAgentRunRequest,
   ProjectAgent as GeneratedProjectAgent,
@@ -32,7 +33,8 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 
 export type SystemPromptMode = "append" | "override";
 
-export interface AgentVfsAccessGrant {
+export interface ProjectVfsMountExposureGrant {
+  [key: string]: JsonValue | undefined;
   mount_id: string;
   capabilities: Array<"read" | "write" | "list" | "search">;
 }
@@ -49,7 +51,7 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   display_name?: string;
   description?: string;
   capability_directives?: CapabilityDirective[];
-  vfs_access_grants?: AgentVfsAccessGrant[];
+  project_vfs_mount_exposure_grants?: ProjectVfsMountExposureGrant[];
   skill_asset_keys?: string[];
   default_companion_enabled?: boolean;
   extra_companions?: string[];

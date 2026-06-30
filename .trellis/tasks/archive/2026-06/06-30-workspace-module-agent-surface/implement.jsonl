@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Workspace Module AgentRun naming and adapter ownership boundaries"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "Workspace module visibility and runtime exposure revision contract"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Canvas VFS exposure and workspace_module operate/present semantics"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway action invocation ownership and adapter expectations"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Workspace module presentation event and generated contract requirements"}

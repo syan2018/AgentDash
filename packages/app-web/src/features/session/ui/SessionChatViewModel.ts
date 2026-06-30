@@ -139,6 +139,36 @@ export function collectAllPlatformEvents(
   return { items, lastSeenSeq };
 }
 
+export function collectTurnLifecycleEvents(
+  rawEvents: SessionEventEnvelope[],
+  afterSeq: number,
+): {
+  items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }>;
+  lastSeenSeq: number;
+} {
+  const items: Array<{ eventSeq: number; eventType: SessionTurnLifecycleEventType; event: BackboneEvent }> = [];
+  let lastSeenSeq = afterSeq;
+
+  for (const event of rawEvents) {
+    if (event.event_seq <= afterSeq) {
+      continue;
+    }
+    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+    const bbEvent = event.notification.event;
+    const eventType = extractTurnLifecycleEventType(bbEvent);
+    if (!eventType) {
+      continue;
+    }
+    items.push({
+      eventSeq: event.event_seq,
+      eventType,
+      event: bbEvent,
+    });
+  }
+
+  return { items, lastSeenSeq };
+}
+
 function isCompactionSummaryFrame(event: BackboneEvent): boolean {
   if (
     event.type !== "platform" ||

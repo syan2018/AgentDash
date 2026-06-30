@@ -13,6 +13,7 @@ use serde_json::Value;
 pub struct AgentRunWorkspaceQueryInput {
     pub run: LifecycleRun,
     pub agent: LifecycleAgent,
+    pub viewer_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,38 +168,6 @@ impl AgentRunWorkspaceStateCode {
             Self::Lost => "lost",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRunWorkspaceRuntimeCommandStatus {
-    Idle,
-    Running,
-    Cancelling,
-    Completed,
-    Failed,
-    Interrupted,
-    Lost,
-}
-
-impl AgentRunWorkspaceRuntimeCommandStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Running => "running",
-            Self::Cancelling => "cancelling",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Interrupted => "interrupted",
-            Self::Lost => "lost",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunWorkspaceRuntimeCommandStateModel {
-    pub status: AgentRunWorkspaceRuntimeCommandStatus,
-    pub turn_id: Option<String>,
-    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

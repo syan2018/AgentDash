@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Check Gateway catalog remains action support owner."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Check capability visibility is not conflated with action readiness."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Check WorkspaceModule tools still follow capability/tool policy rules."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated DTO and frontend/backend contract drift."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check frontend consumes generated contracts and does not re-declare backend wire shape."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check runtime surface fact-source and cross-layer data flow."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/02-extension-action-availability.md", "reason": "Check D8 old paths are actually removed/converged."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Check worker must enforce cleanup-first review discipline and targeted checks."}

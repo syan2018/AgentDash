@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"Verify provider capability, tool visibility and runtime policy boundaries."}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"Verify normalized path admission and tool contracts."}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"Verify shell/materialization policy enforcement."}
+{"file":".trellis/spec/backend/permission/grant-lifecycle.md","reason":"Verify PermissionGrant projection is policy-level, not mount capability mutation."}
+{"file":".trellis/tasks/06-30-runtime-vfs-access-policy-cleanup/prd.md","reason":"Check requirements and acceptance criteria."}
+{"file":".trellis/tasks/06-30-runtime-vfs-access-policy-cleanup/design.md","reason":"Check policy model and staged implementation boundaries."}

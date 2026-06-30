@@ -190,9 +190,30 @@ pub enum AgentRunTerminalLaunchTargetError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunEffectiveCapabilityRequest {
+    pub runtime_session_id: String,
     pub agent_run_id: Uuid,
     pub agent_id: Uuid,
     pub command_key: Option<String>,
+}
+
+impl AgentRunEffectiveCapabilityRequest {
+    pub fn for_runtime_session(
+        runtime_session_id: impl Into<String>,
+        agent_run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Self {
+        Self {
+            runtime_session_id: runtime_session_id.into(),
+            agent_run_id,
+            agent_id,
+            command_key: None,
+        }
+    }
+
+    pub fn with_command_key(mut self, command_key: impl Into<String>) -> Self {
+        self.command_key = Some(command_key.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -213,6 +234,7 @@ pub struct AgentRunEffectiveCapabilityView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunAdmissionRequest {
+    pub runtime_session_id: String,
     pub capability_key: String,
     pub tool_name: String,
     pub cluster: Option<ToolCluster>,
@@ -220,11 +242,13 @@ pub struct AgentRunAdmissionRequest {
 
 impl AgentRunAdmissionRequest {
     pub fn tool(
+        runtime_session_id: impl Into<String>,
         capability_key: impl Into<String>,
         tool_name: impl Into<String>,
         cluster: Option<ToolCluster>,
     ) -> Self {
         Self {
+            runtime_session_id: runtime_session_id.into(),
             capability_key: capability_key.into(),
             tool_name: tool_name.into(),
             cluster,
@@ -256,6 +280,10 @@ impl AgentRunAdmissionDecision {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentRunEffectiveCapabilityError {
+    #[error(
+        "agent run capability runtime session was not found: runtime_session_id={runtime_session_id}"
+    )]
+    MissingRuntimeSession { runtime_session_id: String },
     #[error("agent run capability target was not found: run_id={run_id}, agent_id={agent_id}")]
     MissingTarget { run_id: Uuid, agent_id: Uuid },
     #[error("agent run capability projection failed: {message}")]

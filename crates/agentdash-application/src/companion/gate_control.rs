@@ -1,8 +1,13 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
+use agentdash_application_workflow::gate::{
+    CompleteChildResultGateCommand, GateDeliveryIntent, GateNotificationIntent,
+    LifecycleGateResolver, OpenParentRequestGateCommand, ResolveParentRequestGateCommand,
+    RespondHumanGateCommand,
+};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
+    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
     LifecycleGateRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use async_trait::async_trait;
@@ -345,6 +350,7 @@ impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery 
 
 pub struct CompanionGateControlService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
+    gate_resolver: LifecycleGateResolver,
     run_repo: Arc<dyn LifecycleRunRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
@@ -366,6 +372,7 @@ impl CompanionGateControlService {
         delivery: Arc<dyn CompanionGateNotificationDelivery>,
     ) -> Self {
         Self {
+            gate_resolver: LifecycleGateResolver::new(gate_repo.clone()),
             gate_repo,
             run_repo,
             frame_repo,
@@ -422,7 +429,7 @@ impl CompanionGateControlService {
             return Err(ApplicationError::BadRequest(error));
         }
 
-        let mut gate = self.gate_repo.get(command.gate_id).await?.ok_or_else(|| {
+        let gate = self.gate_repo.get(command.gate_id).await?.ok_or_else(|| {
             ApplicationError::NotFound(format!("gate 不存在: {}", command.gate_id))
         })?;
 
@@ -439,11 +446,6 @@ impl CompanionGateControlService {
             .and_then(|metadata| metadata.get("request_type"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
-        let turn_id = gate_meta
-            .as_ref()
-            .and_then(|metadata| metadata.get("turn_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
 
         let registry = PayloadTypeRegistry::with_builtins();
         if let Some(error) = registry.validate_response(&command.payload, request_type.as_deref()) {
@@ -452,79 +454,56 @@ impl CompanionGateControlService {
 
         let delivery_runtime_session_id = self.resolve_delivery_runtime_session_id(&gate).await?;
         let request_id = gate.id.to_string();
-        let run_id = gate.run_id;
-        let agent_id = gate.agent_id.ok_or_else(|| {
-            ApplicationError::Conflict(format!(
-                "human response gate {} 缺少 requesting agent owner",
-                gate.id
-            ))
-        })?;
 
         let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() else {
             let error =
                 "requesting agent 缺少 current delivery runtime session，无法投递 human response"
                     .to_string();
-            let failed_payload = with_human_mailbox_delivery_payload(
-                command.payload.clone(),
-                serde_json::json!({
-                    "status": "failed",
-                    "error": error.clone(),
-                }),
-            );
-            gate.payload_json = Some(failed_payload);
-            self.gate_repo.update(&gate).await?;
             return Err(ApplicationError::Conflict(error));
         };
 
+        let outcome = self
+            .gate_resolver
+            .respond_human(RespondHumanGateCommand {
+                gate_id: gate.id,
+                payload: command.payload.clone(),
+                resolved_by: "companion_respond".to_string(),
+            })
+            .await?;
+        let human_response_intent = outcome
+            .delivery_intents
+            .into_iter()
+            .find_map(|intent| match intent {
+                GateDeliveryIntent::CompanionHumanResponse(intent) => Some(intent),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ApplicationError::Internal(format!(
+                    "human response gate {} 缺少 delivery intent",
+                    gate.id
+                ))
+            })?;
         let input_text = build_human_response_mailbox_input_text(
-            gate.id,
-            &request_id,
-            turn_id.as_deref(),
-            &command.payload,
+            human_response_intent.gate_id,
+            &human_response_intent.request_id,
+            human_response_intent.turn_id.as_deref(),
+            &human_response_intent.payload,
         );
-        let mailbox_result = match self
-            .human_response_mailbox_delivery
+        self.human_response_mailbox_delivery
             .deliver_human_response_to_requesting_agent(
                 CompanionHumanResponseMailboxDeliveryCommand {
-                    gate_id: gate.id,
-                    request_id: request_id.clone(),
-                    run_id,
-                    agent_id,
+                    gate_id: human_response_intent.gate_id,
+                    request_id: human_response_intent.request_id.clone(),
+                    run_id: human_response_intent.run_id,
+                    agent_id: human_response_intent.agent_id,
                     delivery_runtime_session_id: delivery_runtime_session_id.clone(),
-                    turn_id: turn_id.clone(),
-                    request_type: request_type.clone(),
-                    payload: command.payload.clone(),
+                    turn_id: human_response_intent.turn_id.clone(),
+                    request_type: human_response_intent.request_type.clone(),
+                    payload: human_response_intent.payload.clone(),
                     input_text,
                 },
             )
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let failed_payload = with_human_mailbox_delivery_payload(
-                    command.payload.clone(),
-                    mailbox_delivery_payload(
-                        "delivery_runtime_session_id",
-                        &delivery_runtime_session_id,
-                        serde_json::json!({
-                            "status": "failed",
-                            "error": error.to_string(),
-                        }),
-                    ),
-                );
-                gate.payload_json = Some(failed_payload);
-                self.gate_repo.update(&gate).await?;
-                return Err(error);
-            }
-        };
-
-        let response_payload = with_human_mailbox_delivery_payload(
-            command.payload,
-            human_mailbox_delivery_payload(&delivery_runtime_session_id, &mailbox_result),
-        );
-        gate.payload_json = Some(response_payload);
-        gate.resolve("companion_respond");
-        self.gate_repo.update(&gate).await?;
+            .await?;
 
         Ok(CompanionGateRespondResult {
             gate_id: gate.id,
@@ -566,7 +545,7 @@ impl CompanionGateControlService {
             None => return Ok(None),
         };
 
-        let mut gate = match self
+        let gate = match self
             .gate_repo
             .list_open_for_agent(child_frame.agent_id)
             .await?
@@ -585,34 +564,6 @@ impl CompanionGateControlService {
             .and_then(|metadata| metadata.get("companion_label"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("companion");
-        let summary = command
-            .payload
-            .get("summary")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .trim();
-        let status = normalize_companion_result_status(
-            command
-                .payload
-                .get("status")
-                .and_then(serde_json::Value::as_str),
-        )?;
-        let resolution_payload = serde_json::json!({
-            "gate_id": gate.id.to_string(),
-            "request_id": command.request_id.clone(),
-            "status": status,
-            "summary": summary,
-            "findings": command.payload.get("findings"),
-            "follow_ups": command.payload.get("follow_ups"),
-            "artifact_refs": command.payload.get("artifact_refs"),
-            "child_agent_id": child_frame.agent_id.to_string(),
-            "parent_agent_id": parent_agent_id.to_string(),
-            "resolved_turn_id": resolved_turn_id,
-            "parent_mailbox_delivery": {
-                "status": "pending",
-            },
-        });
-
         let parent_delivery_runtime_session_id = self
             .select_current_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
             .await?;
@@ -629,29 +580,12 @@ impl CompanionGateControlService {
             let error =
                 "parent agent 缺少 current delivery runtime session，无法投递 companion result"
                     .to_string();
-            let failed_payload = with_parent_mailbox_delivery_payload(
-                resolution_payload.clone(),
-                serde_json::json!({
-                    "status": "failed",
-                    "error": error,
-                }),
-            );
-            gate.payload_json = Some(failed_payload);
-            self.gate_repo.update(&gate).await?;
             return Err(ApplicationError::Conflict(error));
         };
 
-        let input_text = build_parent_result_mailbox_input_text(
-            gate.id,
-            &command.request_id,
-            companion_label,
-            status,
-            summary,
-            &resolution_payload,
-        );
-        let mailbox_result = match self
-            .parent_mailbox_delivery
-            .deliver_child_result_to_parent(CompanionParentMailboxDeliveryCommand {
+        let outcome = self
+            .gate_resolver
+            .complete_child_result(CompleteChildResultGateCommand {
                 gate_id: gate.id,
                 request_id: command.request_id.clone(),
                 run_id: lineage.run_id,
@@ -660,59 +594,64 @@ impl CompanionGateControlService {
                 child_agent_id: child_frame.agent_id,
                 child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
                 resolved_turn_id: resolved_turn_id.clone(),
-                payload: resolution_payload.clone(),
+                companion_label: companion_label.to_string(),
+                payload: command.payload.clone(),
+                resolved_by: format!("child_agent:{}", child_frame.agent_id),
+            })
+            .await?;
+        let result_intent = outcome
+            .delivery_intents
+            .iter()
+            .find_map(|intent| match intent {
+                GateDeliveryIntent::CompanionChildResultToParent(intent) => Some(intent),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ApplicationError::Internal(format!(
+                    "child result gate {} 缺少 delivery intent",
+                    gate.id
+                ))
+            })?;
+        let resolution_payload = result_intent.payload.clone();
+        let summary = resolution_payload
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let status = resolution_payload
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("completed");
+        let input_text = build_parent_result_mailbox_input_text(
+            result_intent.gate_id,
+            &result_intent.request_id,
+            companion_label,
+            status,
+            summary,
+            &result_intent.payload,
+        );
+        let mailbox_result = self
+            .parent_mailbox_delivery
+            .deliver_child_result_to_parent(CompanionParentMailboxDeliveryCommand {
+                gate_id: result_intent.gate_id,
+                request_id: result_intent.request_id.clone(),
+                run_id: result_intent.run_id,
+                parent_agent_id: result_intent.parent_agent_id,
+                parent_delivery_runtime_session_id: result_intent
+                    .parent_delivery_runtime_session_id
+                    .clone(),
+                child_agent_id: result_intent.child_agent_id,
+                child_delivery_runtime_session_id: result_intent
+                    .child_delivery_runtime_session_id
+                    .clone(),
+                resolved_turn_id: result_intent.resolved_turn_id.clone(),
+                payload: result_intent.payload.clone(),
                 input_text,
             })
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let failed_payload = with_parent_mailbox_delivery_payload(
-                    resolution_payload.clone(),
-                    serde_json::json!({
-                        "status": "failed",
-                        "error": error.to_string(),
-                    }),
-                );
-                gate.payload_json = Some(failed_payload);
-                self.gate_repo.update(&gate).await?;
-                return Err(error);
-            }
-        };
+            .await?;
 
-        let resolution_payload = with_parent_mailbox_delivery_payload(
-            resolution_payload,
-            parent_mailbox_delivery_payload(&parent_delivery_runtime_session_id, &mailbox_result),
-        );
-        gate.payload_json = Some(resolution_payload.clone());
-        gate.resolve(format!("child_agent:{}", child_frame.agent_id));
-        self.gate_repo.update(&gate).await?;
-
-        let notification = CompanionGateEventNotification {
-            delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
-            turn_id: resolved_turn_id.clone(),
-            event_type: "companion_result_available".to_string(),
-            message: "Companion child agent 已回传结果 (mailbox accepted)".to_string(),
-            payload: resolution_payload.clone(),
-        };
-        if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-            diag!(Warn, Subsystem::AgentRun,
-        error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "companion gate resolved but parent result notification delivery failed");
-        }
-
-        if let Some(session_id) = child_delivery_runtime_session_id.clone() {
-            let notification = CompanionGateEventNotification {
-                delivery_runtime_session_id: session_id,
-                turn_id: resolved_turn_id.clone(),
-                event_type: "companion_result_returned".to_string(),
-                message: "已通过 LifecycleGate 回传结果到 parent agent".to_string(),
-                payload: resolution_payload.clone(),
-            };
-            if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-                diag!(Warn, Subsystem::AgentRun,
-        error = %error, gate_id = %gate.id, child_agent_id = %child_frame.agent_id, "companion gate resolved but child result notification delivery failed");
-            }
-        }
+        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
+            .await;
 
         Ok(Some(CompanionChildResultCompleteResult {
             gate_id: gate.id,
@@ -788,103 +727,73 @@ impl CompanionGateControlService {
         let parent_delivery_runtime_session_id = parent_selection.runtime_session_id;
 
         let companion_label = format!("child:{}", child_frame.agent_id);
-        let mut gate = LifecycleGate::open(
-            lineage.run_id,
-            Some(parent_agent_id),
-            Some(parent_frame_id),
-            COMPANION_PARENT_REQUEST_GATE_KIND,
-            "pending-parent-request",
-            None,
-        );
-        gate.correlation_id = gate.id.to_string();
-        let request_id = gate.id.to_string();
-        let review_payload = serde_json::json!({
-            "gate_id": request_id,
-            "request_id": request_id,
-            "run_id": lineage.run_id.to_string(),
-            "child_agent_id": child_frame.agent_id.to_string(),
-            "child_frame_id": child_frame.id.to_string(),
-            "parent_agent_id": parent_agent_id.to_string(),
-            "parent_frame_id": parent_frame_id.to_string(),
-            "companion_label": companion_label,
-            "companion_session_id": child_delivery_runtime_session_id,
-            "parent_session_id": parent_delivery_runtime_session_id,
-            "request_type": "review",
-            "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
-            "status": "pending",
-            "summary": message,
-            "turn_id": command.turn_id,
-            "wait": command.wait,
-            "payload": command.payload,
-            "parent_mailbox_delivery": {
-                "status": "pending",
-            },
-        });
-        gate.payload_json = Some(review_payload.clone());
-        self.gate_repo.create(&gate).await?;
-
-        let input_text = build_parent_request_mailbox_input_text(
-            gate.id,
-            &request_id,
-            &companion_label,
-            message,
-            command.wait,
-            &review_payload,
-        );
-        let mailbox_result = match self
-            .parent_mailbox_delivery
-            .deliver_parent_request_to_parent(CompanionParentRequestMailboxDeliveryCommand {
-                gate_id: gate.id,
-                request_id: request_id.clone(),
+        let outcome = self
+            .gate_resolver
+            .open_parent_request(OpenParentRequestGateCommand {
                 run_id: lineage.run_id,
                 parent_agent_id,
+                parent_frame_id,
                 parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
                 child_agent_id: child_frame.agent_id,
+                child_frame_id: child_frame.id,
                 child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
                 turn_id: command.turn_id.clone(),
                 wait: command.wait,
-                payload: review_payload.clone(),
+                companion_label: companion_label.clone(),
+                message: message.to_string(),
+                payload: command.payload.clone(),
+            })
+            .await?;
+        let gate = outcome.gate;
+        let request_id = gate.id.to_string();
+        let review_payload = gate.payload_json.clone().ok_or_else(|| {
+            ApplicationError::Internal(format!("parent request gate {} 缺少 payload", gate.id))
+        })?;
+        let parent_request_intent = outcome
+            .delivery_intents
+            .iter()
+            .find_map(|intent| match intent {
+                GateDeliveryIntent::CompanionParentRequest(intent) => Some(intent),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ApplicationError::Internal(format!(
+                    "parent request gate {} 缺少 delivery intent",
+                    gate.id
+                ))
+            })?;
+
+        let input_text = build_parent_request_mailbox_input_text(
+            parent_request_intent.gate_id,
+            &parent_request_intent.request_id,
+            &companion_label,
+            message,
+            parent_request_intent.wait,
+            &parent_request_intent.payload,
+        );
+        let mailbox_result = self
+            .parent_mailbox_delivery
+            .deliver_parent_request_to_parent(CompanionParentRequestMailboxDeliveryCommand {
+                gate_id: parent_request_intent.gate_id,
+                request_id: parent_request_intent.request_id.clone(),
+                run_id: parent_request_intent.run_id,
+                parent_agent_id: parent_request_intent.parent_agent_id,
+                parent_delivery_runtime_session_id: parent_request_intent
+                    .parent_delivery_runtime_session_id
+                    .clone(),
+                child_agent_id: parent_request_intent.child_agent_id,
+                child_delivery_runtime_session_id: parent_request_intent
+                    .child_delivery_runtime_session_id
+                    .clone(),
+                turn_id: parent_request_intent.turn_id.clone(),
+                wait: parent_request_intent.wait,
+                payload: parent_request_intent.payload.clone(),
                 input_text,
             })
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let failed_payload = with_parent_mailbox_delivery_payload(
-                    review_payload.clone(),
-                    mailbox_delivery_payload(
-                        "parent_delivery_runtime_session_id",
-                        &parent_delivery_runtime_session_id,
-                        serde_json::json!({
-                            "status": "failed",
-                            "error": error.to_string(),
-                        }),
-                    ),
-                );
-                gate.payload_json = Some(failed_payload);
-                self.gate_repo.update(&gate).await?;
-                return Err(error);
-            }
-        };
+            .await?;
 
-        let review_payload = with_parent_mailbox_delivery_payload(
-            review_payload,
-            parent_mailbox_delivery_payload(&parent_delivery_runtime_session_id, &mailbox_result),
-        );
-        gate.payload_json = Some(review_payload.clone());
-        self.gate_repo.update(&gate).await?;
-
-        let notification = CompanionGateEventNotification {
-            delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
-            turn_id: command.turn_id,
-            event_type: "companion_review_request".to_string(),
-            message: format!("Companion `{companion_label}` 请求审阅: {message}"),
-            payload: review_payload.clone(),
-        };
-        if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-            diag!(Warn, Subsystem::AgentRun,
-        error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "parent companion request gate opened but runtime notification delivery failed");
-        }
+        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
+            .await;
 
         Ok(CompanionParentRequestOpenResult {
             gate_id: gate.id,
@@ -918,7 +827,7 @@ impl CompanionGateControlService {
         let Ok(gate_id) = Uuid::parse_str(request_id) else {
             return Ok(None);
         };
-        let Some(mut gate) = self.gate_repo.get(gate_id).await? else {
+        let Some(gate) = self.gate_repo.get(gate_id).await? else {
             return Ok(None);
         };
         if gate.gate_kind != COMPANION_PARENT_REQUEST_GATE_KIND {
@@ -993,116 +902,65 @@ impl CompanionGateControlService {
                 ))
             })?;
 
-        let mut resolution_payload = command.payload.clone();
-        if let Some(object) = resolution_payload.as_object_mut() {
-            object.insert(
-                "gate_id".to_string(),
-                serde_json::Value::String(gate.id.to_string()),
-            );
-            object.insert(
-                "request_id".to_string(),
-                serde_json::Value::String(gate.id.to_string()),
-            );
-            object.insert(
-                "resolved_turn_id".to_string(),
-                serde_json::Value::String(command.resolved_turn_id.clone()),
-            );
-            object.insert(
-                "run_id".to_string(),
-                serde_json::Value::String(parent_anchor.run_id.to_string()),
-            );
-            object.insert(
-                "parent_agent_id".to_string(),
-                serde_json::Value::String(parent_frame.agent_id.to_string()),
-            );
-            object.insert(
-                "parent_frame_id".to_string(),
-                serde_json::Value::String(parent_frame.id.to_string()),
-            );
-            object.insert(
-                "parent_delivery_runtime_session_id".to_string(),
-                serde_json::Value::String(parent_delivery_runtime_session_id.clone()),
-            );
-            object.insert(
-                "child_agent_id".to_string(),
-                serde_json::Value::String(child_agent_id.to_string()),
-            );
-            object.insert(
-                "child_frame_id".to_string(),
-                serde_json::Value::String(child_frame_id.to_string()),
-            );
-            object.insert(
-                "child_delivery_runtime_session_id".to_string(),
-                serde_json::Value::String(child_delivery_runtime_session_id.clone()),
-            );
-            object.insert(
-                "child_mailbox_delivery".to_string(),
-                serde_json::json!({
-                    "status": "pending",
-                }),
-            );
-        }
-
-        let input_text = build_parent_response_mailbox_input_text(
-            gate.id,
-            &command.request_id,
-            &command.resolved_turn_id,
-            &resolution_payload,
-        );
-        let mailbox_result = match self
-            .parent_mailbox_delivery
-            .deliver_parent_response_to_child(CompanionParentResponseMailboxDeliveryCommand {
+        let outcome = self
+            .gate_resolver
+            .resolve_parent_request(ResolveParentRequestGateCommand {
                 gate_id: gate.id,
-                request_id: command.request_id.clone(),
                 run_id: parent_anchor.run_id,
                 parent_agent_id: parent_frame.agent_id,
+                parent_frame_id: parent_frame.id,
                 parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
                 child_agent_id,
+                child_frame_id,
                 child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
                 resolved_turn_id: command.resolved_turn_id.clone(),
-                payload: resolution_payload.clone(),
+                payload: command.payload.clone(),
+                resolved_by: format!("parent_agent:{}", parent_frame.agent_id),
+            })
+            .await?;
+        let parent_response_intent = outcome
+            .delivery_intents
+            .iter()
+            .find_map(|intent| match intent {
+                GateDeliveryIntent::CompanionParentResponseToChild(intent) => Some(intent),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ApplicationError::Internal(format!(
+                    "parent response gate {} 缺少 delivery intent",
+                    gate.id
+                ))
+            })?;
+        let resolution_payload = parent_response_intent.payload.clone();
+
+        let input_text = build_parent_response_mailbox_input_text(
+            parent_response_intent.gate_id,
+            &parent_response_intent.request_id,
+            &parent_response_intent.resolved_turn_id,
+            &parent_response_intent.payload,
+        );
+        let mailbox_result = self
+            .parent_mailbox_delivery
+            .deliver_parent_response_to_child(CompanionParentResponseMailboxDeliveryCommand {
+                gate_id: parent_response_intent.gate_id,
+                request_id: parent_response_intent.request_id.clone(),
+                run_id: parent_response_intent.run_id,
+                parent_agent_id: parent_response_intent.parent_agent_id,
+                parent_delivery_runtime_session_id: parent_response_intent
+                    .parent_delivery_runtime_session_id
+                    .clone(),
+                child_agent_id: parent_response_intent.child_agent_id,
+                child_delivery_runtime_session_id: parent_response_intent
+                    .child_delivery_runtime_session_id
+                    .clone(),
+                resolved_turn_id: parent_response_intent.resolved_turn_id.clone(),
+                payload: parent_response_intent.payload.clone(),
                 input_text,
             })
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let failed_payload = with_child_mailbox_delivery_payload(
-                    resolution_payload.clone(),
-                    mailbox_delivery_payload(
-                        "child_delivery_runtime_session_id",
-                        &child_delivery_runtime_session_id,
-                        serde_json::json!({
-                            "status": "failed",
-                            "error": error.to_string(),
-                        }),
-                    ),
-                );
-                gate.payload_json = Some(failed_payload);
-                self.gate_repo.update(&gate).await?;
-                return Err(error);
-            }
-        };
+            .await?;
 
-        let resolution_payload = with_child_mailbox_delivery_payload(
-            resolution_payload,
-            child_mailbox_delivery_payload(&child_delivery_runtime_session_id, &mailbox_result),
-        );
-        gate.payload_json = Some(resolution_payload.clone());
-        gate.resolve(format!("parent_agent:{}", parent_frame.agent_id));
-        self.gate_repo.update(&gate).await?;
-
-        let notification = CompanionGateEventNotification {
-            delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
-            turn_id: command.resolved_turn_id,
-            event_type: "companion_parent_request_resolved".to_string(),
-            message: "Parent companion request 已通过 LifecycleGate resolve".to_string(),
-            payload: resolution_payload.clone(),
-        };
-        if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-            diag!(Warn, Subsystem::AgentRun,
-        error = %error, gate_id = %gate.id, parent_agent_id = %parent_frame.agent_id, "parent companion request gate resolved but runtime notification delivery failed");
-        }
+        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
+            .await;
 
         Ok(Some(CompanionParentRequestResolveResult {
             gate_id: gate.id,
@@ -1200,6 +1058,36 @@ impl CompanionGateControlService {
             Err(error) => Err(application_error_from_selection_error(error)),
         }
     }
+
+    async fn deliver_notification_intents(
+        &self,
+        intents: &[GateNotificationIntent],
+        gate_id: Uuid,
+        diagnostic_agent_id: Option<Uuid>,
+    ) {
+        for intent in intents {
+            let event = match intent {
+                GateNotificationIntent::CompanionReviewRequest(event)
+                | GateNotificationIntent::CompanionParentRequestResolved(event)
+                | GateNotificationIntent::CompanionResultAvailable(event)
+                | GateNotificationIntent::CompanionResultReturned(event) => event,
+            };
+            let notification = CompanionGateEventNotification {
+                delivery_runtime_session_id: event.delivery_runtime_session_id.clone(),
+                turn_id: event.turn_id.clone(),
+                event_type: event.event_type.clone(),
+                message: event.message.clone(),
+                payload: event.payload.clone(),
+            };
+            if let Err(error) = self.delivery.deliver_companion_event(notification).await {
+                diag!(Warn, Subsystem::AgentRun,
+                    error = %error,
+                    gate_id = %gate_id,
+                    agent_id = diagnostic_agent_id.map(|id| id.to_string()).unwrap_or_else(|| "(unknown)".to_string()),
+                    "companion gate transition notification delivery failed");
+            }
+        }
+    }
 }
 
 fn application_error_from_selection_error(
@@ -1215,20 +1103,6 @@ fn application_error_from_selection_error(
         }
         DeliveryRuntimeSelectionError::Repository(source) => ApplicationError::from(source),
         other => ApplicationError::Conflict(other.to_string()),
-    }
-}
-
-fn normalize_companion_result_status(
-    status: Option<&str>,
-) -> Result<&'static str, ApplicationError> {
-    match status.unwrap_or("completed").trim() {
-        "" => Ok("completed"),
-        "completed" => Ok("completed"),
-        "blocked" => Ok("blocked"),
-        "needs_follow_up" => Ok("needs_follow_up"),
-        other => Err(ApplicationError::BadRequest(format!(
-            "payload.status 不支持 `{other}`，应为 completed/blocked/needs_follow_up"
-        ))),
     }
 }
 
@@ -1363,113 +1237,6 @@ fn build_human_response_mailbox_input_text(
     lines.join("\n")
 }
 
-fn parent_mailbox_delivery_payload(
-    parent_delivery_runtime_session_id: &str,
-    delivery: &CompanionParentMailboxDeliveryResult,
-) -> serde_json::Value {
-    mailbox_delivery_payload(
-        "parent_delivery_runtime_session_id",
-        parent_delivery_runtime_session_id,
-        serde_json::json!({
-            "status": "accepted",
-            "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
-            "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
-            "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
-            "command_receipt_status": delivery.command_receipt_status.clone(),
-            "command_receipt_duplicate": delivery.command_receipt_duplicate,
-            "outcome": delivery.outcome.clone(),
-            "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
-            "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
-        }),
-    )
-}
-
-fn child_mailbox_delivery_payload(
-    child_delivery_runtime_session_id: &str,
-    delivery: &CompanionParentMailboxDeliveryResult,
-) -> serde_json::Value {
-    mailbox_delivery_payload(
-        "child_delivery_runtime_session_id",
-        child_delivery_runtime_session_id,
-        serde_json::json!({
-            "status": "accepted",
-            "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
-            "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
-            "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
-            "command_receipt_status": delivery.command_receipt_status.clone(),
-            "command_receipt_duplicate": delivery.command_receipt_duplicate,
-            "outcome": delivery.outcome.clone(),
-            "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
-            "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
-        }),
-    )
-}
-
-fn human_mailbox_delivery_payload(
-    delivery_runtime_session_id: &str,
-    delivery: &CompanionParentMailboxDeliveryResult,
-) -> serde_json::Value {
-    mailbox_delivery_payload(
-        "delivery_runtime_session_id",
-        delivery_runtime_session_id,
-        serde_json::json!({
-            "status": "accepted",
-            "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
-            "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
-            "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
-            "command_receipt_status": delivery.command_receipt_status.clone(),
-            "command_receipt_duplicate": delivery.command_receipt_duplicate,
-            "outcome": delivery.outcome.clone(),
-            "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
-            "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
-        }),
-    )
-}
-
-fn mailbox_delivery_payload(
-    runtime_session_key: &str,
-    runtime_session_id: &str,
-    mut payload: serde_json::Value,
-) -> serde_json::Value {
-    if let Some(object) = payload.as_object_mut() {
-        object.insert(
-            runtime_session_key.to_string(),
-            serde_json::Value::String(runtime_session_id.to_string()),
-        );
-    }
-    payload
-}
-
-fn with_human_mailbox_delivery_payload(
-    mut payload: serde_json::Value,
-    delivery: serde_json::Value,
-) -> serde_json::Value {
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("human_mailbox_delivery".to_string(), delivery);
-    }
-    payload
-}
-
-fn with_parent_mailbox_delivery_payload(
-    mut payload: serde_json::Value,
-    delivery: serde_json::Value,
-) -> serde_json::Value {
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("parent_mailbox_delivery".to_string(), delivery);
-    }
-    payload
-}
-
-fn with_child_mailbox_delivery_payload(
-    mut payload: serde_json::Value,
-    delivery: serde_json::Value,
-) -> serde_json::Value {
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("child_mailbox_delivery".to_string(), delivery);
-    }
-    payload
-}
-
 fn payload_uuid(payload: &serde_json::Value, key: &str) -> Result<Uuid, ApplicationError> {
     let value = payload
         .get(key)
@@ -1490,7 +1257,7 @@ mod tests {
         DomainError,
         workflow::{
             AgentFrame, AgentLineage, AgentSource, DeliveryBindingStatus, LifecycleAgent,
-            LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+            LifecycleGate, LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
         },
     };
 
@@ -2160,10 +1927,16 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
-                .and_then(|delivery| delivery.get("status"))
+                .and_then(|payload| payload.get("status"))
                 .and_then(serde_json::Value::as_str),
-            Some("accepted")
+            Some("approved")
+        );
+        assert!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("human_mailbox_delivery"))
+                .is_none()
         );
 
         let notifications = delivery.response_notifications.lock().unwrap();
@@ -2220,7 +1993,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn respond_records_human_mailbox_delivery_failure() {
+    async fn respond_keeps_delivery_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let frame = AgentFrame::new_revision(agent_id, 1, "test");
@@ -2277,24 +2050,21 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(stored.is_open());
+        assert!(!stored.is_open());
         assert_eq!(
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("human_mailbox_delivery"))
-                .and_then(|delivery| delivery.get("status"))
+                .and_then(|payload| payload.get("status"))
                 .and_then(serde_json::Value::as_str),
-            Some("failed")
+            Some("approved")
         );
-        assert_eq!(
+        assert!(
             stored
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("human_mailbox_delivery"))
-                .and_then(|delivery| delivery.get("error"))
-                .and_then(serde_json::Value::as_str),
-            Some("mailbox unavailable")
+                .is_none()
         );
         assert_eq!(human_mailbox_delivery.commands.lock().unwrap().len(), 1);
     }
@@ -2410,16 +2180,7 @@ mod tests {
                 .and_then(|payload| payload.get("parent_mailbox_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
-            Some("accepted")
-        );
-        assert_eq!(
-            stored
-                .payload_json
-                .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .and_then(|delivery| delivery.get("outcome"))
-                .and_then(serde_json::Value::as_str),
-            Some("queued")
+            None
         );
 
         let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
@@ -2546,18 +2307,8 @@ mod tests {
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .and_then(|payload| payload.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("accepted")
-        );
-        assert_eq!(
-            stored
-                .payload_json
-                .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .and_then(|payload| payload.get("parent_delivery_runtime_session_id"))
-                .and_then(serde_json::Value::as_str),
-            Some("parent-session")
+                .is_none(),
+            true
         );
         assert_eq!(
             result
@@ -2604,7 +2355,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn open_parent_request_records_mailbox_failure_on_gate_payload() {
+    async fn open_parent_request_keeps_mailbox_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2660,14 +2411,12 @@ mod tests {
         let gates = gate_repo.gates.lock().unwrap();
         let stored = gates.values().next().expect("gate persisted");
         assert!(stored.is_open());
-        assert_eq!(
+        assert!(
             stored
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .and_then(|payload| payload.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("failed")
+                .is_none()
         );
         assert_eq!(
             parent_mailbox_delivery
@@ -2680,7 +2429,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_child_result_records_mailbox_failure_on_gate_payload() {
+    async fn complete_child_result_keeps_mailbox_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2755,7 +2504,7 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(stored.is_open());
+        assert!(!stored.is_open());
         assert_eq!(
             stored
                 .payload_json
@@ -2763,16 +2512,7 @@ mod tests {
                 .and_then(|payload| payload.get("parent_mailbox_delivery"))
                 .and_then(|delivery| delivery.get("status"))
                 .and_then(serde_json::Value::as_str),
-            Some("failed")
-        );
-        assert_eq!(
-            stored
-                .payload_json
-                .as_ref()
-                .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .and_then(|delivery| delivery.get("error"))
-                .and_then(serde_json::Value::as_str),
-            Some("mailbox unavailable")
+            None
         );
         assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
         assert!(delivery.event_notifications.lock().unwrap().is_empty());
@@ -3054,15 +2794,13 @@ mod tests {
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("child_mailbox_delivery"))
-                .and_then(|payload| payload.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("accepted")
+                .is_none(),
+            true
         );
         assert_eq!(
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_mailbox_delivery"))
                 .and_then(|payload| payload.get("child_delivery_runtime_session_id"))
                 .and_then(serde_json::Value::as_str),
             Some("child-session")
@@ -3121,7 +2859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_parent_request_records_child_mailbox_failure_on_gate_payload() {
+    async fn resolve_parent_request_keeps_child_mailbox_failure_out_of_gate_payload() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -3190,15 +2928,13 @@ mod tests {
             .await
             .expect("load gate")
             .expect("gate exists");
-        assert!(stored.is_open());
-        assert_eq!(
+        assert!(!stored.is_open());
+        assert!(
             stored
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("child_mailbox_delivery"))
-                .and_then(|payload| payload.get("status"))
-                .and_then(serde_json::Value::as_str),
-            Some("failed")
+                .is_none()
         );
         assert_eq!(
             parent_mailbox_delivery

@@ -1,17 +1,24 @@
 pub mod runtime_bridge;
 pub mod runtime_tool_provider;
+mod surface;
 mod tools;
 pub mod visibility;
 
+use std::collections::BTreeMap;
+
+use agentdash_application_runtime_gateway::{
+    EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA, RuntimeActionDescriptor,
+    RuntimeActionKind, validate_json_schema_subset,
+};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentation,
-    WorkspaceModuleStatus, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
+    WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentation, WorkspaceModuleStatus,
+    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
 use agentdash_domain::canvas::{Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasScope};
 use agentdash_domain::shared_library::{
-    ExtensionPermissionDeclaration, ExtensionRuntimeActionKind,
-    ExtensionWorkspaceTabRendererDeclaration,
+    ExtensionBundleKind, ExtensionPermissionDeclaration, ExtensionWorkspaceTabRendererDeclaration,
 };
 use thiserror::Error;
 
@@ -33,6 +40,13 @@ pub use runtime_bridge::{
     submit_canvas_runtime_surface_update,
 };
 pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
+pub(crate) use surface::{
+    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
+    WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
+    WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
+    WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
+    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
+};
 pub use tools::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
     WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
@@ -40,77 +54,38 @@ pub use tools::{
 pub use visibility::{
     WorkspaceModuleVisibilityDiagnostic, WorkspaceModuleVisibilityProjection,
     resolve_workspace_module_visibility,
+    resolve_workspace_module_visibility_with_operation_context,
 };
 
 pub const MODULE_ID_EXTENSION_PREFIX: &str = "ext:";
 pub const MODULE_ID_CANVAS_PREFIX: &str = CANVAS_MODULE_ID_PREFIX;
 pub const MODULE_ID_BUILTIN_PREFIX: &str = "builtin:";
 
-/// 轻量 input schema 校验（无外部 jsonschema 依赖）。
-///
-/// 覆盖 describe 出的 operation `input_schema` 的常见形态：顶层 `type` 与 `required`。
-/// 校验范围刻意保守，只拦截类型大类不符与缺必填字段这类明确违例。
 pub fn validate_input_against_schema(
     schema: &serde_json::Value,
     input: &serde_json::Value,
 ) -> Result<(), String> {
-    let serde_json::Value::Object(schema_obj) = schema else {
-        return Ok(());
-    };
-
-    if let Some(expected_type) = schema_obj.get("type").and_then(|t| t.as_str())
-        && !json_value_matches_type(input, expected_type)
-    {
-        return Err(format!(
-            "input 类型不匹配 schema：期望 `{expected_type}`，实际 `{}`",
-            json_value_type_name(input)
-        ));
-    }
-
-    if let Some(required) = schema_obj.get("required").and_then(|r| r.as_array()) {
-        let obj = input.as_object();
-        for field in required {
-            let Some(name) = field.as_str() else { continue };
-            let present = obj.is_some_and(|map| map.contains_key(name));
-            if !present {
-                return Err(format!("input 缺少 schema 要求的必填字段 `{name}`"));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn json_value_matches_type(value: &serde_json::Value, expected: &str) -> bool {
-    match expected {
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "string" => value.is_string(),
-        "number" => value.is_number(),
-        "integer" => value.is_i64() || value.is_u64(),
-        "boolean" => value.is_boolean(),
-        "null" => value.is_null(),
-        _ => true,
-    }
-}
-
-fn json_value_type_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "boolean",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
-    }
+    validate_json_schema_subset(schema, input)
 }
 
 pub fn build_workspace_modules(
     ext: &ExtensionRuntimeProjection,
     canvases: &[Canvas],
 ) -> Vec<WorkspaceModuleDescriptor> {
+    build_workspace_modules_with_operation_context(
+        ext,
+        canvases,
+        &WorkspaceModuleOperationContext::default(),
+    )
+}
+
+pub fn build_workspace_modules_with_operation_context(
+    ext: &ExtensionRuntimeProjection,
+    canvases: &[Canvas],
+    operation_context: &WorkspaceModuleOperationContext,
+) -> Vec<WorkspaceModuleDescriptor> {
     let mut modules = Vec::new();
-    modules.extend(build_extension_modules(ext));
+    modules.extend(build_extension_modules(ext, operation_context));
     modules.extend(canvases.iter().map(|canvas| {
         let access = default_canvas_access_for_descriptor(canvas);
         build_canvas_module(canvas, &access)
@@ -122,8 +97,20 @@ pub fn build_workspace_modules_with_canvas_access(
     ext: &ExtensionRuntimeProjection,
     canvases: &[CanvasWithAccess],
 ) -> Vec<WorkspaceModuleDescriptor> {
+    build_workspace_modules_with_canvas_access_and_operation_context(
+        ext,
+        canvases,
+        &WorkspaceModuleOperationContext::default(),
+    )
+}
+
+pub fn build_workspace_modules_with_canvas_access_and_operation_context(
+    ext: &ExtensionRuntimeProjection,
+    canvases: &[CanvasWithAccess],
+    operation_context: &WorkspaceModuleOperationContext,
+) -> Vec<WorkspaceModuleDescriptor> {
     let mut modules = Vec::new();
-    modules.extend(build_extension_modules(ext));
+    modules.extend(build_extension_modules(ext, operation_context));
     modules.extend(
         canvases
             .iter()
@@ -138,6 +125,85 @@ pub fn build_canvas_workspace_module(
     access: &CanvasAccessProjection,
 ) -> WorkspaceModuleDescriptor {
     build_canvas_module(canvas, access)
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceModuleRuntimeActionCatalog {
+    descriptors: Vec<RuntimeActionDescriptor>,
+    missing_descriptor_readiness: WorkspaceModuleOperationReadiness,
+}
+
+impl WorkspaceModuleRuntimeActionCatalog {
+    pub fn from_descriptors(descriptors: Vec<RuntimeActionDescriptor>) -> Self {
+        Self {
+            descriptors,
+            missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
+                "runtime action is not present in the RuntimeGateway actor/context catalog",
+            ),
+        }
+    }
+
+    pub fn missing_runtime_gateway(reason: impl Into<String>) -> Self {
+        Self {
+            descriptors: Vec::new(),
+            missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway,
+                reason,
+            ),
+        }
+    }
+
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            descriptors: Vec::new(),
+            missing_descriptor_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
+                reason,
+            ),
+        }
+    }
+}
+
+impl Default for WorkspaceModuleRuntimeActionCatalog {
+    fn default() -> Self {
+        Self::missing_runtime_gateway(
+            "RuntimeGateway catalog is not attached to this workspace module projection",
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceModuleOperationContext {
+    pub runtime_actions: WorkspaceModuleRuntimeActionCatalog,
+    pub channel_readiness: WorkspaceModuleOperationReadiness,
+    pub backend_readiness: WorkspaceModuleOperationReadiness,
+}
+
+impl WorkspaceModuleOperationContext {
+    pub fn ready(runtime_actions: Vec<RuntimeActionDescriptor>) -> Self {
+        Self {
+            runtime_actions: WorkspaceModuleRuntimeActionCatalog::from_descriptors(runtime_actions),
+            channel_readiness: WorkspaceModuleOperationReadiness::ready(),
+            backend_readiness: WorkspaceModuleOperationReadiness::ready(),
+        }
+    }
+}
+
+impl Default for WorkspaceModuleOperationContext {
+    fn default() -> Self {
+        Self {
+            runtime_actions: WorkspaceModuleRuntimeActionCatalog::default(),
+            channel_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingChannelTransport,
+                "extension channel transport is not attached to this workspace module projection",
+            ),
+            backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
+                "runtime backend anchor is not attached to this workspace module projection",
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -230,27 +296,88 @@ pub fn build_workspace_module_presentation(
     })
 }
 
-fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceModuleDescriptor> {
+fn build_extension_modules(
+    ext: &ExtensionRuntimeProjection,
+    operation_context: &WorkspaceModuleOperationContext,
+) -> Vec<WorkspaceModuleDescriptor> {
+    let action_owner_by_key = unique_runtime_action_owners(ext);
+    let duplicate_action_keys = duplicate_runtime_action_keys(ext);
+    let descriptor_action_keys = operation_context
+        .runtime_actions
+        .descriptors
+        .iter()
+        .filter(|descriptor| descriptor.kind == RuntimeActionKind::SessionRuntime)
+        .filter(|descriptor| !duplicate_action_keys.contains(descriptor.action_key.as_str()))
+        .map(|descriptor| descriptor.action_key.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut runtime_operations_by_extension: BTreeMap<String, Vec<WorkspaceModuleOperation>> =
+        BTreeMap::new();
+    for descriptor in &operation_context.runtime_actions.descriptors {
+        if descriptor.kind != RuntimeActionKind::SessionRuntime {
+            continue;
+        }
+        if duplicate_action_keys.contains(descriptor.action_key.as_str()) {
+            continue;
+        }
+        let Some(extension_key) = descriptor_extension_key(descriptor).or_else(|| {
+            action_owner_by_key
+                .get(descriptor.action_key.as_str())
+                .copied()
+        }) else {
+            continue;
+        };
+        if !ext
+            .installations
+            .iter()
+            .any(|installation| installation.extension_key == extension_key)
+        {
+            continue;
+        }
+        runtime_operations_by_extension
+            .entry(extension_key.to_string())
+            .or_default()
+            .push(runtime_action_operation_from_descriptor(
+                descriptor,
+                &operation_context.backend_readiness,
+            ));
+    }
+
     ext.installations
         .iter()
         .map(|installation| {
             let extension_key = installation.extension_key.as_str();
-            let mut operations: Vec<WorkspaceModuleOperation> = ext
-                .runtime_actions
-                .iter()
-                .filter(|action| action.extension_key == extension_key)
-                .map(|action| WorkspaceModuleOperation {
-                    operation_key: action.action_key.clone(),
-                    origin: runtime_action_origin(&action.kind).to_string(),
-                    description: action.description.clone(),
-                    input_schema: Some(action.input_schema.clone()),
-                    output_schema: Some(action.output_schema.clone()),
-                    permission_summary: action.permissions.clone(),
-                    dispatch: WorkspaceModuleOperationDispatch::RuntimeAction {
-                        action_key: action.action_key.clone(),
-                    },
-                })
-                .collect();
+            let mut operations: Vec<WorkspaceModuleOperation> = runtime_operations_by_extension
+                .get(extension_key)
+                .cloned()
+                .unwrap_or_default();
+
+            operations.extend(
+                ext.runtime_actions
+                    .iter()
+                    .filter(|action| action.extension_key == extension_key)
+                    .filter(|action| !descriptor_action_keys.contains(action.action_key.as_str()))
+                    .map(|action| {
+                        let readiness = if duplicate_action_keys.contains(action.action_key.as_str())
+                        {
+                            WorkspaceModuleOperationReadiness::unavailable(
+                                WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
+                                format!(
+                                    "runtime action `{}` is declared by multiple enabled extensions",
+                                    action.action_key
+                                ),
+                            )
+                        } else {
+                            operation_context
+                                .runtime_actions
+                                .missing_descriptor_readiness
+                                .clone()
+                        };
+                        unavailable_runtime_action_operation(
+                            &action.action_key,
+                            readiness,
+                        )
+                    }),
+            );
 
             for channel in ext
                 .protocol_channels
@@ -269,14 +396,21 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                             channel_key: channel.channel_key.clone(),
                             method_name: method.name.clone(),
                         },
+                        readiness: first_unready_or_ready([
+                            &operation_context.channel_readiness,
+                            &operation_context.backend_readiness,
+                        ]),
                     });
                 }
             }
+
+            operations.sort_by(|left, right| left.operation_key.cmp(&right.operation_key));
 
             let ui_entries: Vec<WorkspaceModuleUiEntry> = ext
                 .workspace_tabs
                 .iter()
                 .filter(|tab| tab.extension_key == extension_key)
+                .filter(|tab| tab.loadability.available)
                 .map(|tab| WorkspaceModuleUiEntry {
                     view_key: tab.type_id.clone(),
                     renderer_kind: tab_renderer_kind(&tab.renderer).to_string(),
@@ -293,14 +427,28 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
                 .map(|permission| describe_permission(&permission.permission))
                 .collect();
 
-            let has_bundle = ext
-                .bundles
-                .iter()
-                .any(|bundle| bundle.extension_key == extension_key);
-            let status = if has_bundle {
+            let has_extension_host_runtime = installation.package_artifact.is_some()
+                && ext.bundles.iter().any(|bundle| {
+                    bundle.extension_key == extension_key
+                        && bundle.kind == ExtensionBundleKind::ExtensionHost
+                        && !bundle.entry.trim().is_empty()
+                });
+            let has_available_ui_only_tab = ext.workspace_tabs.iter().any(|tab| {
+                tab.extension_key == extension_key
+                    && tab.loadability.available
+                    && matches!(
+                        tab.loadability.mode,
+                        crate::extension_runtime::ExtensionWorkspaceTabLoadabilityMode::UiOnly
+                    )
+            });
+            let status = if has_extension_host_runtime
+                || (operations.is_empty() && has_available_ui_only_tab)
+            {
                 WorkspaceModuleStatus::ready()
             } else {
-                WorkspaceModuleStatus::unavailable("extension runtime bundle 缺失，模块无法加载")
+                WorkspaceModuleStatus::unavailable(
+                    "extension host bundle 缺失，runtime operation 无法加载",
+                )
             };
 
             let operation_summary = operations
@@ -328,6 +476,91 @@ fn build_extension_modules(ext: &ExtensionRuntimeProjection) -> Vec<WorkspaceMod
             }
         })
         .collect()
+}
+
+fn unique_runtime_action_owners(ext: &ExtensionRuntimeProjection) -> BTreeMap<&str, &str> {
+    let duplicate_keys = duplicate_runtime_action_keys(ext);
+    let mut owners = BTreeMap::new();
+    for action in &ext.runtime_actions {
+        if duplicate_keys.contains(action.action_key.as_str()) {
+            continue;
+        }
+        owners
+            .entry(action.action_key.as_str())
+            .or_insert(action.extension_key.as_str());
+    }
+    owners
+}
+
+fn duplicate_runtime_action_keys(
+    ext: &ExtensionRuntimeProjection,
+) -> std::collections::BTreeSet<&str> {
+    let mut seen_keys = std::collections::BTreeSet::new();
+    let mut duplicate_keys = std::collections::BTreeSet::new();
+    for action in &ext.runtime_actions {
+        if !seen_keys.insert(action.action_key.as_str()) {
+            duplicate_keys.insert(action.action_key.as_str());
+        }
+    }
+    duplicate_keys
+}
+
+fn descriptor_extension_key(descriptor: &RuntimeActionDescriptor) -> Option<&str> {
+    descriptor
+        .metadata
+        .get(EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA)?
+        .as_str()
+}
+
+fn runtime_action_operation_from_descriptor(
+    descriptor: &RuntimeActionDescriptor,
+    backend_readiness: &WorkspaceModuleOperationReadiness,
+) -> WorkspaceModuleOperation {
+    let action_key = descriptor.action_key.as_str().to_string();
+    WorkspaceModuleOperation {
+        operation_key: action_key.clone(),
+        origin: runtime_action_origin(descriptor.kind).to_string(),
+        description: descriptor
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("Runtime action `{action_key}`")),
+        input_schema: descriptor.input_schema.clone(),
+        output_schema: descriptor.output_schema.clone(),
+        permission_summary: descriptor.default_policy.required_capabilities.clone(),
+        dispatch: WorkspaceModuleOperationDispatch::RuntimeAction { action_key },
+        readiness: first_unready_or_ready([backend_readiness]),
+    }
+}
+
+fn unavailable_runtime_action_operation(
+    action_key: &str,
+    readiness: WorkspaceModuleOperationReadiness,
+) -> WorkspaceModuleOperation {
+    WorkspaceModuleOperation {
+        operation_key: action_key.to_string(),
+        origin: "runtime_action".to_string(),
+        description: format!(
+            "Runtime action `{action_key}` is not available from the current RuntimeGateway catalog."
+        ),
+        input_schema: None,
+        output_schema: None,
+        permission_summary: Vec::new(),
+        dispatch: WorkspaceModuleOperationDispatch::RuntimeAction {
+            action_key: action_key.to_string(),
+        },
+        readiness,
+    }
+}
+
+fn first_unready_or_ready<'a, I>(readinesses: I) -> WorkspaceModuleOperationReadiness
+where
+    I: IntoIterator<Item = &'a WorkspaceModuleOperationReadiness>,
+{
+    readinesses
+        .into_iter()
+        .find(|readiness| !readiness.is_ready())
+        .cloned()
+        .unwrap_or_else(WorkspaceModuleOperationReadiness::ready)
 }
 
 fn build_canvas_module(
@@ -407,6 +640,7 @@ fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::BindData,
         },
+        readiness: WorkspaceModuleOperationReadiness::ready(),
     }
 }
 
@@ -430,6 +664,7 @@ fn canvas_inspect_operation() -> WorkspaceModuleOperation {
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::Inspect,
         },
+        readiness: WorkspaceModuleOperationReadiness::ready(),
     }
 }
 
@@ -453,6 +688,7 @@ fn canvas_get_interaction_state_operation() -> WorkspaceModuleOperation {
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::GetInteractionState,
         },
+        readiness: WorkspaceModuleOperationReadiness::ready(),
     }
 }
 
@@ -476,8 +712,11 @@ fn default_canvas_access_for_descriptor(canvas: &Canvas) -> CanvasAccessProjecti
     }
 }
 
-fn runtime_action_origin(_kind: &ExtensionRuntimeActionKind) -> &'static str {
-    "runtime_action"
+fn runtime_action_origin(kind: RuntimeActionKind) -> &'static str {
+    match kind {
+        RuntimeActionKind::SessionRuntime => "runtime_action",
+        RuntimeActionKind::Setup => "setup_action",
+    }
 }
 
 fn tab_renderer_kind(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &'static str {
@@ -515,5 +754,344 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
             channel_key,
             methods,
         } => format!("channel:{channel_key}[{}]", methods.join(",")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_application_runtime_gateway::{
+        EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA, RuntimeActionDescriptor,
+        RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
+    };
+    use agentdash_contracts::workspace_module::{
+        WorkspaceModuleOperationReadinessKind, WorkspaceModuleStatusKind,
+    };
+    use agentdash_domain::shared_library::{
+        ExtensionBundleKind, ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
+    };
+    use uuid::Uuid;
+
+    use crate::extension_runtime::{
+        ExtensionBundleProjection, ExtensionInstallationProjection,
+        ExtensionRuntimeActionProjection, ExtensionRuntimeProjection,
+        ExtensionWorkspaceTabLoadabilityMode, ExtensionWorkspaceTabLoadabilityProjection,
+        ExtensionWorkspaceTabProjection,
+    };
+
+    use super::{
+        WorkspaceModuleOperationContext, build_workspace_modules,
+        build_workspace_modules_with_operation_context, validate_input_against_schema,
+    };
+
+    #[test]
+    fn workspace_module_accepts_ui_only_canvas_panel_without_extension_host_bundle() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "canvas-demo".to_string(),
+                extension_id: "canvas-demo".to_string(),
+                display_name: "Canvas Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            workspace_tabs: vec![ExtensionWorkspaceTabProjection {
+                extension_key: "canvas-demo".to_string(),
+                extension_id: "canvas-demo".to_string(),
+                type_id: "canvas-demo.panel".to_string(),
+                label: "Canvas Demo".to_string(),
+                uri_scheme: "canvas-demo".to_string(),
+                renderer: ExtensionWorkspaceTabRendererDeclaration::CanvasPanel {
+                    entry: "dist/canvas/runtime-snapshot.json".to_string(),
+                },
+                loadability: ExtensionWorkspaceTabLoadabilityProjection {
+                    available: true,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
+                    reason: None,
+                },
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules(&projection, &[]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0].summary.status.kind,
+            WorkspaceModuleStatusKind::Ready
+        );
+        assert_eq!(modules[0].ui_entries.len(), 1);
+    }
+
+    #[test]
+    fn workspace_module_schema_validator_rejects_additional_properties() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "alias": { "type": "string" }
+            },
+            "required": ["alias"],
+            "additionalProperties": false
+        });
+
+        assert!(
+            validate_input_against_schema(
+                &schema,
+                &serde_json::json!({
+                    "alias": "stats",
+                    "extra": true
+                })
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn workspace_module_operation_runtime_requires_package_artifact() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            runtime_actions: vec![ExtensionRuntimeActionProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                action_key: "ops-demo.run".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Run".to_string(),
+                input_schema: serde_json::json!(true),
+                output_schema: serde_json::json!(true),
+                permissions: vec![],
+            }],
+            bundles: vec![ExtensionBundleProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                kind: ExtensionBundleKind::ExtensionHost,
+                entry: "dist/extension.js".to_string(),
+                digest: "sha256:bundle".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules(&projection, &[]);
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(
+            modules[0].summary.status.kind,
+            WorkspaceModuleStatusKind::Unavailable
+        );
+    }
+
+    #[test]
+    fn projection_runtime_actions_without_gateway_are_diagnostic_only() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            runtime_actions: vec![ExtensionRuntimeActionProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                action_key: "ops-demo.run".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Manifest description must not become executable metadata".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "object"}),
+                permissions: vec!["manifest.permission".to_string()],
+            }],
+            bundles: vec![ExtensionBundleProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                kind: ExtensionBundleKind::ExtensionHost,
+                entry: "dist/extension.js".to_string(),
+                digest: "sha256:bundle".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules(&projection, &[]);
+
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "ops-demo.run")
+            .expect("diagnostic operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway
+        );
+        assert!(operation.input_schema.is_none());
+        assert!(operation.output_schema.is_none());
+        assert!(operation.permission_summary.is_empty());
+    }
+
+    #[test]
+    fn non_session_gateway_descriptor_does_not_mask_runtime_action_diagnostic() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            runtime_actions: vec![ExtensionRuntimeActionProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                action_key: "ops-demo.run".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Manifest action".to_string(),
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "object"}),
+                permissions: vec![],
+            }],
+            bundles: vec![ExtensionBundleProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                kind: ExtensionBundleKind::ExtensionHost,
+                entry: "dist/extension.js".to_string(),
+                digest: "sha256:bundle".to_string(),
+            }],
+            ..Default::default()
+        };
+        let setup_descriptor = RuntimeActionDescriptor {
+            action_key: RuntimeActionKey::parse("ops-demo.run").expect("valid action key"),
+            kind: RuntimeActionKind::Setup,
+            description: Some("setup descriptor".to_string()),
+            input_schema: Some(serde_json::json!({"type": "object"})),
+            output_schema: Some(serde_json::json!({"type": "object"})),
+            default_policy: RuntimePolicy::default(),
+            metadata: Default::default(),
+        };
+        let context = WorkspaceModuleOperationContext::ready(vec![setup_descriptor]);
+
+        let modules = build_workspace_modules_with_operation_context(&projection, &[], &context);
+
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "ops-demo.run")
+            .expect("diagnostic operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable
+        );
+        assert_eq!(
+            operation.description,
+            "Runtime action `ops-demo.run` is not available from the current RuntimeGateway catalog."
+        );
+        assert!(operation.input_schema.is_none());
+    }
+
+    #[test]
+    fn duplicate_runtime_action_key_does_not_mark_last_owner_ready() {
+        let action_key = "shared.profile";
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![
+                ExtensionInstallationProjection {
+                    installation_id: Uuid::new_v4(),
+                    extension_key: "first-demo".to_string(),
+                    extension_id: "first-demo".to_string(),
+                    display_name: "First Demo".to_string(),
+                    installed_source: None,
+                    package_artifact: None,
+                },
+                ExtensionInstallationProjection {
+                    installation_id: Uuid::new_v4(),
+                    extension_key: "last-demo".to_string(),
+                    extension_id: "last-demo".to_string(),
+                    display_name: "Last Demo".to_string(),
+                    installed_source: None,
+                    package_artifact: None,
+                },
+            ],
+            runtime_actions: vec![
+                ExtensionRuntimeActionProjection {
+                    extension_key: "first-demo".to_string(),
+                    extension_id: "first-demo".to_string(),
+                    action_key: action_key.to_string(),
+                    kind: ExtensionRuntimeActionKind::SessionRuntime,
+                    description: "First manifest action".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: serde_json::json!({"type": "object"}),
+                    permissions: vec![],
+                },
+                ExtensionRuntimeActionProjection {
+                    extension_key: "last-demo".to_string(),
+                    extension_id: "last-demo".to_string(),
+                    action_key: action_key.to_string(),
+                    kind: ExtensionRuntimeActionKind::SessionRuntime,
+                    description: "Last manifest action".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: serde_json::json!({"type": "object"}),
+                    permissions: vec![],
+                },
+            ],
+            bundles: vec![
+                ExtensionBundleProjection {
+                    extension_key: "first-demo".to_string(),
+                    extension_id: "first-demo".to_string(),
+                    kind: ExtensionBundleKind::ExtensionHost,
+                    entry: "dist/extension.js".to_string(),
+                    digest: "sha256:first".to_string(),
+                },
+                ExtensionBundleProjection {
+                    extension_key: "last-demo".to_string(),
+                    extension_id: "last-demo".to_string(),
+                    kind: ExtensionBundleKind::ExtensionHost,
+                    entry: "dist/extension.js".to_string(),
+                    digest: "sha256:last".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        let mut metadata = std::collections::BTreeMap::new();
+        metadata.insert(
+            EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA.to_string(),
+            serde_json::json!("first-demo"),
+        );
+        let descriptor = RuntimeActionDescriptor {
+            action_key: RuntimeActionKey::parse(action_key).expect("valid action key"),
+            kind: RuntimeActionKind::SessionRuntime,
+            description: Some("Gateway resolved descriptor".to_string()),
+            input_schema: Some(serde_json::json!({"type": "object"})),
+            output_schema: Some(serde_json::json!({"type": "object"})),
+            default_policy: RuntimePolicy::default(),
+            metadata,
+        };
+        let context = WorkspaceModuleOperationContext::ready(vec![descriptor]);
+
+        let modules = build_workspace_modules_with_operation_context(&projection, &[], &context);
+
+        let operations = modules
+            .iter()
+            .flat_map(|module| module.operations.iter())
+            .filter(|operation| operation.operation_key == action_key)
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 2);
+        assert!(operations.iter().all(|operation| {
+            operation.readiness.kind
+                == WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable
+        }));
+        assert!(operations.iter().all(|operation| {
+            operation
+                .readiness
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("declared by multiple enabled extensions"))
+        }));
+        assert!(
+            operations
+                .iter()
+                .all(|operation| operation.description != "Gateway resolved descriptor")
+        );
     }
 }

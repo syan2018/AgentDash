@@ -11,12 +11,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
-import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
-import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { agentSourceLabel } from "../lib/agent-source";
-import { useAgentRunWorkspaceCommands } from "../features/agent-run-workspace/model/useAgentRunWorkspaceCommands";
+import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
 import {
   WorkspacePanel,
@@ -24,24 +22,10 @@ import {
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/useAgentRunWorkspaceState";
-import type { ExecutorConfig } from "../services/executor";
-import { useLifecycleStore } from "../stores/lifecycleStore";
 import { useProjectStore } from "../stores/projectStore";
-import { useTaskPlanStore } from "../stores/taskPlanStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
-import {
-  workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
-} from "./AgentRunWorkspacePage.workspaceModulePresentation";
-import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
-  isCompleteExecutorConfig,
-  mailboxSnapshotFromConversation,
-  resolveExecutorConfigForConversationCommand,
-} from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
@@ -52,7 +36,6 @@ import type {
   Story,
   StoryNavigationState,
 } from "../types";
-import type { SessionChatCommandState } from "../features/session";
 
 // ─── AgentRunWorkspacePage ────────────────────────────────────────
 
@@ -76,20 +59,14 @@ export function AgentRunWorkspacePage({
   const agentsByProjectId = useProjectStore((state) => state.agentsByProjectId);
   const fetchProjectAgents = useProjectStore((state) => state.fetchProjectAgents);
   const createProjectAgentRun = useProjectStore((state) => state.createProjectAgentRun);
-  const fetchAndIngestLifecycleRun = useLifecycleStore((state) => state.fetchAndIngestLifecycleRun);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
-  const hookRuntimeRefreshTimerRef = useRef<number | null>(null);
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
     story: Story | null;
   } | null>(null);
-  const [explicitExecutorConfigOverrideState, setExplicitExecutorConfigOverrideState] = useState<{
-    scopeKey: string | null;
-    config: ExecutorConfig | null;
-  }>({ scopeKey: null, config: null });
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -124,21 +101,6 @@ export function AgentRunWorkspacePage({
   const draftProjectAgentKey = !currentRunId ? draftProjectAgentId?.trim() || null : null;
   const draftProjectIdValue = !currentRunId ? draftProjectId?.trim() || null : null;
   const isProjectAgentDraft = Boolean(draftProjectIdValue && draftProjectAgentKey);
-  const executorOverrideScopeKey = isProjectAgentDraft
-    ? `draft:${draftProjectIdValue ?? ""}:${draftProjectAgentKey ?? ""}`
-    : currentRunId && currentAgentId
-      ? `agentrun:${currentRunId}:${currentAgentId}`
-      : null;
-  const explicitExecutorConfigOverride =
-    explicitExecutorConfigOverrideState.scopeKey === executorOverrideScopeKey
-      ? explicitExecutorConfigOverrideState.config
-      : null;
-  const setExplicitExecutorConfigOverride = useCallback((config: ExecutorConfig | null) => {
-    setExplicitExecutorConfigOverrideState({
-      scopeKey: executorOverrideScopeKey,
-      config,
-    });
-  }, [executorOverrideScopeKey]);
   const draftProjectAgent: ProjectAgentSummary | null = useMemo(() => {
     if (!draftProjectIdValue || !draftProjectAgentKey) return null;
     return (agentsByProjectId[draftProjectIdValue] ?? [])
@@ -150,15 +112,6 @@ export function AgentRunWorkspacePage({
     if (agentsByProjectId[draftProjectIdValue]) return;
     void fetchProjectAgents(draftProjectIdValue);
   }, [agentsByProjectId, currentRunId, draftProjectIdValue, fetchProjectAgents]);
-
-  useEffect(() => {
-    return () => {
-      if (hookRuntimeRefreshTimerRef.current) {
-        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-        hookRuntimeRefreshTimerRef.current = null;
-      }
-    };
-  }, []);
 
   const agentRunSourceKey = currentRunId && currentAgentId
     ? `agentrun:${currentRunId}:${currentAgentId}`
@@ -173,22 +126,6 @@ export function AgentRunWorkspacePage({
     agentId: currentAgentId,
     sourceKey: agentRunSourceKey,
   });
-
-  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
-    if (!currentRunId || !currentAgentId) return;
-    if (hookRuntimeRefreshTimerRef.current) {
-      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-      hookRuntimeRefreshTimerRef.current = null;
-    }
-    if (immediate) {
-      void refreshAgentRunHookRuntime();
-      return;
-    }
-    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
-      hookRuntimeRefreshTimerRef.current = null;
-      void refreshAgentRunHookRuntime();
-    }, 180);
-  }, [currentAgentId, currentRunId, refreshAgentRunHookRuntime]);
 
   const runtimeControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
   const deliveryRuntimeSessionId = agentRunWorkspaceState.runtime_session_id;
@@ -319,26 +256,6 @@ export function AgentRunWorkspacePage({
 
   // ─── 页面级回调 ───────────────────────────────────────
 
-  const executorHint = draftProjectAgent?.executor.executor
-    ?? traceAgentContext?.executor_hint
-    ?? null;
-  const executorStateKey = useMemo(() => {
-    if (isProjectAgentDraft) {
-      return draftProjectIdValue && draftProjectAgentKey
-        ? `draft:${draftProjectIdValue}:${draftProjectAgentKey}`
-        : null;
-    }
-    if (!currentRunId || !currentAgentId) return null;
-    const frameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? "pending";
-    return `agentrun:${currentRunId}:${currentAgentId}:${frameId}`;
-  }, [
-    currentAgentId,
-    currentRunId,
-    draftProjectAgentKey,
-    draftProjectIdValue,
-    isProjectAgentDraft,
-    runtimeControl?.frame_runtime?.frame_ref.frame_id,
-  ]);
   const chatWorkspaceId =
     ownerStory?.default_workspace_id
     ?? ownerProject?.config.default_workspace_id
@@ -358,38 +275,6 @@ export function AgentRunWorkspacePage({
     };
   }, [chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
-  const handleMessageSent = useCallback(() => {
-    if (!deliveryRuntimeSessionId) return;
-    scheduleHookRuntimeRefresh("message_sent", true);
-    refreshAgentRunList("message_sent");
-  }, [deliveryRuntimeSessionId, refreshAgentRunList, scheduleHookRuntimeRefresh]);
-
-  const chatCommandState = useMemo<SessionChatCommandState>(
-    () => isProjectAgentDraft
-      ? buildDraftSessionCommandState({
-          projectId: draftProjectIdValue,
-          agentKey: draftProjectAgentKey,
-          agent: draftProjectAgent,
-          projectionReady: Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent),
-          explicitExecutorConfigOverride,
-        })
-      : buildRuntimeSessionCommandState({
-          conversation: runtimeControl?.conversation,
-          projectionStatus: agentRunWorkspaceState.status,
-          projectionError: agentRunWorkspaceState.error,
-        }),
-    [
-      agentRunWorkspaceState.error,
-      agentRunWorkspaceState.status,
-      draftProjectAgent,
-      draftProjectAgentKey,
-      draftProjectIdValue,
-      explicitExecutorConfigOverride,
-      isProjectAgentDraft,
-      runtimeControl?.conversation,
-    ],
-  );
-  const conversationMailbox = mailboxSnapshotFromConversation(runtimeControl?.conversation?.mailbox);
   const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
     refreshAgentRunListProjection(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
@@ -404,162 +289,38 @@ export function AgentRunWorkspacePage({
   }, [draftProjectIdValue, navigate]);
 
   const {
-    handleAgentRunCommand,
-    handleCancelAgentRun,
-    handlePromoteMailboxMessage,
-    handleDeleteMailboxMessage,
-    handleResumeMailbox,
-    handleRecallMailboxMessage,
-    handleMoveMailboxMessage,
-    recalledInput,
-    clearRecalledInput,
-  } = useAgentRunWorkspaceCommands({
+    chatModel: controlPlaneChatModel,
+    chatIntents,
+    handleMessageSent,
+    handleTurnEnd,
+    handleTaskPlanChanged,
+    handleSystemEvent,
+    handleWorkspaceModuleOpened,
+  } = useAgentRunWorkspaceControlPlane({
     currentRunId,
     currentAgentId,
-    workspaceStatus: agentRunWorkspaceState.status,
-    chatCommandState,
-    conversationMailbox,
     draftProjectId: draftProjectIdValue,
     draftProjectAgentKey,
-    draftReady: Boolean(draftProjectIdValue && draftProjectAgentKey && draftProjectAgent),
-    createProjectAgentRun,
-    fetchAndIngestLifecycleRun,
-    refreshWorkspaceState: refreshAgentRunWorkspaceState,
-    scheduleHookRuntimeRefresh,
-    resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
-    isCompleteExecutorConfig,
-    onDraftStarted: handleDraftAgentRunStarted,
-  });
-
-  const handleAgentRunCommandWithListRefresh: typeof handleAgentRunCommand = useCallback(async (...args) => {
-    await handleAgentRunCommand(...args);
-    refreshAgentRunList("command_submitted");
-  }, [handleAgentRunCommand, refreshAgentRunList]);
-
-  const handleCancelAgentRunWithListRefresh = useCallback(async () => {
-    await handleCancelAgentRun();
-    refreshAgentRunList("agent_run_cancelled");
-  }, [handleCancelAgentRun, refreshAgentRunList]);
-
-  const handlePromoteMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
-    await handlePromoteMailboxMessage(messageId);
-    refreshAgentRunList("mailbox_message_promoted");
-  }, [handlePromoteMailboxMessage, refreshAgentRunList]);
-
-  const handleDeleteMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
-    await handleDeleteMailboxMessage(messageId);
-    refreshAgentRunList("mailbox_message_deleted");
-  }, [handleDeleteMailboxMessage, refreshAgentRunList]);
-
-  const handleResumeMailboxWithListRefresh = useCallback(async () => {
-    await handleResumeMailbox();
-    refreshAgentRunList("mailbox_resumed");
-  }, [handleResumeMailbox, refreshAgentRunList]);
-
-  const handleRecallMailboxMessageWithListRefresh = useCallback(async (messageId: string) => {
-    await handleRecallMailboxMessage(messageId);
-    refreshAgentRunList("mailbox_message_recalled");
-  }, [handleRecallMailboxMessage, refreshAgentRunList]);
-
-  const handleMoveMailboxMessageWithListRefresh = useCallback(async (
-    messageId: string,
-    afterMessageId: string | null,
-  ) => {
-    await handleMoveMailboxMessage(messageId, afterMessageId);
-    refreshAgentRunList("mailbox_message_moved");
-  }, [handleMoveMailboxMessage, refreshAgentRunList]);
-
-  const refreshStatusBarTasks = useCallback(() => {
-    if (currentRunId && currentAgentId) {
-      void useTaskPlanStore
-        .getState()
-        .fetchAgentRunTasks(currentRunId, currentAgentId)
-        .catch(() => {});
-    }
-  }, [currentRunId, currentAgentId]);
-
-  const handleTurnEnd = useCallback(() => {
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("turn_end", true);
-    refreshAgentRunList("turn_end");
-    // Agent 可能在本轮通过 task_write 改了 Task plan；刷新综合状态栏数据源。
-    refreshStatusBarTasks();
-  }, [refreshAgentRunList, refreshAgentRunWorkspaceState, scheduleHookRuntimeRefresh, refreshStatusBarTasks]);
-
-  const handleTaskPlanChanged = useCallback(() => {
-    refreshStatusBarTasks();
-  }, [refreshStatusBarTasks]);
-
-  const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
-    switch (eventType) {
-      case "hook_event":
-      case "hook_action_resolved":
-      case "companion_dispatch_registered":
-      case "companion_result_available":
-      case "companion_result_returned":
-        scheduleHookRuntimeRefresh(eventType);
-        break;
-      case "context_frame": {
-        const frameData = extractPlatformEventData(_event);
-        if (
-          frameData?.kind === "capability_state_snapshot" ||
-          frameData?.kind === "capability_state_delta"
-        ) {
-          void refreshAgentRunWorkspaceState();
-          refreshWorkspaceModuleCatalog();
-          scheduleHookRuntimeRefresh(eventType);
-        }
-        break;
-      }
-      case "session_meta_updated": {
-        void refreshAgentRunWorkspaceState();
-        refreshAgentRunList("session_meta_updated");
-        break;
-      }
-      case "mailbox_state_changed": {
-        void refreshAgentRunWorkspaceState();
-        refreshAgentRunList("mailbox_state_changed");
-        break;
-      }
-      case "workspace_module_presented": {
-        // workspace_module_present 推送：按 renderer_kind 决定 workspace tab typeId/uri。
-        // - canvas → typeId "canvas"，presentation_uri=canvas://{canvas_mount_id}。
-        // - extension webview/panel → typeId = view_key，presentation_uri 为后端生成的 tab URI。
-        const data = workspaceModulePresentationFromPlatformEventData(
-          extractPlatformEventData(_event),
-        );
-        const target = workspaceModulePresentedTabTarget(data);
-        if (target) {
-          if (target.refreshRuntime) {
-            void (async () => {
-              await refreshAgentRunWorkspaceState().catch(() => {});
-              refreshWorkspaceModuleCatalog();
-              expandWorkspacePanel(target.typeId, target.uri, {
-                refreshContent: target.refreshRuntime,
-              });
-            })();
-            break;
-          }
-          expandWorkspacePanel(target.typeId, target.uri, {
-            refreshContent: target.refreshRuntime,
-          });
-        }
-        break;
-      }
-      case "workspace_module_present_failed": {
-        // 后端已产出可操作诊断（无可展示目标）；展示层无需打开 tab，事件本身在 feed 可见。
-        break;
-      }
-      default:
-        break;
-    }
-  }, [
-    scheduleHookRuntimeRefresh,
+    draftProjectAgent,
+    isProjectAgentDraft,
+    agentRunWorkspaceState,
     refreshAgentRunWorkspaceState,
+    refreshAgentRunHookRuntime,
+    traceExecutorHint: traceAgentContext?.executor_hint,
+    taskExecutorSummary,
+    createProjectAgentRun,
+    onDraftStarted: handleDraftAgentRunStarted,
     refreshAgentRunList,
     refreshWorkspaceModuleCatalog,
-    expandWorkspacePanel,
-  ]);
+    openWorkspacePanel: ({ typeId, uri, options }) => {
+      expandWorkspacePanel(typeId, uri, options);
+    },
+  });
+
+  const chatModel = useMemo(() => ({
+    ...controlPlaneChatModel,
+    workspaceId: chatWorkspaceId,
+  }), [chatWorkspaceId, controlPlaneChatModel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -591,16 +352,6 @@ export function AgentRunWorkspacePage({
       },
     });
   }, [agentRunDetailTarget, deliveryRuntimeSessionId, navigate]);
-
-  const handleWorkspaceModuleOpened = useCallback(() => {
-    void refreshAgentRunWorkspaceState();
-    refreshWorkspaceModuleCatalog();
-    scheduleHookRuntimeRefresh("workspace_module_user_opened");
-  }, [
-    refreshAgentRunWorkspaceState,
-    refreshWorkspaceModuleCatalog,
-    scheduleHookRuntimeRefresh,
-  ]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
@@ -820,29 +571,12 @@ export function AgentRunWorkspacePage({
           <div className="flex h-full flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">
               <SessionChatView
-                sessionId={deliveryRuntimeSessionId}
-                workspaceId={chatWorkspaceId}
+                model={chatModel}
+                intents={chatIntents}
                 onMessageSent={handleMessageSent}
                 onTurnEnd={handleTurnEnd}
                 onSystemEvent={handleSystemEvent}
                 onTaskPlanChanged={handleTaskPlanChanged}
-                executorHint={executorHint}
-                agentDefaults={draftProjectAgent?.effective_executor_config ?? runtimeControl?.conversation?.model_config.effective_executor_config ?? taskExecutorSummary}
-                executorStateKey={executorStateKey}
-                commandState={chatCommandState}
-                onCommand={handleAgentRunCommandWithListRefresh}
-                onCancelAction={handleCancelAgentRunWithListRefresh}
-                onExecutorConfigOverrideChange={setExplicitExecutorConfigOverride}
-                statusBarRunId={currentRunId}
-                statusBarAgentId={currentAgentId}
-                mailboxSnapshot={conversationMailbox}
-                onPromoteMailboxMessage={(id) => { void handlePromoteMailboxMessageWithListRefresh(id); }}
-                onDeleteMailboxMessage={(id) => { void handleDeleteMailboxMessageWithListRefresh(id); }}
-                onResumeMailbox={() => { void handleResumeMailboxWithListRefresh(); }}
-                onRecallMailboxMessage={(id) => { void handleRecallMailboxMessageWithListRefresh(id); }}
-                onMoveMailboxMessage={(id, after) => { void handleMoveMailboxMessageWithListRefresh(id, after); }}
-                injectedInputValue={recalledInput}
-                onInjectedInputConsumed={clearRecalledInput}
                 inputPrefix={ownerBindingBar ?? draftBindingBar}
               />
             </div>

@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Relay prompt is a cross-layer wire contract change."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Remove duplicated conversion helpers instead of adding parallel paths."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Canonical UserInputBlock and RuntimeSession launch input contract."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Relay/local runtime protocol boundary."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer DTO and runtime boundary rules."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "D12 target design and decision state."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/implementation-slices.md", "reason": "Slice 1 requirements and ordering."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "D12 evidence and exact old paths to remove."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Long-running goal execution and subagent discipline."}

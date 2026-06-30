@@ -123,6 +123,50 @@ pub enum WorkspaceModuleOperationDispatch {
     Builtin { builtin_key: String },
 }
 
+/// Operation 调用就绪状态；它只描述当前 operation 是否可调用，
+/// 与 module 可见性和 renderer loadability 分层。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationReadinessKind {
+    Ready,
+    MissingRuntimeGateway,
+    MissingChannelTransport,
+    MissingRuntimeBackendAnchor,
+    BackendUnavailable,
+    RuntimeActionUnavailable,
+}
+
+/// 当前 runtime 中 operation 调用可用性的结构化诊断。
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct WorkspaceModuleOperationReadiness {
+    pub kind: WorkspaceModuleOperationReadinessKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl WorkspaceModuleOperationReadiness {
+    pub fn ready() -> Self {
+        Self {
+            kind: WorkspaceModuleOperationReadinessKind::Ready,
+            reason: None,
+        }
+    }
+
+    pub fn unavailable(
+        kind: WorkspaceModuleOperationReadinessKind,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            reason: Some(reason.into()),
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.kind == WorkspaceModuleOperationReadinessKind::Ready
+    }
+}
+
 /// 单个 operation（extension action / protocol channel method / host canvas / builtin 同构呈现）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleOperation {
@@ -137,6 +181,7 @@ pub struct WorkspaceModuleOperation {
     pub permission_summary: Vec<String>,
     /// 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
     pub dispatch: WorkspaceModuleOperationDispatch,
+    pub readiness: WorkspaceModuleOperationReadiness,
 }
 
 /// `describe` 返回的完整 descriptor。

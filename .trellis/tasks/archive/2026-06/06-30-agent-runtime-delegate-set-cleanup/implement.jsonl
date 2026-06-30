@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession launch/prepared-turn delegate composition and AgentRun command/runtime boundaries."}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Mailbox runtime adapter owns turn-boundary delivery only."}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"Hook runtime covers multiple runtime lifecycle facets and remains the full-facet implementation."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Rust quality and targeted verification expectations."}
+{"file":".trellis/tasks/06-30-design-backlog-review/design-review.md","reason":"D6 design decision and implementation shape."}
+{"file":".trellis/tasks/06-30-design-backlog-review/implementation-slices.md","reason":"Slice 6 ordering and validation notes."}

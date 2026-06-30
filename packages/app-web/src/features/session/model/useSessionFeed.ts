@@ -35,6 +35,7 @@ export interface UseSessionFeedResult {
   turnSegments: TurnSegment[];
   rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
+  historyReplayBoundarySeq: number | null;
   isConnected: boolean;
   isLoading: boolean;
   isReceiving: boolean;
@@ -805,6 +806,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   const {
     entries,
     rawEvents,
+    historyReplayBoundarySeq,
     providerWaitingSeqs,
     isConnected,
     isLoading,
@@ -846,6 +848,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     turnSegments,
     rawEntries: entries,
     rawEvents,
+    historyReplayBoundarySeq,
     isConnected,
     isLoading,
     isReceiving,

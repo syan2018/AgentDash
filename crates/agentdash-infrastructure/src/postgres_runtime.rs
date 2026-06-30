@@ -264,7 +264,7 @@ fn cleanup_stale_instance(data_dir: &Path) {
 
     std::thread::sleep(Duration::from_secs(2));
 
-    // 二次兜底：Windows 上子进程可能在第一轮存活
+    // Windows 上子进程可能在第一轮存活，执行第二轮清理。
     kill_embedded_postgres_for_data_dir(data_dir);
 
     let _ = std::fs::remove_file(data_dir.join("postmaster.pid"));

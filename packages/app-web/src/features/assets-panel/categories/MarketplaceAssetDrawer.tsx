@@ -72,9 +72,9 @@ export function MarketplaceAssetDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 z-[80] bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed left-0 top-0 z-[80] h-dvh w-dvw bg-foreground/18 backdrop-blur-[2px]" onClick={onClose} />
       <aside
-        className="fixed right-0 top-0 z-[81] flex h-full w-[480px] max-w-full flex-col border-l border-border bg-background shadow-2xl"
+        className="fixed right-0 top-0 z-[81] flex h-dvh max-h-dvh w-[480px] max-w-full flex-col overflow-hidden border-l border-border bg-background shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -120,7 +120,7 @@ export function MarketplaceAssetDrawer({
         </header>
 
         {/* Body */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
           {asset.description && (
             <section>
               <p className="text-xs leading-6 text-foreground/85">{asset.description}</p>
@@ -874,7 +874,7 @@ export function ConfirmOverwriteDialog({
 }: ConfirmOverwriteDialogProps) {
   return (
     <div
-      className="fixed inset-0 z-[92] flex items-center justify-center bg-black/40"
+      className="fixed left-0 top-0 z-[92] flex h-dvh w-dvw items-center justify-center bg-black/40"
       onClick={onCancel}
     >
       <div

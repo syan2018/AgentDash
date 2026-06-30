@@ -1,0 +1,25 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point for all design review items."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index for design research workers."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer owner and fact-source review guide."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Guide for detecting duplicated paths and deciding when to extract or delete."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend ownership and clean architecture baseline."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer contract and DTO ownership baseline."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "D1/D8 capability and admission design baseline."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "D1/D9 PermissionGrant and authorization semantics."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "D9/D10 VFS and workspace mount authority baseline."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "D1/D4/D5/D6/D12 AgentRun and RuntimeSession design baseline."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "D11 local runtime, relay, desktop, and runner contract baseline."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "D10/D11 workspace placement and backend access routing baseline."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/adversarial-review.md", "reason": "Original D item evidence and issue severity."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/cleanup-scope-triage.md", "reason": "Boundary between quick fixes and design-class residuals."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/design-backlog.md", "reason": "Canonical D1-D12 backlog source for this task."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Durable execution and compaction recovery protocol for this long-running goal."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/06-agent-runtime-session-surface.md", "reason": "AgentRun/RuntimeSession evidence for D1/D4/D5/D6/D12."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/07-extension-workspace-module-surface.md", "reason": "Extension/WorkspaceModule evidence for D7/D8."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/08-authority-capability-runtime.md", "reason": "Authority/capability evidence for D1/D8/D9."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/09-vfs-runtime-tool-surface.md", "reason": "VFS/runtime tool evidence for D9."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/10-local-runtime-relay-surface.md", "reason": "Local relay and runtime evidence for D11/D12."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/11-project-workspace-backend-placement.md", "reason": "Workspace placement/backend settings evidence for D10/D11."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/05-orchestrated-work-surface.md", "reason": "Lifecycle/gate evidence for D2/D3."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/prd.md", "reason": "Quick convergence completion scope and residuals after implementation."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/implement.md", "reason": "Quick convergence implementation results and final checks."}

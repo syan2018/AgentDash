@@ -154,7 +154,9 @@ impl AgentTool for FsGrepTool {
         let combined_glob = build_combined_glob(params.glob.as_deref(), params.type_.as_deref())
             .map_err(AgentToolError::InvalidArguments)?;
 
-        let vfs = self.vfs.snapshot().await;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
         let target = resolve_uri_path(&vfs, params.path.as_deref().unwrap_or("."))
             .map_err(AgentToolError::ExecutionFailed)?;
         let search_path = if target.path.is_empty() {
@@ -179,8 +181,9 @@ impl AgentTool for FsGrepTool {
 
         let (hits, truncated) = self
             .service
-            .grep_text_extended(
+            .grep_text_extended_with_policy(
                 &vfs,
+                Some(&access_policy),
                 &crate::TextSearchParams {
                     mount_id: &target.mount_id,
                     path: &search_path,

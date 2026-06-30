@@ -1,15 +1,15 @@
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::LlmBridge;
+use crate::tool_result_ref::ToolResultRefContext;
 use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AfterTurnInput, AgentContext, AgentError,
-    AgentEvent, AgentMessage, BeforeStopInput, BeforeToolCallContext, BeforeToolCallResult,
-    DynAgentRuntimeDelegate, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
+    AgentEvent, AgentMessage, AgentRuntimeDelegateSet, BeforeStopInput, BeforeToolCallContext,
+    BeforeToolCallResult, DynAgentTool, StopDecision, ToolApprovalOutcome, ToolApprovalRequest,
     ToolExecutionMode,
 };
 
@@ -81,211 +81,6 @@ pub type AwaitToolApprovalFn = Arc<
 pub type AgentEventSink =
     Arc<dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
-pub type ToolResultCacheWriter = Arc<dyn Fn(ToolResultCacheWrite) + Send + Sync>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ReadableBodyKind {
-    Tool,
-    Command,
-}
-
-impl ReadableBodyKind {
-    pub fn for_tool_name(tool_name: &str) -> Self {
-        if tool_name == "shell_exec" {
-            Self::Command
-        } else {
-            Self::Tool
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Tool => "tool_result",
-            Self::Command => "command_result",
-        }
-    }
-
-    fn alias_prefix(self) -> &'static str {
-        match self {
-            Self::Tool => "tool",
-            Self::Command => "cmd",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadableToolResultRef {
-    pub raw_turn_id: String,
-    pub raw_tool_call_id: String,
-    pub turn_alias: String,
-    pub body_alias: String,
-    pub body_kind: ReadableBodyKind,
-    pub item_id: String,
-    pub lifecycle_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadableTerminalRef {
-    pub raw_terminal_id: String,
-    pub terminal_alias: String,
-    pub metadata_path: String,
-    pub log_path: String,
-    pub lifecycle_path: String,
-}
-
-#[derive(Debug, Default)]
-pub struct ReadableIdRegistry {
-    inner: RwLock<ReadableIdRegistryState>,
-}
-
-#[derive(Debug, Default)]
-struct ReadableIdRegistryState {
-    turn_aliases: HashMap<String, String>,
-    body_aliases: HashMap<ReadableBodyAliasKey, String>,
-    terminal_aliases: HashMap<String, String>,
-    next_turn: usize,
-    next_tool: usize,
-    next_command: usize,
-    next_terminal: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ReadableBodyAliasKey {
-    kind: ReadableBodyKind,
-    raw_tool_call_id: String,
-}
-
-impl ReadableIdRegistry {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
-    }
-
-    pub fn tool_result_ref(
-        &self,
-        raw_turn_id: &str,
-        raw_tool_call_id: &str,
-        tool_name: &str,
-    ) -> ReadableToolResultRef {
-        let kind = ReadableBodyKind::for_tool_name(tool_name);
-        let mut state = self.inner.write().unwrap();
-        let turn_alias = state.turn_alias(raw_turn_id);
-        let body_alias = state.body_alias(kind, raw_tool_call_id);
-        let item_id = readable_tool_result_item_id(&turn_alias, &body_alias);
-        let lifecycle_path = readable_tool_result_lifecycle_path(&turn_alias, &body_alias);
-        ReadableToolResultRef {
-            raw_turn_id: raw_turn_id.to_string(),
-            raw_tool_call_id: raw_tool_call_id.to_string(),
-            turn_alias,
-            body_alias,
-            body_kind: kind,
-            item_id,
-            lifecycle_path,
-        }
-    }
-
-    pub fn terminal_ref(&self, raw_terminal_id: &str) -> ReadableTerminalRef {
-        let mut state = self.inner.write().unwrap();
-        let terminal_alias = state.terminal_alias(raw_terminal_id);
-        ReadableTerminalRef {
-            raw_terminal_id: raw_terminal_id.to_string(),
-            metadata_path: format!("session/terminal/{terminal_alias}.metadata.json"),
-            log_path: format!("session/terminal/{terminal_alias}.log"),
-            lifecycle_path: format!("lifecycle://session/terminal/{terminal_alias}.log"),
-            terminal_alias,
-        }
-    }
-}
-
-impl ReadableIdRegistryState {
-    fn turn_alias(&mut self, raw_turn_id: &str) -> String {
-        if let Some(alias) = self.turn_aliases.get(raw_turn_id) {
-            return alias.clone();
-        }
-        self.next_turn += 1;
-        let alias = format_readable_alias("turn", self.next_turn);
-        self.turn_aliases
-            .insert(raw_turn_id.to_string(), alias.clone());
-        alias
-    }
-
-    fn body_alias(&mut self, kind: ReadableBodyKind, raw_tool_call_id: &str) -> String {
-        let key = ReadableBodyAliasKey {
-            kind,
-            raw_tool_call_id: raw_tool_call_id.to_string(),
-        };
-        if let Some(alias) = self.body_aliases.get(&key) {
-            return alias.clone();
-        }
-        let next = match kind {
-            ReadableBodyKind::Tool => {
-                self.next_tool += 1;
-                self.next_tool
-            }
-            ReadableBodyKind::Command => {
-                self.next_command += 1;
-                self.next_command
-            }
-        };
-        let alias = format_readable_alias(kind.alias_prefix(), next);
-        self.body_aliases.insert(key, alias.clone());
-        alias
-    }
-
-    fn terminal_alias(&mut self, raw_terminal_id: &str) -> String {
-        if let Some(alias) = self.terminal_aliases.get(raw_terminal_id) {
-            return alias.clone();
-        }
-        self.next_terminal += 1;
-        let alias = format_readable_alias("term", self.next_terminal);
-        self.terminal_aliases
-            .insert(raw_terminal_id.to_string(), alias.clone());
-        alias
-    }
-}
-
-fn format_readable_alias(prefix: &str, index: usize) -> String {
-    if index < 1000 {
-        format!("{prefix}_{index:03}")
-    } else {
-        format!("{prefix}_{index}")
-    }
-}
-
-pub fn readable_tool_result_item_id(turn_alias: &str, body_alias: &str) -> String {
-    format!("{turn_alias}:{body_alias}")
-}
-
-pub fn readable_tool_result_lifecycle_path(turn_alias: &str, body_alias: &str) -> String {
-    format!("lifecycle://session/tool-results/{turn_alias}/{body_alias}/result.txt")
-}
-
-#[derive(Clone)]
-pub struct ToolResultRefContext {
-    pub session_id: String,
-    pub raw_turn_id: String,
-    pub readable_ids: Arc<ReadableIdRegistry>,
-    pub cache_writer: Option<ToolResultCacheWriter>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolResultCacheWrite {
-    pub session_id: String,
-    pub item_id: String,
-    pub lifecycle_path: String,
-    pub turn_alias: String,
-    pub body_alias: String,
-    pub body_kind: String,
-    pub raw_turn_id: String,
-    pub raw_tool_call_id: String,
-    pub tool_name: String,
-    pub text: String,
-    pub original_bytes: usize,
-}
-
-pub fn stable_tool_result_item_id(turn_id: &str, tool_call_id: &str) -> String {
-    format!("{turn_id}:{tool_call_id}")
-}
-
 // ─── AgentLoopConfig ────────────────────────────────────────
 
 /// Agent Loop 配置 — 对齐 Pi `AgentLoopConfig`
@@ -319,8 +114,8 @@ pub struct AgentLoopConfig {
     /// 工具审批等待
     pub await_tool_approval: Option<AwaitToolApprovalFn>,
 
-    /// 统一运行时委托
-    pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
+    /// 显式运行时委托 facet 集合。
+    pub runtime_delegates: AgentRuntimeDelegateSet,
 
     /// 当前 turn 的工具结果引用上下文，用于生成 stable lifecycle path 并写入外部缓存。
     pub tool_result_ref_context: Option<ToolResultRefContext>,
@@ -612,11 +407,12 @@ async fn run_after_turn_delegate(
     tool_results: &[AgentMessage],
     cancel: &CancellationToken,
 ) -> Result<Option<crate::types::TurnControlDecision>, AgentError> {
-    let Some(delegate) = config.runtime_delegate.as_ref() else {
+    if config.runtime_delegates.turn_boundary.is_none() {
         return Ok(None);
-    };
+    }
 
-    delegate
+    config
+        .runtime_delegates
         .after_turn(
             AfterTurnInput {
                 context: context.clone(),
@@ -635,11 +431,12 @@ async fn run_before_stop_delegate(
     context: &AgentContext,
     cancel: &CancellationToken,
 ) -> Result<Option<StopDecision>, AgentError> {
-    let Some(delegate) = config.runtime_delegate.as_ref() else {
+    if config.runtime_delegates.turn_boundary.is_none() {
         return Ok(None);
-    };
+    }
 
-    delegate
+    config
+        .runtime_delegates
         .before_stop(
             BeforeStopInput {
                 context: context.clone(),

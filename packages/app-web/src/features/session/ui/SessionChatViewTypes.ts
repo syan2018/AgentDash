@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type {
-  ConversationMailboxSnapshotView,
-  ConversationCommandSetView,
-  ConversationCommandView,
-  ConversationModelConfigView,
-} from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
+import type {
+  MailboxMessageView,
+  MailboxStateView,
+} from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -19,38 +17,90 @@ export interface PromptTemplate {
   content: string;
 }
 
-export interface SessionChatCommandState {
-  mode: "draft" | "runtime";
-  executionStatus: string;
-  commands: ConversationCommandSetView;
-  localDraftAction?: LocalDraftStartAction;
-  modelConfig: ConversationModelConfigView;
-  helperText?: string;
+export interface SessionChatModelConfig {
+  status: "resolved" | "model_required";
+  effective_executor_config?: ConversationEffectiveExecutorConfigView;
+  missing_fields: string[];
+  message?: string;
 }
 
-export interface LocalDraftStartAction {
-  source: "local_draft";
-  kind: "draft_start_local";
+export interface SessionChatCommandModel {
   command_id: string;
+  kind: string;
   enabled: boolean;
   unavailable_reason?: string;
   disabled_code?: string;
-  shortcut: "enter";
-  requires_input: true;
-  executor_config_policy: "required";
+  requires_input: boolean;
+  executor_config_policy: "required" | "optional" | "forbidden";
+  shortcut?: "enter" | "ctrl_enter";
 }
 
-export type SessionChatCommand = ConversationCommandView | LocalDraftStartAction;
+export interface SessionChatCommandState {
+  mode: "draft" | "runtime";
+  executionStatus: string;
+  commands: SessionChatCommandModel[];
+  keyboard: {
+    enter?: string;
+    ctrl_enter?: string;
+  };
+  primaryCommandId?: string;
+  cancelCommand?: SessionChatCommandModel;
+  modelConfig: SessionChatModelConfig;
+  helperText?: string;
+}
 
-export function isLocalDraftStartAction(command: SessionChatCommand): command is LocalDraftStartAction {
-  return command.kind === "draft_start_local";
+export interface SessionChatMailboxModel {
+  messages: MailboxMessageView[];
+  state?: MailboxStateView;
+  paused: boolean;
+  user_attention: boolean;
+  hide_system_steer_messages: boolean;
+  can_resume: boolean;
+  resumeAction?: SessionChatCommandModel;
+  promoteAction?: SessionChatCommandModel;
+  deleteAction?: SessionChatCommandModel;
+}
+
+export interface SessionChatModel {
+  sessionId: string | null;
+  workspaceId?: string | null;
+  executorHint?: string | null;
+  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
+  executorStateKey?: string | null;
+  showExecutorSelector?: boolean;
+  commandState: SessionChatCommandState;
+  mailbox: SessionChatMailboxModel;
+  statusBarRunId?: string | null;
+  statusBarAgentId?: string | null;
+  injectedInputValue?: string | null;
+}
+
+export interface SessionChatSubmitIntent {
+  command_id: string;
+  sessionId: string | null;
+  prompt: string;
+  executorConfig?: ExecutorConfig;
+  imageAttachments?: ImageAttachment[];
+  deliveryIntent?: string;
+}
+
+export interface SessionChatViewIntents {
+  submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
+  cancelAction?: () => Promise<void>;
+  setExecutorConfigOverride?: (config: ExecutorConfig | null) => void;
+  promoteMailboxMessage?: (messageId: string) => void;
+  deleteMailboxMessage?: (messageId: string) => void;
+  resumeMailbox?: () => void;
+  recallMailboxMessage?: (messageId: string) => void;
+  moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  injectedInputConsumed?: () => void;
 }
 
 export interface SessionChatViewProps {
-  /** 当前会话 ID，null 表示尚未创建 */
-  sessionId: string | null;
-  /** 文件引用依赖的工作空间上下文 */
-  workspaceId?: string | null;
+  /** ChatView 消费的 UI model；command DTO 已在外层 control-plane 投影完成。 */
+  model: SessionChatModel;
+  /** ChatView 只表达用户意图，不接触 backend command DTO。 */
+  intents: SessionChatViewIntents;
 
   // ─── 会话生命周期 ────────────────────────────────────
 
@@ -65,66 +115,6 @@ export interface SessionChatViewProps {
 
   /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
   onTaskPlanChanged?: () => void;
-
-  // ─── 执行器 ──────────────────────────────────────────
-
-  /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
-  executorHint?: string | null;
-
-  /**
-   * 当前 session 绑定的执行器默认值（来自 agent 配置或 session context 真值）。
-   * 进入会话 / 切换会话时会被用来 hydrate 本地 executor 状态，避免默认显示"选择模型…"。
-   * 用户手动改过之后不会被再次覆盖（按 sessionId 计一次）。
-   */
-  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
-
-  /** AgentRun/frame scoped executor state key; changes force authoritative hydration. */
-  executorStateKey?: string | null;
-
-  /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
-  showExecutorSelector?: boolean;
-
-  // ─── 控制动作 ────────────────────────────────────────
-
-  commandState: SessionChatCommandState;
-
-  onCommand: (
-    command: SessionChatCommand,
-    sessionId: string | null,
-    prompt: string,
-    executorConfig?: ExecutorConfig,
-    imageAttachments?: ImageAttachment[],
-    deliveryIntent?: string,
-  ) => Promise<void>;
-
-  onCancelAction?: () => Promise<void>;
-
-  /** 用户在模型选择器中显式选择的本地 override；仅作为 command input，不作为 ProjectAgent 默认值。 */
-  onExecutorConfigOverrideChange?: (config: ExecutorConfig | null) => void;
-
-  // ─── Mailbox ─────────────────────────────────
-
-  /** Mailbox 展示状态与消息列表（来自 conversation.mailbox） */
-  mailboxSnapshot?: ConversationMailboxSnapshotView;
-  /** 引导 mailbox 消息 */
-  onPromoteMailboxMessage?: (messageId: string) => void;
-  /** 删除 mailbox 消息 */
-  onDeleteMailboxMessage?: (messageId: string) => void;
-  /** 恢复暂停的 mailbox */
-  onResumeMailbox?: () => void;
-  /** 召回 mailbox 消息（获取内容 + 删除 + 填充 composer） */
-  onRecallMailboxMessage?: (messageId: string) => void;
-  /** 重排序 mailbox 消息 */
-  onMoveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
-
-  // ─── 综合状态栏 Task scope ────────────────────────────
-
-  /** AgentRun scope：用于在输入栏上方的综合状态栏展示 Task 进度（缺省则只展示 mailbox） */
-  statusBarRunId?: string | null;
-  statusBarAgentId?: string | null;
-  /** 外部注入的输入值（recall 后填充 composer），设置后立即消费 */
-  injectedInputValue?: string | null;
-  onInjectedInputConsumed?: () => void;
 
   // ─── 布局插槽 ────────────────────────────────────────
 

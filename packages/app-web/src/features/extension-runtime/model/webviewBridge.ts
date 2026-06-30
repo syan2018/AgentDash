@@ -88,12 +88,6 @@ export async function handleExtensionWebviewBridgeRequest({
       if (!actionKey) {
         throw new Error("runtime.invoke_action 缺少 action_key");
       }
-      const action = workspaceData.extensionRuntime.projection.runtime_actions.find(
-        (item) => item.extension_key === tab.extension_key && item.action_key === actionKey,
-      );
-      if (!action) {
-        throw new Error(`Extension action 不可用: ${actionKey}`);
-      }
       const result = await services.invokeAction(projectId, {
         session_id: sessionId,
         action_key: actionKey,
@@ -170,14 +164,17 @@ export function resolveExtensionWebviewAvailability(
   if (!workspaceData.projectId || !workspaceData.sessionId) {
     return unavailable("Extension panel 不可用", "当前页面缺少 Project 或 Session context。");
   }
+  if (!tab.loadability.available) {
+    return unavailable(
+      "Extension panel 不可用",
+      tab.loadability.reason ?? "当前插件 tab 不满足 renderer loadability 条件。",
+    );
+  }
   const installation = workspaceData.extensionRuntime.projection.installations.find(
     (item) => item.extension_key === tab.extension_key,
   );
   if (!installation) {
     return unavailable("Extension 已停用", "当前 Project 没有启用这个插件。");
-  }
-  if (!installation.package_artifact) {
-    return unavailable("Extension bundle 缺失", "当前插件安装没有可加载的 package artifact。");
   }
   const backend = selectExtensionBackendTarget(workspaceData);
   if (!backend) {
@@ -190,9 +187,6 @@ export function resolveExtensionWebviewAvailability(
     };
   }
   const entry = tab.renderer.entry.trim();
-  if (!entry) {
-    return unavailable("Extension bundle 缺失", "插件 panel renderer 缺少 entry。");
-  }
 
   return {
     available: true,

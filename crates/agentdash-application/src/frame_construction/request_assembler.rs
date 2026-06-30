@@ -59,7 +59,7 @@ use crate::context::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
-use agentdash_application_vfs::{VfsService, apply_agent_vfs_access_grants};
+use agentdash_application_vfs::{VfsService, apply_project_vfs_mount_exposure_grants};
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 1:内部 builder prompt 投影
@@ -296,12 +296,12 @@ impl<'a> FrameRequestAssembler<'a> {
             return Ok(None);
         };
         if let Some(vfs) = prepared.vfs.as_mut() {
-            apply_agent_vfs_access_grants(
+            apply_project_vfs_mount_exposure_grants(
                 vfs,
                 Some(
                     context
                         .preset_config
-                        .vfs_access_grants
+                        .project_vfs_mount_exposure_grants
                         .as_deref()
                         .unwrap_or_default(),
                 ),
@@ -854,12 +854,12 @@ async fn compose_companion_with_workflow(
     if let Some(context) = comp.selected_context.as_ref()
         && let Some(vfs) = slice.vfs.as_mut()
     {
-        apply_agent_vfs_access_grants(
+        apply_project_vfs_mount_exposure_grants(
             vfs,
             Some(
                 context
                     .preset_config
-                    .vfs_access_grants
+                    .project_vfs_mount_exposure_grants
                     .as_deref()
                     .unwrap_or_default(),
             ),
@@ -960,7 +960,7 @@ async fn compose_companion_with_workflow(
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
-    // fragment 注入 Bundle，替代旧的字符串拼接路径。
+    // fragment 注入 Bundle，保持 workflow injection 与其他上下文同一合并路径。
     // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
     // 不需要 declarative bindings 列表）；companion+workflow 路径若提供 audit_session_key
     // 会通过调用方在外层 emit 至审计总线。
@@ -1441,15 +1441,14 @@ mod tests {
         #[test]
         fn builder_with_user_input_unpacks_fields() {
             // 验证 with_user_input 一次性吸收 prompt 输入字段。
-            use crate::agent_run::UserPromptInput;
+            use agentdash_application_ports::launch::LaunchPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 
-            let input = UserPromptInput {
+            let input = LaunchPromptInput {
                 input: Some(agentdash_agent_protocol::text_user_input_blocks("hi")),
-                env,
+                environment_variables: env,
                 executor_config: None,
-                backend_selection: None,
             };
             let prepared = FrameAssemblyBuilder::new().with_user_input(input).build();
             assert!(

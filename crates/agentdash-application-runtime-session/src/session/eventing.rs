@@ -246,7 +246,7 @@ impl SessionEventingService {
         self.advance_model_projection_head(session_id, &persisted)
             .await?;
         // 终态助手消息 / reasoning 落 durable 后，剪除 buffer 中同 item_id 的在途 delta：
-        // 避免 reconnect 时 durable backlog 已 SET 全文、ephemeral 快照又补发旧 delta 脏化（P1-b）。
+        // 避免 reconnect 时 durable backlog 已 SET 全文、ephemeral 快照又补发 in-flight delta 脏化（P1-b）。
         // 与 turn-terminal 的 clear_ephemeral、P2 epoch 不冲突：这里只精剪该消息的 delta。
         if let Some(item_id) = finalized_assistant_item_id(&persisted) {
             self.runtime_registry

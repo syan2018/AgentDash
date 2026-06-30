@@ -5,7 +5,7 @@ use agentdash_application_ports::vfs_materialization::{
     MaterializationTargetKind, VfsMaterializationTransport, VfsMaterializeContent,
     VfsMaterializeEntry, VfsMaterializeRequest,
 };
-use agentdash_spi::{Mount, MountCapability, Vfs};
+use agentdash_spi::{Mount, MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsOperation, Vfs};
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
@@ -14,6 +14,7 @@ use super::rewrite::{
     RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
 };
 use super::service::VfsService;
+use super::service::ensure_runtime_vfs_access;
 use super::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     PROVIDER_SKILL_ASSET_FS, ResourceRef, format_mount_uri, join_root_ref,
@@ -41,6 +42,25 @@ impl VfsMaterializationService {
         &self,
         input: RewriteShellCommandInput<'_>,
     ) -> Result<RewriteShellCommandOutput, String> {
+        self.rewrite_shell_command_inner(input, None, ".").await
+    }
+
+    pub async fn rewrite_shell_command_with_policy(
+        &self,
+        input: RewriteShellCommandInput<'_>,
+        access_policy: &RuntimeVfsAccessPolicy,
+        exec_cwd: &str,
+    ) -> Result<RewriteShellCommandOutput, String> {
+        self.rewrite_shell_command_inner(input, Some(access_policy), exec_cwd)
+            .await
+    }
+
+    async fn rewrite_shell_command_inner(
+        &self,
+        input: RewriteShellCommandInput<'_>,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        exec_cwd: &str,
+    ) -> Result<RewriteShellCommandOutput, String> {
         let mount_ids = input
             .vfs
             .mounts
@@ -56,18 +76,46 @@ impl VfsMaterializationService {
         }
 
         let exec_mount = resolve_mount(input.vfs, input.exec_mount_id, MountCapability::Exec)?;
+        let compiled_policy;
+        let policy = if let Some(access_policy) = access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(input.vfs);
+            &compiled_policy
+        };
+        let exec_cwd = normalize_mount_relative_path(exec_cwd, true)?;
+        ensure_runtime_vfs_access(
+            policy,
+            input.exec_mount_id,
+            &exec_cwd,
+            RuntimeVfsOperation::Exec,
+        )
+        .map_err(|error| error.to_string())?;
         let mut replacements = Vec::new();
         let mut rewrites = Vec::new();
 
         for candidate in candidates {
             let target = parse_mount_uri(&candidate.value, input.vfs)?;
             let source_mount = resolve_mount(input.vfs, &target.mount_id, MountCapability::Read)?;
+            ensure_runtime_vfs_access(
+                policy,
+                &target.mount_id,
+                &target.path,
+                RuntimeVfsOperation::Read,
+            )
+            .map_err(|error| error.to_string())?;
             let local_path = if can_directly_reference_local_path(source_mount, exec_mount) {
                 let path = normalize_mount_relative_path(&target.path, true)?;
                 join_root_ref(&source_mount.root_ref, &path)
             } else {
                 let payload = self
-                    .build_payload(&input, &candidate.value, &target, source_mount)
+                    .build_payload(
+                        &input,
+                        access_policy,
+                        &candidate.value,
+                        &target,
+                        source_mount,
+                    )
                     .await?;
                 let response = self
                     .transport
@@ -123,6 +171,7 @@ impl VfsMaterializationService {
     async fn build_payload(
         &self,
         input: &RewriteShellCommandInput<'_>,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
         source_uri: &str,
         target: &ResourceRef,
         source_mount: &Mount,
@@ -130,6 +179,7 @@ impl VfsMaterializationService {
         let plan = self
             .plan_entries(
                 input.vfs,
+                access_policy,
                 target,
                 source_mount,
                 input.overlay,
@@ -138,7 +188,14 @@ impl VfsMaterializationService {
             .await
             .map_err(|e| e.to_string())?;
         let entries = self
-            .read_plan_entries(input.vfs, target, &plan, input.overlay, input.identity)
+            .read_plan_entries(
+                input.vfs,
+                access_policy,
+                target,
+                &plan,
+                input.overlay,
+                input.identity,
+            )
             .await?;
 
         Ok(VfsMaterializeRequest {
@@ -167,6 +224,7 @@ impl VfsMaterializationService {
         let plan = self
             .plan_entries(
                 input.vfs,
+                input.access_policy,
                 input.target,
                 input.source_mount,
                 input.overlay,
@@ -177,6 +235,7 @@ impl VfsMaterializationService {
         let entries = self
             .read_plan_entries(
                 input.vfs,
+                input.access_policy,
                 input.target,
                 &plan,
                 input.overlay,
@@ -206,6 +265,20 @@ impl VfsMaterializationService {
     async fn local_path_for_uri(&self, input: LocalPathForUriInput<'_>) -> Result<String, String> {
         let target = parse_mount_uri(input.source_uri, input.vfs)?;
         let source_mount = resolve_mount(input.vfs, &target.mount_id, MountCapability::Read)?;
+        let compiled_policy;
+        let policy = if let Some(access_policy) = input.access_policy {
+            access_policy
+        } else {
+            compiled_policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(input.vfs);
+            &compiled_policy
+        };
+        ensure_runtime_vfs_access(
+            policy,
+            &target.mount_id,
+            &target.path,
+            RuntimeVfsOperation::Read,
+        )
+        .map_err(|error| error.to_string())?;
         if can_directly_reference_backend_path(source_mount, input.target_backend_id) {
             let path = normalize_mount_relative_path(&target.path, true)?;
             return Ok(join_root_ref(&source_mount.root_ref, &path));
@@ -214,6 +287,7 @@ impl VfsMaterializationService {
         let payload = self
             .build_payload_for_context(MaterializationBuildInput {
                 vfs: input.vfs,
+                access_policy: input.access_policy,
                 source_uri: input.source_uri,
                 target: &target,
                 source_mount,
@@ -234,6 +308,7 @@ impl VfsMaterializationService {
     async fn plan_entries(
         &self,
         vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         mount: &Mount,
         overlay: Option<&InlineContentOverlay>,
@@ -242,7 +317,7 @@ impl VfsMaterializationService {
         let normalized_path = normalize_mount_relative_path(&target.path, true)?;
         let stat = self
             .vfs_service
-            .stat(vfs, target, overlay, identity)
+            .stat_with_policy(vfs, access_policy, target, overlay, identity)
             .await
             .ok();
 
@@ -250,7 +325,14 @@ impl VfsMaterializationService {
             let root_path = skill_root_path(&normalized_path).expect("skill root path");
             let primary_relative_path = strip_root_prefix(&normalized_path, &root_path);
             let entries = self
-                .list_files_under(vfs, &target.mount_id, &root_path, overlay, identity)
+                .list_files_under(
+                    vfs,
+                    access_policy,
+                    &target.mount_id,
+                    &root_path,
+                    overlay,
+                    identity,
+                )
                 .await?
                 .into_iter()
                 .filter(|path| is_skill_resource_path(&strip_root_prefix(path, &root_path)))
@@ -272,7 +354,14 @@ impl VfsMaterializationService {
         if is_dir {
             let root_path = normalized_path.clone();
             let entries = self
-                .list_files_under(vfs, &target.mount_id, &root_path, overlay, identity)
+                .list_files_under(
+                    vfs,
+                    access_policy,
+                    &target.mount_id,
+                    &root_path,
+                    overlay,
+                    identity,
+                )
                 .await?;
             return Ok(MaterializationPlan {
                 kind: MaterializationPlanKind::WritableWorkingCopy,
@@ -301,6 +390,7 @@ impl VfsMaterializationService {
     async fn list_files_under(
         &self,
         vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
         mount_id: &str,
         root_path: &str,
         overlay: Option<&InlineContentOverlay>,
@@ -308,8 +398,9 @@ impl VfsMaterializationService {
     ) -> Result<Vec<String>, String> {
         let result = self
             .vfs_service
-            .list(
+            .list_with_policy(
                 vfs,
+                access_policy,
                 mount_id,
                 ListOptions {
                     path: root_path.to_string(),
@@ -332,6 +423,7 @@ impl VfsMaterializationService {
     async fn read_plan_entries(
         &self,
         vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
         target: &ResourceRef,
         plan: &MaterializationPlan,
         overlay: Option<&InlineContentOverlay>,
@@ -341,8 +433,9 @@ impl VfsMaterializationService {
         for path in &plan.entry_paths {
             let read = self
                 .vfs_service
-                .read_text(
+                .read_text_with_policy(
                     vfs,
+                    access_policy,
                     &ResourceRef {
                         mount_id: target.mount_id.clone(),
                         path: path.clone(),
@@ -381,6 +474,7 @@ pub struct RewriteShellCommandInput<'a> {
 #[derive(Clone, Copy)]
 pub struct RewriteJsonArgumentsInput<'a> {
     pub vfs: &'a Vfs,
+    pub access_policy: Option<&'a RuntimeVfsAccessPolicy>,
     pub target_backend_id: &'a str,
     pub arguments: &'a serde_json::Map<String, serde_json::Value>,
     pub session_id: &'a str,
@@ -410,6 +504,7 @@ pub struct MaterializationRewrite {
 
 struct MaterializationBuildInput<'a> {
     vfs: &'a Vfs,
+    access_policy: Option<&'a RuntimeVfsAccessPolicy>,
     source_uri: &'a str,
     target: &'a ResourceRef,
     source_mount: &'a Mount,
@@ -422,6 +517,7 @@ struct MaterializationBuildInput<'a> {
 
 struct LocalPathForUriInput<'a> {
     vfs: &'a Vfs,
+    access_policy: Option<&'a RuntimeVfsAccessPolicy>,
     target_backend_id: &'a str,
     source_uri: &'a str,
     session_id: &'a str,
@@ -518,6 +614,7 @@ async fn rewrite_json_string(
         let local_path = service
             .local_path_for_uri(LocalPathForUriInput {
                 vfs: input.vfs,
+                access_policy: input.access_policy,
                 target_backend_id: input.target_backend_id,
                 source_uri: &candidate.value,
                 session_id: input.session_id,
@@ -630,7 +727,11 @@ fn to_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::MountCapability;
+    use agentdash_application_ports::vfs_materialization::VfsMaterializeResponse;
+    use agentdash_spi::{
+        MountCapability, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern,
+    };
+    use std::collections::BTreeSet;
 
     fn mount(id: &str, provider: &str, backend_id: &str, root_ref: &str) -> Mount {
         Mount {
@@ -647,6 +748,72 @@ mod tests {
             display_name: id.to_string(),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    struct NoopMaterializationTransport;
+
+    #[async_trait::async_trait]
+    impl VfsMaterializationTransport for NoopMaterializationTransport {
+        async fn materialize(
+            &self,
+            _backend_id: &str,
+            _request: VfsMaterializeRequest,
+        ) -> Result<VfsMaterializeResponse, String> {
+            Err("unexpected materialization call".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn json_argument_rewrite_uses_runtime_vfs_access_policy() {
+        let vfs = Vfs {
+            mounts: vec![mount(
+                "main",
+                PROVIDER_RELAY_FS,
+                "local-a",
+                "/workspace/repo",
+            )],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let policy = RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix("allowed".to_string()),
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::SystemRuntimeProjection,
+            }],
+        };
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "path".to_string(),
+            serde_json::Value::String("main://blocked.txt".to_string()),
+        );
+        let service = VfsMaterializationService::new(
+            Arc::new(VfsService::new(Arc::new(
+                crate::MountProviderRegistry::new(),
+            ))),
+            Arc::new(NoopMaterializationTransport),
+        );
+
+        let err = service
+            .rewrite_json_arguments(RewriteJsonArgumentsInput {
+                vfs: &vfs,
+                access_policy: Some(&policy),
+                target_backend_id: "local-a",
+                arguments: &arguments,
+                session_id: "session-1",
+                turn_id: None,
+                tool_call_id: Some("tool-1"),
+                overlay: None,
+                identity: None,
+            })
+            .await
+            .expect_err("policy deny should stop JSON rewrite");
+
+        assert!(err.contains("runtime VFS access policy denied"));
+        assert!(err.contains("main://blocked.txt"));
     }
 
     #[test]

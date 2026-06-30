@@ -196,7 +196,7 @@ Validation / errors：
 Tests required：
 
 - mount builder test asserts ProjectAgent runtime mount id is `agent` and inline storage container is `knowledge`.
-- VFS grant test asserts project VFS grants do not constrain Agent memory mount capabilities.
+- Project VFS mount exposure test asserts ProjectAgent preset exposure does not constrain Agent memory mount capabilities.
 - memory discovery projection test asserts provider receives sanitized mount summary, not `root_ref` or `backend_id`.
 - memory context test asserts only bounded `agent://MEMORY.md` index may enter connector context.
 
@@ -382,6 +382,13 @@ Project VFS Mount 是 Project 级单层实体，CRUD 路由为：
 
 `mount_id` 是外部路径标识；数据库 UUID 只服务持久化和 inline storage owner。Project VFS Mount 不持有 `default_write`，workspace `main` 才是隐式写入目标。
 
+ProjectAgent preset 中的 Project VFS mount exposure 是启动面裁剪输入：它只作用于带有
+Project VFS mount metadata 的 mount，并与 mount 自身 provider capability 取交集后决定该
+ProjectAgent frame 中可见的 Project VFS mount。Agent memory、lifecycle、routine、canvas、
+skill asset 和 workspace 等运行期 mount 由各自 projector/provider owner 暴露；通用 mount/path
+运行期准入由 `RuntimeVfsAccessPolicy` 表达。这样 ProjectAgent preset 配置只描述项目资料
+预设暴露，避免与 provider support 或 session runtime authorization 混成同一个事实源。
+
 ## Runtime Tools
 
 Agent 工具使用 mount-relative 参数模型：
@@ -401,6 +408,20 @@ Agent 工具使用 mount-relative 参数模型：
 - `shell.exec`
 
 `shell.exec` 只能作用于声明了 `exec` 能力的 mount。VFS URI 物化成本机路径时遵守 [VFS Materialization](./vfs-materialization.md)。
+
+## Runtime VFS Access Policy
+
+运行期 VFS 准入由三类事实取交集：
+
+| 事实 | 表达 |
+| --- | --- |
+| Tool capability / tool policy | 当前 Agent 能看见并调用哪个 VFS 工具 |
+| Provider mount capability | mount provider 支持 read/list/search/write/exec/apply_patch 中哪些操作 |
+| `RuntimeVfsAccessPolicy` | 当前 runtime surface 对 mount/path/operation 的授权规则 |
+
+`RuntimeVfsAccessPolicy` 的 rule source 至少区分 Project preset、PermissionGrant 和 system/runtime projection。`PermissionGrant.requested_vfs_access` 投影到 policy 时保留 mount id、mount-relative path scope、operation set 和 source，原因是 PermissionGrant 是运行期授权事实；provider mount capability 仍只表达 provider support。
+
+Policy matching 只接收 normalize 后的 mount-relative path。绝对路径和 `..` escape 在进入 matching 前失败，避免把本机路径解析和授权判断耦合。
 
 ## Search Discovery Policy
 

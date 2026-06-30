@@ -109,6 +109,20 @@ pub struct ExtensionWorkspaceTabProjection {
     pub label: String,
     pub uri_scheme: String,
     pub renderer: ExtensionWorkspaceTabRendererDeclaration,
+    pub loadability: ExtensionWorkspaceTabLoadabilityProjection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionWorkspaceTabLoadabilityMode {
+    ExtensionHost,
+    UiOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionWorkspaceTabLoadabilityProjection {
+    pub available: bool,
+    pub mode: ExtensionWorkspaceTabLoadabilityMode,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +189,11 @@ pub fn extension_runtime_projection_from_installations(
     for installation in installations {
         let extension_key = installation.extension_key.clone();
         let extension_id = installation.manifest.extension_id.clone();
+        let has_package_artifact = installation.package_artifact.is_some();
         let manifest = installation.manifest;
+        let has_extension_host_bundle = manifest.bundles.iter().any(|bundle| {
+            bundle.kind == ExtensionBundleKind::ExtensionHost && !bundle.entry.trim().is_empty()
+        });
         for action in &manifest.runtime_actions {
             claim_unique_extension_runtime_key(
                 &mut action_keys,
@@ -294,6 +312,11 @@ pub fn extension_runtime_projection_from_installations(
                     type_id: tab.type_id,
                     label: tab.label,
                     uri_scheme: tab.uri_scheme,
+                    loadability: workspace_tab_loadability(
+                        &tab.renderer,
+                        has_package_artifact,
+                        has_extension_host_bundle,
+                    ),
                     renderer: tab.renderer,
                 }
             }));
@@ -322,6 +345,68 @@ pub fn extension_runtime_projection_from_installations(
             );
     }
     Ok(projection)
+}
+
+fn workspace_tab_loadability(
+    renderer: &ExtensionWorkspaceTabRendererDeclaration,
+    has_package_artifact: bool,
+    has_extension_host_bundle: bool,
+) -> ExtensionWorkspaceTabLoadabilityProjection {
+    match renderer {
+        ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => {
+            if !has_package_artifact {
+                return ExtensionWorkspaceTabLoadabilityProjection {
+                    available: false,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::ExtensionHost,
+                    reason: Some("extension package artifact 缺失，webview 无法加载".to_string()),
+                };
+            }
+            if !has_extension_host_bundle {
+                return ExtensionWorkspaceTabLoadabilityProjection {
+                    available: false,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::ExtensionHost,
+                    reason: Some(
+                        "extension host bundle 缺失，webview runtime 无法加载".to_string(),
+                    ),
+                };
+            }
+            if entry.trim().is_empty() {
+                return ExtensionWorkspaceTabLoadabilityProjection {
+                    available: false,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::ExtensionHost,
+                    reason: Some("webview renderer entry 为空".to_string()),
+                };
+            }
+            ExtensionWorkspaceTabLoadabilityProjection {
+                available: true,
+                mode: ExtensionWorkspaceTabLoadabilityMode::ExtensionHost,
+                reason: None,
+            }
+        }
+        ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
+            if !has_package_artifact {
+                return ExtensionWorkspaceTabLoadabilityProjection {
+                    available: false,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
+                    reason: Some(
+                        "extension package artifact 缺失，Canvas panel 无法加载".to_string(),
+                    ),
+                };
+            }
+            if entry.trim().is_empty() {
+                return ExtensionWorkspaceTabLoadabilityProjection {
+                    available: false,
+                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
+                    reason: Some("Canvas panel renderer entry 为空".to_string()),
+                };
+            }
+            ExtensionWorkspaceTabLoadabilityProjection {
+                available: true,
+                mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
+                reason: None,
+            }
+        }
+    }
 }
 
 fn protocol_channel_projection(
@@ -377,6 +462,7 @@ fn claim_unique_extension_runtime_key(
 mod tests {
     use std::sync::Mutex;
 
+    use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
@@ -495,6 +581,53 @@ mod tests {
         .expect("valid installation")
     }
 
+    fn artifact_ref(extension_id: &str) -> ExtensionPackageArtifactRef {
+        ExtensionPackageArtifactRef {
+            artifact_id: uuid::Uuid::new_v4(),
+            package_name: format!("@agentdash/{extension_id}"),
+            package_version: "1.0.0".to_string(),
+            asset_version: "1.0.0".to_string(),
+            source_version: "1.0.0".to_string(),
+            storage_ref: format!("extensions/{extension_id}.agentdash-extension.tgz"),
+            archive_digest:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            manifest_digest:
+                "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
+        }
+    }
+
+    fn canvas_panel_manifest(extension_id: &str) -> ExtensionTemplatePayload {
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: extension_id.to_string(),
+            package: ExtensionPackageMetadata {
+                name: format!("@agentdash/{extension_id}"),
+                version: "1.0.0".to_string(),
+            },
+            asset_version: "1.0.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![],
+            protocol_channels: vec![],
+            extension_dependencies: vec![],
+            workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
+                type_id: format!("{extension_id}.panel"),
+                label: "Canvas".to_string(),
+                uri_scheme: extension_id.to_string(),
+                renderer: ExtensionWorkspaceTabRendererDeclaration::CanvasPanel {
+                    entry: "dist/canvas/runtime-snapshot.json".to_string(),
+                },
+            }],
+            permissions: vec![],
+            bundles: vec![],
+        }
+    }
+
     #[test]
     fn flattens_enabled_extension_runtime_projection() {
         let projection = extension_runtime_projection_from_installations(vec![installation(
@@ -520,8 +653,37 @@ mod tests {
             "self_api"
         );
         assert_eq!(projection.workspace_tabs[0].type_id, "demo.profile-panel");
+        assert!(!projection.workspace_tabs[0].loadability.available);
+        assert_eq!(
+            projection.workspace_tabs[0].loadability.mode,
+            ExtensionWorkspaceTabLoadabilityMode::ExtensionHost
+        );
         assert_eq!(projection.permissions.len(), 1);
         assert_eq!(projection.bundles[0].entry, "dist/extension.js");
+    }
+
+    #[test]
+    fn canvas_panel_tab_is_ui_only_and_loadable_without_extension_host_bundle() {
+        let project_id = uuid::Uuid::new_v4();
+        let installation = ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "canvas-demo",
+            "Canvas Demo",
+            canvas_panel_manifest("canvas-demo"),
+            artifact_ref("canvas-demo"),
+        )
+        .expect("packaged canvas panel installation");
+
+        let projection = extension_runtime_projection_from_installations(vec![installation])
+            .expect("projection");
+
+        assert!(projection.bundles.is_empty());
+        let tab = &projection.workspace_tabs[0];
+        assert!(tab.loadability.available);
+        assert_eq!(
+            tab.loadability.mode,
+            ExtensionWorkspaceTabLoadabilityMode::UiOnly
+        );
     }
 
     #[derive(Default)]

@@ -7,8 +7,7 @@
 //! crate 没有 re-export `AbsolutePathBuf`，且其 `Deserialize` 实现要求
 //! "已是绝对路径或 thread-local 设了 base"——直接用结构体字面量在外部构造行不通。
 //!
-//! 此前 `agentdash-executor::connectors::pi_agent::stream_mapper` 与 legacy
-//! vibe-kanban mapper 各自用
+//! connector mapper 曾各自用
 //! `serde_json::json!(...)` + `from_value` 绕过此限制，导致 hack 散落两处、
 //! 状态转换重复实现。
 //!

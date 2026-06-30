@@ -23,7 +23,7 @@
 | `panic!()` | 不可恢复错误 | 返回 `Result` |
 | 裸 `std::sync::Mutex` | 可能死锁 | 使用 `tokio::sync::Mutex`（异步） |
 | 业务 HTTP DTO 混用 `camelCase` / `snake_case` | 破坏前后端字段契约 | 统一 `#[serde(rename_all = "snake_case")]` |
-| 前端 mapper 兼容"旧字段 + 新字段" | 掩盖后端契约错误 | 先修正后端 DTO |
+| 前端 mapper 同时接受历史字段和当前字段 | 掩盖后端契约错误 | 先修正后端 DTO |
 
 ---
 
@@ -87,7 +87,7 @@ pub struct StoryMcpServer {
 
 - Response JSON：所有层级 `snake_case`
 - Request JSON：前端发 `snake_case`，后端按 `snake_case` 反序列化
-- 不允许：顶层 `snake_case` 内层 `camelCase`、前端 `fooBar ?? foo_bar` 长期兼容
+- 不允许：顶层 `snake_case` 内层 `camelCase`、前端 `fooBar ?? foo_bar` 双风格读取
 
 ### 关键约束
 

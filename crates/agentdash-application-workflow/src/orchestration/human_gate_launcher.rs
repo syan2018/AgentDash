@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityCompletionPolicy, ExecutorRunRef, ExecutorSpec, LifecycleGate, LifecycleGateRepository,
-    LifecycleRun, NodePortValue, PlanNode, PlanNodeKind, RuntimeNodeState,
+    ActivityCompletionPolicy, ExecutorRunRef, ExecutorSpec, LifecycleGateRepository, LifecycleRun,
+    NodePortValue, PlanNode, PlanNodeKind, RuntimeNodeState,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
-use crate::WorkflowApplicationError;
+use crate::{
+    WorkflowApplicationError,
+    gate::{LifecycleGateResolver, OpenWorkflowHumanGateCommand, ResolveWorkflowHumanGateCommand},
+};
 
 use super::executor_launcher::{OpenedHumanGate, SubmitHumanGateDecisionInput};
 use super::ready_node::{ReadyNodeView, RunningNodeView, RuntimeNodeCoordinate};
@@ -15,13 +18,13 @@ use super::runtime::OrchestrationRuntimeEvent;
 
 #[derive(Clone)]
 pub(super) struct HumanGateLauncher {
-    lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    gate_resolver: LifecycleGateResolver,
 }
 
 impl HumanGateLauncher {
     pub(super) fn new(lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>) -> Self {
         Self {
-            lifecycle_gate_repo,
+            gate_resolver: LifecycleGateResolver::new(lifecycle_gate_repo),
         }
     }
 
@@ -55,29 +58,19 @@ impl HumanGateLauncher {
                 ));
             }
         }
-        let gate = LifecycleGate::open(
-            run.id,
-            None,
-            None,
-            "orchestration_human_gate",
-            human_gate_correlation_id(
-                coordinate.orchestration_id,
-                &coordinate.node_path,
-                coordinate.attempt,
-            ),
-            Some(json!({
-                "contract": "orchestration_human_gate.v1",
-                "run_id": coordinate.run_id,
-                "orchestration_id": coordinate.orchestration_id,
-                "node_path": coordinate.node_path.clone(),
-                "attempt": coordinate.attempt,
-                "plan_node_id": plan_node_id,
-                "label": label,
-                "executor": executor,
-            })),
-        );
-        let gate_id = gate.id;
-        self.lifecycle_gate_repo.create(&gate).await?;
+        let outcome = self
+            .gate_resolver
+            .open_workflow_human_gate(OpenWorkflowHumanGateCommand {
+                run_id: run.id,
+                orchestration_id: coordinate.orchestration_id,
+                node_path: coordinate.node_path.clone(),
+                attempt: coordinate.attempt,
+                plan_node_id,
+                label,
+                executor,
+            })
+            .await?;
+        let gate_id = outcome.gate.id;
 
         Ok(HumanGateOpenOutcome::Opened {
             opened: OpenedHumanGate {
@@ -117,19 +110,13 @@ impl HumanGateLauncher {
                 human_decision_outputs(view.plan_node, input.decision.clone()),
             )
         };
-        let mut gate = self
-            .lifecycle_gate_repo
-            .get(gate_id)
-            .await?
-            .ok_or_else(|| WorkflowApplicationError::NotFound(format!("gate 不存在: {gate_id}")))?;
-        if !gate.is_open() {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "gate {gate_id} 已经 resolved"
-            )));
-        }
-        gate.payload_json = Some(input.decision.clone());
-        gate.resolve(input.resolved_by.clone());
-        self.lifecycle_gate_repo.update(&gate).await?;
+        self.gate_resolver
+            .resolve_workflow_human_gate(ResolveWorkflowHumanGateCommand {
+                gate_id,
+                decision: input.decision.clone(),
+                resolved_by: input.resolved_by.clone(),
+            })
+            .await?;
 
         Ok(HumanGateDecision { gate_id, outputs })
     }
@@ -190,8 +177,4 @@ fn human_gate_id_from_node(node: &RuntimeNodeState) -> Result<Uuid, WorkflowAppl
             node.node_path
         ))),
     }
-}
-
-fn human_gate_correlation_id(orchestration_id: Uuid, node_path: &str, attempt: u32) -> String {
-    format!("orchestration:{orchestration_id}:node:{node_path}:attempt:{attempt}")
 }

@@ -1,6 +1,7 @@
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_spi::ConnectorError;
 
-use super::{LaunchCommand, LaunchCommandOutcome, SessionLaunchDeps, SessionLaunchOrchestrator};
+use super::{LaunchCommandOutcome, SessionLaunchDeps, SessionLaunchOrchestrator};
 use crate::session::hub::SessionRuntimeInner;
 
 #[derive(Clone)]
@@ -19,9 +20,10 @@ impl SessionLaunchService {
         &self,
         session_id: &str,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<String, ConnectorError> {
         Ok(self
-            .launch_command_with_outcome(session_id, command)
+            .launch_command_with_outcome(session_id, command, planning_input)
             .await?
             .turn_id)
     }
@@ -30,22 +32,28 @@ impl SessionLaunchService {
         &self,
         session_id: String,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<String, ConnectorError> {
         let service = self.clone();
-        tokio::spawn(async move { service.launch_command(&session_id, command).await })
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!("session launch task join failed: {error}"))
-            })?
+        tokio::spawn(async move {
+            service
+                .launch_command(&session_id, command, planning_input)
+                .await
+        })
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!("session launch task join failed: {error}"))
+        })?
     }
 
     pub async fn launch_command_with_outcome(
         &self,
         session_id: &str,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         SessionLaunchOrchestrator::new(self.deps.clone())
-            .launch(session_id, command)
+            .launch(session_id, command, planning_input)
             .await
     }
 }

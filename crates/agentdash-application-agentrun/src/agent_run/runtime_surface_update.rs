@@ -7,13 +7,16 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
+use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_domain::canvas::{
     Canvas, CanvasAccessProjection, CanvasScope, canvas_access_projection,
 };
 use agentdash_domain::common::{Mount, MountCapability};
 use agentdash_domain::project::{ProjectAuthorization, ProjectAuthorizationContext};
 use agentdash_domain::workflow::AgentFrameRepository;
-use agentdash_spi::{AuthIdentity, CapabilityState, Vfs};
+use agentdash_spi::{
+    AuthIdentity, CapabilityState, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
+};
 use agentdash_workspace_module::canvas::{
     CANVAS_RUNTIME_DATA_BINDINGS_METADATA_KEY, canvas_module_id, canvas_provider_root_ref,
     upsert_canvas_runtime_data_binding,
@@ -80,7 +83,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         session_id: &str,
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
-    ) -> Result<Vfs, String> {
+    ) -> Result<RuntimeVfsState, String> {
         self.apply_canvas_runtime_surface_update(
             session_id,
             canvas,
@@ -99,7 +102,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: RuntimeSurfaceUpdateRequest,
-    ) -> Result<Vfs, String> {
+    ) -> Result<RuntimeVfsState, String> {
         ensure_canvas_runtime_surface_request_targets_canvas(&request, canvas)?;
         let surface = self
             .surface_query
@@ -145,6 +148,11 @@ impl AgentRunRuntimeSurfaceUpdateService {
             surface.identity.as_ref(),
         )
         .await;
+        let active_policy = runtime_vfs_access_policy_after_canvas_mount_update(
+            &surface.vfs_access_policy,
+            &active_vfs,
+            &canvas.mount_id,
+        )?;
 
         let workspace_module_ref = canvas_module_id(&canvas.mount_id);
         let created_by_kind = match request {
@@ -163,7 +171,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         next_frame.append_visible_workspace_module_ref(&workspace_module_ref);
 
         if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
-            return Ok(active_vfs);
+            return Ok(RuntimeVfsState::new(active_vfs, active_policy));
         }
 
         self.frame_repo
@@ -179,9 +187,10 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .await
             .map_err(|error| error.to_string())?;
 
-        next_frame
+        let vfs = next_frame
             .typed_vfs()
-            .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))
+            .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))?;
+        Ok(RuntimeVfsState::new(vfs, active_policy))
     }
 
     pub async fn effective_capability_view_for_delivery_runtime(
@@ -373,6 +382,43 @@ fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess
     }
 }
 
+fn runtime_vfs_access_policy_after_canvas_mount_update(
+    current_policy: &RuntimeVfsAccessPolicy,
+    active_vfs: &Vfs,
+    canvas_mount_id: &str,
+) -> Result<RuntimeVfsAccessPolicy, String> {
+    let mut policy = current_policy.clone();
+    policy.rules.retain(|rule| {
+        rule.mount_id != canvas_mount_id
+            || rule.source != RuntimeVfsAccessSource::SystemRuntimeProjection
+    });
+    let Some(canvas_mount) = active_vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.id == canvas_mount_id)
+        .cloned()
+    else {
+        return Err(format!(
+            "更新后的运行期 VFS 缺少 Canvas mount `{canvas_mount_id}`，无法同步访问策略"
+        ));
+    };
+    let canvas_vfs = Vfs {
+        mounts: vec![canvas_mount],
+        default_mount_id: None,
+        source_project_id: active_vfs.source_project_id.clone(),
+        source_story_id: active_vfs.source_story_id.clone(),
+        links: Vec::new(),
+    };
+    policy.rules.extend(
+        RuntimeVfsAccessPolicy::whole_mounts_from_vfs_with_source(
+            &canvas_vfs,
+            RuntimeVfsAccessSource::SystemRuntimeProjection,
+        )
+        .rules,
+    );
+    Ok(policy)
+}
+
 fn build_canvas_mount(canvas: &Canvas, access: CanvasMountAccess) -> Mount {
     let mut capabilities = vec![
         MountCapability::Read,
@@ -433,10 +479,16 @@ impl RuntimeSurfaceAdoptionPort for AgentRunRuntimeSurfaceUpdateService {
 mod tests {
     use super::*;
 
+    use std::collections::BTreeSet;
+
     use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{AgentConfig, AuthIdentity, AuthMode, RuntimeMcpServer, ToolCluster};
+    use agentdash_spi::{
+        AgentConfig, AuthIdentity, AuthMode, RuntimeMcpServer, RuntimeVfsAccessPolicy,
+        RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
+        ToolCluster,
+    };
     use chrono::Utc;
     use tokio::sync::Mutex;
     use uuid::Uuid;
@@ -537,12 +589,12 @@ mod tests {
             skill_discovery_providers: Vec::new(),
         });
 
-        let returned_vfs = service
+        let returned_state = service
             .expose_canvas_mount("runtime-1", &canvas, None)
             .await
             .expect("repeated expose should succeed");
 
-        assert_eq!(returned_vfs, active_vfs);
+        assert_eq!(returned_state.vfs, active_vfs);
         assert_eq!(
             frame_repo
                 .list_by_agent(agent_id)
@@ -605,12 +657,13 @@ mod tests {
             skill_discovery_providers: Vec::new(),
         });
 
-        let returned_vfs = service
+        let returned_state = service
             .expose_canvas_mount("runtime-1", &canvas, None)
             .await
             .expect("project shared canvas expose should succeed");
 
-        let mount = returned_vfs
+        let mount = returned_state
+            .vfs
             .mounts
             .iter()
             .find(|mount| mount.id == canvas.mount_id)
@@ -619,6 +672,101 @@ mod tests {
         assert!(!mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src",
+            RuntimeVfsOperation::List
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Search
+        ));
+    }
+
+    #[tokio::test]
+    async fn canvas_expose_preserves_existing_runtime_vfs_policy() {
+        let project_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let canvas = Canvas::new(
+            project_id,
+            "cvs-dashboard-a".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        let active_vfs = base_vfs(project_id);
+        let restricted_policy = RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "workspace".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            }],
+        };
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(active_vfs.clone());
+
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
+        frame.mcp_surface_json =
+            Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
+        frame.execution_profile_json =
+            Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        frame_repo.create(&frame).await.expect("frame should save");
+        let adopter = Arc::new(RecordingAdopter::default());
+        let mut surface = runtime_surface_for_frame(
+            "runtime-1",
+            run_id,
+            project_id,
+            &frame,
+            capability_state,
+            active_vfs,
+            Some(identity("alice")),
+        );
+        surface.vfs_access_policy = restricted_policy;
+        let service = AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
+            surface_query: Arc::new(FixedSurfaceQuery { surface }),
+            frame_repo,
+            vfs_service: Some(Arc::new(VfsService::new(Arc::new(
+                MountProviderRegistry::default(),
+            )))),
+            active_adopter: adopter,
+            extra_skill_dirs: Vec::new(),
+            skill_discovery_providers: Vec::new(),
+        });
+
+        let returned_state = service
+            .expose_canvas_mount("runtime-1", &canvas, None)
+            .await
+            .expect("project shared canvas expose should succeed");
+
+        assert!(returned_state.access_policy.admits(
+            "workspace",
+            "docs/readme.md",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(
+            !returned_state.access_policy.admits(
+                "workspace",
+                "src/lib.rs",
+                RuntimeVfsOperation::Read
+            ),
+            "Canvas expose must not rebuild existing mounts to whole-mount access"
+        );
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "index.html",
+            RuntimeVfsOperation::Read
+        ));
     }
 
     #[tokio::test]
@@ -668,7 +816,7 @@ mod tests {
             skill_discovery_providers: Vec::new(),
         });
 
-        let returned_vfs = service
+        let returned_state = service
             .apply_canvas_runtime_surface_update(
                 "runtime-1",
                 &canvas,
@@ -684,7 +832,8 @@ mod tests {
             .await
             .expect("runtime binding update should succeed");
 
-        let mount = returned_vfs
+        let mount = returned_state
+            .vfs
             .mounts
             .iter()
             .find(|mount| mount.id == canvas.mount_id)
@@ -764,12 +913,13 @@ mod tests {
         });
         let current_user = ProjectAuthorizationContext::new("alice".to_string(), Vec::new(), false);
 
-        let returned_vfs = service
+        let returned_state = service
             .expose_canvas_mount("runtime-1", &canvas, Some(&current_user))
             .await
             .expect("requesting owner should expose personal canvas");
 
-        let mount = returned_vfs
+        let mount = returned_state
+            .vfs
             .mounts
             .iter()
             .find(|mount| mount.id == canvas.mount_id)
@@ -778,6 +928,31 @@ mod tests {
         assert!(mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src",
+            RuntimeVfsOperation::List
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Search
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Write
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::ApplyPatch
+        ));
     }
 
     #[test]
@@ -815,6 +990,7 @@ mod tests {
         vfs: Vfs,
         identity: Option<AuthIdentity>,
     ) -> AgentRunRuntimeSurface {
+        let vfs_access_policy = agentdash_spi::RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs);
         AgentRunRuntimeSurface {
             runtime_session_id: runtime_session_id.to_string(),
             run_id,
@@ -830,6 +1006,7 @@ mod tests {
             surface_revision: frame.revision,
             capability_state,
             vfs,
+            vfs_access_policy,
             mcp_servers: Vec::new(),
             runtime_backend_anchor: None,
             active_turn_id: None,

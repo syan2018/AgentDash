@@ -289,7 +289,7 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_domain::backend::{
-        BackendType, BackendVisibility, LocalBackendClaim, UserPreferences, ViewConfig,
+        BackendType, BackendVisibility, LocalBackendClaim, ViewConfig,
     };
     use agentdash_domain::project::{
         Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType,
@@ -359,14 +359,6 @@ mod tests {
         }
 
         async fn save_view(&self, _view: &ViewConfig) -> Result<(), DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn get_preferences(&self) -> Result<UserPreferences, DomainError> {
-            unreachable!("测试未使用");
-        }
-
-        async fn save_preferences(&self, _prefs: &UserPreferences) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
     }

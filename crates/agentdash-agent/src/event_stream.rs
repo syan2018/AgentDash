@@ -41,7 +41,7 @@ impl<T: Clone + Send + 'static> Clone for EventSender<T> {
 
 /// 事件接收端 — 实现 `Stream<Item = T>` 供下游透明消费
 ///
-/// 内部自动跳过 lagged 错误（消费者过慢时丢弃的旧事件）。
+/// 内部自动跳过 lagged 错误（消费者过慢时丢弃的滞后事件）。
 pub struct EventReceiver<T: Clone + Send + 'static> {
     inner: BroadcastStream<T>,
 }
@@ -55,7 +55,7 @@ impl<T: Clone + Send + 'static> Stream for EventReceiver<T> {
                 Poll::Ready(Some(Ok(item))) => return Poll::Ready(Some(item)),
                 Poll::Ready(Some(Err(err))) => {
                     diag!(Warn, Subsystem::AgentRun,
-        error = ?err, "Agent 事件流消费者发生 lagged，已跳过部分旧事件");
+        error = ?err, "Agent 事件流消费者发生 lagged，已跳过部分滞后事件");
                     continue;
                 }
                 Poll::Ready(None) => return Poll::Ready(None),

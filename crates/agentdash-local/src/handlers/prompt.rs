@@ -1,17 +1,21 @@
 //! Agent prompt / cancel / discover 命令处理
 
 use agentdash_diagnostics::{Subsystem, diag};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use agentdash_relay::*;
 use tokio::sync::{Mutex, mpsc};
 
+use agentdash_agent_protocol::UserInputBlock;
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 use agentdash_application_runtime_session::session::{
-    LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
+    SessionRuntimeServices, SessionTurnSteerCommand,
 };
+use agentdash_spi::AgentConfig;
 use agentdash_spi::AgentConnector;
 
+use super::CommandDispatchPlan;
 use super::relay_mcp_servers::relay_mcp_servers_to_runtime;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::tool_executor::ToolExecutor;
@@ -60,6 +64,17 @@ impl PromptCommandHandler {
                 })
                 .collect(),
             None => vec![],
+        }
+    }
+
+    pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
+        match msg {
+            RelayMessage::CommandPrompt { .. }
+            | RelayMessage::CommandCancel { .. }
+            | RelayMessage::CommandSteer { .. }
+            | RelayMessage::CommandDiscover { .. }
+            | RelayMessage::CommandDiscoverOptions { .. } => Some(CommandDispatchPlan::INLINE),
+            _ => None,
         }
     }
 
@@ -184,18 +199,8 @@ impl PromptCommandHandler {
             }
         }
 
-        // relay 边界仍按 ACP ContentBlock JSON 与云端互通；本机接收侧在此一次性把
-        // ContentBlock 转换为 canonical `Vec<UserInputBlock>`（relay→canonical 单实现）。
-        let input = payload
-            .prompt_blocks
-            .and_then(relay_prompt_blocks_to_user_input);
         let command = LaunchCommand::local_relay_prompt_input(
-            UserPromptInput {
-                input,
-                env: payload.env,
-                executor_config,
-                backend_selection: None,
-            },
+            typed_relay_prompt_user_input(payload.input, payload.env, executor_config),
             mcp_servers,
             workspace_root,
         )
@@ -212,7 +217,7 @@ impl PromptCommandHandler {
 
         match session_runtime
             .launch
-            .launch_command(&session_id, command)
+            .launch_command(&session_id, command, LaunchPlanningInput::default())
             .await
         {
             Ok(turn_id) => {
@@ -359,27 +364,16 @@ impl PromptCommandHandler {
     }
 }
 
-/// relay 边界：把云端透传的 ACP ContentBlock JSON 转换为 canonical `Vec<UserInputBlock>`。
-///
-/// 远程后端互通保留 ACP ContentBlock wire 形态；本机接收侧在此一次性收敛到 canonical
-/// 用户输入。非数组/空/无可用内容时返回 `None`，交由下游 `resolve_prompt_payload` 报错。
-fn relay_prompt_blocks_to_user_input(
-    value: serde_json::Value,
-) -> Option<Vec<agentdash_agent_protocol::UserInputBlock>> {
-    let array = match value {
-        serde_json::Value::Array(arr) => arr,
-        other => vec![other],
-    };
-    let blocks = array
-        .into_iter()
-        .filter_map(|item| {
-            serde_json::from_value::<agentdash_agent_protocol::ContentBlock>(item).ok()
-        })
-        .collect::<Vec<_>>();
-    if blocks.is_empty() {
-        return None;
+fn typed_relay_prompt_user_input(
+    input: Vec<UserInputBlock>,
+    env: HashMap<String, String>,
+    executor_config: Option<AgentConfig>,
+) -> LaunchPromptInput {
+    LaunchPromptInput {
+        input: Some(input),
+        environment_variables: env,
+        executor_config,
     }
-    agentdash_agent_protocol::content_blocks_to_codex_user_input(&blocks).ok()
 }
 
 async fn claim_session_forwarder(
@@ -450,12 +444,47 @@ async fn forward_session_notifications(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
     use std::sync::Arc;
 
+    use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use tokio::sync::Mutex;
 
-    use super::{claim_session_forwarder, release_session_forwarder};
+    use super::{
+        claim_session_forwarder, release_session_forwarder, typed_relay_prompt_user_input,
+    };
+
+    #[test]
+    fn typed_relay_prompt_user_input_preserves_blocks() {
+        let input = vec![
+            codex::UserInput::Text {
+                text: "hello".to_string(),
+                text_elements: Vec::new(),
+            },
+            codex::UserInput::Image {
+                detail: None,
+                url: "data:image/png;base64,AAAA".to_string(),
+            },
+            codex::UserInput::LocalImage {
+                detail: None,
+                path: PathBuf::from("assets/local.png"),
+            },
+            codex::UserInput::Skill {
+                name: "reviewer".to_string(),
+                path: PathBuf::from("skills/reviewer/SKILL.md"),
+            },
+            codex::UserInput::Mention {
+                name: "main.rs".to_string(),
+                path: "file://src/main.rs".to_string(),
+            },
+        ];
+
+        let user_input = typed_relay_prompt_user_input(input.clone(), HashMap::new(), None);
+
+        assert_eq!(user_input.input, Some(input));
+        assert!(user_input.environment_variables.is_empty());
+    }
 
     #[tokio::test]
     async fn session_forwarder_claim_is_unique_until_released() {

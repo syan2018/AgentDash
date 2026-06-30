@@ -224,6 +224,7 @@ mod tests {
                 executor_config: AgentConfig::new("PI_AGENT"),
                 mcp_servers: Vec::new(),
                 vfs: None,
+                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,

@@ -12,6 +12,7 @@ import type { Canvas, CanvasRuntimeSnapshot } from "../../types";
 import { CanvasFilesEditor, type CanvasFilesEditorSaveInput } from "./CanvasFilesEditor";
 import { CanvasRuntimeBindingsEditor, type CanvasRuntimeBindingDraft } from "./CanvasRuntimeBindingsEditor";
 import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
+import { areCanvasRuntimeSnapshotsEquivalent } from "./CanvasRuntimePreview.runtime";
 
 export interface CanvasRuntimePanelProps {
   canvasId: string | null;
@@ -77,7 +78,9 @@ export function CanvasRuntimePanel({
           : fetchCanvasRuntimeSnapshot(snapshotCanvasId),
       ]);
       setCanvas(nextCanvas);
-      setSnapshot(nextSnapshot);
+      setSnapshot((current) =>
+        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Canvas 加载失败");
       setCanvas(null);
@@ -103,7 +106,9 @@ export function CanvasRuntimePanel({
     setBindingsError(null);
     try {
       const nextSnapshot = await upsertAgentRunCanvasRuntimeBinding(agentRunBridge, binding);
-      setSnapshot(nextSnapshot);
+      setSnapshot((current) =>
+        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
+      );
     } catch (err) {
       setBindingsError(err instanceof Error ? err.message : "保存运行期绑定失败");
       throw err;
@@ -133,7 +138,9 @@ export function CanvasRuntimePanel({
       const nextSnapshot = agentRunBridge
         ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
         : await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id);
-      setSnapshot(nextSnapshot);
+      setSnapshot((current) =>
+        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
+      );
     } catch (err) {
       setFilesError(err instanceof Error ? err.message : "保存源文件失败");
       throw err;

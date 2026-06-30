@@ -1,0 +1,10 @@
+{"name":"D11 design review","file":".trellis/tasks/06-30-design-backlog-review/design-review.md","reason":"Source design item D11 with owner boundary and validation expectations."}
+{"name":"Implementation slices","file":".trellis/tasks/06-30-design-backlog-review/implementation-slices.md","reason":"D11 ordering and dependency context."}
+{"name":"Tauri main current implementation","file":"crates/agentdash-local-tauri/src/main.rs","reason":"Current shell mixed with desktop profile/settings/claim DTOs and IO."}
+{"name":"Local runtime library exports","file":"crates/agentdash-local/src/lib.rs","reason":"Module/export style for new desktop local APIs."}
+{"name":"Local runtime config","file":"crates/agentdash-local/src/runtime.rs","reason":"LocalRuntimeConfig contract consumed by DesktopRunnerHost."}
+{"name":"Local runtime paths","file":"crates/agentdash-local/src/runtime_paths.rs","reason":"Profile/settings path ownership and config directory helpers."}
+{"name":"Machine identity","file":"crates/agentdash-local/src/machine_identity.rs","reason":"Profile/start request normalization depends on machine identity."}
+{"name":"Runner config patterns","file":"crates/agentdash-local/src/runner_config.rs","reason":"Config DTO/file IO/test pattern reference."}
+{"name":"Runner claim patterns","file":"crates/agentdash-local/src/runner_claim.rs","reason":"HTTP claim error mapping and response-to-credentials tests reference."}
+{"name":"Cross-layer desktop local runtime spec","file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"Existing local runtime registration and shell boundary spec."}

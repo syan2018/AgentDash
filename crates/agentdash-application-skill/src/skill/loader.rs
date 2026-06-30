@@ -10,7 +10,7 @@ use agentdash_application_vfs::{
     PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{Mount, MountCapability, SkillRef, Vfs};
+use agentdash_spi::{AuthIdentity, Mount, MountCapability, SkillRef, Vfs};
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
@@ -117,11 +117,15 @@ pub fn load_skills_from_local_dirs(
 ///
 /// 使用通用 `discover_mount_files` 底层机制发现 SKILL.md，
 /// 再对每个文件做 frontmatter 解析 + 验证。
-pub async fn load_skills_from_vfs(service: &VfsService, vfs: &Vfs) -> LoadSkillsResult {
+pub async fn load_skills_from_vfs(
+    service: &VfsService,
+    vfs: &Vfs,
+    identity: Option<&AuthIdentity>,
+) -> LoadSkillsResult {
     let mut result = LoadSkillsResult::default();
     let mut name_map: HashMap<String, String> = HashMap::new();
 
-    for file in discover_builtin_skill_files(service, vfs).await {
+    for file in discover_builtin_skill_files(service, vfs, identity).await {
         let (fm, _body) = parse_skill_file(&file.content);
         let fm = fm.unwrap_or_default();
 
@@ -192,7 +196,11 @@ struct DiscoveredSkillFile {
     content: String,
 }
 
-async fn discover_builtin_skill_files(service: &VfsService, vfs: &Vfs) -> Vec<DiscoveredSkillFile> {
+async fn discover_builtin_skill_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    identity: Option<&AuthIdentity>,
+) -> Vec<DiscoveredSkillFile> {
     let mut files = Vec::new();
 
     for mount in &vfs.mounts {
@@ -204,9 +212,10 @@ async fn discover_builtin_skill_files(service: &VfsService, vfs: &Vfs) -> Vec<Di
         }
 
         for prefix in [".agents/skills", "skills"] {
-            for child_dir in list_children_at(service, vfs, &mount.id, prefix).await {
+            for child_dir in list_children_at(service, vfs, &mount.id, prefix, identity).await {
                 let path = format!("{child_dir}/SKILL.md");
-                if let Some(file) = read_skill_file(service, vfs, &mount.id, &path).await {
+                if let Some(file) = read_skill_file(service, vfs, &mount.id, &path, identity).await
+                {
                     files.push(file);
                 }
             }
@@ -256,12 +265,13 @@ async fn read_skill_file(
     vfs: &Vfs,
     mount_id: &str,
     path: &str,
+    identity: Option<&AuthIdentity>,
 ) -> Option<DiscoveredSkillFile> {
     let target = ResourceRef {
         mount_id: mount_id.to_string(),
         path: path.to_string(),
     };
-    let read = service.read_text(vfs, &target, None, None).await.ok()?;
+    let read = service.read_text(vfs, &target, None, identity).await.ok()?;
     if read.content.trim().is_empty() || read.content.len() as u64 > MAX_SKILL_FILE_SIZE_BYTES {
         return None;
     }
@@ -277,8 +287,9 @@ async fn list_children_at(
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<String> {
-    list_entries_at(service, vfs, mount_id, dir_path)
+    list_entries_at(service, vfs, mount_id, dir_path, identity)
         .await
         .into_iter()
         .filter(|entry| entry.is_dir)
@@ -291,6 +302,7 @@ async fn list_entries_at(
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<RuntimeFileEntry> {
     service
         .list(
@@ -302,7 +314,7 @@ async fn list_entries_at(
                 recursive: false,
             },
             None,
-            None,
+            identity,
         )
         .await
         .map(|result| result.entries)
@@ -360,6 +372,14 @@ fn validate_and_collect(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use agentdash_application_vfs::{
+        ListResult, MountError, MountOperationContext, MountProvider, MountProviderRegistry,
+        ReadResult, SearchQuery, SearchResult,
+    };
+    use tokio::sync::Mutex;
+
     use super::*;
 
     #[test]
@@ -382,5 +402,125 @@ mod tests {
         };
         let diags = validate_and_collect("foo", "foo", &fm, "test.md");
         assert!(diags.iter().any(|d| d.message.contains("description")));
+    }
+
+    struct IdentityCaptureProvider {
+        calls: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl IdentityCaptureProvider {
+        async fn captured_calls(&self) -> Vec<(String, Option<String>)> {
+            self.calls.lock().await.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for IdentityCaptureProvider {
+        fn provider_id(&self) -> &str {
+            PROVIDER_INLINE_FS
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.calls.lock().await.push((
+                "read_text".to_string(),
+                ctx.identity
+                    .as_ref()
+                    .map(|identity| identity.user_id.clone()),
+            ));
+            Ok(ReadResult::new(
+                path,
+                "---\nname: demo\ndescription: Demo skill\n---\n",
+            ))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported("identity test".to_string()))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            options: &ListOptions,
+            ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            self.calls.lock().await.push((
+                format!("list:{}", options.path),
+                ctx.identity
+                    .as_ref()
+                    .map(|identity| identity.user_id.clone()),
+            ));
+            let entries = match options.path.as_str() {
+                ".agents/skills" => Vec::new(),
+                "skills" => vec![RuntimeFileEntry::dir("skills/demo")],
+                _ => Vec::new(),
+            };
+            Ok(ListResult { entries })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Err(MountError::NotSupported("identity test".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn builtin_vfs_skill_discovery_passes_identity_to_list_and_read() {
+        let provider = Arc::new(IdentityCaptureProvider {
+            calls: Mutex::new(Vec::new()),
+        });
+        let mut registry = MountProviderRegistry::new();
+        registry.register(provider.clone());
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "main".to_string(),
+                provider: PROVIDER_INLINE_FS.to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "inline://root".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Main".to_string(),
+                metadata: serde_json::json!({}),
+            }],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let identity = AuthIdentity::system_routine("builtin-skill-identity");
+
+        let result = load_skills_from_vfs(&service, &vfs, Some(&identity)).await;
+
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(
+            provider.captured_calls().await,
+            vec![
+                (
+                    "list:.agents/skills".to_string(),
+                    Some(identity.user_id.clone())
+                ),
+                ("list:skills".to_string(), Some(identity.user_id.clone())),
+                ("read_text".to_string(), Some(identity.user_id.clone())),
+            ]
+        );
     }
 }

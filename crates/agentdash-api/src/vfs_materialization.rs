@@ -233,6 +233,7 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
                     .materialization
                     .rewrite_json_arguments(RewriteJsonArgumentsInput {
                         vfs,
+                        access_policy: context_ref.vfs_access_policy.as_ref(),
                         target_backend_id: backend_id.as_str(),
                         arguments: &arguments,
                         session_id: &context_ref.session_id,

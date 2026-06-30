@@ -36,18 +36,18 @@ pub struct WorkspaceBindingSyncResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkspaceDirectoryFact {
+pub(in crate::workspace) struct WorkspaceDirectoryFact {
     pub binding: WorkspaceBinding,
     pub inventory: BackendWorkspaceInventory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceDirectoryFactApplyResult {
+pub(in crate::workspace) enum WorkspaceDirectoryFactApplyResult {
     Created,
     Updated,
 }
 
-pub fn workspace_inventory_from_detection(
+pub(in crate::workspace) fn workspace_inventory_from_detection(
     backend_id: String,
     root_ref: String,
     detected: &WorkspaceDetectionResult,
@@ -67,7 +67,7 @@ pub fn workspace_inventory_from_detection(
     item
 }
 
-pub fn workspace_directory_fact_from_detection(
+pub(in crate::workspace) fn workspace_directory_fact_from_detection(
     seed_binding: &WorkspaceBinding,
     detected: &WorkspaceDetectionResult,
     source: BackendWorkspaceInventorySource,
@@ -94,14 +94,7 @@ pub fn workspace_directory_fact_from_detection(
     WorkspaceDirectoryFact { binding, inventory }
 }
 
-pub fn workspace_matches_directory_fact(
-    workspace: &Workspace,
-    fact: &WorkspaceDirectoryFact,
-) -> bool {
-    workspace_matches_inventory(workspace, &fact.inventory)
-}
-
-pub fn directory_fact_matches_identity(
+pub(in crate::workspace) fn directory_fact_matches_identity(
     identity_kind: agentdash_domain::workspace::WorkspaceIdentityKind,
     identity_payload: &serde_json::Value,
     fact: &WorkspaceDirectoryFact,
@@ -115,7 +108,7 @@ pub fn directory_fact_matches_identity(
         )
 }
 
-pub fn apply_workspace_directory_fact(
+pub(in crate::workspace) fn apply_workspace_directory_fact(
     workspace: &mut Workspace,
     fact: WorkspaceDirectoryFact,
     priority: i32,
@@ -145,7 +138,9 @@ pub fn apply_workspace_directory_fact(
     WorkspaceDirectoryFactApplyResult::Created
 }
 
-pub fn derive_workspace_status_from_bindings(bindings: &[WorkspaceBinding]) -> WorkspaceStatus {
+pub(in crate::workspace) fn derive_workspace_status_from_bindings(
+    bindings: &[WorkspaceBinding],
+) -> WorkspaceStatus {
     if bindings
         .iter()
         .any(|binding| matches!(binding.status, WorkspaceBindingStatus::Ready))

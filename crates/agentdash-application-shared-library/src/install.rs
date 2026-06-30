@@ -472,7 +472,7 @@ fn agent_template_preset_config(
         description,
         capability_directives: (!dependency_mcp_directives.is_empty())
             .then_some(dependency_mcp_directives),
-        vfs_access_grants: None,
+        project_vfs_mount_exposure_grants: None,
         skill_asset_keys: None,
         default_companion_enabled: None,
         extra_companions: None,

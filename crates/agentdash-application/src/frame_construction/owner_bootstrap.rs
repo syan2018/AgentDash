@@ -9,7 +9,7 @@ use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::canvas::CanvasRepository;
-use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
+use agentdash_domain::common::{AgentConfig, ProjectVfsMountExposureGrant};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
@@ -45,7 +45,8 @@ use crate::runtime_bridge::runtime_mcp_servers_to_summaries;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::workspace::BackendAvailability;
 use agentdash_application_vfs::{
-    SessionMountTarget, VfsService, append_agent_knowledge_mounts, apply_agent_vfs_access_grants,
+    SessionMountTarget, VfsService, append_agent_knowledge_mounts,
+    apply_project_vfs_mount_exposure_grants,
 };
 
 use super::assembly::{FrameAssemblyBuilder, project_frame_assembly_to_frame};
@@ -123,7 +124,7 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub user_input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     pub agent_skill_asset_keys: Vec<String>,
-    pub agent_vfs_access_grants: Vec<AgentVfsAccessGrant>,
+    pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
     pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
     pub visible_canvas_mount_ids: Vec<String>,
@@ -366,7 +367,10 @@ impl<'a> OwnerBootstrapComposer<'a> {
             if !has_existing_vfs && let Some(project_agent) = spec.owner.project_agent() {
                 append_agent_knowledge_mounts(space, project_agent)?;
             }
-            apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
+            apply_project_vfs_mount_exposure_grants(
+                space,
+                Some(&spec.project_vfs_mount_exposure_grants),
+            );
         }
 
         let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {

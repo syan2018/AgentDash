@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use agentdash_spi::{AgentToolResult, ContentPart, Vfs};
+use agentdash_spi::{
+    AgentToolResult, ContentPart, RuntimeVfsAccessPolicy, RuntimeVfsAccessSource, Vfs,
+};
 use tokio::sync::RwLock;
 
-use crate::{ResourceRef, parse_mount_uri};
+use crate::{ResourceRef, compile_whole_mount_runtime_vfs_access_policy, parse_mount_uri};
 
 /// Resolve a tool parameter path into a `ResourceRef`.
 ///
@@ -42,23 +44,79 @@ pub fn resolve_uri_path(vfs: &Vfs, path: &str) -> Result<ResourceRef, String> {
 
 #[derive(Clone)]
 pub struct SharedRuntimeVfs {
-    inner: Arc<RwLock<Vfs>>,
+    inner: Arc<RwLock<RuntimeVfsState>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeVfsState {
+    pub vfs: Vfs,
+    pub access_policy: RuntimeVfsAccessPolicy,
+}
+
+impl RuntimeVfsState {
+    pub fn new(vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) -> Self {
+        let access_policy = normalize_runtime_vfs_access_policy_for_vfs(&vfs, access_policy);
+        Self { vfs, access_policy }
+    }
+}
+
+fn normalize_runtime_vfs_access_policy_for_vfs(
+    vfs: &Vfs,
+    access_policy: RuntimeVfsAccessPolicy,
+) -> RuntimeVfsAccessPolicy {
+    let mut explicit_mounts = std::collections::BTreeSet::new();
+    let mut rules = Vec::new();
+
+    for rule in access_policy.rules {
+        if rule.source == RuntimeVfsAccessSource::SystemRuntimeProjection {
+            continue;
+        }
+        explicit_mounts.insert(rule.mount_id.clone());
+        rules.push(rule);
+    }
+
+    rules.extend(
+        compile_whole_mount_runtime_vfs_access_policy(vfs)
+            .rules
+            .into_iter()
+            .filter(|rule| !explicit_mounts.contains(&rule.mount_id)),
+    );
+
+    RuntimeVfsAccessPolicy { rules }
 }
 
 impl SharedRuntimeVfs {
     pub fn new(vfs: Vfs) -> Self {
+        let access_policy = compile_whole_mount_runtime_vfs_access_policy(&vfs);
+        Self::new_with_policy(vfs, access_policy)
+    }
+
+    pub fn new_with_policy(vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(vfs)),
+            inner: Arc::new(RwLock::new(RuntimeVfsState::new(vfs, access_policy))),
         }
     }
 
     pub async fn snapshot(&self) -> Vfs {
+        self.inner.read().await.vfs.clone()
+    }
+
+    pub async fn snapshot_state(&self) -> RuntimeVfsState {
         self.inner.read().await.clone()
     }
 
+    pub async fn access_policy_snapshot(&self) -> RuntimeVfsAccessPolicy {
+        self.inner.read().await.access_policy.clone()
+    }
+
     pub async fn replace(&self, vfs: Vfs) {
+        let access_policy = compile_whole_mount_runtime_vfs_access_policy(&vfs);
+        self.replace_with_policy(vfs, access_policy).await;
+    }
+
+    pub async fn replace_with_policy(&self, vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) {
         let mut guard = self.inner.write().await;
-        *guard = vfs;
+        *guard = RuntimeVfsState::new(vfs, access_policy);
     }
 }
 
@@ -73,7 +131,11 @@ pub fn ok_text(text: String) -> AgentToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::{Mount, MountCapability};
+    use std::collections::BTreeSet;
+
+    use agentdash_spi::{
+        Mount, MountCapability, RuntimeVfsAccessRule, RuntimeVfsOperation, RuntimeVfsPathPattern,
+    };
 
     fn mount(id: &str) -> Mount {
         Mount {
@@ -81,11 +143,110 @@ mod tests {
             provider: "memory".to_string(),
             backend_id: String::new(),
             root_ref: format!("memory://{id}"),
-            capabilities: vec![MountCapability::Read],
+            capabilities: vec![
+                MountCapability::Read,
+                MountCapability::List,
+                MountCapability::Search,
+            ],
             default_write: false,
             display_name: id.to_string(),
             metadata: serde_json::Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn shared_runtime_vfs_carries_compiled_access_policy() {
+        let vfs = Vfs {
+            mounts: vec![mount("main")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let shared = SharedRuntimeVfs::new(vfs);
+
+        let state = shared.snapshot_state().await;
+
+        assert_eq!(state.vfs.mounts[0].id, "main");
+        assert!(
+            state
+                .access_policy
+                .admits("main", "README.md", RuntimeVfsOperation::Read)
+        );
+        assert!(
+            !state
+                .access_policy
+                .admits("main", "README.md", RuntimeVfsOperation::Write)
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_runtime_vfs_rebuilds_system_projection_from_current_vfs() {
+        let vfs = Vfs {
+            mounts: vec![mount("canvas")],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let stale_policy = RuntimeVfsAccessPolicy::default();
+
+        let shared = SharedRuntimeVfs::new_with_policy(vfs, stale_policy);
+        let state = shared.snapshot_state().await;
+
+        assert!(
+            state
+                .access_policy
+                .admits("canvas", "src/main.tsx", RuntimeVfsOperation::Read)
+        );
+        assert!(
+            state
+                .access_policy
+                .admits("canvas", "src", RuntimeVfsOperation::List)
+        );
+        assert!(
+            state
+                .access_policy
+                .admits("canvas", "src/main.tsx", RuntimeVfsOperation::Search)
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_runtime_vfs_preserves_explicit_mount_restrictions_as_overrides() {
+        let vfs = Vfs {
+            mounts: vec![mount("main")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let restricted_policy = RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            }],
+        };
+
+        let shared = SharedRuntimeVfs::new_with_policy(vfs, restricted_policy);
+        let state = shared.snapshot_state().await;
+
+        assert!(
+            state
+                .access_policy
+                .admits("main", "docs/readme.md", RuntimeVfsOperation::Read)
+        );
+        assert!(
+            !state
+                .access_policy
+                .admits("main", "src/lib.rs", RuntimeVfsOperation::Read)
+        );
+        assert!(
+            !state
+                .access_policy
+                .admits("main", "docs", RuntimeVfsOperation::List)
+        );
     }
 
     #[test]

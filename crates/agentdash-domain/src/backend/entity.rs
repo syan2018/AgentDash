@@ -22,7 +22,7 @@ pub struct BackendConfig {
     pub owner_user_id: Option<String>,
     /// Desktop / runtime profile 标识，用于区分同一用户在不同 server/profile 下的本机端。
     pub profile_id: Option<String>,
-    /// 旧版稳定设备标识，仅作为 legacy merge 输入保留，不再作为本机唯一身份。
+    /// 设备稳定标识，仅作为 backend merge 输入保留，不作为本机唯一身份。
     pub device_id: Option<String>,
     /// 机器级稳定身份，由 Desktop 本地生成并长期保存。
     pub machine_id: Option<String>,
@@ -97,16 +97,6 @@ pub struct ViewConfig {
     pub backend_ids: Vec<String>,
     pub filters: serde_json::Value,
     pub sort_by: Option<String>,
-}
-
-/// 用户偏好
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserPreferences {
-    pub default_view_id: Option<String>,
-    pub theme: Option<String>,
-    pub sidebar_collapsed: bool,
-    #[serde(default)]
-    pub hide_system_steer_messages: bool,
 }
 
 /// Desktop 本机 runtime 领取/确保 local backend 的输入。

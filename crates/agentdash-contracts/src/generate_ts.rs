@@ -21,17 +21,19 @@ use agentdash_contracts::auth::{
     LoginResponse,
 };
 use agentdash_contracts::backend::{
-    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
-    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
-    BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
-    BackendWorkspaceInventoryResponse, BackendWorkspaceInventorySource,
-    BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, ProjectBackendAccessMode,
-    ProjectBackendAccessResponse, ProjectBackendAccessStatus,
-    RegisterBackendWorkspaceInventoryRequest, RunnerRegistrationClaimRequest,
-    RunnerRegistrationClaimResponse, RunnerRegistrationTokenCreateRequest,
-    RunnerRegistrationTokenCreateResponse, RunnerRegistrationTokenMetadataResponse,
-    RunnerRegistrationTokenRevokeResponse, RunnerRegistrationTokenRotateResponse,
-    RunnerRegistrationTokenStatus, RuntimeHealthStatus, UpdateProjectBackendAccessRequest,
+    BackendActiveSessionResponse, BackendCapabilitiesResponse, BackendExecutionLeaseState,
+    BackendExecutionSelectionMode, BackendExecutorCapabilityResponse,
+    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeExecutorResponse,
+    BackendRuntimeHealthResponse, BackendRuntimeSummaryResponse, BackendShareScopeKind,
+    BackendType, BackendVisibility, BackendWithStatusResponse, BackendWorkspaceInventoryResponse,
+    BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
+    CreateProjectBackendAccessRequest, ProjectBackendAccessMode, ProjectBackendAccessResponse,
+    ProjectBackendAccessStatus, RegisterBackendWorkspaceInventoryRequest,
+    RunnerRegistrationClaimRequest, RunnerRegistrationClaimResponse,
+    RunnerRegistrationTokenCreateRequest, RunnerRegistrationTokenCreateResponse,
+    RunnerRegistrationTokenMetadataResponse, RunnerRegistrationTokenRevokeResponse,
+    RunnerRegistrationTokenRotateResponse, RunnerRegistrationTokenStatus, RuntimeHealthStatus,
+    UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
@@ -57,6 +59,10 @@ use agentdash_contracts::context::{
     ContextSlot, ContextSourceKind, ContextSourceRef, SessionComposition,
     SessionRequiredContextBlock, VfsCapabilityDto,
 };
+use agentdash_contracts::contract_generation::{
+    GeneratedTsFile, NDJSON_STREAM_VALIDATORS_FILENAME, render_common_json_value,
+    render_domain_file, render_ndjson_stream_validators,
+};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -81,6 +87,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
     ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
 };
@@ -108,8 +115,9 @@ use agentdash_contracts::mcp_preset::{
 };
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
-    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PolicyDecisionDto, PolicyOutcomeDto,
-    ScopeEscalationIntentDto,
+    PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PermissionGrantVfsAccessRuleDto,
+    PermissionGrantVfsOperationDto, PermissionGrantVfsPathScopeDto, PolicyDecisionDto,
+    PolicyOutcomeDto, ScopeEscalationIntentDto,
 };
 use agentdash_contracts::project::{
     AgentPreset, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse, ProjectConfig,
@@ -216,7 +224,8 @@ use agentdash_contracts::workspace::{
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModulePresentRequest,
+    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
+    WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentRequest,
     WorkspaceModulePresentation, WorkspaceModuleStatus, WorkspaceModuleStatusKind,
     WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
@@ -394,6 +403,11 @@ fn main() {
             export_all::<BackendExecutorCapabilityResponse>(dir);
             export_all::<BackendMcpServerCapabilityResponse>(dir);
             export_all::<BackendCapabilitiesResponse>(dir);
+            export_all::<BackendExecutionSelectionMode>(dir);
+            export_all::<BackendExecutionLeaseState>(dir);
+            export_all::<BackendRuntimeExecutorResponse>(dir);
+            export_all::<BackendActiveSessionResponse>(dir);
+            export_all::<BackendRuntimeSummaryResponse>(dir);
             export_all::<BackendResponse>(dir);
             export_all::<BackendWithStatusResponse>(dir);
             export_all::<ProjectBackendAccessStatus>(dir);
@@ -608,6 +622,9 @@ fn main() {
             export_all::<PolicyOutcomeDto>(dir);
             export_all::<PolicyDecisionDto>(dir);
             export_all::<ScopeEscalationIntentDto>(dir);
+            export_all::<PermissionGrantVfsOperationDto>(dir);
+            export_all::<PermissionGrantVfsPathScopeDto>(dir);
+            export_all::<PermissionGrantVfsAccessRuleDto>(dir);
             export_all::<ListPermissionGrantsQuery>(dir);
             export_all::<PermissionGrantResponse>(dir);
         },
@@ -869,6 +886,8 @@ fn main() {
             export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
             export_all::<ExtensionDependencyDeclarationResponse>(dir);
             export_all::<ExtensionDependencyProjectionResponse>(dir);
+            export_all::<ExtensionWorkspaceTabLoadabilityModeResponse>(dir);
+            export_all::<ExtensionWorkspaceTabLoadabilityResponse>(dir);
             export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);
@@ -897,6 +916,8 @@ fn main() {
             export_all::<WorkspaceModuleUiEntry>(dir);
             export_all::<WorkspaceModuleCanvasHostAction>(dir);
             export_all::<WorkspaceModuleOperationDispatch>(dir);
+            export_all::<WorkspaceModuleOperationReadinessKind>(dir);
+            export_all::<WorkspaceModuleOperationReadiness>(dir);
             export_all::<WorkspaceModuleOperation>(dir);
             export_all::<WorkspaceModuleDescriptor>(dir);
             export_all::<WorkspaceModulePresentRequest>(dir);
@@ -973,6 +994,11 @@ fn main() {
             export_all::<UpdateSettingsResponse>(dir);
         },
     );
+
+    write_ndjson_stream_validators(
+        &generated_dir.join(NDJSON_STREAM_VALIDATORS_FILENAME),
+        check,
+    );
 }
 
 /// Emit a single domain file, register its exported types into the upstream registry.
@@ -1006,119 +1032,40 @@ fn write_domain_dedup(
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
-    declarations.remove("JsonValue");
-
-    // Strip types already defined upstream (remove from declarations).
-    let mut stripped: Vec<(String, String)> = Vec::new();
-    for (type_name, source) in upstream.iter() {
-        if declarations.remove(type_name).is_some() {
-            stripped.push((type_name.clone(), source.clone()));
-        }
+    let rendered = render_domain_file(filename_from_path(out), declarations, upstream);
+    let written = rendered.exported_types.clone();
+    check_or_write_rendered(out, &rendered, check);
+    if !check {
+        eprintln!("Wrote {} ({} types)", out.display(), written.len());
     }
-
-    // Only import types that the *remaining* declarations actually reference.
-    // This avoids importing transitive sub-types that were generated by ts_rs
-    // but aren't directly used (e.g. TextElement inside UserInput).
-    let remaining_text: String = declarations
-        .values()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut dedup_imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-    for (type_name, source) in &stripped {
-        if text_references_type(&remaining_text, type_name) {
-            dedup_imports
-                .entry(source.clone())
-                .or_default()
-                .push(type_name.clone());
-        }
-    }
-    // Also catch types NOT in declarations but referenced (cross-crate phantom deps)
-    for (type_name, source) in upstream.iter() {
-        if stripped.iter().any(|(n, _)| n == type_name) {
-            continue;
-        }
-        if text_references_type(&remaining_text, type_name) {
-            dedup_imports
-                .entry(source.clone())
-                .or_default()
-                .push(type_name.clone());
-        }
-    }
-
-    let mut lines = Vec::new();
-    lines.push(
-        "// This file is generated by `cargo run -p agentdash-contracts --bin generate_contracts_ts`."
-            .to_string(),
-    );
-    lines.push("// Do not edit manually.".to_string());
-    lines.push(String::new());
-
-    let mut has_imports = false;
-    if text_references_type(&remaining_text, "JsonValue") {
-        lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
-        has_imports = true;
-    }
-    for (source, names) in &dedup_imports {
-        let joined = names.join(", ");
-        lines.push(format!("import type {{ {joined} }} from \"{source}\";"));
-        has_imports = true;
-    }
-    if has_imports {
-        lines.push(String::new());
-    }
-
-    let written: BTreeSet<String> = declarations.keys().cloned().collect();
-
-    for decl in declarations.values() {
-        lines.push(decl.clone());
-        lines.push(String::new());
-    }
-
-    let output = lines.join("\n");
-
-    if check {
-        match fs::read_to_string(out) {
-            Ok(existing) if existing == output => {
-                eprintln!("{} is up to date", out.display());
-                return written;
-            }
-            Ok(_) => {
-                eprintln!(
-                    "{} is out of date; run `cargo run -p agentdash-contracts --bin generate_contracts_ts`",
-                    out.display()
-                );
-                std::process::exit(1);
-            }
-            Err(error) => {
-                eprintln!("failed to read {}: {error}", out.display());
-                std::process::exit(1);
-            }
-        }
-    }
-
-    fs::write(out, output).expect("write generated TS");
-    eprintln!("Wrote {} ({} types)", out.display(), written.len());
 
     written
 }
 
 fn write_common_json_value(out: &std::path::Path, check: bool) {
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
+    let rendered = render_common_json_value();
+    check_or_write_rendered(out, &rendered, check);
 
-    let output = [
-        "// This file is generated by `cargo run -p agentdash-contracts --bin generate_contracts_ts`.",
-        "// Do not edit manually.",
-        "",
-        "export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;",
-        "",
-    ]
-    .join("\n");
+    if !check {
+        eprintln!("Wrote {}", out.display());
+    }
+}
 
+fn write_ndjson_stream_validators(out: &std::path::Path, check: bool) {
+    fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
+    let rendered = render_ndjson_stream_validators();
+    check_or_write_rendered(out, &rendered, check);
+
+    if !check {
+        eprintln!("Wrote {}", out.display());
+    }
+}
+
+fn check_or_write_rendered(out: &std::path::Path, rendered: &GeneratedTsFile, check: bool) {
     if check {
         match fs::read_to_string(out) {
-            Ok(existing) if existing == output => {
+            Ok(existing) if existing == rendered.contents => {
                 eprintln!("{} is up to date", out.display());
                 return;
             }
@@ -1136,19 +1083,17 @@ fn write_common_json_value(out: &std::path::Path, check: bool) {
         }
     }
 
-    fs::write(out, output).expect("write generated common TS");
-
-    eprintln!("Wrote {}", out.display());
+    fs::write(out, &rendered.contents).expect("write generated TS");
 }
 
 fn export_all<T: TS + 'static>(dir: &std::path::Path) {
     T::export_all_to(dir).expect("export TS type");
 }
 
-/// Word-boundary check: does `text` contain `name` as a standalone identifier?
-fn text_references_type(text: &str, name: &str) -> bool {
-    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .any(|word| word == name)
+fn filename_from_path(path: &Path) -> &str {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .expect("generated file name")
 }
 
 fn collect_ts_files(dir: &std::path::Path, out: &mut BTreeMap<String, String>) {

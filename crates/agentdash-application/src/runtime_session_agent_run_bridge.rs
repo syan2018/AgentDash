@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock, UserInputSubmissionKind};
 use agentdash_application_agentrun::WorkflowApplicationError;
 use agentdash_application_agentrun::agent_run as agent_run_boundary;
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_application_runtime_session::session as runtime_session;
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
@@ -178,11 +179,11 @@ impl agent_run_boundary::RuntimeSessionLaunchPort for SessionLaunchBridge {
     async fn launch_command_in_task(
         &self,
         session_id: String,
-        command: agent_run_boundary::LaunchCommand,
+        command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<String, WorkflowApplicationError> {
-        let command = runtime_launch_command(command)?;
         self.service
-            .launch_command_in_task(session_id, command)
+            .launch_command_in_task(session_id, command, planning_input)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))
     }
@@ -197,83 +198,4 @@ impl agent_run_boundary::AgentRunCancelRuntimePort for SessionCancelRuntimeBridg
     async fn cancel_runtime_session(&self, session_id: &str) -> Result<(), ConnectorError> {
         self.service.cancel(session_id).await
     }
-}
-
-fn runtime_launch_command(
-    command: agent_run_boundary::LaunchCommand,
-) -> Result<runtime_session::LaunchCommand, WorkflowApplicationError> {
-    let backend_selection = command
-        .user_input()
-        .backend_selection
-        .clone()
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(|error| {
-            WorkflowApplicationError::BadRequest(format!("backend_selection 格式无效: {error}"))
-        })?;
-    let input = runtime_session::UserPromptInput {
-        input: command.user_input().input.clone(),
-        env: command.user_input().env.clone(),
-        executor_config: command.user_input().executor_config.clone(),
-        backend_selection,
-    };
-    let mut runtime_command = match command.source() {
-        agent_run_boundary::LaunchSource::HttpPrompt => {
-            runtime_session::LaunchCommand::http_prompt_input(input, command.identity())
-        }
-        agent_run_boundary::LaunchSource::LifecycleAgentUserMessage => {
-            runtime_session::LaunchCommand::lifecycle_agent_user_message_input(
-                input,
-                command.identity(),
-            )
-        }
-        agent_run_boundary::LaunchSource::HookAutoResume => {
-            runtime_session::LaunchCommand::hook_auto_resume_input(input)
-        }
-        agent_run_boundary::LaunchSource::CompanionDispatch => {
-            let companion = command.companion_modifier().ok_or_else(|| {
-                WorkflowApplicationError::Internal(
-                    "CompanionDispatch 缺少 companion launch modifier".to_string(),
-                )
-            })?;
-            runtime_session::LaunchCommand::companion_dispatch_input(
-                input,
-                command.identity(),
-                companion,
-            )
-        }
-        agent_run_boundary::LaunchSource::CompanionParentResume => {
-            runtime_session::LaunchCommand::companion_parent_resume_input(input)
-        }
-        agent_run_boundary::LaunchSource::WorkflowOrchestrator => {
-            runtime_session::LaunchCommand::workflow_orchestrator_input(input)
-        }
-        agent_run_boundary::LaunchSource::RoutineExecutor => {
-            let routine = command.routine_modifier().ok_or_else(|| {
-                WorkflowApplicationError::Internal(
-                    "RoutineExecutor 缺少 routine launch modifier".to_string(),
-                )
-            })?;
-            runtime_session::LaunchCommand::routine_executor_input(
-                input,
-                command.identity(),
-                routine,
-            )
-        }
-        agent_run_boundary::LaunchSource::LocalRelayPrompt => {
-            let local_relay = command.local_relay_modifier().ok_or_else(|| {
-                WorkflowApplicationError::Internal(
-                    "LocalRelayPrompt 缺少 local relay launch modifier".to_string(),
-                )
-            })?;
-            runtime_session::LaunchCommand::local_relay_prompt_input(
-                input,
-                local_relay.mcp_servers.clone(),
-                local_relay.workspace_root.clone(),
-            )
-        }
-    };
-    runtime_command =
-        runtime_command.with_follow_up(command.follow_up_session_id().map(ToString::to_string));
-    Ok(runtime_command)
 }

@@ -66,8 +66,8 @@ pub struct ContextContributions {
 
 /// 增强型能力解析上下文 — 包含 session owner 与 subject association 解析路径。
 ///
-/// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
-/// `run_context` 为新的 LifecycleSubjectAssociation-based 路径。
+/// `owner_ctx` 表达 session owner visibility 路径；
+/// `run_context` 表达 LifecycleSubjectAssociation-based 路径。
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityContext {
     /// Run 关联的 subject kinds（由 LifecycleSubjectAssociation 投影）。

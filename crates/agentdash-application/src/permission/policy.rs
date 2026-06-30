@@ -5,7 +5,7 @@
 //! 2. AgentProcedureContract.requestable_capabilities — Lifecycle 定义声明的运行时可申请范围
 //! 3. 合并策略：两者取交集 → 自动批准；不在交集内 → 需要用户审批
 
-use agentdash_domain::permission::{PolicyDecision, PolicyOutcome};
+use agentdash_domain::permission::{PermissionGrantVfsAccessRule, PolicyDecision, PolicyOutcome};
 use agentdash_domain::workflow::ToolCapabilityPath;
 
 /// Policy 评估服务。
@@ -69,6 +69,48 @@ impl PermissionPolicyService {
                 reason: format!("partial coverage; unmatched: {}", unmatched.join(", ")),
             }
         }
+    }
+
+    pub fn evaluate_request(
+        requested_paths: &[ToolCapabilityPath],
+        requested_vfs_access: &[PermissionGrantVfsAccessRule],
+        agent_auto_grantable: &[ToolCapabilityPath],
+        lifecycle_requestable: &[ToolCapabilityPath],
+    ) -> PolicyDecision {
+        if requested_paths.is_empty() && requested_vfs_access.is_empty() {
+            return PolicyDecision {
+                outcome: PolicyOutcome::Rejected,
+                matched_rules: vec![],
+                reason: "requested access is empty".to_string(),
+            };
+        }
+
+        let tool_decision = (!requested_paths.is_empty())
+            .then(|| Self::evaluate(requested_paths, agent_auto_grantable, lifecycle_requestable));
+        if let Some(decision) = &tool_decision
+            && decision.outcome == PolicyOutcome::Rejected
+        {
+            return decision.clone();
+        }
+
+        if !requested_vfs_access.is_empty() {
+            let mut matched_rules = tool_decision
+                .as_ref()
+                .map(|decision| decision.matched_rules.clone())
+                .unwrap_or_default();
+            matched_rules.push("permission_grant_vfs_access".to_string());
+            let reason = match tool_decision {
+                Some(decision) => format!("{}; vfs access requires user approval", decision.reason),
+                None => "vfs access requires user approval".to_string(),
+            };
+            return PolicyDecision {
+                outcome: PolicyOutcome::NeedsUserApproval,
+                matched_rules,
+                reason,
+            };
+        }
+
+        tool_decision.expect("non-empty requested_paths has a policy decision")
     }
 
     /// 从 ProjectAgent config JSON 中提取 auto_grantable_capabilities。
@@ -222,5 +264,21 @@ mod tests {
     fn empty_requested_paths_rejected() {
         let result = PermissionPolicyService::evaluate(&[], &[path("x")], &[path("x")]);
         assert_eq!(result.outcome, PolicyOutcome::Rejected);
+    }
+
+    #[test]
+    fn vfs_only_access_requires_user_approval() {
+        let result = PermissionPolicyService::evaluate_request(
+            &[],
+            &[PermissionGrantVfsAccessRule {
+                surface_ref: None,
+                mount_id: "workspace".to_string(),
+                path_scope: agentdash_domain::permission::PermissionGrantVfsPathScope::All,
+                operations: vec![agentdash_domain::permission::PermissionGrantVfsOperation::Read],
+            }],
+            &[path("x")],
+            &[path("x")],
+        );
+        assert_eq!(result.outcome, PolicyOutcome::NeedsUserApproval);
     }
 }

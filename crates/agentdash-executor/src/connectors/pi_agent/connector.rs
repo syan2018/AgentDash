@@ -14,8 +14,8 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::{
-    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ReadableIdRegistry,
-    ToolResultCacheWriter, ToolResultRefContext,
+    Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge, ToolResultCacheWriter,
+    ToolResultRefContext,
 };
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -32,6 +32,8 @@ use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
 };
+
+use super::session_item_identity::SessionItemIdentity;
 
 // ─── PiAgentConnector ───────────────────────────────────────────
 
@@ -61,8 +63,8 @@ struct PiAgentSessionRuntime {
     model_selection: PiAgentModelSelection,
     /// 当前执行模型的真实上下文窗口，来自 provider catalog/model profile。
     model_context_window: Option<u64>,
-    /// Session-scoped readable runtime address registry.
-    readable_ids: Arc<ReadableIdRegistry>,
+    /// Session-scoped runtime identity allocator for readable item addresses.
+    session_identity: Arc<SessionItemIdentity>,
 }
 
 struct ResolvedExecutionBridge {
@@ -673,7 +675,7 @@ impl AgentConnector for PiAgentConnector {
             "Pi Agent prompt entered"
         );
         // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平成文本）。
-        // `to_fallback_text` 保留仅供标题/trace 摘要，不再作为投递路径。
+        // `to_fallback_text` 仅供标题/trace 摘要，不作为投递路径。
         let prompt_parts = prompt.to_content_parts();
         if prompt_parts.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
@@ -700,10 +702,13 @@ impl AgentConnector for PiAgentConnector {
             "Pi Agent prompt resolved runtime reuse state"
         );
         let incoming_system_prompt = assemble_system_prompt(&context.turn.context_frames);
-        let readable_ids = existing_runtime
+        let session_identity = existing_runtime
             .as_ref()
-            .map(|runtime| runtime.readable_ids.clone())
-            .unwrap_or_else(ReadableIdRegistry::new);
+            .map(|runtime| runtime.session_identity.clone())
+            .unwrap_or_else(SessionItemIdentity::new);
+        if existing_runtime.is_none() {
+            session_identity.observe_restored_state(restored_state.as_ref());
+        }
         let mut cached_system_prompt = existing_runtime
             .as_ref()
             .and_then(|runtime| runtime.last_system_prompt.clone());
@@ -837,7 +842,7 @@ impl AgentConnector for PiAgentConnector {
             .hook_runtime
             .as_ref()
             .and_then(|hs| hs.subscribe_traces());
-        agent.set_runtime_delegate(context.turn.runtime_delegate.clone());
+        agent.set_runtime_delegates(context.turn.runtime_delegates.clone());
 
         if let Some(thinking_level) = context.session.executor_config.thinking_level {
             agent.set_thinking_level(thinking_level);
@@ -845,7 +850,7 @@ impl AgentConnector for PiAgentConnector {
         agent.set_tool_result_ref_context(Some(ToolResultRefContext {
             session_id: session_id.to_string(),
             raw_turn_id: context.session.turn_id.clone(),
-            readable_ids: readable_ids.clone(),
+            address_provider: session_identity.clone(),
             cache_writer: self.tool_result_cache_writer.clone(),
         }));
 
@@ -875,7 +880,7 @@ impl AgentConnector for PiAgentConnector {
                 last_system_prompt: cached_system_prompt,
                 model_selection: requested_model_selection,
                 model_context_window: current_model_context_window,
-                readable_ids: readable_ids.clone(),
+                session_identity: session_identity.clone(),
             },
         );
 
@@ -889,7 +894,7 @@ impl AgentConnector for PiAgentConnector {
         let stream_runtime_context = StreamMapperRuntimeContext {
             model_context_window: current_model_context_window,
             reserve_tokens: 0,
-            readable_ids: Some(readable_ids),
+            session_identity: Some(session_identity),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<BackboneEnvelope, ConnectorError>>(8192);
@@ -914,9 +919,11 @@ impl AgentConnector for PiAgentConnector {
                                 &session_id_owned,
                                 &source,
                                 &turn_id,
-                                &mut entry_index,
-                                &mut chunk_emit_states,
-                                &mut tool_call_states,
+                                StreamMapperEventState {
+                                    entry_index: &mut entry_index,
+                                    chunk_emit_states: &mut chunk_emit_states,
+                                    tool_call_states: &mut tool_call_states,
+                                },
                                 stream_runtime_context.clone(),
                             );
 
@@ -952,9 +959,11 @@ impl AgentConnector for PiAgentConnector {
                     &session_id_owned,
                     &source,
                     &turn_id,
-                    &mut entry_index,
-                    &mut chunk_emit_states,
-                    &mut tool_call_states,
+                    StreamMapperEventState {
+                        entry_index: &mut entry_index,
+                        chunk_emit_states: &mut chunk_emit_states,
+                        tool_call_states: &mut tool_call_states,
+                    },
                     stream_runtime_context.clone(),
                 );
 
@@ -1128,8 +1137,7 @@ const MEMORY_CONTEXT_FRAME_KIND: &str = "memory_context";
 ///
 /// 这些帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
 /// `identity_context_frame` / `guidelines_context_frame`），因此这里只需按
-/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`，不再需要原先
-/// effective_prompt / rendered_text 的 fallback 兜底。
+/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`。
 fn assemble_system_prompt(frames: &[ContextFrame]) -> Option<String> {
     let mut parts = Vec::new();
     for kind in [
@@ -1167,7 +1175,7 @@ async fn emit_pending_hook_trace_envelopes(
 }
 
 use super::stream_mapper::{
-    ChunkEmitState, StreamMapperRuntimeContext, ToolCallEmitState,
+    ChunkEmitState, StreamMapperEventState, StreamMapperRuntimeContext, ToolCallEmitState,
     convert_event_to_envelopes_with_runtime_context,
 };
 

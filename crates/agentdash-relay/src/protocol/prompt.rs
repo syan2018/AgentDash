@@ -1,5 +1,6 @@
 ﻿use std::collections::HashMap;
 
+use agentdash_agent_protocol::UserInputBlock;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +20,7 @@ pub struct CommandPromptPayload {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub follow_up_session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_blocks: Option<serde_json::Value>,
+    pub input: Vec<UserInputBlock>,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_identity_kind: Option<WorkspaceIdentityKindRelay>,

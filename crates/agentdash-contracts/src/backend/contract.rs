@@ -119,6 +119,88 @@ pub struct BackendCapabilitiesResponse {
     pub mcp_servers: Vec<BackendMcpServerCapabilityResponse>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendExecutionSelectionMode {
+    Explicit,
+    AutoIdle,
+    WorkspaceBinding,
+}
+
+impl From<agentdash_domain::backend::BackendExecutionSelectionMode>
+    for BackendExecutionSelectionMode
+{
+    fn from(value: agentdash_domain::backend::BackendExecutionSelectionMode) -> Self {
+        match value {
+            agentdash_domain::backend::BackendExecutionSelectionMode::Explicit => Self::Explicit,
+            agentdash_domain::backend::BackendExecutionSelectionMode::AutoIdle => Self::AutoIdle,
+            agentdash_domain::backend::BackendExecutionSelectionMode::WorkspaceBinding => {
+                Self::WorkspaceBinding
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendExecutionLeaseState {
+    Claimed,
+    Running,
+    Released,
+    Lost,
+    Failed,
+}
+
+impl From<agentdash_domain::backend::BackendExecutionLeaseState> for BackendExecutionLeaseState {
+    fn from(value: agentdash_domain::backend::BackendExecutionLeaseState) -> Self {
+        match value {
+            agentdash_domain::backend::BackendExecutionLeaseState::Claimed => Self::Claimed,
+            agentdash_domain::backend::BackendExecutionLeaseState::Running => Self::Running,
+            agentdash_domain::backend::BackendExecutionLeaseState::Released => Self::Released,
+            agentdash_domain::backend::BackendExecutionLeaseState::Lost => Self::Lost,
+            agentdash_domain::backend::BackendExecutionLeaseState::Failed => Self::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BackendRuntimeExecutorResponse {
+    pub executor_id: String,
+    pub name: String,
+    pub variants: Vec<String>,
+    pub available: bool,
+    pub active_session_count: usize,
+    pub allocatable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BackendActiveSessionResponse {
+    pub lease_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub executor_id: String,
+    pub workspace_id: Option<String>,
+    pub root_ref: Option<String>,
+    pub selection_mode: BackendExecutionSelectionMode,
+    pub state: BackendExecutionLeaseState,
+    pub claimed_at: DateTime<Utc>,
+    pub activated_at: Option<DateTime<Utc>>,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct BackendRuntimeSummaryResponse {
+    pub backend_id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub online: bool,
+    pub runtime_health: Option<BackendRuntimeHealthResponse>,
+    pub executors: Vec<BackendRuntimeExecutorResponse>,
+    pub active_session_count: usize,
+    pub active_sessions: Vec<BackendActiveSessionResponse>,
+    pub allocatable: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct BackendResponse {
     pub id: String,

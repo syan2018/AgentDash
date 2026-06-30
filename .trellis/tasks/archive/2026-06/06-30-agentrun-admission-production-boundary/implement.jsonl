@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "AgentRun effective capability and admission owner baseline for D1."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Tool visibility/catalog/readiness/admission split introduced by D7/D8."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "PermissionGrant tool-level admission and AgentFrame surface revision semantics."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession / AgentRun runtime boundary and delegate execution context baseline."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "Canonical D1 design review and recommended convergence path."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "Runtime surfaces research covering D1, D5, D6 and D12 evidence."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/implementation-slices.md", "reason": "Slice ordering and D1 acceptance summary."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/01-authority-capability-admission.md", "reason": "Prior quick convergence scope and explicit D1 residual."}

@@ -1,0 +1,27 @@
+{"file": ".trellis/spec/index.md", "reason": "Project spec entry point for selecting backend, cross-layer, frontend, and shared guidance before implementation."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared Trellis guide index required by trellis-before-dev for all implementation work."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer ownership and data-flow thinking guide for convergence work touching backend, local runtime, and frontend surfaces."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse/convergence guide for replacing duplicate resolvers, validators, and guards with a single owner."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend architectural boundaries for application/domain/infrastructure/runtime modules."}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "Cross-layer architecture rules for preserving single source of truth across backend, local, desktop, and frontend boundaries."}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Capability and runtime tool surface rules needed by the authority/capability and VFS/runtime tool work items."}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "Permission grant semantics and authority boundary for tool-level admission fixes."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "VFS identity, authorization, and mount semantics for VFS/local guard rails and extension workspace resolution."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session/runtime assembly guidance for tool builder, mailbox steering, and runtime session launch changes."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Desktop/local runtime boundary guidance for local relay scheduling and workspace root validation."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Project/backend/workspace routing guidance for extension workspace resolver and settings placement changes."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/adversarial-review.md", "reason": "Source issue list and severity context for all quick convergence work items."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/cleanup-scope-triage.md", "reason": "Quick/medium/design scope classification that defines what this task may implement now."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/followups/autonomy-protocol.md", "reason": "Durable goal execution and compaction recovery protocol for this long-running convergence effort."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/02-extension-authority.md", "reason": "Extension authority evidence for workspace module and extension runtime consistency."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/06-agent-runtime-session-surface.md", "reason": "Mailbox/runtime session findings for steering semantics convergence."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/07-extension-workspace-module-surface.md", "reason": "Extension/workspace module findings for schema validator, resolver, and loadability convergence."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/08-authority-capability-runtime.md", "reason": "Authority/capability findings for P0 tool-level grant and effect-frame admission fixes."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/09-vfs-runtime-tool-surface.md", "reason": "VFS/runtime tool findings for duplicate callable names and builtin skill identity."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/10-local-runtime-relay-surface.md", "reason": "Local relay findings for workspace root guard and handler-declared scheduling."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/11-project-workspace-backend-placement.md", "reason": "Settings/backend placement findings for user preference convergence."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/01-authority-capability-admission.md", "reason": "Detailed implementation brief for Authority capability admission quick fix."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/02-extension-workspace-module-consistency.md", "reason": "Detailed implementation brief for Extension/WorkspaceModule consistency."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/03-vfs-local-guard-rails.md", "reason": "Detailed implementation brief for VFS/local guard rails."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/04-mailbox-steering-consistency.md", "reason": "Detailed implementation brief for mailbox steering semantics."}
+{"file": ".trellis/tasks/06-30-architecture-quick-convergence/work-items/05-settings-preference-convergence.md", "reason": "Detailed implementation brief for scoped settings preference convergence."}

@@ -18,10 +18,7 @@ pub use launch_commit::{
     AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
     accepted_launch_commit_port,
 };
-pub use launch_envelope_provider::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, FrameLaunchEnvelopeConstructionInput,
-    RoutineLaunchSource,
-};
+pub use launch_envelope_provider::FrameLaunchEnvelopeConstructionInput;
 pub use lifecycle_materialization::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };

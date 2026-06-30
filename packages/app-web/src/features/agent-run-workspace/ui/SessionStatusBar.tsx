@@ -11,18 +11,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import type {
-  ConversationMailboxSnapshotView,
-  ConversationCommandView,
-} from "../../../generated/workflow-contracts";
-import type {
-  MailboxStateView,
-  MailboxMessageView,
-} from "../../../generated/agent-run-mailbox-contracts";
+import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
 import type { Task, TaskPlanStatus } from "../../../types";
 import { TaskStatusToken } from "../../../components/ui/status-badge";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import { TaskDrawer } from "../../task/task-drawer";
+import type { SessionChatMailboxModel } from "../../session/ui/SessionChatViewTypes";
 import { MailboxSections } from "./MailboxMessageRow";
 import { mailboxHasContent } from "./mailboxContent";
 
@@ -33,10 +27,7 @@ interface SessionStatusBarProps {
 
   // mailbox passthrough
   messages: MailboxMessageView[];
-  mailbox?: ConversationMailboxSnapshotView;
-  mailboxState?: MailboxStateView;
-  promoteCommand?: ConversationCommandView;
-  deleteCommand?: ConversationCommandView;
+  mailbox?: SessionChatMailboxModel;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
@@ -74,7 +65,7 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
     return tasks[0] ?? null;
   }, [tasks]);
 
-  const hasMailbox = mailboxHasContent(props.messages, props.mailbox, props.mailboxState);
+  const hasMailbox = mailboxHasContent(props.messages, props.mailbox);
   const hasTasks = total > 0;
 
   const selectedTask = useMemo(
@@ -85,7 +76,7 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
   if (!hasTasks && !hasMailbox) return null;
 
   const pendingCount = props.messages.length;
-  const paused = Boolean(props.mailboxState?.paused);
+  const paused = Boolean(props.mailbox?.paused);
 
   return (
     <div className="shrink-0 pb-2">

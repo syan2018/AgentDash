@@ -21,7 +21,7 @@ import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "..
 import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
-import type { SessionChatCommand, SessionChatCommandState } from "./SessionChatViewTypes";
+import type { SessionChatCommandModel, SessionChatCommandState } from "./SessionChatViewTypes";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
 import { ComposerSendButton } from "./composer/ComposerSendButton";
@@ -532,7 +532,7 @@ export function SessionChatComposer({
   onInputChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent) => void;
   onCancelAction: () => void;
-  onCommandAction: (command: SessionChatCommand) => void;
+  onCommandAction: (command: SessionChatCommandModel) => void;
   onExecutorConfigExplicitChange?: (config: {
     providerId: string;
     modelId: string;
@@ -542,16 +542,16 @@ export function SessionChatComposer({
   onPlusMenuFiles: (files: FileList) => void;
   onRemoveImage: (id: string) => void;
 }) {
-  const enterCommandId = commandState.commands.keyboard.enter;
-  const runtimeSubmitCommand = commandState.commands.commands.find(
+  const enterCommandId = commandState.keyboard.enter;
+  const runtimeSubmitCommand = commandState.commands.find(
     (command) => command.command_id === enterCommandId,
-  ) ?? commandState.commands.commands.find(
-    (command) => command.placement.includes("composer_primary") && command.enabled,
-  ) ?? commandState.commands.commands.find(
-    (command) => command.placement.includes("composer_primary"),
+  ) ?? commandState.commands.find(
+    (command) => command.command_id === commandState.primaryCommandId && command.enabled,
+  ) ?? commandState.commands.find(
+    (command) => command.command_id === commandState.primaryCommandId,
   );
-  const submitCommand = commandState.localDraftAction ?? runtimeSubmitCommand;
-  const cancelCommand = commandState.commands.commands.find((command) => command.kind === "cancel");
+  const submitCommand = runtimeSubmitCommand;
+  const cancelCommand = commandState.cancelCommand;
 
   const hasContent = Boolean(inputValue.trim()) || imageAttachments.length > 0;
   // 展开条件：有效多行（trim 后仍含换行） OR 有附件 OR 有文件引用

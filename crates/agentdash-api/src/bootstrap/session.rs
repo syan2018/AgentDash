@@ -19,8 +19,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    accepted_launch_commit_port, hook_target_runtime_port, mailbox_runtime_port,
-    runtime_session_effective_capability_port,
+    accepted_launch_commit_port, agent_run_effective_capability_port, hook_target_runtime_port,
+    mailbox_runtime_port, runtime_session_effective_capability_port,
 };
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_ports::agent_run_surface::{
@@ -35,10 +35,9 @@ use agentdash_application_runtime_session::session::{
     SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
     SessionToolResultCache, SessionToolResultCachePut,
 };
-use agentdash_application_vfs::VfsMaterializationService;
-use agentdash_application_vfs::VfsService;
+use agentdash_application_vfs::tools::RuntimeVfsState;
+use agentdash_application_vfs::{VfsMaterializationService, VfsService};
 use agentdash_domain::canvas::Canvas;
-use agentdash_domain::common::Vfs;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
@@ -93,7 +92,7 @@ impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge 
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest,
-    ) -> Result<Vfs, String> {
+    ) -> Result<RuntimeVfsState, String> {
         let services = self
             .inner
             .get()
@@ -260,6 +259,7 @@ pub(crate) async fn build_session_runtime(
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
+            permission_grant_repo: repos.permission_grant_repo.clone(),
         },
     ));
     let session_runtime_surface_query: Arc<dyn PortsAgentRunRuntimeSurfaceQueryPort> =
@@ -268,6 +268,12 @@ pub(crate) async fn build_session_runtime(
         runtime_surface_query_impl.clone();
     let effective_capability_port = runtime_session_effective_capability_port(
         repos.execution_anchor_repo.clone(),
+        repos.agent_frame_repo.clone(),
+        repos.permission_grant_repo.clone(),
+    );
+    let agent_run_capability_port = agent_run_effective_capability_port(
+        repos.execution_anchor_repo.clone(),
+        repos.agent_frame_repo.clone(),
         repos.permission_grant_repo.clone(),
     );
 
@@ -285,6 +291,7 @@ pub(crate) async fn build_session_runtime(
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
     .with_execution_anchor_repo(repos.execution_anchor_repo.clone())
     .with_runtime_surface_query(session_runtime_surface_query)
+    .with_agent_run_effective_capability_port(agent_run_capability_port)
     .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_permission_grant_repo(repos.permission_grant_repo.clone())
     .with_effective_capability_port(effective_capability_port)

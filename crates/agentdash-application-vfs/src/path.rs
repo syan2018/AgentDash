@@ -211,7 +211,7 @@ fn resolve_links(vfs: &Vfs, mut current: ResourceRef) -> Result<ResourceRef, Str
         } else if let Some(tail) = current.path.strip_prefix(&format!("{}/", link.from_path)) {
             tail.to_string()
         } else {
-            // find_link 的匹配规则应保证不会走到这里，兜底。
+            // find_link 的匹配规则应保证不会走到这里；保留防御分支。
             String::new()
         };
 

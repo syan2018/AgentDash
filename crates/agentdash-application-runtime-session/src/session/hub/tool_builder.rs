@@ -192,7 +192,7 @@ impl SessionRuntimeInner {
         context: &ExecutionContext,
     ) -> AssembledToolSurface {
         let context = self
-            .execution_context_with_agent_run_admission_projection(session_id, context)
+            .execution_context_with_agent_run_effective_capability(session_id, context)
             .await;
         assemble_tool_surface_for_execution_context(
             session_id,
@@ -203,14 +203,14 @@ impl SessionRuntimeInner {
         .await
     }
 
-    async fn execution_context_with_agent_run_admission_projection(
+    async fn execution_context_with_agent_run_effective_capability(
         &self,
         session_id: &str,
         context: &ExecutionContext,
     ) -> ExecutionContext {
         let mut context = context.clone();
         context.turn.capability_state = self
-            .capability_state_with_agent_run_admission_projection(
+            .schema_visible_capability_state_for_agent_run(
                 session_id,
                 &context.turn.capability_state,
             )
@@ -218,7 +218,7 @@ impl SessionRuntimeInner {
         context
     }
 
-    async fn capability_state_with_agent_run_admission_projection(
+    async fn schema_visible_capability_state_for_agent_run(
         &self,
         session_id: &str,
         capability_state: &CapabilityState,
@@ -228,7 +228,10 @@ impl SessionRuntimeInner {
         };
 
         match port
-            .execution_capability_state_for_runtime_session(session_id, capability_state.clone())
+            .schema_visible_capability_state_for_runtime_session(
+                session_id,
+                capability_state.clone(),
+            )
             .await
         {
             Ok(state) => state,
@@ -237,7 +240,7 @@ impl SessionRuntimeInner {
                     Warn,
                     Subsystem::AgentRun,
                     session_id,
-                    "AgentRun execution capability projection skipped: {error}"
+                    "AgentRun effective capability projection skipped: {error}"
                 );
                 capability_state.clone()
             }

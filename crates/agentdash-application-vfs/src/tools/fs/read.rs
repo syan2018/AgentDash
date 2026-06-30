@@ -5,7 +5,10 @@ use std::sync::Mutex;
 use agentdash_spi::Vfs;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::platform::mount::MountError;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, RuntimeVfsOperation,
+    ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use base64::Engine;
 use lru::LruCache;
@@ -15,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::ResourceRef;
 use crate::inline_persistence::InlineContentOverlay;
-use crate::service::VfsService;
+use crate::service::{VfsService, ensure_runtime_vfs_access};
 use crate::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 use crate::types::{runtime_entry_is_binary, runtime_entry_mime_type};
 
@@ -129,15 +132,25 @@ impl AgentTool for FsReadTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         let params: FsReadParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("invalid arguments: {e}")))?;
-        let vfs = self.vfs.snapshot().await;
+        let state = self.vfs.snapshot_state().await;
+        let vfs = state.vfs;
+        let access_policy = state.access_policy;
         let target =
             resolve_uri_path(&vfs, &params.path).map_err(AgentToolError::ExecutionFailed)?;
+        ensure_runtime_vfs_access(
+            &access_policy,
+            &target.mount_id,
+            &target.path,
+            RuntimeVfsOperation::Read,
+        )
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
         // Binary 文件保留专用路径（image block / unsupported binary 报错）。
         if let Ok(entry) = self
             .service
-            .stat(
+            .stat_with_policy(
                 &vfs,
+                Some(&access_policy),
                 &target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),
@@ -145,15 +158,18 @@ impl AgentTool for FsReadTool {
             .await
             && runtime_entry_is_binary(&entry)
         {
-            return self.read_binary_entry(&vfs, &target, entry).await;
+            return self
+                .read_binary_entry(&vfs, &access_policy, &target, entry)
+                .await;
         }
 
         // 1-based 入参 → 0-based 传给 SPI；offset = None / 0 都视为从开头读。
         let spi_offset = params.offset.map(|n| n.saturating_sub(1)).unwrap_or(0);
         let result = match self
             .service
-            .read_text_range(
+            .read_text_range_with_policy(
                 &vfs,
+                Some(&access_policy),
                 &target,
                 spi_offset,
                 params.limit,
@@ -166,7 +182,13 @@ impl AgentTool for FsReadTool {
             Err(MountError::NotFound(missing)) => {
                 let suggestions = self
                     .service
-                    .suggest_paths(&vfs, &target, 3, self.identity.as_ref())
+                    .suggest_paths_with_policy(
+                        &vfs,
+                        Some(&access_policy),
+                        &target,
+                        3,
+                        self.identity.as_ref(),
+                    )
                     .await
                     .unwrap_or_default();
                 let hint = if suggestions.is_empty() {
@@ -293,6 +315,7 @@ impl FsReadTool {
     async fn read_binary_entry(
         &self,
         vfs: &Vfs,
+        access_policy: &agentdash_spi::RuntimeVfsAccessPolicy,
         target: &ResourceRef,
         entry: agentdash_spi::platform::mount::RuntimeFileEntry,
     ) -> Result<AgentToolResult, AgentToolError> {
@@ -327,8 +350,9 @@ impl FsReadTool {
 
         let result = self
             .service
-            .read_binary(
+            .read_binary_with_policy(
                 vfs,
+                Some(access_policy),
                 target,
                 self.overlay.as_ref().map(|arc| arc.as_ref()),
                 self.identity.as_ref(),

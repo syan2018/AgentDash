@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "AgentRun/RuntimeSession command and workspace projection boundary."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend command handler/type safety conventions."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/design-review.md", "reason": "Canonical D5 design review and recommended convergence path."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/research/01-runtime-surfaces.md", "reason": "Runtime surfaces research covering D5 evidence and implementation slices."}
+{"file": ".trellis/tasks/06-30-design-backlog-review/implementation-slices.md", "reason": "Slice ordering and D5 acceptance summary."}
+{"file": ".trellis/tasks/06-30-module-adversarial-review/research/06-agent-runtime-session-surface.md", "reason": "Original AgentRun/RuntimeSession command availability evidence."}

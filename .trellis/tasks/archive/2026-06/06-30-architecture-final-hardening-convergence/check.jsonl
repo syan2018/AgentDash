@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify generated validator consumption and control-plane tests follow frontend type-safety conventions."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Verify stream contract generation and frontend runtime validation agree with cross-layer contract rules."}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Verify AgentRun control-plane tests cover hook/model behavior without creating duplicate state machines."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify quality gate adoption preserves expected local and CI quality workflows."}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Verify WorkspaceModule pure outcome keeps the backend boundary domain-owned."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Use as final review lens for repeated interpretation across layers."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Use as final review lens for centralizing reusable logic instead of duplicating adapters."}

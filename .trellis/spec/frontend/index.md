@@ -23,5 +23,4 @@
 
 - 跨后端 DTO、事件流或 runtime surface 的改动，先读 [Cross-layer Architecture](../cross-layer/architecture.md)。
 - UI 变更先确认 [Design Language](./design-language.md) 是否已有 primitive 或 token。
-- 类型/mapper 变更先读 [Type Safety](./type-safety.md)，避免引入字段别名兼容。
-
+- 类型/mapper 变更先读 [Type Safety](./type-safety.md)，保持字段命名以 generated DTO 为准。

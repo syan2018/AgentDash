@@ -2,6 +2,7 @@
 
 @import "streamdown/styles.css";
 @import "katex/dist/katex.min.css";
+@import "./markdown.css";
 
 @source "./**/*.{ts,tsx}";
 @source "../../app-web/src/**/*.{ts,tsx}";
@@ -50,7 +51,10 @@
   --shadow-lg: var(--elevation-lg);
 
   --font-sans: "Inter Variable", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-mono:
+    "Cascadia Mono", "Cascadia Code", "SFMono-Regular", "JetBrains Mono",
+    "Fira Code", "Roboto Mono", "Menlo", "Monaco", "Consolas",
+    "Liberation Mono", "Courier New", monospace;
 }
 
 :root {
@@ -155,11 +159,12 @@
     border-color: hsl(var(--border));
   }
 
-  /* 根容器撑满，使 StatusScreen 等 min-h-full 全屏态在顶层也能填满视口 */
+  /* 根容器固定为应用视口，页面滚动由内部 pane 显式承载。 */
   html,
   body,
   #root {
     height: 100%;
+    overflow: hidden;
   }
 
   body {
@@ -235,173 +240,6 @@
   .agentdash-file-pill-remove:hover {
     background: hsl(var(--background));
     color: hsl(var(--foreground));
-  }
-
-  .agentdash-markdown,
-  .agentdash-chat-markdown {
-    color: hsl(var(--foreground));
-    font-size: 0.875rem;
-    line-height: 1.7;
-  }
-
-  .agentdash-markdown > :first-child,
-  .agentdash-chat-markdown > :first-child {
-    margin-top: 0;
-  }
-
-  .agentdash-markdown > :last-child,
-  .agentdash-chat-markdown > :last-child {
-    margin-bottom: 0;
-  }
-
-  .agentdash-markdown h1,
-  .agentdash-chat-markdown h1 {
-    margin: 0 0 0.9rem;
-    font-size: 1.35rem;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-
-  .agentdash-markdown h2,
-  .agentdash-chat-markdown h2 {
-    margin: 1.15rem 0 0.65rem;
-    font-size: 1.1rem;
-    font-weight: 650;
-    line-height: 1.35;
-  }
-
-  .agentdash-markdown h3,
-  .agentdash-chat-markdown h3 {
-    margin: 1rem 0 0.5rem;
-    font-size: 0.98rem;
-    font-weight: 650;
-    line-height: 1.4;
-  }
-
-  .agentdash-markdown h4,
-  .agentdash-markdown h5,
-  .agentdash-markdown h6,
-  .agentdash-chat-markdown h4,
-  .agentdash-chat-markdown h5,
-  .agentdash-chat-markdown h6 {
-    margin: 0.9rem 0 0.45rem;
-    font-size: 0.9rem;
-    font-weight: 650;
-    line-height: 1.45;
-  }
-
-  .agentdash-markdown p,
-  .agentdash-markdown ul,
-  .agentdash-markdown ol,
-  .agentdash-markdown pre,
-  .agentdash-markdown blockquote,
-  .agentdash-markdown table,
-  .agentdash-chat-markdown p,
-  .agentdash-chat-markdown ul,
-  .agentdash-chat-markdown ol,
-  .agentdash-chat-markdown pre,
-  .agentdash-chat-markdown blockquote,
-  .agentdash-chat-markdown table {
-    margin: 0.75rem 0 0;
-  }
-
-  .agentdash-markdown ul,
-  .agentdash-markdown ol,
-  .agentdash-chat-markdown ul,
-  .agentdash-chat-markdown ol {
-    padding-left: 1.2rem;
-  }
-
-  .agentdash-markdown li + li,
-  .agentdash-chat-markdown li + li {
-    margin-top: 0.25rem;
-  }
-
-  .agentdash-markdown blockquote,
-  .agentdash-chat-markdown blockquote {
-    border-left: 2px solid hsl(var(--border));
-    padding-left: 0.875rem;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .agentdash-markdown pre,
-  .agentdash-chat-markdown pre {
-    overflow: auto;
-    border: 1px solid hsl(var(--border));
-    border-radius: 0.45rem;
-    background: hsl(var(--secondary));
-    padding: 0.75rem 0.875rem;
-    color: hsl(var(--foreground));
-    font-size: 0.75rem;
-    line-height: 1.6;
-  }
-
-  .agentdash-markdown code,
-  .agentdash-chat-markdown code {
-    font-family: var(--font-mono);
-  }
-
-  .agentdash-markdown :not(pre) > code,
-  .agentdash-chat-markdown :not(pre) > code {
-    border: 1px solid hsl(var(--border));
-    border-radius: 0.3rem;
-    background: hsl(var(--secondary));
-    padding: 0.1rem 0.35rem;
-    font-size: 0.75rem;
-  }
-
-  .agentdash-markdown a,
-  .agentdash-chat-markdown a {
-    color: hsl(var(--primary));
-    text-decoration: none;
-  }
-
-  .agentdash-markdown a:hover,
-  .agentdash-chat-markdown a:hover {
-    text-decoration: underline;
-  }
-
-  .agentdash-markdown table,
-  .agentdash-chat-markdown table {
-    width: 100%;
-    border-collapse: collapse;
-    overflow: hidden;
-    border: 1px solid hsl(var(--border));
-    border-radius: 0.45rem;
-    font-size: 0.75rem;
-  }
-
-  .agentdash-markdown th,
-  .agentdash-markdown td,
-  .agentdash-chat-markdown th,
-  .agentdash-chat-markdown td {
-    border-bottom: 1px solid hsl(var(--border));
-    padding: 0.5rem 0.75rem;
-    text-align: left;
-    vertical-align: top;
-  }
-
-  .agentdash-markdown th,
-  .agentdash-chat-markdown th {
-    background: hsl(var(--secondary));
-    color: hsl(var(--muted-foreground));
-    font-weight: 600;
-  }
-
-  .agentdash-markdown tr:last-child td,
-  .agentdash-chat-markdown tr:last-child td {
-    border-bottom: none;
-  }
-
-  .agentdash-chat-code-block {
-    overflow: auto;
-    border: 1px solid hsl(var(--border));
-    border-radius: 0.45rem;
-    background: hsl(var(--secondary));
-    padding: 0.75rem 0.875rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    line-height: 1.6;
   }
 
   .agentdash-panel-header-tag {

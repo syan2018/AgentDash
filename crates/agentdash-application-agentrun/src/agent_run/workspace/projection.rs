@@ -1,9 +1,7 @@
-﻿use crate::agent_run::runtime_session_boundary::SessionExecutionState;
+use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 
 use super::types::{
-    AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,
-    AgentRunWorkspaceRuntimeCommandStateModel, AgentRunWorkspaceRuntimeCommandStatus,
-    AgentRunWorkspaceStateCode,
+    AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel, AgentRunWorkspaceStateCode,
 };
 
 pub struct AgentRunWorkspaceProjection;
@@ -21,12 +19,6 @@ impl AgentRunWorkspaceProjection {
             last_turn_id,
             delivery_status,
         }
-    }
-
-    pub fn runtime_command_state(
-        execution_state: &SessionExecutionState,
-    ) -> AgentRunWorkspaceRuntimeCommandStateModel {
-        runtime_command_state(execution_state)
     }
 }
 
@@ -90,56 +82,6 @@ fn delivery_status(execution_state: &SessionExecutionState, agent_status: &str) 
     }
 }
 
-fn runtime_command_state(
-    execution_state: &SessionExecutionState,
-) -> AgentRunWorkspaceRuntimeCommandStateModel {
-    match execution_state {
-        SessionExecutionState::Idle => AgentRunWorkspaceRuntimeCommandStateModel {
-            status: AgentRunWorkspaceRuntimeCommandStatus::Idle,
-            turn_id: None,
-            message: None,
-        },
-        SessionExecutionState::Running { turn_id } => AgentRunWorkspaceRuntimeCommandStateModel {
-            status: AgentRunWorkspaceRuntimeCommandStatus::Running,
-            turn_id: turn_id.clone(),
-            message: None,
-        },
-        SessionExecutionState::Cancelling { turn_id } => {
-            AgentRunWorkspaceRuntimeCommandStateModel {
-                status: AgentRunWorkspaceRuntimeCommandStatus::Cancelling,
-                turn_id: turn_id.clone(),
-                message: Some("当前执行正在取消中。".to_string()),
-            }
-        }
-        SessionExecutionState::Completed { turn_id } => AgentRunWorkspaceRuntimeCommandStateModel {
-            status: AgentRunWorkspaceRuntimeCommandStatus::Completed,
-            turn_id: Some(turn_id.clone()),
-            message: None,
-        },
-        SessionExecutionState::Failed { turn_id, message } => {
-            AgentRunWorkspaceRuntimeCommandStateModel {
-                status: AgentRunWorkspaceRuntimeCommandStatus::Failed,
-                turn_id: Some(turn_id.clone()),
-                message: message.clone(),
-            }
-        }
-        SessionExecutionState::Interrupted { turn_id, message } => {
-            AgentRunWorkspaceRuntimeCommandStateModel {
-                status: AgentRunWorkspaceRuntimeCommandStatus::Interrupted,
-                turn_id: turn_id.clone(),
-                message: message.clone(),
-            }
-        }
-        SessionExecutionState::Lost { turn_id, message } => {
-            AgentRunWorkspaceRuntimeCommandStateModel {
-                status: AgentRunWorkspaceRuntimeCommandStatus::Lost,
-                turn_id: turn_id.clone(),
-                message: message.clone(),
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,10 +109,6 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id, None);
         assert_eq!(model.delivery_status, "idle");
-        assert_eq!(
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Idle).status,
-            AgentRunWorkspaceRuntimeCommandStatus::Idle
-        );
     }
 
     #[test]
@@ -196,21 +134,6 @@ mod tests {
         assert_eq!(model.active_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "running");
-        assert_eq!(
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            })
-            .status,
-            AgentRunWorkspaceRuntimeCommandStatus::Running
-        );
-        assert_eq!(
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Running {
-                turn_id: Some("turn-1".to_string()),
-            })
-            .turn_id
-            .as_deref(),
-            Some("turn-1")
-        );
     }
 
     #[test]
@@ -223,19 +146,6 @@ mod tests {
         assert_eq!(model.active_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "cancelling");
-        let command_state = AgentRunWorkspaceProjection::runtime_command_state(
-            &SessionExecutionState::Cancelling {
-                turn_id: Some("turn-1".to_string()),
-            },
-        );
-        assert_eq!(
-            command_state.status,
-            AgentRunWorkspaceRuntimeCommandStatus::Cancelling
-        );
-        assert_eq!(
-            command_state.message.as_deref(),
-            Some("当前执行正在取消中。")
-        );
     }
 
     #[test]
@@ -248,13 +158,6 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "completed");
-        assert_eq!(
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Completed {
-                turn_id: "turn-1".to_string(),
-            })
-            .status,
-            AgentRunWorkspaceRuntimeCommandStatus::Completed
-        );
     }
 
     #[test]
@@ -268,16 +171,6 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "failed");
-        let command_state =
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Failed {
-                turn_id: "turn-1".to_string(),
-                message: Some("provider failed".to_string()),
-            });
-        assert_eq!(
-            command_state.status,
-            AgentRunWorkspaceRuntimeCommandStatus::Failed
-        );
-        assert_eq!(command_state.message.as_deref(), Some("provider failed"));
     }
 
     #[test]
@@ -291,21 +184,10 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "interrupted");
-        let command_state = AgentRunWorkspaceProjection::runtime_command_state(
-            &SessionExecutionState::Interrupted {
-                turn_id: Some("turn-1".to_string()),
-                message: Some("user interrupted".to_string()),
-            },
-        );
-        assert_eq!(
-            command_state.status,
-            AgentRunWorkspaceRuntimeCommandStatus::Interrupted
-        );
-        assert_eq!(command_state.message.as_deref(), Some("user interrupted"));
     }
 
     #[test]
-    fn lost_turn_projects_lost_delivery_and_runtime_status() {
+    fn lost_turn_projects_lost_delivery_status() {
         let model = project(&SessionExecutionState::Lost {
             turn_id: Some("turn-1".to_string()),
             message: Some("backend disconnected".to_string()),
@@ -315,19 +197,6 @@ mod tests {
         assert_eq!(model.active_turn_id, None);
         assert_eq!(model.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(model.delivery_status, "lost");
-        let command_state =
-            AgentRunWorkspaceProjection::runtime_command_state(&SessionExecutionState::Lost {
-                turn_id: Some("turn-1".to_string()),
-                message: Some("backend disconnected".to_string()),
-            });
-        assert_eq!(
-            command_state.status,
-            AgentRunWorkspaceRuntimeCommandStatus::Lost
-        );
-        assert_eq!(
-            command_state.message.as_deref(),
-            Some("backend disconnected")
-        );
     }
 
     #[test]

@@ -6,27 +6,35 @@ import {
   QUALITY_GATES,
   gateCommand,
   gateNames,
+  getStep,
   getGate,
   resolveGateSteps,
   validateQualityGateManifest,
 } from "./lib/quality-gates.js";
 
-const [command = "list", gateName, ...rest] = process.argv.slice(2);
-const json = rest.includes("--json") || gateName === "--json";
+const cliArgs = process.argv.slice(2);
+const normalizedArgs = cliArgs.at(0) === "--" ? cliArgs.slice(1) : cliArgs;
+const [command = "list", ...commandArgs] = normalizedArgs;
 
 try {
-  if (command === "list") {
-    printList(json);
+  if (command === "list" || command === "--json") {
+    printList(command === "--json" || hasFlag(commandArgs, "--json"));
   } else if (command === "show") {
-    printGate(requireGateName(gateName, command), json);
+    printGate(requireName(firstPositional(commandArgs), command), hasFlag(commandArgs, "--json"));
   } else if (command === "command") {
-    console.log(gateCommand(requireGateName(gateName, command)));
+    console.log(gateCommand(requireName(firstPositional(commandArgs), command)));
   } else if (command === "run") {
-    runGate(requireGateName(gateName, command));
+    runGate(requireName(firstPositional(commandArgs), command), {
+      dryRun: hasFlag(commandArgs, "--dry-run"),
+    });
+  } else if (command === "run-step") {
+    runCommandStep(getStep(requireName(firstPositional(commandArgs), command)), {
+      dryRun: hasFlag(commandArgs, "--dry-run"),
+    });
   } else if (command === "check") {
-    checkManifest(json);
+    checkManifest(hasFlag(commandArgs, "--json"));
   } else if (command === "expect-failure") {
-    expectFailure(gateName, rest);
+    expectFailure(commandArgs.at(0), commandArgs.slice(1));
   } else {
     printUsage();
     process.exit(1);
@@ -87,20 +95,33 @@ function checkManifest(asJson) {
   }
 }
 
-function runGate(name) {
-  for (const step of resolveGateSteps(name)) {
-    console.log(`\n> ${step.id}: ${step.run}`);
-    const result = spawnSync(step.run, {
-      shell: true,
-      stdio: "inherit",
-    });
+function runGate(name, options) {
+  const steps = resolveGateSteps(name);
+  for (const [index, step] of steps.entries()) {
+    runCommandStep(step, { ...options, index, total: steps.length });
+  }
+}
 
-    if (result.error) {
-      throw result.error;
-    }
-    if ((result.status ?? 1) !== 0) {
-      process.exit(result.status ?? 1);
-    }
+function runCommandStep(step, options) {
+  const prefix =
+    typeof options.index === "number" && typeof options.total === "number"
+      ? `[${options.index + 1}/${options.total}] `
+      : "";
+  console.log(`\n> ${prefix}${step.id}: ${step.run}`);
+  if (options.dryRun) {
+    return;
+  }
+
+  const result = spawnSync(step.run, {
+    shell: true,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
   }
 }
 
@@ -122,15 +143,23 @@ function expectFailure(separator, args) {
   }
 }
 
-function requireGateName(name, commandName) {
-  if (!name || name === "--json") {
+function requireName(name, commandName) {
+  if (!name) {
     throw new Error(`quality-gates ${commandName} requires a gate name`);
   }
   return name;
 }
 
+function firstPositional(args) {
+  return args.find((arg) => !arg.startsWith("--"));
+}
+
+function hasFlag(args, flag) {
+  return args.includes(flag);
+}
+
 function printUsage() {
   console.error(
-    "Usage: node scripts/quality-gates.js <list|show|command|run|check> [gate] [--json]",
+    "Usage: node scripts/quality-gates.js <list|show|command|run|run-step|check> [gate-or-step] [--json] [--dry-run]",
   );
 }

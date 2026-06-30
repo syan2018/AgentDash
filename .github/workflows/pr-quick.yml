@@ -30,7 +30,6 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.33.3
           run_install: false
 
       - name: Setup Node.js
@@ -61,14 +60,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Migration guard
-        run: pnpm run migration:guard
-
-      - name: Shared package typecheck
-        run: pnpm run shared:check
-
-      - name: Web typecheck
-        run: pnpm run frontend:check
-
-      - name: Rust check
-        run: pnpm run backend:check
+      - name: PR quick quality gate
+        run: node scripts/quality-gates.js run pr_quick

@@ -9,9 +9,18 @@
 - **Linting**: ESLint + typescript-eslint
 - **构建**: TypeScript 严格模式（`~5.9.3`）
 - **测试**: Vitest（`^4.0.18`）
-- **检查命令**: `pnpm --filter app-web run check`（typecheck + lint + test）
+- **局部检查命令**: `pnpm run frontend:check`、`pnpm run frontend:lint`、`pnpm run frontend:test`
+- **仓库质量门**: `node scripts/quality-gates.js run <gate>`，其中 gate 组成由 `scripts/lib/quality-gates.js` 维护
 
-代码提交前必须通过 lint 和类型检查。
+代码提交前必须通过对应改动面的质量门、lint 和类型检查。
+
+## 质量门事实源
+
+仓库级质量门使用 `scripts/lib/quality-gates.js` 维护 gate 与 step 的组成关系，`scripts/quality-gates.js run <gate>` 是本地脚本和 CI workflow 共同调用的入口。workflow 只保留 checkout、依赖安装、缓存、浏览器安装和 artifact 上传等执行环境编排，具体检查命令从 manifest 展开。
+
+这样做的原因是 PR quick、deployment contract、desktop check、full local 等检查集合需要在本地和 CI 中保持同一套选择规则；manifest 测试会校验 root script 与 workflow 继续委托给 runner，避免质量门集合随入口漂移。
+
+CI workflow 的 `pnpm/action-setup` 不单独声明 pnpm 版本，版本由 `package.json` 的 `packageManager` 字段提供。这样本地默认包管理器版本和 CI 安装版本共享同一事实源。
 
 ---
 

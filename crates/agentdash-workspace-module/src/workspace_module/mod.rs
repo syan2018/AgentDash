@@ -1,5 +1,6 @@
 pub mod runtime_bridge;
 pub mod runtime_tool_provider;
+mod surface;
 mod tools;
 pub mod visibility;
 
@@ -39,6 +40,12 @@ pub use runtime_bridge::{
     submit_canvas_runtime_surface_update,
 };
 pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
+pub(crate) use surface::{
+    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand, WorkspaceModuleOperateCommand,
+    WorkspaceModuleOperationOutcome, WorkspaceModuleOperationRuntimeSource,
+    WorkspaceModuleResolveContext, WorkspaceModuleVisibilitySource,
+    canvas_access_for_workspace_module, load_canvas_by_project_mount_id_for_tool,
+};
 pub use tools::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
     WorkspaceModuleOperateTool, WorkspaceModulePresentTool,

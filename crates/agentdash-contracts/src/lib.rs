@@ -9,6 +9,7 @@ pub mod common_response;
 #[path = "system/companion.rs"]
 pub mod companion;
 pub mod context;
+pub mod contract_generation;
 #[path = "extension/management.rs"]
 pub mod extension_management;
 #[path = "extension/package.rs"]

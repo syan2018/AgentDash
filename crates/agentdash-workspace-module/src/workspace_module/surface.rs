@@ -1705,10 +1705,10 @@ mod tests {
             _request: RuntimeSurfaceUpdateRequest,
         ) -> Result<RuntimeVfsState, String> {
             let vfs = Vfs::default();
-            Ok(RuntimeVfsState {
-                access_policy: RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
-                vfs,
-            })
+            Ok(RuntimeVfsState::new(
+                vfs.clone(),
+                RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
+            ))
         }
 
         async fn inject_agent_run_notification(

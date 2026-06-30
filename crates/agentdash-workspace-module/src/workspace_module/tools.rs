@@ -1125,10 +1125,10 @@ mod tests {
                 .push(canvas.mount_id.clone());
             self.requests.lock().expect("requests lock").push(request);
             let vfs = agentdash_domain::common::Vfs::default();
-            Ok(RuntimeVfsState {
-                access_policy: RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
-                vfs,
-            })
+            Ok(RuntimeVfsState::new(
+                vfs.clone(),
+                RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
+            ))
         }
 
         async fn inject_agent_run_notification(

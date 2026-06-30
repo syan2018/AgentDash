@@ -171,10 +171,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         next_frame.append_visible_workspace_module_ref(&workspace_module_ref);
 
         if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
-            return Ok(RuntimeVfsState {
-                vfs: active_vfs,
-                access_policy: active_policy,
-            });
+            return Ok(RuntimeVfsState::new(active_vfs, active_policy));
         }
 
         self.frame_repo
@@ -193,10 +190,7 @@ impl AgentRunRuntimeSurfaceUpdateService {
         let vfs = next_frame
             .typed_vfs()
             .ok_or_else(|| format!("AgentFrame `{}` 写入后缺少 VFS surface", next_frame.id))?;
-        Ok(RuntimeVfsState {
-            vfs,
-            access_policy: active_policy,
-        })
+        Ok(RuntimeVfsState::new(vfs, active_policy))
     }
 
     pub async fn effective_capability_view_for_delivery_runtime(
@@ -678,6 +672,21 @@ mod tests {
         assert!(!mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src",
+            RuntimeVfsOperation::List
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Search
+        ));
     }
 
     #[tokio::test]
@@ -919,6 +928,31 @@ mod tests {
         assert!(mount.supports(MountCapability::Write));
         assert!(mount.supports(MountCapability::List));
         assert!(mount.supports(MountCapability::Search));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src",
+            RuntimeVfsOperation::List
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Search
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::Write
+        ));
+        assert!(returned_state.access_policy.admits(
+            &canvas.mount_id,
+            "src/main.tsx",
+            RuntimeVfsOperation::ApplyPatch
+        ));
     }
 
     #[test]

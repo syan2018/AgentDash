@@ -440,10 +440,10 @@ mod tests {
             operations: BTreeSet::from([RuntimeVfsOperation::Read]),
             source: RuntimeVfsAccessSource::SystemRuntimeProjection,
         });
-        let updated_state = RuntimeVfsState {
-            vfs: vfs(vec![mount("main"), mount(&canvas.mount_id)]),
-            access_policy: updated_policy,
-        };
+        let updated_state = RuntimeVfsState::new(
+            vfs(vec![mount("main"), mount(&canvas.mount_id)]),
+            updated_policy,
+        );
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle
             .set(Arc::new(ReturningCanvasBridge {

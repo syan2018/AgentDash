@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallback};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, MountCapability, RuntimeVfsAccessPolicy,
+    RuntimeVfsOperation, ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
@@ -48,15 +51,18 @@ impl AgentTool for MountsListTool {
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
-        let vfs = self.vfs.snapshot().await;
-        let mounts = self.service.list_mounts(&vfs);
+        let state = self.vfs.snapshot_state().await;
+        let mounts = self.service.list_mounts(&state.vfs);
         let body = mounts
             .iter()
             .map(|mount| {
                 let capabilities = mount
                     .capabilities
                     .iter()
-                    .map(capability_name)
+                    .copied()
+                    .filter_map(|capability| {
+                        capability_label_by_policy(&state.access_policy, &mount.id, capability)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
@@ -74,5 +80,136 @@ impl AgentTool for MountsListTool {
                 body
             )
         }))
+    }
+}
+
+fn capability_label_by_policy(
+    policy: &RuntimeVfsAccessPolicy,
+    mount_id: &str,
+    capability: MountCapability,
+) -> Option<String> {
+    let operation = match capability {
+        MountCapability::Read => RuntimeVfsOperation::Read,
+        MountCapability::List => RuntimeVfsOperation::List,
+        MountCapability::Search => RuntimeVfsOperation::Search,
+        MountCapability::Write => RuntimeVfsOperation::Write,
+        MountCapability::Exec => RuntimeVfsOperation::Exec,
+        MountCapability::Watch => return None,
+    };
+    let name = capability_name(&capability);
+    let mut has_scoped_rule = false;
+    for rule in &policy.rules {
+        if rule.mount_id != mount_id || !rule.operations.contains(&operation) {
+            continue;
+        }
+        if rule.path_pattern.matches_normalized_path("") {
+            return Some(name.to_string());
+        }
+        has_scoped_rule = true;
+    }
+    has_scoped_rule.then(|| format!("{name}(scoped)"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{collections::BTreeSet, sync::Arc};
+
+    use agentdash_spi::{
+        AgentTool, Mount, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsPathPattern, Vfs,
+    };
+
+    use crate::MountProviderRegistry;
+
+    fn mount() -> Mount {
+        Mount {
+            id: "main".to_string(),
+            provider: "memory".to_string(),
+            backend_id: String::new(),
+            root_ref: "memory://main".to_string(),
+            capabilities: vec![
+                MountCapability::Read,
+                MountCapability::List,
+                MountCapability::Search,
+            ],
+            default_write: false,
+            display_name: "Main".to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn mounts_list_reports_runtime_effective_capabilities() {
+        let vfs = Vfs {
+            mounts: vec![mount()],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let policy = RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::All,
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            }],
+        };
+        let tool = MountsListTool::new(
+            Arc::new(VfsService::new(Arc::new(MountProviderRegistry::default()))),
+            SharedRuntimeVfs::new_with_policy(vfs, policy),
+        );
+
+        let result = tool
+            .execute(
+                "call-1",
+                serde_json::json!({}),
+                tokio_util::sync::CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("mounts_list should succeed");
+        let text = result.content[0].extract_text().expect("text result");
+
+        assert!(text.contains("capabilities=[read]"));
+        assert!(!text.contains("list"));
+        assert!(!text.contains("search"));
+    }
+
+    #[tokio::test]
+    async fn mounts_list_reports_path_scoped_capabilities() {
+        let vfs = Vfs {
+            mounts: vec![mount()],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let policy = RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            }],
+        };
+        let tool = MountsListTool::new(
+            Arc::new(VfsService::new(Arc::new(MountProviderRegistry::default()))),
+            SharedRuntimeVfs::new_with_policy(vfs, policy),
+        );
+
+        let result = tool
+            .execute(
+                "call-1",
+                serde_json::json!({}),
+                tokio_util::sync::CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("mounts_list should succeed");
+        let text = result.content[0].extract_text().expect("text result");
+
+        assert!(text.contains("capabilities=[read(scoped)]"));
     }
 }

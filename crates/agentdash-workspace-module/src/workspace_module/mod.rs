@@ -41,10 +41,10 @@ pub use runtime_bridge::{
 };
 pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 pub(crate) use surface::{
-    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand, WorkspaceModuleOperateCommand,
-    WorkspaceModuleOperationOutcome, WorkspaceModuleOperationRuntimeSource,
+    WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand, WorkspaceModuleInvokeCommand,
+    WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
+    WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
     WorkspaceModuleResolveContext, WorkspaceModuleVisibilitySource,
-    canvas_access_for_workspace_module, load_canvas_by_project_mount_id_for_tool,
 };
 pub use tools::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,

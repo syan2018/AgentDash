@@ -23,16 +23,19 @@ import type {
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
 } from "../../../types";
-import type { SessionChatCommand, SessionChatCommandState } from "../../session";
-import { isLocalDraftStartAction } from "../../session";
 import type { ImageAttachment } from "../../session/ui/composer/useImageAttachments";
 import {
   resolveAgentRunClientCommandId,
   type InFlightAgentRunCommand,
 } from "./workspaceCommandState";
+import type {
+  AgentRunSessionCommand,
+  AgentRunSessionCommandState,
+} from "./conversationCommandState";
+import { isLocalDraftStartAction } from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
-  command: SessionChatCommand;
+  command: AgentRunSessionCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }
@@ -48,7 +51,7 @@ type CreateProjectAgentRun = (
 export interface UseAgentRunWorkspaceCommandsOptions {
   currentRunId: string | null;
   currentAgentId: string | null;
-  chatCommandState: SessionChatCommandState;
+  chatCommandState: AgentRunSessionCommandState;
   conversationMailbox: ConversationMailboxSnapshotView | undefined;
   draftProjectId: string | null;
   draftProjectAgentKey: string | null;
@@ -64,7 +67,7 @@ export interface UseAgentRunWorkspaceCommandsOptions {
 
 export interface UseAgentRunWorkspaceCommandsResult {
   handleAgentRunCommand: (
-    command: SessionChatCommand,
+    command: AgentRunSessionCommand,
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
@@ -175,7 +178,7 @@ export function useAgentRunWorkspaceCommands(
   }, [refreshWorkspaceProjection]);
 
   const handleAgentRunCommand = useCallback(async (
-    command: SessionChatCommand,
+    command: AgentRunSessionCommand,
     _sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,

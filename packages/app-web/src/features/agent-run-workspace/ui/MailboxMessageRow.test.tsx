@@ -1,14 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
 import type {
-  ConversationCommandView,
-  ConversationMailboxSnapshotView,
-} from "../../../generated/workflow-contracts";
-import type {
-  MailboxStateView,
-  MailboxMessageView,
-} from "../../../generated/agent-run-mailbox-contracts";
+  SessionChatCommandModel,
+  SessionChatMailboxModel,
+} from "../../session/ui/SessionChatViewTypes";
 import { MailboxMessageList } from "./MailboxMessageRow";
 
 const mailboxMessage: MailboxMessageView = {
@@ -37,18 +34,25 @@ const mailboxMessage: MailboxMessageView = {
 
 function renderMailboxList(options: {
   messages?: MailboxMessageView[];
-  mailbox?: ConversationMailboxSnapshotView;
-  mailboxState?: MailboxStateView;
-  promoteCommand?: ConversationCommandView;
-  deleteCommand?: ConversationCommandView;
+  mailbox?: Partial<SessionChatMailboxModel>;
+  promoteCommand?: SessionChatCommandModel;
+  deleteCommand?: SessionChatCommandModel;
 }) {
+  const messages = options.messages ?? [mailboxMessage];
+  const mailbox: SessionChatMailboxModel = {
+    messages,
+    paused: false,
+    user_attention: false,
+    hide_system_steer_messages: false,
+    can_resume: false,
+    ...options.mailbox,
+    promoteAction: options.promoteCommand ?? options.mailbox?.promoteAction,
+    deleteAction: options.deleteCommand ?? options.mailbox?.deleteAction,
+  };
   return renderToStaticMarkup(
     <MailboxMessageList
-      messages={options.messages ?? [mailboxMessage]}
-      mailbox={options.mailbox}
-      mailboxState={options.mailboxState}
-      promoteCommand={options.promoteCommand}
-      deleteCommand={options.deleteCommand}
+      messages={messages}
+      mailbox={mailbox}
       onPromote={() => {}}
       onDelete={() => {}}
       onResume={() => {}}
@@ -56,19 +60,20 @@ function renderMailboxList(options: {
   );
 }
 
-const deleteCommand: ConversationCommandView = {
+const deleteCommand: SessionChatCommandModel = {
   kind: "delete_mailbox_message",
   command_id: "cmd-delete",
   enabled: true,
   requires_input: false,
   executor_config_policy: "forbidden",
-  placement: ["mailbox_row"],
-  stale_guard: {
-    snapshot_id: "snapshot-delete",
-    run_id: "run-1",
-    agent_id: "agent-1",
-    runtime_session_id: "session-1",
-  },
+};
+
+const promoteCommand: SessionChatCommandModel = {
+  kind: "promote_mailbox_message",
+  command_id: "cmd-promote",
+  enabled: true,
+  requires_input: false,
+  executor_config_policy: "forbidden",
 };
 
 describe("MailboxMessageList", () => {
@@ -173,21 +178,7 @@ describe("MailboxMessageList", () => {
   it("shows promote button only when command enabled and message can_promote", () => {
     const markup = renderMailboxList({
       deleteCommand,
-      promoteCommand: {
-        kind: "promote_mailbox_message",
-        command_id: "cmd-promote",
-        enabled: true,
-        requires_input: false,
-        executor_config_policy: "forbidden",
-        placement: ["mailbox_row"],
-        stale_guard: {
-          snapshot_id: "snapshot-promote",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          runtime_session_id: "session-1",
-          active_turn_id: "turn-1",
-        },
-      },
+      promoteCommand,
     });
 
     expect(markup).toContain("注入当前轮");
@@ -197,21 +188,7 @@ describe("MailboxMessageList", () => {
     const markup = renderMailboxList({
       messages: [{ ...mailboxMessage, can_promote: false }],
       deleteCommand,
-      promoteCommand: {
-        kind: "promote_mailbox_message",
-        command_id: "cmd-promote",
-        enabled: true,
-        requires_input: false,
-        executor_config_policy: "forbidden",
-        placement: ["mailbox_row"],
-        stale_guard: {
-          snapshot_id: "snapshot-promote",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          runtime_session_id: "session-1",
-          active_turn_id: "turn-1",
-        },
-      },
+      promoteCommand,
     });
 
     expect(markup).not.toContain("注入当前轮");
@@ -221,8 +198,7 @@ describe("MailboxMessageList", () => {
     const markup = renderMailboxList({
       messages: [],
       mailbox: {
-        paused: true,
-        visible_message_count: 0,
+        paused: false,
         user_attention: false,
         messages: [],
       },
@@ -236,31 +212,17 @@ describe("MailboxMessageList", () => {
       messages: [],
       mailbox: {
         paused: true,
-        visible_message_count: 0,
         user_attention: true,
+        can_resume: true,
         messages: [],
-        resume_command: {
+        resumeAction: {
           kind: "resume_mailbox",
           command_id: "cmd-resume",
           enabled: true,
           unavailable_reason: "上一轮已中断。",
           requires_input: false,
           executor_config_policy: "forbidden",
-          placement: ["mailbox_banner"],
-          stale_guard: {
-            snapshot_id: "snapshot-resume",
-            run_id: "run-1",
-            agent_id: "agent-1",
-            runtime_session_id: "session-1",
-          },
         },
-      },
-      mailboxState: {
-        paused: true,
-        pause_reason: "turn_failed",
-        message: "后端暂停消息",
-        can_resume: true,
-        hide_system_steer_messages: false,
       },
     });
 

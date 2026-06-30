@@ -1,21 +1,17 @@
 import { useState, useCallback } from "react";
 import type {
-  ConversationMailboxSnapshotView,
-  ConversationCommandView,
-} from "../../../generated/workflow-contracts";
-import type {
   MailboxMessageStatus,
-  MailboxStateView,
   MailboxMessageView,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type {
+  SessionChatCommandModel,
+  SessionChatMailboxModel,
+} from "../../session/ui/SessionChatViewTypes";
 import { mailboxHasContent } from "./mailboxContent";
 
 interface MailboxMessageListProps {
   messages: MailboxMessageView[];
-  mailbox?: ConversationMailboxSnapshotView;
-  mailboxState?: MailboxStateView;
-  promoteCommand?: ConversationCommandView;
-  deleteCommand?: ConversationCommandView;
+  mailbox?: SessionChatMailboxModel;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
@@ -24,7 +20,7 @@ interface MailboxMessageListProps {
 }
 
 export function MailboxMessageList(props: MailboxMessageListProps) {
-  if (!mailboxHasContent(props.messages, props.mailbox, props.mailboxState)) return null;
+  if (!mailboxHasContent(props.messages, props.mailbox)) return null;
   return (
     <div className="shrink-0 pb-2">
       <div className="mx-auto w-full max-w-4xl px-5">
@@ -40,9 +36,6 @@ export function MailboxMessageList(props: MailboxMessageListProps) {
 export function MailboxSections({
   messages,
   mailbox,
-  mailboxState,
-  promoteCommand,
-  deleteCommand,
   onPromote,
   onDelete,
   onResume,
@@ -51,17 +44,16 @@ export function MailboxSections({
 }: MailboxMessageListProps) {
   const steerMessages = messages.filter(
     (m) => m.delivery.kind === "steer_active_turn" &&
-      (!mailboxState?.hide_system_steer_messages || m.origin === "user"),
+      (!mailbox?.hide_system_steer_messages || m.origin === "user"),
   );
   const pendingMessages = messages.filter(
     (m) => m.delivery.kind !== "steer_active_turn",
   );
 
-  const resumeCommand = mailbox?.resume_command;
   const showBanner = Boolean(
-    mailboxState?.paused || (mailbox?.user_attention && (mailbox.paused || resumeCommand)),
+    mailbox?.paused || (mailbox?.user_attention && (mailbox.paused || mailbox.resumeAction)),
   );
-  const canResume = Boolean(mailboxState?.can_resume && resumeCommand?.enabled && onResume);
+  const canResume = Boolean(mailbox?.can_resume && mailbox.resumeAction?.enabled && onResume);
 
   return (
     <>
@@ -101,8 +93,8 @@ export function MailboxSections({
                     index={i}
                     totalInSection={steerMessages.length}
                     pendingMessages={pendingMessages}
-                    promoteCommand={promoteCommand}
-                    deleteCommand={deleteCommand}
+                    promoteCommand={mailbox?.promoteAction}
+                    deleteCommand={mailbox?.deleteAction}
                     onPromote={onPromote}
                     onDelete={onDelete}
                     onRecall={onRecall}
@@ -133,8 +125,8 @@ export function MailboxSections({
                     index={i}
                     totalInSection={pendingMessages.length}
                     pendingMessages={pendingMessages}
-                    promoteCommand={promoteCommand}
-                    deleteCommand={deleteCommand}
+                    promoteCommand={mailbox?.promoteAction}
+                    deleteCommand={mailbox?.deleteAction}
                     onPromote={onPromote}
                     onDelete={onDelete}
                     onRecall={onRecall}
@@ -258,8 +250,8 @@ function MessageRow({
   index: number;
   totalInSection: number;
   pendingMessages: MailboxMessageView[];
-  promoteCommand?: ConversationCommandView;
-  deleteCommand?: ConversationCommandView;
+  promoteCommand?: SessionChatCommandModel;
+  deleteCommand?: SessionChatCommandModel;
   onPromote: (id: string) => void;
   onDelete: (id: string) => void;
   onRecall?: (id: string) => void;

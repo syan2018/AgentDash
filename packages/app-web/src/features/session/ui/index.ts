@@ -5,14 +5,15 @@
 export {
   SessionChatView,
 } from "./SessionChatView";
-export {
-  isLocalDraftStartAction,
-} from "./SessionChatViewTypes";
 export type {
-  LocalDraftStartAction,
   PromptTemplate,
-  SessionChatCommand,
+  SessionChatCommandModel,
   SessionChatCommandState,
+  SessionChatMailboxModel,
+  SessionChatModel,
+  SessionChatModelConfig,
+  SessionChatSubmitIntent,
+  SessionChatViewIntents,
   SessionChatViewProps,
 } from "./SessionChatViewTypes";
 export { SessionList, type SessionListProps } from "./SessionList";

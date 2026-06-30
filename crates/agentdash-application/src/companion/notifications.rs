@@ -1,8 +1,7 @@
-﻿//! Companion 子域的 notification 构造 helpers。
+//! Companion 子域的 notification 构造 helpers。
 //!
-//! `build_companion_human_response_notification` 是旧 runtime event helper。
-//! 当前 AgentRun-facing human response 投递以 durable mailbox message 为事实源；
-//! human request 仍通过 `build_companion_event_notification` 暴露为 UI-facing 事件。
+//! AgentRun-facing human response 投递以 durable mailbox message 为事实源；
+//! notification helper 只表达 UI-facing runtime meta event。
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -10,8 +9,7 @@ use agentdash_agent_protocol::{
 
 /// 构造 companion "人类回应" 事件通知。
 ///
-/// 该 helper 仅保留给仍需要 runtime meta event 的旧调用点；新的 human response
-/// continuation 应进入 AgentRun mailbox。
+/// Human response continuation 进入 AgentRun mailbox；该 notification 只用于 runtime UI 事件。
 pub fn build_companion_human_response_notification(
     session_id: &str,
     turn_id: Option<&str>,

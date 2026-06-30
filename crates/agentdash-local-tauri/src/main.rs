@@ -9,12 +9,16 @@ use std::sync::{Arc, Mutex as StdMutex};
 use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
-    DesktopRunnerHost, LocalLogEvent, LocalRuntimeConfig, LocalRuntimeSnapshot, McpProbeResult,
-    StopReason, browse_directory, load_or_create_machine_identity, local_mcp_servers_path,
-    local_runtime_config_dir, local_runtime_profile_path, probe_mcp_server,
+    DesktopAppSettings, DesktopEnsureRetryEvent, DesktopEnsureRetryPolicy, DesktopRunnerHost,
+    DesktopRuntimeStartRequest as RuntimeStartRequest, LocalLogEvent, LocalRuntimeProfile,
+    LocalRuntimeSnapshot, McpProbeResult, StopReason, browse_directory,
+    delete_desktop_runtime_profile, ensure_desktop_runtime_config, load_desktop_app_settings,
+    load_desktop_runtime_profile_with_server_origin, local_mcp_servers_path,
+    normalize_desktop_app_settings, normalize_desktop_runtime_start_request_with_server_origin,
+    probe_mcp_server, save_desktop_app_settings, save_desktop_runtime_profile_with_server_origin,
 };
 use agentdash_relay::BrowseDirectoryEntry;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
@@ -25,8 +29,6 @@ const DESKTOP_API_PORT: u16 = 17301;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
 const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
-const DEFAULT_PROFILE_ID: &str = "default";
-const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
 const DESKTOP_AUTOSTART_ENTRY_NAME: &str = "AgentDash";
 #[cfg(target_os = "windows")]
 const WINDOWS_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -104,70 +106,6 @@ impl Default for DesktopApiSnapshot {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct RuntimeStartRequest {
-    server_url: String,
-    #[serde(default)]
-    access_token: String,
-    profile_id: String,
-    #[serde(default)]
-    machine_id: String,
-    #[serde(default)]
-    machine_label: Option<String>,
-    name: Option<String>,
-    #[serde(default)]
-    workspace_roots: Vec<PathBuf>,
-    executor_enabled: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct LocalRuntimeProfile {
-    server_url: String,
-    #[serde(default)]
-    access_token: String,
-    #[serde(default = "default_profile_id")]
-    profile_id: String,
-    #[serde(default)]
-    machine_id: String,
-    #[serde(default)]
-    machine_label: Option<String>,
-    #[serde(default)]
-    backend_id: Option<String>,
-    #[serde(default)]
-    relay_ws_url: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    workspace_roots: Vec<PathBuf>,
-    #[serde(default = "default_executor_enabled")]
-    executor_enabled: bool,
-    #[serde(default)]
-    auto_start: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-struct DesktopAppSettings {
-    #[serde(default)]
-    launch_at_login: bool,
-    #[serde(default)]
-    start_minimized_to_tray: bool,
-    #[serde(default = "default_auto_connect_local_runtime")]
-    auto_connect_local_runtime: bool,
-}
-
-impl Default for DesktopAppSettings {
-    fn default() -> Self {
-        Self {
-            launch_at_login: false,
-            start_minimized_to_tray: false,
-            auto_connect_local_runtime: default_auto_connect_local_runtime(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct DesktopAutostartStatus {
@@ -176,36 +114,9 @@ struct DesktopAutostartStatus {
     message: Option<String>,
 }
 
-fn default_profile_id() -> String {
-    DEFAULT_PROFILE_ID.to_string()
-}
-
-fn default_executor_enabled() -> bool {
-    true
-}
-
-fn default_auto_connect_local_runtime() -> bool {
-    true
-}
-
-impl From<LocalRuntimeProfile> for RuntimeStartRequest {
-    fn from(profile: LocalRuntimeProfile) -> Self {
-        Self {
-            server_url: profile.server_url,
-            access_token: String::new(),
-            profile_id: profile.profile_id,
-            machine_id: profile.machine_id,
-            machine_label: profile.machine_label,
-            name: profile.name,
-            workspace_roots: profile.workspace_roots,
-            executor_enabled: profile.executor_enabled,
-        }
-    }
-}
-
 #[tauri::command]
 async fn desktop_settings_load() -> Result<DesktopAppSettings, String> {
-    desktop_settings_load_internal()
+    load_desktop_app_settings().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -213,8 +124,7 @@ async fn desktop_settings_save(settings: DesktopAppSettings) -> Result<DesktopAp
     let mut settings = normalize_desktop_app_settings(settings);
     let autostart = desktop_autostart_set_enabled_internal(settings.launch_at_login)?;
     settings.launch_at_login = autostart.enabled;
-    desktop_settings_write_internal(&settings)?;
-    Ok(settings)
+    save_desktop_app_settings(settings).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -224,10 +134,10 @@ async fn desktop_autostart_is_enabled() -> Result<DesktopAutostartStatus, String
 
 #[tauri::command]
 async fn desktop_autostart_set_enabled(enabled: bool) -> Result<DesktopAutostartStatus, String> {
-    let mut settings = desktop_settings_load_internal()?;
+    let mut settings = load_desktop_app_settings().map_err(|error| error.to_string())?;
     let status = desktop_autostart_set_enabled_internal(enabled)?;
     settings.launch_at_login = status.enabled;
-    desktop_settings_write_internal(&settings)?;
+    save_desktop_app_settings(settings).map_err(|error| error.to_string())?;
     Ok(status)
 }
 
@@ -242,35 +152,19 @@ async fn desktop_quit_request(
 
 #[tauri::command]
 async fn profile_load() -> Result<Option<LocalRuntimeProfile>, String> {
-    let path = profile_path()?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let profile = serde_json::from_str(&content)
-        .map_err(|error| format!("读取桌面端 profile 失败: {error}"))?;
-    Ok(Some(normalize_profile(profile)?))
+    load_desktop_runtime_profile_with_server_origin(&desktop_runtime_server_origin())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn profile_save(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
-    let path = profile_path()?;
-    let profile = normalize_profile(profile)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(&profile).map_err(|error| error.to_string())?;
-    std::fs::write(&path, content).map_err(|error| error.to_string())?;
-    Ok(profile)
+    save_desktop_runtime_profile_with_server_origin(profile, &desktop_runtime_server_origin())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn profile_delete() -> Result<(), String> {
-    let path = profile_path()?;
-    if !path.exists() {
-        return Ok(());
-    }
-    std::fs::remove_file(path).map_err(|error| error.to_string())
+    delete_desktop_runtime_profile().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -418,74 +312,6 @@ async fn open_external_url(url: String) -> Result<(), String> {
         scheme => return Err(format!("不支持打开 {scheme}:// 外部链接")),
     }
     open::that(parsed.as_str()).map_err(|error| format!("打开系统浏览器失败: {error}"))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct EnsureLocalRuntimePayload {
-    machine_id: String,
-    machine_label: Option<String>,
-    profile_id: String,
-    scope: LocalRuntimeScopePayload,
-    capability_slot: String,
-    name: Option<String>,
-    executor_enabled: bool,
-    client_version: Option<String>,
-    device: serde_json::Value,
-    rotate_token: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-struct LocalRuntimeScopePayload {
-    kind: String,
-    id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct EnsureLocalRuntimeResponse {
-    backend_id: String,
-    name: String,
-    relay_ws_url: String,
-    auth_token: String,
-    machine_id: String,
-    machine_label: String,
-    share_scope_kind: String,
-    share_scope_id: Option<String>,
-    capability_slot: String,
-    #[serde(default)]
-    registration_source: Option<String>,
-    #[serde(default)]
-    claimed_at: Option<String>,
-}
-
-fn desktop_settings_load_internal() -> Result<DesktopAppSettings, String> {
-    let path = desktop_app_settings_path()?;
-    if !path.exists() {
-        return Ok(DesktopAppSettings::default());
-    }
-    let content = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let settings =
-        serde_json::from_str(&content).map_err(|error| format!("读取桌面端设置失败: {error}"))?;
-    Ok(normalize_desktop_app_settings(settings))
-}
-
-fn desktop_settings_write_internal(settings: &DesktopAppSettings) -> Result<(), String> {
-    let path = desktop_app_settings_path()?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    std::fs::write(&path, content).map_err(|error| error.to_string())
-}
-
-fn normalize_desktop_app_settings(settings: DesktopAppSettings) -> DesktopAppSettings {
-    DesktopAppSettings {
-        launch_at_login: settings.launch_at_login,
-        start_minimized_to_tray: settings.start_minimized_to_tray,
-        auto_connect_local_runtime: settings.auto_connect_local_runtime,
-    }
 }
 
 fn desktop_autostart_is_enabled_internal() -> Result<DesktopAutostartStatus, String> {
@@ -640,251 +466,64 @@ async fn start_runtime_from_request(
     request: RuntimeStartRequest,
     retry_until_server_ready: bool,
 ) -> anyhow::Result<LocalRuntimeSnapshot> {
-    let request = normalize_start_request(request).map_err(anyhow::Error::msg)?;
+    let request = normalize_desktop_runtime_start_request_with_server_origin(
+        request,
+        &desktop_runtime_server_origin(),
+    )?;
     let runtime_for_claim = state.runtime.clone();
     state
         .runtime
         .ensure_started_with(|| async move {
-            let claim =
-                claim_local_runtime(&runtime_for_claim, &request, retry_until_server_ready).await?;
-            Ok(LocalRuntimeConfig::new(
-                claim.relay_ws_url,
-                claim.auth_token,
-                claim.backend_id,
-                claim.name,
-                request.workspace_roots,
-                request.executor_enabled,
-            ))
+            let policy = if retry_until_server_ready {
+                DesktopEnsureRetryPolicy::wait_for_server_ready()
+            } else {
+                DesktopEnsureRetryPolicy::single_attempt()
+            };
+            ensure_desktop_runtime_config(request, policy, |event| {
+                let runtime = runtime_for_claim.clone();
+                async move {
+                    record_desktop_ensure_retry(&runtime, event).await;
+                }
+            })
+            .await
+            .map_err(anyhow::Error::from)
         })
         .await
 }
 
-async fn claim_local_runtime(
-    runtime: &DesktopRunnerHost,
-    request: &RuntimeStartRequest,
-    retry_until_server_ready: bool,
-) -> anyhow::Result<EnsureLocalRuntimeResponse> {
-    let server_url = normalize_server_origin(&request.server_url);
-    let payload = EnsureLocalRuntimePayload {
-        machine_id: request.machine_id.clone(),
-        machine_label: request.machine_label.clone(),
-        profile_id: request.profile_id.clone(),
-        scope: LocalRuntimeScopePayload {
-            kind: "user".to_string(),
-            id: None,
-        },
-        capability_slot: "default".to_string(),
-        name: request.name.clone(),
-        executor_enabled: request.executor_enabled,
-        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        device: local_device_payload(),
-        rotate_token: false,
-    };
-
-    let mut attempts = 0;
-    loop {
-        attempts += 1;
-        match post_local_runtime_claim(&server_url, &request.access_token, &payload).await {
-            Ok(response) => {
-                validate_claim_response(&response, request)?;
-                return Ok(response);
-            }
-            Err(error) if retry_until_server_ready && attempts < 30 => {
-                let next_retry_at =
-                    (chrono::Utc::now() + chrono::Duration::seconds(1)).to_rfc3339();
-                runtime
-                    .mark_waiting_for_api(
-                        "Dashboard API 暂不可用，等待后继续领取本机 runtime",
-                        Some(error.to_string()),
-                        Some(attempts),
-                        Some(next_retry_at),
-                    )
-                    .await;
-                diag!(Warn, Subsystem::Api,
-
-                    attempt = attempts,
-                    error = %error,
-                    "领取本机 runtime 失败，等待 server 就绪后重试"
-                );
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn validate_claim_response(
-    response: &EnsureLocalRuntimeResponse,
-    request: &RuntimeStartRequest,
-) -> anyhow::Result<()> {
-    if response.machine_id != request.machine_id {
-        anyhow::bail!(
-            "server 返回的 machine_id 与本机 profile 不一致: expected={}, actual={}",
-            request.machine_id,
-            response.machine_id
-        );
-    }
-    if response.machine_label.trim().is_empty() {
-        anyhow::bail!("server 返回的 machine_label 为空");
-    }
-    if response.share_scope_kind != "user" {
-        anyhow::bail!(
-            "当前桌面端只支持 personal runtime scope，server 返回: {}",
-            response.share_scope_kind
-        );
-    }
-    if response.capability_slot != "default" {
-        anyhow::bail!(
-            "当前桌面端只支持 default capability slot，server 返回: {}",
-            response.capability_slot
-        );
-    }
-    if let Some(source) = response.registration_source.as_deref()
-        && source != "desktop_access_token"
-    {
-        anyhow::bail!("桌面端 ensure 返回了非桌面注册来源: {source}");
-    }
-    let _claimed_at = response.claimed_at.as_deref();
-    let _personal_scope = response.share_scope_id.as_deref().unwrap_or("current-user");
-    Ok(())
-}
-
-async fn post_local_runtime_claim(
-    server_url: &str,
-    access_token: &str,
-    payload: &EnsureLocalRuntimePayload,
-) -> anyhow::Result<EnsureLocalRuntimeResponse> {
-    let endpoint = format!("{server_url}/api/local-runtime/ensure");
-    let client = reqwest::Client::new();
-    let mut request = client.post(&endpoint);
-    let access_token = access_token.trim();
-    if !access_token.is_empty() {
-        request = request.bearer_auth(access_token);
-    }
-
-    let response = request
-        .json(payload)
-        .send()
-        .await
-        .map_err(|error| anyhow::anyhow!("请求本机 runtime 领取接口失败: {error}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            anyhow::bail!(
-                "本机 runtime 领取被 server 拒绝: HTTP {status}。请重新登录桌面端，或确认当前登录态提供了可用于 /api/local-runtime/ensure 的 access token"
-            );
-        }
-        let text = response.text().await.unwrap_or_default();
-        anyhow::bail!("本机 runtime 领取失败: HTTP {status} {text}");
-    }
-
-    response
-        .json::<EnsureLocalRuntimeResponse>()
-        .await
-        .map_err(|error| anyhow::anyhow!("解析本机 runtime 领取响应失败: {error}"))
-}
-
-fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile, String> {
-    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
-    let machine_id = identity.machine_id;
-    let machine_label = profile
-        .machine_label
-        .and_then(normalize_optional_text)
-        .unwrap_or(identity.machine_label);
-
-    Ok(LocalRuntimeProfile {
-        server_url: normalize_server_origin(&profile.server_url),
-        access_token: String::new(),
-        profile_id: normalize_profile_id(profile.profile_id),
-        machine_id,
-        machine_label: Some(machine_label),
-        name: profile.name.and_then(normalize_optional_text),
-        workspace_roots: profile.workspace_roots,
-        executor_enabled: profile.executor_enabled,
-        auto_start: profile.auto_start,
-        backend_id: profile.backend_id.and_then(normalize_optional_text),
-        relay_ws_url: profile.relay_ws_url.and_then(normalize_optional_text),
-    })
-}
-
-fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartRequest, String> {
-    let identity = load_or_create_machine_identity().map_err(|error| error.to_string())?;
-    let machine_id = identity.machine_id;
-    let machine_label = request
-        .machine_label
-        .and_then(normalize_optional_text)
-        .unwrap_or(identity.machine_label);
-
-    Ok(RuntimeStartRequest {
-        server_url: normalize_server_origin(&request.server_url),
-        access_token: request.access_token.trim().to_string(),
-        profile_id: normalize_profile_id(request.profile_id),
-        machine_id,
-        machine_label: Some(machine_label),
-        name: request.name.and_then(normalize_optional_text),
-        workspace_roots: request.workspace_roots,
-        executor_enabled: request.executor_enabled,
-    })
-}
-
-fn normalize_server_origin(value: &str) -> String {
-    normalize_server_origin_with_default(value, &default_local_runtime_server_origin())
-}
-
-fn normalize_server_origin_with_default(_value: &str, default_origin: &str) -> String {
-    default_origin.trim().trim_end_matches('/').to_string()
-}
-
-fn default_local_runtime_server_origin() -> String {
+fn desktop_runtime_server_origin() -> String {
     desktop_api_config()
         .map(|config| config.origin)
         .unwrap_or_else(|_| desktop_api_origin(DESKTOP_API_PORT))
 }
 
-fn normalize_profile_id(value: String) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        DEFAULT_PROFILE_ID.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn normalize_optional_text(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn local_device_payload() -> serde_json::Value {
-    serde_json::json!({
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "family": std::env::consts::FAMILY,
-        "hostname": local_hostname(),
-    })
-}
-
-fn local_hostname() -> Option<String> {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+async fn record_desktop_ensure_retry(runtime: &DesktopRunnerHost, event: DesktopEnsureRetryEvent) {
+    runtime
+        .mark_waiting_for_api(
+            "Dashboard API 暂不可用，等待后继续领取本机 runtime",
+            Some(event.error.clone()),
+            Some(event.attempt),
+            Some(event.next_retry_at.clone()),
+        )
+        .await;
+    diag!(Warn, Subsystem::Api,
+        attempt = event.attempt,
+        error = %event.error,
+        "领取本机 runtime 失败，等待 server 就绪后重试"
+    );
 }
 
 fn initialize_desktop_runner_host(state: DesktopState) {
     tauri::async_runtime::spawn(async move {
-        let settings = match desktop_settings_load_internal() {
+        let settings = match load_desktop_app_settings() {
             Ok(settings) => settings,
             Err(error) => {
                 state
                     .runtime
-                    .mark_error("读取桌面设置失败，无法判断 runtime 自动连接策略", error)
+                    .mark_error(
+                        "读取桌面设置失败，无法判断 runtime 自动连接策略",
+                        error.to_string(),
+                    )
                     .await;
                 return;
             }
@@ -1198,7 +837,7 @@ async fn request_desktop_quit(app: AppHandle, state: DesktopState) {
 }
 
 fn apply_startup_window_visibility(app: &AppHandle) {
-    let settings = match desktop_settings_load_internal() {
+    let settings = match load_desktop_app_settings() {
         Ok(settings) => settings,
         Err(error) => {
             diag!(Warn, Subsystem::Infra,
@@ -1588,13 +1227,13 @@ fn desktop_api_config() -> Result<DesktopApiConfig, String> {
     desktop_api_config_from_values(
         env_trimmed(DESKTOP_API_ORIGIN_ENV),
         option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
-            .and_then(|value| normalize_optional_text(value.to_string())),
+            .and_then(|value| normalize_optional_env_text(value.to_string())),
         env_trimmed(DESKTOP_API_SIDECAR_ENV),
         option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
-            .and_then(|value| normalize_optional_text(value.to_string())),
+            .and_then(|value| normalize_optional_env_text(value.to_string())),
         env_trimmed(DESKTOP_API_MODE_ENV),
         option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
-            .and_then(|value| normalize_optional_text(value.to_string())),
+            .and_then(|value| normalize_optional_env_text(value.to_string())),
         active_desktop_api_build_profile(),
     )
 }
@@ -1711,7 +1350,18 @@ fn parse_desktop_api_mode(value: &str) -> Option<DesktopApiMode> {
 }
 
 fn env_trimmed(key: &str) -> Option<String> {
-    std::env::var(key).ok().and_then(normalize_optional_text)
+    std::env::var(key)
+        .ok()
+        .and_then(normalize_optional_env_text)
+}
+
+fn normalize_optional_env_text(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn normalize_origin(value: String) -> String {
@@ -1721,16 +1371,6 @@ fn normalize_origin(value: String) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn profile_path() -> Result<PathBuf, String> {
-    local_runtime_profile_path().map_err(|error| error.to_string())
-}
-
-fn desktop_app_settings_path() -> Result<PathBuf, String> {
-    local_runtime_config_dir()
-        .map(|path| path.join(DESKTOP_APP_SETTINGS_FILE))
-        .map_err(|error| error.to_string())
 }
 
 fn mcp_servers_path() -> Result<PathBuf, String> {
@@ -1850,69 +1490,6 @@ mod tests {
         .expect_err("sidecar must not bind a non-loopback host");
 
         assert!(error.contains("127.0.0.1"));
-    }
-
-    #[test]
-    fn desktop_app_settings_default_keeps_runtime_auto_connect_enabled() {
-        let settings = DesktopAppSettings::default();
-
-        assert!(!settings.launch_at_login);
-        assert!(!settings.start_minimized_to_tray);
-        assert!(settings.auto_connect_local_runtime);
-    }
-
-    #[test]
-    fn normalize_desktop_app_settings_preserves_explicit_choices() {
-        let settings = normalize_desktop_app_settings(DesktopAppSettings {
-            launch_at_login: true,
-            start_minimized_to_tray: true,
-            auto_connect_local_runtime: false,
-        });
-
-        assert!(settings.launch_at_login);
-        assert!(settings.start_minimized_to_tray);
-        assert!(!settings.auto_connect_local_runtime);
-    }
-
-    #[test]
-    fn runtime_start_request_from_profile_does_not_reuse_persisted_access_token() {
-        let request = RuntimeStartRequest::from(LocalRuntimeProfile {
-            server_url: "https://agentdash.example".to_string(),
-            access_token: "old-access-token".to_string(),
-            profile_id: "default".to_string(),
-            machine_id: "machine-local".to_string(),
-            machine_label: Some("Desktop".to_string()),
-            backend_id: None,
-            relay_ws_url: None,
-            name: Some("Desktop Local Runtime".to_string()),
-            workspace_roots: Vec::new(),
-            executor_enabled: true,
-            auto_start: true,
-        });
-
-        assert_eq!(request.access_token, "");
-    }
-
-    #[test]
-    fn normalize_server_origin_uses_desktop_dashboard_origin_for_development_default() {
-        assert_eq!(
-            normalize_server_origin_with_default(
-                "http://127.0.0.1:3001/",
-                "http://10.22.71.7:8080"
-            ),
-            "http://10.22.71.7:8080"
-        );
-    }
-
-    #[test]
-    fn normalize_server_origin_uses_desktop_dashboard_origin_for_old_profile_origin() {
-        assert_eq!(
-            normalize_server_origin_with_default(
-                "http://192.168.1.9:9000/",
-                "http://10.22.71.7:8080"
-            ),
-            "http://10.22.71.7:8080"
-        );
     }
 
     #[test]

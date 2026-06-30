@@ -2,7 +2,10 @@
 //!
 //! CLI 与后续 Tauri desktop 都应把这里作为本机能力入口；二进制入口只负责参数解析和宿主启动。
 
+mod desktop_claim;
+mod desktop_profile;
 mod desktop_runner_host;
+mod desktop_settings;
 mod extensions;
 mod file_discovery_policy;
 mod handlers;
@@ -30,7 +33,25 @@ mod ws_client;
 pub mod runtime;
 pub mod runtime_paths;
 
+pub use desktop_claim::{
+    DesktopClaimError, DesktopEnsureLocalRuntimePayload, DesktopEnsureLocalRuntimeResponse,
+    DesktopEnsureRetryEvent, DesktopEnsureRetryPolicy, desktop_claim_error_from_http,
+    desktop_ensure_payload_from_request, desktop_runtime_config_from_ensure,
+    ensure_desktop_local_runtime, ensure_desktop_runtime_config, validate_desktop_ensure_response,
+};
+pub use desktop_profile::{
+    DesktopRuntimeStartRequest, LocalRuntimeProfile, delete_desktop_runtime_profile,
+    load_desktop_runtime_profile, load_desktop_runtime_profile_with_server_origin,
+    normalize_desktop_runtime_profile, normalize_desktop_runtime_profile_with_server_origin,
+    normalize_desktop_runtime_start_request,
+    normalize_desktop_runtime_start_request_with_server_origin, save_desktop_runtime_profile,
+    save_desktop_runtime_profile_with_server_origin,
+};
 pub use desktop_runner_host::DesktopRunnerHost;
+pub use desktop_settings::{
+    DesktopAppSettings, load_desktop_app_settings, normalize_desktop_app_settings,
+    save_desktop_app_settings,
+};
 pub use extensions::{
     ExtensionArtifactCacheEntry, ExtensionArtifactCacheError, ExtensionArtifactDownloadRequest,
     LocalExtensionHostActivation, LocalExtensionHostError, LocalExtensionHostHealth,
@@ -50,6 +71,6 @@ pub use runner_config::{ResolvedRunnerConfig, RunnerCliOverrides, RunnerCredenti
 pub use runner_redaction::{redact_optional, redact_secret};
 pub use runner_status::RunnerStatusSnapshot;
 pub use runtime_paths::{
-    local_mcp_servers_path, local_runtime_config_dir, local_runtime_data_dir,
-    local_runtime_profile_path, machine_identity_path,
+    desktop_app_settings_path, local_mcp_servers_path, local_runtime_config_dir,
+    local_runtime_data_dir, local_runtime_profile_path, machine_identity_path,
 };

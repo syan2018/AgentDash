@@ -4,6 +4,7 @@ const APP_DIR_NAME: &str = "AgentDash";
 const LOCAL_RUNTIME_DIR_NAME: &str = "local-runtime";
 const LOCAL_RUNTIME_CONFIG_DIR_NAME: &str = "config";
 const LOCAL_RUNTIME_PROFILE_FILE: &str = "local-runtime-profile.json";
+const DESKTOP_APP_SETTINGS_FILE: &str = "desktop-app-settings.json";
 const LOCAL_MCP_SERVERS_FILE: &str = "local-mcp-servers.json";
 const MACHINE_IDENTITY_FILE: &str = "machine-identity.json";
 
@@ -48,6 +49,10 @@ pub fn local_runtime_config_dir() -> anyhow::Result<PathBuf> {
 
 pub fn local_runtime_profile_path() -> anyhow::Result<PathBuf> {
     Ok(local_runtime_config_dir()?.join(LOCAL_RUNTIME_PROFILE_FILE))
+}
+
+pub fn desktop_app_settings_path() -> anyhow::Result<PathBuf> {
+    Ok(local_runtime_config_dir()?.join(DESKTOP_APP_SETTINGS_FILE))
 }
 
 pub fn local_mcp_servers_path() -> anyhow::Result<PathBuf> {

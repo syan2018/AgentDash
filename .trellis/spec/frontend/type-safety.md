@@ -68,6 +68,93 @@ Extension webview bridge 的 `runtime.invoke_action` 只校验 Project、Session
 pnpm run contracts:check
 ```
 
+## NDJSON Stream Validation
+
+NDJSON stream transport consumes generated envelope unions through a small runtime validator module, then keeps transport classes focused on fetch, reconnect, cursor, lifecycle, and dispatch. The validator owns `unknown -> generated envelope branch` checks because streamed data crosses the network boundary one line at a time, while the generated TypeScript union remains the wire source.
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing an internal NDJSON stream such as Session stream or Project event stream.
+- Scope: generated `*-contracts.ts` envelope type, stream-specific validator, transport connection code, and focused stream parser tests.
+
+### 2. Signatures
+
+```ts
+export type NdjsonEnvelopeParseResult<TEnvelope extends { type: string }> =
+  | {
+      [TKind in TEnvelope["type"]]: {
+        ok: true;
+        kind: TKind;
+        envelope: Extract<TEnvelope, { type: TKind }>;
+      };
+    }[TEnvelope["type"]]
+  | { ok: false; error: Error };
+
+export function parseSessionNdjsonEnvelope(
+  payload: unknown,
+): NdjsonEnvelopeParseResult<SessionNdjsonEnvelope>;
+
+export function parseProjectEventStreamEnvelopeResult(
+  payload: unknown,
+): NdjsonEnvelopeParseResult<ProjectEventStreamEnvelope>;
+```
+
+### 3. Contracts
+
+- The validator return type is parameterized by the generated envelope union, such as `SessionNdjsonEnvelope` or `ProjectEventStreamEnvelope`.
+- Per-stream validators may define `Extract<GeneratedEnvelope, { type: "..." }>` aliases for branch narrowing, but the branch union itself comes from `src/generated/*`.
+- Runtime guards validate object shape, required numeric cursor fields, required identifiers, JSON object payloads, and nested envelope presence before dispatch.
+- Runtime guards do not duplicate generated enum value unions as frontend allowlists. When a generated field is a backend-owned string union, the runtime guard accepts the field shape and lets Rust contract generation plus TypeScript compilation own the value set.
+- Transport code calls the validator once per parsed NDJSON line, reports validator errors through `onError`, updates cursors from valid envelope branches, and ignores heartbeat branches without storing long-lived stream facts.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| NDJSON line is not valid JSON | Transport reports parse error and keeps connection lifecycle handling intact |
+| Parsed payload is not an object | Validator returns `ok=false` with an object-shape error |
+| Session stream receives Project envelope shape | Session validator rejects before cursor/event dispatch |
+| Project event stream receives Session envelope shape | Project validator rejects before cursor/event dispatch |
+| Known branch misses required cursor or payload fields | Validator returns `ok=false` with branch-specific diagnostic |
+| Unknown branch type arrives | Validator returns `ok=false` with stream-specific unknown-type diagnostic |
+| Backend adds a new generated enum value inside an existing branch | Shape-valid payload is accepted; generated type drift is caught by contract/typecheck work, not by a frontend runtime allowlist |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `parseSessionNdjsonEnvelope` accepts `connected`, `event`, `ephemeral_event`, and `heartbeat`, then `streamTransport.ts` only advances cursor, updates ephemeral epoch, dispatches events, or ignores heartbeat.
+- Good: `parseProjectEventStreamEnvelopeResult` accepts `Connected`, `StateChanged`, `BackendRuntimeChanged`, and `Heartbeat`, while `eventStream.ts` owns only URL setup and cursor reading.
+- Base: Stream-specific UI adapters can convert a generated event branch into a local view model after the validator has accepted the envelope.
+- Bad: A transport class owns both fetch/reconnect and a full set of branch-specific field guards, because parser drift then hides inside connection code and cannot be tested as a contract seam.
+
+### 6. Tests Required
+
+- Session stream tests cover valid `connected`, valid `event`, valid `heartbeat`, invalid event shape, Project-shape rejection, and unknown type rejection.
+- Project event stream tests cover valid `Connected`, valid `StateChanged`, valid `Heartbeat`, invalid `StateChanged`, Session-shape rejection, unknown type rejection, and enum-value forward extension.
+- Typecheck must pass so validator branch narrowing remains tied to generated envelope unions.
+
+### 7. Non-canonical / Canonical
+
+#### Non-canonical
+
+```ts
+const PROJECT_STATE_CHANGE_KINDS = new Set(["story_created", "story_updated"]);
+
+function parsePayload(payload: unknown): ProjectEventStreamEnvelope | null {
+  // fetch/reconnect code plus branch validation in one transport file
+}
+```
+
+#### Canonical
+
+```ts
+const result = parseProjectEventStreamEnvelopeResult(payload);
+if (!result.ok) {
+  options.onError(result.error);
+  return null;
+}
+return result.envelope;
+```
+
 ---
 
 ## CapabilityDirective 契约

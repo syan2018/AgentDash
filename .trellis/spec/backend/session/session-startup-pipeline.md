@@ -16,6 +16,8 @@ LaunchCommand
 
 `LaunchCommand` 表达来源意图；`FrameLaunchEnvelope` 是 frame construction 输出的 launch-ready facts；`LaunchPlan` 是单轮启动决策；后续 stage types 表达 accepted 前准备、connector accepted、accepted 后 commit 与 stream attach。`ExecutionContext` 只在 connector 边界投影。
 
+Canonical launch command 类型归属 `agentdash-application-ports::launch`，原因是 HTTP/API、AgentRun mailbox、Workflow/Routine、Companion、Hook resume 与 Local relay 都需要在进入 application 编排前表达同一份启动意图。该 namespace 按 `command.rs` 与 `modifier.rs` 组织：`command.rs` 承载 `LaunchCommand`、`LaunchSource`、`LaunchPromptInput` 与 `LaunchPlanningInput` 等主合同，`modifier.rs` 承载来源差异的 typed modifier。这样来源入口可以共享稳定 DTO/port 合同，session runtime 模块只消费 canonical command 与 launch-ready facts。
+
 ## Stage Responsibilities
 
 | 阶段 | 输入 | 输出 | 职责 |
@@ -34,6 +36,8 @@ LaunchCommand
 ## Source Adapter Contract
 
 Source adapter 只做来源语义转换，不能预先组装最终运行事实。`LaunchCommand` 的核心字段表达通用 turn launch intent；Routine、Companion、Hook resume、Local relay 等来源差异通过 typed `LaunchModifier` 携带。modifier 是 frame construction / launch planning 的输入事实，不是并列启动路径，原因是所有入口都需要经过同一套 anchor 解析、surface 校验、capability projection 和 accepted 边界。
+
+`backend_selection` 属于 launch planning input。它进入 `LaunchPlanningInput` 后由 planner 解析为 execution placement，原因是 backend 选择是本轮执行位置决策；来源身份、AgentRun owner 与 frame construction facts 继续由 launch identity 和 frame construction pipeline 表达。
 
 | 来源 | `LaunchCommand` 应携带 |
 | --- | --- |

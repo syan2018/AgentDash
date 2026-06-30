@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-30-pr78-quality-convergence-fixes/prd.md", "reason": "Acceptance criteria for focused quality check."}
+{"file": ".trellis/tasks/06-30-pr78-quality-convergence-fixes/design.md", "reason": "Boundary and data-flow decisions to verify."}
+{"file": ".trellis/tasks/06-30-pr78-quality-convergence-fixes/implement.md", "reason": "Validation command list and rollback points."}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Verify VFS policy behavior against spec."}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Verify AgentRun admission behavior against spec."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Verify RuntimeGateway catalog owner behavior against spec."}

@@ -256,4 +256,3 @@
 - Relay prompt typed payload。
 
 这些都需要设计任务先定 owner 和 contract。
-

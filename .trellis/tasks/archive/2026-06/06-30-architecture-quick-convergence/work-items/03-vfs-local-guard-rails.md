@@ -68,4 +68,3 @@
 - 不做 typed RuntimeDiscoveryPolicy。
 - 不做 VFS per-mount/path authorization。
 - 不做 relay prompt typed payload。
-

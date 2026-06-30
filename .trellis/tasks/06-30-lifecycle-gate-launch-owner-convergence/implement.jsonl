@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "RuntimeSession role, launch pipeline invariant, AgentRun admission/delegate boundary baseline."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "LaunchCommand -> FrameLaunchEnvelope -> LaunchPlan contract and source adapter boundary."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "AgentRun mailbox delivery boundary for D3 delivery adapter split."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleRun, OrchestrationInstance, reducer, AgentRun lifecycle surface and dispatch materialization contracts."}
+{"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "RuntimeSessionExecutionAnchor and subject association ownership contracts for D2."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-design-backlog-review/research/04-orchestration-gate-launch.md", "reason": "Canonical research for D2/D3/D4 evidence, owner choices, and implementation slices."}
+{"file": ".trellis/tasks/archive/2026-06/06-30-design-backlog-review/design-review.md", "reason": "Decision matrix and cross-item ordering for design backlog items."}
+

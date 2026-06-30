@@ -358,14 +358,14 @@ mod tests {
         ConstructionResolutionPlan, FrameSurfaceDraft, OwnerResolutionTrace, ResolvedSessionOwner,
         RuntimeContextInspectionPlan, SessionConstructionContextProjection,
     };
-    use crate::session::launch::{LaunchCommand, LaunchSource};
     use crate::session::types::{
-        RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
+        RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, resolve_launch_prompt_payload,
     };
     use agentdash_application_ports::frame_launch_envelope::{
         FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
         LaunchResolutionTrace,
     };
+    use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput, LaunchSource};
     use std::path::{Path, PathBuf};
 
     fn input_for(launch_path: PromptLaunchPath) -> LaunchPlanInput {
@@ -419,9 +419,9 @@ mod tests {
             pending_overlay_applied: false,
             runtime_base_capability_state: None,
         };
-        let resolved_payload = UserPromptInput::from_text("hello")
-            .resolve_prompt_payload()
-            .expect("resolved payload");
+        let resolved_payload =
+            resolve_launch_prompt_payload(&LaunchPromptInput::from_text("hello"))
+                .expect("resolved payload");
         let launch_envelope = envelope_from_construction(construction);
         LaunchPlanInput {
             resolved_payload,
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn launch_command_carries_source_intent_and_follow_up() {
         let command = LaunchCommand::local_relay_prompt_input(
-            UserPromptInput::from_text("ping"),
+            LaunchPromptInput::from_text("ping"),
             Vec::new(),
             PathBuf::from("/workspace"),
         )

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
 use agentdash_agent_protocol::UserInputBlock;
+use agentdash_application_ports::launch::{
+    BackendSelectionInput, LaunchPlanningInput, LaunchPromptInput,
+};
 use serde::{Deserialize, Serialize};
 
 pub use agentdash_spi::CapabilityState;
@@ -31,22 +34,6 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
     #[serde(default)]
     pub backend_selection: Option<BackendSelectionInput>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendSelectionInput {
-    pub mode: BackendSelectionInputMode,
-    #[serde(default)]
-    pub backend_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum BackendSelectionInputMode {
-    Explicit,
-    AutoIdle,
-    WorkspaceBinding,
 }
 
 pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
@@ -166,6 +153,19 @@ pub struct ResolvedPromptPayload {
 }
 
 impl UserPromptInput {
+    pub fn into_launch_parts(self) -> (LaunchPromptInput, LaunchPlanningInput) {
+        (
+            LaunchPromptInput {
+                input: self.input,
+                environment_variables: self.env,
+                executor_config: self.executor_config,
+            },
+            LaunchPlanningInput {
+                backend_selection: self.backend_selection,
+            },
+        )
+    }
+
     /// 解析出有效的 prompt payload。
     /// - `text_prompt`：仅用于标题提示 / trace 元信息的文本摘要
     /// - `input`：canonical 用户输入（`Vec<UserInputBlock>`），投递与持久化的单一形态
@@ -200,6 +200,28 @@ impl UserPromptInput {
             backend_selection: None,
         }
     }
+}
+
+pub fn resolve_launch_prompt_payload(
+    input: &LaunchPromptInput,
+) -> Result<ResolvedPromptPayload, String> {
+    let blocks = input
+        .input
+        .as_ref()
+        .ok_or_else(|| "必须提供 input".to_string())?;
+    if blocks.is_empty() {
+        return Err("input 不能为空数组".to_string());
+    }
+    let prompt_payload = PromptPayload::Input(blocks.clone());
+    let text_prompt = prompt_payload.to_fallback_text();
+    if text_prompt.trim().is_empty() {
+        return Err("input 中没有有效内容".to_string());
+    }
+    Ok(ResolvedPromptPayload {
+        text_prompt,
+        prompt_payload,
+        input: blocks.clone(),
+    })
 }
 
 /// 带有运行时上下文的执行状态（含 turn_id / message 等附加信息）。

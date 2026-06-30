@@ -23,9 +23,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application_ports::frame_launch_envelope::{
-    FrameLaunchCommand, FrameLaunchEnvelopeRequest, FrameLaunchModifier, FrameLaunchSource,
-    RuntimeTraceLaunchStateRef,
+    FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
 };
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{
@@ -36,6 +36,7 @@ use crate::repository_set::RepositorySet;
 use agentdash_application_vfs::VfsService;
 
 use crate::agent_run::RuntimeCommandRecord;
+use crate::agent_run::TerminalHookEffectBinding;
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchEnvelope,
     FrameLaunchEnvelopeConstructionInput, FrameLaunchIntent, FrameLaunchSurface,
@@ -43,10 +44,7 @@ use crate::agent_run::frame::{
 };
 use crate::agent_run::merge_executor_config_fields;
 use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
-use crate::agent_run::{LaunchCommand, TerminalHookEffectBinding};
-use crate::agent_run::{
-    PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode, UserPromptInput,
-};
+use crate::agent_run::{PromptLaunchPath, RuntimeTraceLaunchState, SessionRepositoryRehydrateMode};
 use crate::context::SharedContextAuditBus;
 use crate::platform_config::PlatformConfig;
 use crate::workspace::resolution::BackendAvailability;
@@ -265,7 +263,7 @@ fn frame_launch_provider_input_from_request(
 ) -> Result<FrameLaunchEnvelopeConstructionInput, ConnectorError> {
     Ok(FrameLaunchEnvelopeConstructionInput {
         session_id: request.runtime_session_id,
-        command: launch_command_from_frame_launch(request.command)?,
+        command: request.command,
         runtime_trace_state: runtime_trace_launch_state_from_ref(request.runtime_trace_state),
         had_existing_runtime: request.had_existing_runtime,
         requested_runtime_commands: request.requested_runtime_commands,
@@ -280,80 +278,6 @@ fn runtime_trace_launch_state_from_ref(
         executor_session_id: input.executor_session_id,
         last_event_seq: input.last_event_seq,
     }
-}
-
-fn launch_command_from_frame_launch(
-    command: FrameLaunchCommand,
-) -> Result<LaunchCommand, ConnectorError> {
-    let mut companion = None;
-    let mut routine = None;
-    let mut local_relay = None;
-    for modifier in command.modifiers {
-        match modifier {
-            FrameLaunchModifier::Companion(source) => {
-                companion = Some(*source);
-            }
-            FrameLaunchModifier::Routine(source) => {
-                routine = Some(source);
-            }
-            FrameLaunchModifier::LocalRelay(payload) => {
-                local_relay = Some(payload);
-            }
-            FrameLaunchModifier::HookAutoResume => {}
-        }
-    }
-    let user_input = UserPromptInput {
-        input: command.user_input.input,
-        env: command.user_input.environment_variables,
-        executor_config: command.user_input.executor_config,
-        backend_selection: None,
-    };
-    let launch = match command.source {
-        FrameLaunchSource::HttpPrompt => {
-            LaunchCommand::http_prompt_input(user_input, command.identity)
-        }
-        FrameLaunchSource::LifecycleAgentUserMessage => {
-            LaunchCommand::lifecycle_agent_user_message_input(user_input, command.identity)
-        }
-        FrameLaunchSource::HookAutoResume => LaunchCommand::hook_auto_resume_input(user_input),
-        FrameLaunchSource::CompanionDispatch => LaunchCommand::companion_dispatch_input(
-            user_input,
-            command.identity,
-            companion.ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "companion dispatch launch request 缺少 companion source".to_string(),
-                )
-            })?,
-        ),
-        FrameLaunchSource::CompanionParentResume => {
-            LaunchCommand::companion_parent_resume_input(user_input)
-        }
-        FrameLaunchSource::WorkflowOrchestrator => {
-            LaunchCommand::workflow_orchestrator_input(user_input)
-        }
-        FrameLaunchSource::RoutineExecutor => LaunchCommand::routine_executor_input(
-            user_input,
-            command.identity,
-            routine.ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "routine executor launch request 缺少 routine source".to_string(),
-                )
-            })?,
-        ),
-        FrameLaunchSource::LocalRelayPrompt => {
-            let payload = local_relay.ok_or_else(|| {
-                ConnectorError::InvalidConfig(
-                    "local relay launch request 缺少 local relay payload".to_string(),
-                )
-            })?;
-            LaunchCommand::local_relay_prompt_input(
-                user_input,
-                payload.mcp_servers,
-                payload.workspace_root,
-            )
-        }
-    };
-    Ok(launch.with_follow_up(command.follow_up_session_id))
 }
 
 // ─── Free-standing helpers ───
@@ -402,7 +326,7 @@ pub(crate) fn merge_user_executor_config(
 }
 
 pub(crate) fn required_user_input(
-    input: &UserPromptInput,
+    input: &LaunchPromptInput,
 ) -> Result<Vec<agentdash_agent_protocol::UserInputBlock>, ConnectorError> {
     input
         .input
@@ -445,15 +369,15 @@ pub(crate) fn build_envelope_from_frame(
     let mut context_bundle = None;
     let mut memory_inventory = agentdash_spi::MemoryDiscoveryOutput::default();
 
-    if let Some(config) = command.user_input().executor_config.clone() {
+    if let Some(config) = command.prompt().executor_config.clone() {
         executor_config = Some(match executor_config {
             Some(base) => merge_executor_config_fields(base, &config),
             None => config,
         });
     }
 
-    let mut input = command.user_input().input.clone();
-    let mut environment_variables = command.user_input().env.clone();
+    let mut input = command.prompt().input.clone();
+    let mut environment_variables = command.prompt().environment_variables.clone();
 
     if let Some(extras) = extras {
         surface_draft = extras.frame_surface_draft;

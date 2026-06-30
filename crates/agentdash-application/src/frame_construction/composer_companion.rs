@@ -4,7 +4,9 @@ use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::ConnectorError;
 
 use crate::agent_run::frame::FrameLaunchEnvelope;
-use crate::agent_run::frame::{CompanionLaunchSource, FrameLaunchEnvelopeConstructionInput};
+use agentdash_application_ports::launch::CompanionLaunchSource;
+
+use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 
 use super::{
     CompanionParentSpec, CompanionParentWorkflowSpec, FrameConstructionService,

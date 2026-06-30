@@ -8,8 +8,9 @@ use agentdash_relay::*;
 use tokio::sync::{Mutex, mpsc};
 
 use agentdash_agent_protocol::UserInputBlock;
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 use agentdash_application_runtime_session::session::{
-    LaunchCommand, SessionRuntimeServices, SessionTurnSteerCommand, UserPromptInput,
+    SessionRuntimeServices, SessionTurnSteerCommand,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::AgentConnector;
@@ -216,7 +217,7 @@ impl PromptCommandHandler {
 
         match session_runtime
             .launch
-            .launch_command(&session_id, command)
+            .launch_command(&session_id, command, LaunchPlanningInput::default())
             .await
         {
             Ok(turn_id) => {
@@ -367,12 +368,11 @@ fn typed_relay_prompt_user_input(
     input: Vec<UserInputBlock>,
     env: HashMap<String, String>,
     executor_config: Option<AgentConfig>,
-) -> UserPromptInput {
-    UserPromptInput {
+) -> LaunchPromptInput {
+    LaunchPromptInput {
         input: Some(input),
-        env,
+        environment_variables: env,
         executor_config,
-        backend_selection: None,
     }
 }
 
@@ -483,7 +483,7 @@ mod tests {
         let user_input = typed_relay_prompt_user_input(input.clone(), HashMap::new(), None);
 
         assert_eq!(user_input.input, Some(input));
-        assert!(user_input.backend_selection.is_none());
+        assert!(user_input.environment_variables.is_empty());
     }
 
     #[tokio::test]

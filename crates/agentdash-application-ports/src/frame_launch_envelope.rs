@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::launch::LaunchCommand;
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_domain::backend::RuntimeBackendAnchor;
-use agentdash_domain::workflow::{
-    ActivityDefinition, AgentFrame, AgentProcedure, LifecycleRun, WorkflowGraph,
-};
+use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::session_persistence::RuntimeCommandRecord;
 use agentdash_spi::{
@@ -93,78 +92,6 @@ impl FrameLaunchEnvelope {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoutineLaunchSource {
-    pub routine_id: Uuid,
-    pub execution_id: Uuid,
-    pub trigger_source: String,
-    pub entity_key: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct CompanionLaunchWorkflowSource {
-    pub run: LifecycleRun,
-    pub orchestration_id: Uuid,
-    pub node_path: String,
-    pub attempt: u32,
-    pub lifecycle: WorkflowGraph,
-    pub activity: ActivityDefinition,
-    pub workflow: Option<AgentProcedure>,
-}
-
-#[derive(Clone)]
-pub struct CompanionLaunchSource {
-    pub parent_session_id: String,
-    pub selected_project_agent_id: Option<Uuid>,
-    pub selected_agent_key: Option<String>,
-    pub slice_mode: agentdash_spi::CompanionSliceMode,
-    pub companion_executor_config: AgentConfig,
-    pub dispatch_prompt: String,
-    pub workflow: Option<CompanionLaunchWorkflowSource>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameLaunchSource {
-    HttpPrompt,
-    LifecycleAgentUserMessage,
-    HookAutoResume,
-    CompanionDispatch,
-    CompanionParentResume,
-    WorkflowOrchestrator,
-    RoutineExecutor,
-    LocalRelayPrompt,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct FrameLaunchUserInput {
-    pub input: Option<Vec<UserInputBlock>>,
-    pub environment_variables: HashMap<String, String>,
-    pub executor_config: Option<AgentConfig>,
-}
-
-#[derive(Clone)]
-pub struct FrameLaunchLocalRelayPayload {
-    pub mcp_servers: Vec<RuntimeMcpServer>,
-    pub workspace_root: PathBuf,
-}
-
-#[derive(Clone)]
-pub enum FrameLaunchModifier {
-    Companion(Box<CompanionLaunchSource>),
-    Routine(RoutineLaunchSource),
-    LocalRelay(FrameLaunchLocalRelayPayload),
-    HookAutoResume,
-}
-
-#[derive(Clone)]
-pub struct FrameLaunchCommand {
-    pub user_input: FrameLaunchUserInput,
-    pub source: FrameLaunchSource,
-    pub follow_up_session_id: Option<String>,
-    pub identity: Option<AuthIdentity>,
-    pub modifiers: Vec<FrameLaunchModifier>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuntimeTraceLaunchStateRef {
     pub executor_session_id: Option<String>,
@@ -174,7 +101,7 @@ pub struct RuntimeTraceLaunchStateRef {
 #[derive(Clone)]
 pub struct FrameLaunchEnvelopeRequest {
     pub runtime_session_id: String,
-    pub command: FrameLaunchCommand,
+    pub command: LaunchCommand,
     pub runtime_trace_state: RuntimeTraceLaunchStateRef,
     pub had_existing_runtime: bool,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,

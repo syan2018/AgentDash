@@ -5,6 +5,7 @@ use std::sync::Arc;
 use agentdash_agent_protocol::{
     BackboneEnvelope, UserInputBlock, UserInputSubmissionKind, text_user_input_blocks,
 };
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
@@ -21,7 +22,7 @@ use agentdash_spi::session_persistence::{SessionEventPage, SessionMeta};
 use tokio::sync::Mutex;
 
 use crate::agent_run::runtime_session_boundary::{
-    LaunchCommand, RuntimeSessionControlPort, RuntimeSessionCorePort, RuntimeSessionEventingPort,
+    RuntimeSessionControlPort, RuntimeSessionCorePort, RuntimeSessionEventingPort,
     RuntimeSessionLaunchPort, SessionControlService, SessionCoreService, SessionEventingService,
     SessionExecutionState, SessionLaunchService, SessionTurnSteerCommand,
 };
@@ -832,6 +833,7 @@ impl RuntimeSessionLaunchPort for TestLaunchPort {
         &self,
         _session_id: String,
         _command: LaunchCommand,
+        _planning_input: LaunchPlanningInput,
     ) -> Result<String, WorkflowApplicationError> {
         Ok("launched-turn".to_string())
     }

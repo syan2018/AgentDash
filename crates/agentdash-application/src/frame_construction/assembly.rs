@@ -8,13 +8,13 @@ use agentdash_spi::{
 };
 use uuid::Uuid;
 
-use crate::agent_run::UserPromptInput;
 use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
+use agentdash_application_ports::launch::LaunchPromptInput;
 #[cfg(test)]
 use agentdash_application_ports::lifecycle_surface_projection::{
     LifecycleMountSurface, lifecycle_mount_overlay_for_surface,
@@ -196,19 +196,19 @@ impl FrameAssemblyBuilder {
         self
     }
 
-    /// 一次性吸收 `UserPromptInput` 的所有字段。
+    /// 一次性吸收 `LaunchPromptInput` 的所有字段。
     ///
     /// 等价于依次调用 `with_input` / `with_executor_config` / `with_env`；
     /// 便于 entry 把"用户原始输入"集中交给 builder，compose 阶段如需要再
     /// 通过独立 `with_*` 方法覆盖个别字段（compose 产出优先）。
-    pub(super) fn with_user_input(mut self, input: UserPromptInput) -> Self {
+    pub(super) fn with_user_input(mut self, input: LaunchPromptInput) -> Self {
         if let Some(blocks) = input.input {
             self.input = Some(blocks);
         }
         if let Some(cfg) = input.executor_config {
             self.executor_config = Some(cfg);
         }
-        self.env = input.env;
+        self.env = input.environment_variables;
         self
     }
 

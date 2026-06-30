@@ -4,12 +4,9 @@
 //! frame construction 逻辑才能拿到 context / MCP server 绑定 / flow capabilities /
 //! context bundle 等运行时字段，否则会出现"通道漂移"。
 
-use crate::agent_run::runtime_session_boundary::LaunchCommand;
 use crate::agent_run::runtime_session_boundary::RuntimeCommandRecord;
 use crate::agent_run::runtime_session_boundary::RuntimeTraceLaunchState;
-pub use agentdash_application_ports::frame_launch_envelope::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
-};
+use agentdash_application_ports::launch::LaunchCommand;
 
 #[derive(Clone)]
 pub struct FrameLaunchEnvelopeConstructionInput {

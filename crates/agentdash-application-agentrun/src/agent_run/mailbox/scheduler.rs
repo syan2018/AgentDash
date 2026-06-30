@@ -2,6 +2,7 @@ use super::payload::{message_executor_config, message_input};
 use super::policy::runtime_can_launch;
 use super::target::ensure_command_target;
 use super::*;
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 
 #[derive(Clone, Copy)]
 enum SteeringDeliveryMode {
@@ -649,11 +650,10 @@ impl<'a> AgentRunMailboxService<'a> {
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
         let input = message_input(&message)?;
         let command = match launch_source.as_str() {
-            "hook_auto_resume" => LaunchCommand::hook_auto_resume_input(UserPromptInput {
+            "hook_auto_resume" => LaunchCommand::hook_auto_resume_input(LaunchPromptInput {
                 input: Some(input),
-                env: Default::default(),
+                environment_variables: Default::default(),
                 executor_config: None,
-                backend_selection: None,
             }),
             other => {
                 let failed = self
@@ -683,7 +683,11 @@ impl<'a> AgentRunMailboxService<'a> {
         };
         let turn_id = match self
             .session_launch
-            .launch_command_in_task(message.runtime_session_id.clone(), command)
+            .launch_command_in_task(
+                message.runtime_session_id.clone(),
+                command,
+                LaunchPlanningInput::default(),
+            )
             .await
         {
             Ok(turn_id) => turn_id,

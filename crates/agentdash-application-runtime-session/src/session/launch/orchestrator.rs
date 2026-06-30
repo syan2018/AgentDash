@@ -1,13 +1,14 @@
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
 };
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::ConnectorError;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::launch::{
-    ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
-    SessionLaunchDeps, StreamIngestionAttacher, TurnCommitter, TurnPreparationInput, TurnPreparer,
+    ConnectorStarter, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput, SessionLaunchDeps,
+    StreamIngestionAttacher, TurnCommitter, TurnPreparationInput, TurnPreparer,
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
@@ -32,6 +33,7 @@ impl SessionLaunchOrchestrator {
         &self,
         session_id: &str,
         command: LaunchCommand,
+        planning_input: LaunchPlanningInput,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let reason = command.reason_tag();
         let Some(provider) = self.deps.current_frame_launch_envelope_provider().await else {
@@ -89,7 +91,7 @@ impl SessionLaunchOrchestrator {
         let launch_envelope = match provider
             .build_launch_envelope(FrameLaunchEnvelopeRequest {
                 runtime_session_id: sid.clone(),
-                command: command.to_frame_launch_command(),
+                command: command.clone(),
                 runtime_trace_state: RuntimeTraceLaunchStateRef {
                     executor_session_id: runtime_trace_state.executor_session_id.clone(),
                     last_event_seq: runtime_trace_state.last_event_seq,
@@ -128,7 +130,13 @@ impl SessionLaunchOrchestrator {
         };
         let context_sources = facts.context_sources.clone();
         let turn_id = self
-            .launch_with_envelope(session_id, &command, launch_envelope, facts)
+            .launch_with_envelope(
+                session_id,
+                &command,
+                &planning_input,
+                launch_envelope,
+                facts,
+            )
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -141,6 +149,7 @@ impl SessionLaunchOrchestrator {
         &self,
         session_id: &str,
         command: &LaunchCommand,
+        planning_input: &LaunchPlanningInput,
         launch_envelope: FrameLaunchEnvelope,
         facts: LaunchRuntimeFacts,
     ) -> Result<String, ConnectorError> {
@@ -163,6 +172,7 @@ impl SessionLaunchOrchestrator {
                 session_id,
                 turn_id: &turn_id,
                 command,
+                planning_input: planning_input.clone(),
                 had_existing_runtime,
                 runtime_trace_state: RuntimeTraceLaunchState::from(&session_meta),
                 requested_runtime_commands,

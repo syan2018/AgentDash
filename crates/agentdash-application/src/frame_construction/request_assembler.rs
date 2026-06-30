@@ -1441,15 +1441,14 @@ mod tests {
         #[test]
         fn builder_with_user_input_unpacks_fields() {
             // 验证 with_user_input 一次性吸收 prompt 输入字段。
-            use crate::agent_run::UserPromptInput;
+            use agentdash_application_ports::launch::LaunchPromptInput;
             let mut env = HashMap::new();
             env.insert("PATH".to_string(), "/usr/bin".to_string());
 
-            let input = UserPromptInput {
+            let input = LaunchPromptInput {
                 input: Some(agentdash_agent_protocol::text_user_input_blocks("hi")),
-                env,
+                environment_variables: env,
                 executor_config: None,
-                backend_selection: None,
             };
             let prepared = FrameAssemblyBuilder::new().with_user_input(input).build();
             assert!(

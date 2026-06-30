@@ -1,12 +1,11 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
 
-use agentdash_application_ports::frame_launch_envelope::{
-    CompanionLaunchSource, FrameLaunchCommand, FrameLaunchLocalRelayPayload, FrameLaunchModifier,
-    FrameLaunchSource, FrameLaunchUserInput, RoutineLaunchSource,
-};
-use agentdash_spi::RuntimeMcpServer;
+use agentdash_agent_protocol::{UserInputBlock, text_user_input_blocks};
+use agentdash_spi::{AgentConfig, AuthIdentity};
+use serde::{Deserialize, Serialize};
 
-use crate::session::types::UserPromptInput;
+use super::modifier::{CompanionLaunchSource, LaunchModifier, RoutineLaunchSource};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchSource {
     HttpPrompt,
@@ -19,39 +18,57 @@ pub enum LaunchSource {
     LocalRelayPrompt,
 }
 
-#[derive(Clone)]
-pub struct LaunchCommand {
-    user_input: UserPromptInput,
-    source: LaunchSource,
-    follow_up_session_id: Option<String>,
-    identity: Option<agentdash_spi::AuthIdentity>,
-    modifiers: Vec<LaunchModifier>,
+#[derive(Debug, Clone, Default)]
+pub struct LaunchPromptInput {
+    pub input: Option<Vec<UserInputBlock>>,
+    pub environment_variables: HashMap<String, String>,
+    pub executor_config: Option<AgentConfig>,
 }
 
-#[derive(Clone)]
-pub enum LaunchModifier {
-    Companion(Box<CompanionLaunchSource>),
-    Routine(RoutineLaunchSource),
-    LocalRelay(LocalRelayLaunchPayload),
-    HookAutoResume,
-}
-
-#[derive(Clone)]
-pub struct LocalRelayLaunchPayload {
-    pub mcp_servers: Vec<RuntimeMcpServer>,
-    pub workspace_root: PathBuf,
+impl LaunchPromptInput {
+    pub fn from_text(text: impl AsRef<str>) -> Self {
+        Self {
+            input: Some(text_user_input_blocks(text.as_ref().trim())),
+            environment_variables: HashMap::new(),
+            executor_config: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LaunchCommandOutcome {
-    pub turn_id: String,
-    pub context_sources: Vec<String>,
+pub struct LaunchPlanningInput {
+    pub backend_selection: Option<BackendSelectionInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendSelectionInput {
+    pub mode: BackendSelectionInputMode,
+    #[serde(default)]
+    pub backend_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSelectionInputMode {
+    Explicit,
+    AutoIdle,
+    WorkspaceBinding,
+}
+
+#[derive(Clone)]
+pub struct LaunchCommand {
+    prompt: LaunchPromptInput,
+    source: LaunchSource,
+    follow_up_session_id: Option<String>,
+    identity: Option<AuthIdentity>,
+    modifiers: Vec<LaunchModifier>,
 }
 
 impl LaunchCommand {
-    fn new(user_input: UserPromptInput, source: LaunchSource) -> Self {
+    fn new(prompt: LaunchPromptInput, source: LaunchSource) -> Self {
         Self {
-            user_input,
+            prompt,
             source,
             follow_up_session_id: None,
             identity: None,
@@ -64,11 +81,11 @@ impl LaunchCommand {
         self
     }
 
-    pub fn user_input(&self) -> &UserPromptInput {
-        &self.user_input
+    pub fn prompt(&self) -> &LaunchPromptInput {
+        &self.prompt
     }
 
-    pub fn identity(&self) -> Option<agentdash_spi::AuthIdentity> {
+    pub fn identity(&self) -> Option<AuthIdentity> {
         self.identity.clone()
     }
 
@@ -86,7 +103,7 @@ impl LaunchCommand {
         })
     }
 
-    pub fn local_relay_modifier(&self) -> Option<&LocalRelayLaunchPayload> {
+    pub fn local_relay_modifier(&self) -> Option<&super::LocalRelayLaunchPayload> {
         self.modifiers.iter().find_map(|modifier| match modifier {
             LaunchModifier::LocalRelay(payload) => Some(payload),
             _ => None,
@@ -118,54 +135,13 @@ impl LaunchCommand {
         }
     }
 
-    pub(super) fn to_frame_launch_command(&self) -> FrameLaunchCommand {
-        let mut modifiers = Vec::new();
-        for modifier in &self.modifiers {
-            modifiers.push(match modifier {
-                LaunchModifier::Companion(companion) => {
-                    FrameLaunchModifier::Companion(Box::new(companion.as_ref().clone()))
-                }
-                LaunchModifier::Routine(routine) => FrameLaunchModifier::Routine(routine.clone()),
-                LaunchModifier::LocalRelay(payload) => {
-                    FrameLaunchModifier::LocalRelay(FrameLaunchLocalRelayPayload {
-                        mcp_servers: payload.mcp_servers.clone(),
-                        workspace_root: payload.workspace_root.clone(),
-                    })
-                }
-                LaunchModifier::HookAutoResume => FrameLaunchModifier::HookAutoResume,
-            });
-        }
-        FrameLaunchCommand {
-            user_input: FrameLaunchUserInput {
-                input: self.user_input.input.clone(),
-                environment_variables: self.user_input.env.clone(),
-                executor_config: self.user_input.executor_config.clone(),
-            },
-            source: match self.source {
-                LaunchSource::HttpPrompt => FrameLaunchSource::HttpPrompt,
-                LaunchSource::LifecycleAgentUserMessage => {
-                    FrameLaunchSource::LifecycleAgentUserMessage
-                }
-                LaunchSource::HookAutoResume => FrameLaunchSource::HookAutoResume,
-                LaunchSource::CompanionDispatch => FrameLaunchSource::CompanionDispatch,
-                LaunchSource::CompanionParentResume => FrameLaunchSource::CompanionParentResume,
-                LaunchSource::WorkflowOrchestrator => FrameLaunchSource::WorkflowOrchestrator,
-                LaunchSource::RoutineExecutor => FrameLaunchSource::RoutineExecutor,
-                LaunchSource::LocalRelayPrompt => FrameLaunchSource::LocalRelayPrompt,
-            },
-            follow_up_session_id: self.follow_up_session_id.clone(),
-            identity: self.identity.clone(),
-            modifiers,
-        }
-    }
-
-    fn source_input(input: UserPromptInput, source: LaunchSource) -> Self {
+    fn source_input(input: LaunchPromptInput, source: LaunchSource) -> Self {
         Self::new(input, source)
     }
 
     fn command_with(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        input: LaunchPromptInput,
+        identity: Option<AuthIdentity>,
         modifiers: Vec<LaunchModifier>,
         source: LaunchSource,
     ) -> Self {
@@ -175,16 +151,13 @@ impl LaunchCommand {
         command
     }
 
-    pub fn http_prompt_input(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
-    ) -> Self {
+    pub fn http_prompt_input(input: LaunchPromptInput, identity: Option<AuthIdentity>) -> Self {
         Self::command_with(input, identity, Vec::new(), LaunchSource::HttpPrompt)
     }
 
     pub fn lifecycle_agent_user_message_input(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        input: LaunchPromptInput,
+        identity: Option<AuthIdentity>,
     ) -> Self {
         Self::command_with(
             input,
@@ -194,7 +167,7 @@ impl LaunchCommand {
         )
     }
 
-    pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
+    pub fn hook_auto_resume_input(input: LaunchPromptInput) -> Self {
         Self::command_with(
             input,
             None,
@@ -203,13 +176,13 @@ impl LaunchCommand {
         )
     }
 
-    pub fn companion_parent_resume_input(input: UserPromptInput) -> Self {
+    pub fn companion_parent_resume_input(input: LaunchPromptInput) -> Self {
         Self::source_input(input, LaunchSource::CompanionParentResume)
     }
 
     pub fn companion_dispatch_input(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        input: LaunchPromptInput,
+        identity: Option<AuthIdentity>,
         companion: CompanionLaunchSource,
     ) -> Self {
         Self::command_with(
@@ -220,13 +193,13 @@ impl LaunchCommand {
         )
     }
 
-    pub fn workflow_orchestrator_input(input: UserPromptInput) -> Self {
+    pub fn workflow_orchestrator_input(input: LaunchPromptInput) -> Self {
         Self::source_input(input, LaunchSource::WorkflowOrchestrator)
     }
 
     pub fn routine_executor_input(
-        input: UserPromptInput,
-        identity: Option<agentdash_spi::AuthIdentity>,
+        input: LaunchPromptInput,
+        identity: Option<AuthIdentity>,
         routine: RoutineLaunchSource,
     ) -> Self {
         Self::command_with(
@@ -238,18 +211,19 @@ impl LaunchCommand {
     }
 
     pub fn local_relay_prompt_input(
-        input: UserPromptInput,
-        mcp_servers: Vec<RuntimeMcpServer>,
-        workspace_root: PathBuf,
+        input: LaunchPromptInput,
+        mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
+        workspace_root: std::path::PathBuf,
     ) -> Self {
-        let mut command = Self::new(input, LaunchSource::LocalRelayPrompt);
-        command
-            .modifiers
-            .push(LaunchModifier::LocalRelay(LocalRelayLaunchPayload {
+        Self::command_with(
+            input,
+            None,
+            vec![LaunchModifier::LocalRelay(super::LocalRelayLaunchPayload {
                 mcp_servers,
                 workspace_root,
-            }));
-        command
+            })],
+            LaunchSource::LocalRelayPrompt,
+        )
     }
 }
 
@@ -260,12 +234,8 @@ mod tests {
     use agentdash_spi::{AgentConfig, CompanionSliceMode, McpTransportConfig};
     use uuid::Uuid;
 
-    use agentdash_application_ports::frame_launch_envelope::{
-        CompanionLaunchSource, RoutineLaunchSource,
-    };
-
-    use super::{LaunchCommand, LaunchModifier, LaunchSource};
-    use crate::session::types::UserPromptInput;
+    use super::{LaunchCommand, LaunchPromptInput, LaunchSource};
+    use crate::launch::{CompanionLaunchSource, LaunchModifier, RoutineLaunchSource};
 
     #[test]
     fn source_specific_facts_are_stored_as_modifiers() {
@@ -280,7 +250,7 @@ mod tests {
             uses_relay: false,
         };
         let command = LaunchCommand::local_relay_prompt_input(
-            UserPromptInput::from_text("ping"),
+            LaunchPromptInput::from_text("ping"),
             vec![mcp_server.clone()],
             PathBuf::from("/workspace"),
         );
@@ -312,7 +282,7 @@ mod tests {
             workflow: None,
         };
         let companion_command = LaunchCommand::companion_dispatch_input(
-            UserPromptInput::from_text("review this"),
+            LaunchPromptInput::from_text("review this"),
             None,
             companion.clone(),
         );
@@ -337,7 +307,7 @@ mod tests {
             entity_key: Some("entity-1".to_string()),
         };
         let routine_command = LaunchCommand::routine_executor_input(
-            UserPromptInput::from_text("run"),
+            LaunchPromptInput::from_text("run"),
             None,
             routine.clone(),
         );
@@ -352,7 +322,7 @@ mod tests {
 
     #[test]
     fn hook_auto_resume_keeps_source_tag_as_modifier() {
-        let command = LaunchCommand::hook_auto_resume_input(UserPromptInput::from_text("resume"));
+        let command = LaunchCommand::hook_auto_resume_input(LaunchPromptInput::from_text("resume"));
 
         assert_eq!(command.source(), LaunchSource::HookAutoResume);
         assert!(matches!(

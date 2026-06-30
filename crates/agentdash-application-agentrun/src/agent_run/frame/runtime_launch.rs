@@ -8,7 +8,7 @@
 //! ```
 //!
 //! `FrameLaunchEnvelope` 是 FrameConstructionService 到 planner 的唯一传递形式，
-//! 让"缺字段"在构造边界暴露而不是到 planner 才兜底检查。
+//! 让"缺字段"在构造边界暴露，planner 只消费 launch-ready 输入。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -90,7 +90,7 @@ pub struct FrameLaunchIntent {
 ///
 /// `FrameSurfaceDraft` 仍是 frame construction 写入 `AgentFrame` revision 的草稿形态，
 /// 因此部分字段保持 optional。进入 `FrameLaunchEnvelope` 时必须通过本结构完成
-/// launch-ready gate，让 planner 不需要 fallback 读取。
+/// launch-ready gate，让 planner 不需要旁路读取。
 #[derive(Debug, Clone)]
 pub struct FrameLaunchSurface {
     pub capability_state: CapabilityState,
@@ -234,7 +234,7 @@ fn uuid_metadata(metadata: &serde_json::Value, key: &str) -> Option<Uuid> {
 
 /// Frame construction 到 planner 的传递物。
 /// `working_directory`、`executor_config`、`capability_state` 在此保证 non-optional,
-/// planner 不需要做"半成品是否 ready"的兜底检查。
+/// planner 不需要处理"半成品是否 ready"的检查。
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
     pub surface: FrameRuntimeSurface,

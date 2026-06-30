@@ -90,7 +90,7 @@ AgentRunLifecycleSurfaceInput {
 | --- | --- |
 | builtin key 没有 embedded template | skill service returns not found |
 | embedded bundle `SKILL.md` 缺失或 metadata 不一致 | skill service validation error |
-| project 已有同 key 旧快照 | sync to builtin seed source and embedded files |
+| project 已有同 key 快照 | sync to builtin seed source and embedded files |
 | lifecycle surface lacks required projection facts | lifecycle projector returns projection error |
 
 ### 5. Good/Base/Bad Cases

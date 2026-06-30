@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(
             oidc_post_login_redirect_from_env(
                 Some(" https://app.example.test/ ".to_string()),
-                Some("https://fallback.example.test/".to_string()),
+                Some("https://secondary.example.test/".to_string()),
             ),
             "https://app.example.test/"
         );

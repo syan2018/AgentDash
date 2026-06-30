@@ -63,7 +63,7 @@ impl DesktopRunnerHost {
                     self.record_log(
                         "info",
                         "runtime",
-                        "runtime 正在停止，等待旧实例退出后重试启动",
+                        "runtime 正在停止，等待当前实例退出后重试启动",
                     )
                     .await;
                     let _ = self.runtime.stop(StopReason::Shutdown).await;

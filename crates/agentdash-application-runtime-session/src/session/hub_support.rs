@@ -192,7 +192,7 @@ impl SessionRuntime {
     }
 }
 
-/// Per-session ephemeral buffer 容量上限（条）。超出后 evict 最旧条目，防进程内存膨胀。
+/// Per-session ephemeral buffer 容量上限（条）。超出后 evict 队首条目，防进程内存膨胀。
 /// 单个长 turn 的 delta 量级远小于此；turn 收尾会清空 buffer。
 pub(super) const EPHEMERAL_BUFFER_CAP: usize = 16384;
 

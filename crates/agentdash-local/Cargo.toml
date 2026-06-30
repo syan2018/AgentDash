@@ -21,6 +21,7 @@ agentdash-spi.workspace = true
 agentdash-agent-protocol = { workspace = true }
 agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
+agentdash-application-ports = { workspace = true }
 agentdash-application-runtime-session = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-domain.workspace = true

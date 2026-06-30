@@ -673,7 +673,7 @@ impl AgentConnector for PiAgentConnector {
             "Pi Agent prompt entered"
         );
         // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平成文本）。
-        // `to_fallback_text` 保留仅供标题/trace 摘要，不再作为投递路径。
+        // `to_fallback_text` 仅供标题/trace 摘要，不作为投递路径。
         let prompt_parts = prompt.to_content_parts();
         if prompt_parts.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
@@ -1128,8 +1128,7 @@ const MEMORY_CONTEXT_FRAME_KIND: &str = "memory_context";
 ///
 /// 这些帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
 /// `identity_context_frame` / `guidelines_context_frame`），因此这里只需按
-/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`，不再需要原先
-/// effective_prompt / rendered_text 的 fallback 兜底。
+/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`。
 fn assemble_system_prompt(frames: &[ContextFrame]) -> Option<String> {
     let mut parts = Vec::new();
     for kind in [

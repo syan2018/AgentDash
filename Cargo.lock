@@ -603,6 +603,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-application",
+ "agentdash-application-ports",
  "agentdash-application-runtime-session",
  "agentdash-application-vfs",
  "agentdash-contracts",

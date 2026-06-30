@@ -62,5 +62,4 @@
 - [ ] Props 有文档注释
 - [ ] 无 `console.log` 调试代码
 - [ ] 组件拆分合理
-- [ ] API 字段使用 `snake_case`，无双风格兼容代码
-
+- [ ] API 字段使用 `snake_case`，无双风格字段解析

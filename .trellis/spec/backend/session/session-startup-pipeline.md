@@ -276,7 +276,7 @@ schema 表：前者写入 `ExecutionTurnFrame.assembled_tools` 并交给 connect
 层生成 runtime ContextFrame 的 `tool_schema_delta`。launch preparation 和 hub runtime capability
 refresh 都必须委托该 helper，原因是 connector prompt 前工具面、运行中 capability refresh、MCP
 discovery metadata 与 Agent 可见 ToolSchema 文本必须观察同一份 `ExecutionContext` /
-`CapabilityState` / MCP discovery 语义；hub 不得从旧 runtime profile 或 active turn cache 回填缺失
+`CapabilityState` / MCP discovery 语义；hub 不得从先前 runtime profile 或 active turn cache 回填缺失
 VFS/MCP/capability facts。
 
 `connector.prompt` 返回 `ExecutionStream` 是 launch accepted 边界。accepted 之前允许做 turn claim、active runtime projection、hook `SessionStart` context preparation 和 connector context assembly；accepted 之后才提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与本地 title derivation。connector setup 失败时释放 turn runtime 并记录失败终态。

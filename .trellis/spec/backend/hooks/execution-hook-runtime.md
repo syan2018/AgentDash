@@ -60,7 +60,7 @@ delivery / trace provenance。业务入口需要 hook runtime 时应传递
 由 target-first service 确认 delivery binding cache 是否仍指向同一 control target；若 frame
 revision 已推进，service 按当前 AgentFrame 与 `RuntimeSessionExecutionAnchor` 重建
 `AgentFrameHookRuntime` 并替换 delivery binding。这样 provider 的
-`resolve_runtime_hook_target(runtime_session_id)` 只保留为 legacy adapter/bootstrap 边界，不形成
+`resolve_runtime_hook_target(runtime_session_id)` 只保留为 adapter/bootstrap 边界，不形成
 session id 主导的第二事实源。
 
 ---

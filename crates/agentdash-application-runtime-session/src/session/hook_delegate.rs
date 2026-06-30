@@ -1752,9 +1752,9 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![
-                            AgentMessage::user("旧消息"),
+                            AgentMessage::user("上下文消息"),
                             AgentMessage::Assistant {
-                                content: vec![agentdash_spi::ContentPart::text("旧回复")],
+                                content: vec![agentdash_spi::ContentPart::text("上下文回复")],
                                 tool_calls: vec![],
                                 stop_reason: Some(StopReason::Stop),
                                 error_message: None,
@@ -1970,7 +1970,7 @@ mod tests {
                 agentdash_spi::EvaluateCompactionInput {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
-                        messages: vec![AgentMessage::user("旧消息")],
+                        messages: vec![AgentMessage::user("上下文消息")],
                         message_refs: vec![],
                         tools: vec![],
                     },

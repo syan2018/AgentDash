@@ -705,7 +705,7 @@ fn compute_replacements(
             line_index = start_idx + pattern.len();
         } else {
             return Err(ApplyPatchError::Apply(format!(
-                "无法在 {path_label} 中定位预期旧内容:\n{}",
+                "无法在 {path_label} 中定位预期原内容:\n{}",
                 chunk.old_lines.join("\n")
             )));
         }

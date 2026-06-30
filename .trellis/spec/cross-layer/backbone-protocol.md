@@ -147,7 +147,7 @@ PlatformEvent::SessionRewound(SessionRewound)
 - `SessionRewound` 是 append-only agent-context rewind marker。事件流不物理删除尾部事件；
   前端 reducer 不能按该事件裁剪 timeline/rawEvents；model context projection 只按
   `discarded_turn_id + discarded_entry_index` 排除失败 AgentLoop 子轮次中的 agent 产物。
-- `stable_event_seq` 只保留为诊断/旧稳定边界信息，不表达前端或上下文应裁到该事件序号。
+- `stable_event_seq` 只保留为稳定边界诊断信息，不表达前端或上下文应裁到该事件序号。
 - 新增或修改 `PlatformEvent` 一等 variant 后必须重新生成 TypeScript binding：
 
 ```powershell
@@ -260,7 +260,7 @@ AgentDashThreadItem
 - `ToolCallCardShell`：统一承载 header（badge/title/status/elapsed）、折叠、审批操作、错误展示。
 - `toolCardRegistry`：按 `item.type` 一级分发到专用 renderer body；`dynamicToolCall` 内部按 `tool` 名做二级摘要。
 - `threadItemKind.ts`：kind 元数据（badge/label/summaryVerb）的单一来源。
-- Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的走 `GenericJsonBody` 兜底。
+- Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的使用 `GenericJsonBody` 默认渲染。
 - Codex 已有 item 直接使用 Codex Protocol type；AgentDash 仅在 Codex 不足时通过 `AgentDashNativeThreadItem` 做加法扩展。
 - Tool / command body 展示裁切摘要时优先消费 bounded preview、`details.truncation`、shell truncation
   details 或文本中的 `lifecycle_path` marker；完整输出展开需要走 lifecycle VFS 读取面。

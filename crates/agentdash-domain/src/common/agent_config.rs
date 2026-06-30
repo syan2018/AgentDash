@@ -61,8 +61,7 @@ pub struct AgentPresetConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Agent 级能力指令。替代旧 `tool_clusters: Option<Vec<String>>`。
-    /// 前端 → API → 存储 → Resolver 全链路使用相同的 `ToolCapabilityDirective` 表示。
+    /// Agent 级能力指令。前端、API、存储与 Resolver 使用同一套 directive 表示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_directives: Option<Vec<ToolCapabilityDirective>>,
     /// ProjectAgent preset 暴露的 Project VFS mount 及其 capability 裁剪。

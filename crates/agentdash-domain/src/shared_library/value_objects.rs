@@ -2392,10 +2392,10 @@ mod tests {
         assert!(env_set.allowed);
         assert_eq!(env_set.capability_family, "process_env");
 
-        let legacy = template.evaluate_action_permission("demo.run", "process.execute");
-        assert!(!legacy.allowed);
+        let unknown_permission = template.evaluate_action_permission("demo.run", "process.execute");
+        assert!(!unknown_permission.allowed);
         assert_eq!(
-            legacy.reason,
+            unknown_permission.reason,
             ExtensionPermissionDecisionReason::UnknownPermission
         );
     }
@@ -2648,7 +2648,7 @@ mod tests {
     }
 
     #[test]
-    fn normalize_rejects_legacy_format_lifecycle_payload() {
+    fn normalize_rejects_step_based_lifecycle_payload() {
         let payload = json!({
             "template": {
                 "key": "review_flow",

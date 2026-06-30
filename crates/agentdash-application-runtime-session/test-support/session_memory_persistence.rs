@@ -1147,7 +1147,7 @@ mod tests {
         persistence
             .save_session_meta(&stale)
             .await
-            .expect("旧快照回写仍应成功");
+            .expect("过期快照回写仍应成功");
 
         let merged = persistence
             .get_session_meta("sess-memory")

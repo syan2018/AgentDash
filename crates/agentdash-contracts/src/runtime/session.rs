@@ -67,7 +67,7 @@ pub enum SessionNdjsonEnvelope {
         #[ts(type = "number")]
         last_event_id: u64,
         /// 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——
-        /// epoch 变化时重置 `lastEphemeralSeq`（旧 cursor 失效），同 epoch 重连则保留。
+        /// epoch 变化时重置 `lastEphemeralSeq`（先前 cursor 失效），同 epoch 重连则保留。
         #[ts(type = "number")]
         ephemeral_epoch: u64,
     },

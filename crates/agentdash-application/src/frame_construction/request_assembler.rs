@@ -960,7 +960,7 @@ async fn compose_companion_with_workflow(
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
     //
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
-    // fragment 注入 Bundle，替代旧的字符串拼接路径。
+    // fragment 注入 Bundle，保持 workflow injection 与其他上下文同一合并路径。
     // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
     // 不需要 declarative bindings 列表）；companion+workflow 路径若提供 audit_session_key
     // 会通过调用方在外层 emit 至审计总线。

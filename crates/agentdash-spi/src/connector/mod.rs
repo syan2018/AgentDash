@@ -528,7 +528,7 @@ impl CapabilityState {
 
     /// 检查指定工具是否可用（cluster 启用）。
     ///
-    /// 该方法仅保留给没有 capability 维度的旧调用点；新代码应使用
+    /// 该方法仅服务尚未接入 capability 维度的调用点；优先使用
     /// `is_capability_tool_enabled`。
     pub fn is_tool_enabled(&self, tool_name: &str, cluster: ToolCluster) -> bool {
         let _ = tool_name;
@@ -710,7 +710,7 @@ pub fn partition_runtime_mcp_servers(
 pub enum PromptPayload {
     Text(String),
     /// canonical 用户输入：贯穿 API -> 应用 -> 连接器 -> AgentMessage 的结构化输入单元。
-    /// 取代旧 `Blocks(Vec<ContentBlock>)`，让图片等多模态内容结构化直达模型而不拍平。
+    /// 以结构化输入表达图片等多模态内容，让它们直达模型而不拍平。
     Input(Vec<agentdash_agent_protocol::UserInputBlock>),
 }
 
@@ -833,7 +833,7 @@ mod tests {
 
         assert!(
             !flow.is_capability_tool_enabled("workflow_management", "upsert_workflow_tool", None),
-            "MCP 工具没有 cluster 兜底，必须先由 canonical CapabilityState 授予 capability"
+            "MCP 工具必须先由 canonical CapabilityState 授予 capability"
         );
     }
 }

@@ -9,7 +9,7 @@
 
 use rmcp::model::{Content, ResourceContents};
 
-/// 把单个 MCP `Content` 片段渲染为文本（文本 / 资源文本 / 兜底 pretty JSON）。
+/// 把单个 MCP `Content` 片段渲染为文本（文本 / 资源文本 / 默认 pretty JSON）。
 pub fn render_content(content: &Content) -> String {
     if let Some(text) = content.raw.as_text() {
         return text.text.clone();

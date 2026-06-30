@@ -19,7 +19,7 @@
 - 若该消息此前已发过 delta：
   - `final_text` 以已发送文本为前缀：只发送"尾差量"（suffix）；
   - `final_text == emitted_text`：不再发送 chunk（避免重复）；
-  - 二者不兼容：记录 warning，不再发送兜底快照（保持单路径约束）。
+  - 二者不一致：记录 warning，不再发送补偿快照（保持单路径约束）。
 - 若此前未发过 delta：发送完整文本 chunk（首发即全量）。
 
 ### 3. ToolCall 映射

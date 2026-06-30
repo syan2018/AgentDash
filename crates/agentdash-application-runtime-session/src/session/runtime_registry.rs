@@ -151,7 +151,7 @@ impl SessionRuntimeRegistry {
     }
 
     /// 将一条 ephemeral 事件分配单调 `ephemeral_seq`（写入其 `event_seq` 字段）并推入
-    /// per-session buffer（超出 cap 则 evict 最旧），返回带 seq 的事件供调用方 broadcast。
+    /// per-session buffer（超出 cap 则 evict 队首），返回带 seq 的事件供调用方 broadcast。
     /// seq 分配 + 入 buffer 在同一把锁内完成，天然原子、无需额外同步。
     pub async fn push_ephemeral(
         &self,
@@ -183,8 +183,8 @@ impl SessionRuntimeRegistry {
 
     /// 从 ephemeral buffer 移除指定 `item_id` 的助手文本/ reasoning delta。
     /// 终态助手消息（ItemCompleted AgentMessage/Reasoning）落 durable 后调用：
-    /// 防止 reconnect 时 durable backlog 已 SET 全文、随后 ephemeral 快照又补发旧 delta，
-    /// 导致前端把旧 delta append 到已 final 的气泡上（脏化）。
+    /// 防止 reconnect 时 durable backlog 已 SET 全文、随后 ephemeral 快照又补发 in-flight delta，
+    /// 导致前端把 delta append 到已 final 的气泡上（脏化）。
     /// 只移除该 item_id 的 text/reasoning delta，保留其余 ephemeral 条目。
     pub async fn prune_ephemeral_by_item_id(&self, session_id: &str, item_id: &str) {
         use agentdash_agent_protocol::BackboneEvent;
@@ -298,7 +298,7 @@ mod tests {
 
         let snapshot = registry.snapshot_ephemeral(session_id).await;
         assert_eq!(snapshot.len(), EPHEMERAL_BUFFER_CAP);
-        // 最旧 5 条被 evict；首条 seq = 6（前 5 条 seq 1..=5 被丢）。
+        // 队首 5 条被 evict；首条 seq = 6（前 5 条 seq 1..=5 被丢）。
         assert_eq!(snapshot.first().expect("non-empty").event_seq, 6);
         assert_eq!(
             snapshot.last().expect("non-empty").event_seq,

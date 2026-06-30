@@ -1050,7 +1050,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 let message_entry_index = *entry_index;
 
                 // 终态承载助手正文 / reasoning：turn 收尾落 durable ItemCompleted，
-                // 使重放不再依赖逐条 text delta（delta 仍保留作 live UI + fallback）。
+                // 使重放不再依赖逐条 text delta（delta 仍保留作 live UI snapshot）。
                 // 复用与 delta 相同的 item_id 与 message_entry_index，让前端能并入同一气泡。
                 if !text.is_empty() {
                     let item_id = synth_item_id(turn_id, message_entry_index, "msg");
@@ -1428,7 +1428,7 @@ fn reconcile_chunk(
                 turn_id = %turn_id,
                 entry_index = entry_index,
                 kind = kind,
-                "MessageEnd text 与已发送增量不一致，已忽略兜底快照"
+                "MessageEnd text 与已发送增量不一致，已忽略终态快照"
             );
             None
         }

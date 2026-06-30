@@ -104,7 +104,7 @@ pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapab
 /// - `Some([..非空])`（Allowlist）   → `mode = Allowlist` + allowed_module_ids
 ///
 /// base 每 revision 由当前 config 重新投影，不存在"继承上一版白名单"，
-/// 因此清空（空集）自然回到 All，而非把旧名单捞回。
+/// 因此清空（空集）自然回到 All，而非把上一版名单捞回。
 pub fn project_workspace_module_dimension(
     refs: Option<&[String]>,
 ) -> agentdash_spi::WorkspaceModuleDimension {
@@ -283,7 +283,7 @@ pub struct RuntimeCapabilityProjectionContext;
 pub trait CapabilityDimensionModule {
     fn key(&self) -> &'static str;
 
-    /// 本维度的累积策略——声明跨 revision 更新如何合并新旧声明。
+    /// 本维度的累积策略——声明跨 revision 更新如何合并前后声明。
     ///
     /// 无默认实现，强制每个维度显式声明自己属于 `Replace` / `Accumulate` / `Ephemeral`。
     fn policy(&self) -> AccumulationPolicy;
@@ -1351,7 +1351,7 @@ mod tests {
             vec!["ext:demo".to_string()]
         );
 
-        // clear（空集）→ 下一 revision 重新投影 → All（不继承旧名单）
+        // clear（空集）→ 下一 revision 重新投影 → All（不继承上一版名单）
         let mut cleared = CapabilityState::default();
         cleared.workspace_module = project_workspace_module_dimension(Some(&[]));
         let cleared_surfaces = capability_state_to_frame_surfaces(&cleared);

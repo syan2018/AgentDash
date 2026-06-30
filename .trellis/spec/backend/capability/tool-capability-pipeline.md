@@ -312,7 +312,7 @@ task_write(mode = patch | snapshot, operations[], snapshot[], return_mode = ...)
 | `run_id` 不属于当前 project | tool execution failed |
 | `task_id` 不属于目标 run | invalid arguments / not found |
 | context ref enum 值未知 | invalid arguments |
-| snapshot `drop_missing=true` | 未出现在 snapshot 的旧 Task 软归档为 dropped |
+| snapshot `drop_missing=true` | 未出现在 snapshot 的既有 Task 软归档为 dropped |
 
 ### 5. Good/Base/Bad Cases
 

@@ -22,7 +22,7 @@ pub struct BackendConfig {
     pub owner_user_id: Option<String>,
     /// Desktop / runtime profile 标识，用于区分同一用户在不同 server/profile 下的本机端。
     pub profile_id: Option<String>,
-    /// 旧版稳定设备标识，仅作为 legacy merge 输入保留，不再作为本机唯一身份。
+    /// 设备稳定标识，仅作为 backend merge 输入保留，不作为本机唯一身份。
     pub device_id: Option<String>,
     /// 机器级稳定身份，由 Desktop 本地生成并长期保存。
     pub machine_id: Option<String>,

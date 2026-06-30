@@ -531,7 +531,7 @@ mod tests {
     #[tokio::test]
     async fn hook_not_found_on_unbound_trace_keeps_direct_messages() {
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        let messages = vec![AgentMessage::user("legacy direct")];
+        let messages = vec![AgentMessage::user("direct message")];
 
         let routing = route_hook_delivery_not_found(
             &anchor_repo,
@@ -540,7 +540,7 @@ mod tests {
             "runtime_session 缺少 RuntimeSessionExecutionAnchor".to_string(),
         )
         .await
-        .expect("unbound trace can use direct fallback");
+        .expect("unbound trace keeps direct messages");
 
         assert_eq!(routing.direct_messages, messages);
     }

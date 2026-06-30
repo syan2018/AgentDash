@@ -234,7 +234,7 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 /// 递归内联某节点的直接子 Agent 子树，每个节点携带真实 shell 状态。
 ///
 /// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅投影是新增异步调用。
-/// 深度上限兜底防 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
+/// 深度上限保护 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
 fn build_inline_children<'a>(
     state: &'a AppState,
     run: &'a LifecycleRun,
@@ -1530,7 +1530,7 @@ fn frame_runtime_to_contract(
 
 /// 统计控制树某 root 子树（传递闭包）下的 subagent 总数。
 ///
-/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限兜底，
+/// lineage 支持任意深度递归且无环检测，因此遍历带 `visited` 防环 + 深度上限保护，
 /// 超限截断并 warn（不静默丢弃）。root 自身不计入。
 fn count_descendants(root: Uuid, children_map: &HashMap<Uuid, Vec<Uuid>>) -> u32 {
     const MAX_DEPTH: usize = 64;

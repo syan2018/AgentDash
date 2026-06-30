@@ -1375,12 +1375,12 @@ mod tests {
             project_id,
             "companion-system",
             "Companion System",
-            "旧市场安装快照",
+            "同步前市场安装快照",
             false,
         );
         snapshot.files = build_files(
             snapshot.id,
-            vec![skill_file("companion-system", "旧市场安装快照")],
+            vec![skill_file("companion-system", "同步前市场安装快照")],
         )
         .expect("snapshot files");
         let snapshot_id = snapshot.id;
@@ -1400,7 +1400,7 @@ mod tests {
             }
         );
         assert_eq!(synced[0].installed_source, None);
-        assert_ne!(synced[0].description, "旧市场安装快照");
+        assert_ne!(synced[0].description, "同步前市场安装快照");
         assert!(
             synced[0]
                 .files

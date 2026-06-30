@@ -134,7 +134,7 @@ impl ExecutorResolution {
         }
     }
 
-    /// 用于持久化/序列化到 `SessionExecutorSummary` 的旧双字段形状。
+    /// 用于持久化/序列化到 `SessionExecutorSummary` 的 `(source, resolution_error)` 字段形状。
     pub fn into_parts(self) -> (String, Option<String>) {
         match self {
             Self::Resolved { source } => (source, None),

@@ -11,8 +11,8 @@
 //! Task session 已在 session_runtime_inputs / turn_context 就地拿到 `ActiveWorkflowProjection`，
 //! 无需走 helper；那边直接用 `tool_directives_from_active_workflow` 做单步计算即可。
 //!
-//! 错误处理哲学：容忍 & 向后兼容——repo 报错 / 未找到 / 未配置统一回退到
-//! `None`，只记录 `tracing::warn!`，不中断 session 创建。
+//! 错误处理哲学：repo 报错 / 未找到 / 未配置统一返回 `None`，
+//! 只记录 `tracing::warn!`，不中断 session 创建。
 
 use agentdash_diagnostics::{Subsystem, diag};
 use uuid::Uuid;
@@ -92,7 +92,7 @@ async fn resolve_for_project_agent(
                 project_id = %project_id,
                 project_agent_id = %project_agent_id,
                 error = %error,
-                "resolve_session_workflow_context: 读取 ProjectAgent 失败，回退到空 workflow 上下文"
+                "resolve_session_workflow_context: 读取 ProjectAgent 失败，返回空 workflow 上下文"
             );
             return None;
         }

@@ -664,10 +664,10 @@ mod tests {
     }
 
     #[test]
-    fn workflow_contract_rejects_legacy_fields() {
+    fn workflow_contract_rejects_unknown_capability_fields() {
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
         let error = serde_json::from_str::<AgentProcedureContract>(json)
-            .expect_err("旧 workflow contract 字段必须被拒绝");
+            .expect_err("workflow contract 未声明字段必须被拒绝");
         assert!(error.to_string().contains("unknown field"));
     }
 }

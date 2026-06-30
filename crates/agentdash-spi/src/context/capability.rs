@@ -43,7 +43,7 @@ pub struct CompanionAgentEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillEntry {
-    /// 兼容旧消费者的展示名；新逻辑应优先使用 `capability_key` 做唯一标识。
+    /// 展示名；运行逻辑应优先使用 `capability_key` 做唯一标识。
     pub name: String,
     #[serde(default)]
     pub capability_key: String,

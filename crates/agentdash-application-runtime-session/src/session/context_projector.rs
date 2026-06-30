@@ -36,7 +36,7 @@ impl ContextProjector {
         match head {
             Some(head) => self.build_from_projection_head(session_id, head).await,
             None => {
-                // 无 projection head：raw 全量重建，等价旧 list_all_events。
+                // 无 projection head：通过 raw 事件重建完整 transcript。
                 let events = self.list_events_from(session_id, 0).await?;
                 let transcript = build_raw_projected_transcript_from_filtered_events(events.iter());
                 let token_estimate = entries_token_estimate(&transcript.entries);
@@ -95,7 +95,7 @@ impl ContextProjector {
             }
         }
 
-        // 无可用 head：raw 全量后按 <= head_event_seq 过滤，等价旧 list_all_events。
+        // 无可用 head：通过 raw 事件重建后按 <= head_event_seq 过滤。
         let events = self.list_events_from(session_id, 0).await?;
         Ok(envelope_from_transcript(
             session_id,
@@ -588,7 +588,7 @@ mod tests {
             .await
             .expect("create session");
 
-        // 旧数据：prefix 仍残留逐条 delta（会被 compaction materialize 取代）。
+        // 待压缩 prefix 仍保留逐条 delta（会被 compaction materialize 取代）。
         persistence
             .append_event(
                 session_id,
@@ -626,7 +626,7 @@ mod tests {
             .expect("commit compaction");
         // commit 事件占用 event_seq=3；head_event_seq 被推进到 3。
 
-        // suffix：新 turn 的 user input + assistant（event_seq >= 4），不依赖旧 delta。
+        // suffix：新 turn 的 user input + assistant（event_seq >= 4），不依赖 prefix delta。
         persistence
             .append_event(
                 session_id,
@@ -706,10 +706,10 @@ mod tests {
             joined.contains("new answer"),
             "应包含 suffix assistant: {joined}"
         );
-        // 旧 prefix delta 已被 materialize 取代，不应重复出现。
+        // prefix delta 已被 materialize 取代，不应重复出现。
         assert!(
             !joined.contains("old answer"),
-            "suffix-only 读取不应带回被压缩的旧 delta: {joined}"
+            "suffix-only 读取不应带回被压缩的 prefix delta: {joined}"
         );
     }
 

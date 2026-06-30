@@ -31,7 +31,7 @@ mapper 只负责：
 - 尚未进入 contract crate 的 route-local 过渡 DTO
 
 mapper 不负责：
-- 同时兼容 `camelCase` + `snake_case`（出现 `fooBar ?? foo_bar` 时应修后端 DTO）
+- 同时接受 `camelCase` + `snake_case`（出现 `fooBar ?? foo_bar` 时应修后端 DTO）
 - 猜测后端字段别名
 - 重新声明后端 enum/string union；跨层 DTO 的联合类型来自 `src/generated/*`
 - 对 generated DTO 做逐字段 identity rebuild

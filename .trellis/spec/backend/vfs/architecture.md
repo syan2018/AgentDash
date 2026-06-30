@@ -35,7 +35,7 @@ Tool module baseline：
 | --- | --- |
 | `vfs/tools/common.rs` | `SharedRuntimeVfs`、tool path resolution、text result helper |
 | `vfs/tools/mounts.rs` | `mounts_list` discovery tool |
-| `vfs/tools/fs.rs` | FS tool facade 与旧 public import 路径 |
+| `vfs/tools/fs.rs` | FS tool facade 与既有 public import 路径 |
 | `vfs/tools/fs/read.rs` | `fs.read` text/binary/image read handler |
 | `vfs/tools/fs/apply_patch.rs` | `fs.apply_patch` handler 与 mutation key locking |
 | `vfs/tools/fs/glob.rs` | `fs.glob` list/pattern handler |

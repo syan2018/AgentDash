@@ -46,8 +46,8 @@ impl std::error::Error for MountError {}
 ///
 /// `version_token` 是 dedup 缓存的 invalidation key：不透明字符串，调用方按
 /// `==` 比对，相同内容 ⇒ 相同 token；任何修改 ⇒ token 变化。`None` 表示
-/// provider 暂时无法生成（旧实现路径），调用方按"不命中"处理，**不引入
-/// 常量 fallback**（避免相同 fallback 值被误判为命中）。生成方式由各 provider
+/// provider 暂时无法生成，调用方按"不命中"处理，**不引入
+/// 常量默认值**（避免相同默认值被误判为命中）。生成方式由各 provider
 /// 自定：lifecycle / relay_fs 用 `format!("{mtime}:{size}")`；inline 用
 /// inline_files 表 revision；canvas 用 page version_id；skill_asset 用 updated_at。
 ///

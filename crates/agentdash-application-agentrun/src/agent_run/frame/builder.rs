@@ -8,7 +8,7 @@
 //! - **内部 primitive**：业务模块不应直接持有 builder 来拼完整
 //!   `CapabilityState` 或 adopt runtime surface；外部变化先进入
 //!   `AgentRunFrameSurfaceService` 的 typed command/update boundary。
-//! - **不可变快照**：`build()` 产出新 revision，旧 revision 保持不变，
+//! - **不可变快照**：`build()` 产出新 revision，既有 revision 保持不变，
 //!   revision 序列天然提供 provenance。
 //! - **面向 dispatch**：Lifecycle dispatch facade 在创建 agent 后通过
 //!   AgentRun frame materialization port 产出带 surface 的 initial frame。

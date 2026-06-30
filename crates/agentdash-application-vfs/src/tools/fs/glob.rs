@@ -119,7 +119,7 @@ impl AgentTool for FsGlobTool {
             .filter(|e| !is_vcs_path(&e.path))
             .collect();
 
-        // mtime desc + path asc 兜底
+        // mtime desc + path asc as stable tie-breaker.
         entries.sort_by(|a, b| {
             let a_m = a.modified_at.unwrap_or(0);
             let b_m = b.modified_at.unwrap_or(0);

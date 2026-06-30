@@ -1539,11 +1539,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_provider_keeps_absolute_skill_paths_for_compatibility() {
+    fn provider_keeps_absolute_skill_paths_when_vfs_paths_not_required() {
         let output = SkillDiscoveryOutput {
             clusters: vec![SkillDiscoveryCluster {
-                provider_key: "legacy".to_string(),
-                display_name: "Legacy".to_string(),
+                provider_key: "local".to_string(),
+                display_name: "Local".to_string(),
                 skills: vec![discovered_skill("old", "/workspace/SKILL.md")],
                 ..Default::default()
             }],

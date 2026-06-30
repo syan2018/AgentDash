@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "AgentRun workspace conversation snapshot, command authority, refresh ownership"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated DTO boundary and AgentRun Conversation DTO constraints"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "WorkspacePanel presentation_uri opening and frontend fact-source boundaries"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun workspace mailbox command semantics and delivery/control state"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox turn boundary and command response contract"}

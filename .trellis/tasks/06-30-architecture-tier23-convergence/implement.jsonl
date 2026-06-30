@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Contract generation, generated TypeScript, backend runtime summary DTO direction"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Generated wire source and frontend mirror deletion rules"}
+{"file": ".trellis/spec/backend/story-task-runtime.md", "reason": "Task plan facts and task_read/task_write Agent-facing contract"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "Task and workspace_module tool capability mapping context"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Runtime snapshot DTO follow-up context for local runtime diagnostics"}

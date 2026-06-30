@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend test and quality expectations for deep module refactor"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Cross-layer contract checks for workspace_module payloads and presentation_uri"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend generated event payload expectations touched by presentation flow"}
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Runtime tool provider assembly and delayed gateway injection checks"}

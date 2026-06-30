@@ -21,17 +21,19 @@ use agentdash_contracts::auth::{
     LoginResponse,
 };
 use agentdash_contracts::backend::{
-    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
-    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
-    BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
-    BackendWorkspaceInventoryResponse, BackendWorkspaceInventorySource,
-    BackendWorkspaceInventoryStatus, CreateProjectBackendAccessRequest, ProjectBackendAccessMode,
-    ProjectBackendAccessResponse, ProjectBackendAccessStatus,
-    RegisterBackendWorkspaceInventoryRequest, RunnerRegistrationClaimRequest,
-    RunnerRegistrationClaimResponse, RunnerRegistrationTokenCreateRequest,
-    RunnerRegistrationTokenCreateResponse, RunnerRegistrationTokenMetadataResponse,
-    RunnerRegistrationTokenRevokeResponse, RunnerRegistrationTokenRotateResponse,
-    RunnerRegistrationTokenStatus, RuntimeHealthStatus, UpdateProjectBackendAccessRequest,
+    BackendActiveSessionResponse, BackendCapabilitiesResponse, BackendExecutionLeaseState,
+    BackendExecutionSelectionMode, BackendExecutorCapabilityResponse,
+    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeExecutorResponse,
+    BackendRuntimeHealthResponse, BackendRuntimeSummaryResponse, BackendShareScopeKind,
+    BackendType, BackendVisibility, BackendWithStatusResponse, BackendWorkspaceInventoryResponse,
+    BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
+    CreateProjectBackendAccessRequest, ProjectBackendAccessMode, ProjectBackendAccessResponse,
+    ProjectBackendAccessStatus, RegisterBackendWorkspaceInventoryRequest,
+    RunnerRegistrationClaimRequest, RunnerRegistrationClaimResponse,
+    RunnerRegistrationTokenCreateRequest, RunnerRegistrationTokenCreateResponse,
+    RunnerRegistrationTokenMetadataResponse, RunnerRegistrationTokenRevokeResponse,
+    RunnerRegistrationTokenRotateResponse, RunnerRegistrationTokenStatus, RuntimeHealthStatus,
+    UpdateProjectBackendAccessRequest,
 };
 use agentdash_contracts::canvas::{
     CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
@@ -400,6 +402,11 @@ fn main() {
             export_all::<BackendExecutorCapabilityResponse>(dir);
             export_all::<BackendMcpServerCapabilityResponse>(dir);
             export_all::<BackendCapabilitiesResponse>(dir);
+            export_all::<BackendExecutionSelectionMode>(dir);
+            export_all::<BackendExecutionLeaseState>(dir);
+            export_all::<BackendRuntimeExecutorResponse>(dir);
+            export_all::<BackendActiveSessionResponse>(dir);
+            export_all::<BackendRuntimeSummaryResponse>(dir);
             export_all::<BackendResponse>(dir);
             export_all::<BackendWithStatusResponse>(dir);
             export_all::<ProjectBackendAccessStatus>(dir);

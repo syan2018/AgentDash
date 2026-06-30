@@ -5,7 +5,10 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 
-use agentdash_contracts::backend::BackendResponse;
+use agentdash_contracts::backend::{
+    BackendActiveSessionResponse, BackendResponse, BackendRuntimeExecutorResponse,
+    BackendRuntimeSummaryResponse,
+};
 use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
@@ -16,7 +19,6 @@ use agentdash_domain::project::ProjectRepository;
 use crate::app_state::AppState;
 use crate::auth::CurrentUser;
 use crate::dto::{
-    BackendActiveSessionResponse, BackendRuntimeExecutorResponse, BackendRuntimeSummaryResponse,
     BackendWithStatus, BrowseDirectoryEntryResponse, BrowseDirectoryRequest,
     BrowseDirectoryResponse, CreateBackendRequest, EnsureLocalRuntimeRequest,
     EnsureLocalRuntimeResponse, RuntimeHealthResponse, backend_capabilities_response,
@@ -236,14 +238,14 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
 
 fn active_session_response(lease: BackendExecutionLease) -> BackendActiveSessionResponse {
     BackendActiveSessionResponse {
-        lease_id: lease.id,
+        lease_id: lease.id.to_string(),
         session_id: lease.session_id,
         turn_id: lease.turn_id,
         executor_id: lease.executor_id,
-        workspace_id: lease.workspace_id,
+        workspace_id: lease.workspace_id.map(|id| id.to_string()),
         root_ref: lease.root_ref,
-        selection_mode: lease.selection_mode,
-        state: lease.state,
+        selection_mode: lease.selection_mode.into(),
+        state: lease.state.into(),
         claimed_at: lease.claimed_at,
         activated_at: lease.activated_at,
         last_seen_at: lease.last_seen_at,

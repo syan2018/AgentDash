@@ -3,7 +3,13 @@
 
 import type { JsonValue } from "./common-contracts";
 
+export type BackendActiveSessionResponse = { lease_id: string, session_id: string, turn_id: string, executor_id: string, workspace_id: string | null, root_ref: string | null, selection_mode: BackendExecutionSelectionMode, state: BackendExecutionLeaseState, claimed_at: string, activated_at: string | null, last_seen_at: string, };
+
 export type BackendCapabilitiesResponse = { executors: Array<BackendExecutorCapabilityResponse>, supports_cancel: boolean, supports_discover_options: boolean, mcp_servers: Array<BackendMcpServerCapabilityResponse>, };
+
+export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";
+
+export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
 
 export type BackendExecutorCapabilityResponse = { id: string, name: string, variants: Array<string>, available: boolean, };
 
@@ -11,7 +17,11 @@ export type BackendMcpServerCapabilityResponse = { name: string, transport: stri
 
 export type BackendResponse = { id: string, name: string, endpoint: string, enabled: boolean, backend_type: BackendType, owner_user_id: string | null, profile_id: string | null, device_id: string | null, machine_id: string | null, machine_label: string | null, visibility: BackendVisibility, share_scope_kind: BackendShareScopeKind, share_scope_id: string | null, capability_slot: string, device: JsonValue, last_claimed_at: string | null, registration_source: string | null, };
 
+export type BackendRuntimeExecutorResponse = { executor_id: string, name: string, variants: Array<string>, available: boolean, active_session_count: number, allocatable: boolean, };
+
 export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
+
+export type BackendRuntimeSummaryResponse = { backend_id: string, name: string, enabled: boolean, online: boolean, runtime_health: BackendRuntimeHealthResponse | null, executors: Array<BackendRuntimeExecutorResponse>, active_session_count: number, active_sessions: Array<BackendActiveSessionResponse>, allocatable: boolean, };
 
 export type BackendShareScopeKind = "user" | "project" | "system";
 

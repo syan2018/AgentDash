@@ -160,6 +160,21 @@ impl ReadableIdRegistry {
         Arc::new(Self::default())
     }
 
+    pub fn observe_tool_result_item_id(&self, item_id: &str) {
+        let Some((turn_index, body_kind, body_index)) = parse_tool_result_item_id(item_id) else {
+            return;
+        };
+        let mut state = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.next_turn = state.next_turn.max(turn_index);
+        match body_kind {
+            ReadableBodyKind::Tool => state.next_tool = state.next_tool.max(body_index),
+            ReadableBodyKind::Command => state.next_command = state.next_command.max(body_index),
+        }
+    }
+
     pub fn tool_result_ref(
         &self,
         raw_turn_id: &str,
@@ -249,6 +264,27 @@ fn format_readable_alias(prefix: &str, index: usize) -> String {
     } else {
         format!("{prefix}_{index}")
     }
+}
+
+fn parse_readable_alias(alias: &str, prefix: &str) -> Option<usize> {
+    let suffix = alias
+        .strip_prefix(prefix)?
+        .strip_prefix('_')
+        .filter(|value| !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit()))?;
+    let index = suffix.parse::<usize>().ok()?;
+    (index > 0).then_some(index)
+}
+
+fn parse_tool_result_item_id(item_id: &str) -> Option<(usize, ReadableBodyKind, usize)> {
+    let (turn_alias, body_alias) = item_id.split_once(':')?;
+    let turn_index = parse_readable_alias(turn_alias, "turn")?;
+    if let Some(body_index) = parse_readable_alias(body_alias, "tool") {
+        return Some((turn_index, ReadableBodyKind::Tool, body_index));
+    }
+    if let Some(body_index) = parse_readable_alias(body_alias, "cmd") {
+        return Some((turn_index, ReadableBodyKind::Command, body_index));
+    }
+    None
 }
 
 pub fn readable_tool_result_item_id(turn_alias: &str, body_alias: &str) -> String {
@@ -667,4 +703,22 @@ fn poll_follow_up(config: &AgentLoopConfig) -> Vec<AgentMessage> {
         .as_ref()
         .map(|f| f())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readable_id_registry_reserves_history_item_ids_after_restore() {
+        let registry = ReadableIdRegistry::new();
+        registry.observe_tool_result_item_id("turn_001:tool_004");
+        registry.observe_tool_result_item_id("turn_002:cmd_002");
+
+        let tool_ref = registry.tool_result_ref("raw-turn-new", "raw-tool-new", "fs_read");
+        assert_eq!(tool_ref.item_id, "turn_003:tool_005");
+
+        let command_ref = registry.tool_result_ref("raw-turn-new", "raw-command-new", "shell_exec");
+        assert_eq!(command_ref.item_id, "turn_003:cmd_003");
+    }
 }

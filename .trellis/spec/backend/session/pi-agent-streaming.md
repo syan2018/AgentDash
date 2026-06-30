@@ -256,6 +256,13 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
 - PiAgent 每轮 prompt 必须刷新 `ToolResultRefContext(session_id, raw_turn_id, readable_ids, cache_writer)`。
   hot agent 复用时也使用当前 turn 的 context，避免 lifecycle ref 和 cache write 落到上一轮
   raw `turn_id`，同时复用同一 session 的 alias registry。
+- PiAgent 冷启动仓储恢复创建新 in-process runtime 时，必须先从
+  `RestoredSessionState.messages` 中的历史 `Assistant.tool_calls[].id`、
+  `ToolResult.tool_call_id`、`ToolResult.details.readable_ref.item_id` 与
+  `ToolResult.details.lifecycle_path` 观测已有 `{turn_alias}:{body_alias}`，并推进
+  `ReadableIdRegistry` 的 `turn/tool/cmd` 计数器。原因是 repository rehydrate 会恢复模型上下文，
+  但进程内 registry 已丢失；从 restored transcript 推进计数器可让重启后的新 tool card
+  继续生成 session 内唯一 readable item id。
 - Oversized `AgentToolResult` 写入 `SessionToolResultCache` 时，cache key 使用
   `(session_id, readable_item_id)`；bounded preview 与 `details.lifecycle_path` 使用同一个
   readable item id。cache metadata 保留 raw trace。lifecycle provider 必须读取同一个共享 cache 实例。
@@ -298,6 +305,8 @@ assistant delta emitted -> provider stream error -> failed turn -> SessionRewoun
   original body with `(session_id, {turn_alias}:{body_alias})` and raw trace metadata.
 - Executor mapping tests assert bounded content remains bounded after `stream_mapper`, and parse
   `lifecycle_path` to prove the embedded item id equals ThreadItem id.
+- Executor connector tests assert repository-restored readable ids advance `ReadableIdRegistry`
+  before a new cold-start prompt allocates the next tool/command item id.
 - Application tests assert append/backlog, lifecycle VFS read, projection, continuation and repository
   rehydrate do not re-inline sentinel.
 - Local/relay/API tests assert shell and terminal live output are bounded before cloud SessionEvent.

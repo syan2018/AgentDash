@@ -83,6 +83,51 @@ fn assert_lifecycle_path_matches_item_id(text: &str, item_id: &str) {
     assert_eq!(normalized_item_id, item_id);
 }
 
+#[test]
+fn restored_state_hydrates_readable_id_registry_counters() {
+    let registry = ReadableIdRegistry::new();
+    let restored_state = agentdash_spi::RestoredSessionState {
+        messages: vec![
+            AgentMessage::Assistant {
+                content: Vec::new(),
+                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                    id: "turn_001:tool_004".to_string(),
+                    call_id: None,
+                    name: "fs_read".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+            AgentMessage::ToolResult {
+                tool_call_id: "legacy-raw-tool-call-id".to_string(),
+                call_id: None,
+                tool_name: Some("shell_exec".to_string()),
+                content: Vec::new(),
+                details: Some(serde_json::json!({
+                    "readable_ref": {
+                        "item_id": "turn_002:cmd_002"
+                    },
+                    "lifecycle_path": "lifecycle://session/tool-results/turn_002/cmd_002/result.txt"
+                })),
+                is_error: false,
+                timestamp: None,
+            },
+        ],
+        message_refs: Vec::new(),
+    };
+
+    hydrate_readable_ids_from_restored_state(&registry, Some(&restored_state));
+
+    let tool_ref = registry.tool_result_ref("raw-turn-new", "raw-tool-new", "fs_read");
+    assert_eq!(tool_ref.item_id, "turn_003:tool_005");
+
+    let command_ref = registry.tool_result_ref("raw-turn-new", "raw-cmd-new", "shell_exec");
+    assert_eq!(command_ref.item_id, "turn_003:cmd_003");
+}
+
 #[derive(Default)]
 struct RecordingBridge {
     requests: StdMutex<Vec<agentdash_agent::BridgeRequest>>,
@@ -2808,6 +2853,90 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
     assert_eq!(request.messages[0].first_text(), Some("历史用户消息"));
     assert_eq!(request.messages[1].first_text(), Some("历史助手消息"));
     assert_eq!(request.messages[2].first_text(), Some("新的用户消息"));
+}
+
+#[tokio::test]
+async fn prompt_hydrates_readable_id_registry_from_restored_messages() {
+    let bridge = Arc::new(RecordingBridge::default());
+    let connector = PiAgentConnector::new(bridge, "系统提示");
+    let session_id = "session-readable-restore";
+
+    let mut stream = connector
+        .prompt(
+            session_id,
+            None,
+            &PromptPayload::Text("新的用户消息".to_string()),
+            ExecutionContext {
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "raw-turn-new".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config: agentdash_spi::AgentConfig::new("PI_AGENT"),
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    vfs_access_policy: None,
+                    backend_execution: None,
+                    runtime_backend_anchor: None,
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame {
+                    restored_session_state: Some(agentdash_spi::RestoredSessionState {
+                        messages: vec![
+                            AgentMessage::Assistant {
+                                content: Vec::new(),
+                                tool_calls: vec![agentdash_agent::ToolCallInfo {
+                                    id: "turn_001:tool_004".to_string(),
+                                    call_id: None,
+                                    name: "fs_read".to_string(),
+                                    arguments: serde_json::json!({}),
+                                }],
+                                stop_reason: None,
+                                error_message: None,
+                                usage: None,
+                                timestamp: None,
+                            },
+                            AgentMessage::ToolResult {
+                                tool_call_id: "legacy-raw-tool-call-id".to_string(),
+                                call_id: None,
+                                tool_name: Some("shell_exec".to_string()),
+                                content: Vec::new(),
+                                details: Some(serde_json::json!({
+                                    "readable_ref": {
+                                        "item_id": "turn_002:cmd_002"
+                                    }
+                                })),
+                                is_error: false,
+                                timestamp: None,
+                            },
+                        ],
+                        message_refs: Vec::new(),
+                    }),
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .expect("prompt should start");
+
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    let agents = connector.agents.lock().await;
+    let runtime = agents.get(session_id).expect("runtime should be retained");
+    let tool_ref = runtime.readable_ids.tool_result_ref(
+        "raw-turn-after-restore",
+        "raw-tool-after-restore",
+        "fs_read",
+    );
+    assert_eq!(tool_ref.item_id, "turn_003:tool_005");
+
+    let command_ref = runtime.readable_ids.tool_result_ref(
+        "raw-turn-after-restore",
+        "raw-cmd-after-restore",
+        "shell_exec",
+    );
+    assert_eq!(command_ref.item_id, "turn_003:cmd_003");
 }
 
 #[tokio::test]

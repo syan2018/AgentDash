@@ -30,7 +30,7 @@ use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::build_hook_trace_envelope;
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
+    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload, RestoredSessionState,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -83,6 +83,75 @@ impl PiAgentModelSelection {
             model_id: normalize_model_selector_value(config.model_id.as_deref()),
         }
     }
+}
+
+fn hydrate_readable_ids_from_restored_state(
+    readable_ids: &Arc<ReadableIdRegistry>,
+    restored_state: Option<&RestoredSessionState>,
+) {
+    let Some(restored_state) = restored_state else {
+        return;
+    };
+    for message in &restored_state.messages {
+        observe_readable_ids_from_message(readable_ids, message);
+    }
+}
+
+fn observe_readable_ids_from_message(
+    readable_ids: &Arc<ReadableIdRegistry>,
+    message: &AgentMessage,
+) {
+    match message {
+        AgentMessage::Assistant { tool_calls, .. } => {
+            for tool_call in tool_calls {
+                readable_ids.observe_tool_result_item_id(&tool_call.id);
+            }
+        }
+        AgentMessage::ToolResult {
+            tool_call_id,
+            details,
+            ..
+        } => {
+            readable_ids.observe_tool_result_item_id(tool_call_id);
+            if let Some(details) = details {
+                observe_readable_ids_from_tool_result_details(readable_ids, details);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn observe_readable_ids_from_tool_result_details(
+    readable_ids: &Arc<ReadableIdRegistry>,
+    details: &serde_json::Value,
+) {
+    if let Some(item_id) = details
+        .get("readable_ref")
+        .and_then(|value| value.get("item_id"))
+        .and_then(serde_json::Value::as_str)
+    {
+        readable_ids.observe_tool_result_item_id(item_id);
+    }
+    if let Some(item_id) = details
+        .get("lifecycle_path")
+        .and_then(serde_json::Value::as_str)
+        .and_then(tool_result_item_id_from_lifecycle_path)
+    {
+        readable_ids.observe_tool_result_item_id(&item_id);
+    }
+}
+
+fn tool_result_item_id_from_lifecycle_path(path: &str) -> Option<String> {
+    let remainder = path
+        .strip_prefix("lifecycle://session/tool-results/")?
+        .strip_suffix("/result.txt")?;
+    let mut parts = remainder.split('/');
+    let turn_alias = parts.next()?;
+    let body_alias = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{turn_alias}:{body_alias}"))
 }
 
 struct ProviderRuntimeState {
@@ -704,6 +773,9 @@ impl AgentConnector for PiAgentConnector {
             .as_ref()
             .map(|runtime| runtime.readable_ids.clone())
             .unwrap_or_else(ReadableIdRegistry::new);
+        if existing_runtime.is_none() {
+            hydrate_readable_ids_from_restored_state(&readable_ids, restored_state.as_ref());
+        }
         let mut cached_system_prompt = existing_runtime
             .as_ref()
             .and_then(|runtime| runtime.last_system_prompt.clone());

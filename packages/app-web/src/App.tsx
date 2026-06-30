@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Button, StatusScreen } from "@agentdash/ui";
@@ -11,7 +11,7 @@ import { subscribeProjectEvents, useEventStore } from "./stores/eventStore";
 import { useCurrentUserStore } from "./stores/currentUserStore";
 import { useAuthStore } from "./stores/authStore";
 import { useStoryStore } from "./stores/storyStore";
-import { getStoredToken, clearStoredToken, type ApiHttpError } from "./api/client";
+import { getStoredToken, clearStoredToken, consumeTokenFromLocationHash, type ApiHttpError } from "./api/client";
 import { LoginPage } from "./pages/LoginPage";
 import { ensureDesktopLocalRuntimeStarted, getDesktopLocalRuntimeClient } from "./desktop/localRuntimeBridge";
 
@@ -180,6 +180,7 @@ function DraftAgentRunRouteWrapper() {
 // 原则：fetchCurrentUser 只在此处触发一次；AppContent 不再重复调用。
 
 function AuthGate({ children }: { children: React.ReactNode }) {
+  const [initialHashToken] = useState(() => consumeTokenFromLocationHash());
   const { metadata, isMetadataLoading, fetchMetadata } = useAuthStore();
   const {
     currentUser,
@@ -198,7 +199,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   // Step 2: metadata 就绪 + token 可用（或无需登录）→ 获取用户身份
   const needsLogin = metadata?.requires_login ?? false;
-  const hasToken = !!getStoredToken();
+  const hasToken = !!initialHashToken || !!getStoredToken();
 
   useEffect(() => {
     if (!metadata || isMetadataLoading) return;

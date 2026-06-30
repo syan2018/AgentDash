@@ -21,6 +21,13 @@ use crate::auth::{CurrentUser, map_auth_error, persist_identity_snapshot_or_serv
 use crate::dto::{OidcCallbackQuery, RevokeTokenRequest, TokenQuery};
 use crate::rpc::ApiError;
 
+const TOKEN_FRAGMENT_PARAM: &str = "agentdash_access_token";
+const DESKTOP_REDIRECT_ORIGINS: &[&str] = &[
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+];
+
 /// POST /api/auth/login — 用户提交凭证换取 token + 身份
 pub async fn login(
     State(state): State<Arc<AppState>>,
@@ -119,7 +126,8 @@ pub async fn oidc_callback(
         .await
         .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
 
-    let redirect_to = oidc_post_login_redirect();
+    let redirect_to =
+        oidc_callback_redirect(response.redirect_to.as_deref(), &response.access_token);
     let cookie = format!(
         "agentdash_access_token={}; Path=/; Max-Age={}; SameSite=Lax",
         urlencoding_percent_encode(&response.access_token),
@@ -151,6 +159,117 @@ fn oidc_post_login_redirect_from_env(primary: Option<String>, web_base: Option<S
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "http://127.0.0.1:5380/".to_string())
+}
+
+fn oidc_callback_redirect(provider_redirect_to: Option<&str>, access_token: &str) -> String {
+    let fallback = oidc_post_login_redirect();
+    let allowed_origins = oidc_allowed_redirect_origins(&fallback);
+    oidc_callback_redirect_from_parts(
+        provider_redirect_to,
+        access_token,
+        &fallback,
+        &allowed_origins,
+    )
+}
+
+fn oidc_callback_redirect_from_parts(
+    provider_redirect_to: Option<&str>,
+    access_token: &str,
+    fallback: &str,
+    allowed_origins: &[String],
+) -> String {
+    safe_return_to_url(provider_redirect_to, allowed_origins)
+        .map(|url| redirect_with_access_token_fragment(url, access_token))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn oidc_allowed_redirect_origins(fallback: &str) -> Vec<String> {
+    let mut origins = Vec::new();
+    for value in [
+        Some(fallback.to_string()),
+        std::env::var("AGENTDASH_OIDC_POST_LOGIN_REDIRECT").ok(),
+        std::env::var("AGENTDASH_WEB_BASE_URL").ok(),
+        std::env::var("AGENTDASH_PUBLIC_ORIGIN").ok(),
+        std::env::var("AGENTDASH_PUBLIC_BASE_URL").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_allowed_origin(&mut origins, &value);
+    }
+    for origin in DESKTOP_REDIRECT_ORIGINS {
+        push_allowed_origin(&mut origins, origin);
+    }
+    origins
+}
+
+fn push_allowed_origin(origins: &mut Vec<String>, value: &str) {
+    let Some(origin) = parse_url_origin(value) else {
+        return;
+    };
+    if !origins
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(&origin))
+    {
+        origins.push(origin);
+    }
+}
+
+fn safe_return_to_url(return_to: Option<&str>, allowed_origins: &[String]) -> Option<url::Url> {
+    let value = return_to?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let url = url::Url::parse(value).ok()?;
+    let origin = url_origin(&url)?;
+    allowed_origins
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(&origin))
+        .then_some(url)
+}
+
+fn parse_url_origin(value: &str) -> Option<String> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    url_origin(&url)
+}
+
+fn url_origin(url: &url::Url) -> Option<String> {
+    if !matches!(url.scheme(), "http" | "https" | "tauri") {
+        return None;
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    let host = url.host()?;
+    let mut origin = format!("{}://{}", url.scheme(), host);
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+    Some(origin)
+}
+
+fn redirect_with_access_token_fragment(mut url: url::Url, access_token: &str) -> String {
+    let mut pairs = url
+        .fragment()
+        .map(|fragment| {
+            url::form_urlencoded::parse(fragment.as_bytes())
+                .into_owned()
+                .filter(|(key, _)| key != TOKEN_FRAGMENT_PARAM)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    pairs.push((TOKEN_FRAGMENT_PARAM.to_string(), access_token.to_string()));
+
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer.extend_pairs(
+        pairs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+    let fragment = serializer.finish();
+    url.set_fragment(Some(&fragment));
+    url.to_string()
 }
 
 /// GET /api/auth/metadata — 返回登录方式描述（不需要认证）
@@ -260,6 +379,69 @@ mod tests {
             oidc_post_login_redirect_from_env(
                 Some(" https://app.example.test/ ".to_string()),
                 Some("https://secondary.example.test/".to_string()),
+            ),
+            "https://app.example.test/"
+        );
+    }
+
+    #[test]
+    fn oidc_callback_redirect_rejects_external_return_to() {
+        let allowed = vec![
+            "http://127.0.0.1:5380".to_string(),
+            "http://tauri.localhost".to_string(),
+        ];
+
+        assert_eq!(
+            oidc_callback_redirect_from_parts(
+                Some("https://evil.example.test/dashboard"),
+                "agd_token",
+                "http://127.0.0.1:5380/",
+                &allowed,
+            ),
+            "http://127.0.0.1:5380/"
+        );
+    }
+
+    #[test]
+    fn oidc_callback_redirect_allows_desktop_return_to_with_fragment_token() {
+        let allowed = vec!["http://tauri.localhost".to_string()];
+
+        assert_eq!(
+            oidc_callback_redirect_from_parts(
+                Some("http://tauri.localhost/dashboard/agent"),
+                "agd_token",
+                "http://127.0.0.1:5380/",
+                &allowed,
+            ),
+            "http://tauri.localhost/dashboard/agent#agentdash_access_token=agd_token"
+        );
+    }
+
+    #[test]
+    fn oidc_callback_redirect_allows_same_origin_web_return_to() {
+        let allowed = vec!["https://app.example.test".to_string()];
+
+        assert_eq!(
+            oidc_callback_redirect_from_parts(
+                Some("https://app.example.test/dashboard/agent?tab=story"),
+                "agd token",
+                "https://app.example.test/",
+                &allowed,
+            ),
+            "https://app.example.test/dashboard/agent?tab=story#agentdash_access_token=agd+token"
+        );
+    }
+
+    #[test]
+    fn oidc_callback_redirect_rejects_return_to_with_credentials() {
+        let allowed = vec!["https://app.example.test".to_string()];
+
+        assert_eq!(
+            oidc_callback_redirect_from_parts(
+                Some("https://user:pass@app.example.test/dashboard/agent"),
+                "agd_token",
+                "https://app.example.test/",
+                &allowed,
             ),
             "https://app.example.test/"
         );

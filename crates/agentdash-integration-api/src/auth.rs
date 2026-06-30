@@ -80,6 +80,12 @@ pub struct LoginResponse {
     pub access_token: String,
     /// 已认证的身份信息
     pub identity: AuthIdentity,
+    /// 重定向式登录完成后的前端回跳目标。
+    ///
+    /// 普通 Web 登录可以留空，由 API 层使用部署环境中的默认回跳地址。
+    /// 桌面壳等非 Web origin 登录需要把启动登录时的 return_to 带回 API 层，
+    /// 由 API 层完成安全校验后决定是否回跳。
+    pub redirect_to: Option<String>,
 }
 
 /// 登录表单字段描述 — 供前端渲染

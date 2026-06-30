@@ -26,6 +26,9 @@ use super::{
 };
 
 pub const EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY: &str = "extension_invocation_workspace";
+pub const EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA: &str = "extension_key";
+pub const EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_ID_METADATA: &str = "extension_id";
+pub const EXTENSION_RUNTIME_DESCRIPTOR_INSTALLATION_ID_METADATA: &str = "extension_installation_id";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtensionInvocationWorkspaceContext {
@@ -109,6 +112,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -142,7 +146,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         self.resolve_project_action_catalog(project_id, None)
             .await?
             .iter()
-            .map(|resolved| extension_action_descriptor(&resolved.action))
+            .map(extension_action_descriptor)
             .collect()
     }
 
@@ -258,7 +262,9 @@ impl ExtensionRuntimeActionProvider {
         project_id: Uuid,
         trace: Option<super::RuntimeTrace>,
     ) -> Result<Vec<ResolvedExtensionRuntimeAction>, RuntimeInvocationError> {
-        let installations = self.list_enabled_installations(project_id, trace).await?;
+        let installations = self
+            .list_enabled_installations(project_id, trace.clone())
+            .await?;
         let mut catalog = BTreeMap::<String, ResolvedExtensionRuntimeAction>::new();
         for installation in &installations {
             if installation.package_artifact.is_none() {
@@ -270,13 +276,19 @@ impl ExtensionRuntimeActionProvider {
                 .iter()
                 .filter(|action| action.kind == ExtensionRuntimeActionKind::SessionRuntime)
             {
-                catalog.entry(action.action_key.clone()).or_insert_with(|| {
-                    ResolvedExtensionRuntimeAction {
-                        installations: installations.clone(),
-                        installation: installation.clone(),
-                        action: action.clone(),
-                    }
-                });
+                let resolved = ResolvedExtensionRuntimeAction {
+                    installations: installations.clone(),
+                    installation: installation.clone(),
+                    action: action.clone(),
+                };
+                if let Some(existing) = catalog.insert(action.action_key.clone(), resolved) {
+                    return Err(duplicate_extension_action_key_error(
+                        &action.action_key,
+                        &existing.installation,
+                        installation,
+                        trace.clone(),
+                    ));
+                }
             }
         }
         Ok(catalog.into_values().collect())
@@ -296,15 +308,44 @@ impl ExtensionRuntimeActionProvider {
     }
 }
 
+fn duplicate_extension_action_key_error(
+    action_key: &str,
+    existing: &ProjectExtensionInstallation,
+    duplicate: &ProjectExtensionInstallation,
+    trace: Option<super::RuntimeTrace>,
+) -> RuntimeInvocationError {
+    RuntimeInvocationError::conflict(
+        format!(
+            "Project enabled extensions declare duplicate runtime action `{action_key}`: `{}` and `{}`",
+            existing.extension_key, duplicate.extension_key
+        ),
+        trace,
+    )
+}
+
 fn extension_action_descriptor(
-    action: &ExtensionRuntimeActionDefinition,
+    resolved: &ResolvedExtensionRuntimeAction,
 ) -> Result<RuntimeActionDescriptor, RuntimeInvocationError> {
+    let action = &resolved.action;
     let action_key = RuntimeActionKey::parse(action.action_key.clone()).map_err(|error| {
         RuntimeInvocationError::provider_failed(
             format!("extension runtime action key 非法: {error}"),
             None,
         )
     })?;
+    let mut metadata = BTreeMap::new();
+    metadata.insert(
+        EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA.to_string(),
+        json!(resolved.installation.extension_key.clone()),
+    );
+    metadata.insert(
+        EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_ID_METADATA.to_string(),
+        json!(resolved.installation.manifest.extension_id.clone()),
+    );
+    metadata.insert(
+        EXTENSION_RUNTIME_DESCRIPTOR_INSTALLATION_ID_METADATA.to_string(),
+        json!(resolved.installation.id.to_string()),
+    );
     Ok(RuntimeActionDescriptor {
         action_key,
         kind: RuntimeActionKind::SessionRuntime,
@@ -315,6 +356,7 @@ fn extension_action_descriptor(
             required_capabilities: action.permissions.clone(),
             ..RuntimePolicy::default()
         },
+        metadata,
     })
 }
 
@@ -1258,6 +1300,58 @@ mod tests {
             descriptor.default_policy.required_capabilities,
             vec!["local.profile.read".to_string()]
         );
+        assert_eq!(
+            descriptor.metadata[EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA],
+            "local-hello"
+        );
+        assert_eq!(
+            descriptor.metadata[EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_ID_METADATA],
+            "local-hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_extension_action_key_fails_catalog_and_invoke_without_transport() {
+        let project_id = Uuid::new_v4();
+        let transport = Arc::new(FakeTransport {
+            result: Ok(response_payload(json!({ "should_not": "run" }))),
+            last_payload: StdMutex::new(None),
+        });
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![
+                        installation(project_id, true, true),
+                        duplicate_action_installation(project_id, "shadow-hello"),
+                    ],
+                }),
+                transport.clone(),
+            ),
+        ));
+
+        let catalog_err = gateway
+            .surface_for_actor(
+                RuntimeActor::SessionUser {
+                    session_id: "session-1".to_string(),
+                    user_id: None,
+                },
+                RuntimeContext::Session {
+                    session_id: "session-1".to_string(),
+                    project_id: Some(project_id),
+                    workspace_id: None,
+                },
+            )
+            .await
+            .expect_err("duplicate catalog should fail closed");
+        assert_eq!(catalog_err.kind(), RuntimeInvocationErrorKind::Conflict);
+        assert!(catalog_err.to_string().contains("duplicate runtime action"));
+
+        let invoke_err = gateway
+            .invoke(request(project_id, "local-hello.profile"))
+            .await
+            .expect_err("duplicate invoke should fail closed");
+        assert_eq!(invoke_err.kind(), RuntimeInvocationErrorKind::Conflict);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
     }
 
     #[tokio::test]
@@ -1855,6 +1949,19 @@ mod tests {
             installed_source(),
         )
         .expect("installation")
+    }
+
+    fn duplicate_action_installation(
+        project_id: Uuid,
+        extension_key: &str,
+    ) -> ProjectExtensionInstallation {
+        let mut installation = installation(project_id, true, true);
+        installation.extension_key = extension_key.to_string();
+        installation.display_name = "Shadow Hello".to_string();
+        installation.manifest.extension_id = extension_key.to_string();
+        installation.manifest.package.name = format!("@agentdash/{extension_key}");
+        installation.package_artifact = Some(artifact_ref(extension_key));
+        installation
     }
 
     fn installed_source() -> InstalledAssetSource {

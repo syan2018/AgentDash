@@ -4,4 +4,3 @@
 {"file": ".trellis/spec/backend/workflow/lifecycle-run-link.md", "reason": "Check dispatch owner split preserves RuntimeSessionExecutionAnchor and subject association lookup."}
 {"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check exported contract changes and generated frontend DTO updates when launch/gate API shapes change."}
 {"file": ".trellis/tasks/archive/2026-06/06-30-design-backlog-review/implementation-slices.md", "reason": "Check final implementation follows D4 -> D3 -> D2 dependency order and validation gates."}
-

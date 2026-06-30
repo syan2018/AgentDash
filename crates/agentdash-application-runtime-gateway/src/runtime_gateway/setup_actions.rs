@@ -48,6 +48,7 @@ impl RuntimeProvider for McpProbeTransportProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -112,6 +113,7 @@ impl RuntimeProvider for WorkspaceDetectProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -177,6 +179,7 @@ impl RuntimeProvider for WorkspaceDetectGitProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -240,6 +243,7 @@ impl RuntimeProvider for WorkspaceBrowseDirectoryProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -307,6 +311,7 @@ impl RuntimeProvider for WorkspaceDiscoverByIdentityProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 

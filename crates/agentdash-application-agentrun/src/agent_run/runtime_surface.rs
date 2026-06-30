@@ -351,7 +351,7 @@ impl AgentRunRuntimeSurfaceQuery {
         })?;
         let active_grants = self
             .permission_grant_repo
-            .list_active_by_frame(anchor.launch_frame_id)
+            .list_active_by_frame(frame.id)
             .await
             .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
                 purpose: purpose.clone(),
@@ -416,6 +416,8 @@ fn runtime_vfs_access_policy_for_grants(
     active_grants: &[PermissionGrant],
 ) -> RuntimeVfsAccessPolicy {
     let mut policy = RuntimeVfsAccessPolicy::whole_mounts_from_vfs(vfs);
+    let mut permission_grant_rules = Vec::new();
+    let mut permission_grant_mounts = BTreeSet::new();
     for grant in active_grants
         .iter()
         .filter(|grant| grant.status.is_active())
@@ -428,7 +430,8 @@ fn runtime_vfs_access_policy_for_grants(
             {
                 continue;
             }
-            policy.rules.push(RuntimeVfsAccessRule {
+            permission_grant_mounts.insert(rule.mount_id.clone());
+            permission_grant_rules.push(RuntimeVfsAccessRule {
                 mount_id: rule.mount_id.clone(),
                 path_pattern: match &rule.path_scope {
                     PermissionGrantVfsPathScope::All => RuntimeVfsPathPattern::All,
@@ -445,6 +448,13 @@ fn runtime_vfs_access_policy_for_grants(
                 source: RuntimeVfsAccessSource::PermissionGrant,
             });
         }
+    }
+    if !permission_grant_rules.is_empty() {
+        policy.rules.retain(|rule| {
+            rule.source != RuntimeVfsAccessSource::SystemRuntimeProjection
+                || !permission_grant_mounts.contains(&rule.mount_id)
+        });
+        policy.rules.extend(permission_grant_rules);
     }
     policy
 }
@@ -1874,9 +1884,16 @@ mod tests {
     #[tokio::test]
     async fn active_permission_grant_vfs_rule_is_projected_into_runtime_policy() {
         let fixture = fixture().await;
+        let current_frame = frame(
+            fixture.agent_id,
+            2,
+            Some(vfs_with_default_backend("backend-current")),
+        );
+        let current_frame_id = current_frame.id;
+        insert_current_frame(&fixture, current_frame).await;
         let grant = active_vfs_grant(
             fixture.run_id,
-            fixture.launch_frame_id,
+            current_frame_id,
             None,
             PermissionGrantVfsPathScope::Prefix("src".to_string()),
             vec![PermissionGrantVfsOperation::Read],
@@ -1905,14 +1922,18 @@ mod tests {
                         && rule.path_pattern.matches_normalized_path("src/lib.rs")
                 )
         );
+        assert!(surface.vfs_access_policy.admits(
+            "workspace",
+            "src/lib.rs",
+            RuntimeVfsOperation::Read
+        ));
         assert!(
-            !surface
-                .vfs_access_policy
-                .rules
-                .iter()
-                .filter(|rule| rule.source == RuntimeVfsAccessSource::PermissionGrant)
-                .any(|rule| rule.path_pattern.matches_normalized_path("tests/lib.rs")),
-            "grant path rule remains path-scoped instead of changing provider mount capability"
+            !surface.vfs_access_policy.admits(
+                "workspace",
+                "tests/lib.rs",
+                RuntimeVfsOperation::Read
+            ),
+            "PermissionGrant path rule must affect the final effective policy, not only add an audit rule"
         );
     }
 

@@ -109,6 +109,7 @@ impl RuntimeProvider for McpListToolsProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 
@@ -190,6 +191,7 @@ impl RuntimeProvider for McpCallToolProvider {
             input_schema: None,
             output_schema: None,
             default_policy: Default::default(),
+            metadata: Default::default(),
         }
     }
 

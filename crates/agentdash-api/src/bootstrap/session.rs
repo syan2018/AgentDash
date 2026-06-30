@@ -35,10 +35,9 @@ use agentdash_application_runtime_session::session::{
     SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
     SessionToolResultCache, SessionToolResultCachePut,
 };
-use agentdash_application_vfs::VfsMaterializationService;
-use agentdash_application_vfs::VfsService;
+use agentdash_application_vfs::tools::RuntimeVfsState;
+use agentdash_application_vfs::{VfsMaterializationService, VfsService};
 use agentdash_domain::canvas::Canvas;
-use agentdash_domain::common::Vfs;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
@@ -93,7 +92,7 @@ impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge 
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest,
-    ) -> Result<Vfs, String> {
+    ) -> Result<RuntimeVfsState, String> {
         let services = self
             .inner
             .get()
@@ -269,6 +268,7 @@ pub(crate) async fn build_session_runtime(
         runtime_surface_query_impl.clone();
     let effective_capability_port = runtime_session_effective_capability_port(
         repos.execution_anchor_repo.clone(),
+        repos.agent_frame_repo.clone(),
         repos.permission_grant_repo.clone(),
     );
     let agent_run_capability_port = agent_run_effective_capability_port(

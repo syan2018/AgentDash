@@ -745,7 +745,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
     .await?;
     let current_user_context = project_authorization_context(&current_user);
     let binding = CanvasDataBinding::with_content_type(alias, req.source_uri, req.content_type);
-    let active_vfs = state
+    let active_vfs_state = state
         .services
         .runtime_surface_update
         .apply_canvas_runtime_surface_update(
@@ -762,7 +762,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &context.canvas,
         None,
-        Some(&active_vfs),
+        Some(&active_vfs_state.vfs),
         state.services.vfs_service.as_ref(),
     )
     .await;

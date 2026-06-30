@@ -6,7 +6,7 @@ use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityV
 use agentdash_application_runtime_gateway::{
     ExtensionInvocationWorkspaceContext, RuntimeGateway, resolve_extension_invocation_workspace,
 };
-use agentdash_application_vfs::tools::SharedRuntimeVfs;
+use agentdash_application_vfs::tools::{RuntimeVfsState, SharedRuntimeVfs};
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::canvas::{Canvas, CanvasRepository};
 use agentdash_domain::common::Vfs;
@@ -46,7 +46,7 @@ pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: RuntimeSurfaceUpdateRequest,
-    ) -> Result<Vfs, String>;
+    ) -> Result<RuntimeVfsState, String>;
 
     async fn inject_agent_run_notification(
         &self,
@@ -91,7 +91,12 @@ pub fn shared_runtime_vfs_from_context(
     let vfs = context.session.vfs.clone().ok_or_else(|| {
         ConnectorError::InvalidConfig("缺少 vfs，无法构建统一访问工具".to_string())
     })?;
-    Ok(SharedRuntimeVfs::new(vfs))
+    let access_policy = context.session.vfs_access_policy.clone().ok_or_else(|| {
+        ConnectorError::InvalidConfig(
+            "缺少 vfs_access_policy，无法构建 workspace module VFS 工具".to_string(),
+        )
+    })?;
+    Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
 pub fn delivery_runtime_session_id_from_context(context: &ExecutionContext) -> String {
@@ -159,7 +164,7 @@ pub async fn submit_canvas_runtime_surface_update(
             "当前工具调用缺少 AgentRun delivery runtime id，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
-    let active_vfs = bridge
+    let active_vfs_state = bridge
         .apply_canvas_runtime_surface_update_to_agent_run(
             delivery_runtime_session_id,
             canvas,
@@ -173,7 +178,8 @@ pub async fn submit_canvas_runtime_surface_update(
             ))
         })?;
     if let Some(vfs) = vfs {
-        vfs.replace(active_vfs).await;
+        vfs.replace_with_policy(active_vfs_state.vfs, active_vfs_state.access_policy)
+            .await;
     }
     Ok(())
 }
@@ -251,4 +257,212 @@ async fn load_canvas_by_project_mount_id(
         ));
     }
     Ok(canvas)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{BTreeSet, HashMap},
+        path::PathBuf,
+        sync::Arc,
+    };
+
+    use agentdash_application_ports::agent_frame_materialization::CanvasVisibilityReason;
+    use agentdash_application_vfs::tools::RuntimeVfsState;
+    use agentdash_domain::canvas::Canvas;
+    use agentdash_spi::{
+        AgentConfig, CapabilityState, ExecutionSessionFrame, ExecutionTurnFrame, Mount,
+        MountCapability, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource,
+        RuntimeVfsOperation, RuntimeVfsPathPattern, Vfs,
+    };
+    use async_trait::async_trait;
+
+    use super::*;
+
+    fn mount(id: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: "memory".to_string(),
+            backend_id: String::new(),
+            root_ref: format!("memory://{id}"),
+            capabilities: vec![MountCapability::Read, MountCapability::List],
+            default_write: false,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn vfs(mounts: Vec<Mount>) -> Vfs {
+        Vfs {
+            default_mount_id: mounts.first().map(|mount| mount.id.clone()),
+            mounts,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        }
+    }
+
+    fn docs_only_policy() -> RuntimeVfsAccessPolicy {
+        RuntimeVfsAccessPolicy {
+            rules: vec![RuntimeVfsAccessRule {
+                mount_id: "main".to_string(),
+                path_pattern: RuntimeVfsPathPattern::Prefix("docs".to_string()),
+                operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+                source: RuntimeVfsAccessSource::PermissionGrant,
+            }],
+        }
+    }
+
+    fn execution_context(vfs: Vfs, access_policy: RuntimeVfsAccessPolicy) -> ExecutionContext {
+        ExecutionContext {
+            session: ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory: PathBuf::from("."),
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::default(),
+                mcp_servers: Vec::new(),
+                vfs: Some(vfs),
+                vfs_access_policy: Some(access_policy),
+                backend_execution: None,
+                runtime_backend_anchor: None,
+                identity: None,
+            },
+            turn: ExecutionTurnFrame {
+                capability_state: CapabilityState::default(),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn shared_runtime_vfs_from_context_requires_access_policy() {
+        let mut context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+        context.session.vfs_access_policy = None;
+
+        let error = match shared_runtime_vfs_from_context(&context) {
+            Ok(_) => panic!("policy is required"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, ConnectorError::InvalidConfig(message) if message.contains("vfs_access_policy"))
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_runtime_vfs_from_context_preserves_session_policy() {
+        let context = execution_context(vfs(vec![mount("main")]), docs_only_policy());
+
+        let shared = shared_runtime_vfs_from_context(&context).expect("shared VFS");
+        let state = shared.snapshot_state().await;
+
+        assert_eq!(state.vfs.mounts[0].id, "main");
+        assert!(
+            state
+                .access_policy
+                .admits("main", "docs/readme.md", RuntimeVfsOperation::Read)
+        );
+        assert!(
+            !state
+                .access_policy
+                .admits("main", "src/lib.rs", RuntimeVfsOperation::Read),
+            "workspace module bridge must not widen policy to whole-mount access"
+        );
+    }
+
+    #[derive(Clone)]
+    struct ReturningCanvasBridge {
+        state: RuntimeVfsState,
+    }
+
+    #[async_trait]
+    impl WorkspaceModuleAgentRunBridge for ReturningCanvasBridge {
+        async fn effective_capability_view_for_agent_run_delivery(
+            &self,
+            _delivery_runtime_session_id: &str,
+        ) -> Result<AgentRunEffectiveCapabilityView, String> {
+            Err("not used".to_string())
+        }
+
+        async fn apply_canvas_runtime_surface_update_to_agent_run(
+            &self,
+            _delivery_runtime_session_id: &str,
+            _canvas: &Canvas,
+            _current_user: Option<&ProjectAuthorizationContext>,
+            _request: RuntimeSurfaceUpdateRequest,
+        ) -> Result<RuntimeVfsState, String> {
+            Ok(self.state.clone())
+        }
+
+        async fn inject_agent_run_notification(
+            &self,
+            _delivery_runtime_session_id: &str,
+            _notification: BackboneEnvelope,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn canvas_runtime_surface_update_replaces_vfs_with_bridge_policy() {
+        let canvas = Canvas::new(
+            uuid::Uuid::new_v4(),
+            "cvs-dashboard".to_string(),
+            "Dashboard".to_string(),
+            String::new(),
+        );
+        let shared_vfs =
+            SharedRuntimeVfs::new_with_policy(vfs(vec![mount("main")]), docs_only_policy());
+        let mut updated_policy = docs_only_policy();
+        updated_policy.rules.push(RuntimeVfsAccessRule {
+            mount_id: canvas.mount_id.clone(),
+            path_pattern: RuntimeVfsPathPattern::All,
+            operations: BTreeSet::from([RuntimeVfsOperation::Read]),
+            source: RuntimeVfsAccessSource::SystemRuntimeProjection,
+        });
+        let updated_state = RuntimeVfsState {
+            vfs: vfs(vec![mount("main"), mount(&canvas.mount_id)]),
+            access_policy: updated_policy,
+        };
+        let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
+        bridge_handle
+            .set(Arc::new(ReturningCanvasBridge {
+                state: updated_state,
+            }))
+            .await;
+
+        submit_canvas_runtime_surface_update(
+            Some(&shared_vfs),
+            &bridge_handle,
+            Some("runtime-1"),
+            None,
+            &canvas,
+            RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+                canvas_mount_id: canvas.mount_id.clone(),
+                reason: CanvasVisibilityReason::Presented,
+            },
+        )
+        .await
+        .expect("surface update");
+
+        let state = shared_vfs.snapshot_state().await;
+        assert!(
+            state
+                .vfs
+                .mounts
+                .iter()
+                .any(|mount| mount.id == canvas.mount_id)
+        );
+        assert!(state.access_policy.admits(
+            &canvas.mount_id,
+            "index.html",
+            RuntimeVfsOperation::Read
+        ));
+        assert!(
+            !state
+                .access_policy
+                .admits("main", "src/lib.rs", RuntimeVfsOperation::Read),
+            "replace must keep bridge policy instead of rebuilding whole-mount access"
+        );
+    }
 }

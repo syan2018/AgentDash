@@ -2077,17 +2077,19 @@ mod tests {
     use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
     use agentdash_spi::{
         AgentConfig, CapabilityState, ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame,
-        ToolCapability, ToolCluster, ToolDefinition, Vfs, WorkspaceModuleDimension,
-        WorkspaceModuleVisibilityMode,
+        RuntimeVfsAccessPolicy, ToolCapability, ToolCluster, ToolDefinition, Vfs,
+        WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
     };
     use tokio::sync::RwLock;
 
     use super::*;
     use crate::canvas::{build_canvas, build_personal_canvas};
-    use crate::workspace_module::WorkspaceModuleRuntimeToolProvider;
     use crate::workspace_module::runtime_bridge::{
         SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
         WorkspaceModuleAgentRunBridge,
+    };
+    use crate::workspace_module::{
+        WorkspaceModuleRuntimeToolProvider, resolve_workspace_module_visibility,
     };
 
     fn manifest(extension_id: &str) -> ExtensionTemplatePayload {
@@ -2207,13 +2209,17 @@ mod tests {
             canvas: &Canvas,
             _current_user: Option<&ProjectAuthorizationContext>,
             request: RuntimeSurfaceUpdateRequest,
-        ) -> Result<agentdash_domain::common::Vfs, String> {
+        ) -> Result<RuntimeVfsState, String> {
             self.exposed_canvas_mount_ids
                 .lock()
                 .expect("exposed canvas lock")
                 .push(canvas.mount_id.clone());
             self.requests.lock().expect("requests lock").push(request);
-            Ok(agentdash_domain::common::Vfs::default())
+            let vfs = agentdash_domain::common::Vfs::default();
+            Ok(RuntimeVfsState {
+                access_policy: RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
+                vfs,
+            })
         }
 
         async fn inject_agent_run_notification(
@@ -3011,6 +3017,7 @@ mod tests {
         RuntimeActionDescriptor, RuntimeActionKind, RuntimeInvocationOutput, RuntimePolicy,
         RuntimeProvider,
     };
+    use agentdash_application_vfs::tools::RuntimeVfsState;
 
     struct EchoActionProvider {
         action_key: RuntimeActionKey,
@@ -3036,6 +3043,7 @@ mod tests {
                     required_capabilities: vec!["gateway.profile.read".to_string()],
                     ..RuntimePolicy::default()
                 },
+                metadata: Default::default(),
             }
         }
         async fn invoke(
@@ -3137,8 +3145,8 @@ mod tests {
                 environment_variables: HashMap::new(),
                 executor_config: AgentConfig::default(),
                 mcp_servers: Vec::new(),
+                vfs_access_policy: Some(RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs)),
                 vfs: Some(vfs),
-                vfs_access_policy: None,
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,

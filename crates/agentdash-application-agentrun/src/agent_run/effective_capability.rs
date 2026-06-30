@@ -256,11 +256,13 @@ impl AgentRunEffectiveCapabilityService {
         runtime_session_id: &str,
         base_state: &CapabilityState,
         execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        agent_frame_repo: &dyn AgentFrameRepository,
         permission_grant_repo: &dyn PermissionGrantRepository,
     ) -> Result<CapabilityState, agentdash_domain::DomainError> {
         let _projection = Self::grant_projection_for_runtime_session(
             runtime_session_id,
             execution_anchor_repo,
+            agent_frame_repo,
             permission_grant_repo,
         )
         .await?;
@@ -270,6 +272,7 @@ impl AgentRunEffectiveCapabilityService {
     pub async fn grant_projection_for_runtime_session(
         runtime_session_id: &str,
         execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        agent_frame_repo: &dyn AgentFrameRepository,
         permission_grant_repo: &dyn PermissionGrantRepository,
     ) -> Result<AgentRunGrantProjection, agentdash_domain::DomainError> {
         let Some(anchor) = execution_anchor_repo
@@ -278,15 +281,18 @@ impl AgentRunEffectiveCapabilityService {
         else {
             return Ok(AgentRunGrantProjection::empty());
         };
-        Self::grant_projection_for_execution_anchor(&anchor, permission_grant_repo).await
+        let Some(current_frame) = agent_frame_repo.get_current(anchor.agent_id).await? else {
+            return Ok(AgentRunGrantProjection::empty());
+        };
+        Self::grant_projection_for_effect_frame(current_frame.id, permission_grant_repo).await
     }
 
-    pub async fn grant_projection_for_execution_anchor(
-        anchor: &RuntimeSessionExecutionAnchor,
+    pub async fn grant_projection_for_effect_frame(
+        effect_frame_id: uuid::Uuid,
         permission_grant_repo: &dyn PermissionGrantRepository,
     ) -> Result<AgentRunGrantProjection, agentdash_domain::DomainError> {
         let active_grants = permission_grant_repo
-            .list_active_by_frame(anchor.launch_frame_id)
+            .list_active_by_frame(effect_frame_id)
             .await?;
         Ok(AgentRunGrantProjection::from_active_grants(&active_grants))
     }
@@ -344,11 +350,11 @@ impl AgentRunEffectiveCapabilityAdapter {
     > {
         let frame = self
             .agent_frame_repo
-            .get(anchor.launch_frame_id)
+            .get_current(anchor.agent_id)
             .await
             .map_err(|error| {
                 ports_agent_run_surface::AgentRunEffectiveCapabilityError::Repository {
-                    operation: "anchored AgentFrame",
+                    operation: "current AgentFrame",
                     message: error.to_string(),
                 }
             })?
@@ -363,7 +369,7 @@ impl AgentRunEffectiveCapabilityAdapter {
             return Err(
                 ports_agent_run_surface::AgentRunEffectiveCapabilityError::Projection {
                     message: format!(
-                        "anchored AgentFrame agent mismatch: expected={}, actual={}",
+                        "current AgentFrame agent mismatch: expected={}, actual={}",
                         anchor.agent_id, frame.agent_id
                     ),
                 },
@@ -371,8 +377,8 @@ impl AgentRunEffectiveCapabilityAdapter {
         }
 
         let grant_projection =
-            AgentRunEffectiveCapabilityService::grant_projection_for_execution_anchor(
-                &anchor,
+            AgentRunEffectiveCapabilityService::grant_projection_for_effect_frame(
+                frame.id,
                 self.permission_grant_repo.as_ref(),
             )
             .await
@@ -487,16 +493,19 @@ impl ports_agent_run_surface::AgentRunEffectiveCapabilityPort
 #[derive(Clone)]
 pub struct AgentRunRuntimeSessionEffectiveCapabilityAdapter {
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    agent_frame_repo: Arc<dyn AgentFrameRepository>,
     permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
 impl AgentRunRuntimeSessionEffectiveCapabilityAdapter {
     pub fn new(
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        agent_frame_repo: Arc<dyn AgentFrameRepository>,
         permission_grant_repo: Arc<dyn PermissionGrantRepository>,
     ) -> Self {
         Self {
             execution_anchor_repo,
+            agent_frame_repo,
             permission_grant_repo,
         }
     }
@@ -504,10 +513,12 @@ impl AgentRunRuntimeSessionEffectiveCapabilityAdapter {
 
 pub fn runtime_session_effective_capability_port(
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    agent_frame_repo: Arc<dyn AgentFrameRepository>,
     permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 ) -> Arc<dyn RuntimeSessionEffectiveCapabilityPort> {
     Arc::new(AgentRunRuntimeSessionEffectiveCapabilityAdapter::new(
         execution_anchor_repo,
+        agent_frame_repo,
         permission_grant_repo,
     ))
 }
@@ -523,6 +534,7 @@ impl RuntimeSessionEffectiveCapabilityPort for AgentRunRuntimeSessionEffectiveCa
             runtime_session_id,
             &base_state,
             self.execution_anchor_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
             self.permission_grant_repo.as_ref(),
         )
         .await
@@ -1173,32 +1185,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn product_port_admit_tool_uses_frame_scoped_grants() {
+    async fn product_port_admit_tool_uses_current_frame_surface_and_effect_frame_grants() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let mut frame_a = frame_with_agent_state(agent_id, &CapabilityState::default());
-        frame_a.revision = 1;
-        let mut frame_b_state = CapabilityState::default();
-        frame_b_state
+        let mut launch_frame = frame_with_agent_state(agent_id, &CapabilityState::default());
+        launch_frame.revision = 1;
+        let mut current_state = CapabilityState::default();
+        current_state
             .tool
             .capabilities
-            .insert(ToolCapability::new("workflow_management"));
-        let mut frame_b = frame_with_agent_state(agent_id, &frame_b_state);
-        frame_b.revision = 2;
-        let frame_a_id = frame_a.id;
-        let frame_b_id = frame_b.id;
+            .insert(ToolCapability::new("file_read"));
+        let mut current_frame = frame_with_agent_state(agent_id, &current_state);
+        current_frame.revision = 2;
+        let launch_frame_id = launch_frame.id;
+        let current_frame_id = current_frame.id;
         let anchors = Arc::new(MemoryAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let grants = Arc::new(MemoryGrantRepository::default());
-        frames.create(&frame_a).await.expect("frame a");
-        frames.create(&frame_b).await.expect("frame b");
-        insert_anchor(&anchors, "session-a", run_id, frame_a_id, agent_id).await;
-        insert_anchor(&anchors, "session-b", run_id, frame_b_id, agent_id).await;
+        frames.create(&launch_frame).await.expect("launch frame");
+        frames.create(&current_frame).await.expect("current frame");
+        insert_anchor(&anchors, "session-a", run_id, launch_frame_id, agent_id).await;
         grants
             .insert(active_tool_grant(
                 run_id,
                 "session-a",
-                frame_a_id,
+                launch_frame_id,
+                "workflow_management::old_launch_tool",
+            ))
+            .await;
+        grants
+            .insert(active_tool_grant(
+                run_id,
+                "session-a",
+                current_frame_id,
                 "workflow_management::upsert_workflow_tool",
             ))
             .await;
@@ -1214,12 +1233,18 @@ mod tests {
             )
             .await
             .expect("session a view");
-        assert_eq!(session_a_view.target.frame_id, frame_a_id);
+        assert_eq!(session_a_view.target.frame_id, current_frame_id);
+        assert!(
+            session_a_view
+                .visible_capabilities
+                .contains(&ToolCapability::new("file_read")),
+            "schema-visible surface must come from the current frame, not launch evidence"
+        );
         assert!(
             !session_a_view
                 .visible_capabilities
                 .contains(&ToolCapability::new("workflow_management")),
-            "runtime admission must not resolve schema-visible state from a later current frame"
+            "tool-level grants must stay out of schema-visible capability expansion"
         );
 
         let allowed = adapter
@@ -1233,9 +1258,9 @@ mod tests {
             .expect("allowed decision");
         let denied = adapter
             .admit_tool(ports_agent_run_surface::AgentRunAdmissionRequest::tool(
-                "session-b",
+                "session-a",
                 "workflow_management",
-                "upsert_workflow_tool",
+                "old_launch_tool",
                 Some(ToolCluster::Workflow),
             ))
             .await
@@ -1244,23 +1269,35 @@ mod tests {
         assert!(allowed.allowed);
         assert!(!denied.allowed);
         let frame_queries = grants.active_frame_queries().await;
-        assert!(frame_queries.contains(&frame_a_id));
-        assert!(frame_queries.contains(&frame_b_id));
+        assert!(!frame_queries.is_empty());
+        assert!(!frame_queries.contains(&launch_frame_id));
+        assert!(
+            frame_queries
+                .iter()
+                .all(|frame_id| *frame_id == current_frame_id)
+        );
         assert!(grants.active_run_queries().await.is_empty());
     }
 
     #[tokio::test]
-    async fn runtime_session_grant_projection_queries_effect_frame_not_run() {
+    async fn runtime_session_grant_projection_queries_current_effect_frame_not_run() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let frame_a = Uuid::new_v4();
-        let frame_b = Uuid::new_v4();
+        let mut launch_frame = frame_with_agent_state(agent_id, &CapabilityState::default());
+        launch_frame.revision = 1;
+        let mut current_frame = frame_with_agent_state(agent_id, &CapabilityState::default());
+        current_frame.revision = 2;
+        let launch_frame_id = launch_frame.id;
+        let current_frame_id = current_frame.id;
         let anchors = MemoryAnchorRepository::default();
+        let frames = MemoryAgentFrameRepository::default();
+        frames.create(&launch_frame).await.expect("launch frame");
+        frames.create(&current_frame).await.expect("current frame");
         anchors
             .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
                 "session-b",
                 run_id,
-                frame_b,
+                launch_frame_id,
                 agent_id,
             ))
             .await
@@ -1270,7 +1307,7 @@ mod tests {
             .insert(active_tool_grant(
                 run_id,
                 "session-a",
-                frame_a,
+                launch_frame_id,
                 "workflow_management::upsert_workflow_tool",
             ))
             .await;
@@ -1278,7 +1315,7 @@ mod tests {
             .insert(active_tool_grant(
                 run_id,
                 "session-b",
-                frame_b,
+                current_frame_id,
                 "workflow_management::get_workflow",
             ))
             .await;
@@ -1286,12 +1323,13 @@ mod tests {
         let projection = AgentRunEffectiveCapabilityService::grant_projection_for_runtime_session(
             "session-b",
             &anchors,
+            &frames,
             &grants,
         )
         .await
         .expect("projection");
 
-        assert_eq!(grants.active_frame_queries().await, vec![frame_b]);
+        assert_eq!(grants.active_frame_queries().await, vec![current_frame_id]);
         assert!(grants.active_run_queries().await.is_empty());
         assert!(projection.admits_tool(&AgentRunAdmissionRequest::tool(
             "workflow_management",
@@ -1309,8 +1347,11 @@ mod tests {
     async fn runtime_session_execution_capability_state_keeps_tool_grant_invisible() {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let frame_id = Uuid::new_v4();
+        let frame = frame_with_agent_state(agent_id, &CapabilityState::default());
+        let frame_id = frame.id;
         let anchors = MemoryAnchorRepository::default();
+        let frames = MemoryAgentFrameRepository::default();
+        frames.create(&frame).await.expect("frame");
         anchors
             .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
                 "session-a",
@@ -1335,6 +1376,7 @@ mod tests {
                 "session-a",
                 &CapabilityState::default(),
                 &anchors,
+                &frames,
                 &grants,
             )
             .await

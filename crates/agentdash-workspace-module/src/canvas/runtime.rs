@@ -327,6 +327,7 @@ mod tests {
                 input_schema: Some(json!({ "type": "object" })),
                 output_schema: None,
                 default_policy: Default::default(),
+                metadata: Default::default(),
             }],
         };
 

@@ -164,8 +164,8 @@ export function DesignSystemPage() {
   const [dark, setDark] = useState(false);
 
   return (
-    <div className={cn(dark && "dark")}>
-      <div className="min-h-screen bg-background text-foreground">
+    <div className={cn("h-full overflow-y-auto", dark && "dark")}>
+      <div className="min-h-full bg-background text-foreground">
         <PageHeader dark={dark} setDark={setDark} />
 
         <main className="mx-auto max-w-6xl space-y-16 px-6 pb-24 pt-8">

@@ -1,6 +1,7 @@
 mod catalog;
 mod definition;
 mod error;
+pub mod gate;
 mod graph_planner;
 pub mod graph_resolver;
 pub mod orchestration;

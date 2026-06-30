@@ -312,6 +312,18 @@
     padding-left: 1.2rem;
   }
 
+  .agentdash-markdown ul,
+  .agentdash-chat-markdown ul {
+    list-style-position: outside;
+    list-style-type: disc;
+  }
+
+  .agentdash-markdown ol,
+  .agentdash-chat-markdown ol {
+    list-style-position: outside;
+    list-style-type: decimal;
+  }
+
   .agentdash-markdown li + li,
   .agentdash-chat-markdown li + li {
     margin-top: 0.25rem;
@@ -334,6 +346,171 @@
     color: hsl(var(--foreground));
     font-size: 0.75rem;
     line-height: 1.6;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block"],
+  .agentdash-markdown [data-streamdown="mermaid-block"],
+  .agentdash-markdown [data-streamdown="table-wrapper"],
+  .agentdash-chat-markdown [data-streamdown="code-block"],
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"],
+  .agentdash-chat-markdown [data-streamdown="table-wrapper"] {
+    position: relative !important;
+    display: block !important;
+    gap: 0 !important;
+    margin: 0.75rem 0 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    content-visibility: visible !important;
+    contain-intrinsic-size: none !important;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-header"],
+  .agentdash-chat-markdown [data-streamdown="code-block-header"] {
+    display: none !important;
+  }
+
+  .agentdash-markdown [data-streamdown="mermaid-block"] > div:first-child:not(:has([data-streamdown])),
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"] > div:first-child:not(:has([data-streamdown])) {
+    display: none !important;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block"] > div:not([data-streamdown]),
+  .agentdash-markdown [data-streamdown="mermaid-block"] > div:has([data-streamdown="mermaid-block-actions"]),
+  .agentdash-chat-markdown [data-streamdown="code-block"] > div:not([data-streamdown]) {
+    display: contents !important;
+  }
+
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"] > div:has([data-streamdown="mermaid-block-actions"]) {
+    display: contents !important;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-actions"],
+  .agentdash-markdown [data-streamdown="mermaid-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="code-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="mermaid-block-actions"] {
+    pointer-events: none;
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    z-index: 3;
+    gap: 0.125rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: hsl(var(--background) / 0.86);
+    padding: 0.125rem;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  .agentdash-markdown [data-streamdown="table-wrapper"] > div:first-child:has(button),
+  .agentdash-chat-markdown [data-streamdown="table-wrapper"] > div:first-child:has(button) {
+    pointer-events: none;
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    z-index: 3;
+    gap: 0.125rem;
+    margin: 0;
+    border: 0;
+    border-radius: 0.375rem;
+    background: hsl(var(--background) / 0.86);
+    padding: 0.125rem;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-actions"] button,
+  .agentdash-markdown [data-streamdown="mermaid-block-actions"] button,
+  .agentdash-markdown [data-streamdown="table-wrapper"] > div:first-child:has(button) button,
+  .agentdash-chat-markdown [data-streamdown="code-block-actions"] button {
+    height: 1.625rem;
+    width: 1.625rem;
+    border-radius: 0.375rem;
+  }
+
+  .agentdash-chat-markdown [data-streamdown="mermaid-block-actions"] button,
+  .agentdash-chat-markdown [data-streamdown="table-wrapper"] > div:first-child:has(button) button {
+    height: 1.625rem;
+    width: 1.625rem;
+    border-radius: 0.375rem;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+  .agentdash-markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"],
+  .agentdash-markdown [data-streamdown="mermaid-block"]:hover [data-streamdown="mermaid-block-actions"],
+  .agentdash-markdown [data-streamdown="mermaid-block"]:focus-within [data-streamdown="mermaid-block-actions"],
+  .agentdash-markdown [data-streamdown="table-wrapper"]:hover > div:first-child:has(button),
+  .agentdash-markdown [data-streamdown="table-wrapper"]:focus-within > div:first-child:has(button),
+  .agentdash-chat-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"]:hover [data-streamdown="mermaid-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"]:focus-within [data-streamdown="mermaid-block-actions"],
+  .agentdash-chat-markdown [data-streamdown="table-wrapper"]:hover > div:first-child:has(button),
+  .agentdash-chat-markdown [data-streamdown="table-wrapper"]:focus-within > div:first-child:has(button) {
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-body"],
+  .agentdash-markdown [data-streamdown="mermaid-block"] > div:last-child,
+  .agentdash-chat-markdown [data-streamdown="code-block-body"] {
+    position: relative !important;
+  }
+
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"] > div:last-child {
+    position: relative !important;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-body"]::before,
+  .agentdash-chat-markdown [data-streamdown="code-block-body"]::before,
+  .agentdash-markdown [data-streamdown="mermaid-block"] > div:last-child::before,
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"] > div:last-child::before {
+    position: absolute;
+    top: 0.375rem;
+    left: 0.5rem;
+    z-index: 2;
+    border-radius: 0.375rem;
+    background: hsl(var(--background) / 0.86);
+    padding: 0.125rem 0.375rem;
+    color: hsl(var(--muted-foreground));
+    content: attr(data-language);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  .agentdash-markdown [data-streamdown="mermaid-block"] > div:last-child::before,
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"] > div:last-child::before {
+    content: "mermaid";
+  }
+
+  .agentdash-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-body"]::before,
+  .agentdash-markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-body"]::before,
+  .agentdash-markdown [data-streamdown="mermaid-block"]:hover > div:last-child::before,
+  .agentdash-markdown [data-streamdown="mermaid-block"]:focus-within > div:last-child::before,
+  .agentdash-chat-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-body"]::before,
+  .agentdash-chat-markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-body"]::before,
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"]:hover > div:last-child::before,
+  .agentdash-chat-markdown [data-streamdown="mermaid-block"]:focus-within > div:last-child::before {
+    opacity: 1;
+  }
+
+  .agentdash-markdown [data-streamdown="code-block-body"] pre,
+  .agentdash-chat-markdown [data-streamdown="code-block-body"] pre {
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    color: inherit;
+    font-size: inherit;
+    line-height: inherit;
   }
 
   .agentdash-markdown code,

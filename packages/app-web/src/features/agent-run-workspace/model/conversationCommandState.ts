@@ -273,7 +273,14 @@ function projectModelConfig(modelConfig: ConversationModelConfigView): SessionCh
   };
 }
 
-function mailboxRowCommand(
+export function conversationCommandByKind(
+  commands: ConversationCommandView[],
+  kind: ConversationCommandView["kind"],
+): ConversationCommandView | undefined {
+  return commands.find((command) => command.kind === kind);
+}
+
+export function mailboxRowCommand(
   commands: ConversationCommandView[],
   kind: ConversationCommandView["kind"],
 ): ConversationCommandView | undefined {
@@ -292,7 +299,7 @@ export function projectSessionChatCommandState(
     enter
     ?? runtimeCommands.find((command) => command.kind === "submit_message" && command.enabled)?.command_id
     ?? runtimeCommands.find((command) => command.kind === "submit_message")?.command_id;
-  const cancelCommand = runtimeCommands.find((command) => command.kind === "cancel");
+  const cancelCommand = conversationCommandByKind(commandState.commands.commands, "cancel");
 
   return {
     mode: commandState.mode,
@@ -303,7 +310,7 @@ export function projectSessionChatCommandState(
       ctrl_enter: commandState.commands.keyboard.ctrl_enter,
     },
     primaryCommandId,
-    cancelCommand,
+    cancelCommand: cancelCommand ? projectCommand(cancelCommand) : undefined,
     modelConfig: projectModelConfig(commandState.modelConfig),
     helperText: commandState.helperText,
   };

@@ -32,7 +32,11 @@ import type {
   AgentRunSessionCommand,
   AgentRunSessionCommandState,
 } from "./conversationCommandState";
-import { isLocalDraftStartAction } from "./conversationCommandState";
+import {
+  conversationCommandByKind,
+  isLocalDraftStartAction,
+  mailboxRowCommand,
+} from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
   command: AgentRunSessionCommand;
@@ -136,13 +140,6 @@ function textFromUserInputBlock(block: JsonValue): string | null {
   if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
   if (block.type !== "text") return null;
   return typeof block.text === "string" ? block.text : null;
-}
-
-function mailboxRowCommand(
-  commands: ConversationCommandView[],
-  kind: ConversationCommandView["kind"],
-): ConversationCommandView | undefined {
-  return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
 }
 
 export function useAgentRunWorkspaceCommands(
@@ -293,7 +290,7 @@ export function useAgentRunWorkspaceCommands(
     if (!currentRunId || !currentAgentId) {
       throw new Error("当前 AgentRun 尚未就绪。");
     }
-    const cancelCommand = chatCommandState.commands.commands.find((command) => command.kind === "cancel");
+    const cancelCommand = conversationCommandByKind(chatCommandState.commands.commands, "cancel");
     if (!cancelCommand?.enabled) {
       throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
     }

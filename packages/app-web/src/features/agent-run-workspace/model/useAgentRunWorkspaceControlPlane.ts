@@ -16,12 +16,16 @@ import type {
   SessionChatSubmitIntent,
   SessionChatViewIntents,
 } from "../../session";
-import { extractPlatformEventData } from "../../session/model/platformEvent";
 import type { AgentRunWorkspaceProjectionState } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import {
-  workspaceModulePresentationFromPlatformEventData,
-  workspaceModulePresentedTabTarget,
-} from "../../workspace-module/model/presentation";
+  planAgentRunMessageSent,
+  planAgentRunSystemEvent,
+  planAgentRunTurnEnd,
+  planAgentRunWorkspaceModuleOpened,
+  resolveAgentRunSubmitCommand,
+  type AgentRunControlPlaneEffectPlan,
+  type AgentRunWorkspacePanelTarget,
+} from "./controlPlaneModel";
 import {
   buildDraftSessionCommandState,
   buildRuntimeSessionCommandState,
@@ -29,15 +33,8 @@ import {
   projectSessionChatCommandState,
   projectSessionChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
-  type AgentRunSessionCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
-
-interface OpenWorkspacePanelTarget {
-  typeId?: string;
-  uri?: string;
-  options?: { refreshContent?: boolean };
-}
 
 export interface UseAgentRunWorkspaceControlPlaneOptions {
   currentRunId: string | null;
@@ -59,7 +56,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
   refreshAgentRunList: (reason: string) => void;
   refreshWorkspaceModuleCatalog: () => void;
-  openWorkspacePanel: (target: OpenWorkspacePanelTarget) => void;
+  openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
 }
 
 interface UseAgentRunWorkspaceControlPlaneResult {
@@ -74,10 +71,6 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   handleTaskPlanChanged: () => void;
   handleSystemEvent: (eventType: string, event: BackboneEvent) => void;
   handleWorkspaceModuleOpened: () => void;
-}
-
-function commandLookupKey(command: AgentRunSessionCommand): string {
-  return command.command_id;
 }
 
 export function useAgentRunWorkspaceControlPlane({
@@ -198,17 +191,6 @@ export function useAgentRunWorkspaceControlPlane({
     ],
   );
 
-  const commandById = useMemo(() => {
-    const lookup = new Map<string, AgentRunSessionCommand>();
-    for (const command of commandState.commands.commands) {
-      lookup.set(commandLookupKey(command), command);
-    }
-    if (commandState.localDraftAction) {
-      lookup.set(commandLookupKey(commandState.localDraftAction), commandState.localDraftAction);
-    }
-    return lookup;
-  }, [commandState.commands.commands, commandState.localDraftAction]);
-
   const conversationMailbox = runtimeControl?.conversation?.mailbox;
 
   const {
@@ -239,12 +221,12 @@ export function useAgentRunWorkspaceControlPlane({
   });
 
   const submitComposer = useCallback(async (intent: SessionChatSubmitIntent) => {
-    const command = commandById.get(intent.command_id);
-    if (!command) {
-      throw new Error("当前 AgentRun 命令已刷新，请重试。");
+    const resolution = resolveAgentRunSubmitCommand(commandState, intent);
+    if (!resolution.ok) {
+      throw new Error(resolution.message);
     }
     await handleAgentRunCommand(
-      command,
+      resolution.command,
       intent.sessionId,
       intent.prompt,
       intent.executorConfig,
@@ -252,7 +234,7 @@ export function useAgentRunWorkspaceControlPlane({
       intent.deliveryIntent,
     );
     refreshAgentRunList("command_submitted");
-  }, [commandById, handleAgentRunCommand, refreshAgentRunList]);
+  }, [commandState, handleAgentRunCommand, refreshAgentRunList]);
 
   const cancelAction = useCallback(async () => {
     await handleCancelAgentRun();
@@ -342,11 +324,50 @@ export function useAgentRunWorkspaceControlPlane({
     submitComposer,
   ]);
 
+  const applyControlPlaneEffectPlan = useCallback((plan: AgentRunControlPlaneEffectPlan) => {
+    const openPlan = plan.openWorkspacePanel;
+    if (openPlan?.afterWorkspaceRefresh) {
+      void (async () => {
+        if (plan.refreshWorkspaceState) {
+          await refreshAgentRunWorkspaceState().catch(() => {});
+        }
+        if (plan.refreshWorkspaceModuleCatalog) {
+          refreshWorkspaceModuleCatalog();
+        }
+        openWorkspacePanel(openPlan.target);
+      })();
+    } else {
+      if (plan.refreshWorkspaceState) {
+        void refreshAgentRunWorkspaceState().catch(() => {});
+      }
+      if (plan.refreshWorkspaceModuleCatalog) {
+        refreshWorkspaceModuleCatalog();
+      }
+      if (openPlan) {
+        openWorkspacePanel(openPlan.target);
+      }
+    }
+
+    if (plan.hookRuntimeRefresh) {
+      scheduleHookRuntimeRefresh(
+        plan.hookRuntimeRefresh.reason,
+        plan.hookRuntimeRefresh.immediate,
+      );
+    }
+    if (plan.refreshAgentRunListReason) {
+      refreshAgentRunList(plan.refreshAgentRunListReason);
+    }
+  }, [
+    openWorkspacePanel,
+    refreshAgentRunList,
+    refreshAgentRunWorkspaceState,
+    refreshWorkspaceModuleCatalog,
+    scheduleHookRuntimeRefresh,
+  ]);
+
   const handleMessageSent = useCallback(() => {
-    if (!deliveryRuntimeSessionId) return;
-    scheduleHookRuntimeRefresh("message_sent", true);
-    refreshAgentRunList("message_sent");
-  }, [deliveryRuntimeSessionId, refreshAgentRunList, scheduleHookRuntimeRefresh]);
+    applyControlPlaneEffectPlan(planAgentRunMessageSent(deliveryRuntimeSessionId));
+  }, [applyControlPlaneEffectPlan, deliveryRuntimeSessionId]);
 
   const refreshStatusBarTasks = useCallback(() => {
     if (currentRunId && currentAgentId) {
@@ -358,95 +379,21 @@ export function useAgentRunWorkspaceControlPlane({
   }, [currentAgentId, currentRunId]);
 
   const handleTurnEnd = useCallback(() => {
-    void refreshAgentRunWorkspaceState().catch(() => {});
-    scheduleHookRuntimeRefresh("turn_end", true);
-    refreshAgentRunList("turn_end");
+    applyControlPlaneEffectPlan(planAgentRunTurnEnd());
     refreshStatusBarTasks();
-  }, [refreshAgentRunList, refreshAgentRunWorkspaceState, refreshStatusBarTasks, scheduleHookRuntimeRefresh]);
+  }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
 
   const handleTaskPlanChanged = useCallback(() => {
     refreshStatusBarTasks();
   }, [refreshStatusBarTasks]);
 
   const handleSystemEvent = useCallback((eventType: string, event: BackboneEvent) => {
-    switch (eventType) {
-      case "hook_event":
-      case "hook_action_resolved":
-      case "companion_dispatch_registered":
-      case "companion_result_available":
-      case "companion_result_returned":
-        scheduleHookRuntimeRefresh(eventType);
-        break;
-      case "context_frame": {
-        const frameData = extractPlatformEventData(event);
-        if (
-          frameData?.kind === "capability_state_snapshot" ||
-          frameData?.kind === "capability_state_delta"
-        ) {
-          void refreshAgentRunWorkspaceState();
-          refreshWorkspaceModuleCatalog();
-          scheduleHookRuntimeRefresh(eventType);
-        }
-        break;
-      }
-      case "session_meta_updated": {
-        void refreshAgentRunWorkspaceState();
-        refreshAgentRunList("session_meta_updated");
-        break;
-      }
-      case "mailbox_state_changed": {
-        void refreshAgentRunWorkspaceState();
-        refreshAgentRunList("mailbox_state_changed");
-        break;
-      }
-      case "workspace_module_presented": {
-        const data = workspaceModulePresentationFromPlatformEventData(
-          extractPlatformEventData(event),
-        );
-        const target = workspaceModulePresentedTabTarget(data);
-        if (target) {
-          if (target.refreshRuntime) {
-            void (async () => {
-              await refreshAgentRunWorkspaceState().catch(() => {});
-              refreshWorkspaceModuleCatalog();
-              openWorkspacePanel({
-                typeId: target.typeId,
-                uri: target.uri,
-                options: { refreshContent: target.refreshRuntime },
-              });
-            })();
-            break;
-          }
-          openWorkspacePanel({
-            typeId: target.typeId,
-            uri: target.uri,
-            options: { refreshContent: target.refreshRuntime },
-          });
-        }
-        break;
-      }
-      case "workspace_module_present_failed":
-        break;
-      default:
-        break;
-    }
-  }, [
-    openWorkspacePanel,
-    refreshAgentRunList,
-    refreshAgentRunWorkspaceState,
-    refreshWorkspaceModuleCatalog,
-    scheduleHookRuntimeRefresh,
-  ]);
+    applyControlPlaneEffectPlan(planAgentRunSystemEvent(eventType, event));
+  }, [applyControlPlaneEffectPlan]);
 
   const handleWorkspaceModuleOpened = useCallback(() => {
-    void refreshAgentRunWorkspaceState();
-    refreshWorkspaceModuleCatalog();
-    scheduleHookRuntimeRefresh("workspace_module_user_opened");
-  }, [
-    refreshAgentRunWorkspaceState,
-    refreshWorkspaceModuleCatalog,
-    scheduleHookRuntimeRefresh,
-  ]);
+    applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
+  }, [applyControlPlaneEffectPlan]);
 
   return {
     runtimeControl,

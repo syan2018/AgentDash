@@ -5,7 +5,7 @@ use agentdash_spi::platform::tool_capability::CAP_TASK;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
-use crate::task::tools::{TaskReadTool, TaskToolContext, TaskWriteTool};
+use crate::task::tools::{TaskReadTool, TaskWriteTool};
 
 #[derive(Clone)]
 pub struct TaskRuntimeToolProvider {
@@ -29,19 +29,12 @@ impl RuntimeToolProvider for TaskRuntimeToolProvider {
             return Ok(Vec::new());
         }
 
-        let tool_context = TaskToolContext::from_execution_context(context);
         let mut tools: Vec<DynAgentTool> = Vec::new();
         if flow.is_capability_tool_enabled(CAP_TASK, "task_read", Some(ToolCluster::Task)) {
-            tools.push(Arc::new(TaskReadTool::new(
-                self.repos.clone(),
-                tool_context.clone(),
-            )));
+            tools.push(Arc::new(TaskReadTool::new(self.repos.clone(), context)));
         }
         if flow.is_capability_tool_enabled(CAP_TASK, "task_write", Some(ToolCluster::Task)) {
-            tools.push(Arc::new(TaskWriteTool::new(
-                self.repos.clone(),
-                tool_context,
-            )));
+            tools.push(Arc::new(TaskWriteTool::new(self.repos.clone(), context)));
         }
         Ok(tools)
     }

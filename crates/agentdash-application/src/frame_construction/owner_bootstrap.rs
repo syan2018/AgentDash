@@ -15,15 +15,15 @@ use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{
-    AuthIdentity, CapabilityScopeCtx, MemoryDiscoveryOutput, MemoryDiscoveryProvider,
-    SkillDiscoveryProvider,
+    AuthIdentity, CapabilityScopeCtx, DiscoveredGuideline, MemoryDiscoveryOutput,
+    MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
 use crate::agent_run::runtime_capability_projection::{
-    RuntimeCapabilityProjectionInput, RuntimeMemoryProjectionInput,
+    RuntimeCapabilityProjectionInput, RuntimeMemoryProjectionInput, derive_runtime_guidelines,
     derive_runtime_memory_inventory, derive_runtime_skill_baseline,
 };
 use crate::canvas::append_visible_canvas_mounts;
@@ -256,6 +256,9 @@ impl<'a> OwnerBootstrapComposer<'a> {
         let memory_inventory = self
             .derive_memory_inventory(vfs.as_ref(), spec.identity, "owner_bootstrap")
             .await;
+        let discovered_guidelines = self
+            .derive_guidelines(vfs.as_ref(), spec.identity, "owner_bootstrap")
+            .await;
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -304,6 +307,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(runtime_mcp_servers)
             .with_resolved_capabilities(cap_output)
+            .with_discovered_guidelines(discovered_guidelines)
             .with_memory_inventory(memory_inventory)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
@@ -585,6 +589,18 @@ impl<'a> OwnerBootstrapComposer<'a> {
             diagnostics_label,
         })
         .await
+    }
+
+    async fn derive_guidelines(
+        &self,
+        active_vfs: Option<&Vfs>,
+        identity: Option<&AuthIdentity>,
+        diagnostics_label: &'static str,
+    ) -> Vec<DiscoveredGuideline> {
+        let Some(active_vfs) = active_vfs else {
+            return Vec::new();
+        };
+        derive_runtime_guidelines(self.vfs_service, active_vfs, identity, diagnostics_label).await
     }
 
     async fn build_owner_context_bundle(

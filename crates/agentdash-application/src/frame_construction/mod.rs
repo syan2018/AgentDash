@@ -367,6 +367,7 @@ pub(crate) fn build_envelope_from_frame(
     let mut capability_state = surface_draft.capability_state.clone();
     let mut mcp_servers = surface_draft.mcp_servers.clone();
     let mut context_bundle = None;
+    let mut discovered_guidelines = Vec::new();
     let mut memory_inventory = agentdash_spi::MemoryDiscoveryOutput::default();
 
     if let Some(config) = command.prompt().executor_config.clone() {
@@ -397,6 +398,7 @@ pub(crate) fn build_envelope_from_frame(
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
+        discovered_guidelines = extras.discovered_guidelines;
         memory_inventory = extras.memory_inventory;
         if let Some(cs) = surface_draft.capability_state.clone() {
             capability_state = Some(cs);
@@ -457,7 +459,7 @@ pub(crate) fn build_envelope_from_frame(
             environment_variables,
             identity: command.identity(),
             terminal_hook_effect_binding: hook_binding,
-            discovered_guidelines: Vec::new(),
+            discovered_guidelines,
             discovered_memory: memory_inventory,
         },
         working_directory,

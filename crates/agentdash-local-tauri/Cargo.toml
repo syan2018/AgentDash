@@ -8,6 +8,7 @@ build = "build.rs"
 
 [dependencies]
 agentdash-api = { path = "../agentdash-api" }
+agentdash-contracts = { path = "../agentdash-contracts" }
 agentdash-local = { path = "../agentdash-local", default-features = false }
 agentdash-relay = { path = "../agentdash-relay" }
 
@@ -20,7 +21,9 @@ agentdash-diagnostics = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+base64 = "0.22"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json"] }
+sha2 = "0.10"
 open = "5.3.3"
 
 tauri = { version = "2", features = ["tray-icon"] }

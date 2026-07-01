@@ -292,6 +292,33 @@ pub struct DeleteLlmProviderUserCredentialResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum CodexOAuthCredentialTargetDto {
+    GlobalProvider,
+    UserByok,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PrepareCodexOAuthRequest {
+    pub state: String,
+    pub code_challenge: String,
+    pub redirect_uri: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CompleteCodexOAuthRequest {
+    pub code: String,
+    pub state: String,
+    pub code_verifier: String,
+    pub redirect_uri: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct FailCodexOAuthRequest {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum CodexOAuthFlowStatusDto {
     Pending,
     Completed,

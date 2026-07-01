@@ -4,6 +4,10 @@ import type {
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
 } from '@agentdash/core/local-runtime'
+import type {
+  CodexOAuthStatusResponse,
+  StartCodexOAuthResponse,
+} from '../../app-web/src/generated/llm-provider-contracts'
 import { ensureTauriHost, isTauriHost } from './tauriHost'
 
 export type DesktopAppSettings = DesktopRuntimeSettings
@@ -14,7 +18,16 @@ export interface DesktopAppBridge {
   getAutostartStatus(): Promise<DesktopAutostartStatus>
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>
   getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>
+  startCodexOAuth(request: DesktopCodexOAuthStartRequest): Promise<StartCodexOAuthResponse>
+  cancelCodexOAuth(flowId: string): Promise<CodexOAuthStatusResponse>
   quit(): Promise<void>
+}
+
+export interface DesktopCodexOAuthStartRequest {
+  api_origin: string
+  access_token: string
+  provider_id: string
+  target: 'global_provider' | 'user_byok'
 }
 
 export function createTauriDesktopAppBridge(): DesktopAppBridge {
@@ -24,6 +37,8 @@ export function createTauriDesktopAppBridge(): DesktopAppBridge {
     getAutostartStatus: desktopAutostartIsEnabled,
     setAutostartEnabled: desktopAutostartSetEnabled,
     getDesktopApiSnapshot: desktopApiSnapshot,
+    startCodexOAuth: codexOAuthStart,
+    cancelCodexOAuth: codexOAuthCancel,
     quit: desktopQuitRequest,
   }
 }
@@ -56,6 +71,18 @@ export async function desktopQuitRequest(): Promise<void> {
 export async function desktopApiSnapshot(): Promise<DesktopApiSnapshot | null> {
   if (!isTauriHost()) return null
   return invoke('desktop_api_snapshot')
+}
+
+export async function codexOAuthStart(
+  request: DesktopCodexOAuthStartRequest,
+): Promise<StartCodexOAuthResponse> {
+  ensureTauriHost()
+  return invoke('codex_oauth_start', { request })
+}
+
+export async function codexOAuthCancel(flowId: string): Promise<CodexOAuthStatusResponse> {
+  ensureTauriHost()
+  return invoke('codex_oauth_cancel', { flowId })
 }
 
 export async function desktopSettingsLoadOrDefault(): Promise<DesktopAppSettings> {

@@ -1,11 +1,15 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@agentdash/ui";
 
 import type { LlmProvider, ProbeModelEntry, UpdateLlmProviderRequest } from "../../../api/llmProviders";
 import type { ModelInfo } from "../../executor-selector/model/types";
 import { useExecutorDiscoveredOptions } from "../../executor-selector";
-import { createAdminCodexOAuthActions, probeLlmProviderModels } from "../model/llmProviderActions";
+import {
+  createAdminCodexOAuthActions,
+  hasDesktopCodexOAuthBridge,
+  probeLlmProviderModels,
+} from "../model/llmProviderActions";
 import {
   CUSTOM_LLM_PROVIDER_PROTOCOLS,
   LLM_PROVIDER_PRESETS,
@@ -26,6 +30,10 @@ import {
   useLlmProvidersQuery,
   useUpdateLlmProviderMutation,
 } from "../model/llmProviderQueries";
+import {
+  BulkModelManagementPanel,
+  type BulkManageModelEntry,
+} from "./BulkModelManagementPanel";
 import { OAuthLoginWizard } from "./OAuthLoginWizard";
 import { btnPrimaryCls, Field, inputCls, SectionCard } from "./primitives";
 
@@ -39,6 +47,22 @@ function defaultOpenAiWireApi(baseUrl: string): "responses" | "completions" {
     return "responses";
   }
   return "completions";
+}
+
+function compareModelLabel(
+  a: { id: string; name: string },
+  b: { id: string; name: string },
+): number {
+  const nameCompare = a.name.localeCompare(b.name, "zh-Hans", {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (nameCompare !== 0) return nameCompare;
+
+  return a.id.localeCompare(b.id, "zh-Hans", {
+    numeric: true,
+    sensitivity: "base",
+  });
 }
 
 export function LlmProvidersSection({
@@ -272,7 +296,29 @@ function LlmProviderRow({
   onProviderChanged: () => Promise<void> | void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [saveConfirmed, setSaveConfirmed] = useState(false);
+  const saveConfirmedTimerRef = useRef<number | null>(null);
   const configured = provider.global_api_key_configured;
+
+  useEffect(() => {
+    return () => {
+      if (saveConfirmedTimerRef.current !== null) {
+        window.clearTimeout(saveConfirmedTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSaved = () => {
+    setExpanded(false);
+    setSaveConfirmed(true);
+    if (saveConfirmedTimerRef.current !== null) {
+      window.clearTimeout(saveConfirmedTimerRef.current);
+    }
+    saveConfirmedTimerRef.current = window.setTimeout(() => {
+      setSaveConfirmed(false);
+      saveConfirmedTimerRef.current = null;
+    }, 2400);
+  };
 
   return (
     <div className="rounded-[8px] border border-border bg-background/80">
@@ -291,6 +337,11 @@ function LlmProviderRow({
         {!provider.enabled && (
           <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
             已禁用
+          </span>
+        )}
+        {saveConfirmed && (
+          <span className="rounded-[6px] border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success">
+            已保存
           </span>
         )}
         {configured && provider.enabled && (
@@ -325,6 +376,7 @@ function LlmProviderRow({
           onSave={onSave}
           onDelete={onDelete}
           onProviderChanged={onProviderChanged}
+          onSaved={handleSaved}
         />
       )}
     </div>
@@ -340,6 +392,7 @@ function LlmProviderForm({
   onSave,
   onDelete,
   onProviderChanged,
+  onSaved,
 }: {
   provider: LlmProvider;
   discoveredModels: ModelInfo[];
@@ -349,6 +402,7 @@ function LlmProviderForm({
   onSave: (req: UpdateLlmProviderRequest) => Promise<void>;
   onDelete: () => void;
   onProviderChanged: () => Promise<void> | void;
+  onSaved: () => void;
 }) {
   const [name, setName] = useState(provider.name);
   const [apiKey, setApiKey] = useState(provider.global_api_key_preview ?? "");
@@ -361,6 +415,10 @@ function LlmProviderForm({
   const [models, setModels] = useState<LlmProviderModelConfig[]>(parseLlmProviderModelConfigs(provider.models));
   const [modelsTouched, setModelsTouched] = useState(false);
   const [blockedModels, setBlockedModels] = useState<string[]>(parseLlmProviderBlockedModels(provider.blocked_models));
+  const persistedBlockedModels = useMemo(
+    () => parseLlmProviderBlockedModels(provider.blocked_models),
+    [provider.blocked_models],
+  );
   const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -413,6 +471,8 @@ function LlmProviderForm({
       options.push({ id: c.id, name: c.name.trim() || c.id });
     }
 
+    options.sort(compareModelLabel);
+
     if (defaultModel.trim().length > 0 && !allIds.has(defaultModel)) {
       options.unshift({ id: defaultModel, name: `${defaultModel}（当前值）` });
     }
@@ -429,6 +489,16 @@ function LlmProviderForm({
     setBlockedModelsTouched(true);
   };
 
+  const replaceBlockedModels = (nextBlockedModels: string[]) => {
+    setBlockedModels(Array.from(new Set(nextBlockedModels.filter((modelId) => modelId.trim().length > 0))));
+    setBlockedModelsTouched(true);
+  };
+
+  const replaceModels = (nextModels: LlmProviderModelConfig[]) => {
+    setModels(nextModels);
+    setModelsTouched(true);
+  };
+
   const handleSave = async () => {
     const req: UpdateLlmProviderRequest = {};
     if (name !== provider.name) req.name = name;
@@ -441,16 +511,20 @@ function LlmProviderForm({
     if (modelsTouched) req.models = serializeLlmProviderModelConfigs(models);
     if (blockedModelsTouched) req.blocked_models = serializeLlmProviderBlockedModels(blockedModels);
 
-    if (Object.keys(req).length > 0) {
-      setSaveError(null);
-      try {
-        await onSave(req);
-        setApiKeyTouched(false);
-        setModelsTouched(false);
-        setBlockedModelsTouched(false);
-      } catch (e) {
-        setSaveError(e instanceof Error ? e.message : String(e));
-      }
+    setSaveError(null);
+    if (Object.keys(req).length === 0) {
+      onSaved();
+      return;
+    }
+
+    try {
+      await onSave(req);
+      setApiKeyTouched(false);
+      setModelsTouched(false);
+      setBlockedModelsTouched(false);
+      onSaved();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -481,6 +555,7 @@ function LlmProviderForm({
   }, [onProviderChanged]);
 
   const codexOAuthActions = useMemo(() => createAdminCodexOAuthActions(provider.id), [provider.id]);
+  const desktopCodexOAuthAvailable = hasDesktopCodexOAuthBridge();
 
   const handleAddModel = (initial?: LlmProviderModelConfig) => {
     const newModel: LlmProviderModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
@@ -577,6 +652,8 @@ function LlmProviderForm({
               manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
               completedMessage="Codex 登录已完成"
               failedMessage="Codex 登录失败"
+              disabled={!desktopCodexOAuthAvailable}
+              disabledMessage="ChatGPT OAuth 需要在 AgentDash 桌面端完成"
               surface="inline"
               className="shrink-0"
             />
@@ -654,12 +731,17 @@ function LlmProviderForm({
         discoveredModels={effectiveDiscoveredModels}
         customModels={models}
         blockedModels={blockedModels}
+        initialBlockedModels={persistedBlockedModels}
         isLoadingModels={isProbing || isLoadingModels}
+        saving={saving}
         onRefreshModels={handleProbeModels}
         onToggleBlocked={toggleBlockedModel}
+        onSetBlockedModels={replaceBlockedModels}
         onAddModel={handleAddModel}
         onRemoveModel={handleRemoveModel}
         onUpdateModel={handleUpdateModel}
+        onReplaceModels={replaceModels}
+        onSave={handleSave}
         probeError={probeError}
       />
 
@@ -720,32 +802,49 @@ function buildCustomModelTooltip(model: LlmProviderModelConfig): string {
   return lines.join("\n");
 }
 
+function isProviderPrefixedModel(id: string, name: string): boolean {
+  const candidates = [id, name].map((value) => value.trim()).filter((value) => value.length > 0);
+  return candidates.some((value) => /^[^/\s]+\/[^/]+$/.test(value));
+}
+
 function ModelManagementSection({
   discoveredModels,
   customModels,
   blockedModels,
+  initialBlockedModels,
   isLoadingModels,
+  saving,
   onRefreshModels,
   onToggleBlocked,
+  onSetBlockedModels,
   onAddModel,
   onRemoveModel,
   onUpdateModel,
+  onReplaceModels,
+  onSave,
   probeError,
 }: {
   discoveredModels: ModelInfo[];
   customModels: LlmProviderModelConfig[];
   blockedModels: string[];
+  initialBlockedModels: string[];
   isLoadingModels: boolean;
+  saving: boolean;
   onRefreshModels: () => void;
   onToggleBlocked: (modelId: string) => void;
+  onSetBlockedModels: (modelIds: string[]) => void;
   onAddModel: (initial?: LlmProviderModelConfig) => void;
   onRemoveModel: (index: number) => void;
   onUpdateModel: (index: number, field: keyof LlmProviderModelConfig, value: string | number | boolean) => void;
+  onReplaceModels: (models: LlmProviderModelConfig[]) => void;
+  onSave: () => Promise<void>;
   probeError?: string | null;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingDiscoveredId, setEditingDiscoveredId] = useState<string | null>(null);
+  const [bulkPanelOpen, setBulkPanelOpen] = useState(false);
+  const initialBlockedModelIds = useMemo(() => new Set(initialBlockedModels), [initialBlockedModels]);
 
   const dragRef = useRef<{ action: "block" | "unblock"; touched: Set<string> } | null>(null);
 
@@ -812,9 +911,64 @@ function ModelManagementSection({
   const enabledCount =
     trueDiscoveredModels.filter((m) => !blockedModels.includes(m.id)).length +
     pureCustomEntries.filter((e) => !blockedModels.includes(e.model.id)).length;
+  const bulkEntries: BulkManageModelEntry[] = [
+    ...trueDiscoveredModels.map((model): BulkManageModelEntry => {
+      const overrideIndex = findOverrideIndex(model.id);
+      const override = overrideIndex >= 0 ? customModels[overrideIndex] : null;
+      const name = override?.name || model.name || model.id;
+      return {
+        key: `d-${model.id}`,
+        id: model.id,
+        name,
+        source: "discovered",
+        enabled: !blockedModels.includes(model.id),
+        context_window: override?.context_window ?? model.context_window,
+        reasoning: override?.reasoning ?? model.reasoning,
+        supports_image: override?.supports_image ?? model.supports_image,
+        provider_prefixed: isProviderPrefixedModel(model.id, name),
+        has_override: overrideIndex >= 0,
+        discovered_model: model,
+      };
+    }),
+    ...pureCustomEntries.map(({ model, originalIndex }): BulkManageModelEntry => ({
+      key: `c-${originalIndex}`,
+      id: model.id,
+      name: model.name || model.id || "（未命名）",
+      source: "custom",
+      enabled: !blockedModels.includes(model.id),
+      context_window: model.context_window,
+      reasoning: model.reasoning,
+      supports_image: model.supports_image,
+      provider_prefixed: isProviderPrefixedModel(model.id, model.name),
+      has_override: false,
+      custom_index: originalIndex,
+    })),
+  ].sort((a, b) => {
+    const aInitiallyEnabled = !initialBlockedModelIds.has(a.id);
+    const bInitiallyEnabled = !initialBlockedModelIds.has(b.id);
+    if (aInitiallyEnabled !== bInitiallyEnabled) return aInitiallyEnabled ? -1 : 1;
+    return compareModelLabel(a, b);
+  });
+  const hasBulkModels = bulkEntries.some((entry) => entry.id.trim().length > 0);
+  const displayEntries = bulkEntries;
+
+  const updateBulkEntry = (
+    entry: BulkManageModelEntry,
+    field: keyof LlmProviderModelConfig,
+    value: string | number | boolean,
+  ) => {
+    if (entry.source === "discovered" && entry.discovered_model) {
+      handleDiscoveredOverride(entry.discovered_model, field, value);
+      return;
+    }
+    if (entry.source === "custom" && entry.custom_index !== undefined) {
+      onUpdateModel(entry.custom_index, field, value);
+    }
+  };
 
   return (
-    <div className="space-y-2">
+    <>
+      <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="space-y-0.5">
@@ -825,19 +979,30 @@ function ModelManagementSection({
               : "暂无模型，点击「探测」发现可用模型"}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRefreshModels}
-          disabled={isLoadingModels}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-          title="用当前表单配置实时探测可用模型（无需先保存）"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isLoadingModels ? "animate-spin" : ""}>
-            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-            <path d="M21 3v5h-5" />
-          </svg>
-          {isLoadingModels ? "探测中…" : "探测"}
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {hasBulkModels && (
+            <button
+              type="button"
+              onClick={() => setBulkPanelOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              批量管理
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRefreshModels}
+            disabled={isLoadingModels}
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+            title="用当前表单配置实时探测可用模型（无需先保存）"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={isLoadingModels ? "animate-spin" : ""}>
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+            {isLoadingModels ? "探测中…" : "探测"}
+          </button>
+        </div>
       </div>
 
       {probeError && (
@@ -852,87 +1017,81 @@ function ModelManagementSection({
         onPointerUp={handleDragEnd}
         onPointerLeave={handleDragEnd}
       >
-        {/* Discovered models — 整体是一个统一的 chip */}
-        {trueDiscoveredModels.map((model) => {
-          const enabled = !blockedModels.includes(model.id);
-          const hasOverride = findOverrideIndex(model.id) >= 0;
-          const overrideConfig = hasOverride ? customModels[findOverrideIndex(model.id)] : null;
-          const isEditing = editingDiscoveredId === model.id;
-          const effectiveTooltip = buildModelTooltip({
-            ...model,
-            ...(overrideConfig ? {
-              reasoning: overrideConfig.reasoning,
-              supports_image: overrideConfig.supports_image,
-              context_window: overrideConfig.context_window,
-            } : {}),
-          });
-
-          return (
-            <span
-              key={`d-${model.id}`}
-              className={`group relative inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
-                isEditing
-                  ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
-                  : enabled
-                    ? "border-success/30 bg-success/10 text-success hover:bg-success/15"
-                    : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
-              }`}
-              title={effectiveTooltip}
-              onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
-              onPointerEnter={() => handleDragEnter(model.id)}
-            >
-              <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
-                isEditing ? "bg-primary" : enabled ? "bg-success" : "bg-muted-foreground/30"
-              }`} />
-              <span className={enabled ? "" : "line-through opacity-60"}>
-                {(overrideConfig?.name || model.name || model.id)}
-              </span>
-              {hasOverride && (
-                // eslint-disable-next-line no-restricted-syntax -- 1px 圆点指示
-                <span className="inline-block h-1 w-1 rounded-full bg-warning" title="已自定义属性" />
-              )}
-              {/* Hover 浮现的编辑按钮 — 不会破坏标签轮廓 */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditingDiscoveredId(isEditing ? null : model.id);
-                }}
-                className="ml-0.5 hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-black/10 dark:hover:bg-white/10"
-                onPointerDown={(e) => e.stopPropagation()}
-                title="编辑属性"
+        {displayEntries.map((entry) => {
+          if (entry.source === "discovered" && entry.discovered_model) {
+            const model = entry.discovered_model;
+            const isEditing = editingDiscoveredId === model.id;
+            const effectiveTooltip = buildModelTooltip({
+              ...model,
+              reasoning: entry.reasoning,
+              supports_image: entry.supports_image,
+              context_window: entry.context_window,
+            });
+            return (
+              <span
+                key={entry.key}
+                className={`group relative inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
+                  isEditing
+                    ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
+                    : entry.enabled
+                      ? "border-success/30 bg-success/10 text-success hover:bg-success/15"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
+                }`}
+                title={effectiveTooltip}
+                onPointerDown={(e) => { e.preventDefault(); handleDragStart(model.id); }}
+                onPointerEnter={() => handleDragEnter(model.id)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m12 20 9-11-4-4-9 11 1 5 3-1Z" />
-                </svg>
-              </button>
-            </span>
-          );
-        })}
+                <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
+                  isEditing ? "bg-primary" : entry.enabled ? "bg-success" : "bg-muted-foreground/30"
+                }`} />
+                <span className={entry.enabled ? "" : "line-through opacity-60"}>
+                  {entry.name}
+                </span>
+                {entry.has_override && (
+                  // eslint-disable-next-line no-restricted-syntax -- 1px 圆点指示
+                  <span className="inline-block h-1 w-1 rounded-full bg-warning" title="已自定义属性" />
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingDiscoveredId(isEditing ? null : model.id);
+                  }}
+                  className="ml-0.5 hidden rounded p-0.5 transition-colors group-hover:inline-flex hover:bg-black/10 dark:hover:bg-white/10"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  title="编辑属性"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m12 20 9-11-4-4-9 11 1 5 3-1Z" />
+                  </svg>
+                </button>
+              </span>
+            );
+          }
 
-        {/* Pure custom models — 支持屏蔽和拖拽 */}
-        {pureCustomEntries.map(({ model: m, originalIndex }) => {
+          const originalIndex = entry.custom_index ?? -1;
+          const customModel = originalIndex >= 0 ? customModels[originalIndex] : null;
+          if (!customModel) return null;
           const isEditing = editingIndex === originalIndex;
-          const enabled = !blockedModels.includes(m.id);
           return (
             <span
-              key={`c-${originalIndex}`}
+              key={entry.key}
               className={`group relative inline-flex touch-none items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-all ${
                 isEditing
                   ? "border-primary/40 bg-primary/8 text-primary ring-1 ring-primary/20"
-                  : enabled
+                  : entry.enabled
                     ? "border-blue-500/30 bg-blue-500/8 text-blue-700 hover:bg-blue-500/15 dark:text-blue-300"
                     : "border-border bg-muted/40 text-muted-foreground hover:bg-muted/60"
               }`}
-              title={buildCustomModelTooltip(m)}
-              onPointerDown={(e) => { if (m.id.trim()) { e.preventDefault(); handleDragStart(m.id); } }}
-              onPointerEnter={() => { if (m.id.trim()) handleDragEnter(m.id); }}
+              title={buildCustomModelTooltip(customModel)}
+              onPointerDown={(e) => { if (entry.id.trim()) { e.preventDefault(); handleDragStart(entry.id); } }}
+              onPointerEnter={() => { if (entry.id.trim()) handleDragEnter(entry.id); }}
             >
               <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full transition-colors ${
-                isEditing ? "bg-primary" : enabled ? "bg-blue-500" : "bg-muted-foreground/30"
+                isEditing ? "bg-primary" : entry.enabled ? "bg-blue-500" : "bg-muted-foreground/30"
               }`} />
-              <span className={enabled ? "" : "line-through opacity-60"}>
-                {m.name || m.id || "（未命名）"}
+              <span className={entry.enabled ? "" : "line-through opacity-60"}>
+                {entry.name}
               </span>
               <button
                 type="button"
@@ -1015,7 +1174,21 @@ function ModelManagementSection({
           onCancel={() => setShowAddForm(false)}
         />
       )}
-    </div>
+      </div>
+      <BulkModelManagementPanel
+        open={bulkPanelOpen}
+        entries={bulkEntries}
+        customModels={customModels}
+        trueDiscoveredIds={trueDiscoveredIds}
+        blockedModels={blockedModels}
+        saving={saving}
+        onClose={() => setBulkPanelOpen(false)}
+        onSetBlockedModels={onSetBlockedModels}
+        onUpdateEntry={updateBulkEntry}
+        onReplaceModels={onReplaceModels}
+        onSave={onSave}
+      />
+    </>
   );
 }
 

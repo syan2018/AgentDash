@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Defines desktop external API mode, Tauri command boundaries, DashboardHost behavior, and local runtime bridge ownership for device-local capabilities."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Defines generated DTO ownership for LLM Provider and frontend/backend contract drift requirements."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Defines cloud vs local backend authority and API/application/domain responsibility boundaries."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Defines stable API error mapping required for prepare/complete/cancel/fail endpoints."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Defines diagnostics and secret redaction expectations for OAuth code/token handling."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Defines generated wire type consumption and forbids parallel frontend DTO declarations."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Defines UI/model separation expectations for settings OAuth wizard changes."}

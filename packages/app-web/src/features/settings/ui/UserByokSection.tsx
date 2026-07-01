@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { llmProvidersApi, type EffectiveLlmProvider } from "../../../api/llmProviders";
+import type { EffectiveLlmProvider } from "../../../api/llmProviders";
+import { createUserCodexOAuthActions, hasDesktopCodexOAuthBridge } from "../model/llmProviderActions";
 import {
   useDeleteUserCredentialMutation,
   useEffectiveLlmProvidersQuery,
@@ -220,6 +221,8 @@ function CodexCredentialRow({
   onCompleted: () => Promise<void>;
   onDelete: () => void;
 }) {
+  const codexOAuthActions = createUserCodexOAuthActions(provider.id);
+  const desktopCodexOAuthAvailable = hasDesktopCodexOAuthBridge();
   const statusText = provider.user_api_key_configured
     ? `${provider.user_api_key_preview ?? "ChatGPT OAuth"} · ${credentialVerificationLabel(provider)}`
     : "未验证";
@@ -233,9 +236,9 @@ function CodexCredentialRow({
         </div>
         <div className="flex shrink-0 flex-wrap items-start gap-2">
           <OAuthLoginWizard
-            start={() => llmProvidersApi.startUserCodexOAuth(provider.id)}
-            getStatus={llmProvidersApi.getCodexOAuthStatus}
-            cancel={llmProvidersApi.cancelCodexOAuth}
+            start={codexOAuthActions.start}
+            getStatus={codexOAuthActions.getStatus}
+            cancel={codexOAuthActions.cancel}
             onCompleted={onCompleted}
             idleLabel={provider.user_api_key_configured ? "重新验证 ChatGPT" : "通过 ChatGPT 登录"}
             authLinkLabel="打开 ChatGPT 授权页"
@@ -243,7 +246,8 @@ function CodexCredentialRow({
             manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
             completedMessage="个人 Codex 登录已完成"
             failedMessage="个人 Codex 登录失败"
-            disabled={saving}
+            disabled={saving || !desktopCodexOAuthAvailable}
+            disabledMessage={!desktopCodexOAuthAvailable ? "ChatGPT OAuth 需要在 AgentDash 桌面端完成" : undefined}
             surface="inline"
           />
           <button

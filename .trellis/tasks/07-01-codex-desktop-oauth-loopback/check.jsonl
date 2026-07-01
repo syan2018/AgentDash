@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Check that the implementation preserves release external API mode and keeps device-local loopback work inside the Tauri host."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated LLM Provider DTO updates and contract check coverage."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check prepare/complete/fail/cancel endpoint errors map to stable client behavior."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Check OAuth secrets, verifier, access token, refresh token, and bearer headers are not logged or surfaced."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check frontend consumes generated DTOs and does not introduce hand-written wire unions."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Check settings UI changes keep OAuth flow logic separated from presentation components."}
+{"command": "cargo test -p agentdash-local-tauri codex_oauth", "result": "passed", "coverage": "Tauri PKCE helper, API origin normalization, callback success, state mismatch, and missing code branches."}
+{"command": "cargo test -p agentdash-contracts", "result": "passed", "coverage": "Contract crate unit/doc tests after adding desktop Codex OAuth DTOs."}
+{"command": "cargo test -p agentdash-api llm_providers", "result": "passed", "coverage": "LLM Provider mapping plus Codex OAuth prepare/status/claim state mismatch, expiry, wrong user, cancel, and duplicate completion guards."}
+{"command": "cargo test -p agentdash-api oauth_flow", "result": "passed", "coverage": "Existing PKCE challenge and authorize URL helper behavior."}
+{"command": "pnpm run contracts:check", "result": "passed", "coverage": "Generated TypeScript contract drift check, including llm-provider-contracts.ts."}
+{"command": "pnpm run frontend:check", "result": "passed", "coverage": "app-web TypeScript check after settings OAuth bridge changes."}
+{"command": "pnpm run desktop:frontend:check", "result": "passed", "coverage": "app-tauri TypeScript check after desktop bridge extension."}
+{"command": "cargo check -p agentdash-local-tauri", "result": "passed", "coverage": "Tauri Rust command registration and local OAuth module dependency surface."}

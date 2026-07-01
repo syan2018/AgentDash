@@ -101,11 +101,12 @@ use agentdash_contracts::external_marketplace::{
     RefreshExternalMarketplaceAssetResponse,
 };
 use agentdash_contracts::llm_provider::{
-    CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
-    DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
-    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmCredentialModeDto,
-    LlmCredentialSourceDto, LlmCredentialVerificationStatusDto, LlmProviderAdminDto,
-    LlmProviderProtocol, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
+    CompleteCodexOAuthRequest, CreateLlmProviderRequest, DeleteLlmProviderResponse,
+    DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
+    FailCodexOAuthRequest, LlmCredentialModeDto, LlmCredentialSourceDto,
+    LlmCredentialVerificationStatusDto, LlmProviderAdminDto, LlmProviderProtocol,
+    PrepareCodexOAuthRequest, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
     ReorderLlmProvidersRequest, ReorderLlmProvidersResponse, StartCodexOAuthResponse,
     UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
@@ -603,6 +604,10 @@ fn main() {
             export_all::<ProbeLlmProviderModelDto>(dir);
             export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
             export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
+            export_all::<CodexOAuthCredentialTargetDto>(dir);
+            export_all::<PrepareCodexOAuthRequest>(dir);
+            export_all::<CompleteCodexOAuthRequest>(dir);
+            export_all::<FailCodexOAuthRequest>(dir);
             export_all::<CodexOAuthFlowStatusDto>(dir);
             export_all::<StartCodexOAuthResponse>(dir);
             export_all::<CodexOAuthStatusResponse>(dir);

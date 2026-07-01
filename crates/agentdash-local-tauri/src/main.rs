@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod codex_oauth;
+
 use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -19,6 +21,7 @@ use agentdash_local::{
     save_desktop_runtime_profile_with_server_origin,
 };
 use agentdash_relay::BrowseDirectoryEntry;
+use codex_oauth::{codex_oauth_cancel, codex_oauth_start};
 use serde::Serialize;
 use tauri::menu::MenuBuilder;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -639,6 +642,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            codex_oauth_cancel,
+            codex_oauth_start,
             desktop_autostart_is_enabled,
             desktop_autostart_set_enabled,
             desktop_api_snapshot,

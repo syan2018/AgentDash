@@ -10,6 +10,10 @@ import type {
   LocalRuntimeProfile,
 } from '@agentdash/core/local-runtime';
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser';
+import type {
+  CodexOAuthStatusResponse,
+  StartCodexOAuthResponse,
+} from '../generated/llm-provider-contracts';
 import { ensureDesktopDefaultsLoaded, resolveDefaultLocalRuntimeServerUrl } from './defaults';
 
 declare global {
@@ -20,13 +24,22 @@ declare global {
   }
 }
 
-interface DesktopAppBridge {
+export interface DesktopAppBridge {
   loadSettings(): Promise<DesktopRuntimeSettings>;
   saveSettings(settings: DesktopRuntimeSettings): Promise<DesktopRuntimeSettings>;
   getAutostartStatus(): Promise<DesktopAutostartStatus>;
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>;
   getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>;
+  startCodexOAuth(request: DesktopCodexOAuthStartRequest): Promise<StartCodexOAuthResponse>;
+  cancelCodexOAuth(flowId: string): Promise<CodexOAuthStatusResponse>;
   quit(): Promise<void>;
+}
+
+export interface DesktopCodexOAuthStartRequest {
+  api_origin: string;
+  access_token: string;
+  provider_id: string;
+  target: 'global_provider' | 'user_byok';
 }
 
 const DESKTOP_RUNTIME_AUTO_CONNECT_MAX_ATTEMPTS = 8;

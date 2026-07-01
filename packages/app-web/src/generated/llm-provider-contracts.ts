@@ -3,9 +3,13 @@
 
 import type { JsonValue } from "./common-contracts";
 
+export type CodexOAuthCredentialTargetDto = "global_provider" | "user_byok";
+
 export type CodexOAuthFlowStatusDto = "pending" | "completed" | "failed";
 
 export type CodexOAuthStatusResponse = { flow_id: string, status: CodexOAuthFlowStatusDto, message?: string, };
+
+export type CompleteCodexOAuthRequest = { code: string, state: string, code_verifier: string, redirect_uri: string, };
 
 export type CreateLlmProviderRequest = { name: string, slug: string, protocol: LlmProviderProtocol, credential_mode?: LlmCredentialModeDto, global_api_key?: string, base_url?: string, wire_api?: string, default_model?: string, models?: JsonValue, blocked_models?: JsonValue, env_api_key?: string, discovery_url?: string, enabled?: boolean, };
 
@@ -17,6 +21,8 @@ export type EffectiveLlmModelProfileDto = { id: string, name: string, provider_i
 
 export type EffectiveLlmProviderDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, base_url: string, wire_api: string, resolved_wire_api?: string, default_model: string, models: JsonValue, effective_models: Array<EffectiveLlmModelProfileDto>, model_discovery_status: string, model_discovery_message?: string, blocked_models: JsonValue, discovery_url: string, enabled: boolean, executable: boolean, effective_api_key_source: LlmCredentialSourceDto, user_api_key_configured: boolean, user_credential_verification_status: LlmCredentialVerificationStatusDto, user_api_key_preview?: string, user_credential_verification_message?: string, user_credential_verified_at?: string, status: string, unavailable_reason?: string, };
 
+export type FailCodexOAuthRequest = { message: string, };
+
 export type LlmCredentialModeDto = "global_only" | "global_or_user" | "user_required";
 
 export type LlmCredentialSourceDto = "global_db" | "global_env" | "user_byok" | "none";
@@ -26,6 +32,8 @@ export type LlmCredentialVerificationStatusDto = "unverified" | "verified" | "fa
 export type LlmProviderAdminDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, global_api_key_configured: boolean, global_api_key_preview?: string, global_api_key_source: LlmCredentialSourceDto, base_url: string, wire_api: string, default_model: string, models: JsonValue, blocked_models: JsonValue, env_api_key: string, discovery_url: string, sort_order: number, enabled: boolean, created_at: string, updated_at: string, };
 
 export type LlmProviderProtocol = "anthropic" | "gemini" | "openai_compatible" | "openai_codex";
+
+export type PrepareCodexOAuthRequest = { state: string, code_challenge: string, redirect_uri: string, };
 
 export type ProbeLlmProviderModelDto = { id: string, name: string, };
 

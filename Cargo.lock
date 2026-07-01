@@ -652,15 +652,18 @@ name = "agentdash-local-tauri"
 version = "0.1.0"
 dependencies = [
  "agentdash-api",
+ "agentdash-contracts",
  "agentdash-diagnostics",
  "agentdash-local",
  "agentdash-relay",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "open",
  "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

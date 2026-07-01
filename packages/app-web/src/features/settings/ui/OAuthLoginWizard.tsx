@@ -32,6 +32,7 @@ interface OAuthLoginWizardProps {
   completedMessage?: string;
   failedMessage?: string;
   disabled?: boolean;
+  disabledMessage?: string;
   className?: string;
   buttonClassName?: string;
   surface?: "panel" | "inline";
@@ -69,6 +70,7 @@ export function OAuthLoginWizard({
   completedMessage = "登录已完成",
   failedMessage = "登录失败",
   disabled = false,
+  disabledMessage,
   className,
   buttonClassName = btnPrimaryCls,
   surface = "panel",
@@ -160,6 +162,7 @@ export function OAuthLoginWizard({
   const rootClassName = surface === "panel"
     ? "rounded-[8px] border border-border bg-muted/20 p-3"
     : "space-y-2";
+  const visibleMessage = message ?? (disabled ? disabledMessage ?? null : null);
 
   return (
     <div className={cn(rootClassName, className)}>
@@ -192,9 +195,9 @@ export function OAuthLoginWizard({
           </a>
         )}
       </div>
-      {message && (
+      {visibleMessage && (
         <p className={cn("mt-2 text-xs", status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-          {message}
+          {visibleMessage}
         </p>
       )}
     </div>

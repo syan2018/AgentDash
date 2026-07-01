@@ -3,7 +3,7 @@
   "name": "memory-context-delta-visibility",
   "title": "收束 Memory Context 动态更新与前端展示",
   "description": "",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,

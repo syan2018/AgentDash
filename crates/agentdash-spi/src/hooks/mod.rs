@@ -34,6 +34,7 @@ pub mod context_usage_kind {
     pub const MCP_TOOLS: &str = "mcp_tools";
     pub const AGENTS: &str = "agents";
     pub const SKILLS: &str = "skills";
+    pub const MEMORY: &str = "memory";
 }
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -604,6 +605,21 @@ pub enum ContextFrameSection {
         #[serde(default)]
         changed_skills: Vec<RuntimeSkillEntry>,
     },
+    MemoryInventory {
+        title: String,
+        summary: String,
+        mode: RuntimeMemoryInventoryMode,
+        #[serde(default)]
+        sources: Vec<RuntimeMemorySourceEntry>,
+        #[serde(default)]
+        diagnostics: Vec<RuntimeMemoryDiagnosticEntry>,
+        #[serde(default)]
+        added_sources: Vec<RuntimeMemorySourceEntry>,
+        #[serde(default)]
+        removed_sources: Vec<RuntimeMemorySourceEntry>,
+        #[serde(default)]
+        changed_sources: Vec<RuntimeMemorySourceEntry>,
+    },
     CompanionAgentRosterDelta {
         #[serde(default)]
         added_agents: Vec<RuntimeCompanionAgentEntry>,
@@ -749,6 +765,47 @@ pub struct RuntimeSkillEntry {
     pub exposure: crate::platform::skill_discovery::SkillContextExposure,
     #[serde(default)]
     pub disable_model_invocation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMemoryInventoryMode {
+    #[default]
+    Snapshot,
+    Delta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeMemorySourceEntry {
+    pub provider_key: String,
+    pub source_key: String,
+    pub display_name: String,
+    pub source_uri: String,
+    pub index_uri: String,
+    pub mount_id: String,
+    pub scope: String,
+    pub index_status: String,
+    pub trust_level: String,
+    pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeMemoryDiagnosticEntry {
+    pub provider_key: String,
+    pub code: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage_kind: Option<String>,
 }

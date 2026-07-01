@@ -20,7 +20,7 @@ use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::runtime_capability::apply_runtime_capability_transition;
 use crate::session::{CapabilityState, PendingCapabilityStateTransition};
-use agentdash_spi::{CapabilityStateDelta, compute_capability_state_delta};
+use agentdash_spi::{CapabilityStateDelta, MemoryDiscoveryOutput, compute_capability_state_delta};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {
@@ -64,6 +64,8 @@ pub(crate) fn build_initial_capability_state_frame(
         state_delta: Some(&state_delta),
         tool_schemas,
         skill_entries: &capability_state.skill.skills,
+        before_memory_inventory: None,
+        after_memory_inventory: &capability_state.memory.inventory,
         companion_agents: &capability_state.companion.agents,
     })
 }
@@ -203,6 +205,8 @@ impl SessionRuntimeInner {
                 state_delta: Some(&state_delta),
                 tool_schemas: input.tool_schemas,
                 skill_entries: &pending_after_state.skill.skills,
+                before_memory_inventory: Some(&pending_event_before_state.memory.inventory),
+                after_memory_inventory: &pending_after_state.memory.inventory,
                 companion_agents: &pending_after_state.companion.agents,
             });
             application.context_frames.push(notice);
@@ -277,6 +281,11 @@ fn build_live_context_frame(
         state_delta: Some(state_delta),
         tool_schemas,
         skill_entries: &input.after_state.skill.skills,
+        before_memory_inventory: input
+            .before_state
+            .as_ref()
+            .map(|state| &state.memory.inventory),
+        after_memory_inventory: &input.after_state.memory.inventory,
         companion_agents: &input.after_state.companion.agents,
     });
     context_frame::build_context_frame(&metadata)
@@ -296,6 +305,8 @@ struct RuntimeContextUpdateFrameInput<'a> {
     state_delta: Option<&'a CapabilityStateDelta>,
     tool_schemas: &'a [RuntimeToolSchemaEntry],
     skill_entries: &'a [agentdash_spi::context::capability::SkillEntry],
+    before_memory_inventory: Option<&'a MemoryDiscoveryOutput>,
+    after_memory_inventory: &'a MemoryDiscoveryOutput,
     companion_agents: &'a [agentdash_spi::context::capability::CompanionAgentEntry],
 }
 
@@ -333,6 +344,13 @@ impl RuntimeContextUpdateFrame {
             dimensions.push(d);
         }
         if let Some(d) = dimension::vfs::VfsDimensionDelta::from_state_delta(input.state_delta) {
+            dimensions.push(d);
+        }
+        if let Some(d) = dimension::memory::MemoryDimensionDelta::from_state_delta(
+            input.state_delta,
+            input.before_memory_inventory,
+            input.after_memory_inventory,
+        ) {
             dimensions.push(d);
         }
         if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(
@@ -456,8 +474,11 @@ mod tests {
     use agentdash_agent_types::{
         AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
     };
+    use agentdash_domain::common::MountCapability;
     use agentdash_spi::{
-        SkillContextExposure, ToolCapability, context::capability::SkillEntry, context_usage_kind,
+        DiscoveredMemorySource, MemoryDiscoveryCluster, MemoryDiscoveryOutput, MemoryIndexStatus,
+        MemorySourceFormat, MemorySourceScope, MemorySourceTrustLevel, SkillContextExposure,
+        ToolCapability, context::capability::SkillEntry, context_usage_kind,
     };
     use async_trait::async_trait;
     use serde_json::Value;
@@ -519,6 +540,32 @@ mod tests {
             base_dir: Some("external-integration://skills/jira-issue-lookup".to_string()),
             exposure: SkillContextExposure::DefaultExposed,
             disable_model_invocation: false,
+        }
+    }
+
+    fn memory_inventory(summary: &str) -> MemoryDiscoveryOutput {
+        MemoryDiscoveryOutput {
+            clusters: vec![MemoryDiscoveryCluster {
+                provider_key: "builtin.project_agent_memory".to_string(),
+                display_name: "ProjectAgent Memory".to_string(),
+                sources: vec![DiscoveredMemorySource {
+                    provider_key: "builtin.project_agent_memory".to_string(),
+                    source_key: "agent".to_string(),
+                    display_name: "Agent Memory".to_string(),
+                    source_uri: "agent://".to_string(),
+                    index_uri: "agent://MEMORY.md".to_string(),
+                    mount_id: "agent".to_string(),
+                    scope: MemorySourceScope::Agent,
+                    capabilities: vec![MountCapability::Read, MountCapability::Write],
+                    format: MemorySourceFormat::AgentDash,
+                    index_status: MemoryIndexStatus::Present,
+                    trust_level: MemorySourceTrustLevel::FirstParty,
+                    summary: Some(summary.to_string()),
+                    bounded_index_content: Some("- [Project](topics/project.md)".to_string()),
+                }],
+                ..Default::default()
+            }],
+            diagnostics: Vec::new(),
         }
     }
 
@@ -631,6 +678,44 @@ mod tests {
         );
         assert!(notice.rendered_text.contains("## Skill Delta"));
         assert!(!notice.rendered_text.contains("Capability State Update"));
+    }
+
+    #[test]
+    fn live_context_frame_includes_memory_inventory_delta() {
+        let before_state = CapabilityState::default();
+        let mut after_state = CapabilityState::default();
+        after_state.memory.inventory = memory_inventory("Current project memory index");
+        let input = LiveRuntimeContextTransitionInput {
+            delivery_runtime_session_id: "session-1".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            phase_node: "memory-refresh".to_string(),
+            before_state: Some(before_state),
+            after_state,
+            capability_keys: BTreeSet::new(),
+            key_delta: SetDelta::default(),
+            apply_mode: "live",
+        };
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &[]);
+
+        let added_sources = notice
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::MemoryInventory { added_sources, .. } => Some(added_sources),
+                _ => None,
+            })
+            .expect("memory-only semantic delta should render a memory section");
+        assert_eq!(added_sources.len(), 1);
+        assert_eq!(added_sources[0].source_uri, "agent://");
+        assert_eq!(added_sources[0].index_uri, "agent://MEMORY.md");
+        assert!(notice.rendered_text.contains("## Memory Inventory Delta"));
+        assert!(notice.rendered_text.contains("agent://MEMORY.md"));
     }
 
     #[test]

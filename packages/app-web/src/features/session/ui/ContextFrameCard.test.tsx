@@ -133,6 +133,19 @@ describe("ContextFrameCard", () => {
     expect(markup).toContain("explicit only");
   });
 
+  it("渲染 memory inventory delta", () => {
+    const markup = renderToStaticMarkup(
+      <ContextFrameCard frame={readFrame(sampleMemoryDeltaNotice())} defaultExpanded />,
+    );
+    expect(markup).toContain("MEMORY UPDATE");
+    expect(markup).toContain("Memory Inventory");
+    expect(markup).toContain("+1");
+    expect(markup).toContain("Agent Memory");
+    expect(markup).toContain("builtin.project_agent_memory");
+    expect(markup).toContain("present");
+    expect(markup).toContain("rev abc123");
+  });
+
   it("有能力 key 增删时仍展示 capability delta", () => {
     const markup = renderToStaticMarkup(
       <ContextFrameCard frame={readFrame(sampleCapabilityKeyDeltaNotice())} defaultExpanded />,
@@ -475,6 +488,61 @@ function sampleSkillDeltaNotice(): Record<string, unknown> {
             exposure: "explicit_only",
           },
         ],
+      },
+    ],
+  };
+}
+
+function sampleMemoryDeltaNotice(): Record<string, unknown> {
+  return {
+    id: "memory-delta-1",
+    kind: "capability_state_delta",
+    source: "runtime_context_update",
+    phase_node: "memory-refresh",
+    delivery_status: "queued_for_transform_context",
+    delivery_channel: "turn_start",
+    message_role: "user",
+    rendered_text: "## Memory Inventory Delta",
+    created_at_ms: 1,
+    sections: [
+      {
+        kind: "memory_inventory",
+        title: "Memory Inventory Delta",
+        summary: "Runtime-discovered memory sources changed.",
+        mode: "delta",
+        sources: [
+          {
+            provider_key: "builtin.project_agent_memory",
+            source_key: "agent",
+            display_name: "Agent Memory",
+            source_uri: "agent://",
+            index_uri: "agent://MEMORY.md",
+            mount_id: "agent",
+            scope: "agent",
+            index_status: "present",
+            trust_level: "first_party",
+            revision: "abc123456789",
+            context_usage_kind: "memory",
+          },
+        ],
+        diagnostics: [],
+        added_sources: [
+          {
+            provider_key: "builtin.project_agent_memory",
+            source_key: "agent",
+            display_name: "Agent Memory",
+            source_uri: "agent://",
+            index_uri: "agent://MEMORY.md",
+            mount_id: "agent",
+            scope: "agent",
+            index_status: "present",
+            trust_level: "first_party",
+            revision: "abc123456789",
+            context_usage_kind: "memory",
+          },
+        ],
+        removed_sources: [],
+        changed_sources: [],
       },
     ],
   };

@@ -1,11 +1,16 @@
 //! 动态发现的 memory context 帧。
 
-use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
+use agentdash_spi::hooks::{
+    ContextFrame, ContextFrameSection, RuntimeEventSource, RuntimeMemoryInventoryMode,
+};
 use agentdash_spi::{
     DiscoveredMemorySource, MemoryDiscoveryDiagnostic, MemoryDiscoveryOutput, MemoryIndexStatus,
 };
 
 use super::context_frame::{self, ContextFramePayload};
+use super::memory_inventory_entries::{
+    flatten_memory_sources, runtime_memory_diagnostic_entry, runtime_memory_source_entry,
+};
 
 pub(crate) const MEMORY_CONTEXT_FRAME_KIND: &str = "memory_context";
 
@@ -16,12 +21,7 @@ pub(crate) struct MemoryContextFrameInput<'a> {
 pub(crate) fn build_memory_context_frame(
     input: &MemoryContextFrameInput<'_>,
 ) -> Option<ContextFrame> {
-    let sources = input
-        .inventory
-        .clusters
-        .iter()
-        .flat_map(|cluster| cluster.sources.iter().cloned())
-        .collect::<Vec<_>>();
+    let sources = flatten_memory_sources(input.inventory);
     let diagnostics = input.inventory.diagnostics.clone();
     if sources.is_empty() && diagnostics.is_empty() {
         return None;
@@ -65,10 +65,23 @@ impl ContextFramePayload for MemoryContextFrame {
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
-        vec![ContextFrameSection::SystemNotice {
+        vec![ContextFrameSection::MemoryInventory {
             title: "Memory Context".to_string(),
             summary: "Runtime-discovered memory source inventory and index pointers.".to_string(),
-            body: Some(self.rendered_text()),
+            mode: RuntimeMemoryInventoryMode::Snapshot,
+            sources: self
+                .sources
+                .iter()
+                .map(runtime_memory_source_entry)
+                .collect(),
+            diagnostics: self
+                .diagnostics
+                .iter()
+                .map(runtime_memory_diagnostic_entry)
+                .collect(),
+            added_sources: Vec::new(),
+            removed_sources: Vec::new(),
+            changed_sources: Vec::new(),
         }]
     }
 
@@ -245,6 +258,25 @@ mod tests {
             frame.delivery_metadata.model_channel,
             agentdash_spi::ContextModelChannel::Context
         );
+        let section = frame.sections.first().expect("memory section");
+        match section {
+            ContextFrameSection::MemoryInventory {
+                mode,
+                sources,
+                diagnostics,
+                ..
+            } => {
+                assert_eq!(
+                    *mode,
+                    agentdash_spi::hooks::RuntimeMemoryInventoryMode::Snapshot
+                );
+                assert_eq!(sources.len(), 1);
+                assert_eq!(sources[0].source_uri, "agent://");
+                assert_eq!(sources[0].index_uri, "agent://MEMORY.md");
+                assert!(diagnostics.is_empty());
+            }
+            other => panic!("expected memory inventory section, got {other:?}"),
+        }
         assert!(frame.rendered_text.contains("Default source: `agent://`"));
         assert!(
             frame

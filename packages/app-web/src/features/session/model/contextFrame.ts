@@ -81,6 +81,7 @@ export type ContextFrameSection =
   | VfsDeltaSection
   | ToolSchemaDeltaSection
   | SkillDeltaSection
+  | MemoryInventorySection
   | CompanionAgentRosterDeltaSection
   | SystemNoticeSection
   | PendingActionSection
@@ -181,6 +182,32 @@ export interface RuntimeSkillEntry {
   context_usage_kind?: string;
 }
 
+export type RuntimeMemoryInventoryMode = "snapshot" | "delta";
+
+export interface RuntimeMemorySourceEntry {
+  provider_key: string;
+  source_key: string;
+  display_name: string;
+  source_uri: string;
+  index_uri: string;
+  mount_id: string;
+  scope: string;
+  index_status: string;
+  trust_level: string;
+  revision: string;
+  summary?: string;
+  context_usage_kind?: string;
+}
+
+export interface RuntimeMemoryDiagnosticEntry {
+  provider_key: string;
+  code: string;
+  message: string;
+  source_key?: string;
+  uri?: string;
+  context_usage_kind?: string;
+}
+
 export interface RuntimeCompanionAgentEntry {
   agent_key: string;
   executor: string;
@@ -201,6 +228,18 @@ export interface SkillDeltaSection {
   added_skills: RuntimeSkillEntry[];
   removed_skills: RuntimeSkillEntry[];
   changed_skills: RuntimeSkillEntry[];
+}
+
+export interface MemoryInventorySection {
+  kind: "memory_inventory";
+  title: string;
+  summary: string;
+  mode: RuntimeMemoryInventoryMode;
+  sources: RuntimeMemorySourceEntry[];
+  diagnostics: RuntimeMemoryDiagnosticEntry[];
+  added_sources: RuntimeMemorySourceEntry[];
+  removed_sources: RuntimeMemorySourceEntry[];
+  changed_sources: RuntimeMemorySourceEntry[];
 }
 
 export interface PendingActionSection {
@@ -504,6 +543,26 @@ function parseSection(value: unknown): ContextFrameSection | null {
       changed_skills: changed.map(parseSkillEntry).filter((item): item is RuntimeSkillEntry => item != null),
     };
   }
+  if (kind === "memory_inventory") {
+    const sources = Array.isArray(value.sources) ? value.sources : [];
+    const diagnostics = Array.isArray(value.diagnostics) ? value.diagnostics : [];
+    const added = Array.isArray(value.added_sources) ? value.added_sources : [];
+    const removed = Array.isArray(value.removed_sources) ? value.removed_sources : [];
+    const changed = Array.isArray(value.changed_sources) ? value.changed_sources : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "Memory Inventory",
+      summary: readString(value.summary) ?? "",
+      mode: value.mode === "delta" ? "delta" : "snapshot",
+      sources: sources.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
+      diagnostics: diagnostics
+        .map(parseMemoryDiagnosticEntry)
+        .filter((item): item is RuntimeMemoryDiagnosticEntry => item != null),
+      added_sources: added.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
+      removed_sources: removed.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
+      changed_sources: changed.map(parseMemorySourceEntry).filter((item): item is RuntimeMemorySourceEntry => item != null),
+    };
+  }
   if (kind === "companion_agent_roster_delta") {
     const added = Array.isArray(value.added_agents) ? value.added_agents : [];
     const removed = Array.isArray(value.removed_agent_keys) ? value.removed_agent_keys : [];
@@ -680,6 +739,45 @@ function parseCompanionAgentEntry(value: unknown): RuntimeCompanionAgentEntry | 
   };
 }
 
+function parseMemorySourceEntry(value: unknown): RuntimeMemorySourceEntry | null {
+  if (!isRecord(value)) return null;
+  const providerKey = readString(value.provider_key) ?? "";
+  const sourceKey = readString(value.source_key) ?? "";
+  const sourceUri = readString(value.source_uri) ?? "";
+  const indexUri = readString(value.index_uri) ?? "";
+  if (!sourceKey && !sourceUri && !indexUri) return null;
+  const displayName = readString(value.display_name) ?? (sourceKey || sourceUri || "Memory Source");
+  return {
+    provider_key: providerKey,
+    source_key: sourceKey,
+    display_name: displayName,
+    source_uri: sourceUri,
+    index_uri: indexUri,
+    mount_id: readString(value.mount_id) ?? "",
+    scope: readString(value.scope) ?? "unknown",
+    index_status: readString(value.index_status) ?? "unknown",
+    trust_level: readString(value.trust_level) ?? "unknown",
+    revision: readString(value.revision) ?? "",
+    summary: readString(value.summary) ?? undefined,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+  };
+}
+
+function parseMemoryDiagnosticEntry(value: unknown): RuntimeMemoryDiagnosticEntry | null {
+  if (!isRecord(value)) return null;
+  const code = readString(value.code);
+  const message = readString(value.message);
+  if (!code && !message) return null;
+  return {
+    provider_key: readString(value.provider_key) ?? "",
+    code: code ?? "memory_diagnostic",
+    message: message ?? "",
+    source_key: readString(value.source_key) ?? undefined,
+    uri: readString(value.uri) ?? undefined,
+    context_usage_kind: readString(value.context_usage_kind) ?? undefined,
+  };
+}
+
 function parseProjectGuidelineEntry(value: unknown): ProjectGuidelineEntry | null {
   if (!isRecord(value)) return null;
   const path = readString(value.path);
@@ -798,6 +896,8 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "CMP", variant: "warning" };
     case "system_guidelines":
       return { token: "GUID", variant: "primary" };
+    case "memory_context":
+      return { token: "MEM", variant: "primary" };
     default:
       return {
         token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
@@ -825,6 +925,8 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "TOOL", variant: "neutral" };
     case "skill_delta":
       return { token: "SKL", variant: "neutral" };
+    case "memory_inventory":
+      return { token: "MEM", variant: "primary" };
     case "companion_agent_roster_delta":
       return { token: "AGNT", variant: "primary" };
     case "system_notice":

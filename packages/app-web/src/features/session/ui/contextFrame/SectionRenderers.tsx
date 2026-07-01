@@ -21,12 +21,14 @@ import type {
   ContextTokenInfo,
   IdentitySection,
   McpServerDeltaSection,
+  MemoryInventorySection,
   AssignmentContextSection,
   PendingActionSection,
   ProjectGuidelinesSection,
   RuntimeContextFragmentEntry,
   RuntimeCompanionAgentEntry,
   RuntimeHookInjectionEntry,
+  RuntimeMemorySourceEntry,
   RuntimeSkillEntry,
   SkillDeltaSection,
   SystemNoticeSection,
@@ -89,6 +91,8 @@ function sectionTitle(section: ContextFrameSection): string {
       return "Tool Schema";
     case "skill_delta":
       return "Skills";
+    case "memory_inventory":
+      return section.title || "Memory Inventory";
     case "companion_agent_roster_delta":
       return "Companion Agents";
     case "system_notice":
@@ -151,6 +155,16 @@ function sectionHint(section: ContextFrameSection): string | null {
       if (added + removed + changed === 0) return "no change";
       return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
     }
+    case "memory_inventory": {
+      if (section.mode === "snapshot") {
+        return `${section.sources.length} sources`;
+      }
+      const added = section.added_sources.length;
+      const removed = section.removed_sources.length;
+      const changed = section.changed_sources.length;
+      if (added + removed + changed === 0) return "no change";
+      return `+${added} −${removed}${changed > 0 ? ` ↻${changed}` : ""}`;
+    }
     case "companion_agent_roster_delta": {
       const added = section.added_agents.length;
       const removed = section.removed_agent_keys.length;
@@ -195,6 +209,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <ToolSchemaDeltaBody section={section} />;
     case "skill_delta":
       return <SkillDeltaBody section={section} />;
+    case "memory_inventory":
+      return <MemoryInventoryBody section={section} />;
     case "companion_agent_roster_delta":
       return <CompanionAgentRosterDeltaBody section={section} />;
     case "system_notice":
@@ -526,6 +542,73 @@ function SkillDeltaBody({ section }: { section: SkillDeltaSection }) {
       {renderSkills(section.added_skills, "+")}
       {renderSkills(section.removed_skills, "−")}
       {renderSkills(section.changed_skills, "↻")}
+    </div>
+  );
+}
+
+function MemoryInventoryBody({ section }: { section: MemoryInventorySection }) {
+  const renderSources = (items: RuntimeMemorySourceEntry[], symbol: string) =>
+    items.map((source, index) => {
+      const chips = [
+        source.provider_key,
+        source.scope,
+        source.index_status,
+      ].filter(Boolean);
+      return (
+        <DeltaListItem
+          key={`${symbol}-${source.provider_key}-${source.source_key}-${index}`}
+          symbol={symbol}
+          name={source.display_name || source.source_key || source.source_uri}
+          chips={chips}
+          meta={source.revision ? `rev ${source.revision.slice(0, 8)}` : undefined}
+          hoverDesc={source.summary || source.index_uri || undefined}
+          expandContent={
+            <div className="space-y-1 font-mono text-[11px] leading-5 text-muted-foreground">
+              <div>source: {source.source_uri || "unknown"}</div>
+              <div>index: {source.index_uri || "unknown"}</div>
+              {source.mount_id && <div>mount: {source.mount_id}</div>}
+            </div>
+          }
+        />
+      );
+    });
+
+  const body =
+    section.mode === "snapshot" ? (
+      section.sources.length > 0 ? (
+        <div className={SCROLL_LIST}>{renderSources(section.sources, "*")}</div>
+      ) : (
+        <p className={CB.meta}>当前没有 memory source</p>
+      )
+    ) : (
+      <div className={SCROLL_LIST}>
+        {renderSources(section.added_sources, "+")}
+        {renderSources(section.removed_sources, "−")}
+        {renderSources(section.changed_sources, "↻")}
+        {section.added_sources.length +
+          section.removed_sources.length +
+          section.changed_sources.length ===
+          0 && <p className={CB.meta}>本次无 memory source 变化</p>}
+      </div>
+    );
+
+  return (
+    <div className="space-y-2">
+      {body}
+      {section.diagnostics.length > 0 && (
+        <div className="space-y-0.5">
+          {section.diagnostics.map((diagnostic, index) => (
+            <DeltaListItem
+              key={`${diagnostic.provider_key}-${diagnostic.code}-${index}`}
+              symbol="!"
+              label="diagnostic"
+              name={diagnostic.code}
+              chips={[diagnostic.provider_key, diagnostic.source_key].filter(Boolean) as string[]}
+              hoverDesc={diagnostic.message || diagnostic.uri || undefined}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

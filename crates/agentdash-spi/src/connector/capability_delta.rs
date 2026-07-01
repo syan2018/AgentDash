@@ -1,7 +1,7 @@
 //! 能力状态 delta 的纯数据模型与计算。
 //!
 //! delta 描述两份 `CapabilityState` 之间的结构化差异（工具能力 / 工具路径 /
-//! MCP server / companion roster / VFS / skill），是运行期能力切换通知与前端投影的共同基准。
+//! MCP server / companion roster / VFS / skill / memory），是运行期能力切换通知与前端投影的共同基准。
 //! 类型与计算都只依赖 spi `CapabilityState` 与 domain `Vfs`/`MountLink`，
 //! 因此放在 spi 层，供 application 的 transition / projection / 渲染各阶段消费。
 
@@ -11,6 +11,7 @@ use agentdash_domain::common::{MountLink, Vfs};
 use serde::{Deserialize, Serialize};
 
 use super::CapabilityState;
+use crate::platform::memory_discovery::DiscoveredMemorySource;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +79,7 @@ pub struct CapabilityStateDelta {
     pub companion_agents: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
     pub skills: NamedEntityDelta,
+    pub memory_sources: NamedEntityDelta,
 }
 
 impl CapabilityStateDelta {
@@ -90,6 +92,7 @@ impl CapabilityStateDelta {
             && self.companion_agents.is_empty()
             && self.vfs.is_empty()
             && self.skills.is_empty()
+            && self.memory_sources.is_empty()
     }
 }
 
@@ -158,7 +161,24 @@ pub fn compute_capability_state_delta(
             after.skill.skills.as_slice(),
             |skill| skill.capability_key_or_name().to_string(),
         ),
+        memory_sources: named_entity_delta(
+            &memory_sources(before),
+            &memory_sources(Some(after)),
+            memory_source_key,
+        ),
     }
+}
+
+fn memory_sources(state: Option<&CapabilityState>) -> Vec<DiscoveredMemorySource> {
+    state
+        .into_iter()
+        .flat_map(|state| state.memory.inventory.clusters.iter())
+        .flat_map(|cluster| cluster.sources.iter().cloned())
+        .collect()
+}
+
+pub fn memory_source_key(source: &DiscoveredMemorySource) -> String {
+    format!("{}:{}", source.provider_key, source.source_key)
 }
 
 fn set_delta(before: &BTreeSet<String>, after: &BTreeSet<String>) -> SetDelta {

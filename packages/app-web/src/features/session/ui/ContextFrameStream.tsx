@@ -193,6 +193,11 @@ function frameTabLabel(frame: ContextFrame): string {
     const prefCount = preferences && preferences.kind === "user_preferences" ? preferences.items.length : 0;
     const fileCount = guidelines && guidelines.kind === "project_guidelines" ? guidelines.entries.length : 0;
     if (prefCount + fileCount > 0) parts.push(`${prefCount} prefs / ${fileCount} files`);
+  } else if (frame.kind === "memory_context") {
+    const memory = frame.sections.find((section) => section.kind === "memory_inventory");
+    if (memory && memory.kind === "memory_inventory") {
+      parts.push(`${memory.sources.length} sources`);
+    }
   }
 
   return parts.join(" · ");
@@ -222,6 +227,10 @@ function summarizeRuntimeUpdate(frame: ContextFrame): string | null {
       added += section.added_skills.length;
       removed += section.removed_skills.length;
       changed += section.changed_skills.length;
+    } else if (section.kind === "memory_inventory" && section.mode === "delta") {
+      added += section.added_sources.length;
+      removed += section.removed_sources.length;
+      changed += section.changed_sources.length;
     } else if (section.kind === "companion_agent_roster_delta") {
       added += section.added_agents.length;
       removed += section.removed_agent_keys.length;
@@ -247,6 +256,7 @@ function runtimeSurfaceFrameLabel(frame: ContextFrame): string {
   if (hasCapabilityKeyDelta) return "CAPABILITY DELTA";
   if (sectionKinds.size === 1) {
     if (sectionKinds.has("skill_delta")) return "SKILL UPDATE";
+    if (sectionKinds.has("memory_inventory")) return "MEMORY UPDATE";
     if (sectionKinds.has("vfs_delta")) return "VFS UPDATE";
     if (sectionKinds.has("mcp_server_delta")) return "MCP UPDATE";
     if (sectionKinds.has("tool_schema_delta")) return "TOOL SURFACE";

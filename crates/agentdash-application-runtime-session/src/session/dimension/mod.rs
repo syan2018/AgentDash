@@ -1,12 +1,13 @@
 //! 能力状态更新的维度策略模块
 //!
-//! 每个维度（capability key / tool path / MCP / VFS / skill / tool schema）
+//! 每个维度（capability key / tool path / MCP / VFS / memory / skill / tool schema）
 //! 独立实现 `DimensionDelta` trait，自治 delta 计算、section 构造和 rendered_text 生成。
 //! `RuntimeContextUpdateFrame` 仅做编排：收集各维度产出并委托渲染。
 
 pub(crate) mod capability_key;
 pub(crate) mod companion_agent;
 pub(crate) mod mcp_server;
+pub(crate) mod memory;
 pub(crate) mod skill;
 pub(crate) mod tool_path;
 pub(crate) mod tool_schema;

@@ -4,8 +4,8 @@ use agentdash_agent_types::{
 };
 use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, RuntimeCompanionAgentEntry, RuntimeSkillEntry,
-    RuntimeToolSchemaEntry,
+    ContextFrame, ContextFrameSection, RuntimeCompanionAgentEntry, RuntimeMemoryInventoryMode,
+    RuntimeMemorySourceEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
 };
 
 const PROJECTION_PREVIEW_MAX_CHARS: usize = 360;
@@ -701,6 +701,29 @@ fn context_usage_items_from_section(
             .chain(changed_skills.iter())
             .filter_map(|skill| skill_usage_item(skill, source_event_seq, turn_id))
             .collect(),
+        ContextFrameSection::MemoryInventory {
+            mode,
+            sources,
+            added_sources,
+            removed_sources,
+            changed_sources,
+            ..
+        } => {
+            let visible_sources = match mode {
+                RuntimeMemoryInventoryMode::Snapshot => {
+                    sources.iter().collect::<Vec<&RuntimeMemorySourceEntry>>()
+                }
+                RuntimeMemoryInventoryMode::Delta => added_sources
+                    .iter()
+                    .chain(removed_sources.iter())
+                    .chain(changed_sources.iter())
+                    .collect::<Vec<&RuntimeMemorySourceEntry>>(),
+            };
+            visible_sources
+                .into_iter()
+                .filter_map(|source| memory_source_usage_item(source, source_event_seq, turn_id))
+                .collect()
+        }
         ContextFrameSection::CompanionAgentRosterDelta {
             effective_agents, ..
         } => effective_agents
@@ -920,6 +943,46 @@ fn skill_usage_item(
         &text,
         "skill_registry",
         skill.disable_model_invocation,
+        &trace,
+    ))
+}
+
+fn memory_source_usage_item(
+    source: &RuntimeMemorySourceEntry,
+    source_event_seq: Option<u64>,
+    turn_id: &Option<String>,
+) -> Option<SessionContextUsageItem> {
+    let kind = source.context_usage_kind.as_deref()?;
+    if !usage_kind_matches(Some(kind), context_usage_kind::MEMORY) {
+        return None;
+    }
+    let name = if source.display_name.trim().is_empty() {
+        source.source_key.as_str()
+    } else {
+        source.display_name.as_str()
+    };
+    let text = [
+        name,
+        source.provider_key.as_str(),
+        source.source_key.as_str(),
+        source.source_uri.as_str(),
+        source.index_uri.as_str(),
+        source.scope.as_str(),
+        source.index_status.as_str(),
+        source.revision.as_str(),
+    ]
+    .join("\n");
+    let trace = ContextUsageItemTrace {
+        source_event_seq,
+        turn_id: turn_id.clone(),
+    };
+    Some(context_usage_item(
+        context_usage_kind::MEMORY,
+        "Memory",
+        name,
+        &text,
+        "memory_inventory",
+        false,
         &trace,
     ))
 }

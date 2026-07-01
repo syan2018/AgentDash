@@ -18,6 +18,7 @@ use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
 use crate::hooks::{ContextDeliveryPlan, ContextFrame, HookRuntimeAccess};
+use crate::platform::memory_discovery::MemoryDiscoveryOutput;
 pub mod capability_delta;
 
 pub use capability_delta::{
@@ -496,6 +497,9 @@ pub struct CapabilityState {
     /// Skill 维度。
     #[serde(default)]
     pub skill: SkillDimension,
+    /// Memory 维度。
+    #[serde(default)]
+    pub memory: MemoryDimension,
     /// Workspace module 可见性维度。
     pub workspace_module: WorkspaceModuleDimension,
 }
@@ -643,10 +647,19 @@ impl CapabilityState {
             vfs: self.vfs.clone(),
             // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
             skill: self.skill.clone(),
+            // memory 不参与 capability 交集裁剪，保持当前会话可见发现面。
+            memory: self.memory.clone(),
             // workspace module 可见性不参与 capability 交集裁剪，保持当前会话可见面。
             workspace_module: self.workspace_module.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoryDimension {
+    #[serde(default)]
+    pub inventory: MemoryDiscoveryOutput,
 }
 
 fn merge_tool_policy_for_intersection(

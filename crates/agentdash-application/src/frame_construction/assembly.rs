@@ -112,6 +112,8 @@ impl FrameAssemblyBuilder {
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
     pub(crate) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
+        let mut capability_state = capability_state;
+        capability_state.memory.inventory = self.memory_inventory.clone();
         self.capability_state = Some(capability_state);
         self
     }
@@ -159,6 +161,9 @@ impl FrameAssemblyBuilder {
     }
 
     pub(crate) fn with_memory_inventory(mut self, inventory: MemoryDiscoveryOutput) -> Self {
+        if let Some(state) = self.capability_state.as_mut() {
+            state.memory.inventory = inventory.clone();
+        }
         self.memory_inventory = inventory;
         self
     }
@@ -288,6 +293,7 @@ impl FrameAssemblyBuilder {
         if let Some(state) = capability_state.as_mut() {
             state.vfs.active = self.vfs.clone();
             state.tool.mcp_servers = self.mcp_servers.clone();
+            state.memory.inventory = self.memory_inventory.clone();
         }
         FrameSurfaceDraft {
             capability_state,

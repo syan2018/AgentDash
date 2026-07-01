@@ -289,38 +289,23 @@ fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
         CapabilityScope::Task => "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报",
         CapabilityScope::Story => "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task",
     };
-    let identity = input
-        .agent_type
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unspecified");
-    let preset_name = input
-        .preset_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
     let configured_persona_label = input
         .session_composition
         .and_then(|composition| composition.persona_label.as_deref())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
+        .filter(|value| !value.is_empty());
     let configured_persona_prompt = input
         .session_composition
         .and_then(|composition| composition.persona_prompt.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    let mut markdown = format!(
-        "## Persona\n- role: `{role_label}`\n- identity: `{identity}`\n- preset: `{preset_name}`\n- custom_prompt_template: {}\n- initial_context: {}\n- responsibility: {}",
-        yes_no(input.has_custom_prompt_template),
-        yes_no(input.has_initial_context),
-        role_description
-    );
+    let mut markdown =
+        format!("## Persona\n- role: `{role_label}`\n- responsibility: {role_description}",);
 
-    markdown.push_str(&format!(
-        "\n- configured_persona: `{configured_persona_label}`"
-    ));
+    if let Some(persona_label) = configured_persona_label {
+        markdown.push_str(&format!("\n- configured_persona: `{persona_label}`"));
+    }
 
     if let Some(persona_prompt) = configured_persona_prompt {
         markdown.push_str(&format!("\n\n### Persona Prompt\n{persona_prompt}"));

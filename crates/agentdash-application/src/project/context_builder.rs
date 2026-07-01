@@ -1,5 +1,5 @@
 use agentdash_domain::{project::Project, workspace::Workspace};
-use agentdash_spi::{ContextFragment, MergeStrategy};
+use agentdash_spi::{ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
 
 use crate::context::{Contribution, trim_or_dash, workspace_context_fragment};
 
@@ -32,14 +32,14 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
     });
 
     fragments.push(ContextFragment {
-        slot: "project".to_string(),
+        slot: "agent_identity".to_string(),
         label: "project_agent_identity".to_string(),
         order: 20,
         strategy: MergeStrategy::Append,
-        scope: ContextFragment::default_scope(),
+        scope: FragmentScopeSet::only(FragmentScope::Audit),
         source: "project_context".to_string(),
         content: format!(
-            "## Project Agent\n- display_name: {}\n- preset_name: {}\n- default_agent_type: {}",
+            "## Agent Identity\n- display_name: {}\n- preset_name: {}\n- default_agent_type: {}",
             trim_or_dash(input.agent_display_name),
             input.preset_name.unwrap_or("-"),
             input
@@ -58,4 +58,44 @@ pub fn contribute_project_context(input: ProjectContextBuildInput<'_>) -> Contri
     }
 
     Contribution::fragments_only(fragments)
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_domain::project::Project;
+    use agentdash_spi::FragmentScope;
+
+    use super::*;
+
+    #[test]
+    fn project_agent_identity_is_audit_only() {
+        let mut project = Project::new("AgentDash".to_string(), "我开发我自己".to_string());
+        project.config.default_agent_type = Some("PI_AGENT".to_string());
+
+        let contribution = contribute_project_context(ProjectContextBuildInput {
+            project: &project,
+            workspace: None,
+            preset_name: Some("pi_agent_general"),
+            agent_display_name: "Pi Agent General",
+        });
+
+        let project_core = contribution
+            .fragments
+            .iter()
+            .find(|fragment| fragment.label == "project_core")
+            .expect("project core fragment");
+        assert_eq!(project_core.slot, "project");
+        assert!(project_core.scope.contains(FragmentScope::RuntimeAgent));
+
+        let agent_identity = contribution
+            .fragments
+            .iter()
+            .find(|fragment| fragment.label == "project_agent_identity")
+            .expect("agent identity fragment");
+        assert_eq!(agent_identity.slot, "agent_identity");
+        assert!(agent_identity.scope.contains(FragmentScope::Audit));
+        assert!(!agent_identity.scope.contains(FragmentScope::RuntimeAgent));
+        assert!(agent_identity.content.contains("## Agent Identity"));
+        assert!(agent_identity.content.contains("Pi Agent General"));
+    }
 }

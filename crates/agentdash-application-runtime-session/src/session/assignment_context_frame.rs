@@ -120,7 +120,7 @@ fn fragment_entry(fragment: &ContextFragment) -> RuntimeContextFragmentEntry {
 
 fn render_assignment_context_text(fragments: &[RuntimeContextFragmentEntry]) -> String {
     let mut lines = vec![
-        "## Assignment Context".to_string(),
+        "# Assignment Context".to_string(),
         "以下上下文片段已在本轮对话开始前注入，用于约束任务目标、工作流要求与项目规则。"
             .to_string(),
     ];
@@ -131,14 +131,32 @@ fn render_assignment_context_text(fragments: &[RuntimeContextFragmentEntry]) -> 
             fragment.label.as_str()
         };
         lines.push(format!(
-            "### {} (`{}`)\nsource: `{}`\n\n{}",
+            "## {} (`{}`)\nsource: `{}`\n\n{}",
             label,
             fragment.slot,
             fragment.source,
-            fragment.content.trim()
+            demote_markdown_headings(fragment.content.trim())
         ));
     }
     lines.join("\n\n")
+}
+
+fn demote_markdown_headings(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            let heading_marks = line
+                .chars()
+                .take_while(|character| *character == '#')
+                .count();
+            if (1..6).contains(&heading_marks) && line.chars().nth(heading_marks) == Some(' ') {
+                format!("#{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -184,5 +202,20 @@ mod tests {
             Some("system_developer")
         );
         assert!(frame.rendered_text().contains("Assignment Context"));
+    }
+
+    #[test]
+    fn assignment_context_rendering_keeps_heading_hierarchy_ordered() {
+        let runtime_fragments = vec![fragment("project", "## Project\n- name: AgentDash")];
+
+        let frame = AssignmentContextFrame::from_parts(Some("task_start"), &runtime_fragments)
+            .expect("frame metadata");
+
+        assert!(frame.rendered_text().starts_with("# Assignment Context"));
+        assert!(
+            frame
+                .rendered_text()
+                .contains("## project (`project`)\nsource: `test`\n\n### Project")
+        );
     }
 }

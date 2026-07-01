@@ -20,7 +20,7 @@ use crate::session::hub::{
     HookTriggerInput, PendingRuntimeContextApplication, build_initial_capability_state_frame,
 };
 use crate::session::hub_support::{SessionProfile, TurnExecution};
-use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
+use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frames};
 use crate::session::memory_context_frame::{MemoryContextFrameInput, build_memory_context_frame};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
 use crate::session::post_turn_handler::DynPostTurnHandler;
@@ -82,6 +82,12 @@ impl TurnPreparer {
         let mut runtime_delegate_facets = launch_plan.runtime_delegate_facets.clone();
         let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();
         let context_bundle = launch_plan.context_bundle.clone();
+        let compose_fragments = context_bundle
+            .as_ref()
+            .map(|bundle| bundle.bootstrap_fragments.clone())
+            .or_else(|| hook_snapshot_contribution.clone())
+            .unwrap_or_default();
+        let agent_identity_markdown = find_agent_identity_markdown(&compose_fragments);
         let discovered_guidelines = launch_plan.discovered_guidelines.clone();
         let discovered_memory = launch_plan.discovered_memory.clone();
         let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
@@ -143,14 +149,15 @@ impl TurnPreparer {
         } else {
             Vec::new()
         };
-        let identity_frame = if include_connector_startup_context {
-            build_identity_context_frame(&IdentityFrameInput {
+        let identity_frames = if include_connector_startup_context {
+            build_identity_context_frames(&IdentityFrameInput {
                 base_system_prompt: &deps.base_system_prompt,
+                agent_identity_markdown,
                 agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
                 agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
             })
         } else {
-            None
+            Vec::new()
         };
         // 用户偏好与项目指引迁出 identity 帧，走独立的系统级 guidelines 帧。
         let guidelines_frame = if include_connector_startup_context {
@@ -169,11 +176,6 @@ impl TurnPreparer {
             None
         };
 
-        let compose_fragments = context_bundle
-            .as_ref()
-            .map(|bundle| bundle.bootstrap_fragments.clone())
-            .or_else(|| hook_snapshot_contribution.clone())
-            .unwrap_or_default();
         let (audit_bundle_id, audit_session_id) = context_bundle
             .as_ref()
             .map(|bundle| (bundle.bundle_id, bundle.session_id))
@@ -295,7 +297,7 @@ impl TurnPreparer {
         }
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
-        if let Some(frame) = identity_frame {
+        for frame in identity_frames {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
@@ -375,6 +377,13 @@ impl TurnPreparer {
             post_turn_handler,
         })
     }
+}
+
+fn find_agent_identity_markdown(fragments: &[agentdash_spi::ContextFragment]) -> Option<&str> {
+    fragments
+        .iter()
+        .find(|fragment| fragment.slot == "agent_identity" && !fragment.content.trim().is_empty())
+        .map(|fragment| fragment.content.as_str())
 }
 
 async fn load_user_preferences(

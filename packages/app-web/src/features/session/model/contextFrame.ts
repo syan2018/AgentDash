@@ -408,7 +408,11 @@ function defaultDeliveryMetadata(
 }
 
 function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
-  if (frameKind === "identity") return "stable_system";
+  if (
+    frameKind === "identity"
+    || frameKind === "identity_system_prompt"
+    || frameKind === "identity_agent_profile"
+  ) return "stable_system";
   if (frameKind === "system_guidelines") return "session_policy";
   if (frameKind === "compaction_summary") return "run_state";
   if (frameKind === "assignment_context") return "assignment";
@@ -420,6 +424,8 @@ function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
 
 function defaultDeliveryOrder(frameKind: string): number {
   if (frameKind === "identity") return 10;
+  if (frameKind === "identity_system_prompt") return 10;
+  if (frameKind === "identity_agent_profile") return 11;
   if (frameKind === "system_guidelines") return 20;
   if (frameKind === "compaction_summary") return 30;
   if (frameKind === "assignment_context") return 40;
@@ -431,7 +437,11 @@ function defaultDeliveryOrder(frameKind: string): number {
 }
 
 function defaultCachePolicy(frameKind: string): ContextCachePolicy {
-  if (frameKind === "identity") return "static";
+  if (
+    frameKind === "identity"
+    || frameKind === "identity_system_prompt"
+    || frameKind === "identity_agent_profile"
+  ) return "static";
   if (frameKind === "system_guidelines") return "session_digest";
   if (frameKind === "compaction_summary") return "runtime_state_digest";
   if (frameKind === "assignment_context") return "assignment_revision";
@@ -443,7 +453,12 @@ function defaultCachePolicy(frameKind: string): ContextCachePolicy {
 }
 
 function defaultModelChannel(frameKind: string, messageRole: string): ContextModelChannel {
-  if (frameKind === "identity" || frameKind === "system_guidelines") return "system";
+  if (
+    frameKind === "identity"
+    || frameKind === "identity_system_prompt"
+    || frameKind === "identity_agent_profile"
+    || frameKind === "system_guidelines"
+  ) return "system";
   if (
     frameKind === "memory_context"
     || frameKind === "compaction_summary"
@@ -458,6 +473,8 @@ function defaultModelChannel(frameKind: string, messageRole: string): ContextMod
 
 function defaultFrontendLabel(frameKind: string): string {
   if (frameKind === "identity") return "Identity";
+  if (frameKind === "identity_system_prompt") return "System Prompt";
+  if (frameKind === "identity_agent_profile") return "Agent Identity";
   if (frameKind === "system_guidelines") return "System Guidelines";
   if (frameKind === "compaction_summary") return "Compaction Summary";
   if (frameKind === "assignment_context") return "Assignment Context";

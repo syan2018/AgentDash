@@ -3,7 +3,9 @@ use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
+    ContextAgentConsumptionMode, ContextConnectorProfile, ContextDeliveryEntry,
+    ContextDeliveryMetadata, ContextDeliveryPlan, ContextDeliveryTarget, ContextFrame,
+    ContextFrameSection, ContextModelChannel, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
 use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
 
@@ -12,16 +14,14 @@ use super::{LaunchFollowUpSource, LaunchPlan, RuntimeDelegateCompositionPlan};
 use crate::session::admission_delegate::{AgentRunAdmissionToolPolicyFacet, ToolAdmissionMetadata};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
 use crate::session::guidelines_context_frame::{
-    GuidelinesFrameInput, SYSTEM_GUIDELINES_FRAME_KIND, build_guidelines_context_frame,
+    GuidelinesFrameInput, build_guidelines_context_frame,
 };
 use crate::session::hub::{
     HookTriggerInput, PendingRuntimeContextApplication, build_initial_capability_state_frame,
 };
 use crate::session::hub_support::{SessionProfile, TurnExecution};
 use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
-use crate::session::memory_context_frame::{
-    MEMORY_CONTEXT_FRAME_KIND, MemoryContextFrameInput, build_memory_context_frame,
-};
+use crate::session::memory_context_frame::{MemoryContextFrameInput, build_memory_context_frame};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptLaunchPath, ResolvedPromptPayload};
@@ -307,10 +307,6 @@ impl TurnPreparer {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = launch_plan.continuation_context_frame.clone() {
-            accepted_context_frames_to_emit.push(frame.clone());
-            turn_context_frames.push(frame);
-        }
         turn_context_frames.extend(owner_bootstrap_frames);
         turn_context_frames.extend(pending_transition_application.context_frames.clone());
 
@@ -331,7 +327,28 @@ impl TurnPreparer {
             }
             turn_context_frames.extend(pending_action_frames);
         }
-        context.turn.context_frames = dedupe_context_frames(turn_context_frames);
+        let connector_profile = context_connector_profile(
+            deps.connector.connector_id(),
+            &context.session.executor_config,
+        );
+        context.turn.context_frames = apply_delivery_target_to_frames(
+            dedupe_context_frames(turn_context_frames),
+            &connector_profile,
+            deps.connector.connector_id(),
+            &context.session.executor_config.executor,
+        );
+        context.turn.context_delivery_plan = Some(build_context_delivery_plan(
+            &context.turn.context_frames,
+            &session_id,
+            &turn_id,
+            deps.connector.connector_id(),
+            &context.session.executor_config.executor,
+            connector_profile,
+        ));
+        sync_emitted_frame_delivery_metadata(
+            &mut accepted_context_frames_to_emit,
+            &context.turn.context_frames,
+        );
 
         enqueue_context_frames_for_transform_context(
             hook_runtime.as_ref(),
@@ -420,6 +437,11 @@ fn notice_to_context_frame(notice: HookTurnStartNotice) -> Option<ContextFrame> 
         delivery_status: "queued_for_transform_context".to_string(),
         delivery_channel: "turn_start".to_string(),
         message_role: "user".to_string(),
+        delivery_metadata: ContextDeliveryMetadata::for_frame(
+            "system_notice",
+            "turn_start",
+            "user",
+        ),
         rendered_text: content.to_string(),
         sections: vec![ContextFrameSection::SystemNotice {
             title: "TurnStart Notice".to_string(),
@@ -444,6 +466,130 @@ fn dedupe_context_frames(frames: Vec<ContextFrame>) -> Vec<ContextFrame> {
     deduped
 }
 
+fn apply_delivery_target_to_frames(
+    frames: Vec<ContextFrame>,
+    connector_profile: &ContextConnectorProfile,
+    connector_id: &str,
+    executor: &str,
+) -> Vec<ContextFrame> {
+    let target = delivery_target_name(connector_id, executor);
+    frames
+        .into_iter()
+        .map(|mut frame| {
+            frame.delivery_metadata.connector_profile = connector_profile.clone();
+            frame.delivery_metadata.agent_consumption.target = target.clone();
+            frame.delivery_metadata.agent_consumption.mode = agent_consumption_mode_for_frame(
+                connector_id,
+                connector_profile,
+                &frame.delivery_metadata,
+            );
+            frame.delivery_metadata.agent_consumption.reason =
+                format!("{}_{}_delivery", connector_profile.profile_id, frame.kind);
+            frame
+        })
+        .collect()
+}
+
+fn build_context_delivery_plan(
+    frames: &[ContextFrame],
+    session_id: &str,
+    turn_id: &str,
+    connector_id: &str,
+    executor: &str,
+    connector_profile: ContextConnectorProfile,
+) -> ContextDeliveryPlan {
+    let mut entries = frames
+        .iter()
+        .map(ContextDeliveryEntry::from_frame)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| {
+        (
+            entry.delivery_phase,
+            entry.delivery_order,
+            entry.frame_id.clone(),
+        )
+    });
+    ContextDeliveryPlan {
+        plan_id: format!("context-delivery-plan-{session_id}-{turn_id}"),
+        target_agent: ContextDeliveryTarget {
+            agent_id: Some(executor.to_string()),
+            connector_id: Some(connector_id.to_string()),
+            profile: connector_profile,
+        },
+        entries,
+    }
+}
+
+fn sync_emitted_frame_delivery_metadata(
+    emitted_frames: &mut [ContextFrame],
+    planned_frames: &[ContextFrame],
+) {
+    let metadata_by_id = planned_frames
+        .iter()
+        .map(|frame| (frame.id.as_str(), &frame.delivery_metadata))
+        .collect::<std::collections::HashMap<_, _>>();
+    for frame in emitted_frames {
+        if let Some(metadata) = metadata_by_id.get(frame.id.as_str()) {
+            frame.delivery_metadata = (*metadata).clone();
+        }
+    }
+}
+
+fn context_connector_profile(
+    connector_id: &str,
+    executor_config: &agentdash_domain::common::AgentConfig,
+) -> ContextConnectorProfile {
+    let mut declared_consumption_modes = vec![
+        ContextAgentConsumptionMode::Consume,
+        ContextAgentConsumptionMode::Ignore,
+        ContextAgentConsumptionMode::ConnectorNative,
+    ];
+    match executor_config.system_prompt_mode {
+        Some(agentdash_domain::common::SystemPromptMode::Override) => {
+            declared_consumption_modes.push(ContextAgentConsumptionMode::SystemOverride);
+        }
+        _ => declared_consumption_modes.push(ContextAgentConsumptionMode::SystemAppend),
+    }
+    if connector_id == "pi-agent" {
+        declared_consumption_modes.push(ContextAgentConsumptionMode::SystemOverride);
+    }
+    ContextConnectorProfile {
+        profile_id: delivery_target_name(connector_id, &executor_config.executor),
+        declared_consumption_modes,
+    }
+}
+
+fn agent_consumption_mode_for_frame(
+    connector_id: &str,
+    connector_profile: &ContextConnectorProfile,
+    metadata: &ContextDeliveryMetadata,
+) -> ContextAgentConsumptionMode {
+    if connector_id == "pi-agent" {
+        return ContextAgentConsumptionMode::Consume;
+    }
+    match metadata.model_channel {
+        ContextModelChannel::System | ContextModelChannel::Developer => {
+            if connector_profile
+                .declared_consumption_modes
+                .contains(&ContextAgentConsumptionMode::SystemOverride)
+            {
+                ContextAgentConsumptionMode::SystemOverride
+            } else {
+                ContextAgentConsumptionMode::SystemAppend
+            }
+        }
+        ContextModelChannel::Ignored => ContextAgentConsumptionMode::Ignore,
+        ContextModelChannel::AuditOnly => ContextAgentConsumptionMode::AuditOnly,
+        ContextModelChannel::Context | ContextModelChannel::User => {
+            ContextAgentConsumptionMode::Consume
+        }
+    }
+}
+
+fn delivery_target_name(connector_id: &str, executor: &str) -> String {
+    format!("{connector_id}:{executor}")
+}
+
 fn should_include_connector_startup_context(
     launch_path: PromptLaunchPath,
     had_existing_runtime: bool,
@@ -465,12 +611,12 @@ fn enqueue_context_frames_for_transform_context(
         return;
     };
     for frame in frames {
-        // identity / system_guidelines 走系统通道（由连接器拼进 system prompt），
-        // 不再作为 turn-start notice 重复投递。
-        if frame.kind == "identity"
-            || frame.kind == SYSTEM_GUIDELINES_FRAME_KIND
-            || frame.kind == MEMORY_CONTEXT_FRAME_KIND
-            || frame.kind == "pending_action"
+        // system/developer entries 由 connector 按 delivery plan 消费，不再作为
+        // turn-start notice 重复投递；pending action 有专门的 runtime 投递通道。
+        if matches!(
+            frame.delivery_metadata.model_channel,
+            ContextModelChannel::System | ContextModelChannel::Developer
+        ) || frame.kind == "pending_action"
         {
             continue;
         }
@@ -491,6 +637,7 @@ fn enqueue_context_frames_for_transform_context(
 mod tests {
     use super::*;
     use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode};
+    use agentdash_domain::common::{AgentConfig, SystemPromptMode};
 
     #[test]
     fn connector_startup_context_is_only_sent_when_connector_needs_initializing() {
@@ -519,5 +666,111 @@ mod tests {
             false,
             &LaunchFollowUpSource::SessionMeta,
         ));
+    }
+
+    #[test]
+    fn delivery_plan_orders_frames_and_keeps_pi_memory_out_of_system() {
+        let profile = context_connector_profile("pi-agent", &AgentConfig::new("PI_AGENT"));
+        let frames = apply_delivery_target_to_frames(
+            vec![
+                test_frame("memory-1", "memory_context", "turn_start", "user", 3),
+                test_frame(
+                    "guidelines-1",
+                    "system_guidelines",
+                    "connector_context",
+                    "system",
+                    2,
+                ),
+                test_frame("identity-1", "identity", "connector_context", "system", 1),
+            ],
+            &profile,
+            "pi-agent",
+            "PI_AGENT",
+        );
+
+        let plan = build_context_delivery_plan(
+            &frames,
+            "session-1",
+            "turn-1",
+            "pi-agent",
+            "PI_AGENT",
+            profile,
+        );
+
+        let order = plan
+            .entries
+            .iter()
+            .map(|entry| entry.frame_kind.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            vec!["identity", "system_guidelines", "memory_context"]
+        );
+        let memory = plan
+            .entries
+            .iter()
+            .find(|entry| entry.frame_kind == "memory_context")
+            .expect("memory entry");
+        assert_eq!(memory.model_channel, ContextModelChannel::Context);
+        assert_eq!(
+            memory.agent_consumption.mode,
+            ContextAgentConsumptionMode::Consume
+        );
+    }
+
+    #[test]
+    fn non_pi_connector_can_declare_system_override_consumption() {
+        let mut config = AgentConfig::new("CLAUDE_CODE");
+        config.system_prompt_mode = Some(SystemPromptMode::Override);
+        let profile = context_connector_profile("codex-bridge", &config);
+        let frames = apply_delivery_target_to_frames(
+            vec![test_frame(
+                "identity-1",
+                "identity",
+                "connector_context",
+                "system",
+                1,
+            )],
+            &profile,
+            "codex-bridge",
+            "CLAUDE_CODE",
+        );
+
+        assert!(
+            profile
+                .declared_consumption_modes
+                .contains(&ContextAgentConsumptionMode::SystemOverride)
+        );
+        assert_eq!(
+            frames[0].delivery_metadata.agent_consumption.mode,
+            ContextAgentConsumptionMode::SystemOverride
+        );
+    }
+
+    fn test_frame(
+        id: &str,
+        kind: &str,
+        delivery_channel: &str,
+        message_role: &str,
+        created_at_ms: i64,
+    ) -> ContextFrame {
+        ContextFrame {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            source: agentdash_spi::hooks::RuntimeEventSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status: "accepted".to_string(),
+            delivery_channel: delivery_channel.to_string(),
+            message_role: message_role.to_string(),
+            delivery_metadata: ContextDeliveryMetadata::for_frame(
+                kind,
+                delivery_channel,
+                message_role,
+            ),
+            rendered_text: kind.to_string(),
+            sections: Vec::new(),
+            created_at_ms,
+        }
     }
 }

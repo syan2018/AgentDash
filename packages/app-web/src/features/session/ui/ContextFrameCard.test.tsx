@@ -90,21 +90,30 @@ describe("ContextFrameCard", () => {
   });
 
   it("渲染 compaction_summary frame", () => {
+    const frame = readFrame(sampleCompactionNotice());
+    const compaction = frame.sections.find((section) => section.kind === "compaction_summary");
+
+    expect(compaction?.kind).toBe("compaction_summary");
+    if (compaction?.kind !== "compaction_summary") {
+      throw new Error("compaction_summary section should parse");
+    }
+    expect(compaction.messages_compacted).toBe(12);
+    expect(compaction.projection_version).toBe(7);
+    expect(compaction.compaction_id).toBe("compaction-1");
+    expect(compaction.source_start_event_seq).toBe(3);
+    expect(compaction.source_end_event_seq).toBe(42);
+    expect(compaction.first_kept_event_seq).toBe(43);
+
     const markup = renderToStaticMarkup(
-      <ContextFrameCard frame={readFrame(sampleCompactionNotice())} defaultExpanded />,
+      <ContextFrameCard frame={frame} defaultExpanded />,
     );
     expect(markup).toContain("Compaction Summary");
     expect(markup).toContain("12 messages");
     expect(markup).toContain("COMPACTION");
     expect(markup).toContain("CMP");
-  });
-
-  it("渲染 continuation_context frame", () => {
-    const markup = renderToStaticMarkup(
-      <ContextFrameCard frame={readFrame(sampleContinuationNotice())} defaultExpanded />,
-    );
-    expect(markup).toContain("CTN");
-    expect(markup).toContain("Session Continuation");
+    expect(markup).toContain("projection: v7");
+    expect(markup).toContain("source: 3-42");
+    expect(markup).toContain("checkpoint compaction-1");
   });
 
   it("渲染 skill_delta 的 provider scoped identity", () => {
@@ -399,30 +408,16 @@ function sampleCompactionNotice(): Record<string, unknown> {
         summary: "压缩后的历史摘要",
         tokens_before: 48000,
         messages_compacted: 12,
+        compaction_id: "compaction-1",
+        projection_version: 7,
+        strategy: "rolling_summary",
+        trigger: "context_pressure",
+        phase: "completed",
+        source_start_event_seq: 3,
+        source_end_event_seq: 42,
+        first_kept_event_seq: 43,
         compacted_until_ref: { turn_id: "turn-1", entry_index: 3 },
         timestamp_ms: 1710000000000,
-      },
-    ],
-  };
-}
-
-function sampleContinuationNotice(): Record<string, unknown> {
-  return {
-    id: "continuation-context-1",
-    kind: "continuation_context",
-    source: "runtime_context_update",
-    delivery_status: "prepared_for_connector",
-    delivery_channel: "connector_context",
-    message_role: "system",
-    rendered_text: "## Session Continuation\n\n### Transcript\n#### 用户\n继续处理",
-    created_at_ms: 1,
-    sections: [
-      {
-        kind: "continuation_context",
-        title: "Session Continuation",
-        summary: "从会话仓储恢复 3 条历史消息。",
-        owner_context: "## Owner Context\nproject",
-        transcript_markdown: "### Transcript\n#### 用户\n继续处理",
       },
     ],
   };

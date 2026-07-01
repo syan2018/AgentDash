@@ -261,10 +261,281 @@ pub struct ContextFrame {
     pub delivery_status: String,
     pub delivery_channel: String,
     pub message_role: String,
+    #[serde(default)]
+    pub delivery_metadata: ContextDeliveryMetadata,
     pub rendered_text: String,
     #[serde(default)]
     pub sections: Vec<ContextFrameSection>,
     pub created_at_ms: i64,
+}
+
+/// 一次 turn 中 ContextFrame 的正式投递计划。
+///
+/// 该类型先作为协议骨架存在；runtime-session 后续负责把 frame 集合规划成 plan，
+/// connector 与前端只消费这里表达的正式顺序、缓存和 agent profile 决策。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryPlan {
+    pub plan_id: String,
+    pub target_agent: ContextDeliveryTarget,
+    #[serde(default)]
+    pub entries: Vec<ContextDeliveryEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_id: Option<String>,
+    #[serde(default)]
+    pub profile: ContextConnectorProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryEntry {
+    pub frame_id: String,
+    pub frame_kind: String,
+    pub delivery_phase: ContextDeliveryPhase,
+    pub delivery_order: u32,
+    pub cache_policy: ContextCachePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_revision: Option<String>,
+    pub model_channel: ContextModelChannel,
+    pub agent_consumption: ContextAgentConsumption,
+    pub frontend_label: String,
+    #[serde(default)]
+    pub connector_profile: ContextConnectorProfile,
+}
+
+impl ContextDeliveryEntry {
+    #[must_use]
+    pub fn from_frame(frame: &ContextFrame) -> Self {
+        let metadata = frame.delivery_metadata.clone();
+        Self {
+            frame_id: frame.id.clone(),
+            frame_kind: frame.kind.clone(),
+            delivery_phase: metadata.delivery_phase,
+            delivery_order: metadata.delivery_order,
+            cache_policy: metadata.cache_policy,
+            cache_key: metadata.cache_key,
+            cache_revision: metadata.cache_revision,
+            model_channel: metadata.model_channel,
+            agent_consumption: metadata.agent_consumption,
+            frontend_label: metadata.frontend_label,
+            connector_profile: metadata.connector_profile,
+        }
+    }
+}
+
+/// 单个 ContextFrame 自带的投递 metadata。
+///
+/// 这是后续 planner 的最小公共语言：frame 仍表达“上下文是什么”，metadata 表达
+/// “本次 turn 对目标 agent 如何投递、缓存与展示”。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryMetadata {
+    pub delivery_phase: ContextDeliveryPhase,
+    pub delivery_order: u32,
+    pub cache_policy: ContextCachePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_revision: Option<String>,
+    pub model_channel: ContextModelChannel,
+    pub agent_consumption: ContextAgentConsumption,
+    pub frontend_label: String,
+    #[serde(default)]
+    pub connector_profile: ContextConnectorProfile,
+}
+
+impl Default for ContextDeliveryMetadata {
+    fn default() -> Self {
+        Self {
+            delivery_phase: ContextDeliveryPhase::default(),
+            delivery_order: 0,
+            cache_policy: ContextCachePolicy::default(),
+            cache_key: None,
+            cache_revision: None,
+            model_channel: ContextModelChannel::default(),
+            agent_consumption: ContextAgentConsumption::default(),
+            frontend_label: String::new(),
+            connector_profile: ContextConnectorProfile::default(),
+        }
+    }
+}
+
+impl ContextDeliveryMetadata {
+    #[must_use]
+    pub fn for_frame(
+        kind: impl AsRef<str>,
+        delivery_channel: impl AsRef<str>,
+        message_role: impl AsRef<str>,
+    ) -> Self {
+        let kind = kind.as_ref();
+        let delivery_channel = delivery_channel.as_ref();
+        let message_role = message_role.as_ref();
+        let mut metadata = Self {
+            delivery_phase: delivery_phase_for_kind(kind),
+            delivery_order: delivery_order_for_kind(kind),
+            cache_policy: cache_policy_for_kind(kind),
+            model_channel: model_channel_for_kind(kind, delivery_channel, message_role),
+            frontend_label: frontend_label_for_kind(kind).to_string(),
+            ..Self::default()
+        };
+        metadata.agent_consumption.reason = format!("default_{kind}_delivery");
+        metadata
+    }
+}
+
+impl ContextFrame {
+    #[must_use]
+    pub fn delivery_entry(&self) -> ContextDeliveryEntry {
+        ContextDeliveryEntry::from_frame(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextDeliveryPhase {
+    StableSystem,
+    SessionPolicy,
+    RunState,
+    Assignment,
+    DiscoveredInventory,
+    #[default]
+    TurnRuntime,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCachePolicy {
+    Static,
+    SessionDigest,
+    RuntimeStateDigest,
+    AssignmentRevision,
+    DiscoveryDigest,
+    TurnEphemeral,
+    #[default]
+    Uncached,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextModelChannel {
+    System,
+    Developer,
+    #[default]
+    Context,
+    User,
+    AuditOnly,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextAgentConsumption {
+    #[serde(default)]
+    pub target: String,
+    pub mode: ContextAgentConsumptionMode,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextAgentConsumptionMode {
+    #[default]
+    Consume,
+    AuditOnly,
+    Ignore,
+    ConnectorNative,
+    SystemOverride,
+    SystemAppend,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextConnectorProfile {
+    #[serde(default)]
+    pub profile_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declared_consumption_modes: Vec<ContextAgentConsumptionMode>,
+}
+
+fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
+    match kind {
+        "identity" => ContextDeliveryPhase::StableSystem,
+        "system_guidelines" => ContextDeliveryPhase::SessionPolicy,
+        "compaction_summary" => ContextDeliveryPhase::RunState,
+        "assignment_context" => ContextDeliveryPhase::Assignment,
+        "capability_state_delta" | "memory_context" => ContextDeliveryPhase::DiscoveredInventory,
+        _ => ContextDeliveryPhase::TurnRuntime,
+    }
+}
+
+fn delivery_order_for_kind(kind: &str) -> u32 {
+    match kind {
+        "identity" => 10,
+        "system_guidelines" => 20,
+        "compaction_summary" => 30,
+        "assignment_context" => 40,
+        "capability_state_delta" => 50,
+        "memory_context" => 60,
+        "pending_action" => 70,
+        "auto_resume" => 80,
+        _ => 100,
+    }
+}
+
+fn cache_policy_for_kind(kind: &str) -> ContextCachePolicy {
+    match kind {
+        "identity" => ContextCachePolicy::Static,
+        "system_guidelines" => ContextCachePolicy::SessionDigest,
+        "compaction_summary" => ContextCachePolicy::RuntimeStateDigest,
+        "assignment_context" => ContextCachePolicy::AssignmentRevision,
+        "capability_state_delta" | "memory_context" => ContextCachePolicy::DiscoveryDigest,
+        "pending_action" | "auto_resume" => ContextCachePolicy::TurnEphemeral,
+        _ => ContextCachePolicy::Uncached,
+    }
+}
+
+fn model_channel_for_kind(
+    kind: &str,
+    _delivery_channel: &str,
+    message_role: &str,
+) -> ContextModelChannel {
+    match kind {
+        "identity" | "system_guidelines" => ContextModelChannel::System,
+        "memory_context" | "compaction_summary" | "assignment_context" => {
+            ContextModelChannel::Context
+        }
+        "auto_resume" | "pending_action" => ContextModelChannel::User,
+        _ => match message_role {
+            "system" => ContextModelChannel::System,
+            "developer" => ContextModelChannel::Developer,
+            "user" => ContextModelChannel::User,
+            _ => ContextModelChannel::Context,
+        },
+    }
+}
+
+fn frontend_label_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "identity" => "Identity",
+        "system_guidelines" => "System Guidelines",
+        "compaction_summary" => "Compaction Summary",
+        "assignment_context" => "Assignment Context",
+        "capability_state_delta" => "Capability State Delta",
+        "memory_context" => "Memory Context",
+        "pending_action" => "Pending Action",
+        "auto_resume" => "Auto Resume",
+        _ => "Context Frame",
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -284,13 +555,6 @@ pub enum ContextFrameSection {
         summary: String,
         #[serde(default)]
         fragments: Vec<RuntimeContextFragmentEntry>,
-    },
-    ContinuationContext {
-        title: String,
-        summary: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        owner_context: Option<String>,
-        transcript_markdown: String,
     },
     CapabilityKeyDelta {
         #[serde(default)]
@@ -1109,5 +1373,54 @@ mod run_context_tests {
     fn session_hook_snapshot_default_has_no_run_context() {
         let snapshot = AgentFrameHookSnapshot::default();
         assert!(snapshot.run_context.is_none());
+    }
+
+    #[test]
+    fn context_delivery_metadata_default_serializes_snake_case_shape() {
+        let value = serde_json::to_value(ContextDeliveryMetadata::default()).unwrap();
+
+        assert_eq!(value["delivery_phase"], "turn_runtime");
+        assert_eq!(value["delivery_order"], 0);
+        assert_eq!(value["cache_policy"], "uncached");
+        assert_eq!(value["model_channel"], "context");
+        assert_eq!(value["agent_consumption"]["mode"], "consume");
+        assert!(value.get("frontend_label").is_some());
+    }
+
+    #[test]
+    fn context_delivery_metadata_for_memory_context_carries_plan_fields() {
+        let metadata =
+            ContextDeliveryMetadata::for_frame("memory_context", "connector_context", "system");
+
+        assert_eq!(
+            metadata.delivery_phase,
+            ContextDeliveryPhase::DiscoveredInventory
+        );
+        assert_eq!(metadata.delivery_order, 60);
+        assert_eq!(metadata.cache_policy, ContextCachePolicy::DiscoveryDigest);
+        assert_eq!(metadata.model_channel, ContextModelChannel::Context);
+
+        let frame = ContextFrame {
+            id: "memory-context-1".to_string(),
+            kind: "memory_context".to_string(),
+            source: RuntimeEventSource::RuntimeContextUpdate,
+            phase_node: None,
+            apply_mode: None,
+            delivery_status: "prepared_for_connector".to_string(),
+            delivery_channel: "connector_context".to_string(),
+            message_role: "system".to_string(),
+            delivery_metadata: metadata,
+            rendered_text: "memory inventory".to_string(),
+            sections: Vec::new(),
+            created_at_ms: 1,
+        };
+        let entry = frame.delivery_entry();
+        let value = serde_json::to_value(entry).unwrap();
+
+        assert_eq!(value["frame_kind"], "memory_context");
+        assert_eq!(value["delivery_phase"], "discovered_inventory");
+        assert_eq!(value["delivery_order"], 60);
+        assert_eq!(value["cache_policy"], "discovery_digest");
+        assert_eq!(value["model_channel"], "context");
     }
 }

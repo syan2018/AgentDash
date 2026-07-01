@@ -510,25 +510,6 @@ fn context_usage_items_from_section(
             }
             items
         }
-        ContextFrameSection::ContinuationContext {
-            title,
-            owner_context,
-            ..
-        } => owner_context
-            .as_deref()
-            .map(|owner| {
-                context_usage_item(
-                    context_usage_kind::SYSTEM_DEVELOPER,
-                    "System / Developer",
-                    title,
-                    owner,
-                    "context_frame",
-                    false,
-                    &trace,
-                )
-            })
-            .into_iter()
-            .collect(),
         ContextFrameSection::SystemNotice {
             title,
             summary,
@@ -1315,6 +1296,11 @@ mod tests {
             delivery_status: "prepared_for_connector".to_string(),
             delivery_channel: "connector_context".to_string(),
             message_role: "system".to_string(),
+            delivery_metadata: agentdash_spi::ContextDeliveryMetadata::for_frame(
+                "system_guidelines",
+                "connector_context",
+                "system",
+            ),
             rendered_text: String::new(),
             created_at_ms: 1,
             sections: vec![

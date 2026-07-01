@@ -67,6 +67,7 @@ pub struct ExecutionTurnFrame {
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
     pub context_frames: Vec<ContextFrame>,
+    pub context_delivery_plan: Option<ContextDeliveryPlan>,
     pub assembled_tools: Vec<DynAgentTool>,
 }
 ```
@@ -78,6 +79,7 @@ pub struct ExecutionTurnFrame {
 | `runtime_delegate` | launch hook plan | agent loop hook callbacks |
 | `restored_session_state` | restore plan | 支持 repository restore 的 connector |
 | `context_frames` | `FrameLaunchEnvelope` context projection | connector context 消费（按 kind 分类或渲染为文本） |
+| `context_delivery_plan` | `TurnPreparer` 基于 dedupe 后 `context_frames` 和 connector profile 生成 | connector 与前端展示消费的正式 phase/order/cache/channel/agent consumption |
 | `assembled_tools` | runtime tool provider + MCP tools projection | in-process connector tool execution |
 
 `TurnExecution` 在 active turn 内保存 session frame、capability state、context bundle、
@@ -99,11 +101,15 @@ ToolSchema PromptText 不进入 `ExecutionTurnFrame`。Turn preparation 在 appl
 | vibe_kanban | `vfs`、`working_directory`、`environment_variables`、`executor_config` | `context_frames`（渲染为系统上下文） |
 
 动态 Project Context、Workspace、Skills、Memory、Hook Runtime 等内容通过 ContextFrame
-进入，不作为 running turn 的 system prompt 重置。
+进入，并由 `ContextDeliveryPlan` 标注其 phase、cache policy、model channel 与 agent consumption。
+`system` / `developer` 是目标 connector 的消费策略，不是 frame 自身的语义分类；PiAgent 只把
+`agent_consumption.mode = consume` 且 `model_channel in [system, developer]` 的 entries 拼入
+system prompt，其它 connector 通过 profile 声明 `system_override`、`system_append`、
+`connector_native`、`ignore` 或 `audit_only` 等消费能力。
 
 ## Memory Context Frame
 
-`memory_context` 是 connector-facing system ContextFrame，来源是 `LaunchPlan.discovered_memory`。它向模型提供 runtime-discovered memory source inventory、默认 source/index、policy 文本和 bounded index 内容。
+`memory_context` 是动态发现资源 ContextFrame，来源是 `LaunchPlan.discovered_memory`。它向模型提供 runtime-discovered memory source inventory、默认 source/index、policy 文本和 bounded index 内容。
 
 Contract：
 
@@ -111,17 +117,29 @@ Contract：
 | --- | --- |
 | `kind` | `memory_context` |
 | `source` | `RuntimeContextUpdate` |
-| `delivery_channel` | `connector_context` |
-| `message_role` | `system` |
+| `delivery_channel` | `turn_start` |
+| `message_role` | `user` |
+| `delivery_phase` | `discovered_inventory` |
+| `cache_policy` | `discovery_digest` |
+| `model_channel` | `context` |
 | section | `SystemNotice { title: "Memory Context", body: rendered_text }` |
 
 `rendered_text` 只包含 source inventory、diagnostics、默认 source/index 和 `index_status=present` 的 bounded index 内容。Topic 文件正文需要 Agent 按索引线索通过 VFS 工具读取，原因是 topic body 属于按需资源内容，不应在每轮启动时无界进入 stable system context。
 
-Frame order for PiAgent stable system prompt：
+Formal delivery order：
 
 ```text
-identity -> system_guidelines -> memory_context
+stable_system(identity)
+-> session_policy(system_guidelines)
+-> run_state(compaction_summary)
+-> assignment(assignment_context)
+-> discovered_inventory(capability_state_delta, memory_context, skill/tool/MCP/VFS deltas)
+-> turn_runtime(pending_action, auto_resume, hook notices)
 ```
+
+PiAgent stable system prompt 只消费 `stable_system` / `session_policy` 中被 plan 标为
+`model_channel = system|developer` 且 `agent_consumption.mode = consume` 的 entries，原因是
+memory 与 skill/tool/MCP/VFS 同属可动态更新的 discovery digest，不应提升为长期 system 规则。
 
 Validation / tests：
 
@@ -130,7 +148,8 @@ Validation / tests：
 | `MemoryDiscoveryOutput` 为空 | 不生成 `memory_context` frame |
 | source 有 bounded `agent://MEMORY.md` | rendered text 包含默认 source/index 与 index markdown |
 | source `index_status=too_large` | rendered text 只展示状态和 diagnostic，不包含正文 |
-| connector 收到无序 context frames | system prompt 仍按 identity、guidelines、memory_context 顺序拼接 |
+| connector 收到无序 context frames | PiAgent system prompt 按 delivery metadata 排序，仅拼接 system/developer 可消费 entries |
+| connector profile 支持 system override | plan entry 的 `agent_consumption.mode` 可表达 `system_override`，不退化成 audit-only |
 
 ## Tool Hot Update
 

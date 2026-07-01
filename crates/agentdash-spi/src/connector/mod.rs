@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
-use crate::hooks::{ContextFrame, HookRuntimeAccess};
+use crate::hooks::{ContextDeliveryPlan, ContextFrame, HookRuntimeAccess};
 pub mod capability_delta;
 
 pub use capability_delta::{
@@ -232,11 +232,10 @@ pub struct ExecutionTurnFrame {
     /// 会把重建出的消息历史放在这里，供 connector 恢复连续会话。
     pub restored_session_state: Option<RestoredSessionState>,
     /// 本轮可见的 ContextFrame 列表（含 identity / mission / capability / pending_action...）。
-    ///
-    /// connector 需要自行决定消费策略：
-    /// - in-process connector 可按 frame kind 分类消费（如 identity 走 set_system_prompt）。
-    /// - generic connector 可把 frames 渲染成文本后与用户输入拼接。
     pub context_frames: Vec<ContextFrame>,
+    /// 本轮 ContextFrame 的正式投递计划。connector 和前端应优先消费该计划表达的
+    /// phase/order/cache/channel/agent consumption，而不是从 frame 到达顺序推断。
+    pub context_delivery_plan: Option<ContextDeliveryPlan>,
     /// Application 层预构建的工具列表（runtime + direct MCP + relay MCP）。
     ///
     /// 内嵌 connector 只持有并调用这里的 `DynAgentTool`，不重新持有

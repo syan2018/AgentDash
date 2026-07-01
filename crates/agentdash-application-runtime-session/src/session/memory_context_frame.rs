@@ -1,4 +1,4 @@
-//! 系统级 memory context 帧。
+//! 动态发现的 memory context 帧。
 
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 use agentdash_spi::{
@@ -57,11 +57,11 @@ impl ContextFramePayload for MemoryContextFrame {
     }
 
     fn delivery_channel(&self) -> &'static str {
-        "connector_context"
+        "turn_start"
     }
 
     fn message_role(&self) -> &'static str {
-        "system"
+        "user"
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
@@ -231,8 +231,20 @@ mod tests {
         .expect("memory frame");
 
         assert_eq!(frame.kind, MEMORY_CONTEXT_FRAME_KIND);
-        assert_eq!(frame.delivery_channel, "connector_context");
-        assert_eq!(frame.message_role, "system");
+        assert_eq!(frame.delivery_channel, "turn_start");
+        assert_eq!(frame.message_role, "user");
+        assert_eq!(
+            frame.delivery_metadata.delivery_phase,
+            agentdash_spi::ContextDeliveryPhase::DiscoveredInventory
+        );
+        assert_eq!(
+            frame.delivery_metadata.cache_policy,
+            agentdash_spi::ContextCachePolicy::DiscoveryDigest
+        );
+        assert_eq!(
+            frame.delivery_metadata.model_channel,
+            agentdash_spi::ContextModelChannel::Context
+        );
         assert!(frame.rendered_text.contains("Default source: `agent://`"));
         assert!(
             frame

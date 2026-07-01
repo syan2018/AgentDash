@@ -83,8 +83,11 @@ pub use hooks::script::HookScriptEvaluator;
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot, ContextFrame,
-    ContextFrameSection, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot,
+    ContextAgentConsumption, ContextAgentConsumptionMode, ContextCachePolicy,
+    ContextConnectorProfile, ContextDeliveryEntry, ContextDeliveryMetadata, ContextDeliveryPhase,
+    ContextDeliveryPlan, ContextDeliveryTarget, ContextFrame, ContextFrameSection,
+    ContextModelChannel, ContextTokenStats, ExecutionHookProvider, HookApprovalRequest,
     HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
     HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger, HookInjection,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,

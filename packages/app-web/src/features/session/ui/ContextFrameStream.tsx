@@ -31,7 +31,8 @@ export function ContextFrameStream({
     return null;
   }
 
-  const summary = summarizeFrames(frames);
+  const orderedFrames = [...frames].sort(compareContextDeliveryOrder);
+  const summary = summarizeFrames(orderedFrames);
 
   return (
     <div>
@@ -43,13 +44,13 @@ export function ContextFrameStream({
         <span className={ST.chevron}>{expanded ? "▼" : "▶"}</span>
         <span className={ST.badge}>CTX</span>
         <span className={ST.hint}>
-          上下文已更新 {describeFrameSet(frames)} {summary ? `· ${summary}` : ""}
+          上下文已更新 {describeFrameSet(orderedFrames)} {summary ? `· ${summary}` : ""}
         </span>
       </button>
 
       {expanded && (
         <div className={ST.itemList}>
-          {frames.map((frame) => (
+          {orderedFrames.map((frame) => (
             <FrameStripItem key={frame.id} frame={frame} defaultOpen={defaultExpanded} />
           ))}
         </div>
@@ -69,6 +70,7 @@ function FrameStripItem({
   const [open, setOpen] = useState(defaultOpen);
   const token = frameKindToToken(frame.kind);
   const label = frameTabLabel(frame);
+  const delivery = frame.delivery_metadata;
 
   return (
     <div>
@@ -80,6 +82,9 @@ function FrameStripItem({
         <span className={`${ST.dot} bg-success`} />
         <span className={ST.badge}>{token.token}</span>
         <span className={ST.title}>{label}</span>
+        <span className={ST.hint}>
+          {delivery.delivery_phase} #{delivery.delivery_order} · {delivery.cache_policy} · {delivery.model_channel}/{delivery.agent_consumption.mode}
+        </span>
       </button>
       {open && (
         <div className={ST.bodyArea}>
@@ -88,6 +93,31 @@ function FrameStripItem({
       )}
     </div>
   );
+}
+
+function compareContextDeliveryOrder(a: ContextFrame, b: ContextFrame): number {
+  const phase = phaseRank(a.delivery_metadata.delivery_phase) - phaseRank(b.delivery_metadata.delivery_phase);
+  if (phase !== 0) return phase;
+  const order = a.delivery_metadata.delivery_order - b.delivery_metadata.delivery_order;
+  if (order !== 0) return order;
+  return a.created_at_ms - b.created_at_ms;
+}
+
+function phaseRank(phase: ContextFrame["delivery_metadata"]["delivery_phase"]): number {
+  switch (phase) {
+    case "stable_system":
+      return 0;
+    case "session_policy":
+      return 1;
+    case "run_state":
+      return 2;
+    case "assignment":
+      return 3;
+    case "discovered_inventory":
+      return 4;
+    case "turn_runtime":
+      return 5;
+  }
 }
 
 function summarizeFrames(frames: ContextFrame[]): string {
@@ -101,7 +131,6 @@ function summarizeFrames(frames: ContextFrame[]): string {
 
 const FRAME_KIND_LABELS: Record<string, string> = {
   identity: "IDENTITY",
-  continuation_context: "CONTINUATION",
   capability_state_snapshot: "CAPABILITY SNAPSHOT",
   capability_state_delta: "CAPABILITY",
   assignment_context: "ASSIGNMENT",
@@ -109,6 +138,7 @@ const FRAME_KIND_LABELS: Record<string, string> = {
   auto_resume: "RESUME",
   compaction_summary: "COMPACTION",
   system_guidelines: "GUIDELINES",
+  memory_context: "MEMORY",
 };
 
 function describeFrameSet(frames: ContextFrame[]): string {

@@ -18,7 +18,6 @@ use agentdash_domain::backend::{
     RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
 };
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
     RuntimeMcpServer, SessionContextBundle, Vfs,
@@ -246,7 +245,6 @@ pub struct FrameLaunchEnvelope {
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
     pub context_bundle: Option<SessionContextBundle>,
-    pub continuation_context_frame: Option<ContextFrame>,
     pub base_capability_state: Option<CapabilityState>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub resolution_trace: LaunchResolutionTrace,
@@ -318,7 +316,6 @@ impl FrameLaunchEnvelope {
             },
             working_directory: self.working_directory,
             context_bundle: self.context_bundle,
-            continuation_context_frame: self.continuation_context_frame,
             base_capability_state: self.base_capability_state,
             runtime_backend_anchor: self.runtime_backend_anchor,
             resolution_trace: launch_port::LaunchResolutionTrace {

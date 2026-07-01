@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use agentdash_agent_types::{AgentRuntimeDelegateSet, DynRuntimeToolPolicyDelegate};
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
@@ -129,7 +128,6 @@ pub struct LaunchPlan {
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub discovered_memory: MemoryDiscoveryOutput,
     pub context_bundle: Option<SessionContextBundle>,
-    pub continuation_context_frame: Option<ContextFrame>,
     pub launch_path: PromptLaunchPathPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
@@ -308,10 +306,10 @@ impl LaunchPlan {
             runtime_delegates: input.runtime_delegates,
             restored_session_state: input.restored_session_state,
             context_frames: Vec::new(),
+            context_delivery_plan: None,
             assembled_tools: Vec::new(),
         };
         let context_bundle = input.launch_envelope.context_bundle.clone();
-        let continuation_context_frame = input.launch_envelope.continuation_context_frame.clone();
         Self {
             pending_frame,
             resolved_payload: input.resolved_payload,
@@ -319,7 +317,6 @@ impl LaunchPlan {
             discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
             discovered_memory: input.launch_envelope.intent.discovered_memory.clone(),
             context_bundle,
-            continuation_context_frame,
             launch_path,
             restore,
             hooks,
@@ -520,7 +517,6 @@ mod tests {
             },
             working_directory,
             context_bundle: construction.context.bundle,
-            continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
             runtime_backend_anchor: None,
             resolution_trace: LaunchResolutionTrace {

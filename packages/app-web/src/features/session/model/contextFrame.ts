@@ -10,15 +10,71 @@ export interface ContextFrame {
   delivery_status: string;
   delivery_channel: string;
   message_role: string;
+  delivery_metadata: ContextDeliveryMetadata;
   rendered_text: string;
   sections: ContextFrameSection[];
   created_at_ms: number;
 }
 
+export type ContextDeliveryPhase =
+  | "stable_system"
+  | "session_policy"
+  | "run_state"
+  | "assignment"
+  | "discovered_inventory"
+  | "turn_runtime";
+
+export type ContextCachePolicy =
+  | "static"
+  | "session_digest"
+  | "runtime_state_digest"
+  | "assignment_revision"
+  | "discovery_digest"
+  | "turn_ephemeral"
+  | "uncached";
+
+export type ContextModelChannel =
+  | "system"
+  | "developer"
+  | "context"
+  | "user"
+  | "audit_only"
+  | "ignored";
+
+export type ContextAgentConsumptionMode =
+  | "consume"
+  | "audit_only"
+  | "ignore"
+  | "connector_native"
+  | "system_override"
+  | "system_append";
+
+export interface ContextAgentConsumption {
+  target: string;
+  mode: ContextAgentConsumptionMode;
+  reason: string;
+}
+
+export interface ContextConnectorProfile {
+  profile_id: string;
+  declared_consumption_modes: ContextAgentConsumptionMode[];
+}
+
+export interface ContextDeliveryMetadata {
+  delivery_phase: ContextDeliveryPhase;
+  delivery_order: number;
+  cache_policy: ContextCachePolicy;
+  cache_key?: string;
+  cache_revision?: string;
+  model_channel: ContextModelChannel;
+  agent_consumption: ContextAgentConsumption;
+  frontend_label: string;
+  connector_profile: ContextConnectorProfile;
+}
+
 export type ContextFrameSection =
   | IdentitySection
   | AssignmentContextSection
-  | ContinuationContextSection
   | CapabilityKeyDeltaSection
   | ToolPathDeltaSection
   | McpServerDeltaSection
@@ -39,14 +95,6 @@ export interface AssignmentContextSection {
   title: string;
   summary: string;
   fragments: RuntimeContextFragmentEntry[];
-}
-
-export interface ContinuationContextSection {
-  kind: "continuation_context";
-  title: string;
-  summary: string;
-  owner_context?: string;
-  transcript_markdown: string;
 }
 
 export interface IdentitySection {
@@ -247,10 +295,138 @@ export function parseContextFrame(value: Record<string, unknown>): ContextFrame 
     delivery_status: delivery,
     delivery_channel: deliveryChannel,
     message_role: messageRole,
+    delivery_metadata: parseDeliveryMetadata(
+      value.delivery_metadata,
+      kind,
+      deliveryChannel,
+      messageRole,
+    ),
     rendered_text: agentText,
     sections: rawSections.map(parseSection).filter((item): item is ContextFrameSection => item != null),
     created_at_ms: createdAt,
   };
+}
+
+function parseDeliveryMetadata(
+  value: unknown,
+  frameKind: string,
+  deliveryChannel: string,
+  messageRole: string,
+): ContextDeliveryMetadata {
+  if (!isRecord(value)) {
+    return defaultDeliveryMetadata(frameKind, deliveryChannel, messageRole);
+  }
+  const fallback = defaultDeliveryMetadata(frameKind, deliveryChannel, messageRole);
+  const rawConsumption = isRecord(value.agent_consumption) ? value.agent_consumption : {};
+  const rawProfile = isRecord(value.connector_profile) ? value.connector_profile : {};
+  const declaredModes = Array.isArray(rawProfile.declared_consumption_modes)
+    ? rawProfile.declared_consumption_modes
+    : [];
+
+  return {
+    delivery_phase: readDeliveryPhase(value.delivery_phase) ?? fallback.delivery_phase,
+    delivery_order: readNumber(value.delivery_order) ?? fallback.delivery_order,
+    cache_policy: readCachePolicy(value.cache_policy) ?? fallback.cache_policy,
+    cache_key: readString(value.cache_key) ?? undefined,
+    cache_revision: readString(value.cache_revision) ?? undefined,
+    model_channel: readModelChannel(value.model_channel) ?? fallback.model_channel,
+    agent_consumption: {
+      target: readString(rawConsumption.target) ?? fallback.agent_consumption.target,
+      mode: readConsumptionMode(rawConsumption.mode) ?? fallback.agent_consumption.mode,
+      reason: readString(rawConsumption.reason) ?? fallback.agent_consumption.reason,
+    },
+    frontend_label: readString(value.frontend_label) ?? fallback.frontend_label,
+    connector_profile: {
+      profile_id: readString(rawProfile.profile_id) ?? "",
+      declared_consumption_modes: declaredModes
+        .map(readConsumptionMode)
+        .filter((item): item is ContextAgentConsumptionMode => item != null),
+    },
+  };
+}
+
+function defaultDeliveryMetadata(
+  frameKind: string,
+  _deliveryChannel: string,
+  messageRole: string,
+): ContextDeliveryMetadata {
+  return {
+    delivery_phase: defaultDeliveryPhase(frameKind),
+    delivery_order: defaultDeliveryOrder(frameKind),
+    cache_policy: defaultCachePolicy(frameKind),
+    model_channel: defaultModelChannel(frameKind, messageRole),
+    agent_consumption: {
+      target: "",
+      mode: "consume",
+      reason: `default_${frameKind}_delivery`,
+    },
+    frontend_label: defaultFrontendLabel(frameKind),
+    connector_profile: {
+      profile_id: "",
+      declared_consumption_modes: [],
+    },
+  };
+}
+
+function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
+  if (frameKind === "identity") return "stable_system";
+  if (frameKind === "system_guidelines") return "session_policy";
+  if (frameKind === "compaction_summary") return "run_state";
+  if (frameKind === "assignment_context") return "assignment";
+  if (frameKind === "capability_state_delta" || frameKind === "memory_context") {
+    return "discovered_inventory";
+  }
+  return "turn_runtime";
+}
+
+function defaultDeliveryOrder(frameKind: string): number {
+  if (frameKind === "identity") return 10;
+  if (frameKind === "system_guidelines") return 20;
+  if (frameKind === "compaction_summary") return 30;
+  if (frameKind === "assignment_context") return 40;
+  if (frameKind === "capability_state_delta") return 50;
+  if (frameKind === "memory_context") return 60;
+  if (frameKind === "pending_action") return 70;
+  if (frameKind === "auto_resume") return 80;
+  return 100;
+}
+
+function defaultCachePolicy(frameKind: string): ContextCachePolicy {
+  if (frameKind === "identity") return "static";
+  if (frameKind === "system_guidelines") return "session_digest";
+  if (frameKind === "compaction_summary") return "runtime_state_digest";
+  if (frameKind === "assignment_context") return "assignment_revision";
+  if (frameKind === "capability_state_delta" || frameKind === "memory_context") {
+    return "discovery_digest";
+  }
+  if (frameKind === "pending_action" || frameKind === "auto_resume") return "turn_ephemeral";
+  return "uncached";
+}
+
+function defaultModelChannel(frameKind: string, messageRole: string): ContextModelChannel {
+  if (frameKind === "identity" || frameKind === "system_guidelines") return "system";
+  if (
+    frameKind === "memory_context"
+    || frameKind === "compaction_summary"
+    || frameKind === "assignment_context"
+  ) return "context";
+  if (frameKind === "auto_resume" || frameKind === "pending_action") return "user";
+  if (messageRole === "system") return "system";
+  if (messageRole === "developer") return "developer";
+  if (messageRole === "user") return "user";
+  return "context";
+}
+
+function defaultFrontendLabel(frameKind: string): string {
+  if (frameKind === "identity") return "Identity";
+  if (frameKind === "system_guidelines") return "System Guidelines";
+  if (frameKind === "compaction_summary") return "Compaction Summary";
+  if (frameKind === "assignment_context") return "Assignment Context";
+  if (frameKind === "capability_state_delta") return "Capability State Delta";
+  if (frameKind === "memory_context") return "Memory Context";
+  if (frameKind === "pending_action") return "Pending Action";
+  if (frameKind === "auto_resume") return "Auto Resume";
+  return "Context Frame";
 }
 
 function parseSection(value: unknown): ContextFrameSection | null {
@@ -274,15 +450,6 @@ function parseSection(value: unknown): ContextFrameSection | null {
       agent_prompt: readString(value.agent_prompt) ?? undefined,
       mode: readString(value.mode) ?? "append",
       effective_prompt: readString(value.effective_prompt) ?? "",
-    };
-  }
-  if (kind === "continuation_context") {
-    return {
-      kind,
-      title: readString(value.title) ?? "Session Continuation",
-      summary: readString(value.summary) ?? "",
-      owner_context: readString(value.owner_context) ?? undefined,
-      transcript_markdown: readString(value.transcript_markdown) ?? "",
     };
   }
   if (kind === "capability_key_delta") {
@@ -532,6 +699,55 @@ function readString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function readDeliveryPhase(value: unknown): ContextDeliveryPhase | null {
+  if (
+    value === "stable_system"
+    || value === "session_policy"
+    || value === "run_state"
+    || value === "assignment"
+    || value === "discovered_inventory"
+    || value === "turn_runtime"
+  ) return value;
+  return null;
+}
+
+function readCachePolicy(value: unknown): ContextCachePolicy | null {
+  if (
+    value === "static"
+    || value === "session_digest"
+    || value === "runtime_state_digest"
+    || value === "assignment_revision"
+    || value === "discovery_digest"
+    || value === "turn_ephemeral"
+    || value === "uncached"
+  ) return value;
+  return null;
+}
+
+function readModelChannel(value: unknown): ContextModelChannel | null {
+  if (
+    value === "system"
+    || value === "developer"
+    || value === "context"
+    || value === "user"
+    || value === "audit_only"
+    || value === "ignored"
+  ) return value;
+  return null;
+}
+
+function readConsumptionMode(value: unknown): ContextAgentConsumptionMode | null {
+  if (
+    value === "consume"
+    || value === "audit_only"
+    || value === "ignore"
+    || value === "connector_native"
+    || value === "system_override"
+    || value === "system_append"
+  ) return value;
+  return null;
+}
+
 function readRenderedText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value;
@@ -574,8 +790,6 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "CAP", variant: "neutral" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
-    case "continuation_context":
-      return { token: "CTN", variant: "warning" };
     case "pending_action":
       return { token: "ACT", variant: "warning" };
     case "auto_resume":
@@ -599,8 +813,6 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "IDN", variant: "primary" };
     case "assignment_context":
       return { token: "ASN", variant: "primary" };
-    case "continuation_context":
-      return { token: "CTN", variant: "warning" };
     case "capability_key_delta":
       return { token: "CAP", variant: "neutral" };
     case "tool_path_delta":

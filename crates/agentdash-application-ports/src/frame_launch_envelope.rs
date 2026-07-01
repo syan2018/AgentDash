@@ -6,7 +6,6 @@ use crate::launch::LaunchCommand;
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::session_persistence::RuntimeCommandRecord;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
@@ -68,7 +67,6 @@ pub struct FrameLaunchEnvelope {
     pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
     pub context_bundle: Option<SessionContextBundle>,
-    pub continuation_context_frame: Option<ContextFrame>,
     pub base_capability_state: Option<CapabilityState>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub resolution_trace: LaunchResolutionTrace,

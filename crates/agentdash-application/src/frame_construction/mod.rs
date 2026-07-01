@@ -462,7 +462,6 @@ pub(crate) fn build_envelope_from_frame(
         },
         working_directory,
         context_bundle,
-        continuation_context_frame: None,
         base_capability_state: closed_surface.base_capability_state,
         runtime_backend_anchor,
         resolution_trace: closed_surface.resolution_trace,

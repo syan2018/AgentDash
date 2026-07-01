@@ -14,7 +14,6 @@ mod context_usage_marking;
 mod context_usage_projection;
 pub(crate) mod runtime_transition_service;
 // context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
-pub mod continuation;
 pub mod control;
 pub mod core;
 pub(crate) mod dimension;

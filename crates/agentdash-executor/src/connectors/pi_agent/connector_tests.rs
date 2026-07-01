@@ -2968,6 +2968,11 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                         delivery_status: "prepared_for_connector".to_string(),
                         delivery_channel: "connector_context".to_string(),
                         message_role: "system".to_string(),
+                        delivery_metadata: agentdash_spi::ContextDeliveryMetadata::for_frame(
+                            "identity",
+                            "connector_context",
+                            "system",
+                        ),
                         // identity 帧 rendered_text 为原样身份提示词（无 markdown 脚手架）。
                         rendered_text: prompt.to_string(),
                         sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
@@ -3074,9 +3079,9 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
     assert_eq!(runtime.last_system_prompt.as_deref(), Some("SP_B"));
 }
 
-/// 系统提示词由 identity 帧 + system_guidelines 帧 + memory_context 帧按序组装。
+/// 系统提示词由 delivery metadata 标记为 system/developer 的帧按序组装。
 #[test]
-fn assemble_system_prompt_combines_identity_guidelines_and_memory() {
+fn assemble_system_prompt_uses_delivery_metadata_and_excludes_memory() {
     fn frame(kind: &str, rendered: &str) -> agentdash_spi::hooks::ContextFrame {
         agentdash_spi::hooks::ContextFrame {
             id: format!("{kind}-1"),
@@ -3087,6 +3092,11 @@ fn assemble_system_prompt_combines_identity_guidelines_and_memory() {
             delivery_status: "prepared_for_connector".to_string(),
             delivery_channel: "connector_context".to_string(),
             message_role: "system".to_string(),
+            delivery_metadata: agentdash_spi::ContextDeliveryMetadata::for_frame(
+                kind,
+                "connector_context",
+                "system",
+            ),
             rendered_text: rendered.to_string(),
             sections: Vec::new(),
             created_at_ms: 1,
@@ -3103,22 +3113,23 @@ fn assemble_system_prompt_combines_identity_guidelines_and_memory() {
         "## Memory Context\n\nDefault source: `agent://`",
     );
 
-    // 帧顺序不应影响结果：身份、指引、memory context 按固定顺序拼接。
+    // 帧顺序不应影响结果：正式 system prompt 按 delivery order 拼接，
+    // memory_context 虽然仍可见于动态上下文，但不进入 PiAgent system prompt。
     let prompt = assemble_system_prompt(&[memory.clone(), guidelines.clone(), identity.clone()])
         .expect("system prompt should exist");
     assert!(prompt.starts_with("## Identity"));
     assert!(prompt.contains("base"));
     assert!(prompt.contains("## Project Guidelines"));
     assert!(prompt.contains("使用中文交流"));
-    assert!(prompt.contains("## Memory Context"));
-    assert!(prompt.ends_with("Default source: `agent://`"));
+    assert!(!prompt.contains("## Memory Context"));
+    assert!(prompt.ends_with("使用中文交流"));
 
     // 仅有身份帧时也成立。
     let identity_only = assemble_system_prompt(&[identity]).expect("identity only");
     assert_eq!(identity_only, "## Identity\n\nbase");
 
-    // 无任何系统帧时返回 None。
-    assert!(assemble_system_prompt(&[]).is_none());
+    // 只有动态上下文帧时返回 None。
+    assert!(assemble_system_prompt(&[memory]).is_none());
 }
 
 #[tokio::test]

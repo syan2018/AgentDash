@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, RuntimeMcpServer,
     SessionBaselineCapabilities, SessionContextBundle, Vfs,
@@ -125,7 +124,6 @@ pub struct SessionSurfacePlan {
 pub struct ContextPlan {
     pub bundle: Option<SessionContextBundle>,
     pub bundle_id: Option<Uuid>,
-    pub continuation_context_frame: Option<ContextFrame>,
     pub context_snapshot: Option<SessionContextSnapshot>,
     pub bootstrap_fragment_count: usize,
 }

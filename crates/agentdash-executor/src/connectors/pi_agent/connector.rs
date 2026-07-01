@@ -26,8 +26,8 @@ use super::bridges::provider_registry::{
     CONTEXT_WINDOW_STANDARD, EffectiveLlmProviderProfile, ProviderEntry, ProviderModelResolveError,
     ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::build_hook_trace_envelope;
+use agentdash_spi::hooks::{ContextAgentConsumptionMode, ContextFrame, ContextModelChannel};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
@@ -1128,30 +1128,34 @@ impl AgentConnector for PiAgentConnector {
     }
 }
 
-/// identity / system_guidelines / memory_context 帧的 `kind` 标识（与 application 层帧组装约定一致）。
-const IDENTITY_FRAME_KIND: &str = "identity";
-const SYSTEM_GUIDELINES_FRAME_KIND: &str = "system_guidelines";
-const MEMORY_CONTEXT_FRAME_KIND: &str = "memory_context";
-
-/// 由系统通道 context frames 按序组装最终 system prompt。
-///
-/// 这些帧的 `rendered_text` 均为各自结构化数据的**单一派生**（见 application 层
-/// `identity_context_frame` / `guidelines_context_frame`），因此这里只需按
-/// 「身份 → 项目指引 → memory context」顺序拼接非空 `rendered_text`。
+/// 由 delivery metadata 标记的系统通道 context frames 组装最终 system prompt。
+/// `ContextFrame.kind` 只表达上下文语义，是否进入 PiAgent system prompt 由
+/// delivery plan 决定，避免 memory / skill 这类动态发现资源被硬塞进最高优先级规则。
 fn assemble_system_prompt(frames: &[ContextFrame]) -> Option<String> {
-    let mut parts = Vec::new();
-    for kind in [
-        IDENTITY_FRAME_KIND,
-        SYSTEM_GUIDELINES_FRAME_KIND,
-        MEMORY_CONTEXT_FRAME_KIND,
-    ] {
-        if let Some(frame) = frames.iter().find(|frame| frame.kind == kind) {
+    let mut system_frames = frames
+        .iter()
+        .filter(|frame| {
+            frame.delivery_metadata.agent_consumption.mode == ContextAgentConsumptionMode::Consume
+                && matches!(
+                    frame.delivery_metadata.model_channel,
+                    ContextModelChannel::System | ContextModelChannel::Developer
+                )
+        })
+        .collect::<Vec<_>>();
+    system_frames.sort_by_key(|frame| {
+        (
+            frame.delivery_metadata.delivery_phase,
+            frame.delivery_metadata.delivery_order,
+            frame.created_at_ms,
+        )
+    });
+    let parts = system_frames
+        .into_iter()
+        .filter_map(|frame| {
             let rendered = frame.rendered_text.trim();
-            if !rendered.is_empty() {
-                parts.push(rendered.to_string());
-            }
-        }
-    }
+            (!rendered.is_empty()).then(|| rendered.to_string())
+        })
+        .collect::<Vec<_>>();
     (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 

@@ -1,5 +1,6 @@
 use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource, SharedHookRuntime,
+    ContextDeliveryMetadata, ContextFrame, ContextFrameSection, HookTurnStartNotice,
+    RuntimeEventSource, SharedHookRuntime,
 };
 
 pub(crate) trait ContextFramePayload {
@@ -25,6 +26,14 @@ pub(crate) trait ContextFramePayload {
     fn message_role(&self) -> &'static str {
         "user"
     }
+
+    fn delivery_metadata(&self) -> ContextDeliveryMetadata {
+        ContextDeliveryMetadata::for_frame(
+            self.kind(),
+            self.delivery_channel(),
+            self.message_role(),
+        )
+    }
 }
 
 pub(crate) fn build_context_frame(payload: &impl ContextFramePayload) -> ContextFrame {
@@ -38,6 +47,7 @@ pub(crate) fn build_context_frame(payload: &impl ContextFramePayload) -> Context
         delivery_status: payload.delivery_status(),
         delivery_channel: payload.delivery_channel().to_string(),
         message_role: payload.message_role().to_string(),
+        delivery_metadata: payload.delivery_metadata(),
         rendered_text: payload.rendered_text(),
         sections: payload.sections(),
         created_at_ms,

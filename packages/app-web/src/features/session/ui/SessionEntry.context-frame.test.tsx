@@ -76,6 +76,22 @@ function contextFrame(id: string, kind: string): ContextFrame {
     delivery_status: "queued_for_transform_context",
     delivery_channel: "turn_start",
     message_role: "user",
+    delivery_metadata: {
+      delivery_phase: "discovered_inventory",
+      delivery_order: 50,
+      cache_policy: "discovery_digest",
+      model_channel: "context",
+      agent_consumption: {
+        target: "",
+        mode: "consume",
+        reason: "test",
+      },
+      frontend_label: "Capability State Delta",
+      connector_profile: {
+        profile_id: "",
+        declared_consumption_modes: [],
+      },
+    },
     rendered_text: "## Capability Update",
     created_at_ms: 1,
     sections: [

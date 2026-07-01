@@ -17,7 +17,6 @@ import type {
   CapabilityKeyDeltaSection,
   CompactionSummarySection,
   CompanionAgentRosterDeltaSection,
-  ContinuationContextSection,
   ContextFrameSection,
   ContextTokenInfo,
   IdentitySection,
@@ -78,8 +77,6 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "Identity";
     case "assignment_context":
       return section.title || "Assignment Context";
-    case "continuation_context":
-      return section.title || "Session Continuation";
     case "capability_key_delta":
       return "Capability Keys";
     case "tool_path_delta":
@@ -117,8 +114,6 @@ function sectionHint(section: ContextFrameSection): string | null {
       return section.mode || "append";
     case "assignment_context":
       return `${section.fragments.length} fragments`;
-    case "continuation_context":
-      return section.summary || null;
     case "capability_key_delta": {
       const added = section.added_capabilities.length;
       const removed = section.removed_capabilities.length;
@@ -188,8 +183,6 @@ function renderSectionBody(section: ContextFrameSection) {
       return <IdentityBody section={section} />;
     case "assignment_context":
       return <AssignmentContextBody section={section} />;
-    case "continuation_context":
-      return <ContinuationContextBody section={section} />;
     case "capability_key_delta":
       return <CapabilityKeyDeltaBody section={section} />;
     case "tool_path_delta":
@@ -251,28 +244,6 @@ function AssignmentContextBody({ section }: { section: AssignmentContextSection 
           fragment={fragment}
         />
       ))}
-    </div>
-  );
-}
-
-function ContinuationContextBody({ section }: { section: ContinuationContextSection }) {
-  return (
-    <div className="space-y-2">
-      {section.summary && (
-        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
-      )}
-      {section.owner_context && (
-        <pre className={`max-h-40 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
-          {section.owner_context}
-        </pre>
-      )}
-      {section.transcript_markdown ? (
-        <pre className={`max-h-72 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
-          {section.transcript_markdown}
-        </pre>
-      ) : (
-        <p className="text-xs text-muted-foreground/60">暂无可恢复 transcript</p>
-      )}
     </div>
   );
 }

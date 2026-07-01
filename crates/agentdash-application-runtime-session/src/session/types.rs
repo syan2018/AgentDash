@@ -61,7 +61,7 @@ pub enum HookSnapshotReloadTrigger {
 /// Session 恢复时的上下文重建策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRepositoryRehydrateMode {
-    /// 从持久化事件重建 continuation context frame（适用于不支持 executor restore 的执行器）。
+    /// 连接器不支持原生 repository restore 时，使用 system-context 恢复策略。
     SystemContext,
     /// 从持久化事件重建为 `Vec<AgentMessage>`，交由 connector 走执行器原生的 session restore。
     ExecutorState,

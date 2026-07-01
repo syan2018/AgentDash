@@ -75,8 +75,8 @@ mod tests {
         let contribution = contribute_project_context(ProjectContextBuildInput {
             project: &project,
             workspace: None,
-            preset_name: Some("pi_agent_general"),
-            agent_display_name: "Pi Agent General",
+            preset_name: Some("general"),
+            agent_display_name: "Dash",
         });
 
         let project_core = contribution
@@ -96,6 +96,6 @@ mod tests {
         assert!(agent_identity.scope.contains(FragmentScope::Audit));
         assert!(!agent_identity.scope.contains(FragmentScope::RuntimeAgent));
         assert!(agent_identity.content.contains("## Agent Identity"));
-        assert!(agent_identity.content.contains("Pi Agent General"));
+        assert!(agent_identity.content.contains("Dash"));
     }
 }

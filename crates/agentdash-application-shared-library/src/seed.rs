@@ -14,8 +14,8 @@ pub struct BuiltinAssetVersion {
 const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::AgentTemplate,
-        key: "pi_agent_general",
-        version: "1.0.1",
+        key: "general",
+        version: "1.1.0",
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::WorkflowTemplate,
@@ -69,20 +69,21 @@ fn builtin_asset_version(
 
 fn agent_template_seed() -> Result<BuiltinSeed, DomainError> {
     let asset_type = LibraryAssetType::AgentTemplate;
-    let key = "pi_agent_general";
+    let key = "general";
     let payload = json!({
         "config": {
             "executor": "PI_AGENT",
-            "system_prompt": "你是 AgentDash 内置通用 Agent，优先遵循当前 Project 的上下文与任务约束。",
+            "system_prompt": "你是 Dash，AgentDash 平台的内置通用 Agent。优先遵循当前 Project 的上下文与任务约束；如未明确指定工作方式，则依据 base system prompt 的通用原则行事。有工具可用时积极使用工具完成任务，而非仅提供建议。",
             "capability_directives": [
                 { "add": "workflow_management" }
             ]
-        }
+        },
+        "builtin": true
     });
     Ok(BuiltinSeed {
         asset_type,
         key: key.to_string(),
-        display_name: "Pi Agent General".to_string(),
+        display_name: "Dash".to_string(),
         description: Some("平台内置通用 Agent 模板".to_string()),
         version: builtin_asset_version(asset_type, key)?.to_string(),
         source_ref: builtin_source_ref(asset_type, key),

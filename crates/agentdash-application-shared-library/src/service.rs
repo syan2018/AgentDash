@@ -710,12 +710,12 @@ mod tests {
             LibraryAssetType::AgentTemplate,
             LibraryAssetScope::Builtin,
             None,
-            "pi_agent_general",
-            "Pi Agent General",
+            "general",
+            "Dash",
             Some("平台内置通用 Agent 模板".to_string()),
-            "1.0.0",
+            "1.1.0",
             LibraryAssetSource::Builtin,
-            Some("pi_agent_general".to_string()),
+            Some("general".to_string()),
             seed_digest(&payload).expect("digest"),
             payload,
         )
@@ -725,7 +725,7 @@ mod tests {
         let error = service
             .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
                 asset_type: Some(LibraryAssetType::AgentTemplate),
-                key: Some("pi_agent_general".to_string()),
+                key: Some("general".to_string()),
                 seed_provider: BuiltinLibrarySeedProviderInput::default(),
             })
             .await

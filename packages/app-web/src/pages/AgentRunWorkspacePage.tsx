@@ -570,19 +570,6 @@ export function AgentRunWorkspacePage({
       )}
     </div>
   ) : null;
-  const draftBindingBar = isProjectAgentDraft ? (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5 uppercase">
-        Draft
-      </span>
-      <span className="min-w-0 truncate">
-        {draftProjectAgent?.display_name ?? traceAgentContext?.display_name ?? "ProjectAgent"}
-      </span>
-      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5">
-        待发送
-      </span>
-    </div>
-  ) : null;
   const backendSelectionBar = activeBackendAccesses.length > 0 ? (
     <InlineBackendSelector
       value={effectiveSelectedBackendId}
@@ -593,9 +580,9 @@ export function AgentRunWorkspacePage({
       onRefresh={() => { void fetchBackends(); }}
     />
   ) : null;
-  const chatInputPrefix = ownerBindingBar || draftBindingBar ? (
+  const chatInputPrefix = ownerBindingBar ? (
     <>
-      {ownerBindingBar ?? draftBindingBar}
+      {ownerBindingBar}
     </>
   ) : undefined;
 

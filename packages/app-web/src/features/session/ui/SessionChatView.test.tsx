@@ -182,6 +182,7 @@ describe("collectRenderableSystemEvents", () => {
               subagent_type: null,
               matched_rule_keys: [],
               refresh_snapshot: false,
+              effects_applied: false,
               block_reason: null,
               completion: null,
               diagnostic_codes: ["session_binding_found"],

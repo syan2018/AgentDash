@@ -74,6 +74,7 @@ const hookRuntime: AgentFrameHookRuntimeInfo = {
       subagent_type: "companion",
       matched_rule_keys: ["workflow_completion:checklist_pending:stop_gate"],
       refresh_snapshot: false,
+      effects_applied: false,
       diagnostics: [
         {
           code: "before_stop_checklist_pending",

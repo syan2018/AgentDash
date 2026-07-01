@@ -194,7 +194,7 @@ export type HookTraceCompletion = { mode: string, satisfied: boolean, advanced: 
 /**
  * Hook trace 的结构化数据体。
  */
-export type HookTraceData = { trigger: HookTraceTrigger, decision: string, sequence: bigint, revision: bigint, severity: HookTraceSeverity, tool_name: string | null, tool_call_id: string | null, subagent_type: string | null, matched_rule_keys: Array<string>, refresh_snapshot: boolean, block_reason: string | null, completion: HookTraceCompletion | null, diagnostic_codes: Array<string>, diagnostics: Array<HookTraceDiagnostic>, injections: Array<HookTraceInjection>, };
+export type HookTraceData = { trigger: HookTraceTrigger, decision: string, sequence: bigint, revision: bigint, severity: HookTraceSeverity, tool_name: string | null, tool_call_id: string | null, subagent_type: string | null, matched_rule_keys: Array<string>, refresh_snapshot: boolean, effects_applied: boolean, block_reason: string | null, completion: HookTraceCompletion | null, diagnostic_codes: Array<string>, diagnostics: Array<HookTraceDiagnostic>, injections: Array<HookTraceInjection>, };
 
 export type HookTraceDiagnostic = { code: string | null, message: string | null, };
 

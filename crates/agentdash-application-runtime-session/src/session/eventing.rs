@@ -10,6 +10,9 @@ use agentdash_agent_types::{
 };
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
+use agentdash_spi::hooks::trace::{
+    HookTraceStorageDisposition, hook_trace_payload_storage_disposition,
+};
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
@@ -1479,6 +1482,13 @@ fn backbone_event_type_name_for_guard(event: &BackboneEvent) -> &'static str {
 /// 进度态事件分类：仅这些类为 ephemeral（不入 durable session_events，仅 live 广播）。
 /// 其余一律 durable（白名单 durable、默认 durable）。
 fn is_ephemeral_event(event: &BackboneEvent) -> bool {
+    if let BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) = event {
+        return matches!(
+            hook_trace_payload_storage_disposition(payload),
+            HookTraceStorageDisposition::Ephemeral
+        );
+    }
+
     matches!(
         event,
         BackboneEvent::AgentMessageDelta(_)
@@ -1644,7 +1654,7 @@ mod tests {
     use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-        ExecutionContext, ExecutionStream, PromptPayload,
+        ExecutionContext, ExecutionStream, HookTraceEntry, HookTraceTrigger, PromptPayload,
     };
     use tokio::sync::Mutex;
     use tokio_stream::wrappers::ReceiverStream;
@@ -1715,6 +1725,26 @@ mod tests {
             turn_id: Some(turn_id.to_string()),
             entry_index: Some(1),
         })
+    }
+
+    fn hook_trace_entry(decision: &str) -> HookTraceEntry {
+        HookTraceEntry {
+            sequence: 1,
+            timestamp_ms: 1,
+            revision: 1,
+            trigger: HookTraceTrigger::BeforeTool,
+            decision: decision.to_string(),
+            tool_name: None,
+            tool_call_id: None,
+            subagent_type: None,
+            matched_rule_keys: Vec::new(),
+            refresh_snapshot: false,
+            effects_applied: false,
+            block_reason: None,
+            completion: None,
+            diagnostics: Vec::new(),
+            injections: Vec::new(),
+        }
     }
 
     fn final_assistant_message_envelope(
@@ -2573,6 +2603,86 @@ mod tests {
             .expect("broadcast provider attempt status to subscriber");
         assert!(received.ephemeral);
         assert_eq!(received.session_update_type, "provider_attempt_status");
+    }
+
+    #[tokio::test]
+    async fn matched_silent_hook_trace_is_live_only() {
+        let session_id = "sess-ephemeral-hook-trace";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+        let mut rx = service.ensure_session(session_id).await;
+        let entry = HookTraceEntry {
+            matched_rule_keys: vec!["workflow:silent_observer".to_string()],
+            ..hook_trace_entry("observed")
+        };
+        let envelope = agentdash_spi::build_hook_trace_envelope(
+            session_id,
+            Some("turn-hook"),
+            test_source_info(),
+            &entry,
+        )
+        .expect("matched silent trace should be emitted live");
+
+        let persisted = service
+            .persist_notification(session_id, envelope)
+            .await
+            .expect("persist matched silent hook trace");
+
+        assert!(persisted.ephemeral);
+        assert_eq!(persisted.event_seq, 1);
+        assert_eq!(persisted.session_update_type, "platform_event");
+
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert!(backlog.backlog.is_empty());
+        assert_eq!(backlog.ephemeral_backlog.len(), 1);
+
+        let received = rx
+            .try_recv()
+            .expect("broadcast ephemeral hook trace to subscriber");
+        assert!(received.ephemeral);
+        assert_eq!(received.event_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn actionful_hook_trace_is_durable() {
+        let session_id = "sess-durable-hook-trace";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores);
+        let envelope = agentdash_spi::build_hook_trace_envelope(
+            session_id,
+            Some("turn-hook"),
+            test_source_info(),
+            &hook_trace_entry("deny"),
+        )
+        .expect("actionful trace should build durable envelope");
+
+        let persisted = service
+            .persist_notification(session_id, envelope)
+            .await
+            .expect("persist actionful hook trace");
+
+        assert!(!persisted.ephemeral);
+        let backlog = service
+            .subscribe_after(session_id, 0)
+            .await
+            .expect("read backlog");
+        assert_eq!(backlog.backlog.len(), 1);
+        assert!(backlog.ephemeral_backlog.is_empty());
     }
 
     #[tokio::test]

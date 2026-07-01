@@ -44,6 +44,7 @@ export interface HookTraceEntry {
   subagent_type?: string | null;
   matched_rule_keys: string[];
   refresh_snapshot: boolean;
+  effects_applied: boolean;
   block_reason?: string | null;
   completion?: HookCompletionStatus | null;
   diagnostics: HookDiagnosticEntry[];

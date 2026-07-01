@@ -111,6 +111,7 @@ impl SessionRuntimeInner {
                         subagent_type: None,
                         matched_rule_keys: resolution.matched_rule_keys,
                         refresh_snapshot: resolution.refresh_snapshot,
+                        effects_applied: !effects.is_empty(),
                         block_reason: resolution.block_reason,
                         completion: resolution.completion,
                         diagnostics: resolution.diagnostics,
@@ -121,9 +122,11 @@ impl SessionRuntimeInner {
                     // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
                     // 时兜底持久化，避免前端出现重复 Hook 卡片。
                     if !self.has_live_executor_session(session_id).await {
-                        let envelope =
-                            build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace);
-                        let _ = self.persist_notification(session_id, envelope).await;
+                        if let Some(envelope) =
+                            build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace)
+                        {
+                            let _ = self.persist_notification(session_id, envelope).await;
+                        }
                     }
                 }
                 if !trace_injections.is_empty() {

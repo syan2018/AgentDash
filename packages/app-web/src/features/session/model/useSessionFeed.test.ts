@@ -315,6 +315,7 @@ function mkObservedHookTraceEntry(id: string): SessionDisplayEntry {
           severity: "info",
           matched_rule_keys: [],
           refresh_snapshot: false,
+          effects_applied: false,
           diagnostic_codes: ["session_binding_found"],
           diagnostics: [
             {

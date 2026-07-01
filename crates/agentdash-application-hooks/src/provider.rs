@@ -328,6 +328,11 @@ impl AppExecutionHookProvider {
         };
 
         seed_snapshot_injections_for_trigger(&query.trigger, snapshot, &mut resolution);
+        if !trigger_includes_snapshot_injections(&query.trigger)
+            && !has_applicable_hook_work(snapshot, query.trigger)
+        {
+            return resolution;
+        }
 
         match query.trigger {
             HookTrigger::SessionStart => {}

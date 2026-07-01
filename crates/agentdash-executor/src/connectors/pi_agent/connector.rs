@@ -935,12 +935,14 @@ impl AgentConnector for PiAgentConnector {
                         }
                         trace_result = receiver.recv() => {
                             if let Ok(entry) = trace_result {
-                                let envelope = build_hook_trace_envelope(
+                                let Some(envelope) = build_hook_trace_envelope(
                                     &session_id_owned,
                                     Some(&turn_id),
                                     source.clone(),
                                     &entry,
-                                );
+                                ) else {
+                                    continue;
+                                };
                                 if tx.send(Ok(envelope)).await.is_err() {
                                     return;
                                 }
@@ -1171,7 +1173,11 @@ async fn emit_pending_hook_trace_envelopes(
     };
 
     while let Ok(entry) = receiver.try_recv() {
-        let envelope = build_hook_trace_envelope(session_id, Some(turn_id), source.clone(), &entry);
+        let Some(envelope) =
+            build_hook_trace_envelope(session_id, Some(turn_id), source.clone(), &entry)
+        else {
+            continue;
+        };
         if tx.send(Ok(envelope)).await.is_err() {
             return;
         }

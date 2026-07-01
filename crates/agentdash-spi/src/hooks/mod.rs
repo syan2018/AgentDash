@@ -337,7 +337,7 @@ impl ContextDeliveryEntry {
 ///
 /// 这是后续 planner 的最小公共语言：frame 仍表达“上下文是什么”，metadata 表达
 /// “本次 turn 对目标 agent 如何投递、缓存与展示”。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextDeliveryMetadata {
     pub delivery_phase: ContextDeliveryPhase,
@@ -352,22 +352,6 @@ pub struct ContextDeliveryMetadata {
     pub frontend_label: String,
     #[serde(default)]
     pub connector_profile: ContextConnectorProfile,
-}
-
-impl Default for ContextDeliveryMetadata {
-    fn default() -> Self {
-        Self {
-            delivery_phase: ContextDeliveryPhase::default(),
-            delivery_order: 0,
-            cache_policy: ContextCachePolicy::default(),
-            cache_key: None,
-            cache_revision: None,
-            model_channel: ContextModelChannel::default(),
-            agent_consumption: ContextAgentConsumption::default(),
-            frontend_label: String::new(),
-            connector_profile: ContextConnectorProfile::default(),
-        }
-    }
 }
 
 impl ContextDeliveryMetadata {
@@ -1289,6 +1273,8 @@ pub struct HookTraceEntry {
     pub matched_rule_keys: Vec<String>,
     #[serde(default)]
     pub refresh_snapshot: bool,
+    #[serde(default)]
+    pub effects_applied: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

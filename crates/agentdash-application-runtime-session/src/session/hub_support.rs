@@ -543,6 +543,8 @@ pub(super) fn session_hook_trace_decision(
                 .is_some_and(|completion| completion.advanced)
             {
                 "step_advanced"
+            } else if !resolution.effects.is_empty() {
+                "effects_applied"
             } else {
                 "terminal_observed"
             }

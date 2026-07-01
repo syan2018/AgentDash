@@ -91,6 +91,27 @@ fn render_contract_rule_label(rule: &WorkflowHookRuleSpec) -> String {
         .unwrap_or_else(|| format!("hook_rule:{}:script", rule.key))
 }
 
+pub(crate) fn has_applicable_hook_work(
+    snapshot: &AgentFrameHookSnapshot,
+    trigger: HookTrigger,
+) -> bool {
+    global_rules::registry_items()
+        .iter()
+        .any(|rule| rule.trigger == trigger)
+        || active_workflow_hook_rules(snapshot)
+            .iter()
+            .any(|rule| rule_can_run_for_trigger(rule, trigger))
+        || owner_defaults::owner_default_hook_rules(snapshot)
+            .iter()
+            .any(|rule| rule_can_run_for_trigger(rule, trigger))
+}
+
+fn rule_can_run_for_trigger(rule: &WorkflowHookRuleSpec, trigger: HookTrigger) -> bool {
+    rule.enabled
+        && domain_trigger_to_spi(rule.trigger) == trigger
+        && (rule.preset.is_some() || rule.script.is_some())
+}
+
 pub(crate) fn apply_hook_rules(
     ctx: HookEvaluationContext<'_>,
     resolution: &mut HookResolution,
@@ -206,7 +227,8 @@ mod tests {
 
     use std::sync::Arc;
 
-    use agentdash_spi::{AgentFrameHookSnapshot, HookInjection, HookTrigger};
+    use agentdash_domain::workflow::{EffectiveSessionContract, WorkflowHookRuleSpec};
+    use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, HookInjection, HookTrigger};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
@@ -215,6 +237,47 @@ mod tests {
     fn test_script_engine() -> HookScriptEngine {
         let scripts = builtin_preset_scripts();
         HookScriptEngine::new(Arc::new(TestHookScriptEvaluator::new(&scripts)))
+    }
+
+    #[test]
+    fn empty_snapshot_has_no_user_prompt_hook_work() {
+        let snapshot = AgentFrameHookSnapshot::default();
+
+        assert!(!has_applicable_hook_work(
+            &snapshot,
+            HookTrigger::UserPromptSubmit
+        ));
+    }
+
+    #[test]
+    fn enabled_contract_rule_makes_trigger_applicable() {
+        let snapshot = AgentFrameHookSnapshot {
+            metadata: Some(agentdash_spi::SessionSnapshotMetadata {
+                active_workflow: Some(ActiveWorkflowMeta {
+                    effective_contract: Some(EffectiveSessionContract {
+                        hook_rules: vec![WorkflowHookRuleSpec {
+                            key: "silent_observer".to_string(),
+                            trigger: agentdash_domain::workflow::WorkflowHookTrigger::BeforeProviderRequest,
+                            description: String::new(),
+                            preset: None,
+                            params: None,
+                            script: Some("#{ }".to_string()),
+                            enabled: true,
+                        }],
+                        ..EffectiveSessionContract::default()
+                    }),
+                    ..ActiveWorkflowMeta::default()
+                }),
+                ..agentdash_spi::SessionSnapshotMetadata::default()
+            }),
+            ..AgentFrameHookSnapshot::default()
+        };
+
+        assert!(has_applicable_hook_work(
+            &snapshot,
+            HookTrigger::BeforeProviderRequest
+        ));
+        assert!(!has_applicable_hook_work(&snapshot, HookTrigger::AfterTool));
     }
 
     #[test]

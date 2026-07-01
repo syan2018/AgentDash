@@ -19,6 +19,9 @@ use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionHookTargetPort, RuntimeSessionHookTargetRuntimeRequest,
     RuntimeSessionLivePortError,
 };
+use agentdash_spi::hooks::trace::{
+    HookTraceStorageDisposition, hook_trace_entry_storage_disposition,
+};
 use agentdash_spi::hooks::{
     AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
     AgentFrameRuntimeSnapshot, ContextTokenStats, ExecutionHookProvider, HookControlTarget,
@@ -397,6 +400,12 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
     }
 
     fn append_trace(&self, trace: HookTraceEntry) {
+        if matches!(
+            hook_trace_entry_storage_disposition(&trace),
+            HookTraceStorageDisposition::Drop
+        ) {
+            return;
+        }
         let mut guard = self.trace.write().expect("hook trace write lock poisoned");
         guard.push(trace.clone());
         if guard.len() > 200 {

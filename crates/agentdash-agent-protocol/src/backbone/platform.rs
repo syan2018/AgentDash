@@ -138,6 +138,8 @@ pub struct HookTraceData {
     pub matched_rule_keys: Vec<String>,
     #[serde(default)]
     pub refresh_snapshot: bool,
+    #[serde(default)]
+    pub effects_applied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

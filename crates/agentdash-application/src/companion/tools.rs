@@ -2101,6 +2101,7 @@ async fn record_subagent_trace(
         subagent_type: Some(subagent_type.to_string()),
         matched_rule_keys: resolution.matched_rule_keys.clone(),
         refresh_snapshot: resolution.refresh_snapshot,
+        effects_applied: !resolution.effects.is_empty(),
         block_reason: resolution.block_reason.clone(),
         completion: resolution.completion.clone(),
         diagnostics: resolution.diagnostics.clone(),
@@ -2118,12 +2119,14 @@ async fn record_subagent_trace(
             .has_live_executor_session(session_id)
             .await;
         if !has_live {
-            let notification =
-                build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace);
-            let _ = session_services
-                .eventing
-                .inject_notification(session_id, notification)
-                .await;
+            if let Some(notification) =
+                build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace)
+            {
+                let _ = session_services
+                    .eventing
+                    .inject_notification(session_id, notification)
+                    .await;
+            }
         }
     }
 }

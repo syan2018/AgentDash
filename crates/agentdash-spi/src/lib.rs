@@ -80,7 +80,10 @@ pub use extension_package::{
 // ─── hooks ──────────────────────────────────────────────────
 
 pub use hooks::script::HookScriptEvaluator;
-pub use hooks::trace::build_hook_trace_envelope;
+pub use hooks::trace::{
+    HookTraceStorageDisposition, build_hook_trace_envelope, hook_trace_entry_storage_disposition,
+    hook_trace_payload_storage_disposition,
+};
 pub use hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, AgentFrameRuntimeSnapshot,

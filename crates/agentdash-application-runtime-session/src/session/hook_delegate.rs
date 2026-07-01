@@ -19,6 +19,9 @@ use super::pending_action_context_frame::build_pending_action_context_frame;
 use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
+use agentdash_spi::hooks::trace::{
+    HookTraceStorageDisposition, hook_trace_entry_storage_disposition,
+};
 use agentdash_spi::hooks::{
     AgentFrameRuntimeSnapshot, ContextTokenStats, HookDiagnosticEntry, HookInjection,
     HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTraceTrigger,
@@ -257,6 +260,7 @@ impl HookRuntimeDelegate {
             subagent_type,
             matched_rule_keys: evaluated.resolution.matched_rule_keys.clone(),
             refresh_snapshot: evaluated.resolution.refresh_snapshot,
+            effects_applied: !evaluated.resolution.effects.is_empty(),
             block_reason: evaluated.resolution.block_reason.clone(),
             completion: evaluated.resolution.completion.clone(),
             diagnostics: evaluated.resolution.diagnostics.clone(),
@@ -266,6 +270,12 @@ impl HookRuntimeDelegate {
                 Vec::new()
             },
         };
+        if matches!(
+            hook_trace_entry_storage_disposition(&trace),
+            HookTraceStorageDisposition::Drop
+        ) {
+            return;
+        }
         self.hook_runtime.append_trace(trace);
     }
 }
@@ -631,8 +641,10 @@ impl RuntimeToolPolicyDelegate for HookRuntimeDelegate {
             HookTrigger::AfterTool,
             if evaluated.resolution.refresh_snapshot {
                 "refresh_requested"
-            } else {
+            } else if !evaluated.resolution.effects.is_empty() {
                 "effects_applied"
+            } else {
+                "noop"
             },
             Some(tool_name),
             Some(tool_call_id),
@@ -673,7 +685,18 @@ impl RuntimeTurnBoundaryDelegate for HookRuntimeDelegate {
                 None,
             )
             .await?;
-        self.record_trace(HookTrigger::AfterTurn, "noop", None, None, None, &evaluated);
+        self.record_trace(
+            HookTrigger::AfterTurn,
+            if evaluated.resolution.injections.is_empty() {
+                "noop"
+            } else {
+                "steering_injected"
+            },
+            None,
+            None,
+            None,
+            &evaluated,
+        );
 
         Ok(TurnControlDecision {
             steering: Vec::new(),

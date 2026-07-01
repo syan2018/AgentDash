@@ -5,12 +5,26 @@ use agentdash_agent_protocol::{
 
 use crate::{HookTraceEntry, HookTraceTrigger as HookTrigger};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookTraceStorageDisposition {
+    Durable,
+    Ephemeral,
+    Drop,
+}
+
 pub fn build_hook_trace_envelope(
     session_id: &str,
     turn_id: Option<&str>,
     source: SourceInfo,
     entry: &HookTraceEntry,
-) -> BackboneEnvelope {
+) -> Option<BackboneEnvelope> {
+    if matches!(
+        hook_trace_entry_storage_disposition(entry),
+        HookTraceStorageDisposition::Drop
+    ) {
+        return None;
+    }
+
     let injections: Vec<HookTraceInjection> = entry
         .injections
         .iter()
@@ -45,6 +59,7 @@ pub fn build_hook_trace_envelope(
         subagent_type: entry.subagent_type.clone(),
         matched_rule_keys: entry.matched_rule_keys.clone(),
         refresh_snapshot: entry.refresh_snapshot,
+        effects_applied: entry.effects_applied,
         block_reason: entry.block_reason.clone(),
         completion,
         diagnostic_codes: entry
@@ -66,15 +81,114 @@ pub fn build_hook_trace_envelope(
         data: Some(data),
     };
 
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::HookTrace(Box::new(payload))),
-        session_id,
-        source,
+    Some(
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::HookTrace(Box::new(payload))),
+            session_id,
+            source,
+        )
+        .with_trace(TraceInfo {
+            turn_id: turn_id.map(ToString::to_string),
+            entry_index: None,
+        }),
     )
-    .with_trace(TraceInfo {
-        turn_id: turn_id.map(ToString::to_string),
-        entry_index: None,
+}
+
+pub fn hook_trace_entry_storage_disposition(entry: &HookTraceEntry) -> HookTraceStorageDisposition {
+    hook_trace_storage_disposition(HookTraceStorageSignals {
+        decision: &entry.decision,
+        block_reason: entry.block_reason.as_deref(),
+        refresh_snapshot: entry.refresh_snapshot,
+        effects_applied: entry.effects_applied,
+        has_completion: entry.completion.is_some(),
+        has_substantive_diagnostics: entry.diagnostics.iter().any(is_substantive_hook_diagnostic),
+        has_injections: !entry.injections.is_empty(),
+        has_matched_rules: !entry.matched_rule_keys.is_empty(),
     })
+}
+
+pub fn hook_trace_payload_storage_disposition(
+    payload: &HookTracePayload,
+) -> HookTraceStorageDisposition {
+    let Some(data) = payload.data.as_ref() else {
+        return HookTraceStorageDisposition::Drop;
+    };
+    hook_trace_storage_disposition(HookTraceStorageSignals {
+        decision: &data.decision,
+        block_reason: data.block_reason.as_deref(),
+        refresh_snapshot: data.refresh_snapshot,
+        effects_applied: data.effects_applied,
+        has_completion: data.completion.is_some(),
+        has_substantive_diagnostics: data.diagnostics.iter().any(|diagnostic| {
+            let code = diagnostic.code.as_deref().unwrap_or_default();
+            let message = diagnostic.message.as_deref().unwrap_or_default();
+            is_substantive_diagnostic_parts(code, message)
+        }),
+        has_injections: !data.injections.is_empty(),
+        has_matched_rules: !data.matched_rule_keys.is_empty(),
+    })
+}
+
+struct HookTraceStorageSignals<'a> {
+    decision: &'a str,
+    block_reason: Option<&'a str>,
+    refresh_snapshot: bool,
+    effects_applied: bool,
+    has_completion: bool,
+    has_substantive_diagnostics: bool,
+    has_injections: bool,
+    has_matched_rules: bool,
+}
+
+fn hook_trace_storage_disposition(
+    signals: HookTraceStorageSignals<'_>,
+) -> HookTraceStorageDisposition {
+    if signals
+        .block_reason
+        .is_some_and(|value| !value.trim().is_empty())
+        || is_actionful_decision(signals.decision)
+        || signals.effects_applied
+        || signals.refresh_snapshot
+        || signals.has_completion
+        || signals.has_substantive_diagnostics
+        || signals.has_injections
+    {
+        return HookTraceStorageDisposition::Durable;
+    }
+
+    if signals.has_matched_rules {
+        return HookTraceStorageDisposition::Ephemeral;
+    }
+
+    HookTraceStorageDisposition::Drop
+}
+
+fn is_actionful_decision(decision: &str) -> bool {
+    matches!(
+        normalize_event_decision(decision).as_str(),
+        "deny"
+            | "ask"
+            | "rewrite"
+            | "continue"
+            | "step_advanced"
+            | "steering_injected"
+            | "compact"
+            | "cancel"
+    )
+}
+
+fn is_substantive_hook_diagnostic(item: &crate::HookDiagnosticEntry) -> bool {
+    is_substantive_diagnostic_parts(&item.code, &item.message)
+}
+
+fn is_substantive_diagnostic_parts(code: &str, message: &str) -> bool {
+    if code.trim().is_empty() && message.trim().is_empty() {
+        return false;
+    }
+    !matches!(
+        code.trim(),
+        "active_workflow_resolved" | "session_binding_found"
+    )
 }
 
 fn hook_event_severity(entry: &HookTraceEntry) -> HookTraceSeverity {
@@ -189,6 +303,7 @@ mod tests {
             subagent_type: None,
             matched_rule_keys: Vec::new(),
             refresh_snapshot: false,
+            effects_applied: false,
             block_reason: None,
             completion: None,
             diagnostics: Vec::new(),
@@ -197,28 +312,107 @@ mod tests {
     }
 
     #[test]
-    fn emit_all_events_including_silent() {
+    fn empty_silent_events_are_dropped() {
         for decision in [
             "allow",
             "noop",
             "stop",
             "terminal_observed",
-            "refresh_requested",
+            "observed",
+            "effects_applied",
         ] {
-            let envelope = build_hook_trace_envelope(
-                "sess-1",
-                Some("t-1"),
-                sample_source(),
-                &silent_entry(decision),
+            let entry = silent_entry(decision);
+            assert_eq!(
+                hook_trace_entry_storage_disposition(&entry),
+                HookTraceStorageDisposition::Drop,
+                "should drop empty HookTrace decision: {decision}"
             );
             assert!(
-                matches!(
-                    envelope.event,
-                    BackboneEvent::Platform(PlatformEvent::HookTrace(_))
-                ),
-                "should produce HookTrace event for decision: {decision}"
+                build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry).is_none()
             );
         }
+    }
+
+    #[test]
+    fn matched_silent_event_is_ephemeral() {
+        let entry = HookTraceEntry {
+            matched_rule_keys: vec!["workflow:observed".to_string()],
+            ..silent_entry("observed")
+        };
+
+        assert_eq!(
+            hook_trace_entry_storage_disposition(&entry),
+            HookTraceStorageDisposition::Ephemeral
+        );
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry)
+            .expect("ephemeral HookTrace should still build a live envelope");
+        match &envelope.event {
+            BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
+                assert_eq!(
+                    hook_trace_payload_storage_disposition(payload),
+                    HookTraceStorageDisposition::Ephemeral
+                );
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_workflow_resolution_diagnostic_does_not_make_empty_trace_durable() {
+        for code in ["active_workflow_resolved", "session_binding_found"] {
+            let entry = HookTraceEntry {
+                diagnostics: vec![HookDiagnosticEntry {
+                    code: code.to_string(),
+                    message: "runtime binding loaded".to_string(),
+                }],
+                ..silent_entry("noop")
+            };
+
+            assert_eq!(
+                hook_trace_entry_storage_disposition(&entry),
+                HookTraceStorageDisposition::Drop,
+                "diagnostic should stay non-durable: {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn actionful_and_auditable_events_are_durable() {
+        for decision in ["deny", "ask", "rewrite", "continue", "step_advanced"] {
+            assert_eq!(
+                hook_trace_entry_storage_disposition(&silent_entry(decision)),
+                HookTraceStorageDisposition::Durable,
+                "decision should be durable: {decision}"
+            );
+        }
+
+        let refresh = HookTraceEntry {
+            refresh_snapshot: true,
+            ..silent_entry("refresh_requested")
+        };
+        assert_eq!(
+            hook_trace_entry_storage_disposition(&refresh),
+            HookTraceStorageDisposition::Durable
+        );
+
+        let effects = HookTraceEntry {
+            matched_rule_keys: vec!["workflow:terminal_effect".to_string()],
+            effects_applied: true,
+            ..silent_entry("effects_applied")
+        };
+        assert_eq!(
+            hook_trace_entry_storage_disposition(&effects),
+            HookTraceStorageDisposition::Durable
+        );
+
+        let matched_empty_effects = HookTraceEntry {
+            matched_rule_keys: vec!["workflow:silent_effect_probe".to_string()],
+            ..silent_entry("effects_applied")
+        };
+        assert_eq!(
+            hook_trace_entry_storage_disposition(&matched_empty_effects),
+            HookTraceStorageDisposition::Ephemeral
+        );
     }
 
     #[test]
@@ -233,7 +427,8 @@ mod tests {
             }),
             ..silent_entry("stop")
         };
-        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry)
+            .expect("completion HookTrace should be durable");
         assert!(matches!(
             envelope.event,
             BackboneEvent::Platform(PlatformEvent::HookTrace(_))
@@ -253,6 +448,7 @@ mod tests {
             subagent_type: None,
             matched_rule_keys: vec!["workflow_completion:checklist_pending:stop_gate".to_string()],
             refresh_snapshot: false,
+            effects_applied: false,
             block_reason: None,
             completion: Some(HookCompletionStatus {
                 mode: "checklist_passed".to_string(),
@@ -267,7 +463,8 @@ mod tests {
             injections: Vec::new(),
         };
 
-        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry)
+            .expect("continue HookTrace should be durable");
         match &envelope.event {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 assert!(payload.event_type.as_deref().unwrap().starts_with("hook:"));
@@ -291,7 +488,8 @@ mod tests {
             }],
             ..silent_entry("context_injected")
         };
-        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry);
+        let envelope = build_hook_trace_envelope("sess-1", Some("t-1"), sample_source(), &entry)
+            .expect("injection HookTrace should be durable");
         match &envelope.event {
             BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
                 let data = payload.data.as_ref().unwrap();

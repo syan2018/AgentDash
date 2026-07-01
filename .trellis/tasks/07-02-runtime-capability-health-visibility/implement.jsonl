@@ -1,0 +1,14 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Local Runtime 与桌面诊断边界"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "跨层 DTO 与生成 contract 约束"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "diag 与用户可见健康状态边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端类型安全与 generated contract 使用约束"}
+{"file": "crates/agentdash-relay/src/protocol/handshake.rs", "reason": "CapabilitiesPayload 是 runtime 声明能力主入口"}
+{"file": "crates/agentdash-local/src/runtime.rs", "reason": "LocalRuntimeStatus 与 MCP probe/status 汇总位置"}
+{"file": "crates/agentdash-local/src/handlers/mcp_relay.rs", "reason": "MCP probe/list/call relay handler 与错误呈现路径"}
+{"file": "crates/agentdash-local/src/mcp_client_manager.rs", "reason": "MCP server 声明枚举与 list/call 失败回写位置"}
+{"file": "crates/agentdash-contracts/src/backend/contract.rs", "reason": "后端 runtime summary/health DTO 与 TS 生成来源"}
+{"file": "crates/agentdash-api/src/relay/ws_handler.rs", "reason": "register/capabilities changed 写入 runtime_health capabilities"}
+{"file": "packages/core/src/local-runtime/index.ts", "reason": "Local runtime 前端类型与 diagnostics snapshot 来源"}
+{"file": "packages/views/src/local-runtime/LocalRuntimeView.tsx", "reason": "Local Runtime diagnostics UI 展示入口"}
+{"file": "crates/agentdash-application/src/backend/runtime_summary.rs", "reason": "executor health 派生与 backend runtime summary 投影"}

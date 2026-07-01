@@ -1,2 +1,2 @@
-export { LocalRuntimeView } from './LocalRuntimeView'
+export { CapabilityHealthNotice, LocalRuntimeView } from './LocalRuntimeView'
 export type { LocalRuntimeViewProps } from './LocalRuntimeView'

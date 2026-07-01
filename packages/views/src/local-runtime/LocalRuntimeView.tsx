@@ -14,6 +14,7 @@ import type {
   DesktopRuntimeSettings,
   DesktopRuntimeSettingsClient,
   LayerState,
+  LocalCapabilityHealthItem,
   LocalLogEvent,
   LocalRuntimeClient,
   LocalRuntimeProfile,
@@ -433,6 +434,8 @@ export function LocalRuntimeView({
           </Button>
         </div>
       </Card>
+
+      <CapabilityHealthSection items={snapshot?.capability_health ?? []} />
 
       {desktopApp && (
         <Card>
@@ -1211,4 +1214,46 @@ function formatTime(timestamp: string) {
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return timestamp
   return date.toLocaleTimeString()
+}
+
+// ─── Capability Health ───────────────────────────────────────────────────────
+
+export function CapabilityHealthNotice({ items }: { items: LocalCapabilityHealthItem[] }) {
+  const unhealthy = items.filter((item) => item.status !== 'ready')
+  if (unhealthy.length === 0) return null
+
+  const names = unhealthy.map((item) => item.label).join('、')
+  return (
+    <Notice tone="warning">
+      {unhealthy.length} 个声明能力不可用（{names}），相关工具本次对话可能缺失。
+    </Notice>
+  )
+}
+
+function CapabilityHealthSection({ items }: { items: LocalCapabilityHealthItem[] }) {
+  const unhealthy = items.filter((item) => item.status !== 'ready')
+  if (unhealthy.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>声明能力状态</CardHeader>
+      <div className="space-y-2 px-4 pb-4">
+        {unhealthy.map((item) => (
+          <div
+            key={item.id}
+            className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+          >
+            <div className="flex items-center gap-2">
+              <StatusDot tone={item.status === 'degraded' ? 'warning' : 'danger'} />
+              <span className="text-sm font-medium">{item.label}</span>
+              <Badge variant={item.status === 'degraded' ? 'warning' : 'danger'}>
+                {item.status === 'degraded' ? '降级' : '不可用'}
+              </Badge>
+            </div>
+            <span className="text-xs text-muted">{item.summary}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
 }

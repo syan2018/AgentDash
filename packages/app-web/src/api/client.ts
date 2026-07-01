@@ -2,6 +2,7 @@ import { buildApiPath } from './origin';
 
 const TOKEN_KEY = 'agentdash_access_token';
 const TOKEN_COOKIE = 'agentdash_access_token';
+const TOKEN_HASH_PARAM = 'agentdash_access_token';
 const TOKEN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 天
 
 export function getStoredToken(): string | null {
@@ -15,6 +16,34 @@ export function getStoredToken(): string | null {
 export function setStoredToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token);
   writeCookieToken(token);
+}
+
+export function consumeTokenFromLocationHash(): string | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return null;
+  }
+
+  const rawHash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!rawHash) {
+    return null;
+  }
+
+  const hashParams = new URLSearchParams(rawHash);
+  const token = hashParams.get(TOKEN_HASH_PARAM);
+  if (!token) {
+    return null;
+  }
+
+  setStoredToken(token);
+  hashParams.delete(TOKEN_HASH_PARAM);
+
+  const nextHash = hashParams.toString();
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`;
+  window.history.replaceState(window.history.state, document.title, nextUrl);
+
+  return token;
 }
 
 export function clearStoredToken(): void {

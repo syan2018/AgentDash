@@ -471,7 +471,7 @@ export function VfsBrowserPanel({
         >
           {mounts.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.displayName} ({m.provider})
+              {formatMountOptionLabel(m)}
             </option>
           ))}
         </select>
@@ -621,6 +621,12 @@ export function VfsBrowserPanel({
       />
     </div>
   );
+}
+
+function formatMountOptionLabel(mount: VfsBrowserPanelMountOption): string {
+  return mount.displayName && mount.displayName !== mount.id
+    ? `${mount.id} · ${mount.displayName}`
+    : mount.id;
 }
 
 function OfflineMountNotice({ mount }: { mount: VfsBrowserPanelMountOption | null }) {

@@ -56,6 +56,16 @@ describe("VfsBrowserPanel mount browsing policy", () => {
     expect(resolveDefaultMountId(mounts)).toBe("knowledge");
   });
 
+  it("skill_asset_fs 不作为运行时资源浏览的优先自动选择", () => {
+    const mounts = [
+      mount("skill-assets", "skill_asset_fs", true),
+      mount("context", "inline_fs", true),
+    ];
+
+    expect(resolveDefaultMountId(mounts, undefined, "skill-assets")).toBe("context");
+    expect(resolveDefaultMountId([mount("skill-assets", "skill_asset_fs", true)])).toBe("skill-assets");
+  });
+
   it("全部不可浏览时仍保留第一个 mount 作为摘要选择", () => {
     const mounts = [mount("workspace", "relay_fs", false)];
 

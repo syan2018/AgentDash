@@ -48,7 +48,6 @@ function isPreferredAutoBrowseMount(
     "inline_fs",
     "lifecycle_vfs",
     "canvas_fs",
-    "skill_asset_fs",
   ].includes(mount.provider);
 }
 

@@ -7,7 +7,8 @@ use axum::http::HeaderMap;
 
 use agentdash_contracts::backend::{
     BackendActiveSessionResponse, BackendResponse, BackendRuntimeExecutorResponse,
-    BackendRuntimeSummaryResponse,
+    BackendRuntimeSummaryResponse, CapabilityHealthAction, CapabilityHealthDomain,
+    CapabilityHealthItem, CapabilityHealthStatus,
 };
 use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_domain::DomainError;
@@ -29,11 +30,12 @@ use crate::routes::release_info;
 use crate::rpc::ApiError;
 use agentdash_application::backend::{
     BackendAuthorizationService, BackendPermission, BackendRuntimeExecutorSnapshot,
-    BackendRuntimeOnlineSnapshot, BackendRuntimeSummary, CreateBackendInput,
-    EnsureLocalRuntimeInput, LocalRuntimeScopeInput, add_backend_record,
+    BackendRuntimeExecutorSummary, BackendRuntimeOnlineSnapshot, BackendRuntimeSummary,
+    CreateBackendInput, EnsureLocalRuntimeInput, LocalRuntimeScopeInput, add_backend_record,
     can_manage_global_backend_scope, ensure_local_runtime_record, list_backend_runtime_summaries,
     remove_backend_record,
 };
+use agentdash_relay::CapabilitiesPayload;
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
@@ -285,6 +287,8 @@ fn backend_with_status_from_summary(summary: BackendRuntimeSummary) -> BackendWi
 fn backend_runtime_summary_response(
     summary: BackendRuntimeSummary,
 ) -> BackendRuntimeSummaryResponse {
+    let capability_health =
+        build_capability_health(&summary.capabilities, summary.online, &summary.executors);
     BackendRuntimeSummaryResponse {
         backend_id: summary.backend_id,
         name: summary.name,
@@ -311,8 +315,68 @@ fn backend_runtime_summary_response(
                 allocatable: executor.allocatable,
             })
             .collect(),
+        capability_health,
         allocatable: summary.allocatable,
     }
+}
+
+fn build_capability_health(
+    capabilities: &Option<CapabilitiesPayload>,
+    online: bool,
+    executors: &[BackendRuntimeExecutorSummary],
+) -> Vec<CapabilityHealthItem> {
+    let mut items: Vec<CapabilityHealthItem> = Vec::new();
+
+    // MCP health from relay payload
+    if let Some(caps) = capabilities {
+        for relay_item in &caps.capability_health {
+            if let (Ok(domain), Ok(status)) = (
+                relay_item.domain.parse::<CapabilityHealthDomain>(),
+                relay_item.status.parse::<CapabilityHealthStatus>(),
+            ) {
+                items.push(CapabilityHealthItem {
+                    id: relay_item.id.clone(),
+                    domain,
+                    status,
+                    label: relay_item.label.clone(),
+                    summary: relay_item.summary.clone(),
+                    actions: relay_item
+                        .actions
+                        .iter()
+                        .map(|a| CapabilityHealthAction {
+                            kind: a.kind.clone(),
+                            label: a.label.clone(),
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+
+    // Executor health derived from summary
+    for executor in executors {
+        let (status, summary) = if !online {
+            (CapabilityHealthStatus::Unavailable, "Runtime 离线".to_string())
+        } else if !executor.available {
+            (CapabilityHealthStatus::Degraded, "不可用".to_string())
+        } else if !executor.allocatable {
+            (CapabilityHealthStatus::Degraded, "不可分配".to_string())
+        } else {
+            (CapabilityHealthStatus::Ready, "就绪".to_string())
+        };
+        if status != CapabilityHealthStatus::Ready {
+            items.push(CapabilityHealthItem {
+                id: format!("executor:{}", executor.executor_id),
+                domain: CapabilityHealthDomain::Executor,
+                status,
+                label: executor.name.clone(),
+                summary,
+                actions: Vec::new(),
+            });
+        }
+    }
+
+    items
 }
 
 pub async fn get_backend(

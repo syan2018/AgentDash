@@ -258,6 +258,7 @@ pub struct BackendRuntimeSummaryResponse {
     pub online: bool,
     pub runtime_health: Option<BackendRuntimeHealthResponse>,
     pub executors: Vec<BackendRuntimeExecutorResponse>,
+    pub capability_health: Vec<CapabilityHealthItem>,
     pub active_session_count: usize,
     pub active_sessions: Vec<BackendActiveSessionResponse>,
     pub allocatable: bool,

@@ -21,7 +21,7 @@ export type BackendRuntimeExecutorResponse = { executor_id: string, name: string
 
 export type BackendRuntimeHealthResponse = { backend_id: string, profile_id: string | null, name: string, status: RuntimeHealthStatus, online: boolean, version: string | null, capabilities: JsonValue, device: JsonValue, connected_at: string | null, last_seen_at: string | null, disconnected_at: string | null, disconnect_reason: string | null, created_at: string, updated_at: string, };
 
-export type BackendRuntimeSummaryResponse = { backend_id: string, name: string, enabled: boolean, online: boolean, runtime_health: BackendRuntimeHealthResponse | null, executors: Array<BackendRuntimeExecutorResponse>, active_session_count: number, active_sessions: Array<BackendActiveSessionResponse>, allocatable: boolean, };
+export type BackendRuntimeSummaryResponse = { backend_id: string, name: string, enabled: boolean, online: boolean, runtime_health: BackendRuntimeHealthResponse | null, executors: Array<BackendRuntimeExecutorResponse>, capability_health: Array<CapabilityHealthItem>, active_session_count: number, active_sessions: Array<BackendActiveSessionResponse>, allocatable: boolean, };
 
 export type BackendShareScopeKind = "user" | "project" | "system";
 

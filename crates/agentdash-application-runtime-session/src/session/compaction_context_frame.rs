@@ -142,6 +142,8 @@ impl ContextFramePayload for CompactionSummaryFrame {
             lines.push(format!("compacted_until_ref: {}", compacted_until_ref));
         }
         lines.push(String::new());
+        lines.push("以下是之前对话的压缩摘要，用于延续工作上下文。摘要中的路径、函数名等具体信息可能已过时，请在执行前验证。".to_string());
+        lines.push(String::new());
         lines.push(self.summary.clone());
         lines.join("\n")
     }
@@ -177,6 +179,7 @@ mod tests {
 
         assert_eq!(frame.kind, "compaction_summary");
         assert_eq!(frame.delivery_channel, "continuation");
+        assert!(frame.rendered_text.contains("用于延续工作上下文"));
         assert!(frame.rendered_text.contains("压缩后的历史摘要"));
         assert!(matches!(
             frame.sections.first(),

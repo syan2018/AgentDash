@@ -18,6 +18,7 @@ pub mod control;
 pub mod core;
 pub(crate) mod dimension;
 pub(crate) mod effects_service;
+mod environment_context_frame;
 pub mod eventing;
 mod guidelines_context_frame;
 pub(crate) mod hook_delegate;

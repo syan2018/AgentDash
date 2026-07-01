@@ -178,6 +178,7 @@ impl<'a> FrameRequestAssembler<'a> {
             self.resolve_selected_companion_capabilities(&mut prepared, context, spec.slice_mode)
                 .await?;
         }
+        inject_companion_role_fragment(&mut prepared, spec.child_session_id);
         Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
 
@@ -202,7 +203,7 @@ impl<'a> FrameRequestAssembler<'a> {
                 spec.companion.selected_agent_key.as_deref(),
             )
             .await?;
-        let prepared = compose_companion_with_workflow(
+        let mut prepared = compose_companion_with_workflow(
             self.repos,
             self.platform_config,
             self.lifecycle_surface_projection,
@@ -227,6 +228,7 @@ impl<'a> FrameRequestAssembler<'a> {
             },
         )
         .await?;
+        inject_companion_role_fragment(&mut prepared, spec.companion.child_session_id);
         Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
 
@@ -677,6 +679,42 @@ fn contribute_lifecycle_context(
     });
 
     Contribution::fragments_only(fragments)
+}
+
+/// 为 companion 子 session 注入 agent_identity fragment，声明子代理身份。
+///
+/// 确保 `prepared.context_bundle` 存在，并追加一个 slot=`agent_identity` 的 fragment。
+/// 该 fragment 会被 `preparation.rs::find_agent_identity_markdown` 拾取，
+/// 最终渲染进 Identity Frame 的 "## Agent Identity" section。
+fn inject_companion_role_fragment(prepared: &mut FrameAssemblyBuilder, child_session_id: &str) {
+    use agentdash_spi::context::injection::{ContextFragment, MergeStrategy};
+    use agentdash_spi::context::bundle::SessionContextBundle;
+
+    let role_content = "\
+## Agent Identity
+
+You are operating as a companion sub-agent dispatched by a parent agent session.
+- Complete the assigned task, then call `companion_respond` to return your results.
+- Do not interact with the user directly — your output flows back through the parent agent.
+- Focus exclusively on the dispatched task; do not take autonomous actions beyond its scope.
+- If you need clarification, state what is unclear in your response rather than guessing.";
+
+    let fragment = ContextFragment {
+        slot: "agent_identity".to_string(),
+        label: "companion_role".to_string(),
+        order: 0,
+        strategy: MergeStrategy::Override,
+        scope: ContextFragment::default_scope(),
+        source: "builtin:companion_role".to_string(),
+        content: role_content.to_string(),
+    };
+
+    let bundle = prepared.context_bundle.get_or_insert_with(|| {
+        let session_uuid =
+            uuid::Uuid::parse_str(child_session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        SessionContextBundle::new(session_uuid, "companion_bootstrap")
+    });
+    bundle.bootstrap_fragments.push(fragment);
 }
 
 /// Companion 子 session 组装(脱离 `FrameRequestAssembler`,companion tool

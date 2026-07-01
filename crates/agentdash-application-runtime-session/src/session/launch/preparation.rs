@@ -13,6 +13,9 @@ use super::deps::TurnPreparationDeps;
 use super::{LaunchFollowUpSource, LaunchPlan, RuntimeDelegateCompositionPlan};
 use crate::session::admission_delegate::{AgentRunAdmissionToolPolicyFacet, ToolAdmissionMetadata};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
+use crate::session::environment_context_frame::{
+    EnvironmentFrameInput, build_environment_context_frame,
+};
 use crate::session::guidelines_context_frame::{
     GuidelinesFrameInput, build_guidelines_context_frame,
 };
@@ -158,6 +161,19 @@ impl TurnPreparer {
         } else {
             Vec::new()
         };
+        let environment_frame = if include_connector_startup_context {
+            let date_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            build_environment_context_frame(&EnvironmentFrameInput {
+                date_utc: &date_utc,
+                platform: std::env::consts::OS,
+                arch: std::env::consts::ARCH,
+                model_id: context.session.executor_config.model_id.as_deref(),
+                executor: &context.session.executor_config.executor,
+                working_directory: Some(&context.session.working_directory),
+            })
+        } else {
+            None
+        };
         // 用户偏好与项目指引迁出 identity 帧，走独立的系统级 guidelines 帧。
         let guidelines_frame = if include_connector_startup_context {
             build_guidelines_context_frame(&GuidelinesFrameInput {
@@ -297,6 +313,10 @@ impl TurnPreparer {
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         for frame in identity_frames {
+            accepted_context_frames_to_emit.push(frame.clone());
+            turn_context_frames.push(frame);
+        }
+        if let Some(frame) = environment_frame {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }

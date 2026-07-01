@@ -454,7 +454,7 @@ pub struct ContextConnectorProfile {
 fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
     match kind {
         "identity" => ContextDeliveryPhase::StableSystem,
-        "system_guidelines" => ContextDeliveryPhase::SessionPolicy,
+        "environment" | "system_guidelines" => ContextDeliveryPhase::SessionPolicy,
         "compaction_summary" => ContextDeliveryPhase::RunState,
         "assignment_context" => ContextDeliveryPhase::Assignment,
         "capability_state_delta" | "memory_context" => ContextDeliveryPhase::DiscoveredInventory,
@@ -465,6 +465,7 @@ fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
 fn delivery_order_for_kind(kind: &str) -> u32 {
     match kind {
         "identity" => 10,
+        "environment" => 15,
         "system_guidelines" => 20,
         "compaction_summary" => 30,
         "assignment_context" => 40,
@@ -479,7 +480,7 @@ fn delivery_order_for_kind(kind: &str) -> u32 {
 fn cache_policy_for_kind(kind: &str) -> ContextCachePolicy {
     match kind {
         "identity" => ContextCachePolicy::Static,
-        "system_guidelines" => ContextCachePolicy::SessionDigest,
+        "environment" | "system_guidelines" => ContextCachePolicy::SessionDigest,
         "compaction_summary" => ContextCachePolicy::RuntimeStateDigest,
         "assignment_context" => ContextCachePolicy::AssignmentRevision,
         "capability_state_delta" | "memory_context" => ContextCachePolicy::DiscoveryDigest,
@@ -494,7 +495,7 @@ fn model_channel_for_kind(
     message_role: &str,
 ) -> ContextModelChannel {
     match kind {
-        "identity" | "system_guidelines" => ContextModelChannel::System,
+        "identity" | "environment" | "system_guidelines" => ContextModelChannel::System,
         "memory_context" | "compaction_summary" | "assignment_context" => {
             ContextModelChannel::Context
         }
@@ -511,6 +512,7 @@ fn model_channel_for_kind(
 fn frontend_label_for_kind(kind: &str) -> &'static str {
     match kind {
         "identity" => "Identity",
+        "environment" => "Environment",
         "system_guidelines" => "System Guidelines",
         "compaction_summary" => "Compaction Summary",
         "assignment_context" => "Assignment Context",
@@ -661,6 +663,21 @@ pub enum ContextFrameSection {
         compacted_until_ref: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,
+    },
+    /// 运行时环境信息（date / platform / model / working directory）。
+    Environment {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        date: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        platform: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        executor: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_directory: Option<String>,
     },
     /// 用户级偏好（来自 settings）。作为系统级指引随 `system_guidelines` 帧投递。
     UserPreferences {

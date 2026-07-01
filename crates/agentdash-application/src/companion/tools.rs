@@ -780,7 +780,7 @@ impl CompanionRequestTool {
         } else {
             prompt.to_string()
         };
-        let dispatch_plan = build_companion_dispatch_plan(
+        let mut dispatch_plan = build_companion_dispatch_plan(
             hook_runtime.as_ref(),
             &before_resolution,
             &CompanionDispatchConfig {
@@ -793,6 +793,23 @@ impl CompanionRequestTool {
                 max_constraints,
             },
         );
+        dispatch_plan
+            .slice
+            .injections
+            .push(agentdash_spi::HookInjection {
+                slot: "companion".to_string(),
+                content: format!(
+                    "Date: {} (UTC) | Platform: {} {} | Model: {}",
+                    chrono::Utc::now().format("%Y-%m-%d"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                    companion_executor_config
+                        .model_id
+                        .as_deref()
+                        .unwrap_or("unknown"),
+                ),
+                source: "session:parent_environment".to_string(),
+            });
         let dispatch_prompt = build_companion_dispatch_prompt(&dispatch_plan, &dispatch_message);
         record_subagent_trace(
             hook_runtime.as_ref(),

@@ -651,7 +651,6 @@ dependencies = [
 name = "agentdash-local-tauri"
 version = "0.1.0"
 dependencies = [
- "agentdash-api",
  "agentdash-contracts",
  "agentdash-diagnostics",
  "agentdash-local",

@@ -9,7 +9,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 
 ## 关键类型
 
-- **Rust**：`ApiServerOptions`（`agentdash-api/src/lib.rs`）+ `build_server()` / `build_server_with_migrations()` 可复用入口
+- **Rust**：`agentdash-local-tauri` 通过 external origin 或 `agentdash-server` sidecar process 连接 Dashboard API
 - **Tauri commands**：profile / runtime / logs / MCP / open_external_url（定义在 `agentdash-local-tauri`）
 - **TS port**：`LocalRuntimeClient`（`@agentdash/core`），Tauri 适配层实现 `invoke()` 绑定
 
@@ -18,8 +18,8 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 ### API 与 Dashboard
 
 - Desktop release bundle 默认使用 `external` API mode，并通过 `AGENTDASH_DEFAULT_CLOUD_ORIGIN` / `--api-origin` 指向远端 server，原因是桌面安装包的业务数据、登录、项目和 runner enrollment 权威事实属于 cloud server。
-- Builtin Desktop API 是显式 opt-in 的本机 API host，origin 固定为 `http://127.0.0.1:17301`，原因是它只适合未来本地部署/实验形态，不属于默认桌面发行路径。
-- Sidecar Desktop API 仍必须使用 loopback origin，原因是 sidecar 是本机 API 进程，不以 localhost 作为认证边界向 LAN 暴露。
+- Sidecar Desktop API 启动独立 `agentdash-server` 进程并使用 loopback origin，原因是 API composition root、migration 与 HTTP interface ownership 归 API server 进程，桌面壳只管理进程边界和 readiness projection。
+- Sidecar Desktop API 必须使用 loopback origin，原因是 sidecar 是本机 API 进程，不以 localhost 作为认证边界向 LAN 暴露。
 - `desktop_api_snapshot` 的 `state` 只能是 `starting | running | error | stopped`
 - DashboardHost 必须先确认 `/api/health` ready 后才渲染 Web Dashboard
 - `packages/app-web` 只导出 `App`，`app-tauri` 复用该入口，不能复制组件树
@@ -267,7 +267,7 @@ runner connects to relay_ws_url with auth_token
 ### 1. Scope / Trigger
 
 - Trigger: Windows desktop full installer needs behave like a resident desktop app: close-to-tray, explicit quit, runtime lifecycle menu, startup preferences, and a stable frontend bridge.
-- Scope: `agentdash-local-tauri` tray/menu/window lifecycle, Tauri commands, `desktop-app-settings.json`, `packages/app-tauri` desktop bridge, cloud API origin packaging, and explicit opt-in Desktop API hosting at loopback port `17301`.
+- Scope: `agentdash-local-tauri` tray/menu/window lifecycle, Tauri commands, `desktop-app-settings.json`, `packages/app-tauri` desktop bridge, cloud API origin packaging, and optional `agentdash-server` sidecar process at loopback port `17301`.
 
 ### 2. Signatures
 
@@ -348,7 +348,7 @@ Desktop defaults JSON:
 - `--default-cloud-origin` is a shortcut that produces the same carried `default_cloud_origin` value without hand-writing a defaults file.
 - `default_cloud_origin` 在没有单独 `--api-origin` 时作为 packaged Dashboard API origin。desktop embedded runner 的 Local Runtime profile server URL 会被规范化为当前 Dashboard API origin；`default_cloud_origin` 不创建 `backend_id`，也不嵌入 access/registration/relay token。
 - Autostart commands return `DesktopAutostartStatus { supported, enabled, message }`; the UI must treat `supported=false` as a product capability state, not as a command failure.
-- Builtin Desktop API remains loopback-only at `127.0.0.1:17301` when explicitly selected; its presence does not change local runtime/runner WebSocket relay communication.
+- Sidecar Desktop API uses `agentdash-server` at `127.0.0.1:17301`; its process boundary keeps Dashboard API hosting separate from local runtime/runner WebSocket relay communication.
 - Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
 - `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands only adapt command payloads, shell-selected Dashboard API origin, retry status updates and `Result<_, String>` errors; `agentdash-local` owns desktop profile/request normalization, profile/settings file IO, desktop access-token ensure, response validation, `LocalRuntimeConfig` projection, runtime reuse, serialized start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
 - `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.

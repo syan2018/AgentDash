@@ -34,7 +34,7 @@
 | `agentdash-agent-protocol` | Backbone Protocol 与协议适配 |
 | `agentdash-relay` | Cloud/Local WebSocket relay 协议 |
 | `agentdash-local` | 本机后端 |
-| `agentdash-local-tauri` | Tauri 桌面托管壳 |
+| `agentdash-local-tauri` | Tauri 桌面托管壳，管理本机 runtime 与 external/sidecar Dashboard API 进程边界 |
 
 Agent runtime module baseline：
 
@@ -83,6 +83,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - Extension package artifact 独立于 LibraryAsset payload，原因是正式插件包是平台可下载、可校验、可审计的运行产物；owner 模型让 Project 本地导入与 LibraryAsset Marketplace 模板共享同一套 digest、storage 与访问校验。
 - Extension package archive object storage 端口放在 `agentdash-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。
 - Route module 自持 router 表，原因是 endpoint ownership 应与 handler/module ownership 对齐；根 router 只表达 secured/public 装配，避免跨资源长链路表成为协议事实源。
+- `agentdash-local-tauri` 通过 external origin 或 `agentdash-server` sidecar 连接 Dashboard API，原因是 AppState、migration、HTTP route 与 API diagnostics 的 composition ownership 属于 `agentdash-api`/`agentdash-server`，桌面壳只负责本机能力、进程生命周期和 readiness projection。
 
 ## Contract Appendices
 

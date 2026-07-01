@@ -7,7 +7,6 @@ license.workspace = true
 build = "build.rs"
 
 [dependencies]
-agentdash-api = { path = "../agentdash-api" }
 agentdash-contracts = { path = "../agentdash-contracts" }
 agentdash-local = { path = "../agentdash-local", default-features = false }
 agentdash-relay = { path = "../agentdash-relay" }

@@ -25,7 +25,7 @@ crates/
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
 ├── agentdash-local/             # 本机后端
-└── agentdash-local-tauri/       # Tauri 桌面端封装
+└── agentdash-local-tauri/       # Tauri 桌面端封装；通过 external/sidecar 连接 Dashboard API
 ```
 
 > 具体的文件级目录结构请直接查看代码库，不在 spec 中维护逐文件列表。
@@ -73,6 +73,8 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 4. **Application Layer**（复杂业务时）：创建用例模块，路由改为调用用例
 
 > **禁止跨层依赖**：API 层不能直接访问 Repository 的具体实现。
+
+`agentdash-local-tauri` 不作为 API composition root；它通过 external origin 或 `agentdash-server` sidecar process 连接 Dashboard API，原因是桌面壳负责本机能力与进程生命周期，而 HTTP route、AppState、migration 与业务 API ownership 属于 `agentdash-api`/`agentdash-server`。
 
 `agentdash-application-ports` 只承载 API/local 实现、application 消费的纯端口，原因是 transport trait 需要被 interface/runtime composition root 实现，同时又不能让 API 反向依赖 application 内部编排模块。Domain 仍不依赖 contracts、protocol DTO 或 application ports。
 

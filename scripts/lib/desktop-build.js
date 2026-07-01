@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 
-const VALID_API_MODES = new Set(['builtin', 'external', 'sidecar']);
+const VALID_API_MODES = new Set(['external', 'sidecar']);
 const DEFAULT_DESKTOP_API_ORIGIN = 'http://127.0.0.1:17301';
 
 export function runDesktopBuild(options) {
@@ -210,9 +210,7 @@ function parseDesktopBuildArgs(args, options) {
   });
   defaultCloudOrigin = defaultCloudOrigin || desktopDefaults.default_cloud_origin || null;
 
-  if (apiMode === 'builtin') {
-    apiOrigin = DEFAULT_DESKTOP_API_ORIGIN;
-  } else if (!apiOrigin && apiMode === 'external') {
+  if (!apiOrigin && apiMode === 'external') {
     apiOrigin = defaultCloudOrigin;
   } else if (!apiOrigin) {
     apiOrigin = DEFAULT_DESKTOP_API_ORIGIN;
@@ -251,7 +249,7 @@ function printHelp(options) {
   console.log('AgentDash 桌面端构建入口。');
   console.log('');
   console.log('Build options:');
-  console.log(`  --api-mode <builtin|external|sidecar>  桌面壳默认 API 模式，默认 ${defaultMode}`);
+  console.log(`  --api-mode <external|sidecar>          桌面壳默认 API 模式，默认 ${defaultMode}`);
   console.log(`  --api-origin <url>                    API origin，默认 ${defaultOrigin}`);
   console.log('  --api-sidecar <command>               sidecar 模式下启动的 API 可执行文件');
   console.log('  --desktop-defaults <path>             携带进安装包的桌面默认配置 JSON');
@@ -425,9 +423,7 @@ function validateDesktopApiConfig({ apiMode, apiOrigin }) {
     }
     return;
   }
-  if (apiMode === 'builtin' && apiOrigin !== DEFAULT_DESKTOP_API_ORIGIN) {
-    throw new Error(`builtin Desktop API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
-  }
+
   if (apiMode === 'sidecar' && !isDesktopLoopbackOrigin(apiOrigin)) {
     throw new Error(`sidecar Desktop API origin 必须是 ${DEFAULT_DESKTOP_API_ORIGIN}`);
   }

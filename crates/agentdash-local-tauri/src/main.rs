@@ -8,7 +8,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
 use agentdash_local::{
     DesktopAppSettings, DesktopEnsureRetryEvent, DesktopEnsureRetryPolicy, DesktopRunnerHost,
@@ -613,7 +612,6 @@ fn main() {
             let state_for_api = state.clone();
             match desktop_api_config() {
                 Ok(api_config) => match api_config.mode {
-                    DesktopApiMode::Builtin => start_desktop_api(state_for_api),
                     DesktopApiMode::External => {
                         diag!(Info, Subsystem::Api,
 
@@ -892,63 +890,6 @@ fn restore_main_window(app: &AppHandle) {
     }
 }
 
-fn start_desktop_api(state: DesktopState) {
-    std::thread::Builder::new()
-        .name("agentdash-desktop-api".to_string())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .thread_name("agentdash-desktop-api-worker")
-                .build();
-
-            match runtime {
-                Ok(runtime) => runtime.block_on(run_desktop_api(state)),
-                Err(error) => {
-                    diag!(Error, Subsystem::Api,
-        error = %error, "创建桌面端 API runtime 失败");
-                }
-            }
-        })
-        .expect("启动桌面端 API 线程失败");
-}
-
-async fn run_desktop_api(state: DesktopState) {
-    state.api.mark_starting(DESKTOP_API_PORT).await;
-    let options = ApiServerOptions::desktop_localhost(DESKTOP_API_PORT);
-    // 桌面宿主保持原 fmt 订阅器，不接 JSON 文件层 / 诊断缓冲层：传入一个未接订阅器的
-    // 空缓冲即可，`/api/diagnostics` 在桌面端返回空集（行为与原先一致）。
-    match agentdash_api::build_server_with_migrations(
-        agentdash_api::builtin_integrations(),
-        options,
-        agentdash_api::DiagnosticBuffer::new(0),
-    )
-    .await
-    {
-        Ok(server) => {
-            let ready = server.ready().clone();
-            state.api.mark_running(&ready).await;
-            if let Err(error) = server.serve().await {
-                diag!(Error, Subsystem::Api,
-        error = %error, "桌面端 API 服务退出");
-                state
-                    .api
-                    .mark_error(DESKTOP_API_PORT, error.to_string())
-                    .await;
-            } else {
-                state.api.mark_stopped(DESKTOP_API_PORT).await;
-            }
-        }
-        Err(error) => {
-            diag!(Error, Subsystem::Api,
-        error = %error, "桌面端 API 启动失败");
-            state
-                .api
-                .mark_error(DESKTOP_API_PORT, error.to_string())
-                .await;
-        }
-    }
-}
-
 fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
     let sidecar = match config.sidecar.as_deref() {
         Some(sidecar) => sidecar,
@@ -1002,9 +943,8 @@ fn spawn_desktop_api_sidecar(config: &DesktopApiConfig) -> anyhow::Result<Child>
 
     let mut command = Command::new(sidecar);
     command
-        .env("HOST", host)
-        .env("PORT", port.to_string())
-        .env(DESKTOP_API_MODE_ENV, "builtin")
+        .env("AGENTDASH_BIND_HOST", host)
+        .env("AGENTDASH_PORT", port.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     hide_window_for_std_command(&mut command);
@@ -1070,15 +1010,6 @@ impl DesktopApiManager {
         self.snapshot.lock().await.clone()
     }
 
-    async fn mark_starting(&self, port: u16) {
-        self.mark_starting_origin(
-            desktop_api_origin(port),
-            "桌面端 API 正在启动".to_string(),
-            None,
-        )
-        .await;
-    }
-
     async fn mark_starting_origin(
         &self,
         origin: String,
@@ -1092,15 +1023,6 @@ impl DesktopApiManager {
             message: Some(message),
             database_url,
         };
-    }
-
-    async fn mark_running(&self, ready: &ApiServerReady) {
-        self.mark_running_origin(
-            ready.origin.clone(),
-            format!("桌面端 API 已启动: {}", ready.addr),
-            Some(ready.database_url.clone()),
-        )
-        .await;
     }
 
     async fn mark_running_origin(
@@ -1118,11 +1040,6 @@ impl DesktopApiManager {
         };
     }
 
-    async fn mark_error(&self, port: u16, message: String) {
-        self.mark_error_origin(desktop_api_origin(port), message)
-            .await;
-    }
-
     async fn mark_error_origin(&self, origin: String, message: String) {
         let mut guard = self.snapshot.lock().await;
         *guard = DesktopApiSnapshot {
@@ -1133,12 +1050,12 @@ impl DesktopApiManager {
         };
     }
 
-    async fn mark_stopped(&self, port: u16) {
+    async fn mark_stopped_origin(&self, origin: String) {
         let mut guard = self.snapshot.lock().await;
         *guard = DesktopApiSnapshot {
             state: DesktopApiState::Stopped,
-            origin: desktop_api_origin(port),
-            message: Some("桌面端 API 已停止".to_string()),
+            origin,
+            message: Some("桌面端 API sidecar 已停止".to_string()),
             database_url: None,
         };
     }
@@ -1170,6 +1087,11 @@ impl DesktopApiManager {
         error = %error, "终止桌面端 API sidecar 失败");
             }
             let _ = child.wait();
+            let api = self.clone();
+            tauri::async_runtime::spawn(async move {
+                api.mark_stopped_origin(desktop_api_origin(DESKTOP_API_PORT))
+                    .await;
+            });
         }
     }
 }
@@ -1181,7 +1103,6 @@ fn desktop_api_origin(port: u16) -> String {
 fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
     match desktop_api_config() {
         Ok(config) => match config.mode {
-            DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
             DesktopApiMode::External => DesktopApiSnapshot {
                 state: DesktopApiState::Running,
                 origin: config.origin.clone(),
@@ -1206,7 +1127,6 @@ fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DesktopApiMode {
-    Builtin,
     External,
     Sidecar,
 }
@@ -1262,26 +1182,19 @@ fn desktop_api_config_from_values(
 
     let sidecar = explicit_sidecar.or(build_default_sidecar);
 
-    let explicit_mode = explicit_mode.and_then(|value| {
-        parse_desktop_api_mode(&value).or_else(|| {
-            diag!(Warn, Subsystem::Api,
-        mode = %value, "忽略未知桌面端 API mode");
-            None
-        })
-    });
-    let build_default_mode = build_default_mode.and_then(|value| {
-        parse_desktop_api_mode(&value).or_else(|| {
-            diag!(Warn, Subsystem::Api,
-        mode = %value, "忽略未知桌面端默认 API mode");
-            None
-        })
-    });
+    let explicit_mode = explicit_mode
+        .as_deref()
+        .map(parse_desktop_api_mode)
+        .transpose()?;
+    let build_default_mode = build_default_mode
+        .as_deref()
+        .map(parse_desktop_api_mode)
+        .transpose()?;
 
     let mode = explicit_mode
         .or(build_default_mode)
         .unwrap_or(DesktopApiMode::External);
     let origin = match mode {
-        DesktopApiMode::Builtin => desktop_api_origin(DESKTOP_API_PORT),
         DesktopApiMode::External => {
             let origin = configured_origin
                 .ok_or_else(|| "桌面端 external API mode 需要配置远端 server origin".to_string())?;
@@ -1349,12 +1262,16 @@ fn is_127_loopback_origin(origin: &str) -> bool {
         && url.fragment().is_none()
 }
 
-fn parse_desktop_api_mode(value: &str) -> Option<DesktopApiMode> {
+fn parse_desktop_api_mode(value: &str) -> Result<DesktopApiMode, String> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "builtin" => Some(DesktopApiMode::Builtin),
-        "external" => Some(DesktopApiMode::External),
-        "sidecar" => Some(DesktopApiMode::Sidecar),
-        _ => None,
+        "external" => Ok(DesktopApiMode::External),
+        "sidecar" => Ok(DesktopApiMode::Sidecar),
+        "builtin" => {
+            Err("桌面端 API mode 不再支持 builtin；请使用 external 或 sidecar".to_string())
+        }
+        other => Err(format!(
+            "未知桌面端 API mode: {other}；仅支持 external 或 sidecar"
+        )),
     }
 }
 
@@ -1401,8 +1318,8 @@ mod tests {
     }
 
     #[test]
-    fn builtin_config_keeps_release_origin_fixed() {
-        let config = desktop_api_config_from_values(
+    fn builtin_config_is_rejected() {
+        let error = desktop_api_config_from_values(
             Some("http://10.0.0.5:3001".to_string()),
             None,
             None,
@@ -1411,10 +1328,11 @@ mod tests {
             None,
             DesktopApiBuildProfile::Release,
         )
-        .expect("builtin origin should be fixed by the desktop API contract");
+        .expect_err("builtin Desktop API mode is no longer supported");
 
-        assert_eq!(config.mode, DesktopApiMode::Builtin);
-        assert_eq!(config.origin, "http://127.0.0.1:17301");
+        assert!(error.contains("builtin"));
+        assert!(error.contains("external"));
+        assert!(error.contains("sidecar"));
     }
 
     #[test]
@@ -1472,7 +1390,7 @@ mod tests {
         let config = desktop_api_config_from_values(
             Some("http://127.0.0.1:17301".to_string()),
             None,
-            Some("agentdash-api".to_string()),
+            Some("agentdash-server".to_string()),
             None,
             Some("sidecar".to_string()),
             None,
@@ -1482,7 +1400,7 @@ mod tests {
 
         assert_eq!(config.mode, DesktopApiMode::Sidecar);
         assert_eq!(config.origin, "http://127.0.0.1:17301");
-        assert_eq!(config.sidecar.as_deref(), Some("agentdash-api"));
+        assert_eq!(config.sidecar.as_deref(), Some("agentdash-server"));
     }
 
     #[test]
@@ -1490,7 +1408,7 @@ mod tests {
         let error = desktop_api_config_from_values(
             Some("http://0.0.0.0:17301".to_string()),
             None,
-            Some("agentdash-api".to_string()),
+            Some("agentdash-server".to_string()),
             None,
             Some("sidecar".to_string()),
             None,

@@ -703,7 +703,6 @@ mod tests {
             "config": {
                 "executor": "PI_AGENT",
                 "system_prompt": "seed 前 payload",
-                "system_prompt_mode": "append",
                 "capability_directives": []
             }
         });
@@ -745,7 +744,6 @@ mod tests {
             "config": {
                 "executor": "PI_AGENT",
                 "system_prompt": "已移除模板",
-                "system_prompt_mode": "append",
                 "capability_directives": []
             }
         });

@@ -4,6 +4,7 @@ pub mod binding_resolver;
 pub mod inline_persistence;
 pub mod materialization;
 pub mod mount;
+pub mod mount_file_discovery;
 pub mod mount_inline;
 pub mod mount_project;
 pub mod mount_routine;
@@ -50,6 +51,11 @@ pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
     PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
     mount_purpose,
+};
+pub use mount_file_discovery::{
+    BUILTIN_GUIDELINE_RULES, BUILTIN_SKILL_RULES, DiscoveredMountFile,
+    MountFileDiscoveryDiagnostic, MountFileDiscoveryResult, MountFileDiscoveryRule,
+    discover_memory_vfs_files, discover_mount_files,
 };
 pub use mount_inline::{
     build_context_container_mount, list_inline_entries, normalize_inline_files,

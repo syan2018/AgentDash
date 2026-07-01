@@ -6,7 +6,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::DomainError;
-use crate::common::{MountCapability, SystemPromptMode, ThinkingLevel};
+use crate::common::{MountCapability, ThinkingLevel};
 use crate::extension_package::ExtensionPackageMetadata;
 use crate::mcp_preset::{McpRoutePolicy, McpTransportConfig};
 use crate::skill_asset::SkillAssetFileKind;
@@ -306,8 +306,6 @@ pub struct AgentTemplateConfig {
     pub permission_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt_mode: Option<SystemPromptMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capability_directives: Vec<ToolCapabilityDirective>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -412,8 +410,6 @@ pub struct ProjectAgentConfigOverride {
     pub override_system_prompt: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
 /// Marketplace MCP 安装模板，只能在安装事务中解析为 Project MCP Preset。

@@ -4,17 +4,6 @@ use crate::common::MountCapability;
 use crate::common::error::DomainError;
 use crate::workflow::{ToolCapabilityDirective, mcp_capability_key};
 
-/// Agent 级 System Prompt 注入模式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SystemPromptMode {
-    /// 在全局 system prompt 之后追加（默认）。
-    #[default]
-    Append,
-    /// 完全替换全局 system prompt。
-    Override,
-}
-
 /// 思考/推理级别 — 跨层通用值对象。
 ///
 /// 在 Domain 层定义，避免各层重复声明或依赖具体 Agent 运行时。
@@ -54,8 +43,6 @@ pub struct AgentPresetConfig {
     pub permission_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt_mode: Option<SystemPromptMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,7 +96,6 @@ impl AgentPresetConfig {
             thinking_level,
             permission_policy,
             system_prompt,
-            system_prompt_mode,
             display_name,
             description,
             capability_directives,
@@ -136,7 +122,6 @@ impl AgentPresetConfig {
             thinking_level: self.thinking_level,
             permission_policy: self.permission_policy.clone(),
             system_prompt: self.system_prompt.clone(),
-            system_prompt_mode: self.system_prompt_mode,
         }
     }
 
@@ -171,6 +156,7 @@ impl AgentPresetConfig {
         };
 
         object.remove("mcp_preset_keys");
+        object.remove("system_prompt_mode");
         match normalized.capability_directives {
             Some(directives) => {
                 object.insert(
@@ -226,7 +212,6 @@ struct AgentPresetConfigWire {
     thinking_level: Option<ThinkingLevel>,
     permission_policy: Option<String>,
     system_prompt: Option<String>,
-    system_prompt_mode: Option<SystemPromptMode>,
     display_name: Option<String>,
     description: Option<String>,
     capability_directives: Option<Vec<ToolCapabilityDirective>>,
@@ -252,7 +237,6 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
             thinking_level: wire.thinking_level,
             permission_policy: wire.permission_policy,
             system_prompt: wire.system_prompt,
-            system_prompt_mode: wire.system_prompt_mode,
             display_name: wire.display_name,
             description: wire.description,
             capability_directives: wire.capability_directives,
@@ -297,8 +281,6 @@ pub struct AgentConfig {
     pub permission_policy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt_mode: Option<SystemPromptMode>,
 }
 
 const CLOUD_NATIVE_EXECUTORS: &[&str] = &["PI_AGENT"];
@@ -313,7 +295,6 @@ impl AgentConfig {
             thinking_level: None,
             permission_policy: None,
             system_prompt: None,
-            system_prompt_mode: None,
         }
     }
 
@@ -514,5 +495,22 @@ mod tests {
         }));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn preset_config_normalization_drops_system_prompt_mode() {
+        let normalized = AgentPresetConfig::normalize_json_value(&serde_json::json!({
+            "system_prompt": "agent rules",
+            "system_prompt_mode": "override"
+        }))
+        .expect("normalizes stale prompt mode");
+
+        assert_eq!(normalized.get("system_prompt_mode"), None);
+        assert_eq!(
+            normalized
+                .get("system_prompt")
+                .and_then(serde_json::Value::as_str),
+            Some("agent rules")
+        );
     }
 }

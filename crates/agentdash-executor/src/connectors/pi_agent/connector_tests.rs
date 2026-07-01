@@ -2973,15 +2973,17 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                             "connector_context",
                             "system",
                         ),
-                        // identity 帧 rendered_text 为原样身份提示词（无 markdown 脚手架）。
                         rendered_text: prompt.to_string(),
                         sections: vec![agentdash_spi::hooks::ContextFrameSection::Identity {
                             title: "Identity".to_string(),
                             summary: "test".to_string(),
-                            base_prompt: "".to_string(),
-                            agent_prompt: None,
-                            mode: "override".to_string(),
-                            effective_prompt: prompt.to_string(),
+                            fragments: vec![agentdash_spi::hooks::RuntimeContextFragmentEntry {
+                                slot: "identity".to_string(),
+                                label: "identity_system_prompt".to_string(),
+                                source: "connector".to_string(),
+                                content: prompt.to_string(),
+                                context_usage_kind: None,
+                            }],
                         }],
                         created_at_ms: 1,
                     }]

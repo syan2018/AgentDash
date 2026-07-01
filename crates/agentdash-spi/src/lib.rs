@@ -31,8 +31,7 @@ pub use agentdash_agent_types::{
 // ─── domain re-export ───────────────────────────────────────
 
 pub use agentdash_domain::common::{
-    AgentConfig, AgentPresetConfig, Mount, MountCapability, MountLink, SystemPromptMode,
-    ThinkingLevel, Vfs,
+    AgentConfig, AgentPresetConfig, Mount, MountCapability, MountLink, ThinkingLevel, Vfs,
 };
 
 // ─── connector ──────────────────────────────────────────────

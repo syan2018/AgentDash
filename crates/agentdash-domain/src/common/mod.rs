@@ -6,7 +6,7 @@ mod mount;
 mod mount_capability;
 
 pub use agent_config::{
-    AgentConfig, AgentPresetConfig, ProjectVfsMountExposureGrant, SystemPromptMode, ThinkingLevel,
+    AgentConfig, AgentPresetConfig, ProjectVfsMountExposureGrant, ThinkingLevel,
 };
 pub use file_content::{StoredFileContent, StoredFileContentKind};
 pub use mount::{Mount, MountLink, Vfs};

@@ -439,7 +439,6 @@ pub enum ContextAgentConsumptionMode {
     AuditOnly,
     Ignore,
     ConnectorNative,
-    SystemOverride,
     SystemAppend,
 }
 
@@ -454,9 +453,7 @@ pub struct ContextConnectorProfile {
 
 fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
     match kind {
-        "identity" | "identity_system_prompt" | "identity_agent_profile" => {
-            ContextDeliveryPhase::StableSystem
-        }
+        "identity" => ContextDeliveryPhase::StableSystem,
         "system_guidelines" => ContextDeliveryPhase::SessionPolicy,
         "compaction_summary" => ContextDeliveryPhase::RunState,
         "assignment_context" => ContextDeliveryPhase::Assignment,
@@ -468,8 +465,6 @@ fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
 fn delivery_order_for_kind(kind: &str) -> u32 {
     match kind {
         "identity" => 10,
-        "identity_system_prompt" => 10,
-        "identity_agent_profile" => 11,
         "system_guidelines" => 20,
         "compaction_summary" => 30,
         "assignment_context" => 40,
@@ -483,9 +478,7 @@ fn delivery_order_for_kind(kind: &str) -> u32 {
 
 fn cache_policy_for_kind(kind: &str) -> ContextCachePolicy {
     match kind {
-        "identity" | "identity_system_prompt" | "identity_agent_profile" => {
-            ContextCachePolicy::Static
-        }
+        "identity" => ContextCachePolicy::Static,
         "system_guidelines" => ContextCachePolicy::SessionDigest,
         "compaction_summary" => ContextCachePolicy::RuntimeStateDigest,
         "assignment_context" => ContextCachePolicy::AssignmentRevision,
@@ -501,9 +494,7 @@ fn model_channel_for_kind(
     message_role: &str,
 ) -> ContextModelChannel {
     match kind {
-        "identity" | "identity_system_prompt" | "identity_agent_profile" | "system_guidelines" => {
-            ContextModelChannel::System
-        }
+        "identity" | "system_guidelines" => ContextModelChannel::System,
         "memory_context" | "compaction_summary" | "assignment_context" => {
             ContextModelChannel::Context
         }
@@ -520,8 +511,6 @@ fn model_channel_for_kind(
 fn frontend_label_for_kind(kind: &str) -> &'static str {
     match kind {
         "identity" => "Identity",
-        "identity_system_prompt" => "System Prompt",
-        "identity_agent_profile" => "Agent Identity",
         "system_guidelines" => "System Guidelines",
         "compaction_summary" => "Compaction Summary",
         "assignment_context" => "Assignment Context",
@@ -539,11 +528,8 @@ pub enum ContextFrameSection {
     Identity {
         title: String,
         summary: String,
-        base_prompt: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent_prompt: Option<String>,
-        mode: String,
-        effective_prompt: String,
+        #[serde(default)]
+        fragments: Vec<RuntimeContextFragmentEntry>,
     },
     AssignmentContext {
         title: String,

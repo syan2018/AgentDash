@@ -104,8 +104,8 @@ ToolSchema PromptText 不进入 `ExecutionTurnFrame`。Turn preparation 在 appl
 进入，并由 `ContextDeliveryPlan` 标注其 phase、cache policy、model channel 与 agent consumption。
 `system` / `developer` 是目标 connector 的消费策略，不是 frame 自身的语义分类；PiAgent 只把
 `agent_consumption.mode = consume` 且 `model_channel in [system, developer]` 的 entries 拼入
-system prompt，其它 connector 通过 profile 声明 `system_override`、`system_append`、
-`connector_native`、`ignore` 或 `audit_only` 等消费能力。
+system prompt，其它 connector 对 `system` / `developer` frame 使用 `system_append`，原因是
+platform identity、guidelines 与 connector base prompt 需要保持叠加关系，避免运行期 owner 配置替换平台约束。
 
 ## Memory Context Frame
 
@@ -149,7 +149,7 @@ Validation / tests：
 | source 有 bounded `agent://MEMORY.md` | rendered text 包含默认 source/index 与 index markdown |
 | source `index_status=too_large` | rendered text 只展示状态和 diagnostic，不包含正文 |
 | connector 收到无序 context frames | PiAgent system prompt 按 delivery metadata 排序，仅拼接 system/developer 可消费 entries |
-| connector profile 支持 system override | plan entry 的 `agent_consumption.mode` 可表达 `system_override`，不退化成 audit-only |
+| connector profile 消费 system/developer frame | 非 Pi connector 使用 `system_append`，PiAgent 使用 `consume` 并由 connector 按 delivery order 拼接 stable system prompt |
 
 ## Tool Hot Update
 

@@ -233,17 +233,23 @@ function renderSectionBody(section: ContextFrameSection) {
 // ─── 各 section body ─────────────────────────────────────────────────────────
 
 function IdentityBody({ section }: { section: IdentitySection }) {
+  if (section.fragments.length === 0) {
+    return <p className="text-xs text-muted-foreground/60">暂无片段</p>;
+  }
+
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        <Chip label={`mode: ${section.mode || "append"}`} />
-      </div>
       {section.summary && (
         <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
       )}
-      <pre className={`max-h-64 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
-        {section.effective_prompt || section.base_prompt}
-      </pre>
+      <div className="space-y-2">
+        {section.fragments.map((fragment, index) => (
+          <FragmentItem
+            key={`${fragment.slot}:${fragment.source}:${index}`}
+            fragment={fragment}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -154,7 +154,6 @@ impl TurnPreparer {
                 base_system_prompt: &deps.base_system_prompt,
                 agent_identity_markdown,
                 agent_system_prompt: context.session.executor_config.system_prompt.as_deref(),
-                agent_system_prompt_mode: context.session.executor_config.system_prompt_mode,
             })
         } else {
             Vec::new()
@@ -548,20 +547,12 @@ fn context_connector_profile(
     connector_id: &str,
     executor_config: &agentdash_domain::common::AgentConfig,
 ) -> ContextConnectorProfile {
-    let mut declared_consumption_modes = vec![
+    let declared_consumption_modes = vec![
         ContextAgentConsumptionMode::Consume,
         ContextAgentConsumptionMode::Ignore,
         ContextAgentConsumptionMode::ConnectorNative,
+        ContextAgentConsumptionMode::SystemAppend,
     ];
-    match executor_config.system_prompt_mode {
-        Some(agentdash_domain::common::SystemPromptMode::Override) => {
-            declared_consumption_modes.push(ContextAgentConsumptionMode::SystemOverride);
-        }
-        _ => declared_consumption_modes.push(ContextAgentConsumptionMode::SystemAppend),
-    }
-    if connector_id == "pi-agent" {
-        declared_consumption_modes.push(ContextAgentConsumptionMode::SystemOverride);
-    }
     ContextConnectorProfile {
         profile_id: delivery_target_name(connector_id, &executor_config.executor),
         declared_consumption_modes,
@@ -570,7 +561,7 @@ fn context_connector_profile(
 
 fn agent_consumption_mode_for_frame(
     connector_id: &str,
-    connector_profile: &ContextConnectorProfile,
+    _connector_profile: &ContextConnectorProfile,
     metadata: &ContextDeliveryMetadata,
 ) -> ContextAgentConsumptionMode {
     if connector_id == "pi-agent" {
@@ -578,14 +569,7 @@ fn agent_consumption_mode_for_frame(
     }
     match metadata.model_channel {
         ContextModelChannel::System | ContextModelChannel::Developer => {
-            if connector_profile
-                .declared_consumption_modes
-                .contains(&ContextAgentConsumptionMode::SystemOverride)
-            {
-                ContextAgentConsumptionMode::SystemOverride
-            } else {
-                ContextAgentConsumptionMode::SystemAppend
-            }
+            ContextAgentConsumptionMode::SystemAppend
         }
         ContextModelChannel::Ignored => ContextAgentConsumptionMode::Ignore,
         ContextModelChannel::AuditOnly => ContextAgentConsumptionMode::AuditOnly,
@@ -646,7 +630,7 @@ fn enqueue_context_frames_for_transform_context(
 mod tests {
     use super::*;
     use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode};
-    use agentdash_domain::common::{AgentConfig, SystemPromptMode};
+    use agentdash_domain::common::AgentConfig;
 
     #[test]
     fn connector_startup_context_is_only_sent_when_connector_needs_initializing() {
@@ -728,9 +712,8 @@ mod tests {
     }
 
     #[test]
-    fn non_pi_connector_can_declare_system_override_consumption() {
-        let mut config = AgentConfig::new("CLAUDE_CODE");
-        config.system_prompt_mode = Some(SystemPromptMode::Override);
+    fn non_pi_connector_declares_system_append_consumption() {
+        let config = AgentConfig::new("CLAUDE_CODE");
         let profile = context_connector_profile("codex-bridge", &config);
         let frames = apply_delivery_target_to_frames(
             vec![test_frame(
@@ -748,11 +731,11 @@ mod tests {
         assert!(
             profile
                 .declared_consumption_modes
-                .contains(&ContextAgentConsumptionMode::SystemOverride)
+                .contains(&ContextAgentConsumptionMode::SystemAppend)
         );
         assert_eq!(
             frames[0].delivery_metadata.agent_consumption.mode,
-            ContextAgentConsumptionMode::SystemOverride
+            ContextAgentConsumptionMode::SystemAppend
         );
     }
 

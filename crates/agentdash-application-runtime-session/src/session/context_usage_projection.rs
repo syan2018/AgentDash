@@ -448,14 +448,16 @@ fn context_usage_items_from_section(
     };
     match section {
         ContextFrameSection::Identity {
-            title,
-            effective_prompt,
-            ..
+            title, fragments, ..
         } => vec![context_usage_item(
             context_usage_kind::SYSTEM_DEVELOPER,
             "System / Developer",
             title,
-            effective_prompt,
+            &fragments
+                .iter()
+                .map(|fragment| fragment.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
             "context_frame",
             false,
             &trace,
@@ -1370,10 +1372,13 @@ mod tests {
                 ContextFrameSection::Identity {
                     title: "Identity".to_string(),
                     summary: "identity".to_string(),
-                    base_prompt: "base".to_string(),
-                    agent_prompt: None,
-                    mode: "default".to_string(),
-                    effective_prompt: "You are Codex.".to_string(),
+                    fragments: vec![agentdash_spi::hooks::RuntimeContextFragmentEntry {
+                        slot: "identity".to_string(),
+                        label: "identity_system_prompt".to_string(),
+                        source: "connector".to_string(),
+                        content: "You are Codex.".to_string(),
+                        context_usage_kind: None,
+                    }],
                 },
                 ContextFrameSection::ProjectGuidelines {
                     title: "Project Guidelines".to_string(),

@@ -467,7 +467,6 @@ fn agent_template_preset_config(
         thinking_level: config.thinking_level,
         permission_policy: config.permission_policy,
         system_prompt: config.system_prompt,
-        system_prompt_mode: config.system_prompt_mode,
         display_name,
         description,
         capability_directives: (!dependency_mcp_directives.is_empty())

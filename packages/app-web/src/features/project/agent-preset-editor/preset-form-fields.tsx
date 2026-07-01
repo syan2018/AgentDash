@@ -206,33 +206,6 @@ export function PresetFormFields({
           className="agentdash-form-textarea"
         />
       </div>
-      {form.system_prompt.trim() && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] text-muted-foreground">注入模式</span>
-          {(["append", "override"] as const).map((mode) => {
-            const active = (form.system_prompt_mode || "append") === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => patchForm({ system_prompt_mode: mode })}
-                className={`rounded-[8px] border px-2.5 py-1 text-[11px] font-medium transition-all duration-160 ${
-                  active
-                    ? "border-primary/30 bg-primary/8 text-primary"
-                    : "border-border bg-secondary/30 text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                }`}
-              >
-                {mode === "append" ? "追加" : "覆盖"}
-              </button>
-            );
-          })}
-          <span className="text-[10px] text-muted-foreground/60">
-            {(form.system_prompt_mode || "append") === "append"
-              ? "在全局 prompt 之后追加"
-              : "完全替换全局 prompt"}
-          </span>
-        </div>
-      )}
     </div>
   );
 

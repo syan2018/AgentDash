@@ -15,7 +15,7 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::AgentTemplate,
         key: "pi_agent_general",
-        version: "1.0.0",
+        version: "1.0.1",
     },
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::WorkflowTemplate,
@@ -74,7 +74,6 @@ fn agent_template_seed() -> Result<BuiltinSeed, DomainError> {
         "config": {
             "executor": "PI_AGENT",
             "system_prompt": "你是 AgentDash 内置通用 Agent，优先遵循当前 Project 的上下文与任务约束。",
-            "system_prompt_mode": "append",
             "capability_directives": [
                 { "add": "workflow_management" }
             ]

@@ -305,9 +305,6 @@ pub fn merge_executor_config_fields(
     if override_config.system_prompt.is_some() {
         base.system_prompt = normalize_option_string(override_config.system_prompt.clone());
     }
-    if override_config.system_prompt_mode.is_some() {
-        base.system_prompt_mode = override_config.system_prompt_mode;
-    }
     base
 }
 
@@ -970,7 +967,6 @@ mod tests {
             thinking_level: None,
             permission_policy: None,
             system_prompt: Some("preset prompt".to_string()),
-            system_prompt_mode: None,
         };
         let user = AgentConfig::new("PI_AGENT");
 
@@ -1030,7 +1026,6 @@ mod tests {
             thinking_level: None,
             permission_policy: None,
             system_prompt: None,
-            system_prompt_mode: None,
         };
 
         let resolved = ConversationModelConfigResolver::resolve(ConversationModelConfigInput {

@@ -67,7 +67,7 @@ describe("ContextFrameCard", () => {
     );
     expect(markup).toContain("IDN");
     expect(markup).toContain("Identity");
-    expect(markup).toContain("override");
+    expect(markup).toContain("System Prompt");
   });
 
   it("渲染 pending_action frame", () => {
@@ -341,9 +341,14 @@ function sampleIdentityNotice(): Record<string, unknown> {
         kind: "identity",
         title: "Identity",
         summary: "Connector 启动时使用的稳定 system identity。",
-        base_prompt: "base",
-        mode: "override",
-        effective_prompt: "你是 AgentDash 内置编码助手。",
+        fragments: [
+          {
+            slot: "identity",
+            label: "identity_system_prompt",
+            source: "connector",
+            content: "## System Prompt\n你是 AgentDash 内置编码助手。",
+          },
+        ],
       },
     ],
   };

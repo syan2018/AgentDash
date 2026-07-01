@@ -9,14 +9,16 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::VecDeque;
 
-use agentdash_spi::{MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
+use agentdash_spi::{AuthIdentity, MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule};
 use agentdash_spi::{Mount, MountCapability, Vfs};
 
-use crate::vfs::types::ResourceRef;
-use crate::vfs::{
-    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    PROVIDER_SKILL_ASSET_FS, RuntimeFileEntry, VfsService, normalize_mount_relative_path,
+use crate::mount::{
+    PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
+    PROVIDER_SKILL_ASSET_FS,
 };
+use crate::path::normalize_mount_relative_path;
+use crate::service::VfsService;
+use crate::types::{ListOptions, ResourceRef, RuntimeFileEntry};
 
 const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
 const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
@@ -104,6 +106,7 @@ pub async fn discover_mount_files(
     service: &VfsService,
     vfs: &Vfs,
     rules: &[MountFileDiscoveryRule],
+    identity: Option<&AuthIdentity>,
 ) -> MountFileDiscoveryResult {
     let mut result = MountFileDiscoveryResult::default();
 
@@ -128,17 +131,27 @@ pub async fn discover_mount_files(
             // 根目录扫描
             if rule.scan_root {
                 for file_name in rule.file_names {
-                    try_read_file(service, vfs, &mount.id, file_name, rule, &mut result).await;
+                    try_read_file(
+                        service,
+                        vfs,
+                        &mount.id,
+                        file_name,
+                        rule,
+                        identity,
+                        &mut result,
+                    )
+                    .await;
                 }
             }
 
             // 一级子目录扫描
             if rule.scan_children && has_list {
-                let children = list_root_children(service, vfs, &mount.id).await;
+                let children = list_root_children(service, vfs, &mount.id, identity).await;
                 for child_dir in &children {
                     for file_name in rule.file_names {
                         let path = format!("{child_dir}/{file_name}");
-                        try_read_file(service, vfs, &mount.id, &path, rule, &mut result).await;
+                        try_read_file(service, vfs, &mount.id, &path, rule, identity, &mut result)
+                            .await;
                     }
                 }
             }
@@ -146,11 +159,21 @@ pub async fn discover_mount_files(
             // 前缀目录扫描（skill 模式：prefix/*/file_name）
             if !rule.scan_prefixes.is_empty() && has_list {
                 for prefix in rule.scan_prefixes {
-                    let children = list_children_at(service, vfs, &mount.id, prefix).await;
+                    let children =
+                        list_children_at(service, vfs, &mount.id, prefix, identity).await;
                     for child_dir in &children {
                         for file_name in rule.file_names {
                             let path = format!("{child_dir}/{file_name}");
-                            try_read_file(service, vfs, &mount.id, &path, rule, &mut result).await;
+                            try_read_file(
+                                service,
+                                vfs,
+                                &mount.id,
+                                &path,
+                                rule,
+                                identity,
+                                &mut result,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -161,40 +184,11 @@ pub async fn discover_mount_files(
     result
 }
 
-/// 按 dynamic skill provider 声明的 VFS 规则扫描文件。
-///
-/// Provider 规则只描述“在允许自动发现的 mount 内找什么”。是否允许扫描某个
-/// mount 仍由 `should_scan_mount_for_discovery` 决定，避免 KM / 外部文档等
-/// 高成本 mount 在 session capability 构建时被递归扫爆。
-pub async fn discover_skill_vfs_files(
-    service: &VfsService,
-    vfs: &Vfs,
-    rules: &[agentdash_spi::SkillDiscoveryVfsRule],
-) -> (
-    Vec<agentdash_spi::SkillDiscoveryVfsFile>,
-    Vec<MountFileDiscoveryDiagnostic>,
-) {
-    let (files, diagnostics) =
-        agentdash_application_skill::discovery::discover_skill_vfs_files(service, vfs, rules, None)
-            .await;
-    (
-        files,
-        diagnostics
-            .into_iter()
-            .map(|diagnostic| MountFileDiscoveryDiagnostic {
-                rule_key: diagnostic.rule_key,
-                mount_id: diagnostic.mount_id,
-                path: diagnostic.path,
-                message: diagnostic.message,
-            })
-            .collect(),
-    )
-}
-
 pub async fn discover_memory_vfs_files(
     service: &VfsService,
     vfs: &Vfs,
     rules: &[MemoryDiscoveryVfsRule],
+    identity: Option<&AuthIdentity>,
 ) -> (
     Vec<MemoryDiscoveryVfsFile>,
     Vec<MountFileDiscoveryDiagnostic>,
@@ -233,6 +227,7 @@ pub async fn discover_memory_vfs_files(
                     &path,
                     &rule_key,
                     rule.max_size_bytes,
+                    identity,
                     &mut files,
                     &mut diagnostics,
                 )
@@ -263,10 +258,12 @@ pub async fn discover_memory_vfs_files(
                         &prefix,
                         rule.max_depth.unwrap_or(8),
                         max_files.saturating_sub(emitted_for_rule),
+                        identity,
                     )
                     .await
                 } else {
-                    let children = list_children_at(service, vfs, &mount.id, &prefix).await;
+                    let children =
+                        list_children_at(service, vfs, &mount.id, &prefix, identity).await;
                     children
                         .into_iter()
                         .flat_map(|child_dir| {
@@ -292,6 +289,7 @@ pub async fn discover_memory_vfs_files(
                         &candidate,
                         &rule_key,
                         rule.max_size_bytes,
+                        identity,
                         &mut files,
                         &mut diagnostics,
                     )
@@ -377,6 +375,7 @@ async fn try_read_memory_vfs_file(
     path: &str,
     rule_key: &str,
     max_size_bytes: u64,
+    identity: Option<&AuthIdentity>,
     files: &mut Vec<MemoryDiscoveryVfsFile>,
     diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
 ) {
@@ -384,7 +383,7 @@ async fn try_read_memory_vfs_file(
         mount_id: mount_id.to_string(),
         path: path.to_string(),
     };
-    let read = match service.read_text(vfs, &target, None, None).await {
+    let read = match service.read_text(vfs, &target, None, identity).await {
         Ok(r) => r,
         Err(_) => return,
     };
@@ -397,6 +396,9 @@ async fn try_read_memory_vfs_file(
             path: path.to_string(),
             message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
         });
+        return;
+    }
+    if read.content.trim().is_empty() {
         return;
     }
 
@@ -416,6 +418,7 @@ async fn list_recursive_files(
     root_path: &str,
     max_depth: usize,
     max_files: usize,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<String> {
     if max_files == 0 {
         return Vec::new();
@@ -427,7 +430,7 @@ async fn list_recursive_files(
         if depth > max_depth {
             continue;
         }
-        let entries = list_entries_at(service, vfs, mount_id, &path).await;
+        let entries = list_entries_at(service, vfs, mount_id, &path, identity).await;
         for entry in entries {
             if entry.is_dir {
                 if depth < max_depth {
@@ -459,13 +462,14 @@ async fn try_read_file(
     mount_id: &str,
     path: &str,
     rule: &MountFileDiscoveryRule,
+    identity: Option<&AuthIdentity>,
     result: &mut MountFileDiscoveryResult,
 ) {
     let target = ResourceRef {
         mount_id: mount_id.to_string(),
         path: path.to_string(),
     };
-    let read = match service.read_text(vfs, &target, None, None).await {
+    let read = match service.read_text(vfs, &target, None, identity).await {
         Ok(r) => r,
         Err(_) => return, // 文件不存在或不可读，静默跳过
     };
@@ -501,6 +505,7 @@ async fn list_entries_at(
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<RuntimeFileEntry> {
     let list_result = service
         .list(
@@ -512,7 +517,7 @@ async fn list_entries_at(
                 recursive: false,
             },
             None,
-            None,
+            identity,
         )
         .await;
 
@@ -528,8 +533,9 @@ async fn list_children_at(
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<String> {
-    list_entries_at(service, vfs, mount_id, dir_path)
+    list_entries_at(service, vfs, mount_id, dir_path, identity)
         .await
         .into_iter()
         .filter(|e| e.is_dir)
@@ -538,8 +544,13 @@ async fn list_children_at(
 }
 
 /// 列出 mount 根目录下的一级子目录名。
-async fn list_root_children(service: &VfsService, vfs: &Vfs, mount_id: &str) -> Vec<String> {
-    list_children_at(service, vfs, mount_id, ".").await
+async fn list_root_children(
+    service: &VfsService,
+    vfs: &Vfs,
+    mount_id: &str,
+    identity: Option<&AuthIdentity>,
+) -> Vec<String> {
+    list_children_at(service, vfs, mount_id, ".", identity).await
 }
 
 #[cfg(test)]

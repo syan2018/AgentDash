@@ -31,8 +31,6 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
   );
 }
 
-export type SystemPromptMode = "append" | "override";
-
 export interface ProjectVfsMountExposureGrant {
   [key: string]: JsonValue | undefined;
   mount_id: string;
@@ -47,7 +45,6 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   thinking_level?: ThinkingLevel;
   permission_policy?: string;
   system_prompt?: string;
-  system_prompt_mode?: SystemPromptMode;
   display_name?: string;
   description?: string;
   capability_directives?: CapabilityDirective[];

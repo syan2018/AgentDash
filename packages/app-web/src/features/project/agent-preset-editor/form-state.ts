@@ -3,7 +3,6 @@ import type {
   CapabilityDirective,
   CapabilityKey,
   ProjectVfsMountExposureGrant,
-  SystemPromptMode,
   ThinkingLevel,
 } from "../../../types";
 import {
@@ -37,7 +36,6 @@ export interface PresetFormState {
   thinking_level: ThinkingLevel | "";
   permission_policy: string;
   system_prompt: string;
-  system_prompt_mode: SystemPromptMode | "";
   project_vfs_mount_exposure_grants: ProjectVfsMountExposureGrant[];
   skill_asset_keys: string[];
   capability_directives: CapabilityDirective[];
@@ -193,7 +191,6 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
-    system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     project_vfs_mount_exposure_grants: rawProjectVfsMountExposureGrants,
     skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capabilityDirectives,
@@ -213,7 +210,6 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.thinking_level) config.thinking_level = form.thinking_level;
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
-  if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.project_vfs_mount_exposure_grants.length > 0) {
     config.project_vfs_mount_exposure_grants = form.project_vfs_mount_exposure_grants;
   }

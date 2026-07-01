@@ -17,9 +17,14 @@ describe("parseContextFrame", () => {
           kind: "identity",
           title: "Identity",
           summary: "当前身份",
-          base_prompt: "base",
-          mode: "append",
-          effective_prompt: "effective",
+          fragments: [
+            {
+              slot: "identity",
+              label: "identity_system_prompt",
+              source: "connector",
+              content: "## System Prompt\nbase",
+            },
+          ],
         },
       ],
     });

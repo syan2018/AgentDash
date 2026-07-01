@@ -1,5 +1,5 @@
 use agentdash_diagnostics::{Subsystem, diag};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,9 +10,8 @@ use agentdash_spi::{
     AuthIdentity, CapabilityState, DiscoveredGuideline, DiscoveredSkill, MemoryDiscoveryContext,
     MemoryDiscoveryDiagnostic, MemoryDiscoveryMount, MemoryDiscoveryOutput,
     MemoryDiscoveryOwnerKind, MemoryDiscoveryProvider, MemoryDiscoveryUserContext,
-    MemoryDiscoveryVfsFile, MemoryDiscoveryVfsRule, MemoryIndexStatus, Mount, MountCapability,
-    RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster, SkillDiscoveryContext,
-    SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
+    MemoryIndexStatus, RuntimeMcpServer, SkillContextExposure, SkillDiscoveryCluster,
+    SkillDiscoveryContext, SkillDiscoveryDiagnostic, SkillDiscoveryOutput, SkillDiscoveryProvider,
     SkillDiscoveryUserContext, Vfs, skill_capability_key,
 };
 
@@ -22,9 +21,8 @@ use agentdash_application_skill::discovery::{
 };
 use agentdash_application_vfs::mount::mount_owner_kind;
 use agentdash_application_vfs::{
-    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService, mount_purpose,
-    normalize_mount_relative_path,
+    BUILTIN_GUIDELINE_RULES, MountFileDiscoveryDiagnostic, VfsService, discover_memory_vfs_files,
+    discover_mount_files, mount_purpose,
 };
 
 use crate::agent_run::runtime_session_boundary::{
@@ -37,15 +35,6 @@ const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
 const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
-const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
-const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
-
-#[derive(Debug, Clone)]
-struct MountFileDiscoveryDiagnostic {
-    mount_id: String,
-    path: String,
-    message: String,
-}
 
 #[derive(Clone, Copy)]
 pub struct RuntimeCapabilityProjectionInput<'a> {
@@ -81,7 +70,13 @@ pub async fn derive_runtime_capability_projection(
         .unwrap_or_default();
     let discovered_guidelines = match (input.vfs_service, input.active_vfs) {
         (Some(vfs_service), Some(active_vfs)) => {
-            derive_runtime_guidelines(vfs_service, active_vfs, input.diagnostics_label).await
+            derive_runtime_guidelines(
+                vfs_service,
+                active_vfs,
+                input.identity,
+                input.diagnostics_label,
+            )
+            .await
         }
         _ => Vec::new(),
     };
@@ -193,16 +188,28 @@ pub async fn derive_runtime_skill_baseline(
 pub async fn derive_runtime_guidelines(
     vfs_service: &VfsService,
     active_vfs: &Vfs,
+    identity: Option<&AuthIdentity>,
     diagnostics_label: &'static str,
 ) -> Vec<DiscoveredGuideline> {
-    let _ = (vfs_service, active_vfs);
-    diag!(
-        Debug,
-        Subsystem::AgentRun,
-        label = diagnostics_label,
-        "AgentRun crate does not run built-in guideline file discovery; guideline providers must be injected by the composition owner"
-    );
-    Vec::new()
+    let result =
+        discover_mount_files(vfs_service, active_vfs, BUILTIN_GUIDELINE_RULES, identity).await;
+    log_guideline_discovery_diagnostics(diagnostics_label, &result.diagnostics);
+    result
+        .files
+        .into_iter()
+        .map(|file| DiscoveredGuideline {
+            file_name: file
+                .path
+                .rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("AGENTS.md")
+                .to_string(),
+            mount_id: file.mount_id,
+            path: file.path,
+            content: file.content,
+        })
+        .collect()
 }
 
 pub async fn derive_runtime_memory_inventory(
@@ -347,304 +354,6 @@ fn memory_discovery_mounts_from_vfs(vfs: &Vfs) -> Vec<MemoryDiscoveryMount> {
             summary
         })
         .collect()
-}
-
-async fn discover_memory_vfs_files(
-    service: &VfsService,
-    vfs: &Vfs,
-    rules: &[MemoryDiscoveryVfsRule],
-    identity: Option<&AuthIdentity>,
-) -> (
-    Vec<MemoryDiscoveryVfsFile>,
-    Vec<MountFileDiscoveryDiagnostic>,
-) {
-    let mut files = Vec::new();
-    let mut diagnostics = Vec::new();
-
-    for mount in &vfs.mounts {
-        if !should_scan_mount_for_discovery(mount) {
-            continue;
-        }
-        if !mount.capabilities.contains(&MountCapability::Read) {
-            continue;
-        }
-
-        let has_list = mount.capabilities.contains(&MountCapability::List);
-        for rule in rules {
-            let rule_key = normalized_memory_rule_key(rule);
-
-            for exact_path in &rule.exact_paths {
-                let Ok(path) =
-                    normalize_discovery_rule_path(&mount.id, exact_path, false, &mut diagnostics)
-                else {
-                    continue;
-                };
-                try_read_memory_vfs_file(
-                    service,
-                    vfs,
-                    &mount.id,
-                    &path,
-                    &rule_key,
-                    rule.max_size_bytes,
-                    identity,
-                    &mut files,
-                    &mut diagnostics,
-                )
-                .await;
-            }
-
-            if !has_list || rule.scan_prefixes.is_empty() || rule.file_names.is_empty() {
-                continue;
-            }
-
-            let max_files = rule.max_files.unwrap_or(usize::MAX);
-            let mut emitted_for_rule = 0usize;
-            for prefix in &rule.scan_prefixes {
-                if emitted_for_rule >= max_files {
-                    break;
-                }
-                let Ok(prefix) =
-                    normalize_discovery_rule_path(&mount.id, prefix, true, &mut diagnostics)
-                else {
-                    continue;
-                };
-                let candidates = if rule.recursive {
-                    list_recursive_files(
-                        service,
-                        vfs,
-                        &mount.id,
-                        &prefix,
-                        rule.max_depth.unwrap_or(8),
-                        max_files.saturating_sub(emitted_for_rule),
-                        identity,
-                    )
-                    .await
-                } else {
-                    let children =
-                        list_children_at(service, vfs, &mount.id, &prefix, identity).await;
-                    children
-                        .into_iter()
-                        .flat_map(|child_dir| {
-                            rule.file_names
-                                .iter()
-                                .map(move |file_name| format!("{child_dir}/{file_name}"))
-                        })
-                        .collect()
-                };
-
-                for candidate in candidates {
-                    if emitted_for_rule >= max_files {
-                        break;
-                    }
-                    if !matches_any_file_name(&candidate, &rule.file_names) {
-                        continue;
-                    }
-                    let before_len = files.len();
-                    try_read_memory_vfs_file(
-                        service,
-                        vfs,
-                        &mount.id,
-                        &candidate,
-                        &rule_key,
-                        rule.max_size_bytes,
-                        identity,
-                        &mut files,
-                        &mut diagnostics,
-                    )
-                    .await;
-                    if files.len() > before_len {
-                        emitted_for_rule += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    (files, diagnostics)
-}
-
-fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
-    match mount.metadata.get(AUTO_DISCOVERY_METADATA_KEY) {
-        Some(serde_json::Value::Bool(enabled)) => return *enabled,
-        Some(serde_json::Value::String(value)) => {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "true" | "allow" | "auto" => return true,
-                "false" | "deny" | "skip" | "manual" => return false,
-                _ => {}
-            }
-        }
-        _ => {}
-    }
-
-    match mount
-        .metadata
-        .get(DISCOVERY_POLICY_METADATA_KEY)
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("auto") | Some("allow") => return true,
-        Some("manual") | Some("skip") | Some("deny") => return false,
-        _ => {}
-    }
-
-    matches!(
-        mount.provider.as_str(),
-        PROVIDER_RELAY_FS
-            | PROVIDER_INLINE_FS
-            | PROVIDER_LIFECYCLE_VFS
-            | PROVIDER_CANVAS_FS
-            | PROVIDER_SKILL_ASSET_FS
-    )
-}
-
-fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
-    let key = rule.key.trim();
-    if key.is_empty() {
-        "memory_discovery".to_string()
-    } else {
-        key.to_string()
-    }
-}
-
-fn normalize_discovery_rule_path(
-    mount_id: &str,
-    raw_path: &str,
-    allow_empty: bool,
-    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
-) -> Result<String, ()> {
-    normalize_mount_relative_path(raw_path, allow_empty).map_err(|error| {
-        diagnostics.push(MountFileDiscoveryDiagnostic {
-            mount_id: mount_id.to_string(),
-            path: raw_path.to_string(),
-            message: format!("discovery path 非法: {error}"),
-        });
-    })
-}
-
-async fn try_read_memory_vfs_file(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    path: &str,
-    rule_key: &str,
-    max_size_bytes: u64,
-    identity: Option<&AuthIdentity>,
-    files: &mut Vec<MemoryDiscoveryVfsFile>,
-    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
-) {
-    let target = ResourceRef {
-        mount_id: mount_id.to_string(),
-        path: path.to_string(),
-    };
-    let read = match service.read_text(vfs, &target, None, identity).await {
-        Ok(read) => read,
-        Err(_) => return,
-    };
-
-    let content_len = read.content.len() as u64;
-    if content_len > max_size_bytes {
-        diagnostics.push(MountFileDiscoveryDiagnostic {
-            mount_id: mount_id.to_string(),
-            path: path.to_string(),
-            message: format!("文件过大（{content_len} bytes > {max_size_bytes} bytes），已跳过"),
-        });
-        return;
-    }
-    if read.content.trim().is_empty() {
-        return;
-    }
-
-    files.push(MemoryDiscoveryVfsFile {
-        rule_key: rule_key.to_string(),
-        mount_id: mount_id.to_string(),
-        path: read.path,
-        content: read.content,
-        size_bytes: Some(content_len),
-    });
-}
-
-async fn list_recursive_files(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    root_path: &str,
-    max_depth: usize,
-    max_files: usize,
-    identity: Option<&AuthIdentity>,
-) -> Vec<String> {
-    if max_files == 0 {
-        return Vec::new();
-    }
-
-    let mut files = Vec::new();
-    let mut queue = VecDeque::from([(root_path.to_string(), 0usize)]);
-    while let Some((path, depth)) = queue.pop_front() {
-        if depth > max_depth {
-            continue;
-        }
-        let entries = list_entries_at(service, vfs, mount_id, &path, identity).await;
-        for entry in entries {
-            if entry.is_dir {
-                if depth < max_depth {
-                    queue.push_back((entry.path, depth + 1));
-                }
-            } else {
-                files.push(entry.path);
-                if files.len() >= max_files {
-                    return files;
-                }
-            }
-        }
-    }
-
-    files
-}
-
-fn matches_any_file_name(path: &str, file_names: &[String]) -> bool {
-    let Some(name) = path.rsplit('/').next() else {
-        return false;
-    };
-    file_names.iter().any(|file_name| file_name == name)
-}
-
-async fn list_children_at(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    dir_path: &str,
-    identity: Option<&AuthIdentity>,
-) -> Vec<String> {
-    list_entries_at(service, vfs, mount_id, dir_path, identity)
-        .await
-        .into_iter()
-        .filter(|entry| entry.is_dir)
-        .map(|entry| entry.path)
-        .collect()
-}
-
-async fn list_entries_at(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    dir_path: &str,
-    identity: Option<&AuthIdentity>,
-) -> Vec<RuntimeFileEntry> {
-    service
-        .list(
-            vfs,
-            mount_id,
-            ListOptions {
-                path: dir_path.to_string(),
-                pattern: None,
-                recursive: false,
-            },
-            None,
-            identity,
-        )
-        .await
-        .map(|result| result.entries)
-        .unwrap_or_default()
 }
 
 fn sanitized_memory_mount_metadata_summary(
@@ -1071,6 +780,23 @@ fn log_memory_discovery_diagnostics(
             code = %diag.code,
             source_key = diag.source_key.as_deref().unwrap_or(""),
             "memory discovery 诊断: {}",
+            diag.message
+        );
+    }
+}
+
+fn log_guideline_discovery_diagnostics(
+    diagnostics_label: &'static str,
+    diagnostics: &[agentdash_application_vfs::MountFileDiscoveryDiagnostic],
+) {
+    for diag in diagnostics {
+        diag!(Warn, Subsystem::AgentRun,
+
+            label = diagnostics_label,
+            rule_key = %diag.rule_key,
+            mount_id = %diag.mount_id,
+            path = %diag.path,
+            "guideline discovery 诊断: {}",
             diag.message
         );
     }
@@ -1743,6 +1469,22 @@ mod tests {
             source.bounded_index_content.as_deref(),
             Some("- [Workflow notes](topics/workflow.md)")
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_guideline_projection_discovers_agents_md_from_vfs() {
+        let (service, vfs) = memory_vfs(HashMap::from([(
+            "AGENTS.md".to_string(),
+            "使用中文交流".to_string(),
+        )]));
+
+        let guidelines = derive_runtime_guidelines(&service, &vfs, None, "test").await;
+
+        assert_eq!(guidelines.len(), 1);
+        assert_eq!(guidelines[0].file_name, "AGENTS.md");
+        assert_eq!(guidelines[0].mount_id, "agent");
+        assert_eq!(guidelines[0].path, "AGENTS.md");
+        assert_eq!(guidelines[0].content, "使用中文交流");
     }
 
     #[tokio::test]

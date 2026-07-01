@@ -689,9 +689,8 @@ export function SessionChatComposer({
           {/* ③ 弹性间隔（展开时推右） */}
           {isExpanded && <div className="order-3 flex-1" />}
 
-          {/* ④ 运行上下文工具 + 模型选择器 */}
+          {/* ④ 上下文用量入口 + 模型选择器 */}
           <div className={isExpanded ? "order-4 flex items-center gap-0.5" : "order-3 flex items-center gap-0.5"}>
-            {toolbarSlot}
             <ContextUsageRing
               usage={tokenUsage}
               sessionId={sessionId}
@@ -730,9 +729,16 @@ export function SessionChatComposer({
           </div>
         </div>
 
-        <p className="mt-1.5 px-1 text-[11px] text-muted-foreground/40">
-          {helperText}
-        </p>
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1">
+          <p className="min-w-0 text-[11px] text-muted-foreground/40">
+            {helperText}
+          </p>
+          {toolbarSlot && (
+            <div className="ml-auto flex items-center gap-0.5">
+              {toolbarSlot}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

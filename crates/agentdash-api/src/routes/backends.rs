@@ -353,8 +353,7 @@ pub async fn ensure_local_runtime(
     headers: HeaderMap,
     Json(req): Json<EnsureLocalRuntimeRequest>,
 ) -> Result<Json<EnsureLocalRuntimeResponse>, ApiError> {
-    let relay_ws_url = release_info::configured_relay_ws_url_from_env()
-        .unwrap_or_else(|| relay_ws_url_from_headers(&headers));
+    let relay_ws_url = relay_ws_url_from_headers(&headers);
     let result = ensure_local_runtime_record(
         &state.repos,
         EnsureLocalRuntimeInput {
@@ -413,7 +412,23 @@ fn relay_ws_url_from_headers(headers: &HeaderMap) -> String {
     } else {
         "ws"
     };
-    format!("{ws_scheme}://{host}/ws/backend")
+    release_info::derive_relay_ws_url(&format!("{ws_scheme}://{host}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_ws_url_derives_from_api_host_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "127.0.0.1:3001".parse().expect("header value"));
+
+        assert_eq!(
+            relay_ws_url_from_headers(&headers),
+            "ws://127.0.0.1:3001/ws/backend"
+        );
+    }
 }
 
 pub async fn remove_backend(

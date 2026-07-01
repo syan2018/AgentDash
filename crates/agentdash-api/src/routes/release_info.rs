@@ -48,7 +48,7 @@ fn build_version_info() -> VersionInfoResponse {
 fn build_agentdash_discovery() -> AgentDashDiscoveryResponse {
     let public_origin = configured_public_origin();
     let api_base_url = format!("{public_origin}/api");
-    let relay_ws_url = configured_relay_ws_url_for_public_origin(&public_origin);
+    let relay_ws_url = derive_relay_ws_url(&public_origin);
     let version = env!("CARGO_PKG_VERSION");
 
     AgentDashDiscoveryResponse {
@@ -74,43 +74,21 @@ fn configured_public_origin() -> String {
 }
 
 fn configured_public_origin_from_env() -> Option<String> {
-    runtime_env("AGENTDASH_PUBLIC_ORIGIN")
-        .or_else(|| runtime_env("AGENTDASH_WEB_BASE_URL"))
-        .map(|value| value.trim_end_matches('/').to_string())
+    configured_public_origin_from_value(runtime_env("AGENTDASH_PUBLIC_ORIGIN"))
 }
 
-pub(crate) fn configured_relay_ws_url_from_env() -> Option<String> {
-    configured_relay_ws_url_from_values(
-        configured_public_origin_from_env(),
-        runtime_env("AGENTDASH_RELAY_WS_URL"),
-    )
+fn configured_public_origin_from_value(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim_end_matches('/').to_string())
 }
 
-fn configured_relay_ws_url_for_public_origin(public_origin: &str) -> String {
-    configured_relay_ws_url_from_values(
-        Some(public_origin.to_string()),
-        runtime_env("AGENTDASH_RELAY_WS_URL"),
-    )
-    .unwrap_or_else(|| derive_relay_ws_url(public_origin))
-}
-
-fn configured_relay_ws_url_from_values(
-    public_origin: Option<String>,
-    relay_override: Option<String>,
-) -> Option<String> {
-    relay_override
-        .map(|value| value.trim_end_matches('/').to_string())
-        .or_else(|| public_origin.map(|value| derive_relay_ws_url(value.trim_end_matches('/'))))
-}
-
-fn derive_relay_ws_url(public_origin: &str) -> String {
-    if let Some(rest) = public_origin.strip_prefix("https://") {
+pub(crate) fn derive_relay_ws_url(server_origin: &str) -> String {
+    if let Some(rest) = server_origin.strip_prefix("https://") {
         return format!("wss://{rest}/ws/backend");
     }
-    if let Some(rest) = public_origin.strip_prefix("http://") {
+    if let Some(rest) = server_origin.strip_prefix("http://") {
         return format!("ws://{rest}/ws/backend");
     }
-    format!("{public_origin}/ws/backend")
+    format!("{server_origin}/ws/backend")
 }
 
 fn derived_local_origin() -> String {
@@ -137,7 +115,7 @@ fn runtime_env(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_relay_ws_url_from_values, derive_relay_ws_url};
+    use super::{configured_public_origin_from_value, derive_relay_ws_url};
 
     #[test]
     fn relay_ws_url_uses_ws_for_http_origin() {
@@ -156,24 +134,11 @@ mod tests {
     }
 
     #[test]
-    fn configured_relay_ws_url_uses_explicit_override_first() {
+    fn configured_public_origin_only_uses_public_origin_value() {
         assert_eq!(
-            configured_relay_ws_url_from_values(
-                Some("https://agentdash.example.internal".to_string()),
-                Some("wss://relay.example.internal/custom/relay/".to_string()),
-            ),
-            Some("wss://relay.example.internal/custom/relay".to_string())
+            configured_public_origin_from_value(Some("http://127.0.0.1:3001/".to_string())),
+            Some("http://127.0.0.1:3001".to_string())
         );
-    }
-
-    #[test]
-    fn configured_relay_ws_url_derives_from_public_origin() {
-        assert_eq!(
-            configured_relay_ws_url_from_values(
-                Some("https://agentdash.example.internal/".to_string()),
-                None,
-            ),
-            Some("wss://agentdash.example.internal/ws/backend".to_string())
-        );
+        assert_eq!(configured_public_origin_from_value(None), None);
     }
 }

@@ -60,8 +60,8 @@ pub use frame::{
     AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
     FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
     FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, accepted_launch_commit_port, agent_frame_write_boundaries,
-    hook_target_runtime_port,
+    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, accepted_launch_commit_port,
+    agent_frame_write_boundaries, hook_target_runtime_port,
 };
 pub use lifecycle_read_model_facade::{
     ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,
@@ -134,7 +134,7 @@ pub use runtime_session_boundary::{
     RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeTraceLaunchState,
     SessionControlService, SessionCoreService, SessionEventPage, SessionEventingService,
     SessionExecutionState, SessionLaunchService, SessionMeta, SessionRepositoryRehydrateMode,
-    SessionTurnSteerCommand, TerminalHookEffectBinding, TitleSource, resolve_prompt_launch_path,
+    SessionTurnSteerCommand, TitleSource, resolve_prompt_launch_path,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,

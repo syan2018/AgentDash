@@ -27,6 +27,25 @@ pub struct FrameRuntimeSurface {
     pub runtime_session_id: Option<String>,
 }
 
+impl FrameRuntimeSurface {
+    /// 从 `AgentFrame` 投影纯 surface 数据。
+    pub fn from_frame(frame: &AgentFrame, runtime_session_id: Option<String>) -> Self {
+        Self {
+            agent_id: frame.agent_id,
+            frame_id: frame.id,
+            frame_revision: frame.revision,
+            capability_surface: frame
+                .effective_capability_json
+                .clone()
+                .unwrap_or(Value::Null),
+            context_slice: frame.context_slice_json.clone().unwrap_or(Value::Null),
+            vfs_surface: frame.vfs_surface_json.clone().unwrap_or(Value::Null),
+            mcp_surface: frame.mcp_surface_json.clone().unwrap_or(Value::Null),
+            runtime_session_id,
+        }
+    }
+}
+
 /// Command intent — 只表达用户请求事实（input/env/identity/terminal hook binding）。
 #[derive(Debug, Clone, Default)]
 pub struct FrameLaunchIntent {

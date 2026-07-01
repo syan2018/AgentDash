@@ -109,12 +109,6 @@ pub struct SessionTurnSteerCommand {
     pub input: Vec<UserInputBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalHookEffectBinding {
-    pub handler: serde_json::Value,
-    pub supported_effect_kinds: Vec<String>,
-}
-
 #[async_trait]
 pub trait RuntimeSessionCorePort: Send + Sync {
     async fn inspect_session_execution_state(

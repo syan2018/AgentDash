@@ -10,86 +10,27 @@
 //! `FrameLaunchEnvelope` 是 FrameConstructionService 到 planner 的唯一传递形式，
 //! 让"缺字段"在构造边界暴露，planner 只消费 launch-ready 输入。
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_application_ports::frame_launch_envelope as launch_port;
 use agentdash_domain::backend::{
     RuntimeBackendAnchor, RuntimeBackendAnchorError, RuntimeBackendAnchorSource,
 };
-use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::{
-    AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
-    RuntimeMcpServer, SessionContextBundle, Vfs,
-};
+use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::surface::FrameSurfaceDraft;
-use crate::agent_run::runtime_session_boundary::TerminalHookEffectBinding;
 
-// ─── FrameRuntimeSurface: 只来自 AgentFrame 持久化 surface ───
-
-/// 从 `AgentFrame` 投影的纯 surface 数据，不可被 command/extras 修改。
-#[derive(Debug, Clone)]
-pub struct FrameRuntimeSurface {
-    pub agent_id: Uuid,
-    pub frame_id: Uuid,
-    pub frame_revision: i32,
-    pub capability_surface: serde_json::Value,
-    pub context_slice: serde_json::Value,
-    pub vfs_surface: serde_json::Value,
-    pub mcp_surface: serde_json::Value,
-    pub runtime_session_id: Option<String>,
-}
-
-impl FrameRuntimeSurface {
-    pub fn from_frame(frame: &AgentFrame, runtime_session_id: Option<String>) -> Self {
-        Self {
-            agent_id: frame.agent_id,
-            frame_id: frame.id,
-            frame_revision: frame.revision,
-            capability_surface: frame
-                .effective_capability_json
-                .clone()
-                .unwrap_or(serde_json::Value::Null),
-            context_slice: frame
-                .context_slice_json
-                .clone()
-                .unwrap_or(serde_json::Value::Null),
-            vfs_surface: frame
-                .vfs_surface_json
-                .clone()
-                .unwrap_or(serde_json::Value::Null),
-            mcp_surface: frame
-                .mcp_surface_json
-                .clone()
-                .unwrap_or(serde_json::Value::Null),
-            runtime_session_id,
-        }
-    }
-}
-
-// ─── FrameLaunchIntent: 只来自 command/prompt intent ───
-
-/// 来自 `LaunchCommand` / `FrameAssemblyLaunchExtras` 的请求意图，
-/// 不含任何 frame surface 数据。
-#[derive(Debug, Clone, Default)]
-pub struct FrameLaunchIntent {
-    pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
-    pub environment_variables: HashMap<String, String>,
-    pub identity: Option<AuthIdentity>,
-    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
-}
-
-/// Launch-time runtime context discovery 派生物。
-///
-/// guidelines / memory 归入 context projection，不再作为 command intent 字段。
-#[derive(Debug, Clone, Default)]
-pub struct FrameLaunchContextProjection {
-    pub context_bundle: Option<SessionContextBundle>,
-    pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub discovered_memory: MemoryDiscoveryOutput,
-}
+// ─── 共享子结构：直接复用 ports 定义 ───
+//
+// context / diagnostics / frame / command 四组只承载共享类型
+// (agentdash-spi / agentdash-domain / agent-protocol)，因此直接复用 ports 中性 DTO
+// 的定义，构造侧不再重复声明。只有 runtime surface（含 construction 专属的
+// `surface_draft`）与顶层 `FrameLaunchEnvelope` 保持 agentrun 独有。
+pub use launch_port::{
+    FrameLaunchContextProjection, FrameLaunchDiagnostics, FrameLaunchFrameRef, FrameLaunchIntent,
+    FrameRuntimeSurface, LaunchResolutionTrace, TerminalHookEffectBinding,
+};
 
 // ─── FrameLaunchSurface: planner-facing launch surface，字段 non-optional ───
 
@@ -239,14 +180,10 @@ fn uuid_metadata(metadata: &serde_json::Value, key: &str) -> Option<Uuid> {
 
 // ─── FrameLaunchEnvelope: frame construction 输出，字段 non-optional ───
 
-/// Frame refs — 持久化 frame surface 与 pending frame revision。
-#[derive(Debug, Clone)]
-pub struct FrameLaunchFrameRef {
-    pub surface: FrameRuntimeSurface,
-    pub pending_frame: Option<AgentFrame>,
-}
-
 /// Runtime surface — 闭包后的 launch execution surface。
+///
+/// 因携带 construction 专属的 `surface_draft`（写 AgentFrame revision），保持 agentrun 独有；
+/// 其余四组子结构直接复用 ports 定义。
 ///
 /// `working_directory`、`execution_profile`、`capability_state` 在此保证 non-optional，
 /// planner 不需要处理"半成品是否 ready"的检查。
@@ -259,12 +196,6 @@ pub struct FrameLaunchRuntimeSurface {
     pub working_directory: PathBuf,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub base_capability_state: Option<CapabilityState>,
-}
-
-/// Diagnostics — resolution trace 等可观测性投影。
-#[derive(Debug, Clone, Default)]
-pub struct FrameLaunchDiagnostics {
-    pub resolution_trace: LaunchResolutionTrace,
 }
 
 /// Frame construction 到 planner 的传递物。
@@ -282,15 +213,6 @@ pub struct FrameLaunchEnvelope {
     pub runtime: FrameLaunchRuntimeSurface,
     pub context: FrameLaunchContextProjection,
     pub diagnostics: FrameLaunchDiagnostics,
-}
-
-/// Launch 过程中 resolution 来源的 trace 数据（仅用于诊断/可观测性）。
-#[derive(Debug, Clone, Default)]
-pub struct LaunchResolutionTrace {
-    pub vfs_source: Option<String>,
-    pub mcp_source: Option<String>,
-    pub capability_source: Option<String>,
-    pub pending_overlay_applied: bool,
 }
 
 impl FrameLaunchEnvelope {
@@ -316,32 +238,14 @@ impl FrameLaunchEnvelope {
 
     /// Convert the AgentRun-owned construction envelope into the neutral
     /// RuntimeSession launch DTO consumed through application ports.
+    ///
+    /// `frame` / `command` / `context` / `diagnostics` 四组已直接复用 ports 定义，
+    /// 因此原样 move；只有 `runtime` 因携带 construction 专属的 `surface_draft`，
+    /// 需要投影为不含 draft 的 ports runtime surface。
     pub fn into_runtime_session_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
         launch_port::FrameLaunchEnvelope {
-            frame: launch_port::FrameLaunchFrameRef {
-                surface: launch_port::FrameRuntimeSurface {
-                    agent_id: self.frame.surface.agent_id,
-                    frame_id: self.frame.surface.frame_id,
-                    frame_revision: self.frame.surface.frame_revision,
-                    capability_surface: self.frame.surface.capability_surface,
-                    context_slice: self.frame.surface.context_slice,
-                    vfs_surface: self.frame.surface.vfs_surface,
-                    mcp_surface: self.frame.surface.mcp_surface,
-                    runtime_session_id: self.frame.surface.runtime_session_id,
-                },
-                pending_frame: self.frame.pending_frame,
-            },
-            command: launch_port::FrameLaunchIntent {
-                input: self.command.input,
-                environment_variables: self.command.environment_variables,
-                identity: self.command.identity,
-                terminal_hook_effect_binding: self.command.terminal_hook_effect_binding.map(
-                    |binding| launch_port::TerminalHookEffectBinding {
-                        handler: binding.handler,
-                        supported_effect_kinds: binding.supported_effect_kinds,
-                    },
-                ),
-            },
+            frame: self.frame,
+            command: self.command,
             runtime: launch_port::FrameLaunchRuntimeSurface {
                 launch_surface: launch_port::FrameLaunchSurface {
                     capability_state: self.runtime.launch_surface.capability_state,
@@ -353,32 +257,22 @@ impl FrameLaunchEnvelope {
                 runtime_backend_anchor: self.runtime.runtime_backend_anchor,
                 base_capability_state: self.runtime.base_capability_state,
             },
-            context: launch_port::FrameLaunchContextProjection {
-                context_bundle: self.context.context_bundle,
-                discovered_guidelines: self.context.discovered_guidelines,
-                discovered_memory: self.context.discovered_memory,
-            },
-            diagnostics: launch_port::FrameLaunchDiagnostics {
-                resolution_trace: launch_port::LaunchResolutionTrace {
-                    vfs_source: self.diagnostics.resolution_trace.vfs_source,
-                    mcp_source: self.diagnostics.resolution_trace.mcp_source,
-                    capability_source: self.diagnostics.resolution_trace.capability_source,
-                    pending_overlay_applied: self
-                        .diagnostics
-                        .resolution_trace
-                        .pending_overlay_applied,
-                },
-            },
+            context: self.context,
+            diagnostics: self.diagnostics,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
-    use agentdash_spi::{McpTransportConfig, ToolCluster};
+    use agentdash_spi::{
+        DiscoveredGuideline, McpTransportConfig, MemoryDiscoveryOutput, ToolCluster,
+    };
 
     #[test]
     fn frame_runtime_surface_from_frame_projects_all_fields() {

@@ -126,6 +126,9 @@ export interface SessionChatViewProps {
   /** 渲染在执行器选择器上方（如 owner binding 信息） */
   inputPrefix?: ReactNode;
 
+  /** 渲染在 composer 工具栏内（如 backend / 模型等可执行上下文选择） */
+  inputToolbarSlot?: ReactNode;
+
   /** 注入到流区域顶部的固定内容（如 Task 上下文卡片），始终显示 */
   streamPrefixContent?: ReactNode;
 

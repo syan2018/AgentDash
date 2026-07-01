@@ -60,7 +60,7 @@ export function InlineBackendSelector({
     () => options.find((option) => option.backendId === value) ?? null,
     [options, value],
   );
-  const chipLabel = selectedOption?.label ?? "默认";
+  const chipLabel = `Backend · ${selectedOption?.label ?? "默认"}`;
   const chipStatus = selectedOption?.statusLabel ?? statusText ?? null;
 
   const handleSelect = (backendId: string) => {

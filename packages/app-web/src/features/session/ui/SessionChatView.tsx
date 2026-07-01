@@ -63,6 +63,7 @@ export function SessionChatView({
   onTaskPlanChanged,
   headerSlot,
   inputPrefix,
+  inputToolbarSlot,
   streamPrefixContent,
   showStatusBar = true,
   promptTemplates,
@@ -710,6 +711,7 @@ export function SessionChatView({
           fileRef={fileRef}
           hasSession={hasSession}
           inputPrefix={inputPrefix}
+          toolbarSlot={inputToolbarSlot}
           inputValue={inputValue}
           imageAttachments={imageAttach.attachments}
           imageError={imageAttach.error}

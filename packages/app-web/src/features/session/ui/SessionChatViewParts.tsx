@@ -484,6 +484,7 @@ export function SessionChatComposer({
   fileRef,
   hasSession,
   inputPrefix,
+  toolbarSlot,
   inputValue,
   imageAttachments,
   imageError,
@@ -514,6 +515,7 @@ export function SessionChatComposer({
   fileRef: FileReferenceState;
   hasSession: boolean;
   inputPrefix?: ReactNode;
+  toolbarSlot?: ReactNode;
   inputValue: string;
   imageAttachments: ImageAttachment[];
   imageError: string | null;
@@ -687,8 +689,9 @@ export function SessionChatComposer({
           {/* ③ 弹性间隔（展开时推右） */}
           {isExpanded && <div className="order-3 flex-1" />}
 
-          {/* ④ 上下文用量入口 + 模型选择器 */}
+          {/* ④ 运行上下文工具 + 模型选择器 */}
           <div className={isExpanded ? "order-4 flex items-center gap-0.5" : "order-3 flex items-center gap-0.5"}>
+            {toolbarSlot}
             <ContextUsageRing
               usage={tokenUsage}
               sessionId={sessionId}

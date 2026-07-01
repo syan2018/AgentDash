@@ -14,6 +14,7 @@ import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resiz
 import { SessionChatView } from "../features/session";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
+import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
@@ -95,6 +96,7 @@ export function AgentRunWorkspacePage({
   const [selectedBackendId, setSelectedBackendId] = useState("");
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
+  const syncedRuntimeBackendIdRef = useRef<string | null>(null);
 
   const expandWorkspacePanel = useCallback((
     typeId?: string,
@@ -326,6 +328,28 @@ export function AgentRunWorkspacePage({
   const selectedBackendIsActive = selectedBackendId !== ""
     && activeBackendAccesses.some((access) => access.backend_id === selectedBackendId);
   const effectiveSelectedBackendId = selectedBackendIsActive ? selectedBackendId : "";
+  const actualRuntimeBackendId = useMemo(() => {
+    const target = deliveryRuntimeSurface
+      ? selectVfsBackendTarget(deliveryRuntimeSurface.mounts, {
+          defaultMountId: deliveryRuntimeSurface.default_mount_id,
+        })
+      : null;
+    const backendId = target?.backend_id.trim() ?? "";
+    return backendId || null;
+  }, [deliveryRuntimeSurface]);
+
+  useEffect(() => {
+    syncedRuntimeBackendIdRef.current = null;
+  }, [currentAgentId, currentRunId, draftProjectAgentKey, draftProjectIdValue]);
+
+  useEffect(() => {
+    if (!actualRuntimeBackendId) return;
+    if (syncedRuntimeBackendIdRef.current === actualRuntimeBackendId) return;
+    const isAuthorized = activeBackendAccesses.some((access) => access.backend_id === actualRuntimeBackendId);
+    if (!isAuthorized) return;
+    syncedRuntimeBackendIdRef.current = actualRuntimeBackendId;
+    setSelectedBackendId(actualRuntimeBackendId);
+  }, [activeBackendAccesses, actualRuntimeBackendId]);
 
   const selectedBackendSelection = useMemo<BackendSelectionRequestDto | undefined>(() => {
     const backendId = effectiveSelectedBackendId.trim();
@@ -560,24 +584,18 @@ export function AgentRunWorkspacePage({
     </div>
   ) : null;
   const backendSelectionBar = activeBackendAccesses.length > 0 ? (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
-      <span className="text-[11px] uppercase text-muted-foreground/70">
-        Backend
-      </span>
-      <InlineBackendSelector
-        value={effectiveSelectedBackendId}
-        options={backendSelectorOptions}
-        loading={backendsLoading}
-        statusText={backendSelectorStatusText}
-        onChange={setSelectedBackendId}
-        onRefresh={() => { void fetchBackends(); }}
-      />
-    </div>
+    <InlineBackendSelector
+      value={effectiveSelectedBackendId}
+      options={backendSelectorOptions}
+      loading={backendsLoading}
+      statusText={backendSelectorStatusText}
+      onChange={setSelectedBackendId}
+      onRefresh={() => { void fetchBackends(); }}
+    />
   ) : null;
-  const chatInputPrefix = ownerBindingBar || draftBindingBar || backendSelectionBar ? (
+  const chatInputPrefix = ownerBindingBar || draftBindingBar ? (
     <>
       {ownerBindingBar ?? draftBindingBar}
-      {backendSelectionBar}
     </>
   ) : undefined;
 
@@ -704,6 +722,7 @@ export function AgentRunWorkspacePage({
                 onSystemEvent={handleSystemEvent}
                 onTaskPlanChanged={handleTaskPlanChanged}
                 inputPrefix={chatInputPrefix}
+                inputToolbarSlot={backendSelectionBar}
               />
             </div>
           </div>

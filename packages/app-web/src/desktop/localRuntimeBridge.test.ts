@@ -39,6 +39,7 @@ function createStatus(state: LocalRuntimeStatus["state"]): LocalRuntimeStatus {
     workspace_roots: [],
     executor_enabled: true,
     mcp_server_count: 0,
+    capability_health: [],
     message: null,
     last_error: null,
     last_attempt_at: null,

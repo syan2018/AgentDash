@@ -231,7 +231,7 @@ mod tests {
                 }],
                 supports_cancel: true,
                 supports_discover_options: true,
-                mcp_servers: Vec::new(),
+                ..Default::default()
             },
             executors: vec![BackendRuntimeExecutorSnapshot {
                 executor_id: executor_id.to_string(),

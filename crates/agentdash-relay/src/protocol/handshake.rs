@@ -34,14 +34,14 @@ pub struct PongPayload {
 
 // ── 能力 ──
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CapabilitiesPayload {
+    #[serde(default)]
     pub executors: Vec<AgentInfoRelay>,
     #[serde(default)]
     pub supports_cancel: bool,
     #[serde(default)]
     pub supports_discover_options: bool,
-    /// 该 backend 实例可提供的 MCP server 列表（relay 用）
     #[serde(default)]
     pub mcp_servers: Vec<McpServerInfoRelay>,
     #[serde(default)]

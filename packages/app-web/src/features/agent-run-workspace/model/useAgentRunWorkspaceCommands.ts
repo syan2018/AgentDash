@@ -8,7 +8,10 @@ import type {
   ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type { AgentRunCommandPreconditionView } from "../../../generated/agent-run-mailbox-contracts";
+import type {
+  AgentRunCommandPreconditionView,
+  BackendSelectionRequestDto,
+} from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
@@ -75,6 +78,7 @@ export interface UseAgentRunWorkspaceCommandsResult {
     sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
+    backendSelection?: BackendSelectionRequestDto,
     imageAttachments?: ImageAttachment[],
     deliveryIntent?: string,
   ) => Promise<void>;
@@ -179,6 +183,7 @@ export function useAgentRunWorkspaceCommands(
     _sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
+    backendSelection?: BackendSelectionRequestDto,
     imageAttachments?: ImageAttachment[],
     deliveryIntent?: string,
   ) => {
@@ -222,6 +227,7 @@ export function useAgentRunWorkspaceCommands(
       stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
       input: inputBlocks,
       executor_config: commandExecutorConfig ?? null,
+      backend_selection: backendSelection ?? null,
     });
     const resolvedCommand = resolveAgentRunClientCommandId(
       inFlightCommandRef.current,
@@ -239,6 +245,7 @@ export function useAgentRunWorkspaceCommands(
           input: inputBlocks,
           client_command_id: resolvedCommand.clientCommandId,
           executor_config: executorConfigToJsonValue(commandExecutorConfig),
+          backend_selection: backendSelection,
         });
         void fetchAndIngestLifecycleRun(response.run_ref.run_id);
         onDraftStarted(response);
@@ -254,6 +261,7 @@ export function useAgentRunWorkspaceCommands(
         client_command_id: resolvedCommand.clientCommandId,
         command: commandPrecondition(command),
         executor_config: executorConfigToJsonValue(commandExecutorConfig),
+        backend_selection: backendSelection,
         delivery_intent: deliveryIntent,
       });
       if (response.accepted_refs?.run_ref.run_id) {

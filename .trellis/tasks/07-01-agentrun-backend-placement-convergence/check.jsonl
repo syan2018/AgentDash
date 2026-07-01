@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查实现是否仍由 planner 解析 backend execution placement。"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "检查授权、workspace binding、backend/root 一致性是否符合跨层契约。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 contract generation 与前端 generated DTO 是否无 drift。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端实现与测试质量检查。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端错误展示、selector 状态与测试质量检查。"}

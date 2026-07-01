@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "定义 backend_selection 属于 LaunchPlanningInput，并约束 session launch pipeline。"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "定义 ProjectBackendAccess、workspace binding 与 backend/root 路由事实。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "约束 Rust contract、TS generated DTO 与前后端字段演进。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 mailbox planning facts 与 sticky backend preference migration 时遵循数据库规范。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端消费 generated DTO、错误展示和 payload 接线需要遵循类型规范。"}

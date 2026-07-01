@@ -230,6 +230,7 @@ export function useAgentRunWorkspaceControlPlane({
       intent.sessionId,
       intent.prompt,
       intent.executorConfig,
+      intent.backendSelection,
       intent.imageAttachments,
       intent.deliveryIntent,
     );

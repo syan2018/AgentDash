@@ -12,6 +12,7 @@ use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxSourceIdentity,
     SteeringStopEffect,
 };
+use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
     LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
@@ -38,6 +39,7 @@ pub struct AgentRunMailboxRuntimeBoundaryDeps {
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub session_core: SessionCoreService,
@@ -316,6 +318,7 @@ fn mailbox_service_from_deps(
         deps.lifecycle_agent_repo.as_ref(),
         deps.agent_frame_repo.as_ref(),
         deps.execution_anchor_repo.as_ref(),
+        deps.project_backend_access_repo.as_ref(),
         deps.command_receipt_repo.as_ref(),
         deps.mailbox_repo.as_ref(),
         deps.session_core.clone(),

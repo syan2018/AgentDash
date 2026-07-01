@@ -16,7 +16,7 @@ export type AgentRunComposerSubmitRequest = {
 /**
  * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
  */
-input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue,
+input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto,
 /**
  * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
  */
@@ -35,6 +35,10 @@ export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | 
 export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, };
 
 export type AgentRunRefDto = { run_id: string, agent_id: string, };
+
+export type BackendSelectionModeDto = "explicit" | "auto_idle" | "workspace_binding";
+
+export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backend_id?: string, };
 
 export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
 

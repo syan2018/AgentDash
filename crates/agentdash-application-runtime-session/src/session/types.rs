@@ -162,6 +162,7 @@ impl UserPromptInput {
             },
             LaunchPlanningInput {
                 backend_selection: self.backend_selection,
+                authorized_backend_ids: Vec::new(),
             },
         )
     }

@@ -9,9 +9,9 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
     AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
     AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    RuntimeSessionCommandStateDto, SteeringStopEffect,
+    BackendSelectionModeDto, BackendSelectionRequestDto, ConsumptionBarrier, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView,
+    MailboxSourceIdentity, MailboxStateView, RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -291,6 +291,8 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunComposerSubmitRequest>(dir);
+            export_all::<BackendSelectionModeDto>(dir);
+            export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);

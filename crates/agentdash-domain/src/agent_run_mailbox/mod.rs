@@ -375,6 +375,7 @@ pub struct AgentRunMailboxMessage {
     pub command_receipt_id: Option<Uuid>,
     pub payload_json: Option<Value>,
     pub executor_config_json: Option<Value>,
+    pub launch_planning_input: Option<Value>,
     pub preview: String,
     pub has_images: bool,
     pub retain_payload: bool,
@@ -403,6 +404,7 @@ pub struct NewAgentRunMailboxMessage {
     pub command_receipt_id: Option<Uuid>,
     pub payload_json: Option<Value>,
     pub executor_config_json: Option<Value>,
+    pub launch_planning_input: Option<Value>,
     pub preview: String,
     pub has_images: bool,
     pub retain_payload: bool,
@@ -416,6 +418,7 @@ pub struct AgentRunMailboxState {
     pub paused: bool,
     pub pause_reason: Option<String>,
     pub pause_message: Option<String>,
+    pub backend_selection_preference: Option<Value>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -503,6 +506,14 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<AgentRunMailboxState>, DomainError>;
+
+    async fn set_backend_selection_preference(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: String,
+        preference: Value,
+    ) -> Result<AgentRunMailboxState, DomainError>;
 
     /// Move a message after the anchor (or to the front if `after_id` is None).
     /// Returns the updated message with new order_key.

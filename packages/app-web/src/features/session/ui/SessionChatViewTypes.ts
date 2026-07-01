@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
+  BackendSelectionRequestDto,
   MailboxMessageView,
   MailboxStateView,
 } from "../../../generated/agent-run-mailbox-contracts";
@@ -80,6 +81,7 @@ export interface SessionChatSubmitIntent {
   sessionId: string | null;
   prompt: string;
   executorConfig?: ExecutorConfig;
+  backendSelection?: BackendSelectionRequestDto;
   imageAttachments?: ImageAttachment[];
   deliveryIntent?: string;
 }

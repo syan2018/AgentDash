@@ -2,11 +2,13 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome,
     AgentRunMailboxCommandResult, SessionExecutionState,
 };
+use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
-    MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity,
-    MailboxStateView, RuntimeSessionCommandStateDto, SteeringStopEffect,
+    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
+    RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto};
 
@@ -29,6 +31,21 @@ pub(crate) fn command_receipt_view(receipt: AgentRunCommandReceiptView) -> Agent
         duplicate: receipt.duplicate,
         message: receipt.message,
     }
+}
+
+pub(crate) fn backend_selection_input(
+    selection: Option<BackendSelectionRequestDto>,
+) -> Option<BackendSelectionInput> {
+    selection.map(|selection| BackendSelectionInput {
+        mode: match selection.mode {
+            BackendSelectionModeDto::Explicit => BackendSelectionInputMode::Explicit,
+            BackendSelectionModeDto::AutoIdle => BackendSelectionInputMode::AutoIdle,
+            BackendSelectionModeDto::WorkspaceBinding => {
+                BackendSelectionInputMode::WorkspaceBinding
+            }
+        },
+        backend_id: selection.backend_id,
+    })
 }
 
 pub(crate) fn agent_run_message_accepted_refs(

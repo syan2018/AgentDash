@@ -5,6 +5,7 @@ use ts_rs::TS;
 
 use crate::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse,
+    BackendSelectionRequestDto,
 };
 use crate::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView, LifecycleRunRefDto,
@@ -68,6 +69,9 @@ pub struct CreateProjectAgentRunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_ref: Option<SubjectRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub backend_selection: Option<BackendSelectionRequestDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -4,6 +4,9 @@ use super::payload::{
 use super::policy::user_message_policy;
 use super::target::{ResolvedAgentRunMailboxCommandTarget, base_refs, ensure_command_target};
 use super::*;
+use agentdash_application_ports::launch::{
+    BackendSelectionInput, BackendSelectionInputMode, LaunchPlanningInput,
+};
 
 impl<'a> AgentRunMailboxService<'a> {
     pub async fn accept_user_message(
@@ -30,6 +33,7 @@ impl<'a> AgentRunMailboxService<'a> {
             client_command_id: command.client_command_id,
             source_dedup_key: None,
             executor_config: command.executor_config,
+            backend_selection: command.backend_selection,
             identity: command.identity,
             delivery_intent: command.delivery_intent,
         })
@@ -60,6 +64,7 @@ impl<'a> AgentRunMailboxService<'a> {
             client_command_id: command.client_command_id,
             source_dedup_key: command.source_dedup_key,
             executor_config: command.executor_config,
+            backend_selection: command.backend_selection,
             identity: command.identity,
             delivery_intent: command.delivery_intent,
         })
@@ -80,6 +85,7 @@ impl<'a> AgentRunMailboxService<'a> {
             client_command_id: command.client_command_id,
             source_dedup_key: None,
             executor_config: command.executor_config,
+            backend_selection: command.backend_selection,
             identity: command.identity,
             delivery_intent: command.delivery_intent,
         })
@@ -149,6 +155,15 @@ impl<'a> AgentRunMailboxService<'a> {
             execution_state = ?execution_state,
             "AgentRun mailbox execution state resolved"
         );
+        let launch_planning_input = self
+            .resolve_launch_planning_input(
+                run.project_id,
+                run.id,
+                agent.id,
+                &runtime_session_id,
+                command.backend_selection.clone(),
+            )
+            .await?;
         let supports_steering = match execution_state {
             SessionExecutionState::Running { turn_id: Some(_) } => {
                 self.session_control
@@ -184,6 +199,7 @@ impl<'a> AgentRunMailboxService<'a> {
             "retain_payload": command.retain_payload,
             "source_dedup_key": source_dedup_key,
             "executor_config": command.executor_config,
+            "launch_planning_input": &launch_planning_input,
             "delivery_intent": command.delivery_intent,
         }))?;
         let claim = claim_agent_run_command_receipt(
@@ -214,6 +230,8 @@ impl<'a> AgentRunMailboxService<'a> {
             .map(serde_json::to_value)
             .transpose()
             .map_err(serialization_error("mailbox executor_config"))?;
+        let launch_planning_json = serde_json::to_value(&launch_planning_input)
+            .map_err(serialization_error("mailbox launch_planning_input"))?;
         let message = self
             .mailbox_repo
             .create_message_idempotent(NewAgentRunMailboxMessage {
@@ -233,6 +251,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 command_receipt_id: Some(claim.record.id),
                 payload_json: Some(payload_json),
                 executor_config_json,
+                launch_planning_input: Some(launch_planning_json),
                 preview: build_input_preview(&command.input),
                 has_images: input_has_images(&command.input),
                 retain_payload: command.retain_payload,
@@ -360,6 +379,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 command_receipt_id: None,
                 payload_json: Some(payload_json),
                 executor_config_json: None,
+                launch_planning_input: None,
                 preview: format!("Hook auto-resume after terminal event #{terminal_event_seq}"),
                 has_images: input_has_images(&input),
                 retain_payload: true,
@@ -434,6 +454,7 @@ impl<'a> AgentRunMailboxService<'a> {
                     command_receipt_id: None,
                     payload_json: Some(payload_json),
                     executor_config_json: None,
+                    launch_planning_input: None,
                     preview: build_input_preview(&input),
                     has_images: input_has_images(&input),
                     retain_payload: true,
@@ -442,5 +463,107 @@ impl<'a> AgentRunMailboxService<'a> {
             created.push(mailbox_message);
         }
         Ok(created)
+    }
+
+    async fn resolve_launch_planning_input(
+        &self,
+        project_id: Uuid,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: &str,
+        requested_selection: Option<BackendSelectionInput>,
+    ) -> Result<LaunchPlanningInput, WorkflowApplicationError> {
+        let active_accesses = self
+            .project_backend_access_repo
+            .list_active_by_project(project_id)
+            .await?;
+        let authorized_backend_ids = active_accesses
+            .into_iter()
+            .map(|access| access.backend_id.trim().to_string())
+            .filter(|backend_id| !backend_id.is_empty())
+            .collect::<Vec<_>>();
+
+        let selection = match requested_selection {
+            Some(selection) => {
+                self.ensure_backend_selection_authorized(&selection, &authorized_backend_ids)?;
+                if selection.mode == BackendSelectionInputMode::Explicit {
+                    let preference = serde_json::to_value(&selection)
+                        .map_err(serialization_error("backend selection preference"))?;
+                    self.mailbox_repo
+                        .set_backend_selection_preference(
+                            run_id,
+                            agent_id,
+                            runtime_session_id.to_string(),
+                            preference,
+                        )
+                        .await?;
+                }
+                Some(selection)
+            }
+            None => {
+                let state = self.mailbox_repo.get_state(run_id, agent_id).await?;
+                let preference = state
+                    .and_then(|state| state.backend_selection_preference)
+                    .map(serde_json::from_value::<BackendSelectionInput>)
+                    .transpose()
+                    .map_err(|error| {
+                        WorkflowApplicationError::BadRequest(format!(
+                            "backend selection preference 无效: {error}"
+                        ))
+                    })?;
+                match preference {
+                    Some(selection)
+                        if self.backend_selection_is_authorized(
+                            &selection,
+                            &authorized_backend_ids,
+                        ) =>
+                    {
+                        Some(selection)
+                    }
+                    _ => None,
+                }
+            }
+        };
+
+        Ok(LaunchPlanningInput {
+            backend_selection: selection,
+            authorized_backend_ids,
+        })
+    }
+
+    fn ensure_backend_selection_authorized(
+        &self,
+        selection: &BackendSelectionInput,
+        authorized_backend_ids: &[String],
+    ) -> Result<(), WorkflowApplicationError> {
+        if self.backend_selection_is_authorized(selection, authorized_backend_ids) {
+            return Ok(());
+        }
+        let backend_id = selection.backend_id.as_deref().unwrap_or("<auto>");
+        Err(WorkflowApplicationError::BadRequest(format!(
+            "backend `{backend_id}` 不在当前 Project 授权范围内"
+        )))
+    }
+
+    fn backend_selection_is_authorized(
+        &self,
+        selection: &BackendSelectionInput,
+        authorized_backend_ids: &[String],
+    ) -> bool {
+        match selection.mode {
+            BackendSelectionInputMode::AutoIdle => !authorized_backend_ids.is_empty(),
+            BackendSelectionInputMode::Explicit | BackendSelectionInputMode::WorkspaceBinding => {
+                selection
+                    .backend_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|backend_id| !backend_id.is_empty())
+                    .is_some_and(|backend_id| {
+                        authorized_backend_ids
+                            .iter()
+                            .any(|authorized| authorized == backend_id)
+                    })
+            }
+        }
     }
 }

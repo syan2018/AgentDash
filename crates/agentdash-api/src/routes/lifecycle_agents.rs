@@ -51,8 +51,8 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
         agent_run_mailbox_contracts::{
-            agent_run_message_command_response, mailbox_message_view, mailbox_message_visible,
-            mailbox_state_view,
+            agent_run_message_command_response, backend_selection_input, mailbox_message_view,
+            mailbox_message_visible, mailbox_state_view,
         },
         vfs_surfaces::dto as vfs_surface_dto,
     },
@@ -473,6 +473,7 @@ pub async fn submit_agent_run_composer_input(
             input: req.input,
             client_command_id: req.client_command_id,
             executor_config,
+            backend_selection: backend_selection_input(req.backend_selection),
             identity: Some(current_user),
             delivery_intent: req.delivery_intent,
         })
@@ -2268,6 +2269,7 @@ mod tests {
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
+            backend_selection_preference: None,
             updated_at: chrono::Utc::now(),
         };
         let view = mailbox_state_view(Some(&state), true, 1, false);
@@ -2290,6 +2292,7 @@ mod tests {
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
+            backend_selection_preference: None,
             updated_at: chrono::Utc::now(),
         };
         let view = mailbox_state_view(Some(&state), true, 0, false);

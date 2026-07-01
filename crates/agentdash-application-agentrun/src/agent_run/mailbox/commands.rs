@@ -80,6 +80,7 @@ pub struct AgentRunMailboxUserMessageCommand {
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub identity: Option<AuthIdentity>,
     /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
     pub delivery_intent: Option<String>,
@@ -98,6 +99,7 @@ pub struct AgentRunMailboxIntakeCommand {
     pub client_command_id: String,
     pub source_dedup_key: Option<String>,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub identity: Option<AuthIdentity>,
     /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
     pub delivery_intent: Option<String>,
@@ -111,6 +113,7 @@ pub struct AgentRunMailboxUserMessageTargetCommand {
     pub input: Vec<UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub identity: Option<AuthIdentity>,
     /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
     pub delivery_intent: Option<String>,
@@ -127,6 +130,7 @@ pub struct AgentRunMailboxIntakeTargetCommand {
     pub client_command_id: String,
     pub source_dedup_key: Option<String>,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub identity: Option<AuthIdentity>,
     /// `Some("steer")` = 明确注入 active turn；其余情况排队（pending）。
     pub delivery_intent: Option<String>,

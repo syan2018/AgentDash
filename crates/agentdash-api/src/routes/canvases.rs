@@ -857,6 +857,7 @@ pub async fn submit_agent_run_canvas_agent_input(
             input: req.input,
             client_command_id: req.client_command_id,
             executor_config: None,
+            backend_selection: None,
             identity: Some(current_user),
             delivery_intent: req.delivery_intent,
         })

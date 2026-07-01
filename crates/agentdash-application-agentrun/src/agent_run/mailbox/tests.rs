@@ -12,6 +12,9 @@ use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
     MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity, NewAgentRunMailboxMessage,
 };
+use agentdash_domain::backend::{
+    ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
+};
 use agentdash_domain::workflow::{
     AgentFrame, AgentRunCommandKind, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
     AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun, LifecycleRunRepository,
@@ -115,6 +118,7 @@ fn mailbox_intake_command_prefers_source_identity_dedup() {
         client_command_id: "cmd-1".to_string(),
         source_dedup_key: Some("custom-dedup".to_string()),
         executor_config: None,
+        backend_selection: None,
         identity: None,
         delivery_intent: None,
     };
@@ -141,6 +145,7 @@ fn mailbox_intake_command_uses_explicit_source_dedup_without_source_refs() {
         client_command_id: "cmd-1".to_string(),
         source_dedup_key: Some("custom-dedup".to_string()),
         executor_config: None,
+        backend_selection: None,
         identity: None,
         delivery_intent: None,
     };
@@ -300,6 +305,7 @@ struct MailboxSteeringFixture {
     agents: Arc<MemoryLifecycleAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+    backend_access: Arc<MemoryProjectBackendAccessRepository>,
     receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
     mailbox: Arc<MemoryMailboxRepository>,
     core: Arc<TestCorePort>,
@@ -319,6 +325,7 @@ impl MailboxSteeringFixture {
         let agents = Arc::new(MemoryLifecycleAgentRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
         let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
         let mailbox = Arc::new(MemoryMailboxRepository::default());
         let runtime_session_id = "runtime-steering".to_string();
@@ -350,6 +357,7 @@ impl MailboxSteeringFixture {
             agents,
             frames,
             anchors,
+            backend_access,
             receipts,
             mailbox,
             core: Arc::new(TestCorePort {
@@ -377,6 +385,7 @@ impl MailboxSteeringFixture {
             self.agents.as_ref(),
             self.frames.as_ref(),
             self.anchors.as_ref(),
+            self.backend_access.as_ref(),
             self.receipts.as_ref(),
             self.mailbox.as_ref(),
             SessionCoreService::new(self.core.clone()),
@@ -475,8 +484,129 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
 }
 
 #[derive(Default)]
+struct MemoryProjectBackendAccessRepository {
+    accesses: Mutex<Vec<ProjectBackendAccess>>,
+}
+
+#[async_trait::async_trait]
+impl ProjectBackendAccessRepository for MemoryProjectBackendAccessRepository {
+    async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
+        self.accesses.lock().await.push(access.clone());
+        Ok(())
+    }
+
+    async fn update(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
+        let mut accesses = self.accesses.lock().await;
+        if let Some(existing) = accesses.iter_mut().find(|item| item.id == access.id) {
+            *existing = access.clone();
+        }
+        Ok(())
+    }
+
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .accesses
+            .lock()
+            .await
+            .iter()
+            .find(|access| access.id == id)
+            .cloned())
+    }
+
+    async fn list_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .accesses
+            .lock()
+            .await
+            .iter()
+            .filter(|access| access.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_active_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .list_by_project(project_id)
+            .await?
+            .into_iter()
+            .filter(|access| access.status == ProjectBackendAccessStatus::Active)
+            .collect())
+    }
+
+    async fn get_active_for_project_backend(
+        &self,
+        project_id: Uuid,
+        backend_id: &str,
+    ) -> Result<Option<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .list_active_by_project(project_id)
+            .await?
+            .into_iter()
+            .find(|access| access.backend_id == backend_id.trim()))
+    }
+
+    async fn list_active_by_backend(
+        &self,
+        backend_id: &str,
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .accesses
+            .lock()
+            .await
+            .iter()
+            .filter(|access| {
+                access.backend_id == backend_id.trim()
+                    && access.status == ProjectBackendAccessStatus::Active
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn list_active_by_backends(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+        Ok(self
+            .accesses
+            .lock()
+            .await
+            .iter()
+            .filter(|access| {
+                backend_ids.contains(&access.backend_id)
+                    && access.status == ProjectBackendAccessStatus::Active
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn set_status(
+        &self,
+        id: Uuid,
+        status: ProjectBackendAccessStatus,
+    ) -> Result<(), DomainError> {
+        if let Some(access) = self
+            .accesses
+            .lock()
+            .await
+            .iter_mut()
+            .find(|access| access.id == id)
+        {
+            access.status = status;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
 struct MemoryMailboxRepository {
     messages: Mutex<Vec<AgentRunMailboxMessage>>,
+    states: Mutex<Vec<AgentRunMailboxState>>,
     cleaned: Mutex<Vec<Uuid>>,
 }
 
@@ -497,6 +627,18 @@ impl MemoryMailboxRepository {
 
     async fn cleaned(&self, id: Uuid) -> bool {
         self.cleaned.lock().await.contains(&id)
+    }
+
+    async fn upsert_state(&self, state: AgentRunMailboxState) {
+        let mut states = self.states.lock().await;
+        if let Some(existing) = states
+            .iter_mut()
+            .find(|item| item.run_id == state.run_id && item.agent_id == state.agent_id)
+        {
+            *existing = state;
+        } else {
+            states.push(state);
+        }
     }
 }
 
@@ -675,15 +817,21 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
-        Ok(AgentRunMailboxState {
+        let state = AgentRunMailboxState {
             run_id,
             agent_id,
             runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
+            backend_selection_preference: self
+                .get_state(run_id, agent_id)
+                .await?
+                .and_then(|state| state.backend_selection_preference),
             updated_at: Utc::now(),
-        })
+        };
+        self.upsert_state(state.clone()).await;
+        Ok(state)
     }
 
     async fn resume_state(
@@ -692,15 +840,21 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         agent_id: Uuid,
         runtime_session_id: String,
     ) -> Result<AgentRunMailboxState, DomainError> {
-        Ok(AgentRunMailboxState {
+        let state = AgentRunMailboxState {
             run_id,
             agent_id,
             runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
+            backend_selection_preference: self
+                .get_state(run_id, agent_id)
+                .await?
+                .and_then(|state| state.backend_selection_preference),
             updated_at: Utc::now(),
-        })
+        };
+        self.upsert_state(state.clone()).await;
+        Ok(state)
     }
 
     async fn get_state(
@@ -708,15 +862,34 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<Option<AgentRunMailboxState>, DomainError> {
-        Ok(Some(AgentRunMailboxState {
+        Ok(self
+            .states
+            .lock()
+            .await
+            .iter()
+            .find(|state| state.run_id == run_id && state.agent_id == agent_id)
+            .cloned())
+    }
+
+    async fn set_backend_selection_preference(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: String,
+        preference: serde_json::Value,
+    ) -> Result<AgentRunMailboxState, DomainError> {
+        let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id: "runtime-steering".to_string(),
+            runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
+            backend_selection_preference: Some(preference),
             updated_at: Utc::now(),
-        }))
+        };
+        self.upsert_state(state.clone()).await;
+        Ok(state)
     }
 
     async fn move_message_after(
@@ -873,6 +1046,7 @@ fn mailbox_message(
         command_receipt_id,
         payload_json: Some(serde_json::to_value(text_user_input_blocks("hello")).unwrap()),
         executor_config_json: None,
+        launch_planning_input: None,
         preview: "hello".to_string(),
         has_images: false,
         retain_payload: false,

@@ -25,6 +25,11 @@ import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/use
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
+import {
+  listProjectBackendAccess,
+  type ProjectBackendAccess,
+} from "../services/backendAccess";
+import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
 import type {
   RuntimeTraceAgentContext,
@@ -67,6 +72,8 @@ export function AgentRunWorkspacePage({
     story_id: string;
     story: Story | null;
   } | null>(null);
+  const [backendAccesses, setBackendAccesses] = useState<ProjectBackendAccess[]>([]);
+  const [selectedBackendId, setSelectedBackendId] = useState("");
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
 
@@ -237,6 +244,44 @@ export function AgentRunWorkspacePage({
     void fetchWorkspaces(ownerProjectId);
   }, [fetchWorkspaces, ownerProjectId]);
 
+  useEffect(() => {
+    if (!ownerProjectId) {
+      setBackendAccesses([]);
+      setSelectedBackendId("");
+      return;
+    }
+    let cancelled = false;
+    void listProjectBackendAccess(ownerProjectId)
+      .then((items) => {
+        if (cancelled) return;
+        setBackendAccesses(items);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBackendAccesses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ownerProjectId]);
+
+  const activeBackendAccesses = useMemo(
+    () => backendAccesses.filter((access) => access.status === "active"),
+    [backendAccesses],
+  );
+
+  useEffect(() => {
+    if (!selectedBackendId) return;
+    if (activeBackendAccesses.some((access) => access.backend_id === selectedBackendId)) return;
+    setSelectedBackendId("");
+  }, [activeBackendAccesses, selectedBackendId]);
+
+  const selectedBackendSelection = useMemo<BackendSelectionRequestDto | undefined>(() => {
+    const backendId = selectedBackendId.trim();
+    if (!backendId) return undefined;
+    return { mode: "explicit", backend_id: backendId };
+  }, [selectedBackendId]);
+
   const effectiveReturnTarget = useMemo(() => {
     if (isProjectAgentDraft && draftProjectIdValue) {
       return { owner_type: "project" as const, project_id: draftProjectIdValue };
@@ -290,7 +335,7 @@ export function AgentRunWorkspacePage({
 
   const {
     chatModel: controlPlaneChatModel,
-    chatIntents,
+    chatIntents: controlPlaneChatIntents,
     handleMessageSent,
     handleTurnEnd,
     handleTaskPlanChanged,
@@ -316,6 +361,15 @@ export function AgentRunWorkspacePage({
       expandWorkspacePanel(typeId, uri, options);
     },
   });
+
+  const chatIntents = useMemo(() => ({
+    ...controlPlaneChatIntents,
+    submitComposer: (intent: Parameters<typeof controlPlaneChatIntents.submitComposer>[0]) =>
+      controlPlaneChatIntents.submitComposer({
+        ...intent,
+        backendSelection: selectedBackendSelection,
+      }),
+  }), [controlPlaneChatIntents, selectedBackendSelection]);
 
   const chatModel = useMemo(() => ({
     ...controlPlaneChatModel,
@@ -454,6 +508,31 @@ export function AgentRunWorkspacePage({
       </span>
     </div>
   ) : null;
+  const backendSelectionBar = activeBackendAccesses.length > 0 ? (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
+      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
+        Backend
+      </span>
+      <select
+        value={selectedBackendId}
+        onChange={(event) => setSelectedBackendId(event.target.value)}
+        className="min-w-[180px] rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors hover:bg-secondary focus:border-primary"
+      >
+        <option value="">默认</option>
+        {activeBackendAccesses.map((access) => (
+          <option key={access.id} value={access.backend_id}>
+            {access.backend_id}
+          </option>
+        ))}
+      </select>
+    </div>
+  ) : null;
+  const chatInputPrefix = (
+    <>
+      {ownerBindingBar ?? draftBindingBar}
+      {backendSelectionBar}
+    </>
+  );
 
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
   useEffect(() => {
@@ -577,7 +656,7 @@ export function AgentRunWorkspacePage({
                 onTurnEnd={handleTurnEnd}
                 onSystemEvent={handleSystemEvent}
                 onTaskPlanChanged={handleTaskPlanChanged}
-                inputPrefix={ownerBindingBar ?? draftBindingBar}
+                inputPrefix={chatInputPrefix}
               />
             </div>
           </div>

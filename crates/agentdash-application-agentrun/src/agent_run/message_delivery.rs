@@ -13,6 +13,7 @@ pub struct AgentRunMessageDelivery {
     pub delivery_runtime_session_id: String,
     pub input: Vec<UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
+    pub planning_input: LaunchPlanningInput,
     pub identity: Option<AuthIdentity>,
 }
 
@@ -53,7 +54,7 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
             .launch_command_in_task(
                 delivery.delivery_runtime_session_id.clone(),
                 command,
-                LaunchPlanningInput::default(),
+                delivery.planning_input,
             )
             .await
     }

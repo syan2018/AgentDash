@@ -1,8 +1,8 @@
-use super::payload::{message_executor_config, message_input};
+use super::payload::{message_executor_config, message_input, message_launch_planning_input};
 use super::policy::runtime_can_launch;
 use super::target::ensure_command_target;
 use super::*;
-use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
+use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 
 #[derive(Clone, Copy)]
 enum SteeringDeliveryMode {
@@ -382,6 +382,7 @@ impl<'a> AgentRunMailboxService<'a> {
         );
         let input = message_input(&message)?;
         let executor_config = message_executor_config(&message)?;
+        let planning_input = message_launch_planning_input(&message)?;
         let delivery = SessionTurnMessageDeliveryPort::new(self.session_launch.clone());
         diag!(Debug, Subsystem::AgentRun,
 
@@ -396,6 +397,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 delivery_runtime_session_id: message.runtime_session_id.clone(),
                 input,
                 executor_config,
+                planning_input,
                 identity,
             })
             .await
@@ -686,7 +688,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .launch_command_in_task(
                 message.runtime_session_id.clone(),
                 command,
-                LaunchPlanningInput::default(),
+                message_launch_planning_input(&message)?,
             )
             .await
         {

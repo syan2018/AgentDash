@@ -40,6 +40,7 @@ impl AgentRunMailboxTerminalCallback {
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
             self.repos.execution_anchor_repo.as_ref(),
+            self.repos.project_backend_access_repo.as_ref(),
             self.repos.agent_run_command_receipt_repo.as_ref(),
             self.repos.agent_run_mailbox_repo.as_ref(),
             self.session_core.clone(),

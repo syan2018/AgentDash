@@ -97,10 +97,9 @@ impl PostgresAgentRunMailboxRepository {
     }
 }
 
-const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
-const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.runtime_session_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
-const STATE_COLS: &str =
-    "run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,updated_at";
+const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
+const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.runtime_session_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
+const STATE_COLS: &str = "run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at";
 
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
@@ -122,9 +121,9 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
              (id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,\
               source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,\
               delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,\
-              expected_active_agent_run_turn_id,command_receipt_id,payload_json,executor_config_json,\
+              expected_active_agent_run_turn_id,command_receipt_id,payload_json,executor_config_json,launch_planning_input,\
               preview,has_images,retain_payload,created_at,updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32) \
              RETURNING {MAILBOX_COLS}"
         ))
         .bind(id.to_string())
@@ -153,6 +152,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .bind(message.command_receipt_id.map(|id| id.to_string()))
         .bind(message.payload_json)
         .bind(message.executor_config_json)
+        .bind(message.launch_planning_input)
         .bind(message.preview)
         .bind(message.has_images)
         .bind(message.retain_payload)
@@ -521,6 +521,35 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .transpose()
     }
 
+    async fn set_backend_selection_preference(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: String,
+        preference: Value,
+    ) -> Result<AgentRunMailboxState, DomainError> {
+        let now = Utc::now();
+        sqlx::query_as::<_, AgentRunMailboxStateRow>(&format!(
+            "INSERT INTO agent_run_mailbox_states \
+             (run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at) \
+             VALUES ($1,$2,$3,false,NULL,NULL,$4,$5) \
+             ON CONFLICT (run_id,agent_id) DO UPDATE SET \
+               runtime_session_id=EXCLUDED.runtime_session_id,\
+               backend_selection_preference=EXCLUDED.backend_selection_preference,\
+               updated_at=EXCLUDED.updated_at \
+             RETURNING {STATE_COLS}"
+        ))
+        .bind(run_id.to_string())
+        .bind(agent_id.to_string())
+        .bind(runtime_session_id)
+        .bind(preference)
+        .bind(now)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| sql_err_for("agent_run_mailbox_states", error))?
+        .try_into()
+    }
+
     async fn move_message_after(
         &self,
         id: Uuid,
@@ -681,6 +710,7 @@ struct AgentRunMailboxMessageRow {
     command_receipt_id: Option<String>,
     payload_json: Option<Value>,
     executor_config_json: Option<Value>,
+    launch_planning_input: Option<Value>,
     preview: String,
     has_images: bool,
     retain_payload: bool,
@@ -741,6 +771,7 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
                 .transpose()?,
             payload_json: row.payload_json,
             executor_config_json: row.executor_config_json,
+            launch_planning_input: row.launch_planning_input,
             preview: row.preview,
             has_images: row.has_images,
             retain_payload: row.retain_payload,
@@ -762,6 +793,7 @@ struct AgentRunMailboxStateRow {
     paused: bool,
     pause_reason: Option<String>,
     pause_message: Option<String>,
+    backend_selection_preference: Option<Value>,
     updated_at: DateTime<Utc>,
 }
 
@@ -776,6 +808,7 @@ impl TryFrom<AgentRunMailboxStateRow> for AgentRunMailboxState {
             paused: row.paused,
             pause_reason: row.pause_reason,
             pause_message: row.pause_message,
+            backend_selection_preference: row.backend_selection_preference,
             updated_at: row.updated_at,
         })
     }
@@ -879,6 +912,7 @@ mod tests {
             command_receipt_id: None,
             payload_json: Some(serde_json::json!([{"type":"text","text":"hello"}])),
             executor_config_json: None,
+            launch_planning_input: None,
             preview: "hello".to_string(),
             has_images: false,
             retain_payload: false,

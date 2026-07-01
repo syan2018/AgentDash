@@ -325,6 +325,7 @@ pub(crate) async fn build_session_runtime(
         lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
         agent_frame_repo: repos.agent_frame_repo.clone(),
         execution_anchor_repo: repos.execution_anchor_repo.clone(),
+        project_backend_access_repo: repos.project_backend_access_repo.clone(),
         command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
         mailbox_repo: repos.agent_run_mailbox_repo.clone(),
         session_core: agent_run_session_core(session_core.clone()),

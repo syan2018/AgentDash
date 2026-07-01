@@ -35,13 +35,15 @@ impl LaunchPromptInput {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LaunchPlanningInput {
     pub backend_selection: Option<BackendSelectionInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorized_backend_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct BackendSelectionInput {
     pub mode: BackendSelectionInputMode,
     #[serde(default)]

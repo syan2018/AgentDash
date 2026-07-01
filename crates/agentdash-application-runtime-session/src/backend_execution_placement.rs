@@ -10,6 +10,7 @@ pub struct BackendSelectionRequest {
     pub executor_id: String,
     pub intent: BackendSelectionIntent,
     pub reason: Option<String>,
+    pub authorized_backend_ids: Vec<String>,
 }
 
 impl BackendSelectionRequest {
@@ -18,6 +19,7 @@ impl BackendSelectionRequest {
             executor_id: executor_id.into(),
             intent: BackendSelectionIntent::AutoIdle,
             reason,
+            authorized_backend_ids: Vec::new(),
         }
     }
 
@@ -32,6 +34,7 @@ impl BackendSelectionRequest {
                 backend_id: backend_id.into(),
             },
             reason,
+            authorized_backend_ids: Vec::new(),
         }
     }
 
@@ -46,7 +49,17 @@ impl BackendSelectionRequest {
                 backend_id: backend_id.into(),
             },
             reason,
+            authorized_backend_ids: Vec::new(),
         }
+    }
+
+    pub fn with_authorized_backend_ids(mut self, backend_ids: Vec<String>) -> Self {
+        self.authorized_backend_ids = backend_ids
+            .into_iter()
+            .map(|backend_id| backend_id.trim().to_string())
+            .filter(|backend_id| !backend_id.is_empty())
+            .collect();
+        self
     }
 }
 
@@ -117,6 +130,7 @@ pub async fn resolve_backend_execution_placement(
                 backend_id,
                 BackendExecutionSelectionMode::Explicit,
                 request.reason.clone(),
+                &request.authorized_backend_ids,
             )
             .await
         }
@@ -127,12 +141,19 @@ pub async fn resolve_backend_execution_placement(
                 backend_id,
                 BackendExecutionSelectionMode::WorkspaceBinding,
                 request.reason.clone(),
+                &request.authorized_backend_ids,
             )
             .await
         }
         BackendSelectionIntent::AutoIdle => {
-            resolve_auto_idle_backend(transport, lease_repo, executor_id, request.reason.clone())
-                .await
+            resolve_auto_idle_backend(
+                transport,
+                lease_repo,
+                executor_id,
+                request.reason.clone(),
+                &request.authorized_backend_ids,
+            )
+            .await
         }
     }
 }
@@ -143,12 +164,22 @@ async fn resolve_fixed_backend(
     backend_id: &str,
     selection_mode: BackendExecutionSelectionMode,
     claim_reason: Option<String>,
+    authorized_backend_ids: &[String],
 ) -> Result<ExecutionPlacementPlan, ConnectorError> {
     let backend_id = backend_id.trim();
     if backend_id.is_empty() {
         return Err(ConnectorError::InvalidConfig(
             "backend selection 缺少 backend_id".to_string(),
         ));
+    }
+    if !authorized_backend_ids.is_empty()
+        && !authorized_backend_ids
+            .iter()
+            .any(|authorized| authorized == backend_id)
+    {
+        return Err(ConnectorError::InvalidConfig(format!(
+            "backend `{backend_id}` 不在当前 Project 授权范围内"
+        )));
     }
 
     let has_executor = transport.list_online_executors().iter().any(|executor| {
@@ -175,20 +206,28 @@ async fn resolve_auto_idle_backend(
     lease_repo: &dyn BackendExecutionLeaseRepository,
     executor_id: &str,
     claim_reason: Option<String>,
+    authorized_backend_ids: &[String],
 ) -> Result<ExecutionPlacementPlan, ConnectorError> {
+    let authorized = authorized_backend_ids.iter().collect::<BTreeSet<_>>();
     let mut candidates = transport
         .list_online_executors()
         .iter()
         .filter(|executor| {
             executor.executor_id.eq_ignore_ascii_case(executor_id) && executor.available
         })
+        .filter(|executor| authorized.is_empty() || authorized.contains(&executor.backend_id))
         .map(|executor| executor.backend_id.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
     if candidates.is_empty() {
+        let scope = if authorized.is_empty() {
+            String::new()
+        } else {
+            "（已按当前 Project 授权范围过滤）".to_string()
+        };
         return Err(ConnectorError::Runtime(format!(
-            "没有在线后端提供可用执行器 `{executor_id}`"
+            "没有在线后端提供可用执行器 `{executor_id}`{scope}"
         )));
     }
 

@@ -275,60 +275,67 @@ function MessageRow({
   const statusLabel = STATUS_LABELS[message.status];
 
   return (
-    <div className="group relative flex h-8 items-center gap-2 px-3">
-      {/* 左侧固定宽度区域 — 保证等高 */}
-      <div className="flex w-5 shrink-0 items-center justify-center">
-        {isSteer ? (
-          <span className="text-[10px] text-muted-foreground/60">
-            {message.origin === "user" ? "You" : message.origin === "hook" ? "Hook" : "Sys"}
-          </span>
-        ) : message.can_reorder && onMove ? (
-          <DragHandle
-            canMoveUp={index > 0}
-            canMoveDown={index < totalInSection - 1}
-            onMoveUp={handleMoveUp}
-            onMoveDown={handleMoveDown}
-          />
-        ) : (
-          <GripIcon />
-        )}
+    <div className="group relative">
+      <div className="flex h-8 items-center gap-2 px-3">
+        {/* 左侧固定宽度区域 — 保证等高 */}
+        <div className="flex w-5 shrink-0 items-center justify-center">
+          {isSteer ? (
+            <span className="text-[10px] text-muted-foreground/60">
+              {message.origin === "user" ? "You" : message.origin === "hook" ? "Hook" : "Sys"}
+            </span>
+          ) : message.can_reorder && onMove ? (
+            <DragHandle
+              canMoveUp={index > 0}
+              canMoveDown={index < totalInSection - 1}
+              onMoveUp={handleMoveUp}
+              onMoveDown={handleMoveDown}
+            />
+          ) : (
+            <GripIcon />
+          )}
+        </div>
+
+        {/* 内容 */}
+        <span className="max-w-28 shrink-0 truncate rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {sourceLabel}
+        </span>
+        <span className={`min-w-0 flex-1 truncate text-[13px] leading-tight ${isFailed ? "text-destructive/80" : "text-foreground/80"}`}>
+          {message.preview || "(空)"}
+          {message.has_images && (
+            <span className="ml-1.5 text-muted-foreground/50">[图]</span>
+          )}
+        </span>
+
+        <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium ${mailboxStatusClassName(message.status)}`}>
+          {statusLabel}
+        </span>
+
+        {/* hover 操作 */}
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          {!isSteer && promoteCommand?.enabled && message.can_promote && (
+            <ActionButton onClick={() => onPromote(message.id)} title="注入当前轮">
+              <SteerArrowIcon />
+            </ActionButton>
+          )}
+
+          {message.can_recall && onRecall && (
+            <ActionButton onClick={() => onRecall(message.id)} title="编辑">
+              <EditIcon />
+            </ActionButton>
+          )}
+
+          {message.can_delete && deleteCommand?.enabled && (
+            <ActionButton onClick={() => onDelete(message.id)} title="删除" destructive>
+              <TrashIcon />
+            </ActionButton>
+          )}
+        </div>
       </div>
-
-      {/* 内容 */}
-      <span className="max-w-28 shrink-0 truncate rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-        {sourceLabel}
-      </span>
-      <span className={`min-w-0 flex-1 truncate text-[13px] leading-tight ${isFailed ? "text-destructive/80" : "text-foreground/80"}`}>
-        {message.preview || "(空)"}
-        {message.has_images && (
-          <span className="ml-1.5 text-muted-foreground/50">[图]</span>
-        )}
-      </span>
-
-      <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium ${mailboxStatusClassName(message.status)}`}>
-        {statusLabel}
-      </span>
-
-      {/* hover 操作 */}
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        {!isSteer && promoteCommand?.enabled && message.can_promote && (
-          <ActionButton onClick={() => onPromote(message.id)} title="注入当前轮">
-            <SteerArrowIcon />
-          </ActionButton>
-        )}
-
-        {message.can_recall && onRecall && (
-          <ActionButton onClick={() => onRecall(message.id)} title="编辑">
-            <EditIcon />
-          </ActionButton>
-        )}
-
-        {message.can_delete && deleteCommand?.enabled && (
-          <ActionButton onClick={() => onDelete(message.id)} title="删除" destructive>
-            <TrashIcon />
-          </ActionButton>
-        )}
-      </div>
+      {isFailed && message.last_error && (
+        <div className="mx-3 mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
+          {message.last_error}
+        </div>
+      )}
     </div>
   );
 }

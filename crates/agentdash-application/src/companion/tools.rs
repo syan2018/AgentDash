@@ -122,6 +122,7 @@ fn companion_mailbox_service_from_runtime(
         repos.lifecycle_agent_repo.as_ref(),
         repos.agent_frame_repo.as_ref(),
         repos.execution_anchor_repo.as_ref(),
+        repos.project_backend_access_repo.as_ref(),
         repos.agent_run_command_receipt_repo.as_ref(),
         repos.agent_run_mailbox_repo.as_ref(),
         session_core,
@@ -391,6 +392,7 @@ async fn deliver_companion_mailbox_message(
         client_command_id: input.client_command_id,
         source_dedup_key: Some(input.source_dedup_key),
         executor_config: None,
+        backend_selection: None,
         identity: None,
         delivery_intent: None,
     })
@@ -866,6 +868,7 @@ impl CompanionRequestTool {
                         .companion_executor_config
                         .clone(),
                 ),
+                backend_selection: None,
                 identity: self.tool_context.identity().cloned(),
                 delivery_intent: None,
             })

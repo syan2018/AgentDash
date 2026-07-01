@@ -173,6 +173,23 @@ pub struct AgentRunCommandReceipt {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSelectionModeDto {
+    Explicit,
+    AutoIdle,
+    WorkspaceBinding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct BackendSelectionRequestDto {
+    pub mode: BackendSelectionModeDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub backend_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunAcceptedRefs {
@@ -199,6 +216,9 @@ pub struct AgentRunComposerSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub backend_selection: Option<BackendSelectionRequestDto>,
     /// 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

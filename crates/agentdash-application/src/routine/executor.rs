@@ -339,6 +339,7 @@ impl RoutineExecutor {
                 client_command_id: client_command_id.clone(),
                 source_dedup_key: Some(client_command_id.clone()),
                 executor_config: None,
+                backend_selection: None,
                 identity: Some(AuthIdentity::system_routine(routine.id)),
                 delivery_intent: None,
             })
@@ -387,6 +388,7 @@ impl RoutineExecutor {
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
             self.repos.execution_anchor_repo.as_ref(),
+            self.repos.project_backend_access_repo.as_ref(),
             self.repos.agent_run_command_receipt_repo.as_ref(),
             self.repos.agent_run_mailbox_repo.as_ref(),
             self.mailbox_runtime.session_core.clone(),

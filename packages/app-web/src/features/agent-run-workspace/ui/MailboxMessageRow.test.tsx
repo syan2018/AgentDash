@@ -233,7 +233,7 @@ describe("MailboxMessageList", () => {
     expect(markup).not.toContain("Mailbox");
   });
 
-  it("shows failure hint for blocked messages without exposing internal error", () => {
+  it("shows full failure detail for blocked messages", () => {
     const markup = renderMailboxList({
       messages: [
         {
@@ -253,12 +253,12 @@ describe("MailboxMessageList", () => {
 
     expect(markup).toContain("继续处理下一步");
     expect(markup).toContain("阻塞");
-    // 不应暴露后端状态机概念
+    // 完整错误需要可见，便于用户判断下一步处理。
     expect(markup).not.toContain("已阻塞");
     expect(markup).not.toContain("Loop 边界");
     expect(markup).not.toContain("Stop continuation");
     expect(markup).not.toContain("2 次尝试");
-    expect(markup).not.toContain("delivery_result_unknown");
+    expect(markup).toContain("delivery_result_unknown");
   });
 
   it("shows image indicator in preview", () => {

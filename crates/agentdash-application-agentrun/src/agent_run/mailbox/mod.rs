@@ -15,6 +15,7 @@ use agentdash_domain::agent_run_mailbox::{
     MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
     NewAgentRunMailboxMessage, SteeringStopEffect,
 };
+use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
@@ -68,6 +69,7 @@ pub struct AgentRunMailboxService<'a> {
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
     command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     mailbox_repo: &'a dyn AgentRunMailboxRepository,
     session_core: SessionCoreService,
@@ -83,6 +85,7 @@ impl<'a> AgentRunMailboxService<'a> {
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
         command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
         mailbox_repo: &'a dyn AgentRunMailboxRepository,
         session_core: SessionCoreService,
@@ -95,6 +98,7 @@ impl<'a> AgentRunMailboxService<'a> {
             lifecycle_agent_repo,
             agent_frame_repo,
             execution_anchor_repo,
+            project_backend_access_repo,
             command_receipt_repo,
             mailbox_repo,
             session_core,

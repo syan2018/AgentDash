@@ -317,12 +317,14 @@ impl<'a> LaunchPlanner<'a> {
             Some(selection) => Some(selection_request_from_input(
                 executor_id,
                 selection,
+                &planning_input.authorized_backend_ids,
                 reason_tag,
             )?),
             None if has_available_relay_executor(transport.as_ref(), executor_id) => {
                 Some(selection_request_from_runtime_anchor(
                     executor_id,
                     runtime_backend_anchor,
+                    &planning_input.authorized_backend_ids,
                     reason_tag,
                 ))
             }
@@ -384,46 +386,43 @@ impl<'a> LaunchPlanner<'a> {
 fn selection_request_from_input(
     executor_id: &str,
     selection: &BackendSelectionInput,
+    authorized_backend_ids: &[String],
     reason_tag: &str,
 ) -> Result<BackendSelectionRequest, ConnectorError> {
     let reason = Some(format!("session launch: {reason_tag}"));
-    match selection.mode {
+    let request = match selection.mode {
         BackendSelectionInputMode::Explicit => {
             let backend_id = required_backend_id(selection, "explicit")?;
-            Ok(BackendSelectionRequest::explicit(
-                executor_id,
-                backend_id,
-                reason,
-            ))
+            BackendSelectionRequest::explicit(executor_id, backend_id, reason)
         }
         BackendSelectionInputMode::AutoIdle => {
-            Ok(BackendSelectionRequest::auto_idle(executor_id, reason))
+            BackendSelectionRequest::auto_idle(executor_id, reason)
         }
         BackendSelectionInputMode::WorkspaceBinding => {
             let backend_id = required_backend_id(selection, "workspace_binding")?;
-            Ok(BackendSelectionRequest::workspace_binding(
-                executor_id,
-                backend_id,
-                reason,
-            ))
+            BackendSelectionRequest::workspace_binding(executor_id, backend_id, reason)
         }
-    }
+    };
+    Ok(request.with_authorized_backend_ids(authorized_backend_ids.to_vec()))
 }
 
 fn selection_request_from_runtime_anchor(
     executor_id: &str,
     runtime_backend_anchor: Option<&RuntimeBackendAnchor>,
+    authorized_backend_ids: &[String],
     reason_tag: &str,
 ) -> BackendSelectionRequest {
     let reason = Some(format!("session launch: {reason_tag}"));
-    runtime_backend_anchor
+    let request = runtime_backend_anchor
         .map(|anchor| anchor.backend_id().to_string())
         .map(|backend_id| BackendSelectionRequest {
             executor_id: executor_id.to_string(),
             intent: BackendSelectionIntent::WorkspaceBinding { backend_id },
             reason: reason.clone(),
+            authorized_backend_ids: Vec::new(),
         })
-        .unwrap_or_else(|| BackendSelectionRequest::auto_idle(executor_id, reason))
+        .unwrap_or_else(|| BackendSelectionRequest::auto_idle(executor_id, reason));
+    request.with_authorized_backend_ids(authorized_backend_ids.to_vec())
 }
 
 fn required_backend_id(

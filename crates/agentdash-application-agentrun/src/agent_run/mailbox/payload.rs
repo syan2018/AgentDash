@@ -33,6 +33,23 @@ pub(super) fn message_executor_config(
         })
 }
 
+pub(super) fn message_launch_planning_input(
+    message: &AgentRunMailboxMessage,
+) -> Result<agentdash_application_ports::launch::LaunchPlanningInput, WorkflowApplicationError> {
+    message
+        .launch_planning_input
+        .clone()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| {
+            WorkflowApplicationError::BadRequest(format!(
+                "mailbox message {} launch_planning_input 无效: {error}",
+                message.id
+            ))
+        })
+        .map(Option::unwrap_or_default)
+}
+
 pub(super) fn build_input_preview(input: &[UserInputBlock]) -> String {
     input
         .iter()

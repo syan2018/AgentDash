@@ -39,7 +39,7 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::agent_run_mailbox_contracts::{
-        agent_run_message_command_response, command_receipt_view,
+        agent_run_message_command_response, backend_selection_input, command_receipt_view,
     },
     rpc::ApiError,
 };
@@ -208,6 +208,7 @@ pub async fn create_project_agent_run(
                 input: req.input,
                 client_command_id: req.client_command_id,
                 executor_config,
+                backend_selection: backend_selection_input(req.backend_selection),
                 subject_ref: parse_subject_ref(req.subject_ref)?,
                 identity: Some(current_user.clone()),
             },

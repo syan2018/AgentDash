@@ -12,6 +12,7 @@ use agentdash_contracts::workflow::{
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
+use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
@@ -48,6 +49,7 @@ pub struct ProjectAgentRunStartCommand {
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub subject_ref: Option<SubjectRef>,
     pub identity: Option<AuthIdentity>,
 }
@@ -60,6 +62,7 @@ pub struct ProjectAgentRunInitialMailboxCommand {
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub client_command_id: String,
     pub executor_config: Option<AgentConfig>,
+    pub backend_selection: Option<agentdash_application_ports::launch::BackendSelectionInput>,
     pub identity: Option<AuthIdentity>,
 }
 
@@ -74,6 +77,7 @@ impl ProjectAgentRunInitialMailboxCommand {
             input: self.input,
             client_command_id: self.client_command_id,
             executor_config: self.executor_config,
+            backend_selection: self.backend_selection,
             identity: self.identity,
             delivery_intent: None,
         }
@@ -105,6 +109,7 @@ pub struct ProjectAgentRunStartRepos<'a> {
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub agent_lineage_repo: &'a dyn AgentLineageRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
     pub command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub mailbox_repo: &'a dyn AgentRunMailboxRepository,
     pub runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
@@ -124,6 +129,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
             agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
             execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
+            project_backend_access_repo: repos.project_backend_access_repo.as_ref(),
             command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
             mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
             runtime_session_creator: repos.runtime_session_creator.as_ref(),
@@ -144,6 +150,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             self.lifecycle_agent_repo,
             self.agent_frame_repo,
             self.execution_anchor_repo,
+            self.project_backend_access_repo,
             self.command_receipt_repo,
             self.mailbox_repo,
             session_core,
@@ -454,6 +461,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 input: command.input,
                 client_command_id: format!("{}:initial-message", command.client_command_id),
                 executor_config: command.executor_config,
+                backend_selection: command.backend_selection,
                 identity: command.identity,
             })
             .await
@@ -879,6 +887,7 @@ mod tests {
         MailboxMessageOrigin, MailboxMessageStatus, MailboxSourceIdentity,
         NewAgentRunMailboxMessage,
     };
+    use agentdash_domain::backend::{ProjectBackendAccess, ProjectBackendAccessStatus};
     use agentdash_domain::workflow::{
         AgentFrame, AgentLineage, AgentRuntimeRefs, AgentSource, LifecycleAgent, LifecycleGate,
         LifecycleRun, LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
@@ -1390,6 +1399,131 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct AccessRepo {
+        items: Mutex<Vec<ProjectBackendAccess>>,
+    }
+
+    #[async_trait]
+    impl ProjectBackendAccessRepository for AccessRepo {
+        async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
+            self.items.lock().unwrap().push(access.clone());
+            Ok(())
+        }
+
+        async fn update(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
+            if let Some(existing) = self
+                .items
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|item| item.id == access.id)
+            {
+                *existing = access.clone();
+            }
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|access| access.id == id)
+                .cloned())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|access| access.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .list_by_project(project_id)
+                .await?
+                .into_iter()
+                .filter(|access| access.status == ProjectBackendAccessStatus::Active)
+                .collect())
+        }
+
+        async fn get_active_for_project_backend(
+            &self,
+            project_id: Uuid,
+            backend_id: &str,
+        ) -> Result<Option<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .list_active_by_project(project_id)
+                .await?
+                .into_iter()
+                .find(|access| access.backend_id == backend_id.trim()))
+        }
+
+        async fn list_active_by_backend(
+            &self,
+            backend_id: &str,
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|access| {
+                    access.backend_id == backend_id.trim()
+                        && access.status == ProjectBackendAccessStatus::Active
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn list_active_by_backends(
+            &self,
+            backend_ids: &[String],
+        ) -> Result<Vec<ProjectBackendAccess>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|access| {
+                    backend_ids.contains(&access.backend_id)
+                        && access.status == ProjectBackendAccessStatus::Active
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn set_status(
+            &self,
+            id: Uuid,
+            status: ProjectBackendAccessStatus,
+        ) -> Result<(), DomainError> {
+            if let Some(access) = self
+                .items
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|access| access.id == id)
+            {
+                access.status = status;
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
     struct MailboxRepo {
         items: Mutex<Vec<AgentRunMailboxMessage>>,
         states: Mutex<Vec<AgentRunMailboxState>>,
@@ -1429,6 +1563,7 @@ mod tests {
                 command_receipt_id: message.command_receipt_id,
                 payload_json: message.payload_json,
                 executor_config_json: message.executor_config_json,
+                launch_planning_input: message.launch_planning_input,
                 preview: message.preview,
                 has_images: message.has_images,
                 retain_payload: message.retain_payload,
@@ -1648,6 +1783,14 @@ mod tests {
                 paused: true,
                 pause_reason: Some(reason),
                 pause_message: message,
+                backend_selection_preference: self
+                    .states
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|state| state.run_id == run_id && state.agent_id == agent_id)
+                    .and_then(|state| state.backend_selection_preference.clone()),
                 updated_at: Utc::now(),
             };
             self.states.lock().unwrap().push(state.clone());
@@ -1667,6 +1810,14 @@ mod tests {
                 paused: false,
                 pause_reason: None,
                 pause_message: None,
+                backend_selection_preference: self
+                    .states
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|state| state.run_id == run_id && state.agent_id == agent_id)
+                    .and_then(|state| state.backend_selection_preference.clone()),
                 updated_at: Utc::now(),
             };
             self.states.lock().unwrap().push(state.clone());
@@ -1686,6 +1837,27 @@ mod tests {
                 .rev()
                 .find(|state| state.run_id == run_id && state.agent_id == agent_id)
                 .cloned())
+        }
+
+        async fn set_backend_selection_preference(
+            &self,
+            run_id: Uuid,
+            agent_id: Uuid,
+            runtime_session_id: String,
+            preference: serde_json::Value,
+        ) -> Result<AgentRunMailboxState, DomainError> {
+            let state = AgentRunMailboxState {
+                run_id,
+                agent_id,
+                runtime_session_id,
+                paused: false,
+                pause_reason: None,
+                pause_message: None,
+                backend_selection_preference: Some(preference),
+                updated_at: Utc::now(),
+            };
+            self.states.lock().unwrap().push(state.clone());
+            Ok(state)
         }
 
         async fn move_message_after(
@@ -1935,6 +2107,7 @@ mod tests {
                     command_receipt_id: None,
                     payload_json: Some(payload_json),
                     executor_config_json,
+                    launch_planning_input: None,
                     preview: "hello".to_string(),
                     has_images: false,
                     retain_payload: false,
@@ -2051,6 +2224,7 @@ mod tests {
         gate_repo: GateRepo,
         lineage_repo: LineageRepo,
         anchor_repo: AnchorRepo,
+        access_repo: AccessRepo,
         command_receipt_repo: MemoryAgentRunCommandReceiptRepository,
         mailbox_repo: MailboxRepo,
         runtime_creator: RuntimeCreator,
@@ -2074,6 +2248,7 @@ mod tests {
                 gate_repo: GateRepo,
                 lineage_repo: LineageRepo,
                 anchor_repo: AnchorRepo::default(),
+                access_repo: AccessRepo::default(),
                 command_receipt_repo: MemoryAgentRunCommandReceiptRepository::default(),
                 mailbox_repo: MailboxRepo::default(),
                 runtime_creator: RuntimeCreator::default(),
@@ -2092,6 +2267,7 @@ mod tests {
                     lifecycle_gate_repo: &self.gate_repo,
                     agent_lineage_repo: &self.lineage_repo,
                     execution_anchor_repo: &self.anchor_repo,
+                    project_backend_access_repo: &self.access_repo,
                     command_receipt_repo: &self.command_receipt_repo,
                     mailbox_repo: &self.mailbox_repo,
                     runtime_session_creator: &self.runtime_creator,
@@ -2109,6 +2285,7 @@ mod tests {
                 input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                 client_command_id: client_command_id.to_string(),
                 executor_config: None,
+                backend_selection: None,
                 subject_ref: None,
                 identity: None,
             }
@@ -2157,6 +2334,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
+        let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
@@ -2178,6 +2356,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
@@ -2194,6 +2373,7 @@ mod tests {
             input: agentdash_agent_protocol::text_user_input_blocks("hello"),
             client_command_id: "cmd-start-1".to_string(),
             executor_config: None,
+            backend_selection: None,
             subject_ref: None,
             identity: None,
         };
@@ -2330,6 +2510,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
+        let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
@@ -2351,6 +2532,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
@@ -2369,6 +2551,7 @@ mod tests {
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                     client_command_id: "cmd-start-1".to_string(),
                     executor_config: None,
+                    backend_selection: None,
                     subject_ref: None,
                     identity: None,
                 },
@@ -2405,6 +2588,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
+        let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
@@ -2426,6 +2610,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
@@ -2444,6 +2629,7 @@ mod tests {
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                     client_command_id: "cmd-start-1".to_string(),
                     executor_config: Some(AgentConfig::new("PI_AGENT")),
+                    backend_selection: None,
                     subject_ref: None,
                     identity: None,
                 },
@@ -2492,6 +2678,7 @@ mod tests {
         let gate_repo = GateRepo;
         let lineage_repo = LineageRepo;
         let anchor_repo = AnchorRepo::default();
+        let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
@@ -2513,6 +2700,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
                 runtime_session_creator: &runtime_creator,
@@ -2531,6 +2719,7 @@ mod tests {
                     input: agentdash_agent_protocol::text_user_input_blocks("hello"),
                     client_command_id: "cmd-start-1".to_string(),
                     executor_config: None,
+                    backend_selection: None,
                     subject_ref: None,
                     identity: None,
                 },

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Defines HookTrace lifecycle semantics and existing noise-trace emission rule."}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Covers durable vs ephemeral session stream behavior used by HookTrace storage disposition."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "BackboneEnvelope/PlatformEvent contract must remain consistent across backend and frontend."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Frontend generated protocol and stream parsing changes must avoid duplicate enum allowlists."}
+{"file": ".trellis/tasks/07-01-hook-trace-storage-policy/research/hook-trace-storage-evidence.md", "reason": "Evidence map for current HookTrace production, broadcast, persistence, and frontend filtering paths."}

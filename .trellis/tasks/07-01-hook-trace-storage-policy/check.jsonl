@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Check HookTrace emission behavior against hook runtime semantics."}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Check durable/ephemeral event lane behavior and replay semantics."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Check protocol shape consistency for PlatformEvent::HookTrace changes."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check generated contract and frontend runtime guard expectations."}
+{"file": ".trellis/tasks/07-01-hook-trace-storage-policy/research/hook-trace-storage-evidence.md", "reason": "Check implementation covers all identified trace persistence paths."}

@@ -96,7 +96,6 @@ export function AgentRunWorkspacePage({
   const [selectedBackendId, setSelectedBackendId] = useState("");
   const workspacePanelRef = useRef<WorkspacePanelHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
-  const syncedRuntimeBackendIdRef = useRef<string | null>(null);
 
   const expandWorkspacePanel = useCallback((
     typeId?: string,
@@ -325,9 +324,6 @@ export function AgentRunWorkspacePage({
       : "Backend 信息未同步"
     : null;
 
-  const selectedBackendIsActive = selectedBackendId !== ""
-    && activeBackendAccesses.some((access) => access.backend_id === selectedBackendId);
-  const effectiveSelectedBackendId = selectedBackendIsActive ? selectedBackendId : "";
   const actualRuntimeBackendId = useMemo(() => {
     const target = deliveryRuntimeSurface
       ? selectVfsBackendTarget(deliveryRuntimeSurface.mounts, {
@@ -337,19 +333,15 @@ export function AgentRunWorkspacePage({
     const backendId = target?.backend_id.trim() ?? "";
     return backendId || null;
   }, [deliveryRuntimeSurface]);
-
-  useEffect(() => {
-    syncedRuntimeBackendIdRef.current = null;
-  }, [currentAgentId, currentRunId, draftProjectAgentKey, draftProjectIdValue]);
-
-  useEffect(() => {
-    if (!actualRuntimeBackendId) return;
-    if (syncedRuntimeBackendIdRef.current === actualRuntimeBackendId) return;
-    const isAuthorized = activeBackendAccesses.some((access) => access.backend_id === actualRuntimeBackendId);
-    if (!isAuthorized) return;
-    syncedRuntimeBackendIdRef.current = actualRuntimeBackendId;
-    setSelectedBackendId(actualRuntimeBackendId);
-  }, [activeBackendAccesses, actualRuntimeBackendId]);
+  const selectedBackendIsActive = selectedBackendId !== ""
+    && activeBackendAccesses.some((access) => access.backend_id === selectedBackendId);
+  const runtimeBackendIsActive = actualRuntimeBackendId != null
+    && activeBackendAccesses.some((access) => access.backend_id === actualRuntimeBackendId);
+  const effectiveSelectedBackendId = selectedBackendIsActive
+    ? selectedBackendId
+    : runtimeBackendIsActive
+      ? actualRuntimeBackendId
+      : "";
 
   const selectedBackendSelection = useMemo<BackendSelectionRequestDto | undefined>(() => {
     const backendId = effectiveSelectedBackendId.trim();

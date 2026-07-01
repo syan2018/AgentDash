@@ -115,7 +115,7 @@ function sectionTitle(section: ContextFrameSection): string {
 function sectionHint(section: ContextFrameSection): string | null {
   switch (section.kind) {
     case "identity":
-      return section.mode || "append";
+      return `${section.fragments.length} fragments`;
     case "assignment_context":
       return `${section.fragments.length} fragments`;
     case "capability_key_delta": {

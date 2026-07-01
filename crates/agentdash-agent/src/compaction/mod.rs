@@ -790,9 +790,9 @@ mod tests {
     fn reserve_tokens_changes_cut_point() {
         let messages = vec![
             AgentMessage::user("短"),
-            AgentMessage::assistant("前段回复 ".repeat(400)),
+            AgentMessage::assistant("前段回复 ".repeat(2_000)),
             AgentMessage::user("中间"),
-            AgentMessage::assistant("近期回复 ".repeat(400)),
+            AgentMessage::assistant("近期回复 ".repeat(2_000)),
             AgentMessage::user("最新"),
         ];
         let start_index = first_uncompacted_message_index(&messages);

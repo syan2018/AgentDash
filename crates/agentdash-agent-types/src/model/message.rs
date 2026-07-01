@@ -175,6 +175,16 @@ impl AgentMessage {
         )
     }
 
+    pub fn is_aborted(&self) -> bool {
+        matches!(
+            self,
+            AgentMessage::Assistant {
+                stop_reason: Some(StopReason::Aborted),
+                ..
+            }
+        )
+    }
+
     pub fn tool_result(
         tool_call_id: impl Into<String>,
         text: impl Into<String>,

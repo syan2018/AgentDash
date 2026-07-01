@@ -763,7 +763,12 @@ pub(super) async fn stream_assistant_response(
         }
     };
 
-    if !partial.added_partial {
+    if assistant_message.is_aborted() {
+        if partial.added_partial {
+            context.messages.pop();
+            context.message_refs.pop();
+        }
+    } else if !partial.added_partial {
         emit_event(
             emit,
             AgentEvent::MessageStart {

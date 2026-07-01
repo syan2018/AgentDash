@@ -673,8 +673,10 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
         }
         AgentEvent::MessageEnd { message } => {
             s.stream_message = None;
-            s.messages.push(message.clone());
-            s.message_refs.push(None);
+            if !message.is_aborted() {
+                s.messages.push(message.clone());
+                s.message_refs.push(None);
+            }
         }
         AgentEvent::ContextCompactionStarted { .. } => {}
         AgentEvent::ContextCompacted {

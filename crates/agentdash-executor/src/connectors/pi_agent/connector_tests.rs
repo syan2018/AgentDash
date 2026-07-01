@@ -1940,7 +1940,7 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
 }
 
 #[test]
-fn assistant_message_end_with_error_message_emits_fallback_chunk() {
+fn aborted_assistant_message_end_emits_no_backbone_content() {
     let event = AgentEvent::MessageEnd {
         message: AgentMessage::Assistant {
             content: vec![ContentPart::text("")],
@@ -1966,24 +1966,8 @@ fn assistant_message_end_with_error_message_emits_fallback_chunk() {
         &mut tool_call_states,
     );
 
-    // 残余 delta 补发 + 终态 ItemCompleted(AgentMessage) 并存。
-    assert_eq!(entry_index, 1);
-    let delta = envelopes
-        .iter()
-        .find_map(|env| match &env.event {
-            BackboneEvent::AgentMessageDelta(delta) => Some(delta),
-            _ => None,
-        })
-        .expect("residual agent message delta");
-    assert_eq!(delta.delta, "Agent run aborted");
-    let final_text = envelopes
-        .iter()
-        .find_map(|env| match &env.event {
-            BackboneEvent::ItemCompleted(n) => assistant_message_text(&n.item),
-            _ => None,
-        })
-        .expect("terminal assistant message item");
-    assert_eq!(final_text, "Agent run aborted");
+    assert_eq!(entry_index, 0);
+    assert!(envelopes.is_empty());
 }
 
 #[test]
@@ -2205,7 +2189,7 @@ fn provider_adapter_behavior_matrix_has_named_coverage() {
         ),
         (
             "stderr_or_error",
-            "assistant_message_end_with_error_message_emits_fallback_chunk",
+            "aborted_assistant_message_end_emits_no_backbone_content",
         ),
         (
             "cancel",

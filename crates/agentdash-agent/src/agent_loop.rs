@@ -266,7 +266,9 @@ async fn run_loop(
             let assistant_message =
                 stream_assistant_response(context, tool_instances, config, bridge, emit, cancel)
                     .await?;
-            new_messages.push(assistant_message.clone());
+            if !assistant_message.is_aborted() {
+                new_messages.push(assistant_message.clone());
+            }
 
             if assistant_message.is_error_or_aborted() {
                 emit_event(

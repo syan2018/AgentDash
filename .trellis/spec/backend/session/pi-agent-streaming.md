@@ -21,6 +21,11 @@
   - `final_text == emitted_text`：不再发送 chunk（避免重复）；
   - 二者不一致：记录 warning，不再发送补偿快照（保持单路径约束）。
 - 若此前未发过 delta：发送完整文本 chunk（首发即全量）。
+- `AgentMessage::Assistant { stop_reason: Aborted, .. }` 表达用户取消 / runtime abort 的
+  turn 终止事实，`stream_mapper` 不产出 `AgentMessageDelta`，也不产出
+  `ItemCompleted(ThreadItem::AgentMessage)`。中断原因进入 turn terminal / platform 诊断链路，
+  原因是 aborted 文本不是模型回答，进入 Backbone assistant content 会污染前端折叠摘要、历史
+  transcript 和后续恢复上下文。
 
 ### 3. ToolCall 映射
 
@@ -53,6 +58,9 @@
 
 - Turn 开始产出 `BackboneEvent::TurnStarted`；
 - Turn 结束产出 `BackboneEvent::TurnCompleted`。
+- 用户取消、provider abort 和 runtime abort 通过终态状态表达为 interrupted，不通过 assistant
+  message 表达。这样前端折叠摘要消费 turn lifecycle，模型上下文恢复只消费真实 assistant
+  content。
 
 ### 5. Token usage 更新
 
@@ -154,7 +162,7 @@ provider_fatal_error(message, code)
 | 2xx SSE stream ends before visible output | Retryable `empty_stream` provider error |
 | Retryable error before first visible delta | Retry attempt; no assistant error message or polluted provider request context |
 | Retryable error after visible delta | Do not retry; terminal failed/recovery path |
-| Aborted error | Do not retry; assistant stop reason is `Aborted` |
+| Aborted error | Do not retry; turn becomes interrupted; no assistant message delta or terminal agent message item |
 | Fatal error | Do not retry; assistant stop reason is `Error` |
 
 ### 5. Good/Base/Bad Cases
@@ -175,6 +183,10 @@ provider_fatal_error(message, code)
 
 - Agent tests assert pre-delta retry success, pre-delta retry exhaustion, post-delta no retry,
   aborted no retry and fatal no retry.
+- Agent tests assert aborted turns do not append `StopReason::Aborted` assistant messages to
+  `new_messages`, runtime state, or runtime context.
+- Executor mapping tests assert aborted assistant `MessageEnd` produces no Backbone assistant
+  content event.
 - Agent tests assert pre-delta transient errors are not added to provider request snapshots or
   assistant context before the final failure.
 - Bridge tests assert HTTP `429`/`408`/`5xx`, fatal body codes, Codex usage/rate-limit fatal behavior,

@@ -980,6 +980,10 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 ..
             } = message
             {
+                if matches!(stop_reason, Some(agentdash_agent::StopReason::Aborted)) {
+                    return Vec::new();
+                }
+
                 let reasoning_text = content
                     .iter()
                     .filter_map(ContentPart::extract_reasoning)

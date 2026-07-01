@@ -755,13 +755,8 @@ async fn provider_abort_error_does_not_retry() {
     .expect("agent loop should surface provider abort without retrying");
 
     assert_eq!(bridge.message_snapshots().await.len(), 1);
-    assert!(matches!(
-        new_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Aborted),
-            ..
-        })
-    ));
+    assert!(!new_messages.iter().any(|message| message.is_aborted()));
+    assert!(!context.messages.iter().any(|message| message.is_aborted()));
 
     let collected = events.lock().await.clone();
     assert!(
@@ -1887,7 +1882,7 @@ async fn runtime_delegate_errors_after_assistant_do_not_become_assistant_message
 }
 
 #[tokio::test]
-async fn abort_becomes_aborted_assistant_message() {
+async fn abort_does_not_append_aborted_assistant_message() {
     let first_delta_sent = Arc::new(Notify::new());
     let release_stream = Arc::new(Notify::new());
     let bridge = ScriptedBridge::new(vec![vec![
@@ -1911,22 +1906,11 @@ async fn abort_becomes_aborted_assistant_message() {
         .await
         .expect("task should not panic")
         .expect("run should succeed");
-    assert!(matches!(
-        new_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Aborted),
-            ..
-        })
-    ));
+    assert!(!new_messages.iter().any(|message| message.is_aborted()));
 
     let state = agent.state().await;
-    assert!(matches!(
-        state.messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Aborted),
-            ..
-        })
-    ));
+    assert!(!state.messages.iter().any(|message| message.is_aborted()));
+    assert!(state.stream_message.is_none());
 }
 
 #[tokio::test]
@@ -1963,14 +1947,8 @@ async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
     let first_messages = first_handle
         .await
         .expect("first task should not panic")
-        .expect("first run should resolve as aborted assistant message");
-    assert!(matches!(
-        first_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Aborted),
-            ..
-        })
-    ));
+        .expect("first run should resolve after abort");
+    assert!(!first_messages.iter().any(|message| message.is_aborted()));
 
     let (_rx, second_handle) = agent
         .prompt(AgentMessage::user("second"))

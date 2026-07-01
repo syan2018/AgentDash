@@ -1639,3 +1639,37 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 46: 收束 ContextDeliveryPlan 上下文消费
+
+**Date**: 2026-07-01
+**Task**: 收束 ContextDeliveryPlan 上下文消费
+**Branch**: `main`
+
+### Summary
+
+提交ContextDeliveryPlan任务计划并完成实现：新增delivery metadata/plan协议，runtime-session生成正式投递顺序，PiAgent按metadata消费system prompt并排除memory_context，删除continuation_context死链路，前端按正式顺序展示ContextFrame。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bb3012f03` | (see git log) |
+| `5fc544fee` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

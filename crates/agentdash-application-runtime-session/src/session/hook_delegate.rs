@@ -519,13 +519,6 @@ impl RuntimeContextTransformDelegate for HookRuntimeDelegate {
         // 3. 构建消息列表
         let mut messages = input.context.messages;
 
-        // 3a. transformed_message — hook 改写了用户原始输入
-        if let Some(ref new_text) = evaluated.resolution.transformed_message
-            && let Some(last_user) = messages.iter_mut().rev().find(|m| m.is_user())
-        {
-            last_user.replace_user_text(new_text);
-        }
-
         // TurnStart 统一消费 turn-start notice / pending action 这类暂存注入事件；
         // 通用 hook injections 不再隐式桥接为 inline user message。
         messages.extend(turn_start_messages.steering);

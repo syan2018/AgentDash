@@ -1178,10 +1178,6 @@ pub struct HookResolution {
     /// 压缩决策。由 BeforeCompact hook 设置。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<HookCompactionDecision>,
-    /// 改写后的用户消息。由 UserPromptSubmit hook 设置。
-    /// 当存在时，agent loop 使用此消息替换用户原始输入。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transformed_message: Option<String>,
 }
 
 /// Hook 评估产出的通用副作用声明。

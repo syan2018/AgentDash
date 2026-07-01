@@ -138,6 +138,40 @@ pub enum WorkflowHookTrigger {
     BeforeProviderRequest,
 }
 
+impl WorkflowHookTrigger {
+    pub const ALL: [Self; 12] = [
+        Self::UserPromptSubmit,
+        Self::BeforeTool,
+        Self::AfterTool,
+        Self::AfterTurn,
+        Self::BeforeStop,
+        Self::SessionTerminal,
+        Self::BeforeSubagentDispatch,
+        Self::AfterSubagentDispatch,
+        Self::CompanionResult,
+        Self::BeforeCompact,
+        Self::AfterCompact,
+        Self::BeforeProviderRequest,
+    ];
+
+    pub const fn wire_value(self) -> &'static str {
+        match self {
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::BeforeTool => "before_tool",
+            Self::AfterTool => "after_tool",
+            Self::AfterTurn => "after_turn",
+            Self::BeforeStop => "before_stop",
+            Self::SessionTerminal => "session_terminal",
+            Self::BeforeSubagentDispatch => "before_subagent_dispatch",
+            Self::AfterSubagentDispatch => "after_subagent_dispatch",
+            Self::CompanionResult => "companion_result",
+            Self::BeforeCompact => "before_compact",
+            Self::AfterCompact => "after_compact",
+            Self::BeforeProviderRequest => "before_provider_request",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct WorkflowHookRuleSpec {
     pub key: String,

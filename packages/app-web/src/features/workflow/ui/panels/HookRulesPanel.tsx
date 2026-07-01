@@ -115,7 +115,7 @@ function NewRuleEditor({
   onCommit,
   onCancel,
 }: {
-  triggerOptions: WorkflowHookTrigger[];
+  triggerOptions: ReadonlyArray<WorkflowHookTrigger>;
   presets: HookRulePreset[];
   existingKeys: Set<string>;
   onCommit: (rule: WorkflowHookRuleSpec) => void;
@@ -316,8 +316,8 @@ function HookRuleGroup({
   onRemove,
 }: {
   rules: WorkflowHookRuleSpec[];
-  triggerOrder: WorkflowHookTrigger[];
-  triggerOptions: WorkflowHookTrigger[];
+  triggerOrder: ReadonlyArray<WorkflowHookTrigger>;
+  triggerOptions: ReadonlyArray<WorkflowHookTrigger>;
   presets: HookRulePreset[];
   existingKeys: Set<string>;
   onAdd: (rule: WorkflowHookRuleSpec) => void;

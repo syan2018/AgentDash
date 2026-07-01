@@ -86,7 +86,7 @@ AgentRun-anchored hook delivery message 使用 AgentRun Mailbox 表达：
 
 | Hook output | Mailbox contract |
 | --- | --- |
-| `UserPromptSubmit` block/rewrite/context injection | 不进入 mailbox；它改写或阻止用户输入 envelope intake。 |
+| `UserPromptSubmit` block/context injection | 不进入 mailbox；它阻止用户输入 envelope intake 或生成动态上下文注入。 |
 | `UserPromptSubmit` extra steering | origin=`Hook`，delivery=`SteerActiveTurn`，barrier=`AgentLoopTurnBoundary`，drain=`All`。 |
 | `AfterTurn` steering | origin=`Hook`，delivery=`SteerActiveTurn`，barrier=`AgentLoopTurnBoundary`，drain=`All`。 |
 | `BeforeStop` steering / follow-up | origin=`Hook`，delivery=`SteerActiveTurn { stop_effect=ContinueOnStop }`，barrier=`AgentRunTurnBoundary`。 |

@@ -25,15 +25,6 @@ pub struct HookRulePreset {
 static PRESET_REGISTRY: LazyLock<Vec<HookRulePreset>> = LazyLock::new(|| {
     vec![
         HookRulePreset {
-            key: "session_terminal_advance",
-            trigger: WorkflowHookTrigger::BeforeStop,
-            label: "Session 终态自动推进",
-            description: "当 session 进入终态时自动推进 lifecycle step",
-            param_schema: None,
-            script: include_str!("../scripts/hook-presets/session_terminal_advance.rhai"),
-            source: PresetSource::Builtin,
-        },
-        HookRulePreset {
             key: "manual_step_notice",
             trigger: WorkflowHookTrigger::BeforeStop,
             label: "手动推进通知",

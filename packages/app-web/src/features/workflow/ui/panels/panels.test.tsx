@@ -154,6 +154,41 @@ describe("HookRulesPanel", () => {
     expect((markup.match(/暂无/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("渲染所有非 gate trigger 的规则", () => {
+    const markup = renderToStaticMarkup(
+      <HookRulesPanel
+        hookRules={[
+          {
+            key: "provider_observer",
+            trigger: "before_provider_request",
+            description: "Provider 请求前观察",
+            preset: undefined,
+            params: null,
+            script: "#{}",
+            enabled: true,
+          },
+          {
+            key: "compact_gate",
+            trigger: "before_compact",
+            description: "压缩前检查",
+            preset: "context_compaction_trigger",
+            params: null,
+            script: undefined,
+            enabled: true,
+          },
+        ]}
+        presets={presets}
+        onAdd={() => undefined}
+        onToggle={() => undefined}
+        onRemove={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("过程行为 (2)");
+    expect(markup).toContain("Provider 请求前观察");
+    expect(markup).toContain("压缩前检查");
+  });
+
   it("buildDefaultParams 处理 schema properties", () => {
     const result = buildDefaultParams({
       properties: {

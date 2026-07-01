@@ -34,18 +34,7 @@ pub fn snapshot_with_workflow_ports(
         "session_ended" => (
             "auto",
             Some("trellis_dev_task_implement"),
-            AgentProcedureContract {
-                hook_rules: vec![WorkflowHookRuleSpec {
-                    key: "terminal_advance".to_string(),
-                    trigger: WorkflowHookTrigger::BeforeStop,
-                    description: "advance on terminal".to_string(),
-                    preset: Some("session_terminal_advance".to_string()),
-                    params: None,
-                    script: None,
-                    enabled: true,
-                }],
-                ..AgentProcedureContract::default()
-            },
+            AgentProcedureContract::default(),
         ),
         _ => ("manual", None, AgentProcedureContract::default()),
     };

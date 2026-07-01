@@ -313,3 +313,18 @@ export type WorkflowScriptPlanPreviewNodeDto = { node_id: string, node_path: str
 export type WorkflowScriptPreflightDiagnosticDto = { code: string, severity: ValidationSeverity, message: string, source_path: string, };
 
 export type WorkflowTargetKind = "project" | "story";
+
+export const WORKFLOW_HOOK_TRIGGERS = [
+  "user_prompt_submit",
+  "before_tool",
+  "after_tool",
+  "after_turn",
+  "before_stop",
+  "session_terminal",
+  "before_subagent_dispatch",
+  "after_subagent_dispatch",
+  "companion_result",
+  "before_compact",
+  "after_compact",
+  "before_provider_request",
+] as const satisfies ReadonlyArray<WorkflowHookTrigger>;

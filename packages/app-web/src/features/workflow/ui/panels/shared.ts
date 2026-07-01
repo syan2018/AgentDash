@@ -9,6 +9,7 @@ import type {
   WorkflowHookTrigger,
   WorkflowTargetKind,
 } from "../../../../types";
+import { WORKFLOW_HOOK_TRIGGERS } from "../../../../generated/workflow-contracts";
 
 // ─── Hook trigger 分类 ────────────────────────────────
 
@@ -32,28 +33,15 @@ export const GATE_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
   "session_terminal",
 ]);
 
-export const PROCESS_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set([
-  "before_tool",
-  "after_tool",
-  "after_turn",
-  "before_subagent_dispatch",
-  "after_subagent_dispatch",
-  "companion_result",
-]);
+export const GATE_TRIGGER_OPTIONS: WorkflowHookTrigger[] = WORKFLOW_HOOK_TRIGGERS.filter(
+  (trigger) => GATE_TRIGGERS.has(trigger),
+);
 
-export const PROCESS_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
-  "before_tool",
-  "after_tool",
-  "after_turn",
-  "before_subagent_dispatch",
-  "after_subagent_dispatch",
-  "companion_result",
-];
+export const PROCESS_TRIGGER_OPTIONS: WorkflowHookTrigger[] = WORKFLOW_HOOK_TRIGGERS.filter(
+  (trigger) => !GATE_TRIGGERS.has(trigger),
+);
 
-export const GATE_TRIGGER_OPTIONS: WorkflowHookTrigger[] = [
-  "before_stop",
-  "session_terminal",
-];
+export const PROCESS_TRIGGERS: ReadonlySet<WorkflowHookTrigger> = new Set(PROCESS_TRIGGER_OPTIONS);
 
 export const PROCESS_TRIGGER_ORDER: WorkflowHookTrigger[] = PROCESS_TRIGGER_OPTIONS;
 export const GATE_TRIGGER_ORDER: WorkflowHookTrigger[] = GATE_TRIGGER_OPTIONS;

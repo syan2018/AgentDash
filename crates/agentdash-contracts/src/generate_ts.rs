@@ -210,10 +210,10 @@ use agentdash_contracts::workflow::{
     SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowGraphResponse, WorkflowScriptApiEndpointDto, WorkflowScriptBashCommandDto,
-    WorkflowScriptCapabilitySummaryDto, WorkflowScriptHumanGateCapabilityDto,
-    WorkflowScriptPlanPreviewDto, WorkflowScriptPlanPreviewNodeDto,
-    WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
+    WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
+    WorkflowScriptBashCommandDto, WorkflowScriptCapabilitySummaryDto,
+    WorkflowScriptHumanGateCapabilityDto, WorkflowScriptPlanPreviewDto,
+    WorkflowScriptPlanPreviewNodeDto, WorkflowScriptPreflightDiagnosticDto, WorkflowTargetKind,
 };
 use agentdash_contracts::workspace::{
     BindDiscoveredWorkspaceBindingRequest, BindDiscoveredWorkspaceBindingsRequest,
@@ -715,11 +715,13 @@ fn main() {
     );
 
     // --- workflow-contracts.ts ---
-    emit_domain(
+    let workflow_footer = workflow_contracts_footer();
+    emit_domain_with_footer(
         &generated_dir,
         "workflow-contracts.ts",
         &mut upstream,
         check,
+        Some(&workflow_footer),
         |dir| {
             export_all::<AgentProcedureContract>(dir);
             export_all::<AgentProcedureResponse>(dir);
@@ -1014,11 +1016,36 @@ fn emit_domain(
     check: bool,
     export: impl FnOnce(&Path),
 ) {
-    let types = write_domain_dedup(&dir.join(filename), upstream, check, export);
+    emit_domain_with_footer(dir, filename, upstream, check, None, export);
+}
+
+fn emit_domain_with_footer(
+    dir: &Path,
+    filename: &str,
+    upstream: &mut BTreeMap<String, String>,
+    check: bool,
+    footer: Option<&str>,
+    export: impl FnOnce(&Path),
+) {
+    let types = write_domain_dedup(&dir.join(filename), upstream, check, footer, export);
     let source = format!("./{}", filename.strip_suffix(".ts").unwrap());
     for name in types {
         upstream.insert(name, source.clone());
     }
+}
+
+fn workflow_contracts_footer() -> String {
+    let trigger_values = WorkflowHookTrigger::ALL
+        .iter()
+        .map(|trigger| format!("  \"{}\",", trigger.wire_value()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"export const WORKFLOW_HOOK_TRIGGERS = [
+{trigger_values}
+] as const satisfies ReadonlyArray<WorkflowHookTrigger>;
+"#
+    )
 }
 
 /// Write a domain file, stripping types already claimed by upstream domains
@@ -1028,6 +1055,7 @@ fn write_domain_dedup(
     out: &Path,
     upstream: &BTreeMap<String, String>,
     check: bool,
+    footer: Option<&str>,
     export: impl FnOnce(&Path),
 ) -> BTreeSet<String> {
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
@@ -1037,7 +1065,12 @@ fn write_domain_dedup(
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
-    let rendered = render_domain_file(filename_from_path(out), declarations, upstream);
+    let mut rendered = render_domain_file(filename_from_path(out), declarations, upstream);
+    if let Some(footer) = footer {
+        rendered.contents.push('\n');
+        rendered.contents.push_str(footer.trim_end());
+        rendered.contents.push('\n');
+    }
     let written = rendered.exported_types.clone();
     check_or_write_rendered(out, &rendered, check);
     if !check {

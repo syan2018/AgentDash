@@ -106,7 +106,6 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | Key | Trigger | 功能 |
 | --- | --- | --- |
 | `block_record_artifact` | `BeforeTool` | 禁止上报特定类型的 workflow artifact |
-| `session_terminal_advance` | `BeforeStop` | Session 终态自动推进 lifecycle step |
 | `stop_gate_checks_pending` | `BeforeStop` | 完成条件门禁 |
 | `manual_step_notice` | `BeforeStop` | 通知 Agent 当前 step 使用手动推进 |
 | `context_compaction_trigger` | `AfterCompaction` | 压缩后刷新 snapshot |

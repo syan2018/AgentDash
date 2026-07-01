@@ -10,7 +10,6 @@
  */
 
 import { useState } from "react";
-import { Tooltip } from "@agentdash/ui";
 import { CB } from "../bodies/cardBodyTokens";
 import { JsonTree } from "../bodies/JsonTree";
 import type {
@@ -476,11 +475,12 @@ function DeltaListItem({
         {clickable && <span className={CB.expandToggle}>{open ? "▲" : "▼"}</span>}
       </button>
       {hoverDesc && (
-        <Tooltip content={hoverDesc} side="bottom">
-          <p className="line-clamp-1 px-2 pb-0.5 pl-7 text-[10px] text-muted-foreground/40">
-            {hoverDesc}
-          </p>
-        </Tooltip>
+        <p
+          className="line-clamp-1 px-2 pb-0.5 pl-7 text-[10px] text-muted-foreground/40"
+          title={hoverDesc}
+        >
+          {hoverDesc}
+        </p>
       )}
       {open && expandContent && (
         <div className="px-2 py-1.5">

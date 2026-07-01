@@ -5,7 +5,7 @@ import type { JsonValue } from "./common-contracts";
 
 export type BackendActiveSessionResponse = { lease_id: string, session_id: string, turn_id: string, executor_id: string, workspace_id: string | null, root_ref: string | null, selection_mode: BackendExecutionSelectionMode, state: BackendExecutionLeaseState, claimed_at: string, activated_at: string | null, last_seen_at: string, };
 
-export type BackendCapabilitiesResponse = { executors: Array<BackendExecutorCapabilityResponse>, supports_cancel: boolean, supports_discover_options: boolean, mcp_servers: Array<BackendMcpServerCapabilityResponse>, };
+export type BackendCapabilitiesResponse = { executors: Array<BackendExecutorCapabilityResponse>, supports_cancel: boolean, supports_discover_options: boolean, mcp_servers: Array<BackendMcpServerCapabilityResponse>, capability_health: Array<CapabilityHealthItem>, };
 
 export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";
 
@@ -36,6 +36,14 @@ export type BackendWorkspaceInventoryResponse = { id: string, backend_id: string
 export type BackendWorkspaceInventorySource = "manual_register" | "identity_discovery";
 
 export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";
+
+export type CapabilityHealthAction = { kind: string, label: string, };
+
+export type CapabilityHealthDomain = "mcp" | "executor";
+
+export type CapabilityHealthItem = { id: string, domain: CapabilityHealthDomain, status: CapabilityHealthStatus, label: string, summary: string, actions: Array<CapabilityHealthAction>, };
+
+export type CapabilityHealthStatus = "ready" | "degraded" | "unavailable";
 
 export type CreateProjectBackendAccessRequest = { backend_id: string, priority?: number, root_policy?: { [key in string]?: JsonValue }, capability_policy?: { [key in string]?: JsonValue }, note?: string, };
 

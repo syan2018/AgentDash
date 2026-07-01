@@ -510,6 +510,7 @@ fn build_capabilities(
         supports_cancel: true,
         supports_discover_options: false,
         mcp_servers,
+        capability_health: Vec::new(),
     }
 }
 

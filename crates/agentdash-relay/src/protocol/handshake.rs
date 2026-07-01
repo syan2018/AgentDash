@@ -44,6 +44,25 @@ pub struct CapabilitiesPayload {
     /// 该 backend 实例可提供的 MCP server 列表（relay 用）
     #[serde(default)]
     pub mcp_servers: Vec<McpServerInfoRelay>,
+    #[serde(default)]
+    pub capability_health: Vec<CapabilityHealthItemRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityHealthItemRelay {
+    pub id: String,
+    pub domain: String,
+    pub status: String,
+    pub label: String,
+    pub summary: String,
+    #[serde(default)]
+    pub actions: Vec<CapabilityHealthActionRelay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityHealthActionRelay {
+    pub kind: String,
+    pub label: String,
 }
 
 /// backend 上报的 MCP server 能力描述

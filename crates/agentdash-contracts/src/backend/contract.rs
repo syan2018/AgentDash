@@ -117,7 +117,69 @@ pub struct BackendCapabilitiesResponse {
     pub supports_cancel: bool,
     pub supports_discover_options: bool,
     pub mcp_servers: Vec<BackendMcpServerCapabilityResponse>,
+    #[serde(default)]
+    pub capability_health: Vec<CapabilityHealthItem>,
 }
+
+// ─── Capability Health ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityHealthStatus {
+    Ready,
+    Degraded,
+    Unavailable,
+}
+
+impl std::str::FromStr for CapabilityHealthStatus {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ready" => Ok(Self::Ready),
+            "degraded" => Ok(Self::Degraded),
+            "unavailable" => Ok(Self::Unavailable),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityHealthDomain {
+    Mcp,
+    Executor,
+}
+
+impl std::str::FromStr for CapabilityHealthDomain {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mcp" => Ok(Self::Mcp),
+            "executor" => Ok(Self::Executor),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct CapabilityHealthAction {
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CapabilityHealthItem {
+    pub id: String,
+    pub domain: CapabilityHealthDomain,
+    pub status: CapabilityHealthStatus,
+    pub label: String,
+    pub summary: String,
+    #[serde(default)]
+    pub actions: Vec<CapabilityHealthAction>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

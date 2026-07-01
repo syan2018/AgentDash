@@ -13,6 +13,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
 import { SessionChatView } from "../features/session";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
+import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
@@ -24,6 +25,7 @@ import {
 import { useAgentRunWorkspaceState } from "../features/workspace-panel/model/useAgentRunWorkspaceState";
 import { useProjectStore } from "../stores/projectStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
+import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import {
   listProjectBackendAccess,
@@ -32,6 +34,7 @@ import {
 import type { BackendSelectionRequestDto } from "../generated/agent-run-mailbox-contracts";
 import { useWorkspaceModuleStore } from "../features/workspace-module";
 import type {
+  BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
@@ -51,6 +54,19 @@ interface AgentRunWorkspacePageProps {
   draftProjectAgentId?: string;
 }
 
+function machineLabelFromDevice(device: BackendConfig["device"]): string | null {
+  if (device == null || typeof device !== "object" || Array.isArray(device)) return null;
+  const hostname = device.hostname;
+  return typeof hostname === "string" && hostname.trim() ? hostname.trim() : null;
+}
+
+function backendDisplayLabel(backend: BackendConfig): string {
+  return backend.name.trim()
+    || backend.machine_label?.trim()
+    || machineLabelFromDevice(backend.device)
+    || "未命名 Backend";
+}
+
 export function AgentRunWorkspacePage({
   runId: propRunId,
   agentId: propAgentId,
@@ -64,6 +80,9 @@ export function AgentRunWorkspacePage({
   const agentsByProjectId = useProjectStore((state) => state.agentsByProjectId);
   const fetchProjectAgents = useProjectStore((state) => state.fetchProjectAgents);
   const createProjectAgentRun = useProjectStore((state) => state.createProjectAgentRun);
+  const backends = useCoordinatorStore((state) => state.backends);
+  const backendsLoading = useCoordinatorStore((state) => state.isLoading);
+  const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
@@ -245,20 +264,27 @@ export function AgentRunWorkspacePage({
   }, [fetchWorkspaces, ownerProjectId]);
 
   useEffect(() => {
-    if (!ownerProjectId) {
-      setBackendAccesses([]);
-      setSelectedBackendId("");
-      return;
-    }
+    void fetchBackends();
+  }, [fetchBackends]);
+
+  useEffect(() => {
+    if (!ownerProjectId) return;
     let cancelled = false;
     void listProjectBackendAccess(ownerProjectId)
       .then((items) => {
         if (cancelled) return;
         setBackendAccesses(items);
+        setSelectedBackendId((current) => {
+          if (!current) return "";
+          return items.some((access) => access.status === "active" && access.backend_id === current)
+            ? current
+            : "";
+        });
       })
       .catch(() => {
         if (cancelled) return;
         setBackendAccesses([]);
+        setSelectedBackendId("");
       });
     return () => {
       cancelled = true;
@@ -266,21 +292,46 @@ export function AgentRunWorkspacePage({
   }, [ownerProjectId]);
 
   const activeBackendAccesses = useMemo(
-    () => backendAccesses.filter((access) => access.status === "active"),
-    [backendAccesses],
+    () => ownerProjectId ? backendAccesses.filter((access) => access.status === "active") : [],
+    [backendAccesses, ownerProjectId],
   );
+  const backendById = useMemo(
+    () => new Map(backends.map((backend) => [backend.id, backend])),
+    [backends],
+  );
+  const backendLabelById = useMemo(
+    () => new Map(backends.map((backend) => [backend.id, backendDisplayLabel(backend)])),
+    [backends],
+  );
+  const backendSelectorOptions = useMemo<InlineBackendOption[]>(
+    () => activeBackendAccesses.map((access) => {
+      const backend = backendById.get(access.backend_id);
+      return {
+        accessId: access.id,
+        backendId: access.backend_id,
+        label: backendLabelById.get(access.backend_id) ?? (backendsLoading ? "加载 Backend 信息中" : "未知 Backend"),
+        online: backend?.online,
+        statusLabel: backend ? (backend.online ? "在线" : "离线") : undefined,
+      };
+    }),
+    [activeBackendAccesses, backendById, backendLabelById, backendsLoading],
+  );
+  const backendSelectorHasMissingNames = backendSelectorOptions.some((option) => !backendLabelById.has(option.backendId));
+  const backendSelectorStatusText = backendSelectorHasMissingNames
+    ? backendsLoading
+      ? "加载 Backend 信息中"
+      : "Backend 信息未同步"
+    : null;
 
-  useEffect(() => {
-    if (!selectedBackendId) return;
-    if (activeBackendAccesses.some((access) => access.backend_id === selectedBackendId)) return;
-    setSelectedBackendId("");
-  }, [activeBackendAccesses, selectedBackendId]);
+  const selectedBackendIsActive = selectedBackendId !== ""
+    && activeBackendAccesses.some((access) => access.backend_id === selectedBackendId);
+  const effectiveSelectedBackendId = selectedBackendIsActive ? selectedBackendId : "";
 
   const selectedBackendSelection = useMemo<BackendSelectionRequestDto | undefined>(() => {
-    const backendId = selectedBackendId.trim();
+    const backendId = effectiveSelectedBackendId.trim();
     if (!backendId) return undefined;
     return { mode: "explicit", backend_id: backendId };
-  }, [selectedBackendId]);
+  }, [effectiveSelectedBackendId]);
 
   const effectiveReturnTarget = useMemo(() => {
     if (isProjectAgentDraft && draftProjectIdValue) {
@@ -315,10 +366,10 @@ export function AgentRunWorkspacePage({
     if (!binding) return null;
     return {
       backend_id: binding.backend_id,
-      label: selectedWorkspace.name || binding.backend_id,
+      label: backendLabelById.get(binding.backend_id) ?? "未知 Backend",
       online: binding.status !== "offline" && binding.status !== "error",
     };
-  }, [chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
+  }, [backendLabelById, chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
   const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
     refreshAgentRunListProjection(draftProjectIdValue, "draft_started");
@@ -472,18 +523,18 @@ export function AgentRunWorkspacePage({
   }, [runContext, ownerProject]);
 
   const ownerBindingBar = runContext ? (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5 uppercase">
         {runContext.scope}
       </span>
-      <span>
+      <span className="min-w-0 truncate">
         已绑定：{runContextDisplayName}
       </span>
       {effectiveReturnTarget && (
         <button
           type="button"
           onClick={handleBackToOwner}
-          className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
+          className="rounded-[6px] px-1.5 py-0.5 text-[11px] transition-colors hover:bg-background hover:text-foreground"
         >
           打开关联
           {runContext.scope === "project"
@@ -496,43 +547,39 @@ export function AgentRunWorkspacePage({
     </div>
   ) : null;
   const draftBindingBar = isProjectAgentDraft ? (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5 uppercase">
         Draft
       </span>
       <span className="min-w-0 truncate">
         {draftProjectAgent?.display_name ?? traceAgentContext?.display_name ?? "ProjectAgent"}
       </span>
-      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5">
+      <span className="rounded-[6px] bg-background/80 px-1.5 py-0.5">
         待发送
       </span>
     </div>
   ) : null;
   const backendSelectionBar = activeBackendAccesses.length > 0 ? (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-      <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
+    <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
+      <span className="text-[11px] uppercase text-muted-foreground/70">
         Backend
       </span>
-      <select
-        value={selectedBackendId}
-        onChange={(event) => setSelectedBackendId(event.target.value)}
-        className="min-w-[180px] rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-foreground outline-none transition-colors hover:bg-secondary focus:border-primary"
-      >
-        <option value="">默认</option>
-        {activeBackendAccesses.map((access) => (
-          <option key={access.id} value={access.backend_id}>
-            {access.backend_id}
-          </option>
-        ))}
-      </select>
+      <InlineBackendSelector
+        value={effectiveSelectedBackendId}
+        options={backendSelectorOptions}
+        loading={backendsLoading}
+        statusText={backendSelectorStatusText}
+        onChange={setSelectedBackendId}
+        onRefresh={() => { void fetchBackends(); }}
+      />
     </div>
   ) : null;
-  const chatInputPrefix = (
+  const chatInputPrefix = ownerBindingBar || draftBindingBar || backendSelectionBar ? (
     <>
       {ownerBindingBar ?? draftBindingBar}
       {backendSelectionBar}
     </>
-  );
+  ) : undefined;
 
   // ─── 路由 state 驱动自动展开右栏 ───────────────────────
   useEffect(() => {

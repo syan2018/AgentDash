@@ -602,8 +602,6 @@ export function SessionChatComposer({
           </div>
         )}
 
-        {inputPrefix}
-
         {/*
          * Composer — flex-wrap + order 单实例布局
          *
@@ -613,6 +611,12 @@ export function SessionChatComposer({
          * 展开条件: 文本换行 || 有附件 || 有文件引用
          */}
         <div className="relative flex flex-wrap items-center gap-x-1 rounded-[12px] bg-muted/40 px-2 py-1.5 transition-colors focus-within:bg-muted/60">
+          {inputPrefix && (
+            <div className="order-0 mb-1 flex w-full flex-wrap items-center gap-2 border-b border-border/40 px-2 pb-1.5 text-xs text-muted-foreground">
+              {inputPrefix}
+            </div>
+          )}
+
           {/* ① RichInput 区域 — 唯一实例，展开时 w-full 独占行 */}
           <div className={
             isExpanded

@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/project-overview.md", "reason": "Defines RuntimeSession, AgentFrame, and lifecycle ownership concepts that ContextDeliveryPlan must respect."}
+{"file": ".trellis/spec/tech-stack.md", "reason": "Lists crate/package boundaries for placing protocol, runtime-session, executor, and frontend changes."}
+{"file": ".trellis/tasks/archive/2026-05/04-29-session-context-builder-unification/research/context-injection-map.md", "reason": "Prior research map of session context injection paths, duplicated prompt surfaces, and PiAgent system prompt assembly."}

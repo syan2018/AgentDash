@@ -37,6 +37,7 @@ function renderMailboxList(options: {
   mailbox?: Partial<SessionChatMailboxModel>;
   promoteCommand?: SessionChatCommandModel;
   deleteCommand?: SessionChatCommandModel;
+  onRecall?: (messageId: string) => void;
 }) {
   const messages = options.messages ?? [mailboxMessage];
   const mailbox: SessionChatMailboxModel = {
@@ -56,6 +57,7 @@ function renderMailboxList(options: {
       onPromote={() => {}}
       onDelete={() => {}}
       onResume={() => {}}
+      onRecall={options.onRecall}
     />,
   );
 }
@@ -259,6 +261,27 @@ describe("MailboxMessageList", () => {
     expect(markup).not.toContain("Stop continuation");
     expect(markup).not.toContain("2 次尝试");
     expect(markup).toContain("delivery_result_unknown");
+  });
+
+  it("shows retry row action for failed messages when recall handler exists", () => {
+    const markup = renderMailboxList({
+      messages: [
+        {
+          ...mailboxMessage,
+          status: "failed",
+          last_error: "backend executor unavailable",
+          can_promote: false,
+          can_recall: false,
+        },
+      ],
+      deleteCommand,
+      onRecall: () => {},
+    });
+
+    expect(markup).toContain("失败");
+    expect(markup).toContain("backend executor unavailable");
+    expect(markup).toContain("aria-label=\"重试\"");
+    expect(markup).not.toContain("编辑");
   });
 
   it("shows image indicator in preview", () => {

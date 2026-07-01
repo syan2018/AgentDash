@@ -271,6 +271,8 @@ function MessageRow({
 
   const isFailed = message.status === "failed" || message.status === "blocked";
   const isSteer = section === "steer";
+  const canRecall = Boolean(message.can_recall && onRecall);
+  const canRetry = Boolean(isFailed && onRecall);
   const sourceLabel = mailboxSourceLabel(message);
   const statusLabel = STATUS_LABELS[message.status];
 
@@ -311,15 +313,21 @@ function MessageRow({
         </span>
 
         {/* hover 操作 */}
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className={`flex shrink-0 items-center gap-0.5 transition-opacity ${isFailed ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
           {!isSteer && promoteCommand?.enabled && message.can_promote && (
             <ActionButton onClick={() => onPromote(message.id)} title="注入当前轮">
               <SteerArrowIcon />
             </ActionButton>
           )}
 
-          {message.can_recall && onRecall && (
-            <ActionButton onClick={() => onRecall(message.id)} title="编辑">
+          {canRetry && (
+            <ActionButton onClick={() => onRecall?.(message.id)} title="重试">
+              <RetryIcon />
+            </ActionButton>
+          )}
+
+          {!canRetry && canRecall && (
+            <ActionButton onClick={() => onRecall?.(message.id)} title="编辑">
               <EditIcon />
             </ActionButton>
           )}
@@ -405,6 +413,7 @@ function ActionButton({
       type="button"
       onClick={onClick}
       title={title}
+      aria-label={title}
       className={`flex h-6 w-6 items-center justify-center rounded-[6px] transition-colors ${
         destructive
           ? "text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
@@ -451,6 +460,15 @@ function EditIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <path d="M8.5 1.5l2 2L4 10H2v-2l6.5-6.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RetryIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <path d="M9.5 3.5A4 4 0 1 0 10 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.5 1.5v2h-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

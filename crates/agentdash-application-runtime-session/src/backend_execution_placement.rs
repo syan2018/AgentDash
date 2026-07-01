@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use agentdash_application_ports::backend_transport::RelayPromptTransport;
 use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionSelectionMode};
+use agentdash_domain::common::AgentConfig;
 use agentdash_spi::connector::ConnectorError;
 use uuid::Uuid;
 
@@ -182,15 +183,17 @@ async fn resolve_fixed_backend(
         )));
     }
 
-    let has_executor = transport.list_online_executors().iter().any(|executor| {
-        executor.backend_id == backend_id
-            && executor.executor_id.eq_ignore_ascii_case(executor_id)
-            && executor.available
-    });
-    if !has_executor {
-        return Err(ConnectorError::Runtime(format!(
-            "backend `{backend_id}` 当前未提供可用执行器 `{executor_id}`"
-        )));
+    if requires_backend_relay_executor(executor_id) {
+        let has_executor = transport.list_online_executors().iter().any(|executor| {
+            executor.backend_id == backend_id
+                && executor.executor_id.eq_ignore_ascii_case(executor_id)
+                && executor.available
+        });
+        if !has_executor {
+            return Err(ConnectorError::Runtime(format!(
+                "backend `{backend_id}` 当前未提供可用执行器 `{executor_id}`"
+            )));
+        }
     }
 
     Ok(ExecutionPlacementPlan::new(
@@ -199,6 +202,10 @@ async fn resolve_fixed_backend(
         selection_mode,
         claim_reason,
     ))
+}
+
+fn requires_backend_relay_executor(executor_id: &str) -> bool {
+    !AgentConfig::new(executor_id).is_cloud_native()
 }
 
 async fn resolve_auto_idle_backend(
@@ -249,4 +256,221 @@ async fn resolve_auto_idle_backend(
         BackendExecutionSelectionMode::AutoIdle,
         claim_reason,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use agentdash_application_ports::backend_transport::{
+        BackendTransport, DirectoryBrowseInfo, RelayPromptRequest, RelayPromptTransport,
+        RelaySessionRoute, RelaySessionRouteInfo, RelaySteerRequest, RemoteExecutorInfo,
+        TransportError, WorkspaceIdentityDiscoveryInfo, WorkspaceIdentityDiscoveryRequest,
+        WorkspaceProbeInfo,
+    };
+    use agentdash_domain::DomainError;
+    use agentdash_domain::backend::{
+        BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionTerminalKind,
+    };
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct TestTransport {
+        executors: Vec<RemoteExecutorInfo>,
+    }
+
+    #[async_trait]
+    impl BackendTransport for TestTransport {
+        async fn is_online(&self, _backend_id: &str) -> bool {
+            true
+        }
+
+        async fn list_online_backend_ids(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        async fn detect_workspace(
+            &self,
+            _backend_id: &str,
+            _root: &str,
+        ) -> Result<WorkspaceProbeInfo, TransportError> {
+            Ok(WorkspaceProbeInfo::default())
+        }
+
+        async fn browse_directory(
+            &self,
+            _backend_id: &str,
+            _path: Option<&str>,
+        ) -> Result<DirectoryBrowseInfo, TransportError> {
+            Ok(DirectoryBrowseInfo::default())
+        }
+
+        async fn discover_workspace_by_identity(
+            &self,
+            _backend_id: &str,
+            _workspaces: Vec<WorkspaceIdentityDiscoveryRequest>,
+        ) -> Result<WorkspaceIdentityDiscoveryInfo, TransportError> {
+            Ok(WorkspaceIdentityDiscoveryInfo::default())
+        }
+    }
+
+    #[async_trait]
+    impl RelayPromptTransport for TestTransport {
+        async fn relay_prompt(
+            &self,
+            _backend_id: &str,
+            _payload: RelayPromptRequest,
+        ) -> Result<String, TransportError> {
+            Ok("turn".to_string())
+        }
+
+        async fn relay_cancel(
+            &self,
+            _backend_id: &str,
+            _session_id: &str,
+        ) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        async fn relay_steer(
+            &self,
+            _backend_id: &str,
+            _payload: RelaySteerRequest,
+        ) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
+            self.executors.clone()
+        }
+
+        async fn resolve_backend(
+            &self,
+            _executor_id: &str,
+            preferred_backend_id: Option<&str>,
+        ) -> Result<String, TransportError> {
+            preferred_backend_id
+                .map(ToString::to_string)
+                .ok_or_else(|| TransportError::OperationFailed("missing backend".to_string()))
+        }
+
+        fn register_session_sink(&self, _route: RelaySessionRoute) {}
+
+        fn unregister_session_sink(&self, _session_id: &str) {}
+
+        fn has_session_sink(&self, _session_id: &str) -> bool {
+            false
+        }
+
+        fn session_route(&self, _session_id: &str) -> Option<RelaySessionRouteInfo> {
+            None
+        }
+    }
+
+    struct TestLeaseRepository;
+
+    #[async_trait]
+    impl BackendExecutionLeaseRepository for TestLeaseRepository {
+        async fn claim(&self, _lease: &BackendExecutionLease) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn activate(
+            &self,
+            _lease_id: Uuid,
+            _activated_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn release(
+            &self,
+            _lease_id: Uuid,
+            _terminal_kind: Option<BackendExecutionTerminalKind>,
+            _reason: Option<String>,
+            _released_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn fail(
+            &self,
+            _lease_id: Uuid,
+            _reason: Option<String>,
+            _failed_at: DateTime<Utc>,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn mark_lost_by_backend(
+            &self,
+            _backend_id: &str,
+            _reason: Option<String>,
+            _lost_at: DateTime<Utc>,
+        ) -> Result<u64, DomainError> {
+            Ok(0)
+        }
+
+        async fn get_by_id(
+            &self,
+            _lease_id: Uuid,
+        ) -> Result<Option<BackendExecutionLease>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_active(&self) -> Result<Vec<BackendExecutionLease>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn count_active_by_backend(
+            &self,
+            backend_ids: &[String],
+        ) -> Result<HashMap<String, i64>, DomainError> {
+            Ok(backend_ids
+                .iter()
+                .map(|backend_id| (backend_id.clone(), 0))
+                .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_cloud_native_executor_does_not_require_backend_relay_executor() {
+        let transport = TestTransport::default();
+        let lease_repo = TestLeaseRepository;
+
+        let plan = resolve_backend_execution_placement(
+            &transport,
+            &lease_repo,
+            &BackendSelectionRequest::explicit(
+                "PI_AGENT",
+                "local_4625439c028d045e69448a88",
+                Some("test".to_string()),
+            ),
+        )
+        .await
+        .expect("cloud-native executor should not require backend relay executor");
+
+        assert_eq!(plan.backend_id, "local_4625439c028d045e69448a88");
+        assert_eq!(plan.executor_id, "PI_AGENT");
+        assert_eq!(plan.selection_mode, BackendExecutionSelectionMode::Explicit);
+    }
+
+    #[tokio::test]
+    async fn explicit_relay_executor_still_requires_backend_executor() {
+        let transport = TestTransport::default();
+        let lease_repo = TestLeaseRepository;
+
+        let error = resolve_backend_execution_placement(
+            &transport,
+            &lease_repo,
+            &BackendSelectionRequest::explicit("CODEX", "local", Some("test".to_string())),
+        )
+        .await
+        .expect_err("relay executor should require backend executor");
+
+        assert!(error.to_string().contains("当前未提供可用执行器 `CODEX`"));
+    }
 }

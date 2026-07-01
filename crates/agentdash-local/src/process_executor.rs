@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use crate::process_window::hide_window_for_tokio_command;
 use crate::tool_executor::{ToolError, is_absolute_like, resolve_existing_path_with_root};
 use crate::workspace_root_guard::WorkspaceRootGuard;
 
@@ -106,6 +107,7 @@ async fn run_output_command(
 ) -> Result<ProcessOutput, ToolError> {
     let timeout_value = timeout_ms.unwrap_or(DEFAULT_PROCESS_TIMEOUT_MS);
     let timeout = Duration::from_millis(timeout_value);
+    hide_window_for_tokio_command(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     match tokio::time::timeout(timeout, command.output()).await {

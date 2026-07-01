@@ -7,6 +7,8 @@ use agentdash_relay::{
 };
 use gix::bstr::ByteSlice;
 
+use crate::process_window::hide_window_for_std_command;
+
 pub fn detect_workspace(path: &Path) -> ResponseWorkspaceDetectPayload {
     detect_workspace_with_p4_context(path, None)
 }
@@ -202,7 +204,10 @@ fn detect_p4_workspace(
 pub(crate) fn detect_p4_executable() -> Option<String> {
     let lookup = if cfg!(windows) { "where" } else { "which" };
     let candidate = if cfg!(windows) { "p4.exe" } else { "p4" };
-    let output = Command::new(lookup).arg(candidate).output().ok()?;
+    let mut command = Command::new(lookup);
+    command.arg(candidate);
+    hide_window_for_std_command(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -246,6 +251,7 @@ fn run_p4_tagged(
             command.env("P4CLIENT", client_name);
         }
     }
+    hide_window_for_std_command(&mut command);
     let output = command
         .output()
         .map_err(|err| format!("启动 p4 失败: {err}"))?;

@@ -5,6 +5,7 @@ use std::time::Duration;
 use agentdash_relay::SearchHit;
 
 use crate::file_discovery_policy::FileDiscoveryPolicy;
+use crate::process_window::hide_window_for_tokio_command;
 use crate::tool_executor::{ToolError, resolve_existing_path_with_root, workspace_relative_path};
 
 const SEARCH_TIMEOUT_MS: u64 = 30_000;
@@ -72,13 +73,14 @@ async fn detect_ripgrep() -> Option<PathBuf> {
         vec!["rg"]
     };
     for name in candidates {
-        if let Ok(output) =
-            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" })
-                .arg(name)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .await
+        let mut command =
+            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" });
+        command
+            .arg(name)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        hide_window_for_tokio_command(&mut command);
+        if let Ok(output) = command.output().await
             && output.status.success()
         {
             let path_str = String::from_utf8_lossy(&output.stdout);
@@ -117,6 +119,7 @@ async fn run_ripgrep(
     }
 
     cmd.arg("--").arg(params.query).arg(search_dir);
+    hide_window_for_tokio_command(&mut cmd);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 

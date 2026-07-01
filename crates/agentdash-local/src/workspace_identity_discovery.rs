@@ -15,6 +15,7 @@ use agentdash_relay::{
 };
 use serde_json::{Value, json};
 
+use crate::process_window::hide_window_for_std_command;
 use crate::tool_executor::resolve_detect_workspace_root;
 use crate::workspace_probe::{
     P4ProbeContext, detect_p4_executable, detect_workspace_with_p4_context, normalize_display_path,
@@ -366,6 +367,7 @@ impl P4Cli {
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
+        hide_window_for_std_command(&mut command);
         let output = command
             .output()
             .map_err(|error| format!("启动 p4 失败: {error}"))?;

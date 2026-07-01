@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::local_backend_config::McpLocalServerEntry;
+use crate::process_window::hide_window_for_tokio_command;
 
 // ─── Client Manager ──────────────────────────────────────
 
@@ -176,6 +177,7 @@ impl McpClientManager {
                 if let Some(cwd) = cwd {
                     cmd.current_dir(cwd);
                 }
+                hide_window_for_tokio_command(&mut cmd);
                 let transport = TokioChildProcess::new(cmd)
                     .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;
                 ().serve(transport)

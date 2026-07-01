@@ -7,6 +7,7 @@ use agentdash_domain::workspace::{
 };
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
+use crate::process_window::hide_window_for_std_command;
 
 pub fn prepare_workspace(
     path: &Path,
@@ -194,9 +195,10 @@ fn prepare_p4_workspace(
 }
 
 fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(path)
-        .args(args)
+    let mut command = Command::new("git");
+    command.current_dir(path).args(args);
+    hide_window_for_std_command(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("启动 git 失败: {error}"))?;
 
@@ -214,18 +216,22 @@ fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 fn git_ref_exists(path: &Path, reference: &str) -> Result<bool, String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .current_dir(path)
-        .args(["rev-parse", "--verify", "--quiet", reference])
+        .args(["rev-parse", "--verify", "--quiet", reference]);
+    hide_window_for_std_command(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("检查 Git ref 失败: {error}"))?;
     Ok(output.status.success())
 }
 
 fn run_p4(path: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("p4")
-        .current_dir(path)
-        .args(args)
+    let mut command = Command::new("p4");
+    command.current_dir(path).args(args);
+    hide_window_for_std_command(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("启动 p4 失败: {error}"))?;
 
@@ -246,10 +252,10 @@ fn run_p4_tagged(
     path: &Path,
     args: &[&str],
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let output = Command::new("p4")
-        .current_dir(path)
-        .arg("-ztag")
-        .args(args)
+    let mut command = Command::new("p4");
+    command.current_dir(path).arg("-ztag").args(args);
+    hide_window_for_std_command(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("启动 p4 失败: {error}"))?;
 

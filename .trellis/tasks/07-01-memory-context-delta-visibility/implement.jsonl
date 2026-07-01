@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "定义ContextFrame、ContextDeliveryPlan、memory_context当前语义和PiAgent消费边界。"}
+{"file": ".trellis/spec/backend/capability/integration-api.md", "reason": "定义MemoryDiscoveryProvider、VFS权限边界和MemoryDiscoveryOutput契约。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "约束前端ContextFrame parser和跨层DTO字段处理方式。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨SPI、runtime-session、stream事件和前端展示，需要按跨层事实源检查。"}

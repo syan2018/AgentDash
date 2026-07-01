@@ -163,25 +163,30 @@ function rawEvent(eventSeq: number, event: BackboneEvent, turnId = "u1"): Sessio
   };
 }
 
-function turnPayload(id: string, status: Turn["status"], durationMs: number | null): Turn {
+function turnPayload(
+  id: string,
+  status: Turn["status"],
+  durationMs: number | null,
+  opts?: { startedAt?: number | null },
+): Turn {
   return {
     id,
     items: [],
     itemsView: "full",
     status,
     error: null,
-    startedAt: null,
+    startedAt: opts?.startedAt ?? null,
     completedAt: null,
     durationMs,
   };
 }
 
-function rawTurnStarted(eventSeq: number, turnId = "u1"): SessionEventEnvelope {
+function rawTurnStarted(eventSeq: number, turnId = "u1", startedAt?: number): SessionEventEnvelope {
   return rawEvent(eventSeq, {
     type: "turn_started",
     payload: {
       threadId: "t1",
-      turn: turnPayload(turnId, "inProgress", null),
+      turn: turnPayload(turnId, "inProgress", null, { startedAt }),
     },
   }, turnId);
 }
@@ -806,6 +811,15 @@ describe("aggregateEntries — tool burst", () => {
     expect(failed[0]?.durationMs).toBe(34_000);
     expect(interrupted[0]?.status).toBe("interrupted");
     expect(interrupted[0]?.durationMs).toBe(56_000);
+  });
+
+  it("T25b: active turn exposes startedAtMs for live turn elapsed UI", () => {
+    const segments = segmentByTurn([mkMessageEntry("active-message", "working")], [
+      rawTurnStarted(1, "u1", 1_700_000_000),
+    ]);
+
+    expect(segments[0]?.status).toBe("active");
+    expect(segments[0]?.startedAtMs).toBe(1_700_000_000_000);
   });
 
   it("T26: retry exhausted does not create a status-only turn segment", () => {

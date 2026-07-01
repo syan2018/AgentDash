@@ -554,6 +554,7 @@ export interface TurnActivityStatus {
 export interface TurnSegment {
   turnId: string | null;
   status: TurnStatus;
+  startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
   items: SessionDisplayItem[];
@@ -582,6 +583,7 @@ function isAgentMessageItem(item: SessionDisplayItem): boolean {
 interface TurnMeta {
   status: TurnStatus;
   firstSeq: number;
+  startedAtMs?: number;
   durationMs?: number;
   activity?: TurnActivityStatus;
 }
@@ -635,8 +637,16 @@ function updateTurnMeta(
 ): void {
   const meta = ensureTurnMeta(map, turnId, firstSeq);
   if (patch.status) meta.status = patch.status;
+  if (patch.startedAtMs !== undefined) meta.startedAtMs = patch.startedAtMs;
   if (patch.durationMs !== undefined) meta.durationMs = patch.durationMs;
   if (patch.activity !== undefined) meta.activity = patch.activity;
+}
+
+function turnStartedAtMs(startedAtSeconds: number | null | undefined): number | undefined {
+  if (typeof startedAtSeconds !== "number" || !Number.isFinite(startedAtSeconds)) {
+    return undefined;
+  }
+  return startedAtSeconds * 1000;
 }
 
 function normalizeTurnStatus(status: string): TurnStatus {
@@ -649,6 +659,7 @@ function normalizeTurnStatus(status: string): TurnStatus {
 function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   turnId: string;
   status: TurnStatus;
+  startedAtMs?: number;
   durationMs?: number;
 } | null {
   const bbEvent = event.notification.event;
@@ -657,6 +668,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
     return {
       turnId: turn.id,
       status: normalizeTurnStatus(turn.status),
+      startedAtMs: turnStartedAtMs(turn.startedAt),
       durationMs: turn.durationMs ?? undefined,
     };
   }
@@ -683,6 +695,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   return {
     turnId,
     status,
+    startedAtMs: readNumberField(value, "started_at_ms"),
     durationMs: readNumberField(value, "duration_ms"),
   };
 }
@@ -697,13 +710,17 @@ export function segmentByTurn(
     const bbEvent = event.notification.event;
 
     if (bbEvent.type === "turn_started") {
-      updateTurnMeta(turnMeta, bbEvent.payload.turn.id, event.event_seq, { status: "active" });
+      updateTurnMeta(turnMeta, bbEvent.payload.turn.id, event.event_seq, {
+        status: "active",
+        startedAtMs: turnStartedAtMs(bbEvent.payload.turn.startedAt),
+      });
     }
 
     const terminal = extractTurnTerminalMeta(event);
     if (terminal) {
       updateTurnMeta(turnMeta, terminal.turnId, event.event_seq, {
         status: terminal.status,
+        startedAtMs: terminal.startedAtMs,
         durationMs: terminal.durationMs,
       });
     }
@@ -717,6 +734,7 @@ export function segmentByTurn(
       .map(([turnId, meta]) => ({
         turnId,
         status: meta.status,
+        startedAtMs: meta.startedAtMs,
         durationMs: meta.durationMs,
         activity: meta.activity,
         items: [],
@@ -745,6 +763,7 @@ export function segmentByTurn(
     segments.push({
       turnId: currentTurnId,
       status: meta?.status ?? "active",
+      startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,
       items: currentItems,
@@ -757,6 +776,7 @@ export function segmentByTurn(
     segments.push({
       turnId: null,
       status: "active",
+      startedAtMs: undefined,
       durationMs: undefined,
       activity: undefined,
       items: [item],
@@ -788,6 +808,7 @@ export function segmentByTurn(
     .map(([turnId, meta]): TurnSegment => ({
       turnId,
       status: meta.status,
+      startedAtMs: meta.startedAtMs,
       durationMs: meta.durationMs,
       activity: meta.activity,
       items: [],

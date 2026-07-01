@@ -361,6 +361,11 @@ function formatTurnDuration(ms: number): string {
   return `${m}m ${s}s`;
 }
 
+function formatTurnDurationSuffix(ms: number | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  return ` ${formatTurnDuration(ms)}`;
+}
+
 function terminalTurnLabel(status: TurnSegment["status"]): string | null {
   switch (status) {
     case "completed":
@@ -395,6 +400,19 @@ function TurnActivityStrip({ activity }: { activity: TurnActivityStatus }) {
   );
 }
 
+function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean): number | undefined {
+  const [clock, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active || startedAtMs == null) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, startedAtMs]);
+
+  if (!active || startedAtMs == null) return undefined;
+  return Math.max(clock - startedAtMs, 0);
+}
+
 function TurnSection({
   segment,
   sessionId,
@@ -404,34 +422,35 @@ function TurnSection({
   sessionId: string | null;
   streamingEntryId: string | null;
 }) {
-  const isCompleted = segment.status === "completed";
+  const isTerminal = segment.status !== "active";
   const terminalLabel = terminalTurnLabel(segment.status);
+  const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
+  const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
+  const displayDurationMs = segment.durationMs ?? activeElapsedMs;
   const [collapsed, setCollapsed] = useState(false);
   const [prevStatus, setPrevStatus] = useState(segment.status);
 
   if (segment.status !== prevStatus) {
     setPrevStatus(segment.status);
-    if (segment.status === "completed" && prevStatus === "active") {
+    if (isTerminal && prevStatus === "active") {
       setCollapsed(true);
     }
   }
 
-  if (!isCompleted || !collapsed) {
+  if (!collapsed) {
     return (
       <div className="space-y-1.5">
         {segment.activity && (
           <TurnActivityStrip activity={segment.activity} />
         )}
-        {terminalLabel && (
+        {headerLabel && (
           <button
             type="button"
-            onClick={() => {
-              if (isCompleted) setCollapsed(true);
-            }}
+            onClick={() => setCollapsed(true)}
             className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
           >
             <span className="h-px flex-1 max-w-6 bg-border/40" />
-            <span>{terminalLabel}{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+            <span>{headerLabel}{formatTurnDurationSuffix(displayDurationMs)}</span>
             <span className="h-px flex-1 bg-border/40" />
           </button>
         )}
@@ -462,13 +481,13 @@ function TurnSection({
         className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
       >
         <span className="text-muted-foreground/40">▶</span>
-        <span>已处理{segment.durationMs ? ` ${formatTurnDuration(segment.durationMs)}` : ""}</span>
+        <span>{headerLabel ?? "会话段落"}{formatTurnDurationSuffix(displayDurationMs)}</span>
         <span className="h-px flex-1 bg-border/40" />
       </button>
       {segment.finalOutput && (
         <SessionEntry
           item={segment.finalOutput}
-          isStreaming={false}
+          isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
           sessionId={sessionId}
         />
       )}

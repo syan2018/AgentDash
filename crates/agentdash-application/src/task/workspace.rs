@@ -453,9 +453,10 @@ impl<'a> TaskPlanWorkspace<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskPlanReadMode {
+    #[default]
     Overview,
     List,
     Detail,
@@ -463,23 +464,12 @@ pub enum TaskPlanReadMode {
     Projection,
 }
 
-impl Default for TaskPlanReadMode {
-    fn default() -> Self {
-        Self::Overview
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskPlanReadFormat {
+    #[default]
     Compact,
     Full,
-}
-
-impl Default for TaskPlanReadFormat {
-    fn default() -> Self {
-        Self::Compact
-    }
 }
 
 #[derive(Debug, Clone)]

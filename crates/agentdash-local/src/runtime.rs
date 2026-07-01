@@ -157,6 +157,7 @@ pub struct LocalRuntimeManager {
 struct RunningRuntime {
     config: LocalRuntimeConfig,
     session_runtime: Option<SessionRuntimeServices>,
+    mcp_manager: Option<Arc<McpClientManager>>,
     shutdown_tx: watch::Sender<bool>,
     status_tx: watch::Sender<LocalRuntimeStatus>,
     status_rx: watch::Receiver<LocalRuntimeStatus>,
@@ -213,6 +214,7 @@ impl LocalRuntimeManager {
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
         let session_runtime = ws_config.session_runtime.clone();
+        let mcp_manager = ws_config.mcp_manager.clone();
 
         tokio::spawn({
             let status_tx = status_tx.clone();
@@ -281,6 +283,7 @@ impl LocalRuntimeManager {
         *guard = Some(RunningRuntime {
             config,
             session_runtime,
+            mcp_manager,
             shutdown_tx,
             status_tx,
             status_rx,
@@ -379,9 +382,12 @@ impl LocalRuntimeManager {
 
     pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot> {
         let guard = self.inner.lock().await;
-        guard
-            .as_ref()
-            .map(|running| running.status_rx.borrow().clone())
+        let running = guard.as_ref()?;
+        let mut status = running.status_rx.borrow().clone();
+        if let Some(ref mcp) = running.mcp_manager {
+            status.capability_health = mcp.capability_health_snapshot().await;
+        }
+        Some(status)
     }
 }
 

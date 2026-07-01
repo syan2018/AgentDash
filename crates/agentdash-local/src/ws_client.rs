@@ -298,7 +298,7 @@ async fn run_session(
             backend_id: config.backend_id.clone(),
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: build_capabilities(&handler, &config.mcp_manager),
+            capabilities: build_capabilities(&handler, &config.mcp_manager).await,
         },
     };
 
@@ -496,7 +496,7 @@ fn report_relay_status(config: &Config, status: RelayConnectionStatus) {
     }
 }
 
-fn build_capabilities(
+async fn build_capabilities(
     handler: &LocalCommandRouter,
     mcp_manager: &Option<Arc<McpClientManager>>,
 ) -> CapabilitiesPayload {
@@ -505,12 +505,35 @@ fn build_capabilities(
         .as_ref()
         .map(|m| m.capability_entries())
         .unwrap_or_default();
+    let capability_health = match mcp_manager.as_ref() {
+        Some(m) => m
+            .capability_health_snapshot()
+            .await
+            .into_iter()
+            .map(|item| agentdash_relay::CapabilityHealthItemRelay {
+                id: item.id,
+                domain: item.domain,
+                status: item.status,
+                label: item.label,
+                summary: item.summary,
+                actions: item
+                    .actions
+                    .into_iter()
+                    .map(|a| agentdash_relay::CapabilityHealthActionRelay {
+                        kind: a.kind,
+                        label: a.label,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        None => Vec::new(),
+    };
     CapabilitiesPayload {
         executors,
         supports_cancel: true,
         supports_discover_options: false,
         mcp_servers,
-        capability_health: Vec::new(),
+        capability_health,
     }
 }
 

@@ -124,7 +124,8 @@ pub use runtime_capability::{
     replay_runtime_capability_transitions,
 };
 pub use runtime_capability_projection::{
-    RuntimeCapabilityProjection, RuntimeCapabilityProjectionInput,
+    LaunchContextDiscoveryInput, LaunchContextDiscoveryOutput, RuntimeCapabilityProjection,
+    RuntimeCapabilityProjectionInput, derive_launch_context_discovery,
     derive_runtime_capability_projection, derive_runtime_guidelines, derive_runtime_skill_baseline,
     merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
 };

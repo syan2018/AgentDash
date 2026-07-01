@@ -5,18 +5,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_application_vfs::{
-    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    PROVIDER_SKILL_ASSET_FS, ResourceRef, RuntimeFileEntry, VfsService,
-};
+use agentdash_application_vfs::{BUILTIN_SKILL_RULES, VfsService, discover_mount_files};
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{AuthIdentity, Mount, MountCapability, SkillRef, Vfs};
+use agentdash_spi::{AuthIdentity, SkillRef, Vfs};
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
-
-const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
-const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
-const MAX_SKILL_FILE_SIZE_BYTES: u64 = 64 * 1024;
 
 // ─── 公共 API ──────────────────────────────────────────────────────────────
 
@@ -196,129 +189,26 @@ struct DiscoveredSkillFile {
     content: String,
 }
 
+/// 复用共享 mount 扫描器发现 builtin SKILL.md。
+///
+/// mount policy / list / read / size-limit / 空内容过滤都由
+/// `agentdash-application-vfs::discover_mount_files` + `BUILTIN_SKILL_RULES` 提供，
+/// skill crate 只做 `DiscoveredMountFile -> DiscoveredSkillFile` 的 adapter 转换。
 async fn discover_builtin_skill_files(
     service: &VfsService,
     vfs: &Vfs,
     identity: Option<&AuthIdentity>,
 ) -> Vec<DiscoveredSkillFile> {
-    let mut files = Vec::new();
-
-    for mount in &vfs.mounts {
-        if !should_scan_mount_for_discovery(mount)
-            || !mount.capabilities.contains(&MountCapability::Read)
-            || !mount.capabilities.contains(&MountCapability::List)
-        {
-            continue;
-        }
-
-        for prefix in [".agents/skills", "skills"] {
-            for child_dir in list_children_at(service, vfs, &mount.id, prefix, identity).await {
-                let path = format!("{child_dir}/SKILL.md");
-                if let Some(file) = read_skill_file(service, vfs, &mount.id, &path, identity).await
-                {
-                    files.push(file);
-                }
-            }
-        }
-    }
-
-    files
-}
-
-fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
-    match mount.metadata.get(AUTO_DISCOVERY_METADATA_KEY) {
-        Some(serde_json::Value::Bool(enabled)) => return *enabled,
-        Some(serde_json::Value::String(value)) => {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "true" | "allow" | "auto" => return true,
-                "false" | "deny" | "skip" | "manual" => return false,
-                _ => {}
-            }
-        }
-        _ => {}
-    }
-
-    match mount
-        .metadata
-        .get(DISCOVERY_POLICY_METADATA_KEY)
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("auto") | Some("allow") => return true,
-        Some("manual") | Some("skip") | Some("deny") => return false,
-        _ => {}
-    }
-
-    matches!(
-        mount.provider.as_str(),
-        PROVIDER_RELAY_FS
-            | PROVIDER_INLINE_FS
-            | PROVIDER_LIFECYCLE_VFS
-            | PROVIDER_CANVAS_FS
-            | PROVIDER_SKILL_ASSET_FS
-    )
-}
-
-async fn read_skill_file(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    path: &str,
-    identity: Option<&AuthIdentity>,
-) -> Option<DiscoveredSkillFile> {
-    let target = ResourceRef {
-        mount_id: mount_id.to_string(),
-        path: path.to_string(),
-    };
-    let read = service.read_text(vfs, &target, None, identity).await.ok()?;
-    if read.content.trim().is_empty() || read.content.len() as u64 > MAX_SKILL_FILE_SIZE_BYTES {
-        return None;
-    }
-    Some(DiscoveredSkillFile {
-        mount_id: mount_id.to_string(),
-        path: read.path,
-        content: read.content,
-    })
-}
-
-async fn list_children_at(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    dir_path: &str,
-    identity: Option<&AuthIdentity>,
-) -> Vec<String> {
-    list_entries_at(service, vfs, mount_id, dir_path, identity)
+    discover_mount_files(service, vfs, BUILTIN_SKILL_RULES, identity)
         .await
+        .files
         .into_iter()
-        .filter(|entry| entry.is_dir)
-        .map(|entry| entry.path)
+        .map(|file| DiscoveredSkillFile {
+            mount_id: file.mount_id,
+            path: file.path,
+            content: file.content,
+        })
         .collect()
-}
-
-async fn list_entries_at(
-    service: &VfsService,
-    vfs: &Vfs,
-    mount_id: &str,
-    dir_path: &str,
-    identity: Option<&AuthIdentity>,
-) -> Vec<RuntimeFileEntry> {
-    service
-        .list(
-            vfs,
-            mount_id,
-            ListOptions {
-                path: dir_path.to_string(),
-                pattern: None,
-                recursive: false,
-            },
-            None,
-            identity,
-        )
-        .await
-        .map(|result| result.entries)
-        .unwrap_or_default()
 }
 
 fn validate_and_collect(
@@ -375,9 +265,11 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_application_vfs::{
-        ListResult, MountError, MountOperationContext, MountProvider, MountProviderRegistry,
-        ReadResult, SearchQuery, SearchResult,
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
+        MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, RuntimeFileEntry, SearchQuery,
+        SearchResult,
     };
+    use agentdash_spi::{Mount, MountCapability};
     use tokio::sync::Mutex;
 
     use super::*;

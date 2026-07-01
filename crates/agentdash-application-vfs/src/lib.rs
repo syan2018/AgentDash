@@ -53,8 +53,9 @@ pub use mount::{
     mount_purpose,
 };
 pub use mount_file_discovery::{
-    BUILTIN_GUIDELINE_RULES, BUILTIN_SKILL_RULES, DiscoveredMountFile,
-    MountFileDiscoveryDiagnostic, MountFileDiscoveryResult, MountFileDiscoveryRule,
+    BUILTIN_GUIDELINE_RULES, BUILTIN_SKILL_RULES, DiscoveredDynamicFile, DiscoveredMountFile,
+    DynamicMountFileDiscoveryResult, DynamicMountFileDiscoveryRule, MountFileDiscoveryDiagnostic,
+    MountFileDiscoveryResult, MountFileDiscoveryRule, discover_dynamic_mount_files,
     discover_memory_vfs_files, discover_mount_files,
 };
 pub use mount_inline::{

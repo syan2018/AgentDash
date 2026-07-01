@@ -27,12 +27,19 @@ pub struct FrameRuntimeSurface {
     pub runtime_session_id: Option<String>,
 }
 
+/// Command intent — 只表达用户请求事实（input/env/identity/terminal hook binding）。
 #[derive(Debug, Clone, Default)]
 pub struct FrameLaunchIntent {
     pub input: Option<Vec<UserInputBlock>>,
     pub environment_variables: HashMap<String, String>,
     pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+}
+
+/// Context projection — launch-time runtime context discovery 派生物。
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchContextProjection {
+    pub context_bundle: Option<SessionContextBundle>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub discovered_memory: MemoryDiscoveryOutput,
 }
@@ -59,34 +66,52 @@ pub struct TerminalHookEffectBinding {
     pub supported_effect_kinds: Vec<String>,
 }
 
+/// Frame refs — 持久化 frame surface 与 pending frame revision。
+#[derive(Debug, Clone)]
+pub struct FrameLaunchFrameRef {
+    pub surface: FrameRuntimeSurface,
+    pub pending_frame: Option<AgentFrame>,
+}
+
+/// Runtime surface — 闭包后的 launch execution surface。
+#[derive(Debug, Clone)]
+pub struct FrameLaunchRuntimeSurface {
+    pub launch_surface: FrameLaunchSurface,
+    pub working_directory: PathBuf,
+    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
+    pub base_capability_state: Option<CapabilityState>,
+}
+
+/// Diagnostics — resolution trace 等可观测性投影。
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchDiagnostics {
+    pub resolution_trace: LaunchResolutionTrace,
+}
+
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
-    pub surface: FrameRuntimeSurface,
-    pub launch_surface: FrameLaunchSurface,
-    pub pending_frame: Option<AgentFrame>,
-    pub intent: FrameLaunchIntent,
-    pub working_directory: PathBuf,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub base_capability_state: Option<CapabilityState>,
-    pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
-    pub resolution_trace: LaunchResolutionTrace,
+    pub frame: FrameLaunchFrameRef,
+    pub command: FrameLaunchIntent,
+    pub runtime: FrameLaunchRuntimeSurface,
+    pub context: FrameLaunchContextProjection,
+    pub diagnostics: FrameLaunchDiagnostics,
 }
 
 impl FrameLaunchEnvelope {
     pub fn launch_capability_state(&self) -> &CapabilityState {
-        &self.launch_surface.capability_state
+        &self.runtime.launch_surface.capability_state
     }
 
     pub fn launch_vfs(&self) -> &Vfs {
-        &self.launch_surface.vfs
+        &self.runtime.launch_surface.vfs
     }
 
     pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServer] {
-        &self.launch_surface.mcp_servers
+        &self.runtime.launch_surface.mcp_servers
     }
 
     pub fn launch_executor_config(&self) -> &AgentConfig {
-        &self.launch_surface.execution_profile
+        &self.runtime.launch_surface.execution_profile
     }
 }
 

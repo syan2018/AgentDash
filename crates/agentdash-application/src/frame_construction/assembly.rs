@@ -3,10 +3,7 @@ use std::collections::HashMap;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{
-    AuthIdentity, CapabilityState, DiscoveredGuideline, MemoryDiscoveryOutput,
-    SessionContextBundle, Vfs,
-};
+use agentdash_spi::{AuthIdentity, CapabilityState, SessionContextBundle, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
@@ -46,8 +43,6 @@ pub(crate) struct FrameAssemblyBuilder {
 
     // ── 系统上下文层 ──
     pub(super) context_bundle: Option<SessionContextBundle>,
-    pub(super) discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub(super) memory_inventory: MemoryDiscoveryOutput,
 
     // ── Prompt 层 ──
     pub(super) input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
@@ -114,8 +109,6 @@ impl FrameAssemblyBuilder {
 
     /// 设置已解析的能力输出（由外部 CapabilityResolver 产出）。
     pub(crate) fn with_resolved_capabilities(mut self, capability_state: CapabilityState) -> Self {
-        let mut capability_state = capability_state;
-        capability_state.memory.inventory = self.memory_inventory.clone();
         self.capability_state = Some(capability_state);
         self
     }
@@ -159,22 +152,6 @@ impl FrameAssemblyBuilder {
         if bundle.is_some() {
             self.context_bundle = bundle;
         }
-        self
-    }
-
-    pub(crate) fn with_memory_inventory(mut self, inventory: MemoryDiscoveryOutput) -> Self {
-        if let Some(state) = self.capability_state.as_mut() {
-            state.memory.inventory = inventory.clone();
-        }
-        self.memory_inventory = inventory;
-        self
-    }
-
-    pub(crate) fn with_discovered_guidelines(
-        mut self,
-        guidelines: Vec<DiscoveredGuideline>,
-    ) -> Self {
-        self.discovered_guidelines = guidelines;
         self
     }
 
@@ -260,8 +237,6 @@ impl FrameAssemblyBuilder {
             capability_state: Some(flow_caps),
             mcp_servers: slice.mcp_servers,
             context_bundle: sliced_bundle,
-            discovered_guidelines: Vec::new(),
-            memory_inventory: MemoryDiscoveryOutput::default(),
             input: Some(input),
             executor_config: Some(executor_config),
             workspace_defaults: None,
@@ -304,7 +279,6 @@ impl FrameAssemblyBuilder {
         if let Some(state) = capability_state.as_mut() {
             state.vfs.active = self.vfs.clone();
             state.tool.mcp_servers = self.mcp_servers.clone();
-            state.memory.inventory = self.memory_inventory.clone();
         }
         FrameSurfaceDraft {
             capability_state,
@@ -370,8 +344,6 @@ pub(crate) fn project_frame_assembly_to_frame(
     let extras = FrameAssemblyLaunchExtras {
         frame_surface_draft: surface_draft,
         context_bundle: prepared.context_bundle,
-        discovered_guidelines: prepared.discovered_guidelines,
-        memory_inventory: prepared.memory_inventory,
         input: prepared.input,
         executor_config: prepared.executor_config,
         environment_variables: prepared.env,
@@ -389,39 +361,9 @@ pub(crate) fn project_frame_assembly_to_frame(
 pub struct FrameAssemblyLaunchExtras {
     pub frame_surface_draft: FrameSurfaceDraft,
     pub context_bundle: Option<SessionContextBundle>,
-    pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub memory_inventory: MemoryDiscoveryOutput,
     pub input: Option<Vec<agentdash_agent_protocol::UserInputBlock>>,
     pub executor_config: Option<AgentConfig>,
     pub environment_variables: HashMap<String, String>,
     pub workspace_defaults: Option<Workspace>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::agent_run::frame::AgentFrameBuilder;
-
-    #[test]
-    fn project_frame_assembly_preserves_discovered_guidelines_in_launch_extras() {
-        let guideline = DiscoveredGuideline {
-            file_name: "AGENTS.md".to_string(),
-            mount_id: "workspace".to_string(),
-            path: "AGENTS.md".to_string(),
-            content: "使用中文交流".to_string(),
-        };
-        let prepared = FrameAssemblyBuilder::new()
-            .with_discovered_guidelines(vec![guideline.clone()])
-            .build();
-
-        let (_frame_builder, extras) =
-            project_frame_assembly_to_frame(AgentFrameBuilder::new(uuid::Uuid::new_v4()), prepared);
-
-        assert_eq!(extras.discovered_guidelines.len(), 1);
-        let discovered = &extras.discovered_guidelines[0];
-        assert_eq!(discovered.file_name, guideline.file_name);
-        assert_eq!(discovered.mount_id, guideline.mount_id);
-        assert_eq!(discovered.path, guideline.path);
-        assert_eq!(discovered.content, guideline.content);
-    }
-}

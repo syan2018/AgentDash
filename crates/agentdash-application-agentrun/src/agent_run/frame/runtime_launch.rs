@@ -79,6 +79,14 @@ pub struct FrameLaunchIntent {
     pub environment_variables: HashMap<String, String>,
     pub identity: Option<AuthIdentity>,
     pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+}
+
+/// Launch-time runtime context discovery 派生物。
+///
+/// guidelines / memory 归入 context projection，不再作为 command intent 字段。
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchContextProjection {
+    pub context_bundle: Option<SessionContextBundle>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub discovered_memory: MemoryDiscoveryOutput,
 }
@@ -231,23 +239,49 @@ fn uuid_metadata(metadata: &serde_json::Value, key: &str) -> Option<Uuid> {
 
 // ─── FrameLaunchEnvelope: frame construction 输出，字段 non-optional ───
 
-/// Frame construction 到 planner 的传递物。
-/// `working_directory`、`executor_config`、`capability_state` 在此保证 non-optional,
+/// Frame refs — 持久化 frame surface 与 pending frame revision。
+#[derive(Debug, Clone)]
+pub struct FrameLaunchFrameRef {
+    pub surface: FrameRuntimeSurface,
+    pub pending_frame: Option<AgentFrame>,
+}
+
+/// Runtime surface — 闭包后的 launch execution surface。
+///
+/// `working_directory`、`execution_profile`、`capability_state` 在此保证 non-optional，
 /// planner 不需要处理"半成品是否 ready"的检查。
 #[derive(Debug, Clone)]
-pub struct FrameLaunchEnvelope {
-    pub surface: FrameRuntimeSurface,
+pub struct FrameLaunchRuntimeSurface {
     /// 写入 AgentFrame revision 的 construction draft。
     pub surface_draft: FrameSurfaceDraft,
     /// Launch planner / preparation 的 non-optional typed surface。
     pub launch_surface: FrameLaunchSurface,
-    pub pending_frame: Option<AgentFrame>,
-    pub intent: FrameLaunchIntent,
     pub working_directory: PathBuf,
-    pub context_bundle: Option<SessionContextBundle>,
-    pub base_capability_state: Option<CapabilityState>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
+    pub base_capability_state: Option<CapabilityState>,
+}
+
+/// Diagnostics — resolution trace 等可观测性投影。
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchDiagnostics {
     pub resolution_trace: LaunchResolutionTrace,
+}
+
+/// Frame construction 到 planner 的传递物。
+///
+/// 顶层按语义分组：
+/// - `frame`   : 持久化 frame surface / pending revision
+/// - `command` : 用户请求 intent
+/// - `runtime` : 闭包后的 execution surface
+/// - `context` : launch-time context discovery 投影
+/// - `diagnostics` : resolution trace
+#[derive(Debug, Clone)]
+pub struct FrameLaunchEnvelope {
+    pub frame: FrameLaunchFrameRef,
+    pub command: FrameLaunchIntent,
+    pub runtime: FrameLaunchRuntimeSurface,
+    pub context: FrameLaunchContextProjection,
+    pub diagnostics: FrameLaunchDiagnostics,
 }
 
 /// Launch 过程中 resolution 来源的 trace 数据（仅用于诊断/可观测性）。
@@ -262,67 +296,78 @@ pub struct LaunchResolutionTrace {
 impl FrameLaunchEnvelope {
     /// Launch-time capability surface。
     pub fn launch_capability_state(&self) -> &CapabilityState {
-        &self.launch_surface.capability_state
+        &self.runtime.launch_surface.capability_state
     }
 
     /// Launch-time VFS surface。
     pub fn launch_vfs(&self) -> &Vfs {
-        &self.launch_surface.vfs
+        &self.runtime.launch_surface.vfs
     }
 
     /// Launch-time MCP surface。
     pub fn launch_mcp_servers(&self) -> &[RuntimeMcpServer] {
-        &self.launch_surface.mcp_servers
+        &self.runtime.launch_surface.mcp_servers
     }
 
     /// Launch-time execution profile。
     pub fn launch_executor_config(&self) -> &AgentConfig {
-        &self.launch_surface.execution_profile
+        &self.runtime.launch_surface.execution_profile
     }
 
     /// Convert the AgentRun-owned construction envelope into the neutral
     /// RuntimeSession launch DTO consumed through application ports.
     pub fn into_runtime_session_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
         launch_port::FrameLaunchEnvelope {
-            surface: launch_port::FrameRuntimeSurface {
-                agent_id: self.surface.agent_id,
-                frame_id: self.surface.frame_id,
-                frame_revision: self.surface.frame_revision,
-                capability_surface: self.surface.capability_surface,
-                context_slice: self.surface.context_slice,
-                vfs_surface: self.surface.vfs_surface,
-                mcp_surface: self.surface.mcp_surface,
-                runtime_session_id: self.surface.runtime_session_id,
+            frame: launch_port::FrameLaunchFrameRef {
+                surface: launch_port::FrameRuntimeSurface {
+                    agent_id: self.frame.surface.agent_id,
+                    frame_id: self.frame.surface.frame_id,
+                    frame_revision: self.frame.surface.frame_revision,
+                    capability_surface: self.frame.surface.capability_surface,
+                    context_slice: self.frame.surface.context_slice,
+                    vfs_surface: self.frame.surface.vfs_surface,
+                    mcp_surface: self.frame.surface.mcp_surface,
+                    runtime_session_id: self.frame.surface.runtime_session_id,
+                },
+                pending_frame: self.frame.pending_frame,
             },
-            launch_surface: launch_port::FrameLaunchSurface {
-                capability_state: self.launch_surface.capability_state,
-                vfs: self.launch_surface.vfs,
-                mcp_servers: self.launch_surface.mcp_servers,
-                execution_profile: self.launch_surface.execution_profile,
-            },
-            pending_frame: self.pending_frame,
-            intent: launch_port::FrameLaunchIntent {
-                input: self.intent.input,
-                environment_variables: self.intent.environment_variables,
-                identity: self.intent.identity,
-                terminal_hook_effect_binding: self.intent.terminal_hook_effect_binding.map(
+            command: launch_port::FrameLaunchIntent {
+                input: self.command.input,
+                environment_variables: self.command.environment_variables,
+                identity: self.command.identity,
+                terminal_hook_effect_binding: self.command.terminal_hook_effect_binding.map(
                     |binding| launch_port::TerminalHookEffectBinding {
                         handler: binding.handler,
                         supported_effect_kinds: binding.supported_effect_kinds,
                     },
                 ),
-                discovered_guidelines: self.intent.discovered_guidelines,
-                discovered_memory: self.intent.discovered_memory,
             },
-            working_directory: self.working_directory,
-            context_bundle: self.context_bundle,
-            base_capability_state: self.base_capability_state,
-            runtime_backend_anchor: self.runtime_backend_anchor,
-            resolution_trace: launch_port::LaunchResolutionTrace {
-                vfs_source: self.resolution_trace.vfs_source,
-                mcp_source: self.resolution_trace.mcp_source,
-                capability_source: self.resolution_trace.capability_source,
-                pending_overlay_applied: self.resolution_trace.pending_overlay_applied,
+            runtime: launch_port::FrameLaunchRuntimeSurface {
+                launch_surface: launch_port::FrameLaunchSurface {
+                    capability_state: self.runtime.launch_surface.capability_state,
+                    vfs: self.runtime.launch_surface.vfs,
+                    mcp_servers: self.runtime.launch_surface.mcp_servers,
+                    execution_profile: self.runtime.launch_surface.execution_profile,
+                },
+                working_directory: self.runtime.working_directory,
+                runtime_backend_anchor: self.runtime.runtime_backend_anchor,
+                base_capability_state: self.runtime.base_capability_state,
+            },
+            context: launch_port::FrameLaunchContextProjection {
+                context_bundle: self.context.context_bundle,
+                discovered_guidelines: self.context.discovered_guidelines,
+                discovered_memory: self.context.discovered_memory,
+            },
+            diagnostics: launch_port::FrameLaunchDiagnostics {
+                resolution_trace: launch_port::LaunchResolutionTrace {
+                    vfs_source: self.diagnostics.resolution_trace.vfs_source,
+                    mcp_source: self.diagnostics.resolution_trace.mcp_source,
+                    capability_source: self.diagnostics.resolution_trace.capability_source,
+                    pending_overlay_applied: self
+                        .diagnostics
+                        .resolution_trace
+                        .pending_overlay_applied,
+                },
             },
         }
     }
@@ -557,5 +602,105 @@ mod tests {
                 .expect("anchor result")
                 .is_none()
         );
+    }
+
+    fn grouped_envelope() -> FrameLaunchEnvelope {
+        let vfs = test_vfs("/workspace");
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(vfs.clone());
+        let launch_surface = FrameLaunchSurface::new(
+            capability_state.clone(),
+            vfs.clone(),
+            Vec::new(),
+            AgentConfig::new("PI_AGENT"),
+        )
+        .expect("launch surface");
+        let mut surface_draft = FrameSurfaceDraft::default();
+        launch_surface.write_back_to_surface_draft(&mut surface_draft);
+        let guideline = DiscoveredGuideline {
+            file_name: "AGENTS.md".to_string(),
+            mount_id: "workspace".to_string(),
+            path: "AGENTS.md".to_string(),
+            content: "使用中文交流".to_string(),
+        };
+        FrameLaunchEnvelope {
+            frame: FrameLaunchFrameRef {
+                surface: FrameRuntimeSurface::from_frame(
+                    &AgentFrame::new_revision(Uuid::new_v4(), 1, "test"),
+                    Some("sess".to_string()),
+                ),
+                pending_frame: None,
+            },
+            command: FrameLaunchIntent {
+                input: None,
+                environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
+                identity: None,
+                terminal_hook_effect_binding: None,
+            },
+            runtime: FrameLaunchRuntimeSurface {
+                surface_draft,
+                launch_surface,
+                working_directory: PathBuf::from("/workspace"),
+                runtime_backend_anchor: None,
+                base_capability_state: None,
+            },
+            context: FrameLaunchContextProjection {
+                context_bundle: None,
+                discovered_guidelines: vec![guideline],
+                discovered_memory: MemoryDiscoveryOutput::default(),
+            },
+            diagnostics: FrameLaunchDiagnostics {
+                resolution_trace: LaunchResolutionTrace {
+                    vfs_source: Some("construction.test".to_string()),
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn grouped_envelope_accessors_read_runtime_surface() {
+        let envelope = grouped_envelope();
+        assert_eq!(envelope.launch_executor_config().executor, "PI_AGENT");
+        assert_eq!(envelope.launch_vfs().mounts.len(), 1);
+        assert!(envelope.launch_mcp_servers().is_empty());
+        assert!(
+            envelope
+                .launch_capability_state()
+                .vfs
+                .active
+                .as_ref()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn into_runtime_session_envelope_preserves_grouping() {
+        let envelope = grouped_envelope();
+        let port = envelope.into_runtime_session_launch_envelope();
+
+        // command intent 只保留请求事实
+        assert_eq!(port.command.environment_variables["A"], "B");
+        assert!(port.command.input.is_none());
+
+        // runtime surface 闭包字段
+        assert_eq!(port.runtime.working_directory, PathBuf::from("/workspace"));
+        assert_eq!(port.runtime.launch_surface.execution_profile.executor, "PI_AGENT");
+        assert_eq!(port.runtime.launch_surface.vfs.mounts.len(), 1);
+
+        // context projection 承载 discovery 派生物
+        assert_eq!(port.context.discovered_guidelines.len(), 1);
+        assert_eq!(port.context.discovered_guidelines[0].file_name, "AGENTS.md");
+        assert!(port.context.context_bundle.is_none());
+
+        // diagnostics
+        assert_eq!(
+            port.diagnostics.resolution_trace.vfs_source.as_deref(),
+            Some("construction.test")
+        );
+
+        // frame refs
+        assert_eq!(port.frame.surface.runtime_session_id.as_deref(), Some("sess"));
+        assert!(port.frame.pending_frame.is_none());
     }
 }

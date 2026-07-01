@@ -112,6 +112,7 @@ impl SessionLaunchOrchestrator {
             }
         };
         let context_sources = launch_envelope
+            .context
             .context_bundle
             .as_ref()
             .map(|bundle| {

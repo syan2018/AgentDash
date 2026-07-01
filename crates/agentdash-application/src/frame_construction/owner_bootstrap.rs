@@ -3,7 +3,7 @@
 //! Project/Story/Routine owner surface composition belongs to frame construction because it
 //! produces the `FrameSurfaceDraft` written into `AgentFrame` and handed to runtime launch.
 
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::collections::BTreeSet;
 
 use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
@@ -14,18 +14,11 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{
-    AuthIdentity, CapabilityScopeCtx, DiscoveredGuideline, MemoryDiscoveryOutput,
-    MemoryDiscoveryProvider, SkillDiscoveryProvider,
-};
+use agentdash_spi::{AuthIdentity, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
-use crate::agent_run::runtime_capability_projection::{
-    RuntimeCapabilityProjectionInput, RuntimeMemoryProjectionInput, derive_runtime_guidelines,
-    derive_runtime_memory_inventory, derive_runtime_skill_baseline,
-};
 use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
@@ -164,9 +157,6 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
     pub lifecycle_surface_projection:
         &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     pub audit_bus: Option<SharedContextAuditBus>,
-    pub extra_skill_dirs: &'a [PathBuf],
-    pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
-    pub memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
 }
 
 impl<'a> OwnerBootstrapComposer<'a> {
@@ -186,32 +176,11 @@ impl<'a> OwnerBootstrapComposer<'a> {
             platform_config,
             lifecycle_surface_projection,
             audit_bus: None,
-            extra_skill_dirs: &[],
-            skill_discovery_providers: &[],
-            memory_discovery_providers: &[],
         }
     }
 
     pub(crate) fn with_audit_bus(mut self, bus: SharedContextAuditBus) -> Self {
         self.audit_bus = Some(bus);
-        self
-    }
-
-    pub(crate) fn with_skill_discovery(
-        mut self,
-        extra_skill_dirs: &'a [PathBuf],
-        skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
-    ) -> Self {
-        self.extra_skill_dirs = extra_skill_dirs;
-        self.skill_discovery_providers = skill_discovery_providers;
-        self
-    }
-
-    pub(crate) fn with_memory_discovery(
-        mut self,
-        memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
-    ) -> Self {
-        self.memory_discovery_providers = memory_discovery_providers;
         self
     }
 
@@ -253,12 +222,9 @@ impl<'a> OwnerBootstrapComposer<'a> {
             );
         let runtime_mcp_servers =
             normalize_owner_bootstrap_mcp_projection(&mut cap_output, &spec.request_mcp_servers);
-        let memory_inventory = self
-            .derive_memory_inventory(vfs.as_ref(), spec.identity, "owner_bootstrap")
-            .await;
-        let discovered_guidelines = self
-            .derive_guidelines(vfs.as_ref(), spec.identity, "owner_bootstrap")
-            .await;
+        // guidelines / memory / skill baseline 由 launch-time 单入口
+        // (`FrameConstructionService::apply_launch_context_discovery`) 在 runtime surface
+        // 闭包后从最终 launch VFS 统一派生，owner bootstrap 不再各自 derive。
         let context_bundle = self
             .build_owner_context_bundle(
                 &spec,
@@ -307,8 +273,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
             .with_executor_config(spec.executor_config.clone())
             .with_mcp_servers(runtime_mcp_servers)
             .with_resolved_capabilities(cap_output)
-            .with_discovered_guidelines(discovered_guidelines)
-            .with_memory_inventory(memory_inventory)
             .with_optional_workspace_defaults(workspace_defaults)
             .with_optional_context_bundle(effective_bundle);
 
@@ -546,61 +510,11 @@ impl<'a> OwnerBootstrapComposer<'a> {
             capability_context: None,
             authority_state: AuthorityState::main_project_agent(),
         };
-        let mut capability_state =
+        let capability_state =
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
-        self.apply_skill_baseline(&mut capability_state, vfs, spec.identity, "owner_bootstrap")
-            .await;
+        // Skill baseline 由 launch-time 单入口在 runtime surface 闭包后从最终 launch VFS
+        // 统一派生，owner bootstrap 不再各自 derive skill baseline。
         Ok(capability_state)
-    }
-
-    async fn apply_skill_baseline(
-        &self,
-        capability_state: &mut CapabilityState,
-        active_vfs: Option<&Vfs>,
-        identity: Option<&AuthIdentity>,
-        diagnostics_label: &'static str,
-    ) {
-        let Some(caps) = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
-            vfs_service: Some(self.vfs_service),
-            active_vfs,
-            identity,
-            extra_skill_dirs: self.extra_skill_dirs,
-            skill_discovery_providers: self.skill_discovery_providers,
-            diagnostics_label,
-        })
-        .await
-        else {
-            return;
-        };
-        capability_state.skill.skills = caps.skills;
-    }
-
-    async fn derive_memory_inventory(
-        &self,
-        active_vfs: Option<&Vfs>,
-        identity: Option<&AuthIdentity>,
-        diagnostics_label: &'static str,
-    ) -> MemoryDiscoveryOutput {
-        derive_runtime_memory_inventory(RuntimeMemoryProjectionInput {
-            vfs_service: Some(self.vfs_service),
-            active_vfs,
-            identity,
-            memory_discovery_providers: self.memory_discovery_providers,
-            diagnostics_label,
-        })
-        .await
-    }
-
-    async fn derive_guidelines(
-        &self,
-        active_vfs: Option<&Vfs>,
-        identity: Option<&AuthIdentity>,
-        diagnostics_label: &'static str,
-    ) -> Vec<DiscoveredGuideline> {
-        let Some(active_vfs) = active_vfs else {
-            return Vec::new();
-        };
-        derive_runtime_guidelines(self.vfs_service, active_vfs, identity, diagnostics_label).await
     }
 
     async fn build_owner_context_bundle(

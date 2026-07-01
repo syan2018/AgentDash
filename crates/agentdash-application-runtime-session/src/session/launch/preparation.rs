@@ -699,6 +699,18 @@ mod tests {
             order,
             vec!["identity", "system_guidelines", "memory_context"]
         );
+        // system_guidelines 落在 session_policy #20，走 system model channel。
+        let guidelines = plan
+            .entries
+            .iter()
+            .find(|entry| entry.frame_kind == "system_guidelines")
+            .expect("system_guidelines entry");
+        assert_eq!(
+            guidelines.delivery_phase,
+            agentdash_spi::hooks::ContextDeliveryPhase::SessionPolicy
+        );
+        assert_eq!(guidelines.delivery_order, 20);
+        assert_eq!(guidelines.model_channel, ContextModelChannel::System);
         let memory = plan
             .entries
             .iter()

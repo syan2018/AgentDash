@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "crates/agentdash-application-runtime-session/src/session/guidelines_context_frame.rs", "reason": "system_guidelines frame 构造与渲染验收"}
+{"file": "crates/agentdash-application-runtime-session/src/session/launch/preparation.rs", "reason": "TurnPreparer context frame 注入与 delivery plan 验收"}
+{"file": "packages/app-web/src/features/session/model/contextFrame.ts", "reason": "前端 ContextFrame parser 验收"}

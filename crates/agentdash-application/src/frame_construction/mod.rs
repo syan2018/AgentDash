@@ -38,9 +38,10 @@ use agentdash_application_vfs::VfsService;
 use crate::agent_run::RuntimeCommandRecord;
 use crate::agent_run::TerminalHookEffectBinding;
 use crate::agent_run::frame::{
-    AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchEnvelope,
-    FrameLaunchEnvelopeConstructionInput, FrameLaunchIntent, FrameLaunchSurface,
-    FrameRuntimeSurface, FrameSurfaceDraft, LaunchResolutionTrace,
+    AgentFrameBuilder, AgentFrameSurfaceExt, FrameLaunchContextProjection, FrameLaunchDiagnostics,
+    FrameLaunchEnvelope, FrameLaunchEnvelopeConstructionInput, FrameLaunchFrameRef,
+    FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
+    FrameSurfaceDraft, LaunchResolutionTrace,
 };
 use crate::agent_run::merge_executor_config_fields;
 use crate::agent_run::runtime_capability::replay_runtime_capability_transitions;
@@ -188,14 +189,12 @@ impl FrameConstructionService {
 
     pub(crate) fn assembler(&self) -> FrameRequestAssembler<'_> {
         FrameRequestAssembler::new(
-            self.vfs_service.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),
             self.lifecycle_surface_projection.as_ref(),
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
-        .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
     }
 
     pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
@@ -208,8 +207,6 @@ impl FrameConstructionService {
             self.lifecycle_surface_projection.as_ref(),
         )
         .with_audit_bus(self.audit_bus.clone())
-        .with_skill_discovery(&self.extra_skill_dirs, &self.skill_discovery_providers)
-        .with_memory_discovery(&self.memory_discovery_providers)
     }
 
     pub(crate) fn prompt_launch_path(
@@ -253,8 +250,63 @@ impl FrameConstructionService {
             runtime_session_id,
             requested_runtime_commands,
         )?;
-        envelope.pending_frame = Some(frame);
+        self.apply_launch_context_discovery(&mut envelope, command.identity().as_ref())
+            .await;
+        envelope.frame.pending_frame = Some(frame);
         Ok(envelope)
+    }
+
+    /// Launch-time runtime context discovery 单入口。
+    ///
+    /// 在 runtime surface 闭包 (`build_envelope_from_frame` → `close_frame_launch_surface`)
+    /// 之后，从最终 `FrameLaunchSurface.vfs` 一次性派生 guidelines / memory / skill baseline，
+    /// 写入 envelope `context` projection 并把 skill baseline 合入 launch capability state。
+    ///
+    /// 所有 envelope 构造路径（ProjectAgent owner、LifecycleNode、ExistingSurface、
+    /// companion modifier）都经此单入口，route 层不再各自 derive discovery。
+    pub(crate) async fn apply_launch_context_discovery(
+        &self,
+        envelope: &mut FrameLaunchEnvelope,
+        identity: Option<&agentdash_spi::AuthIdentity>,
+    ) {
+        use crate::agent_run::runtime_capability_projection::{
+            LaunchContextDiscoveryInput, derive_launch_context_discovery,
+        };
+
+        let launch_vfs = envelope.runtime.launch_surface.vfs.clone();
+        let discovery = derive_launch_context_discovery(LaunchContextDiscoveryInput {
+            vfs_service: self.vfs_service.as_ref(),
+            launch_vfs: &launch_vfs,
+            identity,
+            extra_skill_dirs: &self.extra_skill_dirs,
+            skill_discovery_providers: &self.skill_discovery_providers,
+            memory_discovery_providers: &self.memory_discovery_providers,
+            diagnostics_label: "launch_context_discovery",
+        })
+        .await;
+
+        // Skill baseline 合入 launch capability state 与 surface draft，
+        // 保持 capability delta 阶段消费统一发现结果。
+        envelope.runtime.launch_surface.capability_state.skill.skills =
+            discovery.session_capabilities.skills.clone();
+        if let Some(state) = envelope.runtime.surface_draft.capability_state.as_mut() {
+            state.skill.skills = discovery.session_capabilities.skills.clone();
+        }
+
+        // memory inventory 同步到 launch capability state 的 memory 维度，
+        // 保持 bounded-index 行为与既有契约一致。
+        envelope
+            .runtime
+            .launch_surface
+            .capability_state
+            .memory
+            .inventory = discovery.discovered_memory.clone();
+        if let Some(state) = envelope.runtime.surface_draft.capability_state.as_mut() {
+            state.memory.inventory = discovery.discovered_memory.clone();
+        }
+
+        envelope.context.discovered_guidelines = discovery.discovered_guidelines;
+        envelope.context.discovered_memory = discovery.discovered_memory;
     }
 }
 
@@ -367,8 +419,6 @@ pub(crate) fn build_envelope_from_frame(
     let mut capability_state = surface_draft.capability_state.clone();
     let mut mcp_servers = surface_draft.mcp_servers.clone();
     let mut context_bundle = None;
-    let mut discovered_guidelines = Vec::new();
-    let mut memory_inventory = agentdash_spi::MemoryDiscoveryOutput::default();
 
     if let Some(config) = command.prompt().executor_config.clone() {
         executor_config = Some(match executor_config {
@@ -398,8 +448,6 @@ pub(crate) fn build_envelope_from_frame(
         if let Some(bundle) = extras.context_bundle {
             context_bundle = Some(bundle);
         }
-        discovered_guidelines = extras.discovered_guidelines;
-        memory_inventory = extras.memory_inventory;
         if let Some(cs) = surface_draft.capability_state.clone() {
             capability_state = Some(cs);
         }
@@ -450,23 +498,34 @@ pub(crate) fn build_envelope_from_frame(
         .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
     Ok(FrameLaunchEnvelope {
-        surface,
-        surface_draft,
-        launch_surface: closed_surface.launch_surface,
-        pending_frame: None,
-        intent: FrameLaunchIntent {
+        frame: FrameLaunchFrameRef {
+            surface,
+            pending_frame: None,
+        },
+        command: FrameLaunchIntent {
             input,
             environment_variables,
             identity: command.identity(),
             terminal_hook_effect_binding: hook_binding,
-            discovered_guidelines,
-            discovered_memory: memory_inventory,
         },
-        working_directory,
-        context_bundle,
-        base_capability_state: closed_surface.base_capability_state,
-        runtime_backend_anchor,
-        resolution_trace: closed_surface.resolution_trace,
+        runtime: FrameLaunchRuntimeSurface {
+            surface_draft,
+            launch_surface: closed_surface.launch_surface,
+            working_directory,
+            runtime_backend_anchor,
+            base_capability_state: closed_surface.base_capability_state,
+        },
+        context: FrameLaunchContextProjection {
+            context_bundle,
+            // discovered_guidelines / discovered_memory 由 launch-time 单入口
+            // (`apply_launch_context_discovery`) 在 runtime surface 闭包后统一派生，
+            // route / extras 不再手填。
+            discovered_guidelines: Vec::new(),
+            discovered_memory: agentdash_spi::MemoryDiscoveryOutput::default(),
+        },
+        diagnostics: FrameLaunchDiagnostics {
+            resolution_trace: closed_surface.resolution_trace,
+        },
     })
 }
 
@@ -533,4 +592,178 @@ pub(crate) fn close_frame_launch_surface(
             pending_overlay_applied: true,
         },
     })
+}
+
+#[cfg(test)]
+mod existing_surface_discovery_tests {
+    //! ExistingSurface launch regression: 当 owner facts 缺失、只能凭已持久化的
+    //! AgentFrame surface 启动时，`build_envelope_from_frame` 必须把 frame 上的 VFS
+    //! 无损带进 launch surface，从而让 launch-time 单入口 discovery 能从同一份 VFS
+    //! 发现 AGENTS.md 并产出 `system_guidelines` 所需的 `DiscoveredGuideline`。
+    //!
+    //! 这是 Phase 4 新堵的缺口：此前 ExistingSurface route 跳过 owner bootstrap，
+    //! 若 launch surface 丢掉 frame VFS，`system_guidelines` 就会静默缺失。
+
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use agentdash_application_agentrun::agent_run::runtime_capability_projection::{
+        LaunchContextDiscoveryInput, derive_launch_context_discovery,
+    };
+    use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
+    use agentdash_application_vfs::{
+        ListOptions, ListResult, MountError, MountOperationContext, MountProvider,
+        MountProviderRegistry, PROVIDER_INLINE_FS, ReadResult, SearchQuery, SearchResult,
+        VfsService,
+    };
+    use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::workflow::AgentFrame;
+    use agentdash_spi::{AgentConfig, CapabilityState, ToolCluster, Vfs};
+    use uuid::Uuid;
+
+    use super::build_envelope_from_frame;
+
+    struct StaticFileProvider {
+        files: HashMap<String, String>,
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for StaticFileProvider {
+        fn provider_id(&self) -> &str {
+            PROVIDER_INLINE_FS
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.files
+                .get(path)
+                .cloned()
+                .map(|content| ReadResult::new(path, content))
+                .ok_or_else(|| MountError::NotFound(path.to_string()))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported("static provider".to_string()))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            Ok(ListResult {
+                entries: Vec::new(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Err(MountError::NotSupported("static provider".to_string()))
+        }
+    }
+
+    fn persisted_frame_with_agents_md() -> AgentFrame {
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: PROVIDER_INLINE_FS.to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "inline://workspace".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
+        capability_state.vfs.active = Some(vfs.clone());
+
+        let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 3, "existing_surface");
+        frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
+        frame.vfs_surface_json = Some(serde_json::to_value(&vfs).unwrap());
+        frame.execution_profile_json = Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+        frame
+    }
+
+    /// ExistingSurface 路径把 frame VFS 带进 launch surface，单入口 discovery
+    /// 从这份 VFS 发现 AGENTS.md，产出 `system_guidelines` 所需 guideline。
+    #[tokio::test]
+    async fn existing_surface_launch_discovers_agents_md_from_persisted_frame_vfs() {
+        let frame = persisted_frame_with_agents_md();
+        let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hello"), None);
+
+        // ExistingSurface route 的第一步：从已持久化 frame 构造 envelope，不走 owner bootstrap。
+        let envelope =
+            build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[])
+                .expect("build envelope from persisted frame");
+
+        // 回归保护：frame 上的 workspace mount 必须无损进入 launch surface VFS。
+        let launch_vfs = &envelope.runtime.launch_surface.vfs;
+        assert_eq!(launch_vfs.mounts.len(), 1);
+        assert_eq!(launch_vfs.mounts[0].id, "workspace");
+
+        // ExistingSurface route 的第二步（apply_launch_context_discovery 内核）：
+        // 从最终 launch surface VFS 派生 runtime context discovery。
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(StaticFileProvider {
+            files: HashMap::from([("AGENTS.md".to_string(), "使用中文交流".to_string())]),
+        }));
+        let vfs_service = VfsService::new(Arc::new(registry));
+
+        let discovery = derive_launch_context_discovery(LaunchContextDiscoveryInput {
+            vfs_service: &vfs_service,
+            launch_vfs,
+            identity: None,
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &[],
+            memory_discovery_providers: &[],
+            diagnostics_label: "existing_surface_test",
+        })
+        .await;
+
+        assert_eq!(discovery.discovered_guidelines.len(), 1);
+        assert_eq!(discovery.discovered_guidelines[0].file_name, "AGENTS.md");
+        assert_eq!(discovery.discovered_guidelines[0].mount_id, "workspace");
+        assert_eq!(discovery.discovered_guidelines[0].content, "使用中文交流");
+    }
+
+    /// 若持久化 frame 缺少 VFS surface，ExistingSurface 无法闭包 launch surface，
+    /// 应在构造阶段暴露而不是产出空 discovery（避免静默丢 guidelines）。
+    #[test]
+    fn existing_surface_without_vfs_rejects_launch_surface_close() {
+        let mut frame = persisted_frame_with_agents_md();
+        frame.vfs_surface_json = None;
+        let capability_without_vfs = CapabilityState::from_clusters([ToolCluster::Read]);
+        frame.effective_capability_json =
+            Some(serde_json::to_value(&capability_without_vfs).unwrap());
+        let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hi"), None);
+
+        let result =
+            build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[]);
+
+        assert!(result.is_err());
+    }
 }

@@ -23,7 +23,8 @@ pub use lifecycle_materialization::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
 pub use runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
+    FrameLaunchContextProjection, FrameLaunchDiagnostics, FrameLaunchEnvelope, FrameLaunchFrameRef,
+    FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
     LaunchResolutionTrace,
 };
 pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};

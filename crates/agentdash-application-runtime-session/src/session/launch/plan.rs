@@ -167,8 +167,8 @@ pub struct LaunchPlanInput {
 
 impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
-        let pending_frame = input.launch_envelope.pending_frame.clone();
-        let working_directory = input.launch_envelope.working_directory.clone();
+        let pending_frame = input.launch_envelope.frame.pending_frame.clone();
+        let working_directory = input.launch_envelope.runtime.working_directory.clone();
         let executor_config = input.launch_envelope.launch_executor_config().clone();
         let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
         let vfs = input.launch_envelope.launch_vfs().clone();
@@ -178,8 +178,12 @@ impl LaunchPlan {
         } else {
             None
         };
-        let identity = input.launch_envelope.intent.identity.clone();
-        let runtime_backend_anchor = input.launch_envelope.runtime_backend_anchor.clone();
+        let identity = input.launch_envelope.command.identity.clone();
+        let runtime_backend_anchor = input
+            .launch_envelope
+            .runtime
+            .runtime_backend_anchor
+            .clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -202,14 +206,26 @@ impl LaunchPlan {
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
             pending_transition_count,
-            vfs_source: input.launch_envelope.resolution_trace.vfs_source.clone(),
+            vfs_source: input
+                .launch_envelope
+                .diagnostics
+                .resolution_trace
+                .vfs_source
+                .clone(),
             pending_vfs_overlay_applied: input
                 .launch_envelope
+                .diagnostics
                 .resolution_trace
                 .pending_overlay_applied,
-            mcp_source: input.launch_envelope.resolution_trace.mcp_source.clone(),
+            mcp_source: input
+                .launch_envelope
+                .diagnostics
+                .resolution_trace
+                .mcp_source
+                .clone(),
             capability_source: input
                 .launch_envelope
+                .diagnostics
                 .resolution_trace
                 .capability_source
                 .clone(),
@@ -309,13 +325,17 @@ impl LaunchPlan {
             context_delivery_plan: None,
             assembled_tools: Vec::new(),
         };
-        let context_bundle = input.launch_envelope.context_bundle.clone();
+        let context_bundle = input.launch_envelope.context.context_bundle.clone();
         Self {
             pending_frame,
             resolved_payload: input.resolved_payload,
             title_hint,
-            discovered_guidelines: input.launch_envelope.intent.discovered_guidelines.clone(),
-            discovered_memory: input.launch_envelope.intent.discovered_memory.clone(),
+            discovered_guidelines: input
+                .launch_envelope
+                .context
+                .discovered_guidelines
+                .clone(),
+            discovered_memory: input.launch_envelope.context.discovered_memory.clone(),
             context_bundle,
             launch_path,
             restore,
@@ -359,8 +379,9 @@ mod tests {
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, resolve_launch_prompt_payload,
     };
     use agentdash_application_ports::frame_launch_envelope::{
-        FrameLaunchEnvelope, FrameLaunchIntent, FrameLaunchSurface, FrameRuntimeSurface,
-        LaunchResolutionTrace,
+        FrameLaunchContextProjection, FrameLaunchDiagnostics, FrameLaunchEnvelope,
+        FrameLaunchFrameRef, FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface,
+        FrameRuntimeSurface, LaunchResolutionTrace,
     };
     use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput, LaunchSource};
     use std::path::{Path, PathBuf};
@@ -495,35 +516,43 @@ mod tests {
                 .expect("launch plan tests must provide execution_profile"),
         };
         FrameLaunchEnvelope {
-            surface: FrameRuntimeSurface {
-                agent_id: uuid::Uuid::new_v4(),
-                frame_id: uuid::Uuid::new_v4(),
-                frame_revision: 1,
-                capability_surface: serde_json::Value::Null,
-                context_slice: serde_json::Value::Null,
-                vfs_surface: serde_json::Value::Null,
-                mcp_surface: serde_json::Value::Null,
-                runtime_session_id: Some("sess-launch".to_string()),
+            frame: FrameLaunchFrameRef {
+                surface: FrameRuntimeSurface {
+                    agent_id: uuid::Uuid::new_v4(),
+                    frame_id: uuid::Uuid::new_v4(),
+                    frame_revision: 1,
+                    capability_surface: serde_json::Value::Null,
+                    context_slice: serde_json::Value::Null,
+                    vfs_surface: serde_json::Value::Null,
+                    mcp_surface: serde_json::Value::Null,
+                    runtime_session_id: Some("sess-launch".to_string()),
+                },
+                pending_frame: None,
             },
-            launch_surface,
-            pending_frame: None,
-            intent: FrameLaunchIntent {
+            command: FrameLaunchIntent {
                 input: None,
                 environment_variables: HashMap::new(),
                 identity: None,
                 terminal_hook_effect_binding: None,
+            },
+            runtime: FrameLaunchRuntimeSurface {
+                launch_surface,
+                working_directory,
+                runtime_backend_anchor: None,
+                base_capability_state: construction.resolution.runtime_base_capability_state,
+            },
+            context: FrameLaunchContextProjection {
+                context_bundle: construction.context.bundle,
                 discovered_guidelines: construction.projections.discovered_guidelines,
                 discovered_memory: Default::default(),
             },
-            working_directory,
-            context_bundle: construction.context.bundle,
-            base_capability_state: construction.resolution.runtime_base_capability_state,
-            runtime_backend_anchor: None,
-            resolution_trace: LaunchResolutionTrace {
-                vfs_source: construction.resolution.vfs_source,
-                mcp_source: construction.resolution.mcp_source,
-                capability_source: construction.resolution.capability_source,
-                pending_overlay_applied: construction.resolution.pending_overlay_applied,
+            diagnostics: FrameLaunchDiagnostics {
+                resolution_trace: LaunchResolutionTrace {
+                    vfs_source: construction.resolution.vfs_source,
+                    mcp_source: construction.resolution.mcp_source,
+                    capability_source: construction.resolution.capability_source,
+                    pending_overlay_applied: construction.resolution.pending_overlay_applied,
+                },
             },
         }
     }
@@ -586,6 +615,30 @@ mod tests {
         assert!(execution.terminal_effects.durable_outbox_required);
     }
 
+    /// 全链路一环：envelope `context` projection 里的 discovered guidelines/memory
+    /// 必须无损进入 `LaunchPlan`，供 `TurnPreparer` 派生 `system_guidelines` /
+    /// `memory_context` context frame。route 层不再手填这些字段。
+    #[test]
+    fn launch_plan_carries_discovered_guidelines_from_envelope_context_projection() {
+        let mut input = input_for(PromptLaunchPath::OwnerBootstrap);
+        let guideline = DiscoveredGuideline {
+            file_name: "AGENTS.md".to_string(),
+            mount_id: "workspace".to_string(),
+            path: "AGENTS.md".to_string(),
+            content: "使用中文交流".to_string(),
+        };
+        input
+            .launch_envelope
+            .context
+            .discovered_guidelines = vec![guideline.clone()];
+
+        let execution = LaunchPlan::build(input);
+
+        assert_eq!(execution.discovered_guidelines.len(), 1);
+        assert_eq!(execution.discovered_guidelines[0].file_name, "AGENTS.md");
+        assert_eq!(execution.discovered_guidelines[0].content, "使用中文交流");
+    }
+
     #[test]
     fn launch_command_carries_source_intent_and_follow_up() {
         let command = LaunchCommand::local_relay_prompt_input(
@@ -638,16 +691,20 @@ mod tests {
             created_at: 3,
             source_turn_id: None,
         }];
-        input.launch_envelope.resolution_trace.vfs_source =
+        input.launch_envelope.diagnostics.resolution_trace.vfs_source =
             Some("runtime_command.pending_vfs_overlay".to_string());
         input
             .launch_envelope
+            .diagnostics
             .resolution_trace
             .pending_overlay_applied = true;
-        input.launch_envelope.resolution_trace.mcp_source =
+        input.launch_envelope.diagnostics.resolution_trace.mcp_source =
             Some("runtime_command.pending_transition".to_string());
-        input.launch_envelope.resolution_trace.capability_source =
-            Some("runtime_command.pending_transition".to_string());
+        input
+            .launch_envelope
+            .diagnostics
+            .resolution_trace
+            .capability_source = Some("runtime_command.pending_transition".to_string());
 
         let execution = LaunchPlan::build(input);
 

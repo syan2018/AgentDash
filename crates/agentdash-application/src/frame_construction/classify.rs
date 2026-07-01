@@ -67,14 +67,17 @@ pub(super) async fn route_and_compose(
             )));
         }
         (Some(ComposeRoute::ExistingSurface), None) => {
-            return build_envelope_from_frame(
+            let mut envelope = build_envelope_from_frame(
                 &frame,
                 None,
                 &input.command,
                 None,
                 &input.session_id,
                 &input.requested_runtime_commands,
-            );
+            )?;
+            svc.apply_launch_context_discovery(&mut envelope, input.command.identity().as_ref())
+                .await;
+            return Ok(envelope);
         }
         (None, Some(_)) => {
             return Err(ConnectorError::InvalidConfig(format!(

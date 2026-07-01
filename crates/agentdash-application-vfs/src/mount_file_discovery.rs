@@ -92,6 +92,26 @@ pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscovery
     max_size_bytes: 64 * 1024,
 }];
 
+// ─── 动态规则定义 ──────────────────────────────────────────────
+
+/// 运行时动态文件发现规则（由 skill / memory discovery provider 声明）。
+///
+/// 与 `MountFileDiscoveryRule` 的静态形态不同，本规则允许 provider 在运行时
+/// 描述 `exact_paths` / prefix 递归扫描 / 文件数上限等更灵活的搜索约束。
+/// `SkillDiscoveryVfsRule` 与 `MemoryDiscoveryVfsRule` 都可无损投影为本类型，
+/// 从而共用同一套 mount policy / read / list / size-limit / diagnostics 基础设施。
+#[derive(Debug, Clone)]
+pub struct DynamicMountFileDiscoveryRule {
+    pub key: String,
+    pub file_names: Vec<String>,
+    pub exact_paths: Vec<String>,
+    pub scan_prefixes: Vec<String>,
+    pub recursive: bool,
+    pub max_depth: Option<usize>,
+    pub max_files: Option<usize>,
+    pub max_size_bytes: u64,
+}
+
 // ─── 公共 API ─────────────────────────────────────────────────
 
 /// 扫描所有可读 mount，按规则列表发现约定文件。
@@ -193,8 +213,67 @@ pub async fn discover_memory_vfs_files(
     Vec<MemoryDiscoveryVfsFile>,
     Vec<MountFileDiscoveryDiagnostic>,
 ) {
-    let mut files = Vec::new();
-    let mut diagnostics = Vec::new();
+    let dynamic_rules = rules
+        .iter()
+        .map(memory_rule_to_dynamic)
+        .collect::<Vec<_>>();
+    let result = discover_dynamic_mount_files(service, vfs, &dynamic_rules, identity).await;
+    let files = result
+        .files
+        .into_iter()
+        .map(|file| MemoryDiscoveryVfsFile {
+            rule_key: file.rule_key,
+            mount_id: file.mount_id,
+            path: file.path,
+            content: file.content,
+            size_bytes: file.size_bytes,
+        })
+        .collect();
+    (files, result.diagnostics)
+}
+
+fn memory_rule_to_dynamic(rule: &MemoryDiscoveryVfsRule) -> DynamicMountFileDiscoveryRule {
+    DynamicMountFileDiscoveryRule {
+        key: normalized_dynamic_rule_key(&rule.key, "memory_discovery"),
+        file_names: rule.file_names.clone(),
+        exact_paths: rule.exact_paths.clone(),
+        scan_prefixes: rule.scan_prefixes.clone(),
+        recursive: rule.recursive,
+        max_depth: rule.max_depth,
+        max_files: rule.max_files,
+        max_size_bytes: rule.max_size_bytes,
+    }
+}
+
+/// 一个动态规则命中的文件（含 size_bytes，供 memory index bounded 逻辑使用）。
+#[derive(Debug, Clone)]
+pub struct DiscoveredDynamicFile {
+    pub rule_key: String,
+    pub mount_id: String,
+    pub path: String,
+    pub content: String,
+    pub size_bytes: Option<u64>,
+}
+
+/// 动态规则扫描结果。
+#[derive(Debug, Default)]
+pub struct DynamicMountFileDiscoveryResult {
+    pub files: Vec<DiscoveredDynamicFile>,
+    pub diagnostics: Vec<MountFileDiscoveryDiagnostic>,
+}
+
+/// 通用动态规则扫描入口。
+///
+/// 复用与静态 `discover_mount_files` 相同的 mount policy / read / list / size-limit /
+/// 空内容过滤 / 诊断基础设施，供 skill / memory 等 provider 声明的动态规则共用，
+/// 避免各 adapter 重复实现 mount 扫描逻辑。
+pub async fn discover_dynamic_mount_files(
+    service: &VfsService,
+    vfs: &Vfs,
+    rules: &[DynamicMountFileDiscoveryRule],
+    identity: Option<&AuthIdentity>,
+) -> DynamicMountFileDiscoveryResult {
+    let mut result = DynamicMountFileDiscoveryResult::default();
 
     for mount in &vfs.mounts {
         if !should_scan_mount_for_discovery(mount) {
@@ -202,7 +281,7 @@ pub async fn discover_memory_vfs_files(
 
                 mount_id = %mount.id,
                 provider = %mount.provider,
-                "跳过 memory VFS discovery mount"
+                "跳过 dynamic VFS discovery mount"
             );
             continue;
         }
@@ -212,15 +291,19 @@ pub async fn discover_memory_vfs_files(
 
         let has_list = mount.capabilities.contains(&MountCapability::List);
         for rule in rules {
-            let rule_key = normalized_memory_rule_key(rule);
+            let rule_key = normalized_dynamic_rule_key(&rule.key, "dynamic_discovery");
 
             for exact_path in &rule.exact_paths {
-                let Ok(path) =
-                    normalize_rule_path(&rule_key, &mount.id, exact_path, false, &mut diagnostics)
-                else {
+                let Ok(path) = normalize_rule_path(
+                    &rule_key,
+                    &mount.id,
+                    exact_path,
+                    false,
+                    &mut result.diagnostics,
+                ) else {
                     continue;
                 };
-                try_read_memory_vfs_file(
+                try_read_dynamic_file(
                     service,
                     vfs,
                     &mount.id,
@@ -228,8 +311,7 @@ pub async fn discover_memory_vfs_files(
                     &rule_key,
                     rule.max_size_bytes,
                     identity,
-                    &mut files,
-                    &mut diagnostics,
+                    &mut result,
                 )
                 .await;
             }
@@ -245,7 +327,7 @@ pub async fn discover_memory_vfs_files(
                     break;
                 }
                 let Ok(prefix) =
-                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut diagnostics)
+                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut result.diagnostics)
                 else {
                     continue;
                 };
@@ -281,8 +363,8 @@ pub async fn discover_memory_vfs_files(
                     if !matches_any_file_name(&candidate, &rule.file_names) {
                         continue;
                     }
-                    let before_len = files.len();
-                    try_read_memory_vfs_file(
+                    let before_len = result.files.len();
+                    try_read_dynamic_file(
                         service,
                         vfs,
                         &mount.id,
@@ -290,11 +372,10 @@ pub async fn discover_memory_vfs_files(
                         &rule_key,
                         rule.max_size_bytes,
                         identity,
-                        &mut files,
-                        &mut diagnostics,
+                        &mut result,
                     )
                     .await;
-                    if files.len() > before_len {
+                    if result.files.len() > before_len {
                         emitted_for_rule += 1;
                     }
                 }
@@ -302,7 +383,7 @@ pub async fn discover_memory_vfs_files(
         }
     }
 
-    (files, diagnostics)
+    result
 }
 
 // ─── 内部辅助 ─────────────────────────────────────────────────
@@ -342,10 +423,10 @@ fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
     )
 }
 
-fn normalized_memory_rule_key(rule: &MemoryDiscoveryVfsRule) -> String {
-    let key = rule.key.trim();
+fn normalized_dynamic_rule_key(key: &str, fallback: &str) -> String {
+    let key = key.trim();
     if key.is_empty() {
-        "memory_discovery".to_string()
+        fallback.to_string()
     } else {
         key.to_string()
     }
@@ -368,7 +449,7 @@ fn normalize_rule_path(
     })
 }
 
-async fn try_read_memory_vfs_file(
+async fn try_read_dynamic_file(
     service: &VfsService,
     vfs: &Vfs,
     mount_id: &str,
@@ -376,8 +457,7 @@ async fn try_read_memory_vfs_file(
     rule_key: &str,
     max_size_bytes: u64,
     identity: Option<&AuthIdentity>,
-    files: &mut Vec<MemoryDiscoveryVfsFile>,
-    diagnostics: &mut Vec<MountFileDiscoveryDiagnostic>,
+    result: &mut DynamicMountFileDiscoveryResult,
 ) {
     let target = ResourceRef {
         mount_id: mount_id.to_string(),
@@ -390,7 +470,7 @@ async fn try_read_memory_vfs_file(
 
     let content_len = read.content.len() as u64;
     if content_len > max_size_bytes {
-        diagnostics.push(MountFileDiscoveryDiagnostic {
+        result.diagnostics.push(MountFileDiscoveryDiagnostic {
             rule_key: rule_key.to_string(),
             mount_id: mount_id.to_string(),
             path: path.to_string(),
@@ -402,7 +482,7 @@ async fn try_read_memory_vfs_file(
         return;
     }
 
-    files.push(MemoryDiscoveryVfsFile {
+    result.files.push(DiscoveredDynamicFile {
         rule_key: rule_key.to_string(),
         mount_id: mount_id.to_string(),
         path: read.path,
@@ -556,6 +636,14 @@ async fn list_root_children(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::MountProviderRegistry;
+    use crate::service::VfsService;
+    use agentdash_spi::platform::mount::{
+        MountError, MountOperationContext, MountProvider, SearchQuery, SearchResult,
+    };
+    use crate::types::{ListResult, ReadResult};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn mount(provider: &str, metadata: serde_json::Value) -> Mount {
         Mount {
@@ -662,5 +750,208 @@ mod tests {
             "km",
             serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "auto" })
         )));
+    }
+
+    // ─── 动态规则扫描共享 policy 测试 ──────────────────────────
+
+    struct StaticFileProvider {
+        files: HashMap<String, String>,
+    }
+
+    #[async_trait::async_trait]
+    impl MountProvider for StaticFileProvider {
+        fn provider_id(&self) -> &str {
+            PROVIDER_INLINE_FS
+        }
+
+        fn supported_capabilities(&self) -> Vec<&str> {
+            vec!["read", "list"]
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            self.files
+                .get(path)
+                .cloned()
+                .map(|content| ReadResult::new(path, content))
+                .ok_or_else(|| MountError::NotFound(path.to_string()))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported("static provider".to_string()))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            let prefix = if options.path == "." {
+                String::new()
+            } else {
+                format!("{}/", options.path.trim_end_matches('/'))
+            };
+            let mut dirs = std::collections::BTreeSet::new();
+            for path in self.files.keys() {
+                let Some(rest) = path.strip_prefix(&prefix) else {
+                    continue;
+                };
+                if let Some((child, _)) = rest.split_once('/') {
+                    dirs.insert(format!("{prefix}{child}"));
+                }
+            }
+            Ok(ListResult {
+                entries: dirs.into_iter().map(RuntimeFileEntry::dir).collect(),
+            })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            Err(MountError::NotSupported("static provider".to_string()))
+        }
+    }
+
+    fn static_vfs(provider: &str, files: HashMap<String, String>) -> (VfsService, Vfs) {
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(StaticFileProvider { files }));
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![mount(provider, serde_json::Value::Null)],
+            default_mount_id: Some(provider.to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        (service, vfs)
+    }
+
+    fn skill_prefix_rule() -> DynamicMountFileDiscoveryRule {
+        DynamicMountFileDiscoveryRule {
+            key: "skill_md".to_string(),
+            file_names: vec!["SKILL.md".to_string()],
+            exact_paths: Vec::new(),
+            scan_prefixes: vec![".agents/skills".to_string(), "skills".to_string()],
+            recursive: false,
+            max_depth: None,
+            max_files: None,
+            max_size_bytes: 64 * 1024,
+        }
+    }
+
+    #[tokio::test]
+    async fn dynamic_scanner_discovers_prefix_and_exact_files() {
+        let (service, vfs) = static_vfs(
+            PROVIDER_INLINE_FS,
+            HashMap::from([
+                (
+                    "skills/review/SKILL.md".to_string(),
+                    "review skill".to_string(),
+                ),
+                ("MEMORY.md".to_string(), "memory index".to_string()),
+            ]),
+        );
+        let mut rule = skill_prefix_rule();
+        rule.exact_paths = vec!["MEMORY.md".to_string()];
+
+        let result = discover_dynamic_mount_files(&service, &vfs, &[rule], None).await;
+
+        let paths = result
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"skills/review/SKILL.md"));
+        assert!(paths.contains(&"MEMORY.md"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_scanner_filters_empty_content() {
+        let (service, vfs) = static_vfs(
+            PROVIDER_INLINE_FS,
+            HashMap::from([("skills/blank/SKILL.md".to_string(), "   \n\t".to_string())]),
+        );
+
+        let result = discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
+
+        assert!(result.files.is_empty());
+        assert!(result.diagnostics.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dynamic_scanner_emits_oversized_diagnostic() {
+        let (service, vfs) = static_vfs(
+            PROVIDER_INLINE_FS,
+            HashMap::from([(
+                "skills/big/SKILL.md".to_string(),
+                "x".repeat(128).to_string(),
+            )]),
+        );
+        let mut rule = skill_prefix_rule();
+        rule.max_size_bytes = 8;
+
+        let result = discover_dynamic_mount_files(&service, &vfs, &[rule], None).await;
+
+        assert!(result.files.is_empty());
+        assert_eq!(result.diagnostics.len(), 1);
+        assert!(result.diagnostics[0].message.contains("文件过大"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_scanner_respects_deny_metadata() {
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(StaticFileProvider {
+            files: HashMap::from([(
+                "skills/review/SKILL.md".to_string(),
+                "review".to_string(),
+            )]),
+        }));
+        let service = VfsService::new(Arc::new(registry));
+        let vfs = Vfs {
+            mounts: vec![mount(
+                PROVIDER_INLINE_FS,
+                serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "deny" }),
+            )],
+            default_mount_id: Some(PROVIDER_INLINE_FS.to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let result = discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
+
+        assert!(result.files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn memory_adapter_reuses_dynamic_scanner_and_reports_size_bytes() {
+        let (service, vfs) = static_vfs(
+            PROVIDER_INLINE_FS,
+            HashMap::from([("MEMORY.md".to_string(), "memory index".to_string())]),
+        );
+        let mut rule = MemoryDiscoveryVfsRule::new("memory-index");
+        rule.exact_paths = vec!["MEMORY.md".to_string()];
+
+        let (files, diagnostics) =
+            discover_memory_vfs_files(&service, &vfs, std::slice::from_ref(&rule), None).await;
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "MEMORY.md");
+        assert_eq!(files[0].size_bytes, Some("memory index".len() as u64));
     }
 }

@@ -22,7 +22,7 @@
 //! compose 函数内部共享 lifecycle / companion building blocks，不再重复散落。
 //! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchPlan` / outbox。
 
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::collections::BTreeSet;
 
 use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
@@ -30,7 +30,7 @@ use agentdash_domain::common::AgentConfig;
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedureContract, LifecycleRun, WorkflowGraph,
 };
-use agentdash_spi::{AuthIdentity, CapabilityScope, CapabilityScopeCtx, SkillDiscoveryProvider};
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -42,9 +42,6 @@ use super::activity_activation::{
 use super::assembly::slice_companion_bundle;
 use super::assembly::{
     FrameAssemblyBuilder, FrameAssemblyLaunchExtras, project_frame_assembly_to_frame,
-};
-use crate::agent_run::runtime_capability_projection::{
-    RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline,
 };
 use crate::agent_run::{ResolvedProjectAgentContext, build_project_agent_context};
 use crate::capability::{
@@ -59,7 +56,7 @@ use crate::context::{
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::runtime::McpServerSummary;
-use agentdash_application_vfs::{VfsService, apply_project_vfs_mount_exposure_grants};
+use agentdash_application_vfs::apply_project_vfs_mount_exposure_grants;
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 1:内部 builder prompt 投影
@@ -74,7 +71,6 @@ use agentdash_application_vfs::{VfsService, apply_project_vfs_mount_exposure_gra
 /// 由 `AppState` / 各 handler 构造后传入各 compose 函数,避免每个 compose
 /// 签名都携带 6-7 个 service 参数。
 pub struct FrameRequestAssembler<'a> {
-    pub vfs_service: &'a VfsService,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
     pub lifecycle_surface_projection:
@@ -85,11 +81,6 @@ pub struct FrameRequestAssembler<'a> {
     /// 生产路径由 `AppState` 注入 `InMemoryContextAuditBus` 共享实例。
     pub audit_bus: Option<SharedContextAuditBus>,
     pub companion_parent_facts_provider: Option<&'a dyn CompanionParentFactsProvider>,
-    /// Host Integration 提供的静态/dynamic skill discovery 来源。
-    ///
-    /// 只在 session capability baseline 中按 provider 返回的 exposure 投影默认可见 skills。
-    pub extra_skill_dirs: &'a [PathBuf],
-    pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
 }
 
 #[async_trait]
@@ -115,20 +106,16 @@ impl CompanionParentFactsProvider
 
 impl<'a> FrameRequestAssembler<'a> {
     pub fn new(
-        vfs_service: &'a VfsService,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
         lifecycle_surface_projection: &'a dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort,
     ) -> Self {
         Self {
-            vfs_service,
             repos,
             platform_config,
             lifecycle_surface_projection,
             audit_bus: None,
             companion_parent_facts_provider: None,
-            extra_skill_dirs: &[],
-            skill_discovery_providers: &[],
         }
     }
 
@@ -143,16 +130,6 @@ impl<'a> FrameRequestAssembler<'a> {
         provider: &'a dyn CompanionParentFactsProvider,
     ) -> Self {
         self.companion_parent_facts_provider = Some(provider);
-        self
-    }
-
-    pub fn with_skill_discovery(
-        mut self,
-        extra_skill_dirs: &'a [PathBuf],
-        skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
-    ) -> Self {
-        self.extra_skill_dirs = extra_skill_dirs;
-        self.skill_discovery_providers = skill_discovery_providers;
         self
     }
 
@@ -198,13 +175,8 @@ impl<'a> FrameRequestAssembler<'a> {
         )
         .await?;
         if let Some(context) = selected_context.as_ref() {
-            self.resolve_selected_companion_capabilities(
-                &mut prepared,
-                context,
-                spec.slice_mode,
-                spec.identity.as_ref(),
-            )
-            .await?;
+            self.resolve_selected_companion_capabilities(&mut prepared, context, spec.slice_mode)
+                .await?;
         }
         Ok(project_frame_assembly_to_frame(frame_builder, prepared))
     }
@@ -398,7 +370,6 @@ impl<'a> FrameRequestAssembler<'a> {
         prepared: &mut FrameAssemblyBuilder,
         context: &ResolvedProjectAgentContext,
         slice_mode: CompanionSliceMode,
-        identity: Option<&AuthIdentity>,
     ) -> Result<(), String> {
         let active_vfs = prepared.vfs.as_ref();
         let cap_input = CapabilityResolverInput {
@@ -430,19 +401,8 @@ impl<'a> FrameRequestAssembler<'a> {
         let mut capability_state =
             CapabilityResolver::resolve_checked(&cap_input, self.platform_config)?;
         capability_state = CapabilityResolver::apply_companion_slice(capability_state, slice_mode);
-
-        if let Some(caps) = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
-            vfs_service: Some(self.vfs_service),
-            active_vfs,
-            identity,
-            extra_skill_dirs: self.extra_skill_dirs,
-            skill_discovery_providers: self.skill_discovery_providers,
-            diagnostics_label: "companion_selected_project_agent",
-        })
-        .await
-        {
-            capability_state.skill.skills = caps.skills;
-        }
+        // Skill baseline / guidelines / memory 由 launch-time 单入口在 runtime surface
+        // 闭包后从最终 launch VFS 统一派生，companion route 不再各自 derive skill baseline。
 
         prepared.mcp_servers = capability_state.tool.mcp_servers.clone();
         prepared.capability_state = Some(capability_state);
@@ -799,7 +759,6 @@ pub struct CompanionParentSpec<'a> {
     pub dispatch_prompt: String,
     pub selected_project_agent_id: Option<Uuid>,
     pub selected_agent_key: Option<String>,
-    pub identity: Option<AuthIdentity>,
 }
 
 pub struct CompanionParentWorkflowSpec<'a> {

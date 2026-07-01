@@ -29,6 +29,87 @@ policy、prompt plan 或 follow-up plan；它不进入 connector-facing `Executi
 只消费本次 prompt 的闭包事实，原因是 connector 不应理解 ProjectAgent、Companion、Routine、
 Local relay 等 application 来源差异。
 
+## `FrameLaunchEnvelope` 五段分层
+
+`FrameLaunchEnvelope` 是 frame construction 到 launch planner 的唯一传递物。顶层字段
+按语义分五组，让调用点无需从平铺字段猜测事实来源。
+
+定义位置：`crates/agentdash-application-agentrun/src/agent_run/frame/runtime_launch.rs`
+（AgentRun 侧），投影为 `crates/agentdash-application-ports/src/frame_launch_envelope.rs`
+的中立 DTO 供 runtime-session 消费。
+
+```rust
+pub struct FrameLaunchEnvelope {
+    pub frame: FrameLaunchFrameRef,          // 持久化 frame surface + pending revision
+    pub command: FrameLaunchIntent,          // 用户请求 intent
+    pub runtime: FrameLaunchRuntimeSurface,  // 闭包后的 execution surface
+    pub context: FrameLaunchContextProjection, // launch-time context discovery 投影
+    pub diagnostics: FrameLaunchDiagnostics, // resolution trace
+}
+```
+
+| 分组 | 只承载 | 不承载 |
+|---|---|---|
+| `frame` | `FrameRuntimeSurface`（AgentFrame 持久化投影）、`pending_frame` revision | 任何 command/discovery 派生物 |
+| `command` | `input`、`environment_variables`、`identity`、`terminal_hook_effect_binding` | VFS/capability/guidelines/memory |
+| `runtime` | 闭包后的 `launch_surface`（capability/VFS/MCP/execution profile）、`working_directory`、`runtime_backend_anchor`、`base_capability_state`、写入 revision 的 `surface_draft` | 用户请求 intent、discovery 派生物 |
+| `context` | `context_bundle`、`discovered_guidelines`、`discovered_memory` | surface 闭包字段 |
+| `diagnostics` | `resolution_trace`（vfs/mcp/capability source、pending overlay 标记） | 任何 launch 语义事实 |
+
+约束：`discovered_guidelines` / `discovered_memory` 只属于 `context` 分组，不再作为
+`FrameLaunchIntent`（command）字段；`system_guidelines` frame 是否出现完全由 discovery
+result 与 frame builder 的空内容过滤决定，route 层不手写空 guidelines/memory。
+
+## Runtime Context Discovery 单入口
+
+AGENTS.md（project guidelines）、Skill、Memory 都是"基于当前 runtime surface 派生的
+模型可见上下文"，必须在最终 launch surface 闭包后从同一份 VFS 派生一次。
+
+调用时机：
+
+```text
+frame route compose / existing surface
+  -> build/read FrameSurfaceDraft
+  -> close_frame_launch_surface  (得到 FrameLaunchSurface.vfs)
+  -> FrameConstructionService::apply_launch_context_discovery
+       -> derive_launch_context_discovery(LaunchContextDiscoveryInput { launch_vfs, identity, skill/memory providers, extra_skill_dirs })
+  -> 写入 envelope.context (discovered_guidelines / discovered_memory) 与 launch_surface.capability_state.skill/memory baseline
+  -> LaunchPlan -> TurnPreparer context frames
+```
+
+单入口位置：`crates/agentdash-application-agentrun/src/agent_run/runtime_capability_projection.rs`
+的 `derive_launch_context_discovery`；owner/existing-surface 装配后的统一调用在
+`crates/agentdash-application/src/frame_construction/mod.rs` 的
+`FrameConstructionService::apply_launch_context_discovery`。
+
+VFS 文件扫描的唯一 owner 是 `agentdash-application-vfs::mount_file_discovery`
+（`discover_mount_files` / `discover_dynamic_mount_files`）：mount auto-scan policy、
+metadata allow/deny、path normalization、read/list、identity 透传、recursive traversal、
+max file size diagnostics、空内容过滤都在此。Guideline / Memory / Skill 只保留 adapter：
+
+- Guideline：`DiscoveredMountFile -> DiscoveredGuideline`（`BUILTIN_GUIDELINE_RULES`）。
+- Memory：`MemoryDiscoveryVfsRule -> MemoryDiscoveryVfsFile`（`discover_memory_vfs_files`）。
+- Skill：`SkillDiscoveryVfsRule -> SkillDiscoveryVfsFile`（`discover_skill_vfs_files`）。
+
+`agentdash-application-skill` 不再复制 mount scanning helper，只保留 SKILL.md
+frontmatter 解析、name/description validation、duplicate name diagnostics 与
+`SkillRef`/capability projection。
+
+### Route 覆盖矩阵
+
+所有 `FrameLaunchEnvelope` 构造路径都消费同一个 discovery output，不各自决定是否 derive：
+
+| Route | Discovery source | 入口 |
+|---|---|---|
+| ProjectAgent owner compose | final launch surface VFS | `apply_launch_context_discovery` |
+| LifecycleNode compose | final launch surface VFS | `apply_launch_context_discovery` |
+| ExistingSurface | 已持久化 frame 的 launch surface VFS | `classify.rs` ExistingSurface 分支显式调用 `apply_launch_context_discovery` |
+| Companion owner modifier | 子 session slice/modifier 后的 launch surface VFS | `compose_pending_frame` -> `apply_launch_context_discovery` |
+
+ExistingSurface 是此前最容易漏掉 `system_guidelines` 的路径（跳过 owner bootstrap），
+现由 classify route 强制走同一单入口，回归测试见
+`frame_construction::existing_surface_discovery_tests`。
+
 ## `ExecutionSessionFrame` — Who + Where
 
 ```rust

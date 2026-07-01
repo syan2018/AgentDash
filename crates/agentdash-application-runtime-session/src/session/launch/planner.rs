@@ -60,20 +60,20 @@ impl<'a> LaunchPlanner<'a> {
         let sid = input.session_id.to_string();
         let command = input.command;
 
-        let working_directory = input.launch_envelope.working_directory.clone();
+        let working_directory = input.launch_envelope.runtime.working_directory.clone();
         let executor_config = input.launch_envelope.launch_executor_config().clone();
         let capability_state = input.launch_envelope.launch_capability_state().clone();
 
-        let mut context_bundle = input.launch_envelope.context_bundle.clone();
+        let mut context_bundle = input.launch_envelope.context.context_bundle.clone();
         let terminal_hook_effect_binding = input
             .launch_envelope
-            .intent
+            .command
             .terminal_hook_effect_binding
             .clone();
         let typed_vfs = input.launch_envelope.launch_vfs().clone();
-        let environment_variables = input.launch_envelope.intent.environment_variables.clone();
-        let input_blocks = input.launch_envelope.intent.input.clone();
-        let base_capability_override = input.launch_envelope.base_capability_state.clone();
+        let environment_variables = input.launch_envelope.command.environment_variables.clone();
+        let input_blocks = input.launch_envelope.command.input.clone();
+        let base_capability_override = input.launch_envelope.runtime.base_capability_state.clone();
 
         let mut prompt_input = command.prompt().clone();
         if let Some(blocks) = input_blocks.clone() {
@@ -126,8 +126,8 @@ impl<'a> LaunchPlanner<'a> {
             .resolve_hook_runtime(
                 input.session_id,
                 input.turn_id,
-                input.launch_envelope.surface.frame_id,
-                input.launch_envelope.pending_frame.as_ref(),
+                input.launch_envelope.frame.surface.frame_id,
+                input.launch_envelope.frame.pending_frame.as_ref(),
                 &executor_config,
                 &working_directory,
                 is_owner_bootstrap,
@@ -246,14 +246,14 @@ impl<'a> LaunchPlanner<'a> {
                 input.turn_id,
                 &input.planning_input,
                 Some(&typed_vfs),
-                input.launch_envelope.runtime_backend_anchor.as_ref(),
+                input.launch_envelope.runtime.runtime_backend_anchor.as_ref(),
                 &executor_config.executor,
                 command.reason_tag(),
             )
             .await?;
         // 将更新后的 context_bundle 写回 envelope
         let mut launch_envelope = input.launch_envelope;
-        launch_envelope.context_bundle = context_bundle.clone();
+        launch_envelope.context.context_bundle = context_bundle.clone();
         let launch_plan = LaunchPlan::build(LaunchPlanInput {
             resolved_payload,
             launch_envelope,

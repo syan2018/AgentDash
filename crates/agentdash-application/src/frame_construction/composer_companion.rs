@@ -20,7 +20,6 @@ pub(super) async fn compose_project_agent_owner_modifier(
     input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
-    let identity = command.identity();
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
     let (builder, extras) = svc
@@ -35,7 +34,6 @@ pub(super) async fn compose_project_agent_owner_modifier(
                 dispatch_prompt: companion.dispatch_prompt,
                 selected_project_agent_id: companion.selected_project_agent_id,
                 selected_agent_key: companion.selected_agent_key.clone(),
-                identity,
             },
         )
         .await
@@ -59,7 +57,6 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
     input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
-    let identity = command.identity();
     let workflow = companion.workflow.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!(
             "RuntimeSession {} 的 LifecycleNode companion modifier 缺少 workflow facts",
@@ -81,7 +78,6 @@ pub(super) async fn compose_lifecycle_node_owner_modifier(
                     dispatch_prompt: companion.dispatch_prompt,
                     selected_project_agent_id: companion.selected_project_agent_id,
                     selected_agent_key: companion.selected_agent_key.clone(),
-                    identity,
                 },
                 run: &workflow.run,
                 orchestration_id: workflow.orchestration_id,

@@ -1,0 +1,8 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "crates/agentdash-application/src/frame_construction/mod.rs", "reason": "FrameLaunchEnvelope 构造与 discovered context 投递入口"}
+{"file": "crates/agentdash-application-vfs/src/mount_file_discovery.rs", "reason": "VFS mount 文件发现的目标统一归属"}
+{"file": "crates/agentdash-application/src/frame_construction/assembly.rs", "reason": "FrameAssemblyLaunchExtras 与 launch-only context 数据桥"}
+{"file": "crates/agentdash-application-skill/src/discovery.rs", "reason": "Skill VFS-first discovery 当前重复 scanner"}
+{"file": "crates/agentdash-application/src/frame_construction/owner_bootstrap.rs", "reason": "Owner bootstrap 当前 discovery 派生位置"}
+{"file": "crates/agentdash-application-skill/src/skill/loader.rs", "reason": "Builtin Skill loader 当前重复 mount scanning"}
+{"file": "crates/agentdash-application-agentrun/src/agent_run/frame/runtime_launch.rs", "reason": "FrameLaunchEnvelope 与 FrameLaunchIntent 类型定义，需要纳入 envelope 分层收束"}

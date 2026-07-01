@@ -62,6 +62,77 @@ pub struct RuntimeCapabilityProjection {
     pub discovered_memory: MemoryDiscoveryOutput,
 }
 
+/// Launch-time runtime context discovery 单入口输入。
+///
+/// 输入必须是最终闭包后的 launch surface VFS（`FrameLaunchSurface.vfs`）与当前身份、
+/// skill / memory discovery provider 列表；单入口从这份唯一事实源派生 guidelines、
+/// memory 与 skill baseline，避免各 launch route 各自决定是否发现。
+#[derive(Clone, Copy)]
+pub struct LaunchContextDiscoveryInput<'a> {
+    pub vfs_service: &'a VfsService,
+    /// 最终闭包后的 launch surface VFS。
+    pub launch_vfs: &'a Vfs,
+    pub identity: Option<&'a AuthIdentity>,
+    pub extra_skill_dirs: &'a [PathBuf],
+    pub skill_discovery_providers: &'a [Arc<dyn SkillDiscoveryProvider>],
+    pub memory_discovery_providers: &'a [Arc<dyn MemoryDiscoveryProvider>],
+    pub diagnostics_label: &'static str,
+}
+
+/// Launch-time runtime context discovery 单入口输出。
+///
+/// `session_capabilities` 承载 skill baseline 投影（供 capability delta 阶段消费），
+/// `discovered_guidelines` / `discovered_memory` 进入 envelope `context` projection。
+#[derive(Debug, Clone, Default)]
+pub struct LaunchContextDiscoveryOutput {
+    pub session_capabilities: SessionBaselineCapabilities,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub discovered_memory: MemoryDiscoveryOutput,
+}
+
+/// 从最终 launch surface VFS 一次性派生 runtime context discovery。
+///
+/// 所有 envelope 构造路径（ProjectAgent owner、LifecycleNode、ExistingSurface、
+/// companion modifier）都应在 runtime surface 闭包之后调用本入口，而不是各自
+/// 决定是否 derive guidelines/memory/skill baseline。
+pub async fn derive_launch_context_discovery(
+    input: LaunchContextDiscoveryInput<'_>,
+) -> LaunchContextDiscoveryOutput {
+    let session_capabilities = derive_runtime_skill_baseline(RuntimeCapabilityProjectionInput {
+        vfs_service: Some(input.vfs_service),
+        active_vfs: Some(input.launch_vfs),
+        identity: input.identity,
+        extra_skill_dirs: input.extra_skill_dirs,
+        skill_discovery_providers: input.skill_discovery_providers,
+        diagnostics_label: input.diagnostics_label,
+    })
+    .await
+    .unwrap_or_default();
+
+    let discovered_guidelines = derive_runtime_guidelines(
+        input.vfs_service,
+        input.launch_vfs,
+        input.identity,
+        input.diagnostics_label,
+    )
+    .await;
+
+    let discovered_memory = derive_runtime_memory_inventory(RuntimeMemoryProjectionInput {
+        vfs_service: Some(input.vfs_service),
+        active_vfs: Some(input.launch_vfs),
+        identity: input.identity,
+        memory_discovery_providers: input.memory_discovery_providers,
+        diagnostics_label: input.diagnostics_label,
+    })
+    .await;
+
+    LaunchContextDiscoveryOutput {
+        session_capabilities,
+        discovered_guidelines,
+        discovered_memory,
+    }
+}
+
 pub async fn derive_runtime_capability_projection(
     input: RuntimeCapabilityProjectionInput<'_>,
 ) -> RuntimeCapabilityProjection {
@@ -1464,6 +1535,57 @@ mod tests {
         .await;
 
         let source = &output.clusters[0].sources[0];
+        assert_eq!(source.index_status, MemoryIndexStatus::Present);
+        assert_eq!(
+            source.bounded_index_content.as_deref(),
+            Some("- [Workflow notes](topics/workflow.md)")
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_context_discovery_derives_guidelines_memory_and_skill_from_single_vfs() {
+        let (service, vfs) = memory_vfs(HashMap::from([
+            ("AGENTS.md".to_string(), "使用中文交流".to_string()),
+            (
+                "skills/review/SKILL.md".to_string(),
+                "Review changes from VFS".to_string(),
+            ),
+            (
+                "MEMORY.md".to_string(),
+                "- [Workflow notes](topics/workflow.md)".to_string(),
+            ),
+        ]));
+        let skill_provider = Arc::new(ProjectionSkillProvider);
+        let skill_providers: Vec<Arc<dyn SkillDiscoveryProvider>> = vec![skill_provider];
+        let memory_provider = Arc::new(ProjectionMemoryProvider {
+            max_size_bytes: 1024,
+        });
+        let memory_providers: Vec<Arc<dyn MemoryDiscoveryProvider>> = vec![memory_provider];
+
+        let output = derive_launch_context_discovery(LaunchContextDiscoveryInput {
+            vfs_service: &service,
+            launch_vfs: &vfs,
+            identity: None,
+            extra_skill_dirs: &[],
+            skill_discovery_providers: &skill_providers,
+            memory_discovery_providers: &memory_providers,
+            diagnostics_label: "test",
+        })
+        .await;
+
+        assert_eq!(output.discovered_guidelines.len(), 1);
+        assert_eq!(output.discovered_guidelines[0].file_name, "AGENTS.md");
+        assert_eq!(output.discovered_guidelines[0].content, "使用中文交流");
+
+        assert!(
+            output
+                .session_capabilities
+                .skills
+                .iter()
+                .any(|skill| skill.capability_key == "test.vfs/review")
+        );
+
+        let source = &output.discovered_memory.clusters[0].sources[0];
         assert_eq!(source.index_status, MemoryIndexStatus::Present);
         assert_eq!(
             source.bounded_index_content.as_deref(),

@@ -1,7 +1,10 @@
 import { api } from "../api/client";
 import type {
+  DirectoryGroupResolveResponse,
   DirectoryGroupSearchResponse,
+  DirectoryResolveRequest,
   DirectoryTreeResponse,
+  DirectoryUserResolveResponse,
   DirectoryUserSearchResponse,
 } from "../generated/auth-contracts";
 
@@ -51,6 +54,12 @@ export async function fetchDirectoryUsers(
   );
 }
 
+export async function resolveDirectoryUser(
+  request: DirectoryResolveRequest,
+): Promise<DirectoryUserResolveResponse> {
+  return api.post<DirectoryUserResolveResponse>("/directory/users/resolve", request);
+}
+
 export async function fetchDirectoryGroups(
   options: DirectorySearchOptions = {},
 ): Promise<DirectoryGroupSearchResponse> {
@@ -61,6 +70,12 @@ export async function fetchDirectoryGroups(
       cursor: options.cursor,
     })}`,
   );
+}
+
+export async function resolveDirectoryGroup(
+  request: DirectoryResolveRequest,
+): Promise<DirectoryGroupResolveResponse> {
+  return api.post<DirectoryGroupResolveResponse>("/directory/groups/resolve", request);
 }
 
 export async function fetchDirectoryGroupTree(

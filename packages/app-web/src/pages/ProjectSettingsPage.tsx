@@ -21,6 +21,8 @@ import { UserAvatar } from "../components/ui/user-avatar";
 import {
   fetchDirectoryGroups,
   fetchDirectoryUsers,
+  resolveDirectoryGroup,
+  resolveDirectoryUser,
 } from "../services/directory";
 import {
   mergeDirectoryUsers,
@@ -246,6 +248,36 @@ export function ProjectSettingsPage() {
     setDirectoryGroupsStatus(statusFrom(groupsResponse));
   }, [rememberDirectoryGroups, rememberDirectoryUsers]);
 
+  const hydrateDirectorySubjectsForGrants = useCallback(async (grantItems: ProjectSubjectGrant[]) => {
+    const userIds = Array.from(new Set(
+      grantItems
+        .filter((grant) => grant.subject_type === "user")
+        .map((grant) => grant.subject_id),
+    ));
+    const groupIds = Array.from(new Set(
+      grantItems
+        .filter((grant) => grant.subject_type === "group")
+        .map((grant) => grant.subject_id),
+    ));
+    const [userResults, groupResults] = await Promise.all([
+      Promise.allSettled(userIds.map((key) => resolveDirectoryUser({ key }))),
+      Promise.allSettled(groupIds.map((key) => resolveDirectoryGroup({ key }))),
+    ]);
+
+    const resolvedUsers = userResults
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof resolveDirectoryUser>>> =>
+        result.status === "fulfilled",
+      )
+      .map((result) => result.value.item);
+    const resolvedGroups = groupResults
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof resolveDirectoryGroup>>> =>
+        result.status === "fulfilled",
+      )
+      .map((result) => result.value.item);
+    rememberDirectoryUsers(resolvedUsers);
+    rememberDirectoryGroups(resolvedGroups);
+  }, [rememberDirectoryGroups, rememberDirectoryUsers]);
+
   useEffect(() => {
     if (activeTab !== "management" || !project?.access.can_manage_sharing) return;
     let cancelled = false;
@@ -253,8 +285,11 @@ export function ProjectSettingsPage() {
     void (async () => {
       setIsDirectoryLoading(true);
       try {
-        await fetchProjectGrants(project.id);
-        await loadDirectorySnapshot();
+        const grantItems = await fetchProjectGrants(project.id);
+        await Promise.all([
+          loadDirectorySnapshot(),
+          hydrateDirectorySubjectsForGrants(grantItems),
+        ]);
         if (cancelled) return;
       } catch (loadError) {
         if (!cancelled) {
@@ -273,6 +308,7 @@ export function ProjectSettingsPage() {
   }, [
     activeTab,
     fetchProjectGrants,
+    hydrateDirectorySubjectsForGrants,
     loadDirectorySnapshot,
     project?.access.can_manage_sharing,
     project?.id,
@@ -422,10 +458,11 @@ export function ProjectSettingsPage() {
         setError(null);
         setNotice(`已授权 ${pendingSelections.length} 项`);
       }
+      const refreshedGrantItems = await fetchProjectGrants(project.id);
       await Promise.all([
-        fetchProjectGrants(project.id),
         fetchProjects(),
         loadDirectorySnapshot(),
+        hydrateDirectorySubjectsForGrants(refreshedGrantItems),
       ]);
       setPickerSelections([]);
     } catch (grantError) {

@@ -1,5 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
+mod agent_run_lineage;
 mod command_receipt;
 pub mod dispatch;
 mod entity;
@@ -13,6 +14,7 @@ mod value_objects;
 
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
+pub use agent_run_lineage::AgentRunLineage;
 pub use command_receipt::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
     AgentRunCommandReceiptRepository, AgentRunCommandStatus, NewAgentRunCommandReceipt,
@@ -37,9 +39,10 @@ pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    AgentRunLineageRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
 pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};

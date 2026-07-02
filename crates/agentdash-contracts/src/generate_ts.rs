@@ -7,11 +7,13 @@ use std::{
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
-    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    BackendSelectionModeDto, BackendSelectionRequestDto, ConsumptionBarrier, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView,
-    MailboxSourceIdentity, MailboxStateView, RuntimeSessionCommandStateDto, SteeringStopEffect,
+    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse,
+    AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
+    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
+    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
+    RuntimeSessionCommandStateDto, SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -293,6 +295,11 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunComposerSubmitRequest>(dir);
+            export_all::<AgentRunForkLineageView>(dir);
+            export_all::<AgentRunForkOutcomeView>(dir);
+            export_all::<AgentRunForkRequest>(dir);
+            export_all::<AgentRunForkResponse>(dir);
+            export_all::<AgentRunForkSubmitRequest>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);

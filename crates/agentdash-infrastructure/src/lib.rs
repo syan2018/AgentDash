@@ -16,6 +16,8 @@ pub use mcp::RmcpProbeTransport;
 pub use persistence::postgres::PostgresAgentFrameRepository;
 pub use persistence::postgres::PostgresAgentLineageRepository;
 pub use persistence::postgres::PostgresAgentRunCommandReceiptRepository;
+pub use persistence::postgres::PostgresAgentRunForkMaterialization;
+pub use persistence::postgres::PostgresAgentRunLineageRepository;
 pub use persistence::postgres::PostgresAgentRunMailboxRepository;
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendExecutionLeaseRepository;

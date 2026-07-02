@@ -1157,6 +1157,7 @@ mod lifecycle_agent_current_delivery_tests {
             id: Uuid::new_v4().to_string(),
             run_id: Uuid::new_v4().to_string(),
             project_id: Uuid::new_v4().to_string(),
+            created_by_user_id: "fixture-user".to_string(),
             source: AgentSource::ProjectAgent.as_str().to_string(),
             project_agent_id: None,
             status: "active".to_string(),

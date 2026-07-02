@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
@@ -27,8 +28,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, AgentRunLineageRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallRepository,
 };
@@ -70,11 +71,13 @@ pub struct AgentRunRepositorySet {
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub agent_run_fork_materialization: Arc<dyn AgentRunForkMaterializationPort>,
     pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,

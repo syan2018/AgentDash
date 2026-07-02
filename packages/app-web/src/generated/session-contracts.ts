@@ -2,6 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { SessionMessageRefDto } from "./agent-run-mailbox-contracts";
 import type { BackboneEnvelope } from "./backbone-protocol";
 
 export type ApproveToolCallResponse = { approved: boolean, session_id: string, tool_call_id: string, };
@@ -41,8 +42,6 @@ export type SessionLineageStatusDto = "open" | "closed" | "archived";
 export type SessionLineageViewResponse = { session_id: string, lineage?: SessionLineageRecordResponse, ancestors: Array<SessionLineageRecordResponse>, children: Array<SessionLineageRecordResponse>, };
 
 export type SessionMessageContextBreakdownResponse = { user_message_tokens: number, assistant_message_tokens: number, tool_call_tokens: number, tool_result_tokens: number, attachment_tokens: number, };
-
-export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
 
 export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number,
 /**

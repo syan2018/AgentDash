@@ -798,6 +798,7 @@ mod workflow_claim_tests {
         LifecycleRunRow {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: uuid::Uuid::new_v4().to_string(),
+            created_by_user_id: "fixture-user".to_string(),
             topology: "plain".to_string(),
             context: "{}".to_string(),
             orchestrations: "[]".to_string(),

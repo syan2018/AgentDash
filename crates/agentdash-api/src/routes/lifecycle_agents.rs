@@ -2,6 +2,7 @@ use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use agentdash_agent::MessageRef;
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
@@ -12,16 +13,19 @@ use agentdash_application_agentrun::agent_run::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCommandReceiptView,
-    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos,
+    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
+    AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_contracts::agent_run_mailbox::{
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
-    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
-    MailboxMessageView, MailboxStateView,
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
+    AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
+    AgentRunMessageCommandResponse, MailboxMessageView, MailboxStateView,
 };
+use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
@@ -58,8 +62,9 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
         agent_run_mailbox_contracts::{
-            agent_run_message_command_response, backend_selection_input, mailbox_message_view,
-            mailbox_message_visible, mailbox_state_view,
+            agent_run_message_accepted_refs, agent_run_message_command_response,
+            backend_selection_input, command_receipt_view, mailbox_command_outcome_view,
+            mailbox_message_view, mailbox_message_visible, mailbox_state_view,
         },
         sessions,
         vfs_surfaces::dto as vfs_surface_dto,
@@ -91,6 +96,14 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
             axum::routing::post(submit_agent_run_composer_input),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork",
+            axum::routing::post(fork_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
+            axum::routing::post(fork_submit_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
@@ -388,7 +401,7 @@ async fn resolve_agent_run_lineage(
         .map_err(ApiError::from)?;
     let (children_map, _) = build_lineage_forest(&lineages);
 
-    let parent = match lineages
+    let same_run_parent = match lineages
         .iter()
         .find(|lineage| lineage.child_agent_id == agent.id)
         .and_then(|lineage| {
@@ -422,6 +435,43 @@ async fn resolve_agent_run_lineage(
         }
         None => None,
     };
+    let cross_run_parent = match state
+        .repos
+        .agent_run_lineage_repo
+        .find_parent(run.id, agent.id)
+        .await
+        .map_err(ApiError::from)?
+    {
+        Some(lineage) => {
+            let parent_run = state
+                .repos
+                .lifecycle_run_repo
+                .get_by_id(lineage.parent_run_id)
+                .await
+                .map_err(ApiError::from)?;
+            let parent_agent = state
+                .repos
+                .lifecycle_agent_repo
+                .get(lineage.parent_agent_id)
+                .await
+                .map_err(ApiError::from)?;
+            match (parent_run, parent_agent) {
+                (Some(parent_run), Some(parent_agent)) => Some(
+                    lineage_ref_for_agent(
+                        state,
+                        &parent_run,
+                        &parent_agent,
+                        lineage.relation_kind,
+                        0,
+                    )
+                    .await?,
+                ),
+                _ => None,
+            }
+        }
+        None => None,
+    };
+    let parent = cross_run_parent.or(same_run_parent);
 
     let mut children = Vec::new();
     for lineage in lineages
@@ -445,6 +495,32 @@ async fn resolve_agent_run_lineage(
                     subagent_count,
                 )
                 .await?,
+            );
+        }
+    }
+    for lineage in state
+        .repos
+        .agent_run_lineage_repo
+        .list_children(run.id, agent.id)
+        .await
+        .map_err(ApiError::from)?
+    {
+        let child_run = state
+            .repos
+            .lifecycle_run_repo
+            .get_by_id(lineage.child_run_id)
+            .await
+            .map_err(ApiError::from)?;
+        let child_agent = state
+            .repos
+            .lifecycle_agent_repo
+            .get(lineage.child_agent_id)
+            .await
+            .map_err(ApiError::from)?;
+        if let (Some(child_run), Some(child_agent)) = (child_run, child_agent) {
+            children.push(
+                lineage_ref_for_agent(state, &child_run, &child_agent, lineage.relation_kind, 0)
+                    .await?,
             );
         }
     }
@@ -534,6 +610,26 @@ pub async fn submit_agent_run_composer_input(
         .map(serde_json::from_value::<AgentConfig>)
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+    if context.run.created_by_user_id != current_user.user_id {
+        let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+        let response = service
+            .fork_submit(AgentRunForkSubmitCommand {
+                parent_run_id: context.run.id,
+                parent_agent_id: context.agent.id,
+                current_user_id: current_user.user_id.clone(),
+                title: None,
+                fork_point_ref: None,
+                metadata_json: None,
+                input: req.input,
+                client_command_id: req.client_command_id,
+                executor_config,
+                backend_selection: backend_selection_input(req.backend_selection),
+                identity: Some(current_user),
+            })
+            .await
+            .map_err(ApiError::from)?;
+        return Ok(Json(agent_run_fork_submit_message_response(response)));
+    }
     let service = agent_run_mailbox_service(state.as_ref(), &agent_run_repos);
     let response = service
         .accept_user_message(AgentRunMailboxUserMessageCommand {
@@ -560,6 +656,90 @@ pub async fn submit_agent_run_composer_input(
         "AgentRun composer submit mailbox accepted"
     );
     Ok(Json(agent_run_message_command_response(response)))
+}
+
+async fn fork_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(req): Json<AgentRunForkRequest>,
+) -> Result<Json<AgentRunForkResponse>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let result = service
+        .explicit_fork(AgentRunForkCommand {
+            parent_run_id: context.run.id,
+            parent_agent_id: context.agent.id,
+            current_user_id: current_user.user_id,
+            title: req.title,
+            fork_point_ref: req.fork_point_ref.map(message_ref_from_contract),
+            metadata_json: req.metadata_json,
+            client_command_id: req.client_command_id,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_fork_response(result)))
+}
+
+async fn fork_submit_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(req): Json<AgentRunForkSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
+    if req.input.is_empty() {
+        return Err(ApiError::BadRequest("input 不能为空".to_string()));
+    }
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let executor_config = req
+        .executor_config
+        .map(serde_json::from_value::<AgentConfig>)
+        .transpose()
+        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let result = service
+        .fork_submit(AgentRunForkSubmitCommand {
+            parent_run_id: context.run.id,
+            parent_agent_id: context.agent.id,
+            current_user_id: current_user.user_id.clone(),
+            title: req.title,
+            fork_point_ref: req.fork_point_ref.map(message_ref_from_contract),
+            metadata_json: req.metadata_json,
+            input: req.input,
+            client_command_id: req.client_command_id,
+            executor_config,
+            backend_selection: backend_selection_input(req.backend_selection),
+            identity: Some(current_user),
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_fork_submit_message_response(result)))
 }
 
 async fn get_agent_run_mailbox(
@@ -1836,6 +2016,80 @@ fn agent_run_mailbox_service<'a>(
     )
 }
 
+fn agent_run_fork_service<'a>(
+    state: &AppState,
+    agent_run_repos: &'a AgentRunRepositorySet,
+) -> AgentRunForkService<'a> {
+    AgentRunForkService::new(
+        agent_run_repos,
+        state.services.session_branching.clone(),
+        agent_run_session_core(state.services.session_core.clone()),
+        agent_run_mailbox_service(state, agent_run_repos),
+    )
+}
+
+fn agent_run_fork_submit_message_response(
+    result: AgentRunForkCommandResult,
+) -> AgentRunMessageCommandResponse {
+    let fork = agent_run_fork_outcome_view(&result);
+    AgentRunMessageCommandResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: mailbox_command_outcome_view(
+            result
+                .mailbox_outcome
+                .unwrap_or(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
+        ),
+        mailbox_message: result.mailbox_message.map(mailbox_message_view),
+        accepted_refs: Some(agent_run_message_accepted_refs(result.child_refs.clone())),
+        runtime_state: None,
+        fork: Some(fork),
+    }
+}
+
+fn agent_run_fork_response(result: AgentRunForkCommandResult) -> AgentRunForkResponse {
+    let fork = agent_run_fork_outcome_view(&result);
+    AgentRunForkResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: fork.outcome,
+        parent_refs: fork.parent_refs,
+        child_refs: fork.child_refs,
+        lineage: fork.lineage,
+        redirect: fork.redirect,
+    }
+}
+
+fn agent_run_fork_outcome_view(result: &AgentRunForkCommandResult) -> AgentRunForkOutcomeView {
+    let parent_refs = agent_run_message_accepted_refs(result.parent_refs.clone());
+    let child_refs = agent_run_message_accepted_refs(result.child_refs.clone());
+    AgentRunForkOutcomeView {
+        outcome: "forked".to_string(),
+        parent_refs: parent_refs.clone(),
+        child_refs: child_refs.clone(),
+        lineage: AgentRunForkLineageView {
+            id: result.lineage.id.to_string(),
+            parent: parent_refs,
+            child: child_refs.clone(),
+            relation_kind: result.lineage.relation_kind.clone(),
+            fork_point_event_seq: result.lineage.fork_point_event_seq,
+            fork_point_ref: result
+                .lineage
+                .fork_point_ref_json
+                .clone()
+                .and_then(|value| serde_json::from_value::<SessionMessageRefDto>(value).ok()),
+            forked_by_user_id: result.lineage.forked_by_user_id.clone(),
+            created_at: result.lineage.created_at.to_rfc3339(),
+        },
+        redirect: child_refs.agent_ref,
+    }
+}
+
+fn message_ref_from_contract(value: SessionMessageRefDto) -> MessageRef {
+    MessageRef {
+        turn_id: value.turn_id,
+        entry_index: value.entry_index,
+    }
+}
+
 fn agent_run_workspace_command_policy<'a>(
     state: &AppState,
     agent_run_repos: &'a AgentRunRepositorySet,
@@ -1922,13 +2176,92 @@ mod tests {
     use agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionRepositories;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentSource, DeliveryBindingStatus, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunLineage, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+        LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+        RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn agent_run_fork_response_preserves_redirect_and_lineage() {
+        let parent_run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_run_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let fork_point_ref = SessionMessageRefDto {
+            turn_id: "turn-1".to_string(),
+            entry_index: 2,
+        };
+        let lineage = AgentRunLineage::new_fork(
+            parent_run_id,
+            parent_agent_id,
+            child_run_id,
+            child_agent_id,
+            Some(12),
+            Some(serde_json::to_value(&fork_point_ref).expect("message ref should serialize")),
+            "parent-runtime",
+            "child-runtime",
+            "user-a",
+            Some(serde_json::json!({ "source": "api-test" })),
+        );
+
+        let response = agent_run_fork_response(AgentRunForkCommandResult {
+            command_receipt: AgentRunCommandReceiptView {
+                client_command_id: "cmd-fork".to_string(),
+                status: "accepted".to_string(),
+                duplicate: false,
+                message: None,
+            },
+            parent_refs: AgentRunAcceptedRefs {
+                run_id: parent_run_id,
+                agent_id: parent_agent_id,
+                frame_id: None,
+                frame_revision: None,
+                runtime_session_id: Some("parent-runtime".to_string()),
+                agent_run_turn_id: None,
+                protocol_turn_id: None,
+            },
+            child_refs: AgentRunAcceptedRefs {
+                run_id: child_run_id,
+                agent_id: child_agent_id,
+                frame_id: Some(child_frame_id),
+                frame_revision: Some(1),
+                runtime_session_id: Some("child-runtime".to_string()),
+                agent_run_turn_id: None,
+                protocol_turn_id: None,
+            },
+            lineage,
+            mailbox_outcome: Some(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
+            mailbox_message: None,
+        });
+
+        assert_eq!(response.outcome, "forked");
+        assert_eq!(response.redirect.run_id, child_run_id.to_string());
+        assert_eq!(response.redirect.agent_id, child_agent_id.to_string());
+        assert_eq!(
+            response.lineage.parent.agent_ref.run_id,
+            parent_run_id.to_string()
+        );
+        assert_eq!(
+            response.lineage.child.agent_ref.run_id,
+            child_run_id.to_string()
+        );
+        assert_eq!(response.lineage.fork_point_event_seq, Some(12));
+        let response_fork_point_ref = response
+            .lineage
+            .fork_point_ref
+            .expect("fork point ref should be mapped");
+        assert_eq!(response_fork_point_ref.turn_id, fork_point_ref.turn_id);
+        assert_eq!(
+            response_fork_point_ref.entry_index,
+            fork_point_ref.entry_index
+        );
+        assert_eq!(response.lineage.forked_by_user_id, "user-a");
+    }
 
     #[derive(Default)]
     struct MemoryLifecycleRunRepository {

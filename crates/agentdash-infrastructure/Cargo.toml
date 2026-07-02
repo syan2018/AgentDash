@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 agentdash-domain = { workspace = true }
+agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 agentdash-process = { workspace = true }

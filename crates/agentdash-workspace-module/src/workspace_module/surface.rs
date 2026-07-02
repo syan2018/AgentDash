@@ -14,7 +14,6 @@ use agentdash_application_runtime_gateway::{
     RuntimeInvocationErrorKind, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
     RuntimeTrace, attach_extension_invocation_workspace,
 };
-use agentdash_application_vfs::tools::SharedRuntimeVfs;
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
@@ -50,10 +49,9 @@ use crate::workspace_module::runtime_bridge::{
 };
 use crate::workspace_module::{
     ResolvedInvocationBackend, WorkspaceModuleOperationContext,
-    WorkspaceModuleRuntimeActionCatalog, build_canvas_workspace_module,
-    build_workspace_module_presentation, request_existing_canvas_visibility_for_runtime,
-    resolve_workspace_module_visibility_with_operation_context,
-    submit_canvas_runtime_surface_update, validate_input_against_schema,
+    WorkspaceModuleRuntimeActionCatalog, WorkspaceModuleRuntimeContext,
+    build_canvas_workspace_module, build_workspace_module_presentation,
+    resolve_workspace_module_visibility_with_operation_context, validate_input_against_schema,
 };
 
 #[derive(Clone, Default)]
@@ -275,10 +273,7 @@ pub(crate) struct WorkspaceModuleOperateCommand<'a> {
     pub project_repo: &'a Arc<dyn ProjectRepository>,
     pub canvas_repo: &'a Arc<dyn CanvasRepository>,
     pub project_id: Uuid,
-    pub vfs: &'a SharedRuntimeVfs,
-    pub agent_run_bridge_handle: &'a SharedWorkspaceModuleAgentRunBridgeHandle,
-    pub delivery_runtime_session_id: Option<&'a str>,
-    pub current_user: Option<&'a ProjectAuthorizationContext>,
+    pub runtime_context: &'a WorkspaceModuleRuntimeContext,
     pub operation: String,
     pub input: serde_json::Value,
 }
@@ -289,15 +284,11 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
     pub canvas_runtime_state_repo: &'a Arc<dyn CanvasRuntimeStateRepository>,
     pub execution_anchor_repo: &'a Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub project_id: Uuid,
-    pub delivery_runtime_session_id: &'a str,
-    pub agent_id: Option<String>,
-    pub backend: Option<&'a ResolvedInvocationBackend>,
     pub gateway: &'a Arc<RuntimeGateway>,
     pub channel_invoker: &'a Arc<ExtensionRuntimeChannelInvoker>,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
     pub operation_runtime_source: &'a WorkspaceModuleOperationRuntimeSource,
-    pub agent_run_bridge_handle: Option<&'a SharedWorkspaceModuleAgentRunBridgeHandle>,
-    pub current_user: Option<&'a ProjectAuthorizationContext>,
+    pub runtime_context: &'a WorkspaceModuleRuntimeContext,
     pub module_id: String,
     pub operation_key: String,
     pub input: serde_json::Value,
@@ -307,12 +298,10 @@ pub(crate) struct WorkspaceModulePresentCommand<'a> {
     pub installation_repo: &'a Arc<dyn ProjectExtensionInstallationRepository>,
     pub canvas_repo: &'a Arc<dyn CanvasRepository>,
     pub project_id: Uuid,
-    pub vfs: &'a SharedRuntimeVfs,
-    pub agent_run_bridge_handle: &'a SharedWorkspaceModuleAgentRunBridgeHandle,
-    pub delivery_runtime_session_id: &'a str,
     pub turn_id: &'a str,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
     pub operation_runtime_source: &'a WorkspaceModuleOperationRuntimeSource,
+    pub runtime_context: &'a WorkspaceModuleRuntimeContext,
     pub module_id: String,
     pub view_key: String,
     pub payload: Option<serde_json::Value>,
@@ -483,7 +472,7 @@ async fn operate(
     command: WorkspaceModuleOperateCommand<'_>,
 ) -> Result<WorkspaceModuleOperationOutcome, WorkspaceModuleSurfaceError> {
     let operation = command.operation.trim().to_string();
-    let Some(current_user) = command.current_user else {
+    let Some(current_user) = command.runtime_context.current_user() else {
         return Err(WorkspaceModuleSurfaceError::ExecutionFailed(
             "workspace_module_operate 需要当前 runtime identity".to_string(),
         ));
@@ -504,9 +493,7 @@ async fn operate(
                 &repos,
                 command.project_id,
                 current_user,
-                command.vfs,
-                command.agent_run_bridge_handle,
-                command.delivery_runtime_session_id,
+                command.runtime_context,
                 params,
             )
             .await?
@@ -522,9 +509,7 @@ async fn operate(
                 &repos,
                 command.project_id,
                 current_user,
-                command.vfs,
-                command.agent_run_bridge_handle,
-                command.delivery_runtime_session_id,
+                command.runtime_context,
                 params,
             )
             .await?
@@ -540,9 +525,7 @@ async fn operate(
                 &repos,
                 command.project_id,
                 current_user,
-                command.vfs,
-                command.agent_run_bridge_handle,
-                command.delivery_runtime_session_id,
+                command.runtime_context,
                 params,
             )
             .await?
@@ -601,7 +584,7 @@ async fn invoke(
                 && let Err(guard_diagnostic) = load_canvas_for_runtime_binding(
                     command.canvas_repo.as_ref(),
                     command.project_id,
-                    command.current_user,
+                    command.runtime_context.current_user(),
                     &module.summary.source,
                 )
                 .await
@@ -648,7 +631,7 @@ async fn invoke(
 
     match &operation.dispatch {
         WorkspaceModuleOperationDispatch::RuntimeAction { action_key } => {
-            let backend = match require_backend(command.backend) {
+            let backend = match require_backend(command.runtime_context.backend()) {
                 Ok(backend) => backend,
                 Err(diagnostic) => {
                     return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic));
@@ -661,15 +644,8 @@ async fn invoke(
             })?;
             let mut request = RuntimeInvocationRequest::new(
                 action_key,
-                RuntimeActor::AgentSession {
-                    session_id: command.delivery_runtime_session_id.to_string(),
-                    agent_id: command.agent_id.clone(),
-                },
-                RuntimeContext::Session {
-                    session_id: command.delivery_runtime_session_id.to_string(),
-                    project_id: Some(command.project_id),
-                    workspace_id: None,
-                },
+                command.runtime_context.runtime_actor(),
+                command.runtime_context.runtime_context(),
                 command.input,
             );
             request.target = Some(RuntimeTarget::Backend {
@@ -693,7 +669,7 @@ async fn invoke(
             channel_key,
             method_name,
         } => {
-            let backend = match require_backend(command.backend) {
+            let backend = match require_backend(command.runtime_context.backend()) {
                 Ok(backend) => backend,
                 Err(diagnostic) => {
                     return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic));
@@ -704,7 +680,10 @@ async fn invoke(
                 .channel_invoker
                 .invoke(ExtensionRuntimeChannelInvokeRequest {
                     project_id: command.project_id,
-                    session_id: command.delivery_runtime_session_id.to_string(),
+                    session_id: command
+                        .runtime_context
+                        .delivery_runtime_session_id()
+                        .to_string(),
                     backend_id: backend.backend_id.clone(),
                     workspace: backend.workspace.clone(),
                     consumer: ExtensionRuntimeChannelConsumer::SessionUser,
@@ -733,7 +712,7 @@ async fn invoke(
                 let editable_canvas = match load_canvas_for_runtime_binding(
                     command.canvas_repo.as_ref(),
                     command.project_id,
-                    command.current_user,
+                    command.runtime_context.current_user(),
                     &module.summary.source,
                 )
                 .await
@@ -771,24 +750,24 @@ async fn invoke(
                     editable_canvas,
                     bind_params,
                 )?;
-                submit_optional_canvas_runtime_surface_request(
-                    command.agent_run_bridge_handle,
-                    command.delivery_runtime_session_id,
-                    command.current_user,
-                    &canvas,
-                    RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
-                        canvas_mount_id: canvas.mount_id.clone(),
-                        binding,
-                    },
-                )
-                .await?;
+                command
+                    .runtime_context
+                    .submit_optional_canvas_surface_update(
+                        &canvas,
+                        RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
+                            canvas_mount_id: canvas.mount_id.clone(),
+                            binding,
+                        },
+                    )
+                    .await
+                    .map_err(runtime_bridge_error_to_surface_error)?;
                 Ok(WorkspaceModuleOperationOutcome::CanvasBindingApplied { result, provenance })
             }
             WorkspaceModuleCanvasHostAction::Inspect => {
                 inspect_canvas(
                     command.canvas_runtime_state_repo.as_ref(),
                     command.execution_anchor_repo.as_ref(),
-                    command.delivery_runtime_session_id,
+                    command.runtime_context.delivery_runtime_session_id(),
                     &module.summary.source,
                 )
                 .await
@@ -797,7 +776,7 @@ async fn invoke(
                 get_canvas_interaction_state(
                     command.canvas_runtime_state_repo.as_ref(),
                     command.execution_anchor_repo.as_ref(),
-                    command.delivery_runtime_session_id,
+                    command.runtime_context.delivery_runtime_session_id(),
                     &module.summary.source,
                 )
                 .await
@@ -850,13 +829,8 @@ async fn present(
             Ok(presentation) => presentation,
             Err(error) => {
                 let diagnostic = error.diagnostics();
-                inject_present_diagnostic(
-                    command.agent_run_bridge_handle,
-                    command.delivery_runtime_session_id,
-                    command.turn_id,
-                    &diagnostic,
-                )
-                .await;
+                inject_present_diagnostic(command.runtime_context, command.turn_id, &diagnostic)
+                    .await;
                 return Ok(WorkspaceModuleOperationOutcome::Diagnostic(
                     WorkspaceModuleCommandDiagnostic {
                         code: "view_not_found",
@@ -868,17 +842,14 @@ async fn present(
         };
 
     if presentation.renderer_kind == CANVAS_RENDERER_KIND {
-        request_existing_canvas_visibility_for_runtime(
-            command.canvas_repo.as_ref(),
-            command.project_id,
-            &module.summary.source,
-            Some(command.vfs),
-            command.agent_run_bridge_handle,
-            Some(command.delivery_runtime_session_id),
-            command.visibility_source.current_user(),
-        )
-        .await
-        .map_err(runtime_bridge_error_to_surface_error)?;
+        command
+            .runtime_context
+            .request_existing_canvas_visibility(
+                command.canvas_repo.as_ref(),
+                &module.summary.source,
+            )
+            .await
+            .map_err(runtime_bridge_error_to_surface_error)?;
     }
 
     let value = serde_json::to_value(&presentation).map_err(|error| {
@@ -888,20 +859,16 @@ async fn present(
     })?;
 
     let notification = build_present_notification(
-        command.delivery_runtime_session_id,
+        command.runtime_context.delivery_runtime_session_id(),
         command.turn_id,
         "workspace_module_presented",
         value,
     );
-    let agent_run_bridge = command.agent_run_bridge_handle.get().await.ok_or_else(|| {
-        WorkspaceModuleSurfaceError::ExecutionFailed(
-            "Workspace module AgentRun bridge 尚未完成初始化".to_string(),
-        )
-    })?;
-    agent_run_bridge
-        .inject_agent_run_notification(command.delivery_runtime_session_id, notification)
+    command
+        .runtime_context
+        .inject_agent_run_notification(notification)
         .await
-        .map_err(WorkspaceModuleSurfaceError::ExecutionFailed)?;
+        .map_err(runtime_bridge_error_to_surface_error)?;
 
     Ok(WorkspaceModuleOperationOutcome::Presented { presentation })
 }
@@ -997,9 +964,7 @@ async fn operate_create_personal_canvas_for_workspace_module(
     repos: &dyn CanvasRepositorySet,
     project_id: Uuid,
     current_user: &ProjectAuthorizationContext,
-    vfs: &SharedRuntimeVfs,
-    agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_context: &WorkspaceModuleRuntimeContext,
     params: CreatePersonalCanvasModuleInput,
 ) -> Result<(Canvas, WorkspaceModuleCanvasOperationResult), WorkspaceModuleSurfaceError> {
     let title = params
@@ -1027,10 +992,7 @@ async fn operate_create_personal_canvas_for_workspace_module(
     .map_err(|error| WorkspaceModuleSurfaceError::ExecutionFailed(error.to_string()))?
     .canvas;
     expose_canvas_for_workspace_module(
-        vfs,
-        agent_run_bridge_handle,
-        delivery_runtime_session_id,
-        current_user,
+        runtime_context,
         canvas,
         "created",
         CanvasVisibilityReason::Created,
@@ -1042,9 +1004,7 @@ async fn operate_attach_existing_canvas_for_workspace_module(
     repos: &dyn CanvasRepositorySet,
     project_id: Uuid,
     current_user: &ProjectAuthorizationContext,
-    vfs: &SharedRuntimeVfs,
-    agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_context: &WorkspaceModuleRuntimeContext,
     params: AttachExistingCanvasModuleInput,
 ) -> Result<(Canvas, WorkspaceModuleCanvasOperationResult), WorkspaceModuleSurfaceError> {
     let canvas_mount_id = required_canvas_mount_id(
@@ -1056,10 +1016,7 @@ async fn operate_attach_existing_canvas_for_workspace_module(
         .map_err(|error| WorkspaceModuleSurfaceError::ExecutionFailed(error.to_string()))?;
     ensure_canvas_visible_to_current_user(&canvas, current_user)?;
     expose_canvas_for_workspace_module(
-        vfs,
-        agent_run_bridge_handle,
-        delivery_runtime_session_id,
-        current_user,
+        runtime_context,
         canvas,
         "attached",
         CanvasVisibilityReason::Presented,
@@ -1071,9 +1028,7 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
     repos: &dyn CanvasRepositorySet,
     project_id: Uuid,
     current_user: &ProjectAuthorizationContext,
-    vfs: &SharedRuntimeVfs,
-    agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_context: &WorkspaceModuleRuntimeContext,
     params: CopyCanvasToPersonalModuleInput,
 ) -> Result<(Canvas, WorkspaceModuleCanvasOperationResult), WorkspaceModuleSurfaceError> {
     let source_mount_id = required_canvas_mount_id(
@@ -1097,10 +1052,7 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
     .map_err(|error| WorkspaceModuleSurfaceError::ExecutionFailed(error.to_string()))?
     .canvas;
     expose_canvas_for_workspace_module(
-        vfs,
-        agent_run_bridge_handle,
-        delivery_runtime_session_id,
-        current_user,
+        runtime_context,
         copy,
         "copied",
         CanvasVisibilityReason::Created,
@@ -1109,27 +1061,21 @@ async fn operate_copy_canvas_to_personal_for_workspace_module(
 }
 
 async fn expose_canvas_for_workspace_module(
-    vfs: &SharedRuntimeVfs,
-    agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
-    current_user: &ProjectAuthorizationContext,
+    runtime_context: &WorkspaceModuleRuntimeContext,
     canvas: Canvas,
     action: &str,
     reason: CanvasVisibilityReason,
 ) -> Result<(Canvas, WorkspaceModuleCanvasOperationResult), WorkspaceModuleSurfaceError> {
-    submit_canvas_runtime_surface_update(
-        Some(vfs),
-        agent_run_bridge_handle,
-        delivery_runtime_session_id,
-        Some(current_user),
-        &canvas,
-        RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
-            canvas_mount_id: canvas.mount_id.clone(),
-            reason,
-        },
-    )
-    .await
-    .map_err(runtime_bridge_error_to_surface_error)?;
+    runtime_context
+        .submit_canvas_surface_update(
+            &canvas,
+            RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
+                canvas_mount_id: canvas.mount_id.clone(),
+                reason,
+            },
+        )
+        .await
+        .map_err(runtime_bridge_error_to_surface_error)?;
 
     let result = WorkspaceModuleCanvasOperationResult {
         action: action.to_string(),
@@ -1377,28 +1323,6 @@ fn bind_canvas_data_for_loaded_canvas(
     Ok((canvas, binding, result))
 }
 
-async fn submit_optional_canvas_runtime_surface_request(
-    agent_run_bridge_handle: Option<&SharedWorkspaceModuleAgentRunBridgeHandle>,
-    delivery_runtime_session_id: &str,
-    current_user: Option<&ProjectAuthorizationContext>,
-    canvas: &Canvas,
-    request: RuntimeSurfaceUpdateRequest,
-) -> Result<(), WorkspaceModuleSurfaceError> {
-    let Some(handle) = agent_run_bridge_handle else {
-        return Ok(());
-    };
-    submit_canvas_runtime_surface_update(
-        None,
-        handle,
-        Some(delivery_runtime_session_id),
-        current_user,
-        canvas,
-        request,
-    )
-    .await
-    .map_err(runtime_bridge_error_to_surface_error)
-}
-
 async fn current_anchor(
     execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
     delivery_runtime_session_id: &str,
@@ -1476,22 +1400,18 @@ async fn get_canvas_interaction_state(
 }
 
 async fn inject_present_diagnostic(
-    agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: &str,
+    runtime_context: &WorkspaceModuleRuntimeContext,
     turn_id: &str,
     value: &serde_json::Value,
 ) {
-    let Some(agent_run_bridge) = agent_run_bridge_handle.get().await else {
-        return;
-    };
     let notification = build_present_notification(
-        delivery_runtime_session_id,
+        runtime_context.delivery_runtime_session_id(),
         turn_id,
         "workspace_module_present_failed",
         value.clone(),
     );
-    if let Err(error) = agent_run_bridge
-        .inject_agent_run_notification(delivery_runtime_session_id, notification)
+    if let Err(error) = runtime_context
+        .inject_agent_run_notification(notification)
         .await
     {
         diag!(Warn, Subsystem::AgentRun,
@@ -1535,7 +1455,7 @@ mod tests {
         ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
     };
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
-    use agentdash_application_vfs::tools::RuntimeVfsState;
+    use agentdash_application_vfs::tools::{RuntimeVfsState, SharedRuntimeVfs};
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{Canvas, CanvasRepository};
     use agentdash_domain::common::Vfs;
@@ -1900,6 +1820,9 @@ mod tests {
         let bridge = Arc::new(CapturingAgentRunBridge::default());
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle.set(bridge).await;
+        let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-a")
+            .with_current_user(Some(current_user.clone()))
+            .with_agent_run_bridge(Some(bridge_handle.clone()));
         let gateway = Arc::new(RuntimeGateway::new());
         let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
             installation_repo.clone(),
@@ -1913,15 +1836,11 @@ mod tests {
                 canvas_runtime_state_repo: &canvas_runtime_state_repo,
                 execution_anchor_repo: &execution_anchor_repo,
                 project_id,
-                delivery_runtime_session_id: "session-a",
-                agent_id: None,
-                backend: None,
                 gateway: &gateway,
                 channel_invoker: &channel_invoker,
                 visibility_source: &visibility_source,
                 operation_runtime_source: &operation_runtime_source,
-                agent_run_bridge_handle: Some(&bridge_handle),
-                current_user: Some(&current_user),
+                runtime_context: &runtime_context,
                 module_id: "canvas:cvs-dashboard-a".to_string(),
                 operation_key: CANVAS_BIND_DATA_OPERATION_KEY.to_string(),
                 input: serde_json::json!({
@@ -1979,18 +1898,20 @@ mod tests {
         let bridge = Arc::new(CapturingAgentRunBridge::default());
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle.set(bridge.clone()).await;
+        let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-a")
+            .with_vfs(shared_vfs.clone())
+            .with_current_user(visibility_source.current_user().cloned())
+            .with_agent_run_bridge(Some(bridge_handle.clone()));
 
         let outcome = WorkspaceModuleAgentSurface::execute(
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
                 project_id,
-                vfs: &shared_vfs,
-                agent_run_bridge_handle: &bridge_handle,
-                delivery_runtime_session_id: "session-a",
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,
                 operation_runtime_source: &operation_runtime_source,
+                runtime_context: &runtime_context,
                 module_id: "canvas:cvs-dashboard-a".to_string(),
                 view_key: "preview".to_string(),
                 payload: None,
@@ -2046,18 +1967,20 @@ mod tests {
         let bridge = Arc::new(CapturingAgentRunBridge::default());
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle.set(bridge.clone()).await;
+        let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-a")
+            .with_vfs(shared_vfs.clone())
+            .with_current_user(visibility_source.current_user().cloned())
+            .with_agent_run_bridge(Some(bridge_handle.clone()));
 
         let outcome = WorkspaceModuleAgentSurface::execute(
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
                 project_id,
-                vfs: &shared_vfs,
-                agent_run_bridge_handle: &bridge_handle,
-                delivery_runtime_session_id: "session-a",
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,
                 operation_runtime_source: &operation_runtime_source,
+                runtime_context: &runtime_context,
                 module_id: "canvas:cvs-dashboard-a".to_string(),
                 view_key: "missing".to_string(),
                 payload: None,

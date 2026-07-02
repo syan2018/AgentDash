@@ -229,17 +229,6 @@ pub struct CanvasRuntimeSnapshotDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct CanvasAgentRunRuntimeBridgeSnapshotDto {
-    pub enabled: bool,
-    #[serde(default)]
-    pub actions: Vec<RuntimeActionDescriptorDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub disabled_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct CanvasAgentRunRuntimeSnapshotDto {
     pub canvas_id: String,
     pub canvas_mount_id: String,
@@ -252,7 +241,7 @@ pub struct CanvasAgentRunRuntimeSnapshotDto {
     pub bindings: Vec<CanvasRuntimeBindingDto>,
     pub import_map: CanvasImportMapDto,
     pub libraries: Vec<String>,
-    pub runtime_bridge: CanvasAgentRunRuntimeBridgeSnapshotDto,
+    pub runtime_bridge: CanvasRuntimeBridgeSnapshotDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -37,13 +37,14 @@ use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActionKind, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeSurface,
 };
+use agentdash_application_vfs::ResolvedVfsSurfaceSource;
 use agentdash_contracts::canvas::{
-    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeBridgeSnapshotDto,
-    CanvasAgentRunRuntimeSnapshotDto, CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto,
-    CanvasInteractionSnapshot, CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto,
-    CanvasResponse, CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest,
-    CanvasRuntimeBridgeSnapshotDto, CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto,
-    CanvasRuntimeFileDto, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
+    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeSnapshotDto,
+    CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto, CanvasInteractionSnapshot,
+    CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto, CanvasResponse,
+    CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
+    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
+    CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
     CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
     CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
     DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
@@ -717,6 +718,7 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
         state.services.vfs_service.as_ref(),
     )
     .await;
+    snapshot.resource_surface_ref = Some(agent_run_canvas_resource_surface_ref(&context));
     snapshot.runtime_bridge = build_canvas_runtime_bridge_surface(
         state.as_ref(),
         &context.canvas,
@@ -766,6 +768,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
         state.services.vfs_service.as_ref(),
     )
     .await;
+    snapshot.resource_surface_ref = Some(agent_run_canvas_resource_surface_ref(&context));
     snapshot.runtime_bridge = build_canvas_runtime_bridge_surface(
         state.as_ref(),
         &context.canvas,
@@ -882,6 +885,17 @@ async fn resolve_agent_run_canvas_route_context(
     Ok(context)
 }
 
+fn agent_run_canvas_resource_surface_ref(context: &CanvasAgentRunContext) -> String {
+    agent_run_canvas_resource_surface_ref_for_session(&context.runtime_session_id)
+}
+
+fn agent_run_canvas_resource_surface_ref_for_session(runtime_session_id: &str) -> String {
+    ResolvedVfsSurfaceSource::SessionRuntime {
+        session_id: runtime_session_id.to_string(),
+    }
+    .surface_ref()
+}
+
 fn agent_run_mailbox_service<'a>(
     state: &AppState,
     agent_run_repos: &'a AgentRunRepositorySet,
@@ -927,26 +941,7 @@ fn canvas_agent_run_runtime_snapshot_to_contract(
             imports: snapshot.import_map.imports,
         },
         libraries: snapshot.libraries,
-        runtime_bridge: canvas_agent_run_runtime_bridge_to_contract(snapshot.runtime_bridge),
-    }
-}
-
-fn canvas_agent_run_runtime_bridge_to_contract(
-    bridge: CanvasRuntimeBridgeSnapshot,
-) -> CanvasAgentRunRuntimeBridgeSnapshotDto {
-    CanvasAgentRunRuntimeBridgeSnapshotDto {
-        enabled: bridge.enabled,
-        actions: bridge
-            .surface
-            .map(|surface| {
-                surface
-                    .actions
-                    .into_iter()
-                    .map(runtime_action_descriptor_to_contract)
-                    .collect()
-            })
-            .unwrap_or_default(),
-        disabled_reason: bridge.disabled_reason,
+        runtime_bridge: canvas_runtime_bridge_to_contract(snapshot.runtime_bridge),
     }
 }
 
@@ -1371,6 +1366,14 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn agent_run_canvas_resource_surface_ref_uses_delivery_runtime_session() {
+        assert_eq!(
+            agent_run_canvas_resource_surface_ref_for_session("runtime-session-1"),
+            "session-runtime:runtime-session-1"
+        );
+    }
 
     #[test]
     fn canvas_response_maps_scope_access_and_lineage() {

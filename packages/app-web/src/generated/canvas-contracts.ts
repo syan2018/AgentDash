@@ -8,9 +8,7 @@ export type CanvasAccessDto = { can_view: boolean, can_edit_source: boolean, can
 
 export type CanvasAgentInputSubmitRequest = { input: Array<UserInput>, client_command_id: string, delivery_intent?: string, interaction_snapshot_id?: string, render_observation_id?: string, };
 
-export type CanvasAgentRunRuntimeBridgeSnapshotDto = { enabled: boolean, actions: Array<RuntimeActionDescriptorDto>, disabled_reason?: string, };
-
-export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasAgentRunRuntimeBridgeSnapshotDto, };
+export type CanvasAgentRunRuntimeSnapshotDto = { canvas_id: string, canvas_mount_id: string, vfs_mount_id: string, resource_surface_ref?: string, entry: string, files: Array<CanvasRuntimeFileDto>, bindings: Array<CanvasRuntimeBindingDto>, import_map: CanvasImportMapDto, libraries: Array<string>, runtime_bridge: CanvasRuntimeBridgeSnapshotDto, };
 
 export type CanvasFileDto = { path: string, content: string, };
 

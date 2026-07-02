@@ -917,9 +917,6 @@ function normalizeAgentSubmitInput(payload: AgentSubmitEnvelope): SubmitCanvasAg
 }
 
 function runtimeActionsForSnapshot(snapshot: CanvasRuntimeSnapshot): RuntimeActionDescriptor[] {
-  if ("actions" in snapshot.runtime_bridge) {
-    return snapshot.runtime_bridge.actions;
-  }
   return snapshot.runtime_bridge.surface?.actions ?? [];
 }
 

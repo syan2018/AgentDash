@@ -1,4 +1,5 @@
 pub mod runtime_bridge;
+mod runtime_context;
 pub mod runtime_tool_provider;
 mod surface;
 mod tools;
@@ -39,6 +40,7 @@ pub use runtime_bridge::{
     resolve_invocation_backend, shared_runtime_vfs_from_context,
     submit_canvas_runtime_surface_update,
 };
+pub(crate) use runtime_context::WorkspaceModuleRuntimeContext;
 pub use runtime_tool_provider::WorkspaceModuleRuntimeToolProvider;
 pub(crate) use surface::{
     WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,

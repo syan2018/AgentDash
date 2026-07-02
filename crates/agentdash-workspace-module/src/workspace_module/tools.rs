@@ -39,7 +39,8 @@ use crate::workspace_module::{
     WorkspaceModuleCanvasBindingResult, WorkspaceModuleCommandDiagnostic,
     WorkspaceModuleInvokeCommand, WorkspaceModuleOperateCommand, WorkspaceModuleOperationOutcome,
     WorkspaceModuleOperationRuntimeSource, WorkspaceModulePresentCommand,
-    WorkspaceModuleResolveContext, WorkspaceModuleSurfaceError, WorkspaceModuleVisibilitySource,
+    WorkspaceModuleResolveContext, WorkspaceModuleRuntimeContext, WorkspaceModuleSurfaceError,
+    WorkspaceModuleVisibilitySource,
 };
 
 fn surface_error_to_tool_error(error: WorkspaceModuleSurfaceError) -> AgentToolError {
@@ -435,16 +436,26 @@ impl AgentTool for WorkspaceModuleOperateTool {
                 AgentToolError::InvalidArguments(format!("invalid arguments: {error}"))
             })?;
         let WorkspaceModuleOperateParams { operation, input } = params;
+        let delivery_runtime_session_id =
+            self.delivery_runtime_session_id.clone().ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "workspace_module_operate 缺少 AgentRun delivery runtime id".to_string(),
+                )
+            })?;
+        let runtime_context = WorkspaceModuleRuntimeContext::new(
+            self.project_id,
+            delivery_runtime_session_id.clone(),
+        )
+        .with_vfs(self.vfs.clone())
+        .with_current_user(self.current_user.clone())
+        .with_agent_run_bridge(Some(self.agent_run_bridge_handle.clone()));
         project_operation_outcome(
             WorkspaceModuleAgentSurface::execute(WorkspaceModuleAgentSurfaceCommand::Operate(
                 WorkspaceModuleOperateCommand {
                     project_repo: &self.project_repo,
                     canvas_repo: &self.canvas_repo,
                     project_id: self.project_id,
-                    vfs: &self.vfs,
-                    agent_run_bridge_handle: &self.agent_run_bridge_handle,
-                    delivery_runtime_session_id: self.delivery_runtime_session_id.as_deref(),
-                    current_user: self.current_user.as_ref(),
+                    runtime_context: &runtime_context,
                     operation,
                     input,
                 },
@@ -780,6 +791,14 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                 "module_id 与 operation_key 不能为空".to_string(),
             ));
         }
+        let runtime_context = WorkspaceModuleRuntimeContext::new(
+            self.project_id,
+            self.delivery_runtime_session_id.clone(),
+        )
+        .with_agent_id(self.agent_id.clone())
+        .with_current_user(self.current_user.clone())
+        .with_agent_run_bridge(self.agent_run_bridge_handle.clone())
+        .with_backend(self.backend.clone());
 
         project_operation_outcome(
             WorkspaceModuleAgentSurface::execute(WorkspaceModuleAgentSurfaceCommand::Invoke(
@@ -789,15 +808,11 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     canvas_runtime_state_repo: &self.canvas_runtime_state_repo,
                     execution_anchor_repo: &self.execution_anchor_repo,
                     project_id: self.project_id,
-                    delivery_runtime_session_id: &self.delivery_runtime_session_id,
-                    agent_id: self.agent_id.clone(),
-                    backend: self.backend.as_ref(),
                     gateway: &self.gateway,
                     channel_invoker: &self.channel_invoker,
                     visibility_source: &self.visibility_source,
                     operation_runtime_source: &self.operation_runtime_source,
-                    agent_run_bridge_handle: self.agent_run_bridge_handle.as_ref(),
-                    current_user: self.current_user.as_ref(),
+                    runtime_context: &runtime_context,
                     module_id: module_id.to_string(),
                     operation_key: operation_key.to_string(),
                     input: params.input,
@@ -921,6 +936,13 @@ impl AgentTool for WorkspaceModulePresentTool {
                 "module_id 与 view_key 不能为空".to_string(),
             ));
         }
+        let runtime_context = WorkspaceModuleRuntimeContext::new(
+            self.project_id,
+            self.delivery_runtime_session_id.clone(),
+        )
+        .with_vfs(self.vfs.clone())
+        .with_agent_run_bridge(Some(self.agent_run_bridge_handle.clone()))
+        .with_current_user(self.visibility_source.current_user().cloned());
 
         project_operation_outcome(
             WorkspaceModuleAgentSurface::execute(WorkspaceModuleAgentSurfaceCommand::Present(
@@ -928,12 +950,10 @@ impl AgentTool for WorkspaceModulePresentTool {
                     installation_repo: &self.installation_repo,
                     canvas_repo: &self.canvas_repo,
                     project_id: self.project_id,
-                    vfs: &self.vfs,
-                    agent_run_bridge_handle: &self.agent_run_bridge_handle,
-                    delivery_runtime_session_id: &self.delivery_runtime_session_id,
                     turn_id: &self.turn_id,
                     visibility_source: &self.visibility_source,
                     operation_runtime_source: &self.operation_runtime_source,
+                    runtime_context: &runtime_context,
                     module_id: module_id.to_string(),
                     view_key: view_key.to_string(),
                     payload: params.payload,
@@ -1815,7 +1835,7 @@ mod tests {
             matches!(
                 result,
                 Err(AgentToolError::ExecutionFailed(ref message))
-                    if message.contains("AgentRun bridge")
+                    if message.contains("delivery runtime id")
             ),
             "Canvas expose must fail explicitly without a runtime session, got {result:?}"
         );

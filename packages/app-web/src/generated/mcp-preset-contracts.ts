@@ -19,6 +19,8 @@ export type McpPresetResponse = { id: string, project_id: string, key: string, d
 
 export type McpPresetSourceTag = "builtin" | "user";
 
+export type McpProbeTargetDto = { "kind": "default_user_local" } | { "kind": "backend", backend_id: string, };
+
 export type McpRoutePolicy = "auto" | "relay" | "direct";
 
 export type McpRuntimeBindingConfigDto = { mount_id?: string, bindings?: Array<McpRuntimeBindingRuleDto>, };
@@ -31,7 +33,7 @@ export type McpRuntimeBindingTargetDto = { "kind": "http_query", name: string, }
 
 export type McpTransportConfigDto = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, cwd?: string, };
 
-export type ProbeMcpPresetRequest = { transport: McpTransportConfigDto, route_policy: McpRoutePolicy, runtime_binding?: McpRuntimeBindingConfigDto, };
+export type ProbeMcpPresetRequest = { transport: McpTransportConfigDto, route_policy: McpRoutePolicy, probe_target?: McpProbeTargetDto, runtime_binding?: McpRuntimeBindingConfigDto, };
 
 export type ProbeMcpPresetResponse = { "status": "ok", latency_ms: number, tools: Array<ProbeMcpToolInfo>, } | { "status": "error", error: string, } | { "status": "unsupported", reason: string, };
 

@@ -13,7 +13,7 @@ use agentdash_domain::mcp_preset::{
     McpTransportConfig,
 };
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
-use agentdash_spi::platform::mcp_relay::McpRelayProvider;
+use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
@@ -51,12 +51,18 @@ pub struct ProbeTool {
 pub async fn probe_transport(
     transport: &McpTransportConfig,
     route_policy: McpRoutePolicy,
+    relay_target: Option<RelayProbeTarget>,
     relay: Option<&dyn McpRelayProvider>,
     http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
     if route_policy.uses_relay(transport) {
+        let Some(target) = relay_target else {
+            return ProbeResult::Unsupported {
+                reason: "当前用户没有可用于 MCP relay 探测的在线本机 runtime".to_string(),
+            };
+        };
         return match relay {
-            Some(relay) => probe_via_relay(relay, transport).await,
+            Some(relay) => probe_via_relay(relay, transport, target).await,
             None => ProbeResult::Error {
                 error: "本机 relay 未连接，无法探测 relay MCP transport".to_string(),
             },
@@ -78,6 +84,7 @@ pub async fn probe_transport_without_runtime_context(
     transport: &McpTransportConfig,
     route_policy: McpRoutePolicy,
     runtime_binding: Option<&McpRuntimeBindingConfig>,
+    relay_target: Option<RelayProbeTarget>,
     relay: Option<&dyn McpRelayProvider>,
     http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
@@ -85,7 +92,7 @@ pub async fn probe_transport_without_runtime_context(
         return ProbeResult::Unsupported { reason };
     }
 
-    probe_transport(transport, route_policy, relay, http_probe).await
+    probe_transport(transport, route_policy, relay_target, relay, http_probe).await
 }
 
 fn required_runtime_binding_unsupported_reason(
@@ -129,8 +136,9 @@ fn runtime_binding_source_path(source: &McpRuntimeBindingSource) -> String {
 async fn probe_via_relay(
     relay: &dyn McpRelayProvider,
     transport: &McpTransportConfig,
+    target: RelayProbeTarget,
 ) -> ProbeResult {
-    match relay.probe_transport(transport).await {
+    match relay.probe_transport(transport, target).await {
         Ok(result) => match result.status.as_str() {
             "ok" => ProbeResult::Ok {
                 latency_ms: result.latency_ms.unwrap_or(0),
@@ -194,7 +202,7 @@ mod tests {
         ConnectorError, RuntimeMcpServer,
         platform::mcp_relay::{
             RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome, RelayProbeResult,
-            RelayProbeTool,
+            RelayProbeTarget, RelayProbeTool,
         },
     };
     use std::sync::{Arc, Mutex};
@@ -246,6 +254,7 @@ mod tests {
         async fn probe_transport(
             &self,
             transport: &McpTransportConfig,
+            _target: RelayProbeTarget,
         ) -> Result<RelayProbeResult, ConnectorError> {
             self.transports
                 .lock()
@@ -263,6 +272,12 @@ mod tests {
         }
     }
 
+    fn relay_target() -> RelayProbeTarget {
+        RelayProbeTarget {
+            backend_id: "backend-a".to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn stdio_without_relay_returns_error() {
         let transport = McpTransportConfig::Stdio {
@@ -277,6 +292,7 @@ mod tests {
         match probe_transport(
             &transport,
             McpRoutePolicy::Auto,
+            Some(relay_target()),
             None,
             &RmcpProbeTransport::new(),
         )
@@ -298,6 +314,7 @@ mod tests {
         match probe_transport(
             &transport,
             McpRoutePolicy::Auto,
+            None,
             None,
             &RmcpProbeTransport::new(),
         )
@@ -323,7 +340,7 @@ mod tests {
             headers: vec![header.clone()],
         };
 
-        match probe_transport(&transport, McpRoutePolicy::Auto, None, &probe).await {
+        match probe_transport(&transport, McpRoutePolicy::Auto, None, None, &probe).await {
             ProbeResult::Ok { .. } => {}
             other => panic!("expected Ok from fake probe, got: {other:?}"),
         }
@@ -344,7 +361,15 @@ mod tests {
             headers: vec![header],
         };
 
-        match probe_transport(&transport, McpRoutePolicy::Relay, Some(&relay), &probe).await {
+        match probe_transport(
+            &transport,
+            McpRoutePolicy::Relay,
+            Some(relay_target()),
+            Some(&relay),
+            &probe,
+        )
+        .await
+        {
             ProbeResult::Ok { latency_ms, tools } => {
                 assert_eq!(latency_ms, 7);
                 assert_eq!(tools[0].name, "relay_tool");
@@ -421,6 +446,7 @@ mod tests {
             McpRoutePolicy::Auto,
             Some(&runtime_binding),
             None,
+            None,
             &RmcpProbeTransport::new(),
         )
         .await
@@ -456,6 +482,7 @@ mod tests {
             &transport,
             McpRoutePolicy::Auto,
             Some(&runtime_binding),
+            None,
             None,
             &RmcpProbeTransport::new(),
         )

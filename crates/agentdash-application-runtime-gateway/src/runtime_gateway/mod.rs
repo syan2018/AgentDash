@@ -15,10 +15,11 @@ pub use agentdash_application_ports::extension_runtime::{
     ExtensionRuntimeChannelTransport,
 };
 pub use agentdash_application_ports::runtime_gateway_setup::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeToolOutput, McpProbeTransportInput,
-    McpProbeTransportOutput, RuntimeGatewaySetupError, WORKSPACE_BROWSE_DIRECTORY_ACTION,
-    WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
-    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
+    McpProbeTransportInput, McpProbeTransportOutput, RuntimeGatewaySetupError,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
+    WORKSPACE_DISCOVER_BY_IDENTITY_ACTION, WorkspaceBrowseDirectoryEntry,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
     WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
     WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
     WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,

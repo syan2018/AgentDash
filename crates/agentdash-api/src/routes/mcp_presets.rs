@@ -14,15 +14,15 @@ use agentdash_application::mcp_preset::{
     UpdateMcpPresetInput,
 };
 use agentdash_application_runtime_gateway::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeTransportInput, RuntimeActionKey, RuntimeActor,
-    RuntimeContext, RuntimeInvocationRequest,
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeTarget, McpProbeTransportInput, RuntimeActionKey,
+    RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
-    McpEnvVar, McpHttpHeader, McpPresetResponse, McpPresetSourceTag, McpRoutePolicy,
-    McpRuntimeBindingConfigDto, McpRuntimeBindingRuleDto, McpRuntimeBindingSourceDto,
-    McpRuntimeBindingTargetDto, McpTransportConfigDto, ProbeMcpPresetRequest,
-    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    McpEnvVar, McpHttpHeader, McpPresetResponse, McpPresetSourceTag, McpProbeTargetDto,
+    McpRoutePolicy, McpRuntimeBindingConfigDto, McpRuntimeBindingRuleDto,
+    McpRuntimeBindingSourceDto, McpRuntimeBindingTargetDto, McpTransportConfigDto,
+    ProbeMcpPresetRequest, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_domain::mcp_preset::{
     McpEnvVar as DomainMcpEnvVar, McpHttpHeader as DomainMcpHttpHeader, McpPreset,
@@ -265,7 +265,7 @@ pub async fn probe_mcp_transport_handler(
     )
     .await?;
 
-    let input = serde_json::to_value(probe_mcp_transport_input(req))
+    let input = serde_json::to_value(probe_mcp_transport_input(req, current_user.clone()))
         .map_err(|error| ApiError::BadRequest(format!("MCP probe 请求非法: {error}")))?;
     let request = RuntimeInvocationRequest::new(
         RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).map_err(|error| {
@@ -348,11 +348,23 @@ fn update_mcp_preset_input(req: UpdateMcpPresetRequest) -> UpdateMcpPresetInput 
     }
 }
 
-fn probe_mcp_transport_input(req: ProbeMcpPresetRequest) -> McpProbeTransportInput {
+fn probe_mcp_transport_input(
+    req: ProbeMcpPresetRequest,
+    current_user: agentdash_integration_api::AuthIdentity,
+) -> McpProbeTransportInput {
     McpProbeTransportInput {
         transport: mcp_transport_config(req.transport),
         route_policy: mcp_route_policy(req.route_policy),
+        probe_target: req.probe_target.map(mcp_probe_target).unwrap_or_default(),
+        current_user,
         runtime_binding: req.runtime_binding.map(mcp_runtime_binding_config),
+    }
+}
+
+fn mcp_probe_target(target: McpProbeTargetDto) -> McpProbeTarget {
+    match target {
+        McpProbeTargetDto::DefaultUserLocal => McpProbeTarget::DefaultUserLocal,
+        McpProbeTargetDto::Backend { backend_id } => McpProbeTarget::Backend { backend_id },
     }
 }
 
@@ -465,6 +477,7 @@ mod tests {
 
     use super::*;
     use crate::rpc::ApiError;
+    use agentdash_integration_api::AuthMode;
 
     #[test]
     fn parse_project_id_rejects_invalid() {
@@ -549,17 +562,21 @@ mod tests {
 
     #[test]
     fn probe_request_mapping_preserves_optional_runtime_binding() {
-        let input = probe_mcp_transport_input(ProbeMcpPresetRequest {
-            transport: McpTransportConfigDto::Http {
-                url: "http://127.0.0.1:1/mcp".to_string(),
-                headers: vec![McpHttpHeader {
-                    name: "x-demo".to_string(),
-                    value: "1".to_string(),
-                }],
+        let input = probe_mcp_transport_input(
+            ProbeMcpPresetRequest {
+                transport: McpTransportConfigDto::Http {
+                    url: "http://127.0.0.1:1/mcp".to_string(),
+                    headers: vec![McpHttpHeader {
+                        name: "x-demo".to_string(),
+                        value: "1".to_string(),
+                    }],
+                },
+                route_policy: McpRoutePolicy::Relay,
+                probe_target: None,
+                runtime_binding: Some(sample_runtime_binding_dto(true)),
             },
-            route_policy: McpRoutePolicy::Relay,
-            runtime_binding: Some(sample_runtime_binding_dto(true)),
-        });
+            test_identity(),
+        );
 
         assert_eq!(
             input.transport,
@@ -572,7 +589,24 @@ mod tests {
             }
         );
         assert_eq!(input.route_policy, DomainMcpRoutePolicy::Relay);
+        assert_eq!(input.probe_target, McpProbeTarget::DefaultUserLocal);
+        assert_eq!(input.current_user.user_id, "user-1");
         assert!(input.runtime_binding.expect("binding").bindings[0].required);
+    }
+
+    fn test_identity() -> agentdash_integration_api::AuthIdentity {
+        agentdash_integration_api::AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: "user-1".to_string(),
+            subject: "user-1".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: None,
+            extra: serde_json::Value::Null,
+        }
     }
 
     fn sample_runtime_binding_dto(required: bool) -> McpRuntimeBindingConfigDto {

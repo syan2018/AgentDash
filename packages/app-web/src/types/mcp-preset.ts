@@ -5,6 +5,7 @@ export type {
   McpEnvVar,
   McpHttpHeader,
   McpPresetResponse as McpPresetDto,
+  McpProbeTargetDto as McpProbeTarget,
   McpPresetSourceTag as McpPresetSource,
   McpRoutePolicy,
   McpRuntimeBindingConfigDto as McpRuntimeBindingConfig,

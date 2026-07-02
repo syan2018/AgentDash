@@ -113,7 +113,8 @@ use agentdash_contracts::llm_provider::{
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
-    McpPresetResponse, ProbeMcpPresetRequest, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    McpPresetResponse, McpProbeTargetDto, ProbeMcpPresetRequest, ProbeMcpPresetResponse,
+    UpdateMcpPresetRequest,
 };
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
@@ -538,6 +539,7 @@ fn main() {
             export_all::<UpdateMcpPresetRequest>(dir);
             export_all::<CloneMcpPresetRequest>(dir);
             export_all::<ListMcpPresetQuery>(dir);
+            export_all::<McpProbeTargetDto>(dir);
             export_all::<ProbeMcpPresetRequest>(dir);
             export_all::<ProbeMcpPresetResponse>(dir);
             export_all::<DeleteMcpPresetResponse>(dir);

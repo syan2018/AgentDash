@@ -216,6 +216,7 @@ mod tests {
         async fn probe_transport(
             &self,
             _transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+            _target: agentdash_spi::platform::mcp_relay::RelayProbeTarget,
         ) -> Result<RelayProbeResult, ConnectorError> {
             Ok(RelayProbeResult {
                 status: "ok".to_string(),

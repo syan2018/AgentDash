@@ -381,9 +381,10 @@ mod tests {
     use crate::runtime_gateway::{RuntimeActor, RuntimeContext, RuntimeGateway};
     use agentdash_application_ports::backend_transport::{GitRepoInfo, WorkspaceProbeInfo};
     use agentdash_application_ports::runtime_gateway_setup::{
-        McpProbeTransportOutput, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryOutput,
-        WorkspaceDetectGitOutput, WorkspaceDetectOutput,
+        McpProbeTarget, McpProbeTransportOutput, WorkspaceBrowseDirectoryEntry,
+        WorkspaceBrowseDirectoryOutput, WorkspaceDetectGitOutput, WorkspaceDetectOutput,
     };
+    use agentdash_spi::{AuthIdentity, AuthMode};
 
     struct FakeBackendTransport {
         online: bool,
@@ -550,6 +551,8 @@ mod tests {
                 cwd: None,
             },
             route_policy: agentdash_domain::mcp_preset::McpRoutePolicy::Auto,
+            probe_target: McpProbeTarget::DefaultUserLocal,
+            current_user: test_identity(),
             runtime_binding: None,
         })
         .expect("serialize input");
@@ -602,7 +605,9 @@ mod tests {
                     },
                     required: true,
                 }],
-            }
+            },
+            "probe_target": { "kind": "default_user_local" },
+            "current_user": test_identity(),
         });
         let request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
@@ -628,6 +633,21 @@ mod tests {
                 .unwrap_or_default()
                 .contains("workspace.detected_facts.p4.client_name")
         );
+    }
+
+    fn test_identity() -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: "user-1".to_string(),
+            subject: "user-1".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: None,
+            extra: serde_json::Value::Null,
+        }
     }
 
     #[tokio::test]

@@ -268,7 +268,8 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
     async fn probe_transport(
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+        target: agentdash_spi::platform::mcp_relay::RelayProbeTarget,
     ) -> Result<RelayProbeResult, ConnectorError> {
-        self.backends.probe_transport(transport).await
+        self.backends.probe_transport(transport, target).await
     }
 }

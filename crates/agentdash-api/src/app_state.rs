@@ -318,6 +318,8 @@ impl AppState {
         ));
         let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
             mcp_probe_relay,
+            repos.clone(),
+            backend_registry.clone(),
             setup_action_transport,
             session_mcp_access,
             repos.project_extension_installation_repo.clone(),

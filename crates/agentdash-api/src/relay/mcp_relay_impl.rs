@@ -9,7 +9,7 @@ use agentdash_spi::ConnectorError;
 use agentdash_spi::RuntimeMcpServer;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
-    RelayMcpSourceOutcome, RelayMcpToolInfo, RelayProbeResult, RelayProbeTool,
+    RelayMcpSourceOutcome, RelayMcpToolInfo, RelayProbeResult, RelayProbeTarget, RelayProbeTool,
 };
 
 use super::registry::BackendRegistry;
@@ -176,11 +176,9 @@ impl McpRelayProvider for BackendRegistry {
     async fn probe_transport(
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+        target: RelayProbeTarget,
     ) -> Result<RelayProbeResult, ConnectorError> {
-        let backend_id = self
-            .find_any_online_backend_for_setup_probe()
-            .await
-            .ok_or_else(|| ConnectorError::ConnectionFailed("无在线本机后端".to_string()))?;
+        let backend_id = target.backend_id;
 
         let cmd = RelayMessage::CommandMcpProbeTransport {
             id: RelayMessage::new_id("mcp-probe"),

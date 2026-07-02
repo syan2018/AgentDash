@@ -1,5 +1,6 @@
 use agentdash_domain::mcp_preset::{McpRoutePolicy, McpRuntimeBindingConfig, McpTransportConfig};
 use agentdash_domain::workspace::{WorkspaceBinding, WorkspaceIdentityKind};
+use agentdash_spi::AuthIdentity;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,13 +12,29 @@ pub const WORKSPACE_DETECT_ACTION: &str = "workspace.detect";
 pub const WORKSPACE_DETECT_GIT_ACTION: &str = "workspace.detect_git";
 pub const WORKSPACE_DISCOVER_BY_IDENTITY_ACTION: &str = "workspace.discover_by_identity";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpProbeTransportInput {
     pub transport: McpTransportConfig,
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
+    #[serde(default)]
+    pub probe_target: McpProbeTarget,
+    pub current_user: AuthIdentity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_binding: Option<McpRuntimeBindingConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpProbeTarget {
+    DefaultUserLocal,
+    Backend { backend_id: String },
+}
+
+impl Default for McpProbeTarget {
+    fn default() -> Self {
+        Self::DefaultUserLocal
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

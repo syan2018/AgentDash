@@ -4,6 +4,7 @@ import type {
   CreateMcpPresetRequest,
   ListMcpPresetQuery,
   McpPresetDto,
+  McpProbeTarget,
   McpRoutePolicy,
   McpRuntimeBindingConfig,
   McpTransportConfig,
@@ -11,6 +12,8 @@ import type {
   ProbeMcpPresetResponse,
   UpdateMcpPresetRequest,
 } from "../types";
+
+export const DEFAULT_MCP_PROBE_TARGET: McpProbeTarget = { kind: "default_user_local" };
 
 export async function fetchProjectMcpPresets(
   projectId: string,
@@ -90,8 +93,13 @@ export async function probeMcpTransport(
   transport: McpTransportConfig,
   routePolicy: McpRoutePolicy,
   runtimeBinding?: McpRuntimeBindingConfig | null,
+  probeTarget?: McpProbeTarget | null,
 ): Promise<ProbeMcpPresetResponse> {
-  const input: ProbeMcpPresetRequest = { transport, route_policy: routePolicy };
+  const input: ProbeMcpPresetRequest = {
+    transport,
+    route_policy: routePolicy,
+    probe_target: probeTarget ?? DEFAULT_MCP_PROBE_TARGET,
+  };
   if (runtimeBinding) {
     input.runtime_binding = runtimeBinding;
   }

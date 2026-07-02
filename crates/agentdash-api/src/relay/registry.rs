@@ -200,8 +200,9 @@ impl BackendRegistry {
 
     /// 获取任意一个在线 backend ID。
     ///
-    /// 仅用于 MCP preset setup/probe diagnostic。runtime relay MCP discovery/call
-    /// 必须消费 `RelayMcpCallContext.backend_anchor`，不得使用此 helper 兜底选 backend。
+    /// 仅保留给手工诊断/测试辅助。产品路径不得用它兜底选择 backend；
+    /// runtime relay MCP discovery/call 必须消费 `RelayMcpCallContext.backend_anchor`，
+    /// setup probe 必须先解析明确的用户本机 backend target。
     pub async fn find_any_online_backend_for_setup_probe(&self) -> Option<String> {
         self.backends.read().await.keys().next().cloned()
     }

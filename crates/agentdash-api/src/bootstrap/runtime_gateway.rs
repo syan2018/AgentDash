@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
+use agentdash_application::backend::{
+    McpProbeBackendTarget, McpProbeBackendTargetResolutionError, resolve_mcp_probe_backend_target,
+};
+use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
     ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
-    McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput, McpProbeTransportProvider,
-    RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
+    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
+    McpProbeTransportProvider, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
     WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
     WorkspaceBrowseDirectoryProvider, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
     WorkspaceDetectGitOutput, WorkspaceDetectGitProvider, WorkspaceDetectGitSetupPort,
@@ -16,12 +20,17 @@ use agentdash_application_runtime_gateway::{
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
+use agentdash_spi::AuthIdentity;
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
-use agentdash_spi::platform::mcp_relay::McpRelayProvider;
+use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
 use async_trait::async_trait;
+
+use crate::relay::registry::BackendRegistry;
 
 pub(crate) fn build_runtime_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
+    repos: RepositorySet,
+    backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<
         dyn agentdash_application_ports::backend_transport::BackendTransport,
     >,
@@ -31,6 +40,7 @@ pub(crate) fn build_runtime_gateway(
 ) -> Arc<RuntimeGateway> {
     let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
         Some(mcp_probe_relay),
+        McpProbeBackendTargetResolver::new(repos, backend_registry),
         Arc::new(agentdash_infrastructure::RmcpProbeTransport::new()),
     ));
     let workspace_setup = Arc::new(ApplicationWorkspaceSetupPort::new(setup_action_transport));
@@ -63,15 +73,21 @@ pub(crate) fn build_runtime_gateway(
 
 struct ApplicationMcpProbeSetupPort {
     relay: Option<Arc<dyn McpRelayProvider>>,
+    target_resolver: McpProbeBackendTargetResolver,
     http_probe: Arc<dyn McpProbeTransport>,
 }
 
 impl ApplicationMcpProbeSetupPort {
     fn new(
         relay: Option<Arc<dyn McpRelayProvider>>,
+        target_resolver: McpProbeBackendTargetResolver,
         http_probe: Arc<dyn McpProbeTransport>,
     ) -> Self {
-        Self { relay, http_probe }
+        Self {
+            relay,
+            target_resolver,
+            http_probe,
+        }
     }
 }
 
@@ -81,10 +97,28 @@ impl McpProbeSetupPort for ApplicationMcpProbeSetupPort {
         &self,
         input: McpProbeTransportInput,
     ) -> Result<McpProbeTransportOutput, RuntimeGatewaySetupError> {
+        let relay_target = if input.route_policy.uses_relay(&input.transport) {
+            match self
+                .target_resolver
+                .resolve(&input.current_user, &input.probe_target)
+                .await
+            {
+                Ok(target) => Some(target),
+                Err(McpProbeBackendTargetResolutionError::Unavailable(message)) => {
+                    return Ok(McpProbeTransportOutput::Unsupported { reason: message });
+                }
+                Err(McpProbeBackendTargetResolutionError::Failed(message)) => {
+                    return Err(RuntimeGatewaySetupError::ProviderFailed(message));
+                }
+            }
+        } else {
+            None
+        };
         let result = agentdash_application::mcp_preset::probe_transport_without_runtime_context(
             &input.transport,
             input.route_policy,
             input.runtime_binding.as_ref(),
+            relay_target,
             self.relay.as_deref(),
             self.http_probe.as_ref(),
         )
@@ -109,6 +143,50 @@ impl McpProbeSetupPort for ApplicationMcpProbeSetupPort {
                 McpProbeTransportOutput::Unsupported { reason }
             }
         })
+    }
+}
+
+#[derive(Clone)]
+struct McpProbeBackendTargetResolver {
+    repos: RepositorySet,
+    backend_registry: Arc<BackendRegistry>,
+}
+
+impl McpProbeBackendTargetResolver {
+    fn new(repos: RepositorySet, backend_registry: Arc<BackendRegistry>) -> Self {
+        Self {
+            repos,
+            backend_registry,
+        }
+    }
+
+    async fn resolve(
+        &self,
+        identity: &AuthIdentity,
+        target: &McpProbeTarget,
+    ) -> Result<RelayProbeTarget, McpProbeBackendTargetResolutionError> {
+        let online_backend_ids = self.backend_registry.list_online_ids().await;
+        let resolved = resolve_mcp_probe_backend_target(
+            self.repos.backend_repo.as_ref(),
+            self.repos.project_repo.as_ref(),
+            self.repos.project_backend_access_repo.as_ref(),
+            identity,
+            &mcp_probe_backend_target(target),
+            &online_backend_ids,
+        )
+        .await?;
+        Ok(RelayProbeTarget {
+            backend_id: resolved.backend_id,
+        })
+    }
+}
+
+fn mcp_probe_backend_target(target: &McpProbeTarget) -> McpProbeBackendTarget {
+    match target {
+        McpProbeTarget::DefaultUserLocal => McpProbeBackendTarget::DefaultUserLocal,
+        McpProbeTarget::Backend { backend_id } => McpProbeBackendTarget::Backend {
+            backend_id: backend_id.clone(),
+        },
     }
 }
 

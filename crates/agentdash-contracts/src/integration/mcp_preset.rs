@@ -347,9 +347,19 @@ pub struct ProbeMcpPresetRequest {
     pub transport: McpTransportConfigDto,
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub probe_target: Option<McpProbeTargetDto>,
     #[serde(default)]
     #[ts(optional)]
     pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpProbeTargetDto {
+    DefaultUserLocal,
+    Backend { backend_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

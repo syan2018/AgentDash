@@ -97,6 +97,12 @@ pub struct RelayProbeTool {
     pub description: String,
 }
 
+/// relay probe 已解析的目标 backend。
+#[derive(Debug, Clone)]
+pub struct RelayProbeTarget {
+    pub backend_id: String,
+}
+
 /// 通过 relay 信道发现和调用本机 MCP 工具的提供者。
 ///
 /// 由 API 层实现（基于 BackendRegistry），由 executor 层消费（RelayMcpToolAdapter）。
@@ -123,6 +129,7 @@ pub trait McpRelayProvider: Send + Sync {
     async fn probe_transport(
         &self,
         transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+        target: RelayProbeTarget,
     ) -> Result<RelayProbeResult, ConnectorError>;
 }
 

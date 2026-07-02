@@ -172,6 +172,8 @@ pub struct LifecycleAgent {
     pub id: Uuid,
     pub run_id: Uuid,
     pub project_id: Uuid,
+    #[serde(default = "default_created_by_user_id")]
+    pub created_by_user_id: String,
     /// Agent 创建/启动来源（取代原 `agent_kind` 自由字符串）。
     pub source: AgentSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,12 +194,24 @@ fn default_bootstrap_status() -> String {
 }
 
 impl LifecycleAgent {
+    pub const SYSTEM_CREATED_BY_USER_ID: &'static str = "system";
+
     pub fn new_root(run_id: Uuid, project_id: Uuid, source: AgentSource) -> Self {
+        Self::new_root_for_user(run_id, project_id, source, Self::SYSTEM_CREATED_BY_USER_ID)
+    }
+
+    pub fn new_root_for_user(
+        run_id: Uuid,
+        project_id: Uuid,
+        source: AgentSource,
+        created_by_user_id: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             run_id,
             project_id,
+            created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             source,
             project_agent_id: None,
             status: "active".to_string(),
@@ -242,6 +256,20 @@ impl LifecycleAgent {
     }
 }
 
+fn default_created_by_user_id() -> String {
+    LifecycleAgent::SYSTEM_CREATED_BY_USER_ID.to_string()
+}
+
+fn normalize_created_by_user_id(value: impl Into<String>) -> String {
+    let value = value.into();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        LifecycleAgent::SYSTEM_CREATED_BY_USER_ID.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod agent_source_tests {
     use super::*;
@@ -280,6 +308,32 @@ mod agent_source_tests {
         assert_eq!(
             AgentSource::from_str("PI_AGENT").unwrap(),
             AgentSource::Unknown
+        );
+    }
+
+    #[test]
+    fn lifecycle_agent_owner_defaults_to_system_and_preserves_actor() {
+        let run_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let default_agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        assert_eq!(
+            default_agent.created_by_user_id,
+            LifecycleAgent::SYSTEM_CREATED_BY_USER_ID
+        );
+
+        let user_agent = LifecycleAgent::new_root_for_user(
+            run_id,
+            project_id,
+            AgentSource::ProjectAgent,
+            "  user-a  ",
+        );
+        assert_eq!(user_agent.created_by_user_id, "user-a");
+
+        let blank_agent =
+            LifecycleAgent::new_root_for_user(run_id, project_id, AgentSource::ProjectAgent, "   ");
+        assert_eq!(
+            blank_agent.created_by_user_id,
+            LifecycleAgent::SYSTEM_CREATED_BY_USER_ID
         );
     }
 }

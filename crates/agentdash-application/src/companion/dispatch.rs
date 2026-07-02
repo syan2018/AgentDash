@@ -105,6 +105,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                 .launch_agent(&AgentLaunchIntent {
                     project_id: request.project_id,
                     source: ExecutionSource::ParentAgent,
+                    created_by_user_id: None,
                     subject_ref: None,
                     parent_run_id: Some(request.parent_run_id),
                     parent_agent_id: Some(request.parent_agent_id),

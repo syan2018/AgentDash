@@ -16,7 +16,7 @@ use crate::agent_run::lifecycle_read_model_facade::{
 use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    ConversationModelConfigInput, ConversationModelConfigResolver,
+    AgentRunOwnershipModel, ConversationModelConfigInput, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
     DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
@@ -71,6 +71,11 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         let viewer_user_id = input.viewer_user_id;
         let run = input.run;
         let agent = input.agent;
+        let ownership = AgentRunOwnershipModel::from_owner_fields(
+            run.created_by_user_id.clone(),
+            agent.created_by_user_id.clone(),
+            viewer_user_id.as_deref(),
+        );
         let current_delivery = self.current_delivery_selection(&run, &agent).await?;
         let delivery_runtime_session_id = current_delivery
             .as_ref()
@@ -232,6 +237,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 resource_surface_coordinate: resource_surface_coordinate.clone(),
                 resource_diagnostics,
                 model_config,
+                ownership: ownership.clone(),
             });
         let shell = shell_model(
             meta.as_ref(),
@@ -247,6 +253,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         Ok(AgentRunWorkspaceSnapshot {
             run,
             agent,
+            ownership,
             shell,
             delivery_runtime_session_id,
             delivery_trace_meta,

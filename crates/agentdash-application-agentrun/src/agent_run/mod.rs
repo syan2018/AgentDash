@@ -29,7 +29,7 @@ pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
     AgentConversationSnapshotModel, AgentConversationSnapshotResolver,
-    AgentRunCommandPreconditionModel, ConversationCommandAvailability,
+    AgentRunCommandPreconditionModel, AgentRunOwnershipModel, ConversationCommandAvailability,
     ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
     ConversationCommandKindModel, ConversationCommandModel, ConversationCommandPlacementModel,
     ConversationCommandSetModel, ConversationCommandStaleGuardModel, ConversationDiagnosticModel,

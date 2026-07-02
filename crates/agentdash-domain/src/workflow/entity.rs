@@ -159,6 +159,8 @@ pub enum LifecycleRunTopology {
 pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
+    #[serde(default = "default_created_by_user_id")]
+    pub created_by_user_id: String,
     pub topology: LifecycleRunTopology,
     #[serde(default)]
     pub context: LifecycleContext,
@@ -177,11 +179,18 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
+    pub const SYSTEM_CREATED_BY_USER_ID: &'static str = "system";
+
     pub fn new_control(project_id: Uuid) -> Self {
+        Self::new_control_for_user(project_id, Self::SYSTEM_CREATED_BY_USER_ID)
+    }
+
+    pub fn new_control_for_user(project_id: Uuid, created_by_user_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
+            created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::WorkflowGraph,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
@@ -196,10 +205,15 @@ impl LifecycleRun {
     }
 
     pub fn new_plain(project_id: Uuid) -> Self {
+        Self::new_plain_for_user(project_id, Self::SYSTEM_CREATED_BY_USER_ID)
+    }
+
+    pub fn new_plain_for_user(project_id: Uuid, created_by_user_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
+            created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::Plain,
             context: LifecycleContext::default(),
             orchestrations: Vec::new(),
@@ -427,6 +441,20 @@ impl LifecycleRun {
 
     pub fn refresh_status_from_orchestrations(&mut self) {
         self.status = aggregate_lifecycle_run_status(&self.orchestrations);
+    }
+}
+
+fn default_created_by_user_id() -> String {
+    LifecycleRun::SYSTEM_CREATED_BY_USER_ID.to_string()
+}
+
+fn normalize_created_by_user_id(value: impl Into<String>) -> String {
+    let value = value.into();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        LifecycleRun::SYSTEM_CREATED_BY_USER_ID.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -672,6 +700,25 @@ mod tests {
         assert!(plain.orchestrations.is_empty());
         assert!(plain.tasks.is_empty());
         assert!(plain.view_projection.is_none());
+    }
+
+    #[test]
+    fn lifecycle_run_owner_defaults_to_system_and_preserves_actor() {
+        let project_id = Uuid::new_v4();
+        let default_run = LifecycleRun::new_plain(project_id);
+        assert_eq!(
+            default_run.created_by_user_id,
+            LifecycleRun::SYSTEM_CREATED_BY_USER_ID
+        );
+
+        let user_run = LifecycleRun::new_control_for_user(project_id, "  user-a  ");
+        assert_eq!(user_run.created_by_user_id, "user-a");
+
+        let blank_run = LifecycleRun::new_plain_for_user(project_id, "   ");
+        assert_eq!(
+            blank_run.created_by_user_id,
+            LifecycleRun::SYSTEM_CREATED_BY_USER_ID
+        );
     }
 
     #[test]

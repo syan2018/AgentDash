@@ -40,6 +40,8 @@ impl TryFrom<&str> for AgentRunCommandStatus {
 pub enum AgentRunCommandKind {
     MessageSubmit,
     ProjectAgentStart,
+    AgentRunFork,
+    AgentRunForkSubmit,
     MailboxPromote,
     MailboxDelete,
     MailboxResume,
@@ -51,6 +53,8 @@ impl AgentRunCommandKind {
         match self {
             Self::MessageSubmit => "message_submit",
             Self::ProjectAgentStart => "project_agent_start",
+            Self::AgentRunFork => "agent_run_fork",
+            Self::AgentRunForkSubmit => "agent_run_fork_submit",
             Self::MailboxPromote => "mailbox_promote",
             Self::MailboxDelete => "mailbox_delete",
             Self::MailboxResume => "mailbox_resume",
@@ -66,6 +70,8 @@ impl TryFrom<&str> for AgentRunCommandKind {
         match value {
             "message_submit" => Ok(Self::MessageSubmit),
             "project_agent_start" => Ok(Self::ProjectAgentStart),
+            "agent_run_fork" => Ok(Self::AgentRunFork),
+            "agent_run_fork_submit" => Ok(Self::AgentRunForkSubmit),
             "mailbox_promote" => Ok(Self::MailboxPromote),
             "mailbox_delete" => Ok(Self::MailboxDelete),
             "mailbox_resume" => Ok(Self::MailboxResume),

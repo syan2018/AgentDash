@@ -15,6 +15,7 @@ use crate::lifecycle::WorkflowApplicationError;
 pub(crate) struct DispatchPlan {
     pub(crate) project_id: Uuid,
     pub(crate) source: ExecutionSource,
+    pub(crate) created_by_user_id: Option<String>,
     pub(crate) subject_ref: Option<SubjectRef>,
     pub(crate) parent_run_id: Option<Uuid>,
     pub(crate) parent_agent_id: Option<Uuid>,
@@ -55,6 +56,7 @@ impl From<&AgentLaunchIntent> for DispatchPlan {
         Self {
             project_id: intent.project_id,
             source: intent.source.clone(),
+            created_by_user_id: intent.created_by_user_id.clone(),
             subject_ref: intent.subject_ref.clone(),
             parent_run_id: intent.parent_run_id,
             parent_agent_id: intent.parent_agent_id,
@@ -72,6 +74,7 @@ impl From<&SubjectExecutionIntent> for DispatchPlan {
         Self {
             project_id: intent.project_id,
             source: intent.source.clone(),
+            created_by_user_id: intent.created_by_user_id.clone(),
             subject_ref: Some(intent.subject_ref.clone()),
             parent_run_id: intent.parent_run_id,
             parent_agent_id: intent.parent_agent_id,
@@ -89,6 +92,7 @@ impl From<&InteractionDispatchIntent> for DispatchPlan {
         Self {
             project_id: intent.project_id,
             source: intent.source.clone(),
+            created_by_user_id: None,
             subject_ref: None,
             parent_run_id: Some(intent.parent_run_id),
             parent_agent_id: Some(intent.parent_agent_id),

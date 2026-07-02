@@ -112,8 +112,13 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         request: WorkflowAgentNodeMaterializationRequest,
     ) -> Result<WorkflowAgentNodeMaterializationResult, WorkflowApplicationError> {
         let run = context.run;
-        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::WorkflowAgent)
-            .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
+        let agent = LifecycleAgent::new_root_for_user(
+            run.id,
+            run.project_id,
+            AgentSource::WorkflowAgent,
+            &run.created_by_user_id,
+        )
+        .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
         self.agent_repo.create(&agent).await?;
 
         let runtime_session_ref = self
@@ -223,7 +228,14 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         plan: &DispatchPlan,
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
         let source = agent_source_from_execution_source(&plan.source);
-        let agent = LifecycleAgent::new_root(run.id, plan.project_id, source);
+        let agent = LifecycleAgent::new_root_for_user(
+            run.id,
+            plan.project_id,
+            source,
+            plan.created_by_user_id
+                .as_deref()
+                .unwrap_or(run.created_by_user_id.as_str()),
+        );
         self.agent_repo.create(&agent).await?;
         Ok(agent)
     }

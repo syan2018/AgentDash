@@ -34,6 +34,7 @@ pub fn build_routine_execution_intent(
     SubjectExecutionIntent {
         project_id: routine.project_id,
         source: ExecutionSource::Routine,
+        created_by_user_id: None,
         subject_ref: SubjectRef::new("routine_execution", execution.id),
         parent_run_id: None,
         parent_agent_id: None,

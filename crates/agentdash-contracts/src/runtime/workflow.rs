@@ -939,6 +939,15 @@ pub struct AgentRunWorkspaceControlPlaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub reason: Option<String>,
+    pub ownership: AgentRunOwnershipView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunOwnershipView {
+    pub run_created_by_user_id: String,
+    pub agent_created_by_user_id: String,
+    pub current_user_controls_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1116,6 +1125,7 @@ pub struct ConversationKeyboardMapView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ConversationCommandSetView {
+    pub ownership: AgentRunOwnershipView,
     #[serde(default)]
     pub commands: Vec<ConversationCommandView>,
     pub keyboard: ConversationKeyboardMapView,

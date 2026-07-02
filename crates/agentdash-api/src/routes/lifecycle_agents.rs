@@ -25,9 +25,9 @@ use agentdash_contracts::agent_run_mailbox::{
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunRefDto,
-    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView,
+    AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
+    AgentRunView, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
     ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
@@ -1338,6 +1338,7 @@ fn conversation_command_set_to_contract(
     commands: app_agent_run::ConversationCommandSetModel,
 ) -> ConversationCommandSetView {
     ConversationCommandSetView {
+        ownership: ownership_to_contract(commands.ownership),
         commands: commands
             .commands
             .into_iter()
@@ -1347,6 +1348,16 @@ fn conversation_command_set_to_contract(
             enter: commands.keyboard.enter,
             ctrl_enter: commands.keyboard.ctrl_enter,
         },
+    }
+}
+
+fn ownership_to_contract(
+    ownership: app_agent_run::AgentRunOwnershipModel,
+) -> AgentRunOwnershipView {
+    AgentRunOwnershipView {
+        run_created_by_user_id: ownership.run_created_by_user_id,
+        agent_created_by_user_id: ownership.agent_created_by_user_id,
+        current_user_controls_run: ownership.current_user_controls_run,
     }
 }
 
@@ -1525,6 +1536,7 @@ fn workspace_control_plane_from_conversation(
     AgentRunWorkspaceControlPlaneView {
         status,
         reason: conversation.execution.reason.clone(),
+        ownership: conversation.commands.ownership.clone(),
     }
 }
 

@@ -85,6 +85,31 @@ pub struct ConversationEffectiveExecutorConfigModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunOwnershipModel {
+    pub run_created_by_user_id: String,
+    pub agent_created_by_user_id: String,
+    pub current_user_controls_run: bool,
+}
+
+impl AgentRunOwnershipModel {
+    pub fn from_owner_fields(
+        run_created_by_user_id: impl Into<String>,
+        agent_created_by_user_id: impl Into<String>,
+        viewer_user_id: Option<&str>,
+    ) -> Self {
+        let run_created_by_user_id = run_created_by_user_id.into();
+        let agent_created_by_user_id = agent_created_by_user_id.into();
+        let current_user_controls_run =
+            viewer_user_id.is_some_and(|viewer| viewer == run_created_by_user_id);
+        Self {
+            run_created_by_user_id,
+            agent_created_by_user_id,
+            current_user_controls_run,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationModelConfigModel {
     pub status: ConversationModelConfigStatusModel,
     pub effective_executor_config: Option<ConversationEffectiveExecutorConfigModel>,
@@ -150,6 +175,7 @@ pub struct ConversationKeyboardMapModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationCommandSetModel {
+    pub ownership: AgentRunOwnershipModel,
     pub commands: Vec<ConversationCommandModel>,
     pub keyboard: ConversationKeyboardMapModel,
 }
@@ -421,6 +447,7 @@ pub struct ConversationCommandAvailabilityInput {
     pub mailbox_paused: bool,
     pub mailbox_visible_message_count: usize,
     pub model_config_status: ConversationModelConfigStatusModel,
+    pub ownership: AgentRunOwnershipModel,
 }
 
 impl ConversationCommandAvailabilityInput {
@@ -436,6 +463,7 @@ impl ConversationCommandAvailabilityInput {
             mailbox_paused: input.mailbox_paused,
             mailbox_visible_message_count: input.mailbox_visible_message_count,
             model_config_status: input.model_config.status,
+            ownership: input.ownership.clone(),
         }
     }
 }
@@ -500,6 +528,7 @@ pub struct AgentConversationSnapshotInput {
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
     pub resource_diagnostics: Vec<ConversationDiagnosticModel>,
     pub model_config: ConversationModelConfigModel,
+    pub ownership: AgentRunOwnershipModel,
 }
 
 pub struct AgentConversationSnapshotResolver;
@@ -717,6 +746,7 @@ fn conversation_commands(
     ];
 
     ConversationCommandSetModel {
+        ownership: input.ownership.clone(),
         keyboard: ConversationKeyboardMapModel {
             enter: if submit_message {
                 Some(command_id_for(ConversationCommandKindModel::SubmitMessage))
@@ -932,7 +962,31 @@ mod tests {
             resource_surface_coordinate: None,
             resource_diagnostics: Vec::new(),
             model_config: resolved_model_config(),
+            ownership: AgentRunOwnershipModel::from_owner_fields(
+                "owner-user",
+                "owner-user",
+                Some("owner-user"),
+            ),
         }
+    }
+
+    #[test]
+    fn ownership_model_marks_only_run_owner_as_controller() {
+        let owner = AgentRunOwnershipModel::from_owner_fields(
+            "owner-user",
+            "agent-owner",
+            Some("owner-user"),
+        );
+        assert!(owner.current_user_controls_run);
+        assert_eq!(owner.run_created_by_user_id, "owner-user");
+        assert_eq!(owner.agent_created_by_user_id, "agent-owner");
+
+        let collaborator = AgentRunOwnershipModel::from_owner_fields(
+            "owner-user",
+            "agent-owner",
+            Some("collaborator"),
+        );
+        assert!(!collaborator.current_user_controls_run);
     }
 
     fn lifecycle_surface() -> ResolvedVfsSurface {

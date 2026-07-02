@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
+import type { AgentRunOwnershipView } from "../../../generated/workflow-contracts";
 import type {
   AgentFrameRuntimeView,
   AgentRunWorkspaceView,
@@ -25,6 +26,12 @@ const frameRuntime: AgentFrameRuntimeView = {
   runtime_session_refs: [{ runtime_session_id: "session-1" }],
 };
 
+const ownership: AgentRunOwnershipView = {
+  run_created_by_user_id: "owner-user",
+  agent_created_by_user_id: "owner-user",
+  current_user_controls_run: true,
+};
+
 const workspace: AgentRunWorkspaceView = {
   run_ref: { run_id: "run-1" },
   agent_ref: { run_id: "run-1", agent_id: "agent-1" },
@@ -39,6 +46,7 @@ const workspace: AgentRunWorkspaceView = {
   delivery_runtime_ref: { runtime_session_id: "session-1" },
   control_plane: {
     status: "running",
+    ownership,
   },
   frame_runtime: frameRuntime,
   subject_associations: [],
@@ -112,6 +120,7 @@ describe("AgentRun workspace refresh state", () => {
           missing_fields: [],
         },
         commands: {
+          ownership,
           keyboard: {
             enter: "submit",
             ctrl_enter: "submit",

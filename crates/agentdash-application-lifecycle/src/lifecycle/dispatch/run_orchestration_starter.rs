@@ -49,7 +49,10 @@ impl<'a> RunOrchestrationStarter<'a> {
         let planned_graph = self
             .plan_workflow_graph(intent.project_id, &intent.workflow_graph_ref)
             .await?;
-        let mut run = create_lifecycle_run(intent.project_id);
+        let mut run = LifecycleRun::new_control_for_user(
+            intent.project_id,
+            LifecycleRun::SYSTEM_CREATED_BY_USER_ID,
+        );
         let orchestration_binding = ensure_workflow_graph_orchestration(
             &mut run,
             &planned_graph.graph,
@@ -105,7 +108,12 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = LifecycleRun::new_plain(plan.project_id);
+                let run = LifecycleRun::new_plain_for_user(
+                    plan.project_id,
+                    plan.created_by_user_id
+                        .as_deref()
+                        .unwrap_or(LifecycleRun::SYSTEM_CREATED_BY_USER_ID),
+                );
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -182,7 +190,7 @@ impl<'a> RunOrchestrationStarter<'a> {
                 "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
             )),
             _ => {
-                let run = create_lifecycle_run(plan.project_id);
+                let run = create_lifecycle_run(plan);
                 self.run_repo.create(&run).await?;
                 Ok(run)
             }
@@ -190,8 +198,13 @@ impl<'a> RunOrchestrationStarter<'a> {
     }
 }
 
-fn create_lifecycle_run(project_id: Uuid) -> LifecycleRun {
-    LifecycleRun::new_control(project_id)
+fn create_lifecycle_run(plan: &DispatchPlan) -> LifecycleRun {
+    LifecycleRun::new_control_for_user(
+        plan.project_id,
+        plan.created_by_user_id
+            .as_deref()
+            .unwrap_or(LifecycleRun::SYSTEM_CREATED_BY_USER_ID),
+    )
 }
 
 fn ensure_workflow_graph_orchestration(

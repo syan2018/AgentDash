@@ -201,6 +201,11 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 mailbox_paused,
                 mailbox_visible_message_count,
                 model_config_status,
+                ownership: crate::agent_run::AgentRunOwnershipModel::from_owner_fields(
+                    context.run.created_by_user_id.clone(),
+                    context.agent.created_by_user_id.clone(),
+                    None,
+                ),
             },
         ))
     }
@@ -665,6 +670,11 @@ mod tests {
             mailbox_paused: false,
             mailbox_visible_message_count: 0,
             model_config_status: ConversationModelConfigStatusModel::Resolved,
+            ownership: crate::agent_run::AgentRunOwnershipModel::from_owner_fields(
+                context.run.created_by_user_id.clone(),
+                context.agent.created_by_user_id.clone(),
+                Some(context.run.created_by_user_id.as_str()),
+            ),
         })
     }
 

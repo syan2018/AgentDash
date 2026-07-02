@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  AgentRunOwnershipView,
   ConversationCommandPlacement,
   ConversationCommandView,
   ConversationMailboxSnapshotView,
@@ -18,6 +19,12 @@ import {
   projectSessionChatCommandState,
   projectSessionChatMailboxModel,
 } from "./conversationCommandState";
+
+const ownership: AgentRunOwnershipView = {
+  run_created_by_user_id: "owner-user",
+  agent_created_by_user_id: "owner-user",
+  current_user_controls_run: true,
+};
 
 function staleGuard(commandId: string): ConversationCommandStaleGuardView {
   return {
@@ -118,6 +125,7 @@ describe("AgentRun conversation command state", () => {
           reason: "正在运行",
         },
         commands: {
+          ownership,
           keyboard: {
             enter: "cmd-submit",
             ctrl_enter: "cmd-submit-steer",
@@ -247,6 +255,7 @@ describe("AgentRun conversation command state", () => {
       conversation: {
         execution: { status: "ready" },
         commands: {
+          ownership,
           keyboard: {},
           commands: [promote, deleteCommand],
         },

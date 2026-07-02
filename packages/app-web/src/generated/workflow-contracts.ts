@@ -85,6 +85,8 @@ subagent_count: number,
  */
 children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, };
 
+export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_created_by_user_id: string, current_user_controls_run: boolean, };
+
 export type AgentRunResourceSurfaceCoordinateView = { surface_frame_ref: AgentFrameRefDto, source_anchor?: AgentRunResourceSurfaceSourceAnchorView, };
 
 export type AgentRunResourceSurfaceSourceAnchorView = { runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
@@ -105,7 +107,7 @@ last_delivery_status?: string, created_at: string, updated_at: string, };
 
 export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing" | "delivery_missing";
 
-export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, };
+export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, ownership: AgentRunOwnershipView, };
 
 export type AgentRunWorkspaceListEntry = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, run_status: LifecycleRunStatus,
 /**
@@ -166,7 +168,7 @@ export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result
 
 export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
 
-export type ConversationCommandSetView = { commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
+export type ConversationCommandSetView = { ownership: AgentRunOwnershipView, commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
 
 export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
 

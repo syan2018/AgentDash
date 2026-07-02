@@ -200,16 +200,16 @@ use agentdash_contracts::workflow::{
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
-    HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto, LifecycleExecutionEntry,
-    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
-    LifecycleSubjectAssociationDto, OpenedHumanGateDto, OrchestrationExecutorDrainResultDto,
-    OrchestrationInstanceView, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
-    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
-    RuntimeNodeView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus,
-    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
-    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    DeleteAgentRunResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto,
+    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
+    LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
+    OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
+    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionExecutionAnchorDto,
+    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
+    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
+    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -808,6 +808,7 @@ fn main() {
             export_all::<CapabilityCatalogResponse>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
+            export_all::<DeleteAgentRunResponse>(dir);
             export_all::<PreflightWorkflowScriptRequest>(dir);
             export_all::<WorkflowScriptPreflightDiagnosticDto>(dir);
             export_all::<WorkflowScriptPlanPreviewNodeDto>(dir);

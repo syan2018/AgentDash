@@ -1,6 +1,7 @@
 mod cancel_command;
 pub(crate) mod command_receipt;
 mod conversation_snapshot;
+mod delete_command;
 mod delivery_runtime_selection;
 mod effective_capability;
 pub mod frame;
@@ -39,6 +40,9 @@ pub use conversation_snapshot::{
     ConversationModelConfigSourceModel, ConversationModelConfigStatusModel,
     ValidationSeverityModel, conversation_command_id_for, conversation_execution_state_code,
     conversation_snapshot_id, merge_executor_config_fields,
+};
+pub use delete_command::{
+    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteOutcome, AgentRunDeleteRepos,
 };
 pub use delivery_runtime_selection::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,

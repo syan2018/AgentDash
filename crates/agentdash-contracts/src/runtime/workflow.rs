@@ -667,6 +667,14 @@ pub struct DeleteAgentProcedureResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DeleteAgentRunResponse {
+    pub deleted: bool,
+    pub project_id: String,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct HookPresetResponse {
     pub key: String,
     pub trigger: Value,

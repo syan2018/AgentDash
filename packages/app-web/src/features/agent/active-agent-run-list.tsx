@@ -5,9 +5,12 @@
  * 按 subject 分组聚合；列表 keyset 游标分页，「加载更多」按需续拉。
  */
 
+import { CardMenu, ConfirmDialog, type CardMenuItem } from "@agentdash/ui";
 import { useCallback, useMemo, useState } from "react";
+import { useMatch, useNavigate } from "react-router-dom";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
 import type { SessionExecutionStatusValue } from "../../services/session";
+import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
 import {
@@ -294,21 +297,44 @@ interface AgentRunRowProps {
   entry: AgentRunWorkspaceListEntry;
   selectedAgentId: string | null;
   onOpenAgentRun: (runId: string, agentId: string) => void;
+  onRequestDelete: (entry: AgentRunWorkspaceListEntry) => void;
 }
 
-function AgentRunRow({ entry, selectedAgentId, onOpenAgentRun }: AgentRunRowProps) {
+function AgentRunRow({
+  entry,
+  selectedAgentId,
+  onOpenAgentRun,
+  onRequestDelete,
+}: AgentRunRowProps) {
   const [expanded, setExpanded] = useState(false);
   const status = normalizeExecutionStatus(entry.shell.delivery_status);
   const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
   const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
   const children = entry.children ?? [];
   const isSelected = selectedAgentId === entry.agent_ref.agent_id;
+  const menuItems = useMemo<CardMenuItem[]>(() => [
+    {
+      key: "delete",
+      label: "删除 AgentRun",
+      danger: true,
+      onSelect: () => onRequestDelete(entry),
+    },
+  ], [entry, onRequestDelete]);
+  const openRun = () => onOpenAgentRun(entry.run_ref.run_id, entry.agent_ref.agent_id);
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => onOpenAgentRun(entry.run_ref.run_id, entry.agent_ref.agent_id)}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={openRun}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openRun();
+          }
+        }}
         className={`flex w-full flex-col gap-0.5 rounded-[8px] px-3 py-2.5 text-left transition-colors ${
           isSelected ? "bg-primary/10" : "hover:bg-muted/40"
         }`}
@@ -325,6 +351,7 @@ function AgentRunRow({ entry, selectedAgentId, onOpenAgentRun }: AgentRunRowProp
               {formatRelativeTime(updatedAt)}
             </span>
           )}
+          <CardMenu items={menuItems} />
         </div>
         <div className="flex items-center gap-1.5 pl-4">
           <SourceTag source={entry.source} />
@@ -341,7 +368,7 @@ function AgentRunRow({ entry, selectedAgentId, onOpenAgentRun }: AgentRunRowProp
             {executionStatusLabel[status] ?? status}
           </span>
         </div>
-      </button>
+      </div>
 
       {expanded && children.map((child) => (
         <AgentRunChildRow
@@ -404,6 +431,9 @@ export function ActiveAgentRunList({
 }: ActiveAgentRunListProps) {
   const projection = useAgentRunListProjection(projectId, PAGE_SIZE);
   const loadMoreProjectAgentRuns = useAgentRunListProjectionStore((state) => state.loadMore);
+  const refreshProjectAgentRuns = useAgentRunListProjectionStore((state) => state.refreshProject);
+  const navigate = useNavigate();
+  const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
   const agentRuns = projection.entries;
   const nextCursor = projection.next_cursor;
   const isFetching = projection.status === "loading";
@@ -412,6 +442,12 @@ export function ActiveAgentRunList({
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilterGroup>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{
+    runId: string;
+    title: string;
+  } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;
@@ -426,6 +462,42 @@ export function ActiveAgentRunList({
       return next;
     });
   };
+
+  const requestDelete = useCallback((entry: AgentRunWorkspaceListEntry) => {
+    const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
+    setDeleteTarget({ runId: entry.run_ref.run_id, title });
+    setDeleteError(null);
+  }, []);
+
+  const closeDeleteDialog = useCallback(() => {
+    if (isDeleting) return;
+    setDeleteTarget(null);
+  }, [isDeleting]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteAgentRun(projectId, deleteTarget.runId);
+      await refreshProjectAgentRuns(projectId, "agent_run_deleted");
+      if (agentRunRouteMatch?.params.runId === deleteTarget.runId) {
+        navigate("/dashboard/agent");
+      }
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "删除 AgentRun 失败");
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [
+    agentRunRouteMatch?.params.runId,
+    deleteTarget,
+    isDeleting,
+    navigate,
+    projectId,
+    refreshProjectAgentRuns,
+  ]);
 
   // 状态 tab + 关键词在**已加载窗口**内过滤（见任务 PRD：服务端过滤为后续）。
   const filteredEntries = useMemo(() => {
@@ -469,6 +541,7 @@ export function ActiveAgentRunList({
       entry={entry}
       selectedAgentId={selectedAgentId}
       onOpenAgentRun={onOpenAgentRun}
+      onRequestDelete={requestDelete}
     />
   );
 
@@ -510,6 +583,11 @@ export function ActiveAgentRunList({
       )}
 
       <div className="flex-1 overflow-y-auto">
+        {deleteError && (
+          <p className="border-b border-border bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+            {deleteError}
+          </p>
+        )}
         {filteredEntries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-sm font-medium text-muted-foreground">暂无活跃 AgentRun</p>
@@ -558,6 +636,16 @@ export function ActiveAgentRunList({
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除 AgentRun"
+        description={`将删除「${deleteTarget?.title ?? ""}」及其关联 runtime trace facts。正在运行或取消中的 AgentRun 会被后端拒绝删除。`}
+        confirmLabel="删除"
+        tone="danger"
+        onClose={closeDeleteDialog}
+        onConfirm={() => void confirmDelete()}
+        isConfirming={isDeleting}
+      />
     </div>
   );
 }

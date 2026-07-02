@@ -712,3 +712,97 @@ let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
 .await?
 .ok_or_else(|| WorkflowApplicationError::NotFound("runtime frame unavailable".to_string()))?;
 ```
+
+## Scenario: AgentRun Whole-Run Delete Contract
+
+### 1. Scope / Trigger
+
+- Trigger: 浏览器需要删除 Agent 主页面中的一个主 AgentRun，并让后端统一清理对应 LifecycleRun、LifecycleAgent tree、delivery RuntimeSession trace facts 与 run-owned projection。
+- Scope: `DELETE /api/projects/{project_id}/agent-runs/{run_id}`、`agentdash-contracts::workflow::DeleteAgentRunResponse`、AgentRun 删除 application command、AgentRun list projection refresh。
+
+### 2. Signatures
+
+HTTP API:
+
+```text
+DELETE /api/projects/{project_id}/agent-runs/{run_id}
+```
+
+Response DTO:
+
+```rust
+#[serde(rename_all = "snake_case")]
+pub struct DeleteAgentRunResponse {
+    pub deleted: bool,
+    pub project_id: String,
+    pub run_id: String,
+}
+```
+
+Frontend service:
+
+```ts
+deleteAgentRun(projectId: string, runId: string): Promise<DeleteAgentRunResponse>
+```
+
+Application command:
+
+```rust
+pub struct AgentRunDeleteCommand {
+    pub project_id: Uuid,
+    pub run_id: Uuid,
+}
+```
+
+### 3. Contracts
+
+- Delete intent is Project-scoped because AgentRun list projection is Project-scoped and deletion must validate both Project edit permission and run ownership.
+- The product command target is the whole AgentRun / `LifecycleRun`; child Agent rows are not independent delete targets in this contract.
+- RuntimeSession ids are collected from `RuntimeSessionExecutionAnchor` and `LifecycleAgent.current_delivery` after the run ownership check. RuntimeSession cleanup serves the AgentRun delete command and is not the browser-facing product action.
+- The command rejects active work before any delete side effect. `LifecycleRunStatus::Running`, `SessionExecutionState::Running`, and `SessionExecutionState::Cancelling` all block deletion.
+- Successful deletion removes RuntimeSession trace facts first, then deletes the `LifecycleRun`; run-owned lifecycle rows, anchors, mailbox rows, and frame relations rely on existing database cascades.
+- Frontend success handling refreshes the AgentRun list projection from the server. If the current route points at the deleted `run_id`, the browser navigates back to the Agent page.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `project_id` or `run_id` is not a UUID | `400 Bad Request` |
+| Current user lacks Project edit permission | Project authorization error |
+| `run_id` does not exist | `404 Not Found` |
+| Run belongs to another Project | `404 Not Found` or equivalent non-disclosing Project ownership error |
+| Run status is `running` | `409 Conflict`, no RuntimeSession or LifecycleRun delete |
+| Any associated RuntimeSession is `running` or `cancelling` | `409 Conflict`, no RuntimeSession or LifecycleRun delete |
+| Associated RuntimeSession is already missing | Continue deleting the AgentRun facts |
+| LifecycleRun delete fails after session cleanup | Return the application error; caller refreshes projection before presenting final state |
+
+### 5. Good/Base/Bad Cases
+
+- Good: A completed Project AgentRun with two terminal RuntimeSessions is deleted; both sessions are removed through the session core and the LifecycleRun disappears from the Project AgentRun list after refresh.
+- Base: A draft or idle AgentRun with no RuntimeSession deletes only the LifecycleRun and cascaded run-owned rows.
+- Bad: A running AgentRun receives a delete request and any RuntimeSession or LifecycleRun row is deleted before the conflict is returned.
+
+### 6. Tests Required
+
+- Application test asserts terminal RuntimeSessions are deleted before LifecycleRun delete and the outcome includes the deleted session ids.
+- Application test asserts cross-Project delete returns not found / ownership error without deleting sessions or the run.
+- Application test asserts `Running` and `Cancelling` RuntimeSession states return conflict before any delete side effect.
+- API check/test asserts the route compiles with `DeleteAgentRunResponse` and Project edit permission path.
+- Contract check asserts `DeleteAgentRunResponse` is generated into `workflow-contracts.ts`.
+- Frontend test asserts the service calls `/projects/{project_id}/agent-runs/{run_id}` and consumes the generated response type.
+- Frontend test asserts the main AgentRun row exposes the delete menu, uses a lightweight danger confirmation, refreshes list projection on success, and protects row-open keyboard/click behavior from nested menu interactions.
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```ts
+await deleteSession(runtimeSessionId);
+```
+
+#### Canonical
+
+```ts
+await deleteAgentRun(projectId, runId);
+await refreshProjectAgentRuns(projectId, "agent_run_deleted");
+```

@@ -150,4 +150,21 @@ describe("agent-run list projection store", () => {
     expect(shortcutSource).not.toContain("setInterval");
     expect(activeListSource).not.toContain("setInterval");
   });
+
+  it("ActiveAgentRunList 主行删除入口使用确认、刷新投影和安全导航", () => {
+    const source = readFileSync(new URL("./active-agent-run-list.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain("CardMenu");
+    expect(source).toContain("ConfirmDialog");
+    expect(source).toContain("tone=\"danger\"");
+    expect(source).toContain("deleteAgentRun(projectId, deleteTarget.runId)");
+    expect(source).toContain("refreshProjectAgentRuns(projectId, \"agent_run_deleted\")");
+    expect(source).toContain("useMatch(\"/agent-runs/:runId/:agentId\")");
+    expect(source).toContain("navigate(\"/dashboard/agent\")");
+    expect(source).toContain("onRequestDelete: (entry: AgentRunWorkspaceListEntry) => void");
+    expect(source).toContain("event.target !== event.currentTarget");
+    expect(source).not.toContain("expectedValue={deleteTarget");
+    expect(source).not.toContain("onInputValueChange");
+    expect(source).not.toContain("onRequestDelete: (child: AgentRunListChild) => void");
+  });
 });

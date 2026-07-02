@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查后端实现是否遵守 route/application/repository 边界。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "检查删除命令是否以 AgentRun/LifecycleRun 控制面为事实根，并正确处理 RuntimeSessionExecutionAnchor。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查没有把 RuntimeSession 删除接口作为前端产品入口。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查新增 DTO 和 generated TypeScript 是否同步，contracts:check 是否覆盖。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 service/store/UI 是否消费 generated DTO，未手写 wire union 或使用类型断言。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查删除成功后的 AgentRun list projection 刷新和当前 workspace 导航处理。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "检查删除入口和确认弹窗是否符合现有 UI primitive 与危险操作样式。"}

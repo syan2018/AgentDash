@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "约束 API route、application use case、domain/repository 分层，避免在 route 中拼跨聚合删除逻辑。"}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "定义 LifecycleRun、LifecycleAgent、RuntimeSessionExecutionAnchor 与 AgentRun 控制面关系，是删除聚合根和清理顺序的事实依据。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "明确 RuntimeSession 只是 delivery / trace substrate，不应作为产品删除入口。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "新增删除 response DTO 时必须通过 Rust contract 生成 TypeScript，保持前后端 wire 单源。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端 AgentRun UI 以 AgentRun Workspace projection 为准，不能从 RuntimeSession 推导业务状态。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "删除成功后必须刷新 AgentRun list projection，不能仅本地 patch。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "危险删除入口应使用现有 CardMenu / DangerConfirmDialog 等 primitive 和设计 token。"}

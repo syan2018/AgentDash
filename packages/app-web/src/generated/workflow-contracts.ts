@@ -188,6 +188,8 @@ export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
 export type DeleteAgentProcedureResponse = { deleted: boolean, };
 
+export type DeleteAgentRunResponse = { deleted: boolean, project_id: string, run_id: string, };
+
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 
 export type DeleteWorkflowGraphResponse = { deleted: boolean, };

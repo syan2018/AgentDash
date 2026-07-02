@@ -12,6 +12,7 @@ use agentdash_application_agentrun::agent_run::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCommandReceiptView,
+    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
 };
@@ -33,8 +34,9 @@ use agentdash_contracts::workflow::{
     ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, LifecycleRunRefDto, LifecycleSubjectAssociationDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta, SubjectRefDto, ValidationSeverity,
+    ConversationModelConfigView, DeleteAgentRunResponse, LifecycleRunRefDto,
+    LifecycleSubjectAssociationDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta, SubjectRefDto,
+    ValidationSeverity,
 };
 use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -71,6 +73,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/projects/{project_id}/agent-runs",
             axum::routing::get(get_project_agent_runs),
+        )
+        .route(
+            "/projects/{project_id}/agent-runs/{run_id}",
+            axum::routing::delete(delete_project_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
@@ -205,6 +211,38 @@ pub async fn get_project_agent_runs(
         project_id: project_id.to_string(),
         agent_runs: entries,
         next_cursor,
+    }))
+}
+
+pub async fn delete_project_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((project_id, run_id)): Path<(String, String)>,
+) -> Result<Json<DeleteAgentRunResponse>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let service = AgentRunDeleteCommandService::new(
+        AgentRunDeleteRepos::from_repository_set(&agent_run_repos),
+        agent_run_session_core(state.services.session_core.clone()),
+    );
+    let outcome = service
+        .delete(AgentRunDeleteCommand { project_id, run_id })
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(Json(DeleteAgentRunResponse {
+        deleted: outcome.deleted,
+        project_id: outcome.project_id.to_string(),
+        run_id: outcome.run_id.to_string(),
     }))
 }
 

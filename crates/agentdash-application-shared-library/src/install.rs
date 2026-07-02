@@ -444,12 +444,77 @@ async fn install_agent_template(
         asset.description,
         dependency_mcp_directives,
     );
-    agent.config = serde_json::to_value(agent_config).map_err(DomainError::Serialization)?;
+    agent.config = serde_json::to_value(&agent_config).map_err(DomainError::Serialization)?;
     agent.installed_source = Some(installed_source);
+    upsert_project_agent_template(repos, agent, &agent_config, input.overwrite).await
+}
+
+async fn upsert_project_agent_template(
+    repos: &SharedLibraryRepositorySet,
+    agent: ProjectAgent,
+    template_config: &AgentPresetConfig,
+    overwrite: bool,
+) -> Result<InstallLibraryAssetOutput, DomainError> {
+    if let Some(existing) = repos
+        .project_agent_repo
+        .get_by_project_and_name(agent.project_id, &agent.name)
+        .await?
+    {
+        if !overwrite {
+            return Err(DomainError::InvalidConfig(format!(
+                "ProjectAgent name 已存在: {}",
+                agent.name
+            )));
+        }
+        let merged = merge_project_agent_template_update(existing, agent, template_config)?;
+        repos.project_agent_repo.update(&merged).await?;
+        return Ok(InstallLibraryAssetOutput::ProjectAgent {
+            project_agent_id: merged.id,
+        });
+    }
+
+    let project_agent_id = agent.id;
     repos.project_agent_repo.create(&agent).await?;
-    Ok(InstallLibraryAssetOutput::ProjectAgent {
-        project_agent_id: agent.id,
-    })
+    Ok(InstallLibraryAssetOutput::ProjectAgent { project_agent_id })
+}
+
+fn merge_project_agent_template_update(
+    mut existing: ProjectAgent,
+    template_agent: ProjectAgent,
+    template_config: &AgentPresetConfig,
+) -> Result<ProjectAgent, DomainError> {
+    if let Some(executor) = &template_config.executor {
+        existing.agent_type = executor.clone();
+    }
+    existing.config = merge_agent_template_config_json(&existing.config, template_config)?;
+    existing.installed_source = template_agent.installed_source;
+    existing.updated_at = chrono::Utc::now();
+    Ok(existing)
+}
+
+fn merge_agent_template_config_json(
+    existing_config: &serde_json::Value,
+    template_config: &AgentPresetConfig,
+) -> Result<serde_json::Value, DomainError> {
+    let mut merged = match AgentPresetConfig::normalize_json_value(existing_config)? {
+        serde_json::Value::Object(object) => object,
+        _ => {
+            return Err(DomainError::InvalidConfig(
+                "ProjectAgent config 必须是 JSON object".to_string(),
+            ));
+        }
+    };
+    let template_value =
+        serde_json::to_value(template_config).map_err(DomainError::Serialization)?;
+    let serde_json::Value::Object(template_object) = template_value else {
+        return Err(DomainError::InvalidConfig(
+            "AgentTemplate config 必须序列化为 JSON object".to_string(),
+        ));
+    };
+    for (key, value) in template_object {
+        merged.insert(key, value);
+    }
+    Ok(serde_json::Value::Object(merged))
 }
 
 fn agent_template_preset_config(
@@ -1229,6 +1294,111 @@ mod tests {
             ])
         );
         assert!(serialized.get("mcp_preset_keys").is_none());
+    }
+
+    #[test]
+    fn agent_template_config_merge_overwrites_resource_fields_and_preserves_local_json() {
+        let template_config = AgentPresetConfig {
+            provider_id: Some("resource-provider".to_string()),
+            system_prompt: Some("resource prompt".to_string()),
+            display_name: Some("Resource Agent".to_string()),
+            capability_directives: Some(vec![ToolCapabilityDirective::add_simple(
+                "mcp:resource-tools",
+            )]),
+            ..Default::default()
+        };
+
+        let merged = merge_agent_template_config_json(
+            &json!({
+                "provider_id": "local-provider",
+                "model_id": "local-model",
+                "system_prompt": "local prompt",
+                "extra_companions": ["reviewer"],
+                "unknown_local_field": { "keep": true },
+                "mcp_preset_keys": ["legacy-tool"]
+            }),
+            &template_config,
+        )
+        .expect("merge config");
+
+        assert_eq!(merged["provider_id"], "resource-provider");
+        assert_eq!(merged["system_prompt"], "resource prompt");
+        assert_eq!(merged["display_name"], "Resource Agent");
+        assert_eq!(merged["model_id"], "local-model");
+        assert_eq!(merged["extra_companions"], json!(["reviewer"]));
+        assert_eq!(merged["unknown_local_field"], json!({ "keep": true }));
+        assert_eq!(
+            merged["capability_directives"],
+            json!([{ "add": "mcp:resource-tools" }])
+        );
+        assert!(merged.get("mcp_preset_keys").is_none());
+    }
+
+    #[test]
+    fn project_agent_template_update_preserves_local_state_when_template_omits_executor() {
+        let project_id = Uuid::new_v4();
+        let mut existing = ProjectAgent::new(project_id, "abc-copilot", "LOCAL_EXEC");
+        existing.config = json!({
+            "provider_id": "local-provider",
+            "model_id": "local-model",
+            "unknown_local_field": true
+        });
+        existing.default_lifecycle_key = Some("local-flow".to_string());
+        existing.is_default_for_story = true;
+        existing.is_default_for_task = true;
+        existing.knowledge_enabled = true;
+        let existing_id = existing.id;
+        let existing_created_at = existing.created_at;
+
+        let mut template_agent = ProjectAgent::new(project_id, "abc-copilot", "PI_AGENT");
+        template_agent.installed_source = Some(InstalledAssetSource::new(
+            Uuid::new_v4(),
+            "resource-source",
+            "0.2.0",
+            "sha256:resource",
+        ));
+        let installed_source = template_agent.installed_source.clone();
+        let template_config = AgentPresetConfig {
+            provider_id: Some("resource-provider".to_string()),
+            display_name: Some("ABC Copilot".to_string()),
+            ..Default::default()
+        };
+
+        let merged =
+            merge_project_agent_template_update(existing, template_agent, &template_config)
+                .expect("merge project agent");
+
+        assert_eq!(merged.id, existing_id);
+        assert_eq!(merged.created_at, existing_created_at);
+        assert_eq!(merged.name, "abc-copilot");
+        assert_eq!(merged.agent_type, "LOCAL_EXEC");
+        assert_eq!(merged.default_lifecycle_key.as_deref(), Some("local-flow"));
+        assert!(merged.is_default_for_story);
+        assert!(merged.is_default_for_task);
+        assert!(merged.knowledge_enabled);
+        assert_eq!(merged.installed_source, installed_source);
+        assert_eq!(merged.config["provider_id"], "resource-provider");
+        assert_eq!(merged.config["display_name"], "ABC Copilot");
+        assert_eq!(merged.config["model_id"], "local-model");
+        assert_eq!(merged.config["unknown_local_field"], true);
+    }
+
+    #[test]
+    fn project_agent_template_update_overwrites_executor_when_resource_declares_it() {
+        let project_id = Uuid::new_v4();
+        let existing = ProjectAgent::new(project_id, "abc-copilot", "LOCAL_EXEC");
+        let template_agent = ProjectAgent::new(project_id, "abc-copilot", "PI_AGENT");
+        let template_config = AgentPresetConfig {
+            executor: Some("PI_AGENT".to_string()),
+            ..Default::default()
+        };
+
+        let merged =
+            merge_project_agent_template_update(existing, template_agent, &template_config)
+                .expect("merge project agent");
+
+        assert_eq!(merged.agent_type, "PI_AGENT");
+        assert_eq!(merged.config["executor"], "PI_AGENT");
     }
 
     fn mcp_template_asset(payload: serde_json::Value) -> LibraryAsset {

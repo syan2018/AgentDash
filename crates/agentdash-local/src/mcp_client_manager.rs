@@ -79,6 +79,7 @@ impl McpClientManager {
     }
 
     async fn mark_unavailable(&self, server_name: &str, error: &str) {
+        let summary = truncate_error_summary(error);
         let mut health = self.health.write().await;
         health.insert(
             server_name.to_string(),
@@ -87,7 +88,7 @@ impl McpClientManager {
                 domain: "mcp".to_string(),
                 status: "unavailable".to_string(),
                 label: server_name.to_string(),
-                summary: error.to_string(),
+                summary,
                 actions: vec![
                     LocalCapabilityHealthAction {
                         kind: "probe".to_string(),
@@ -293,6 +294,19 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 
 fn connection_key_prefix(server_name: &str) -> Result<String, anyhow::Error> {
     Ok(format!("{}:", serde_json::to_string(server_name)?))
+}
+
+fn truncate_error_summary(error: &str) -> String {
+    let first_line = error.lines().next().unwrap_or(error);
+    let short = if first_line.len() > 80 {
+        format!("{}…", &first_line[..77])
+    } else {
+        first_line.to_string()
+    };
+    short
+        .replace("rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<reqwest::async_impl::client::Client>>", "MCP transport")
+        .replace("rmcp::transport::worker::WorkerTransport<", "")
+        .replace(">::Error", "")
 }
 
 #[cfg(test)]

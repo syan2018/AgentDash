@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import {
   DEFAULT_LOCAL_RUNTIME_PROFILE_ID,
   DEFAULT_LOCAL_RUNTIME_SERVER_URL,
@@ -7,7 +6,6 @@ import type {
   DesktopApiSnapshot,
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
-  LocalCapabilityHealthItem,
   LocalRuntimeClient,
   LocalRuntimeProfile,
 } from '@agentdash/core/local-runtime';
@@ -200,23 +198,4 @@ async function loadOrCreateAutoConnectProfile(client: LocalRuntimeClient): Promi
 
 function resolveDesktopServerUrl(): string {
   return resolveDefaultLocalRuntimeServerUrl() || DEFAULT_LOCAL_RUNTIME_SERVER_URL;
-}
-
-export function useCapabilityHealth(): LocalCapabilityHealthItem[] {
-  const [items, setItems] = useState<LocalCapabilityHealthItem[]>([]);
-  useEffect(() => {
-    const client = getDesktopLocalRuntimeClient();
-    if (!client) return;
-    let cancelled = false;
-    const poll = () => {
-      void client.runtimeSnapshot().then((snapshot) => {
-        if (cancelled) return;
-        setItems(snapshot?.capability_health ?? []);
-      });
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
-  return items;
 }

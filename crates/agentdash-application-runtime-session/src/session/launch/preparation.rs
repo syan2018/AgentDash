@@ -117,6 +117,31 @@ impl TurnPreparer {
         let mut context = launch_plan.context;
 
         let assembled_tool_surface = deps.assemble_tool_surface(&session_id, &context).await;
+        if !assembled_tool_surface.mcp_failures.is_empty() {
+            let messages: Vec<&str> = assembled_tool_surface
+                .mcp_failures
+                .iter()
+                .map(|f| f.summary.as_str())
+                .collect();
+            let message = format!(
+                "MCP 工具加载失败，部分工具本次对话不可用：{}",
+                messages.join("；")
+            );
+            use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+            let envelope = BackboneEnvelope::new(
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                    key: "system_message".to_string(),
+                    value: serde_json::json!({ "message": message }),
+                }),
+                &session_id,
+                SourceInfo {
+                    connector_id: deps.connector.connector_id().to_string(),
+                    connector_type: "runtime".to_string(),
+                    executor_id: None,
+                },
+            );
+            let _ = deps.eventing.persist_notification(&session_id, envelope).await;
+        }
         let assembled_tool_schemas = assembled_tool_surface.schemas;
         context.turn.assembled_tools = assembled_tool_surface.tools;
         if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {

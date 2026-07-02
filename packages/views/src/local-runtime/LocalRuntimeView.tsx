@@ -1241,16 +1241,18 @@ function CapabilityHealthSection({ items }: { items: LocalCapabilityHealthItem[]
         {unhealthy.map((item) => (
           <div
             key={item.id}
-            className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+            className="flex items-start gap-2 rounded-md border border-border px-3 py-2 overflow-hidden"
           >
-            <div className="flex items-center gap-2">
-              <StatusDot tone={item.status === 'degraded' ? 'warning' : 'danger'} />
-              <span className="text-sm font-medium">{item.label}</span>
-              <Badge variant={item.status === 'degraded' ? 'warning' : 'danger'}>
-                {item.status === 'degraded' ? '降级' : '不可用'}
-              </Badge>
+            <StatusDot tone={item.status === 'degraded' ? 'warning' : 'danger'} className="mt-1 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium truncate">{item.label}</span>
+                <Badge variant={item.status === 'degraded' ? 'warning' : 'danger'}>
+                  {item.status === 'degraded' ? '降级' : '不可用'}
+                </Badge>
+              </div>
+              <p className="mt-0.5 text-xs text-muted truncate">{item.summary}</p>
             </div>
-            <span className="text-xs text-muted">{item.summary}</span>
           </div>
         ))}
       </div>

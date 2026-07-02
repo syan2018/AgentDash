@@ -14,6 +14,12 @@ use crate::session::dimension::tool_schema::{
 pub(crate) struct AssembledToolSurface {
     pub tools: Vec<DynAgentTool>,
     pub schemas: Vec<RuntimeToolSchemaEntry>,
+    pub mcp_failures: Vec<McpDiscoveryFailure>,
+}
+
+#[derive(Clone)]
+pub(crate) struct McpDiscoveryFailure {
+    pub summary: String,
 }
 
 pub(crate) async fn assemble_tool_surface_for_execution_context(
@@ -24,6 +30,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
 ) -> AssembledToolSurface {
     let mut all_tools: Vec<DynAgentTool> = Vec::new();
     let mut all_schemas: Vec<RuntimeToolSchemaEntry> = Vec::new();
+    let mut mcp_failures: Vec<McpDiscoveryFailure> = Vec::new();
 
     if let Some(provider) = runtime_tool_provider {
         match provider.build_tools(context).await {
@@ -73,15 +80,21 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 all_schemas.extend(runtime_tool_schema_entries_from_mcp_tools(&entries));
                 all_tools.extend(entries.into_iter().map(|entry| entry.tool));
             }
-            Err(e) => diag!(Warn, Subsystem::AgentRun,
-
-                session_id = %session_id,
-                "MCP 工具发现失败: {e}"
-            ),
+            Err(e) => {
+                diag!(Warn, Subsystem::AgentRun,
+                    session_id = %session_id,
+                    "MCP 工具发现失败: {e}"
+                );
+                mcp_failures.push(McpDiscoveryFailure {
+                    summary: format!("{e}"),
+                });
+            }
         }
     }
 
-    finalize_tool_surface(session_id, all_tools, all_schemas)
+    let mut surface = finalize_tool_surface(session_id, all_tools, all_schemas);
+    surface.mcp_failures = mcp_failures;
+    surface
 }
 
 fn finalize_tool_surface(
@@ -98,7 +111,11 @@ fn finalize_tool_surface(
         return AssembledToolSurface::default();
     }
 
-    AssembledToolSurface { tools, schemas }
+    AssembledToolSurface {
+        tools,
+        schemas,
+        mcp_failures: Vec::new(),
+    }
 }
 
 fn dedupe_tool_schemas(schemas: &mut Vec<RuntimeToolSchemaEntry>) {

@@ -10,6 +10,7 @@ pub(crate) struct McpServerDimensionDelta {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<String>,
+    pub unavailable: Vec<String>,
 }
 
 impl McpServerDimensionDelta {
@@ -21,6 +22,7 @@ impl McpServerDimensionDelta {
             added: state_delta.mcp_servers.added.clone(),
             removed: state_delta.mcp_servers.removed.clone(),
             changed: state_delta.mcp_servers.changed.clone(),
+            unavailable: state_delta.unavailable_mcp_servers.clone(),
         };
         if !delta.has_changes() {
             return None;
@@ -31,7 +33,10 @@ impl McpServerDimensionDelta {
 
 impl DimensionDelta for McpServerDimensionDelta {
     fn has_changes(&self) -> bool {
-        !self.added.is_empty() || !self.removed.is_empty() || !self.changed.is_empty()
+        !self.added.is_empty()
+            || !self.removed.is_empty()
+            || !self.changed.is_empty()
+            || !self.unavailable.is_empty()
     }
 
     fn to_section(&self) -> ContextFrameSection {
@@ -51,6 +56,15 @@ impl DimensionDelta for McpServerDimensionDelta {
         append_lines(&mut lines, "Added MCP servers", &self.added, "已注入");
         append_lines(&mut lines, "Removed MCP servers", &self.removed, "已移除");
         append_lines(&mut lines, "Changed MCP servers", &self.changed, "已变更");
+
+        if !self.unavailable.is_empty() {
+            lines.push(String::new());
+            lines.push("### Unavailable MCP servers (connection failed)".to_string());
+            lines.push("The following MCP tool sources failed to connect. Their tools are NOT available this session. If the user's request requires these tools, inform them that the MCP environment needs to be fixed before proceeding.".to_string());
+            for desc in &self.unavailable {
+                lines.push(format!("- {desc}"));
+            }
+        }
 
         lines.join("\n")
     }

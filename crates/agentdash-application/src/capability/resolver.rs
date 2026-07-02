@@ -377,6 +377,7 @@ impl CapabilityResolver {
                 enabled_clusters,
                 tool_policy,
                 mcp_servers: resolved_mcp_servers,
+                unavailable_mcp_servers: Vec::new(),
             },
             companion,
             ..Default::default()

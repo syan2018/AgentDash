@@ -401,6 +401,9 @@ pub struct ToolDimension {
     /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
     /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
     pub mcp_servers: Vec<RuntimeMcpServer>,
+    /// 工具发现阶段连接失败的 MCP server 摘要；用于 agent context 提示。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable_mcp_servers: Vec<String>,
 }
 
 /// Companion 维度的运行态。
@@ -642,6 +645,7 @@ impl CapabilityState {
                     &other.tool.tool_policy,
                 ),
                 mcp_servers: self.tool.mcp_servers.clone(),
+                unavailable_mcp_servers: self.tool.unavailable_mcp_servers.clone(),
             },
             companion: self.companion.clone(),
             vfs: self.vfs.clone(),

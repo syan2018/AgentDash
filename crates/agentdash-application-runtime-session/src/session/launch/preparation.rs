@@ -117,21 +117,18 @@ impl TurnPreparer {
         let mut context = launch_plan.context;
 
         let assembled_tool_surface = deps.assemble_tool_surface(&session_id, &context).await;
-        if !assembled_tool_surface.mcp_failures.is_empty() {
-            let messages: Vec<&str> = assembled_tool_surface
-                .mcp_failures
-                .iter()
-                .map(|f| f.summary.as_str())
-                .collect();
-            let message = format!(
+        let mcp_failures = assembled_tool_surface.mcp_failures.clone();
+        if !mcp_failures.is_empty() {
+            let summaries: Vec<&str> = mcp_failures.iter().map(|f| f.summary.as_str()).collect();
+            let user_message = format!(
                 "MCP 工具加载失败，部分工具本次对话不可用：{}",
-                messages.join("；")
+                summaries.join("；")
             );
             use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
             let envelope = BackboneEnvelope::new(
                 BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                     key: "system_message".to_string(),
-                    value: serde_json::json!({ "message": message }),
+                    value: serde_json::json!({ "message": user_message }),
                 }),
                 &session_id,
                 SourceInfo {
@@ -144,6 +141,12 @@ impl TurnPreparer {
         }
         let assembled_tool_schemas = assembled_tool_surface.schemas;
         context.turn.assembled_tools = assembled_tool_surface.tools;
+        if !mcp_failures.is_empty() {
+            context.turn.capability_state.tool.unavailable_mcp_servers = mcp_failures
+                .iter()
+                .map(|f| f.summary.clone())
+                .collect();
+        }
         if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {
             let admission_metadata =
                 ToolAdmissionMetadata::from_schema_entries(&assembled_tool_schemas);

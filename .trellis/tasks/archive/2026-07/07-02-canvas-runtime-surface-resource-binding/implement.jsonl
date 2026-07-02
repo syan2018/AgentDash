@@ -1,0 +1,12 @@
+{"file":".trellis/spec/cross-layer/architecture.md","reason":"Canvas runtime context spans frontend, API, runtime session and local/backend execution boundaries."}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Canvas runtime snapshot and bridge DTO changes must remain generated contract facts."}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"Runtime resource surface and VFS surface refs are the resource access contract."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"Canvas runtime action and backend placement must follow RuntimeGateway admission boundaries."}
+{"file":"crates/agentdash-application/src/canvas/diagnostics.rs","reason":"Existing CanvasAgentRunContext is the binding layer that implementation must reuse and deepen."}
+{"file":"crates/agentdash-domain/src/canvas/runtime_state.rs","reason":"Existing AgentRun Canvas runtime observation/interaction latest state defines binding ownership fields."}
+{"file":"crates/agentdash-infrastructure/migrations/0026_agent_run_canvas_runtime_state.sql","reason":"Migration documents that RuntimeSession is a derived trace field, not the Canvas runtime state ownership key."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/surface.rs","reason":"Workspace Module command structs and Canvas operations are the local interface to converge around a shared runtime context."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/runtime_bridge.rs","reason":"Canvas runtime surface updates currently assemble runtime session, bridge, VFS and user facts that should flow from the shared Workspace Module runtime context."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/tools.rs","reason":"Workspace Module tool providers construct operate/invoke/present commands and must pass the converged runtime context instead of parallel runtime fact sets."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/runtime_tool_provider.rs","reason":"Runtime tool provider builds Workspace Module runtime inputs from ExecutionContext and is the adapter into the new local context."}
+{"file":"crates/agentdash-application-agentrun/src/agent_run/runtime_surface.rs","reason":"AgentRun current runtime surface query is the source for delivery runtime VFS/backend/resource surface projection."}

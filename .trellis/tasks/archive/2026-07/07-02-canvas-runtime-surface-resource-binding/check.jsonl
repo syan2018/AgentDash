@@ -1,0 +1,10 @@
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Contract generation and frontend consumption must be checked after DTO shape changes."}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"Resource surface read behavior must stay aligned with VFS surface invariants."}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"Runtime action invocation must not bypass actor/context admission."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Frontend must consume generated Canvas DTOs without hand-written protocol drift."}
+{"file":"crates/agentdash-application/src/canvas/diagnostics.rs","reason":"Checks must verify implementation reuses CanvasAgentRunContext instead of creating a parallel binding layer."}
+{"file":"crates/agentdash-infrastructure/migrations/0026_agent_run_canvas_runtime_state.sql","reason":"Checks must preserve the existing AgentRun Canvas runtime state ownership model."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/surface.rs","reason":"Checks must verify Workspace Module operate/invoke/present consume the shared runtime context for session, backend, VFS and Canvas state facts."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/runtime_bridge.rs","reason":"Checks must verify Canvas runtime surface updates use the shared Workspace Module runtime context and keep AgentFrame/VFS projection in sync."}
+{"file":"crates/agentdash-workspace-module/src/workspace_module/tools.rs","reason":"Checks must verify Workspace Module tool providers no longer maintain a parallel runtime fact assembly."}
+{"file":"crates/agentdash-application-agentrun/src/agent_run/runtime_surface.rs","reason":"Checks must verify the implementation continues to use AgentRun current runtime surface as the source for VFS/backend projection."}

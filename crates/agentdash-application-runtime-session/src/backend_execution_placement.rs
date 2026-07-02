@@ -182,6 +182,11 @@ async fn resolve_fixed_backend(
             "backend `{backend_id}` 不在当前 Project 授权范围内"
         )));
     }
+    if !transport.is_online(backend_id).await {
+        return Err(ConnectorError::ConnectionFailed(format!(
+            "backend `{backend_id}` 当前不在线"
+        )));
+    }
 
     if requires_backend_relay_executor(executor_id) {
         let has_executor = transport.list_online_executors().iter().any(|executor| {
@@ -190,7 +195,7 @@ async fn resolve_fixed_backend(
                 && executor.available
         });
         if !has_executor {
-            return Err(ConnectorError::Runtime(format!(
+            return Err(ConnectorError::ConnectionFailed(format!(
                 "backend `{backend_id}` 当前未提供可用执行器 `{executor_id}`"
             )));
         }
@@ -233,7 +238,7 @@ async fn resolve_auto_idle_backend(
         } else {
             "（已按当前 Project 授权范围过滤）".to_string()
         };
-        return Err(ConnectorError::Runtime(format!(
+        return Err(ConnectorError::ConnectionFailed(format!(
             "没有在线后端提供可用执行器 `{executor_id}`{scope}"
         )));
     }
@@ -260,7 +265,7 @@ async fn resolve_auto_idle_backend(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
     use agentdash_application_ports::backend_transport::{
         BackendTransport, DirectoryBrowseInfo, RelayPromptRequest, RelayPromptTransport,
@@ -280,12 +285,13 @@ mod tests {
     #[derive(Default)]
     struct TestTransport {
         executors: Vec<RemoteExecutorInfo>,
+        offline_backend_ids: BTreeSet<String>,
     }
 
     #[async_trait]
     impl BackendTransport for TestTransport {
-        async fn is_online(&self, _backend_id: &str) -> bool {
-            true
+        async fn is_online(&self, backend_id: &str) -> bool {
+            !self.offline_backend_ids.contains(backend_id)
         }
 
         async fn list_online_backend_ids(&self) -> Vec<String> {
@@ -459,6 +465,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_cloud_native_executor_rejects_offline_backend() {
+        let transport = TestTransport {
+            executors: Vec::new(),
+            offline_backend_ids: BTreeSet::from(["local_offline".to_string()]),
+        };
+        let lease_repo = TestLeaseRepository;
+
+        let error = resolve_backend_execution_placement(
+            &transport,
+            &lease_repo,
+            &BackendSelectionRequest::explicit(
+                "PI_AGENT",
+                "local_offline",
+                Some("test".to_string()),
+            ),
+        )
+        .await
+        .expect_err("offline backend should be rejected even for cloud-native executor");
+
+        assert!(matches!(error, ConnectorError::ConnectionFailed(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("backend `local_offline` 当前不在线")
+        );
+    }
+
+    #[tokio::test]
     async fn explicit_relay_executor_still_requires_backend_executor() {
         let transport = TestTransport::default();
         let lease_repo = TestLeaseRepository;
@@ -472,5 +506,27 @@ mod tests {
         .expect_err("relay executor should require backend executor");
 
         assert!(error.to_string().contains("当前未提供可用执行器 `CODEX`"));
+        assert!(matches!(error, ConnectorError::ConnectionFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn auto_idle_reports_no_available_backend_as_connection_failure() {
+        let transport = TestTransport::default();
+        let lease_repo = TestLeaseRepository;
+
+        let error = resolve_backend_execution_placement(
+            &transport,
+            &lease_repo,
+            &BackendSelectionRequest::auto_idle("CODEX", Some("test".to_string())),
+        )
+        .await
+        .expect_err("auto idle should report no available backend");
+
+        assert!(matches!(error, ConnectorError::ConnectionFailed(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("没有在线后端提供可用执行器 `CODEX`")
+        );
     }
 }

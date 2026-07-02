@@ -550,6 +550,9 @@ fn map_routine_mailbox_error(error: AgentRunWorkflowApplicationError) -> Applica
         AgentRunWorkflowApplicationError::Conflict(message) => {
             ApplicationError::Conflict(format!("Routine mailbox dispatch 失败: {message}"))
         }
+        AgentRunWorkflowApplicationError::Unavailable(message) => {
+            ApplicationError::Unavailable(format!("Routine mailbox dispatch 失败: {message}"))
+        }
         AgentRunWorkflowApplicationError::Internal(message) => {
             ApplicationError::Internal(format!("Routine mailbox dispatch 失败: {message}"))
         }

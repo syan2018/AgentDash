@@ -221,6 +221,9 @@ impl From<agentdash_application_agentrun::WorkflowApplicationError> for ApiError
             agentdash_application_agentrun::WorkflowApplicationError::Conflict(message) => {
                 ApiError::Conflict(message)
             }
+            agentdash_application_agentrun::WorkflowApplicationError::Unavailable(message) => {
+                ApiError::ServiceUnavailable(message)
+            }
             agentdash_application_agentrun::WorkflowApplicationError::Internal(message) => {
                 ApiError::Internal(message)
             }

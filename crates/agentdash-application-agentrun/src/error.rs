@@ -73,6 +73,8 @@ pub enum WorkflowApplicationError {
     #[error("{0}")]
     Conflict(String),
     #[error("{0}")]
+    Unavailable(String),
+    #[error("{0}")]
     Internal(String),
 }
 
@@ -98,7 +100,7 @@ impl From<ConnectorError> for WorkflowApplicationError {
     fn from(value: ConnectorError) -> Self {
         match value {
             ConnectorError::InvalidConfig(message) => Self::BadRequest(message),
-            ConnectorError::ConnectionFailed(message) => Self::Internal(message),
+            ConnectorError::ConnectionFailed(message) => Self::Unavailable(message),
             ConnectorError::SpawnFailed(message) | ConnectorError::Runtime(message) => {
                 Self::Internal(message)
             }

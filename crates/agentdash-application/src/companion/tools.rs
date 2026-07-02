@@ -455,6 +455,9 @@ fn map_companion_mailbox_error(
         agentdash_application_agentrun::WorkflowApplicationError::Conflict(message) => {
             crate::ApplicationError::Conflict(message)
         }
+        agentdash_application_agentrun::WorkflowApplicationError::Unavailable(message) => {
+            crate::ApplicationError::Unavailable(message)
+        }
         agentdash_application_agentrun::WorkflowApplicationError::Internal(message) => {
             crate::ApplicationError::Internal(message)
         }

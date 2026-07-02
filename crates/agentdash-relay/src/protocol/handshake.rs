@@ -34,7 +34,7 @@ pub struct PongPayload {
 
 // ── 能力 ──
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilitiesPayload {
     #[serde(default)]
     pub executors: Vec<AgentInfoRelay>,
@@ -48,7 +48,7 @@ pub struct CapabilitiesPayload {
     pub capability_health: Vec<CapabilityHealthItemRelay>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityHealthItemRelay {
     pub id: String,
     pub domain: String,
@@ -59,14 +59,14 @@ pub struct CapabilityHealthItemRelay {
     pub actions: Vec<CapabilityHealthActionRelay>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityHealthActionRelay {
     pub kind: String,
     pub label: String,
 }
 
 /// backend 上报的 MCP server 能力描述
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerInfoRelay {
     pub name: String,
     /// "stdio" | "http" | "sse"
@@ -83,7 +83,7 @@ pub struct McpToolInfoRelay {
     pub parameters_schema: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentInfoRelay {
     pub id: String,
     pub name: String,

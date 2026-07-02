@@ -250,6 +250,7 @@ mod tests {
                 cwd: None,
             },
             uses_relay: false,
+            readiness: Default::default(),
         };
         let command = LaunchCommand::local_relay_prompt_input(
             LaunchPromptInput::from_text("ping"),

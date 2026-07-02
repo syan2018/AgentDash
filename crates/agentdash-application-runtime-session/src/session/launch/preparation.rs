@@ -7,7 +7,10 @@ use agentdash_spi::hooks::{
     ContextDeliveryMetadata, ContextDeliveryPlan, ContextDeliveryTarget, ContextFrame,
     ContextFrameSection, ContextModelChannel, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
-use agentdash_spi::{CapabilityState, ConnectorError, ExecutionContext};
+use agentdash_spi::{
+    CapabilityState, ConnectorError, ExecutionContext, McpServerReadinessSummary, RuntimeMcpServer,
+    RuntimeMcpSourceReadiness,
+};
 
 use super::deps::TurnPreparationDeps;
 use super::{LaunchFollowUpSource, LaunchPlan, RuntimeDelegateCompositionPlan};
@@ -26,9 +29,9 @@ use crate::session::hub_support::{SessionProfile, TurnExecution};
 use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frames};
 use crate::session::memory_context_frame::{MemoryContextFrameInput, build_memory_context_frame};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
-use crate::session::user_context_frame::{UserContextFrameInput, build_user_context_frame};
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptLaunchPath, ResolvedPromptPayload};
+use crate::session::user_context_frame::{UserContextFrameInput, build_user_context_frame};
 
 pub(in crate::session) struct TurnPreparationInput {
     pub launch_plan: LaunchPlan,
@@ -51,6 +54,7 @@ pub(in crate::session) struct PreparedTurn {
     pub pending_transition_application: PendingRuntimeContextApplication,
     pub pending_command_ids: Vec<uuid::Uuid>,
     pub accepted_capability_state: CapabilityState,
+    pub mcp_readiness_notice: Vec<McpServerReadinessSummary>,
     pub is_owner_bootstrap: bool,
     pub runtime_delegate_composition: RuntimeDelegateCompositionPlan,
     pub hook_runtime: Option<SharedHookRuntime>,
@@ -94,9 +98,6 @@ impl TurnPreparer {
         let agent_identity_markdown = find_agent_identity_markdown(&compose_fragments);
         let discovered_guidelines = launch_plan.discovered_guidelines.clone();
         let discovered_memory = launch_plan.discovered_memory.clone();
-        let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
-        let capability_state = launch_plan.context.turn.capability_state.clone();
-        let capability_keys = capability_state.capability_keys();
         let is_owner_bootstrap =
             launch_plan.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         diag!(Debug, Subsystem::SessionLaunch,
@@ -118,37 +119,20 @@ impl TurnPreparer {
         let mut context = launch_plan.context;
 
         let assembled_tool_surface = deps.assemble_tool_surface(&session_id, &context).await;
-        let mcp_failures = assembled_tool_surface.mcp_failures.clone();
-        if !mcp_failures.is_empty() {
-            let summaries: Vec<&str> = mcp_failures.iter().map(|f| f.summary.as_str()).collect();
-            let user_message = format!(
-                "MCP 工具加载失败，部分工具本次对话不可用：{}",
-                summaries.join("；")
-            );
-            use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
-            let envelope = BackboneEnvelope::new(
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                    key: "system_message".to_string(),
-                    value: serde_json::json!({ "message": user_message }),
-                }),
-                &session_id,
-                SourceInfo {
-                    connector_id: deps.connector.connector_id().to_string(),
-                    connector_type: "runtime".to_string(),
-                    executor_id: None,
-                },
-            );
-            let _ = deps
-                .eventing
-                .persist_notification(&session_id, envelope)
-                .await;
-        }
         let assembled_tool_schemas = assembled_tool_surface.schemas;
         context.turn.assembled_tools = assembled_tool_surface.tools;
-        if !mcp_failures.is_empty() {
-            context.turn.capability_state.tool.unavailable_mcp_servers =
-                mcp_failures.iter().map(|f| f.summary.clone()).collect();
+        if !assembled_tool_surface.mcp_sources.is_empty() {
+            context.session.mcp_servers = merge_mcp_source_readiness(
+                context.session.mcp_servers,
+                assembled_tool_surface.mcp_sources,
+            );
         }
+        context.turn.capability_state.tool.mcp_servers = context.session.mcp_servers.clone();
+        let mcp_readiness_notice =
+            unavailable_mcp_source_summaries(&context.turn.capability_state.tool.mcp_servers);
+        let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
+        let capability_state = context.turn.capability_state.clone();
+        let capability_keys = capability_state.capability_keys();
         if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {
             let admission_metadata =
                 ToolAdmissionMetadata::from_schema_entries(&assembled_tool_schemas);
@@ -431,12 +415,51 @@ impl TurnPreparer {
             pending_transition_application,
             pending_command_ids,
             accepted_capability_state: capability_state,
+            mcp_readiness_notice,
             is_owner_bootstrap,
             runtime_delegate_composition: runtime_delegate_facets.composition,
             hook_runtime,
             post_turn_handler,
         })
     }
+}
+
+fn merge_mcp_source_readiness(
+    current_servers: Vec<RuntimeMcpServer>,
+    discovered_sources: Vec<RuntimeMcpServer>,
+) -> Vec<RuntimeMcpServer> {
+    let readiness_by_name = discovered_sources
+        .into_iter()
+        .map(|server| (server.name, server.readiness))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    current_servers
+        .into_iter()
+        .map(|mut server| {
+            if let Some(readiness) = readiness_by_name.get(&server.name) {
+                server.readiness = readiness.clone();
+            }
+            server
+        })
+        .collect()
+}
+
+fn unavailable_mcp_source_summaries(
+    servers: &[RuntimeMcpServer],
+) -> Vec<McpServerReadinessSummary> {
+    servers
+        .iter()
+        .filter_map(|server| match &server.readiness {
+            RuntimeMcpSourceReadiness::Unavailable {
+                reason_code,
+                message,
+            } => Some(McpServerReadinessSummary {
+                name: server.name.clone(),
+                reason_code: reason_code.clone(),
+                message: message.clone(),
+            }),
+            RuntimeMcpSourceReadiness::Pending | RuntimeMcpSourceReadiness::Ready { .. } => None,
+        })
+        .collect()
 }
 
 fn find_agent_identity_markdown(fragments: &[agentdash_spi::ContextFragment]) -> Option<&str> {

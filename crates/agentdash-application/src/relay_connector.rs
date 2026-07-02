@@ -747,6 +747,7 @@ mod tests {
                 cwd: Some("C:/workspace".to_string()),
             },
             uses_relay: false,
+            readiness: Default::default(),
         };
         let context = ExecutionContext {
             session: agentdash_spi::ExecutionSessionFrame {

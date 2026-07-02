@@ -828,6 +828,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         let capability_keys = capability_state.capability_keys();
         let tool_schemas = vec![RuntimeToolSchemaEntry {
@@ -880,6 +881,37 @@ mod tests {
     }
 
     #[test]
+    fn initial_context_frame_includes_unavailable_mcp_source_readiness() {
+        let mut capability_state = CapabilityState::default();
+        capability_state.tool.mcp_servers = vec![agentdash_spi::RuntimeMcpServer {
+            name: "code-analyzer".to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: "http://127.0.0.1:9999/mcp".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+            readiness: agentdash_spi::RuntimeMcpSourceReadiness::unavailable(
+                "connection_failed",
+                "connection refused",
+            ),
+        }];
+        let capability_keys = capability_state.capability_keys();
+
+        let notice = build_initial_capability_state_frame(&capability_state, &capability_keys, &[]);
+
+        assert!(
+            notice
+                .rendered_text
+                .contains("Unavailable MCP servers (connection failed)")
+        );
+        assert!(
+            notice
+                .rendered_text
+                .contains("`code-analyzer` — `connection_failed`: connection refused")
+        );
+    }
+
+    #[test]
     fn live_transition_frame_includes_project_mcp_schema_from_application_surface() {
         let before_state = CapabilityState::default();
         let mut after_state = CapabilityState::default();
@@ -894,6 +926,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         let input = LiveRuntimeContextTransitionInput {
             delivery_runtime_session_id: "session-1".to_string(),

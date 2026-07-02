@@ -895,6 +895,7 @@ mod tests {
                 headers: vec![],
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         state.companion.agents = vec![agentdash_spi::context::capability::CompanionAgentEntry {
             name: "helper".to_string(),

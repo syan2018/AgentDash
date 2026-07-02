@@ -12,6 +12,7 @@ pub fn relay_mcp_server_to_runtime(server: &McpServerRelay, uses_relay: bool) ->
         name: server.name.clone(),
         transport: relay_transport_to_mcp_transport(&server.transport),
         uses_relay,
+        readiness: Default::default(),
     }
 }
 

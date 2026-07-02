@@ -379,6 +379,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }
     }
 

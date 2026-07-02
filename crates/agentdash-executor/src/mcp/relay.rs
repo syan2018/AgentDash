@@ -2,7 +2,10 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayMcpCallContext, RelayMcpToolInfo};
+use agentdash_application_ports::mcp_discovery::{McpToolDiscoveryOutcome, McpToolSourceOutcome};
+use agentdash_spi::platform::mcp_relay::{
+    McpRelayProvider, RelayMcpCallContext, RelayMcpListOutcome, RelayMcpToolInfo,
+};
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
     RuntimeMcpServer, ToolUpdateCallback,
@@ -102,8 +105,9 @@ pub async fn discover_relay_mcp_tools(
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DynAgentTool> {
-    discover_relay_mcp_tool_entries(provider, servers, capability_state, call_context)
+    discover_relay_mcp_tool_outcome(provider, servers, capability_state, call_context)
         .await
+        .tools
         .into_iter()
         .map(|entry| entry.tool)
         .collect()
@@ -115,17 +119,28 @@ pub async fn discover_relay_mcp_tool_entries(
     capability_state: &CapabilityState,
     call_context: Option<RelayMcpCallContext>,
 ) -> Vec<DiscoveredMcpTool> {
+    discover_relay_mcp_tool_outcome(provider, servers, capability_state, call_context)
+        .await
+        .tools
+}
+
+pub async fn discover_relay_mcp_tool_outcome(
+    provider: Arc<dyn McpRelayProvider>,
+    servers: &[RuntimeMcpServer],
+    capability_state: &CapabilityState,
+    call_context: Option<RelayMcpCallContext>,
+) -> McpToolDiscoveryOutcome {
     if servers.is_empty() {
-        return Vec::new();
+        return McpToolDiscoveryOutcome::default();
     }
     let requested_names = servers
         .iter()
         .map(|server| server.name.as_str())
         .collect::<BTreeSet<_>>();
-    let tools = provider
+    let RelayMcpListOutcome { tools, sources } = provider
         .list_relay_tools(servers, call_context.clone())
         .await;
-    tools
+    let tools = tools
         .iter()
         .filter(|info| {
             if !requested_names.contains(info.server_name.as_str()) {
@@ -143,13 +158,24 @@ pub async fn discover_relay_mcp_tool_entries(
             let tool = adapter.clone() as DynAgentTool;
             build_discovered_entry(&adapter.surface, true, tool)
         })
-        .collect()
+        .collect();
+    McpToolDiscoveryOutcome {
+        tools,
+        sources: sources
+            .into_iter()
+            .map(|source| McpToolSourceOutcome {
+                server: source.server,
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_spi::platform::mcp_relay::{RelayMcpCallResult, RelayProbeResult};
+    use agentdash_spi::platform::mcp_relay::{
+        RelayMcpCallResult, RelayMcpSourceOutcome, RelayProbeResult,
+    };
     use agentdash_spi::{ConnectorError, ToolCapability, ToolCapabilityFilter};
     use async_trait::async_trait;
 
@@ -164,8 +190,14 @@ mod tests {
             &self,
             _requested_servers: &[RuntimeMcpServer],
             _context: Option<RelayMcpCallContext>,
-        ) -> Vec<RelayMcpToolInfo> {
-            self.tools.clone()
+        ) -> RelayMcpListOutcome {
+            RelayMcpListOutcome {
+                tools: self.tools.clone(),
+                sources: _requested_servers
+                    .iter()
+                    .map(|server| RelayMcpSourceOutcome::ready(server.clone(), self.tools.len()))
+                    .collect(),
+            }
         }
 
         async fn call_relay_tool(
@@ -202,6 +234,7 @@ mod tests {
                 headers: vec![],
             },
             uses_relay: true,
+            readiness: Default::default(),
         }
     }
 

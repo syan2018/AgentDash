@@ -8,8 +8,8 @@ use agentdash_relay::RelayMessage;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::RuntimeMcpServer;
 use agentdash_spi::platform::mcp_relay::{
-    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
-    RelayProbeTool,
+    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
+    RelayMcpSourceOutcome, RelayMcpToolInfo, RelayProbeResult, RelayProbeTool,
 };
 
 use super::registry::BackendRegistry;
@@ -20,8 +20,9 @@ impl McpRelayProvider for BackendRegistry {
         &self,
         requested_servers: &[RuntimeMcpServer],
         context: Option<RelayMcpCallContext>,
-    ) -> Vec<RelayMcpToolInfo> {
-        let mut result = Vec::new();
+    ) -> RelayMcpListOutcome {
+        let mut tools = Vec::new();
+        let mut sources = Vec::new();
 
         for server in requested_servers {
             let server_name = &server.name;
@@ -31,12 +32,20 @@ impl McpRelayProvider for BackendRegistry {
             {
                 Ok(id) => id,
                 Err(error) => {
+                    let message = format!(
+                        "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
+                    );
                     diag!(Warn, Subsystem::Relay,
 
                         server = %server_name,
                         error = %error,
                         "relay MCP list_tools 缺少可用 runtime backend anchor，跳过 server"
                     );
+                    sources.push(RelayMcpSourceOutcome::unavailable(
+                        server.clone(),
+                        "backend_anchor_unavailable",
+                        message,
+                    ));
                     continue;
                 }
             };
@@ -57,8 +66,9 @@ impl McpRelayProvider for BackendRegistry {
                     error: None,
                     ..
                 }) => {
+                    let tool_count = resp.tools.len();
                     for tool in &resp.tools {
-                        result.push(RelayMcpToolInfo {
+                        tools.push(RelayMcpToolInfo {
                             server_name: server_name.clone(),
                             server: server.clone(),
                             tool_name: tool.name.clone(),
@@ -66,6 +76,7 @@ impl McpRelayProvider for BackendRegistry {
                             parameters_schema: tool.parameters_schema.clone(),
                         });
                     }
+                    sources.push(RelayMcpSourceOutcome::ready(server.clone(), tool_count));
                 }
                 Ok(RelayMessage::ResponseMcpListTools {
                     error: Some(err), ..
@@ -76,6 +87,11 @@ impl McpRelayProvider for BackendRegistry {
                         error = %err.message,
                         "relay MCP list_tools 失败"
                     );
+                    sources.push(RelayMcpSourceOutcome::unavailable(
+                        server.clone(),
+                        "list_tools_failed",
+                        err.message,
+                    ));
                 }
                 Ok(_) => {
                     diag!(Warn, Subsystem::Relay,
@@ -83,6 +99,11 @@ impl McpRelayProvider for BackendRegistry {
                         server = %server_name,
                         "relay MCP list_tools 返回意外消息类型"
                     );
+                    sources.push(RelayMcpSourceOutcome::unavailable(
+                        server.clone(),
+                        "unexpected_response",
+                        "relay MCP list_tools returned an unexpected response type",
+                    ));
                 }
                 Err(e) => {
                     diag!(Warn, Subsystem::Relay,
@@ -91,11 +112,16 @@ impl McpRelayProvider for BackendRegistry {
                         error = %e,
                         "relay MCP list_tools 通信失败"
                     );
+                    sources.push(RelayMcpSourceOutcome::unavailable(
+                        server.clone(),
+                        "relay_unreachable",
+                        e.to_string(),
+                    ));
                 }
             }
         }
 
-        result
+        RelayMcpListOutcome { tools, sources }
     }
 
     async fn call_relay_tool(

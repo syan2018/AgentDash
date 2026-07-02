@@ -1,6 +1,7 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use std::{collections::HashMap, sync::Arc};
 
+use agentdash_application_ports::mcp_discovery::{McpToolDiscoveryOutcome, McpToolSourceOutcome};
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, CapabilityState, ContentPart, DynAgentTool,
     McpHttpHeader, McpTransportConfig, RuntimeMcpServer, ToolUpdateCallback,
@@ -209,8 +210,9 @@ pub async fn discover_mcp_tools(
     servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-    Ok(discover_mcp_tool_entries(servers, capability_state)
+    Ok(discover_mcp_tool_outcome(servers, capability_state)
         .await?
+        .tools
         .into_iter()
         .map(|entry| entry.tool)
         .collect())
@@ -220,16 +222,47 @@ pub async fn discover_mcp_tool_entries(
     servers: &[RuntimeMcpServer],
     capability_state: &CapabilityState,
 ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+    Ok(discover_mcp_tool_outcome(servers, capability_state)
+        .await?
+        .tools)
+}
+
+pub async fn discover_mcp_tool_outcome(
+    servers: &[RuntimeMcpServer],
+    capability_state: &CapabilityState,
+) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
     let mut entries = Vec::new();
+    let mut sources = Vec::new();
     let pool = Arc::new(DirectMcpClientPool::default());
 
     for server in servers {
         let Some(server_spec) = parse_http_mcp_server(server) else {
-            diag!(Debug, Subsystem::Mcp, "跳过非 HTTP MCP Server");
+            diag!(Debug, Subsystem::Mcp, server = %server.name, "跳过非 HTTP MCP Server");
+            sources.push(McpToolSourceOutcome::unavailable(
+                server.clone(),
+                "unsupported_transport",
+                "direct MCP discovery only supports streamable HTTP transport",
+            ));
             continue;
         };
 
-        let listed = pool.list_tools(&server_spec).await?;
+        let listed = match pool.list_tools(&server_spec).await {
+            Ok(listed) => listed,
+            Err(error) => {
+                diag!(Warn, Subsystem::Mcp,
+                    server = %server.name,
+                    error = %error,
+                    "direct MCP 工具发现失败"
+                );
+                sources.push(McpToolSourceOutcome::unavailable(
+                    server.clone(),
+                    "connection_failed",
+                    error.to_string(),
+                ));
+                continue;
+            }
+        };
+        let tool_count = listed.len();
 
         entries.extend(build_direct_discovered_entries_from_listed_tools(
             server_spec,
@@ -237,9 +270,13 @@ pub async fn discover_mcp_tool_entries(
             listed,
             capability_state,
         ));
+        sources.push(McpToolSourceOutcome::ready(server.clone(), tool_count));
     }
 
-    Ok(entries)
+    Ok(McpToolDiscoveryOutcome {
+        tools: entries,
+        sources,
+    })
 }
 
 fn build_direct_discovered_entries_from_listed_tools(
@@ -379,6 +416,7 @@ mod tests {
                 headers: vec![header("demo")],
             },
             uses_relay: false,
+            readiness: Default::default(),
         };
 
         let parsed = parse_http_mcp_server(&server).expect("http server should parse");
@@ -452,5 +490,32 @@ mod tests {
 
         assert_eq!(raw_tool_names, vec!["allowed_tool"]);
         assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
+    }
+
+    #[tokio::test]
+    async fn direct_discovery_records_unsupported_transport_as_unavailable_source() {
+        let server = RuntimeMcpServer {
+            name: "local-stdio".to_string(),
+            transport: McpTransportConfig::Stdio {
+                command: "tool".to_string(),
+                args: Vec::new(),
+                env: Vec::new(),
+                cwd: None,
+            },
+            uses_relay: false,
+            readiness: Default::default(),
+        };
+
+        let outcome = discover_mcp_tool_outcome(&[server], &CapabilityState::default())
+            .await
+            .expect("unsupported transport should be reported as a source outcome");
+
+        assert!(outcome.tools.is_empty());
+        assert_eq!(outcome.sources.len(), 1);
+        assert!(matches!(
+            &outcome.sources[0].server.readiness,
+            agentdash_spi::RuntimeMcpSourceReadiness::Unavailable { reason_code, .. }
+                if reason_code == "unsupported_transport"
+        ));
     }
 }

@@ -55,6 +55,7 @@ mod tests {
                 cwd: Some("/workspace/demo".to_string()),
             },
             uses_relay: false,
+            readiness: Default::default(),
         });
 
         let servers = relay_mcp_servers_to_runtime(&[value])

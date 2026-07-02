@@ -133,6 +133,105 @@ AgentRun admission bridge 必须从 `RuntimeToolSchemaEntry.capability_key` 和 
 `AgentRunAdmissionRequest`。缺少 provenance 的工具不能绕过 AgentRun admission，原因是该工具没有
 可审计的 capability ownership，不能被视作已授权的 runtime surface。
 
+## MCP Source Readiness Contract
+
+### 1. Scope / Trigger
+
+- Trigger: MCP 工具发现跨越 AgentFrame surface、relay/backend health、direct HTTP 连接和 model-visible context。source 可用性必须和 MCP source 同步投影，避免工具列表、能力状态与模型提示读取不同事实。
+- Scope: `RuntimeMcpServer`、`McpToolDiscovery`、`McpRelayProvider`、tool assembly、capability delta、launch accepted event。
+
+### 2. Signatures
+
+```rust
+pub enum RuntimeMcpSourceReadiness {
+    Pending,
+    Ready { tool_count: usize },
+    Unavailable { reason_code: String, message: String },
+}
+
+pub struct RuntimeMcpServer {
+    pub name: String,
+    pub transport: McpTransportConfig,
+    pub uses_relay: bool,
+    pub readiness: RuntimeMcpSourceReadiness,
+}
+
+pub struct McpToolDiscoveryOutcome {
+    pub tools: Vec<DiscoveredMcpTool>,
+    pub sources: Vec<McpToolSourceOutcome>,
+}
+```
+
+```rust
+pub struct RelayMcpListOutcome {
+    pub tools: Vec<RelayMcpToolInfo>,
+    pub sources: Vec<RelayMcpSourceOutcome>,
+}
+```
+
+### 3. Contracts
+
+- `CapabilityState.tool.mcp_servers[]` 是 MCP source set 与 source readiness 的运行态事实源；readiness 属于具体 `RuntimeMcpServer`。
+- `RuntimeMcpSourceReadiness::Pending` 表示尚未执行本轮 discovery；序列化时可省略，原因是 pending 是 capability/frame surface 的声明态默认值。
+- `Ready.tool_count` 记录该 source discovery 返回的原始工具数；工具级 capability policy 过滤后的 callable/schema 数量由 tool assembly 另行投影。
+- `Unavailable.reason_code` 必须是稳定 snake_case code；`message` 面向诊断与模型提示，可包含底层连接/relay 错误摘要。
+- `McpToolDiscovery::discover_tool_entries()` 返回 `McpToolDiscoveryOutcome`；每个输入 source 都应产生 `Ready` 或 `Unavailable` outcome，单个 source 失败不终止其它 source discovery。
+- `McpRelayProvider::list_relay_tools()` 返回 `RelayMcpListOutcome`；relay backend anchor 缺失、relay 响应错误、意外响应和通信失败都必须形成 source outcome。
+- `assemble_tool_surface_for_execution_context()` 只组装 tools/schema/source outcomes；`launch::preparation` 在工具装配后把 source readiness 合并回 `context.session.mcp_servers` 与 `context.turn.capability_state.tool.mcp_servers`，再派生 supervisor state、bootstrap frame 与 accepted capability state。
+- model-visible MCP unavailable 提示在 accepted launch events 中 `turn_started` 后提交；payload 使用 `system_message` 且包含 `kind="mcp_source_readiness"` 与结构化 `sources[]`。
+- `CapabilityStateDelta.mcp_server_readiness` 是从 `after.tool.mcp_servers[].readiness` 派生的 event/context projection，不是独立状态源。
+- 本机 runtime 的 MCP health 变化必须通过 `EventCapabilitiesChanged` 主动上报，原因是云端 relay discovery 依赖 backend registry 中的最新 MCP server/health projection。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| Direct source transport 不是 HTTP | source outcome = `Unavailable { reason_code: "unsupported_transport" }` |
+| Direct HTTP 连接或 list_tools 失败 | source outcome = `Unavailable { reason_code: "connection_failed" }`；继续发现其它 source |
+| Relay provider 缺失 | relay source outcome = `Unavailable { reason_code: "relay_provider_missing" }` |
+| Relay backend anchor 不可解析 | relay source outcome = `Unavailable { reason_code: "backend_anchor_unavailable" }` |
+| Relay list_tools 响应 error | relay source outcome = `Unavailable { reason_code: "list_tools_failed" }` |
+| Relay 返回非 list_tools 响应 | relay source outcome = `Unavailable { reason_code: "unexpected_response" }` |
+| Relay 通信失败 | relay source outcome = `Unavailable { reason_code: "relay_unreachable" }` |
+| Discovery 顶层错误 | 本轮请求的 source outcome = `Unavailable { reason_code: "discovery_failed" }` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 一个 relay MCP 离线、另一个 direct MCP 在线；tool assembly 暴露 direct tools，capability/context frame 标明离线 relay source。
+- Base: 所有 source ready；`RuntimeMcpServer.readiness` 进入 ready，model-visible unavailable 段落为空。
+- Bad: 所有 source 都 unavailable；accepted turn 仍提交结构化 readiness notice，模型看到相关工具本轮不可用。
+
+### 6. Tests Required
+
+- Direct discovery test asserts unsupported/failed source yields `McpToolDiscoveryOutcome.sources[].server.readiness=Unavailable` and does not abort the outcome.
+- Relay discovery test asserts provider outcome maps to `McpToolDiscoveryOutcome.sources` while filtering tools by capability policy.
+- Runtime context transition test asserts initial capability frame renders unavailable source name、reason code 与 message。
+- Launch preparation/commit test or focused integration check asserts accepted capability state and committed `system_message` payload use post-assembly readiness.
+- Local runtime test or check asserts capability health changes produce `EventCapabilitiesChanged` payload.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+capability_state.tool.mcp_servers = [server]
+capability_state.tool.<separate readiness list> = ["server failed"]
+```
+
+#### Correct
+
+```text
+capability_state.tool.mcp_servers = [
+  RuntimeMcpServer {
+    name: "code-analyzer",
+    readiness: Unavailable {
+      reason_code: "connection_failed",
+      message: "connection refused"
+    }
+  }
+]
+```
+
 ## Companion Agent Roster Surface
 
 Project Agent 使用 `collaboration` capability 调用 `companion_request(payload.agent_key)` 派发协作 Agent。

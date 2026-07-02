@@ -3,14 +3,14 @@
 use agentdash_spi::hooks::ContextFrameSection;
 
 use super::DimensionDelta;
-use agentdash_spi::CapabilityStateDelta;
+use agentdash_spi::{CapabilityStateDelta, McpServerReadinessSummary};
 
 #[derive(Debug, Clone)]
 pub(crate) struct McpServerDimensionDelta {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<String>,
-    pub unavailable: Vec<String>,
+    pub unavailable: Vec<McpServerReadinessSummary>,
 }
 
 impl McpServerDimensionDelta {
@@ -22,7 +22,7 @@ impl McpServerDimensionDelta {
             added: state_delta.mcp_servers.added.clone(),
             removed: state_delta.mcp_servers.removed.clone(),
             changed: state_delta.mcp_servers.changed.clone(),
-            unavailable: state_delta.unavailable_mcp_servers.clone(),
+            unavailable: state_delta.mcp_server_readiness.clone(),
         };
         if !delta.has_changes() {
             return None;
@@ -61,8 +61,11 @@ impl DimensionDelta for McpServerDimensionDelta {
             lines.push(String::new());
             lines.push("### Unavailable MCP servers (connection failed)".to_string());
             lines.push("The following MCP tool sources failed to connect. Their tools are NOT available this session. If the user's request requires these tools, inform them that the MCP environment needs to be fixed before proceeding.".to_string());
-            for desc in &self.unavailable {
-                lines.push(format!("- {desc}"));
+            for source in &self.unavailable {
+                lines.push(format!(
+                    "- `{}` — `{}`: {}",
+                    source.name, source.reason_code, source.message
+                ));
             }
         }
 

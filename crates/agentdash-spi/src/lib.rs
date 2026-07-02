@@ -44,13 +44,13 @@ pub use connector::{
     AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, CompanionDimension,
     ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,
     DiscoveryContext, ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame,
-    ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
-    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
-    RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
-    RuntimeVfsPathPattern, SetDelta, SkillClusterMeta, SkillDimension, ToolCapabilityFilter,
-    ToolCluster, ToolDimension, VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension,
-    WorkspaceModuleVisibilityMode, compute_capability_state_delta, partition_runtime_mcp_servers,
-    workspace_path_from_context,
+    ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpServerReadinessSummary,
+    McpTransportConfig, NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
+    RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, SetDelta, SkillClusterMeta,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
+    compute_capability_state_delta, partition_runtime_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────
@@ -117,7 +117,8 @@ pub use platform::marketplace_source::{
 pub use platform::mcp_injection::{McpInjectionConfig, ToolScope};
 pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
-    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
+    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
+    RelayMcpSourceOutcome, RelayMcpToolInfo,
 };
 pub use platform::memory_discovery::{
     DiscoveredMemorySource, MemoryDiscoveryCluster, MemoryDiscoveryContext,

@@ -490,6 +490,7 @@ mod tests {
                     headers: Vec::new(),
                 },
                 uses_relay: false,
+                readiness: Default::default(),
             }],
             capability_keys: BTreeSet::from(["file_read".to_string()]),
             kickoff_prompt: KickoffPromptFragment::default(),
@@ -592,6 +593,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         capability_state.tool.mcp_servers = mcp_servers.clone();
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");

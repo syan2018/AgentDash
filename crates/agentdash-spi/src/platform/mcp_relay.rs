@@ -4,7 +4,10 @@ use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError}
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthIdentity, ConnectorError, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
+use crate::{
+    AuthIdentity, ConnectorError, RuntimeMcpServer, RuntimeMcpSourceReadiness,
+    RuntimeVfsAccessPolicy, Vfs,
+};
 
 /// relay MCP 工具描述
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +18,33 @@ pub struct RelayMcpToolInfo {
     pub description: String,
     #[serde(default)]
     pub parameters_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayMcpSourceOutcome {
+    pub server: RuntimeMcpServer,
+}
+
+impl RelayMcpSourceOutcome {
+    pub fn ready(mut server: RuntimeMcpServer, tool_count: usize) -> Self {
+        server.readiness = RuntimeMcpSourceReadiness::ready(tool_count);
+        Self { server }
+    }
+
+    pub fn unavailable(
+        mut server: RuntimeMcpServer,
+        reason_code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        server.readiness = RuntimeMcpSourceReadiness::unavailable(reason_code, message);
+        Self { server }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RelayMcpListOutcome {
+    pub tools: Vec<RelayMcpToolInfo>,
+    pub sources: Vec<RelayMcpSourceOutcome>,
 }
 
 /// relay MCP 工具调用结果
@@ -77,7 +107,7 @@ pub trait McpRelayProvider: Send + Sync {
         &self,
         requested_servers: &[RuntimeMcpServer],
         context: Option<RelayMcpCallContext>,
-    ) -> Vec<RelayMcpToolInfo>;
+    ) -> RelayMcpListOutcome;
 
     /// 调用指定 MCP server 上的工具
     async fn call_relay_tool(

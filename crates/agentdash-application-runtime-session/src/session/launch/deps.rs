@@ -119,7 +119,6 @@ impl SessionLaunchDeps {
             hooks: self.hooks.clone(),
             runtime_transition: self.runtime_transition.clone(),
             agent_run_effective_capability_port: self.agent_run_effective_capability_port.clone(),
-            eventing: self.eventing.clone(),
         }
     }
 
@@ -216,7 +215,6 @@ pub(super) struct TurnPreparationDeps {
     pub(super) settings_repo: Option<Arc<dyn SettingsRepository>>,
     pub(super) hooks: SessionHookService,
     pub(super) runtime_transition: SessionRuntimeTransitionService,
-    pub(super) eventing: SessionEventingService,
     pub(super) agent_run_effective_capability_port:
         Option<Arc<dyn AgentRunEffectiveCapabilityPort>>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,

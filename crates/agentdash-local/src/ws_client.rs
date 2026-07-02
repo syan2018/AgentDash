@@ -292,13 +292,14 @@ async fn run_session(
     });
 
     // 第一步：发送注册消息
+    let mut last_capabilities = build_capabilities(&handler, &config.mcp_manager).await;
     let register_msg = RelayMessage::Register {
         id: RelayMessage::new_id("reg"),
         payload: RegisterPayload {
             backend_id: config.backend_id.clone(),
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: build_capabilities(&handler, &config.mcp_manager).await,
+            capabilities: last_capabilities.clone(),
         },
     };
 
@@ -363,6 +364,9 @@ async fn run_session(
     let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
+    let mut capability_interval = tokio::time::interval(Duration::from_secs(5));
+    capability_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    capability_interval.tick().await;
 
     loop {
         tokio::select! {
@@ -430,6 +434,21 @@ async fn run_session(
             }
             _ = ping_interval.tick() => {
                 // 本机侧不主动发 ping，只响应云端的 ping
+            }
+            _ = capability_interval.tick() => {
+                let next_capabilities = build_capabilities(&handler, &config.mcp_manager).await;
+                if next_capabilities != last_capabilities {
+                    last_capabilities = next_capabilities.clone();
+                    let relay_msg = RelayMessage::EventCapabilitiesChanged {
+                        id: RelayMessage::new_id("caps"),
+                        payload: next_capabilities,
+                    };
+                    if outbound_tx.send(relay_msg).is_err() {
+                        diag!(Warn, Subsystem::Relay,
+        "capability changed event 写出通道已关闭");
+                        break;
+                    }
+                }
             }
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {

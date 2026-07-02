@@ -1,9 +1,11 @@
 use agentdash_agent_types::DynAgentTool;
-use agentdash_application_ports::mcp_discovery::{McpToolDiscovery, McpToolDiscoveryRequest};
+use agentdash_application_ports::mcp_discovery::{
+    McpToolDiscovery, McpToolDiscoveryRequest, McpToolSourceOutcome,
+};
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::RuntimeToolSchemaEntry;
+use agentdash_spi::{ExecutionContext, RuntimeMcpServer};
 use std::collections::BTreeMap;
 
 use crate::session::dimension::tool_schema::{
@@ -14,12 +16,7 @@ use crate::session::dimension::tool_schema::{
 pub(crate) struct AssembledToolSurface {
     pub tools: Vec<DynAgentTool>,
     pub schemas: Vec<RuntimeToolSchemaEntry>,
-    pub mcp_failures: Vec<McpDiscoveryFailure>,
-}
-
-#[derive(Clone)]
-pub(crate) struct McpDiscoveryFailure {
-    pub summary: String,
+    pub mcp_sources: Vec<RuntimeMcpServer>,
 }
 
 pub(crate) async fn assemble_tool_surface_for_execution_context(
@@ -30,7 +27,7 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
 ) -> AssembledToolSurface {
     let mut all_tools: Vec<DynAgentTool> = Vec::new();
     let mut all_schemas: Vec<RuntimeToolSchemaEntry> = Vec::new();
-    let mut mcp_failures: Vec<McpDiscoveryFailure> = Vec::new();
+    let mut mcp_sources: Vec<RuntimeMcpServer> = Vec::new();
 
     if let Some(provider) = runtime_tool_provider {
         match provider.build_tools(context).await {
@@ -47,18 +44,6 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
     }
 
     if let Some(discovery) = mcp_tool_discovery {
-        if let Err(error) = context
-            .session
-            .require_runtime_backend_anchor("tool_assembly", Some(session_id))
-        {
-            diag!(Warn, Subsystem::AgentRun,
-
-                session_id = %session_id,
-                error = %error,
-                "MCP 工具发现跳过：缺少 runtime backend anchor"
-            );
-            return finalize_tool_surface(session_id, all_tools, all_schemas);
-        }
         let call_context = agentdash_spi::RelayMcpCallContext {
             session_id: session_id.to_string(),
             turn_id: Some(context.session.turn_id.clone()),
@@ -76,24 +61,26 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
             })
             .await
         {
-            Ok(entries) => {
-                all_schemas.extend(runtime_tool_schema_entries_from_mcp_tools(&entries));
-                all_tools.extend(entries.into_iter().map(|entry| entry.tool));
+            Ok(outcome) => {
+                mcp_sources.extend(outcome.sources.into_iter().map(|source| source.server));
+                all_schemas.extend(runtime_tool_schema_entries_from_mcp_tools(&outcome.tools));
+                all_tools.extend(outcome.tools.into_iter().map(|entry| entry.tool));
             }
             Err(e) => {
                 diag!(Warn, Subsystem::AgentRun,
                     session_id = %session_id,
                     "MCP 工具发现失败: {e}"
                 );
-                mcp_failures.push(McpDiscoveryFailure {
-                    summary: format!("{e}"),
-                });
+                mcp_sources.extend(context.session.mcp_servers.iter().cloned().map(|server| {
+                    McpToolSourceOutcome::unavailable(server, "discovery_failed", e.to_string())
+                        .server
+                }));
             }
         }
     }
 
     let mut surface = finalize_tool_surface(session_id, all_tools, all_schemas);
-    surface.mcp_failures = mcp_failures;
+    surface.mcp_sources = mcp_sources;
     surface
 }
 
@@ -114,7 +101,7 @@ fn finalize_tool_surface(
     AssembledToolSurface {
         tools,
         schemas,
-        mcp_failures: Vec::new(),
+        mcp_sources: Vec::new(),
     }
 }
 
@@ -174,7 +161,7 @@ mod tests {
         AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback,
     };
     use agentdash_application_ports::mcp_discovery::{
-        DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
+        DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryOutcome, McpToolDiscoveryRequest,
     };
     use async_trait::async_trait;
     use serde_json::Value;
@@ -191,7 +178,7 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<Vec<DiscoveredMcpTool>, agentdash_spi::ConnectorError> {
+        ) -> Result<McpToolDiscoveryOutcome, agentdash_spi::ConnectorError> {
             let mut captured = self
                 .captured_anchor
                 .lock()
@@ -199,24 +186,27 @@ mod tests {
             *captured = request
                 .call_context
                 .and_then(|context| context.backend_anchor);
-            Ok(vec![DiscoveredMcpTool {
-                runtime_name: "mcp_code_analyzer_scan_repo".to_string(),
-                server_name: "code-analyzer".to_string(),
-                tool_name: "scan_repo".to_string(),
-                uses_relay: false,
-                description: "Scan repository structure".to_string(),
-                parameters_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "root": {
-                            "type": "string",
-                            "description": "Repository root"
-                        }
-                    },
-                    "required": ["root"]
-                }),
-                tool: Arc::new(StubTool),
-            }])
+            Ok(McpToolDiscoveryOutcome {
+                tools: vec![DiscoveredMcpTool {
+                    runtime_name: "mcp_code_analyzer_scan_repo".to_string(),
+                    server_name: "code-analyzer".to_string(),
+                    tool_name: "scan_repo".to_string(),
+                    uses_relay: false,
+                    description: "Scan repository structure".to_string(),
+                    parameters_schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "root": {
+                                "type": "string",
+                                "description": "Repository root"
+                            }
+                        },
+                        "required": ["root"]
+                    }),
+                    tool: Arc::new(StubTool),
+                }],
+                sources: Vec::new(),
+            })
         }
     }
 
@@ -291,7 +281,7 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<Vec<DiscoveredMcpTool>, agentdash_spi::ConnectorError> {
+        ) -> Result<McpToolDiscoveryOutcome, agentdash_spi::ConnectorError> {
             let entries = ["allowed_tool", "blocked_tool"]
                 .into_iter()
                 .map(|tool_name| {
@@ -314,7 +304,10 @@ mod tests {
                     )
                 })
                 .collect();
-            Ok(entries)
+            Ok(McpToolDiscoveryOutcome {
+                tools: entries,
+                sources: Vec::new(),
+            })
         }
     }
 
@@ -353,6 +346,7 @@ mod tests {
                         headers: Default::default(),
                     },
                     uses_relay: false,
+                    readiness: Default::default(),
                 }],
                 vfs: None,
                 vfs_access_policy: None,
@@ -430,6 +424,7 @@ mod tests {
                         headers: Default::default(),
                     },
                     uses_relay: false,
+                    readiness: Default::default(),
                 }],
                 vfs: None,
                 vfs_access_policy: None,

@@ -1561,6 +1561,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: true,
+            readiness: Default::default(),
         }];
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::Read]);
         capability_state.tool.mcp_servers = mcp_servers.clone();

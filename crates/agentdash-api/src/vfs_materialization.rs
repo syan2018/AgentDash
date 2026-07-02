@@ -11,7 +11,8 @@ use agentdash_relay::{RelayMessage, VfsMaterializePayload};
 use agentdash_spi::ConnectorError;
 use agentdash_spi::RuntimeMcpServer;
 use agentdash_spi::platform::mcp_relay::{
-    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
+    McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome,
+    RelayProbeResult,
 };
 use async_trait::async_trait;
 
@@ -199,7 +200,7 @@ impl McpRelayProvider for MaterializingMcpRelayProvider {
         &self,
         requested_servers: &[RuntimeMcpServer],
         context: Option<RelayMcpCallContext>,
-    ) -> Vec<RelayMcpToolInfo> {
+    ) -> RelayMcpListOutcome {
         self.backends
             .list_relay_tools(requested_servers, context)
             .await

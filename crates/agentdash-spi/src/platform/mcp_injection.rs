@@ -104,6 +104,7 @@ impl McpInjectionConfig {
                 headers: vec![],
             },
             uses_relay: false,
+            readiness: Default::default(),
         }
     }
 }

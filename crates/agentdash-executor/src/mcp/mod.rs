@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::mcp_discovery::{
-    DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
+    DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryOutcome, McpToolDiscoveryRequest,
 };
 use agentdash_spi::{ConnectorError, McpRelayProvider};
 use async_trait::async_trait;
@@ -38,24 +38,34 @@ impl McpToolDiscovery for ExecutorMcpToolDiscovery {
     async fn discover_tool_entries(
         &self,
         request: McpToolDiscoveryRequest,
-    ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+    ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
         let (relay_servers, direct_servers) =
             agentdash_spi::partition_runtime_mcp_servers(&request.servers);
-        let mut entries =
-            direct::discover_mcp_tool_entries(&direct_servers, &request.capability_state).await?;
+        let mut outcome =
+            direct::discover_mcp_tool_outcome(&direct_servers, &request.capability_state).await?;
 
         if let Some(relay_provider) = &self.relay_provider {
-            entries.extend(
-                relay::discover_relay_mcp_tool_entries(
-                    relay_provider.clone(),
-                    &relay_servers,
-                    &request.capability_state,
-                    request.call_context,
-                )
-                .await,
-            );
+            let relay_outcome = relay::discover_relay_mcp_tool_outcome(
+                relay_provider.clone(),
+                &relay_servers,
+                &request.capability_state,
+                request.call_context,
+            )
+            .await;
+            outcome.tools.extend(relay_outcome.tools);
+            outcome.sources.extend(relay_outcome.sources);
+        } else {
+            outcome
+                .sources
+                .extend(relay_servers.into_iter().map(|server| {
+                    agentdash_application_ports::mcp_discovery::McpToolSourceOutcome::unavailable(
+                        server,
+                        "relay_provider_missing",
+                        "relay MCP discovery requires a relay provider",
+                    )
+                }));
         }
 
-        Ok(entries)
+        Ok(outcome)
     }
 }

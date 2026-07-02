@@ -191,6 +191,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         let json = serde_json::to_value(&servers).unwrap();
 
@@ -283,6 +284,7 @@ mod tests {
                 headers: Vec::new(),
             },
             uses_relay: false,
+            readiness: Default::default(),
         }];
         let execution_profile = AgentConfig::new("PI_AGENT");
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");

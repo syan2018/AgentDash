@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use agentdash_domain::common::{MountLink, Vfs};
 use serde::{Deserialize, Serialize};
 
-use super::CapabilityState;
+use super::{CapabilityState, RuntimeMcpSourceReadiness};
 use crate::platform::memory_discovery::DiscoveredMemorySource;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +68,14 @@ impl VfsSurfaceDelta {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct McpServerReadinessSummary {
+    pub name: String,
+    pub reason_code: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CapabilityStateDelta {
@@ -76,7 +84,7 @@ pub struct CapabilityStateDelta {
     pub excluded_tool_paths: SetDelta,
     pub included_tool_paths: SetDelta,
     pub mcp_servers: NamedEntityDelta,
-    pub unavailable_mcp_servers: Vec<String>,
+    pub mcp_server_readiness: Vec<McpServerReadinessSummary>,
     pub companion_agents: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
     pub skills: NamedEntityDelta,
@@ -90,7 +98,7 @@ impl CapabilityStateDelta {
             && self.excluded_tool_paths.is_empty()
             && self.included_tool_paths.is_empty()
             && self.mcp_servers.is_empty()
-            && self.unavailable_mcp_servers.is_empty()
+            && self.mcp_server_readiness.is_empty()
             && self.companion_agents.is_empty()
             && self.vfs.is_empty()
             && self.skills.is_empty()
@@ -145,7 +153,24 @@ pub fn compute_capability_state_delta(
             after.tool.mcp_servers.as_slice(),
             |server| server.name.clone(),
         ),
-        unavailable_mcp_servers: after.tool.unavailable_mcp_servers.clone(),
+        mcp_server_readiness: after
+            .tool
+            .mcp_servers
+            .iter()
+            .filter_map(|server| match &server.readiness {
+                RuntimeMcpSourceReadiness::Unavailable {
+                    reason_code,
+                    message,
+                } => Some(McpServerReadinessSummary {
+                    name: server.name.clone(),
+                    reason_code: reason_code.clone(),
+                    message: message.clone(),
+                }),
+                RuntimeMcpSourceReadiness::Pending | RuntimeMcpSourceReadiness::Ready { .. } => {
+                    None
+                }
+            })
+            .collect(),
         companion_agents: named_entity_delta(
             before
                 .map(|surface| surface.companion.agents.as_slice())

@@ -1,6 +1,7 @@
+use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::ConnectorError;
+use agentdash_spi::{ConnectorError, McpServerReadinessSummary};
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
@@ -42,6 +43,13 @@ impl TurnCommitter {
             turn_id,
             &prepared.resolved_payload,
             prepared.started_at_ms,
+        )
+        .await;
+
+        self.commit_mcp_readiness_notice(
+            session_id,
+            &prepared.source,
+            &prepared.mcp_readiness_notice,
         )
         .await;
 
@@ -130,7 +138,7 @@ impl TurnCommitter {
     async fn commit_accepted_launch_events(
         &self,
         session_id: &str,
-        source: &agentdash_agent_protocol::SourceInfo,
+        source: &SourceInfo,
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
         started_at_ms: i64,
@@ -157,6 +165,39 @@ impl TurnCommitter {
             .deps
             .eventing
             .persist_notification(session_id, started)
+            .await;
+    }
+
+    async fn commit_mcp_readiness_notice(
+        &self,
+        session_id: &str,
+        source: &SourceInfo,
+        unavailable_sources: &[McpServerReadinessSummary],
+    ) {
+        if unavailable_sources.is_empty() {
+            return;
+        }
+        let source_names = unavailable_sources
+            .iter()
+            .map(|source| format!("{} ({})", source.name, source.reason_code))
+            .collect::<Vec<_>>()
+            .join("；");
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "system_message".to_string(),
+                value: serde_json::json!({
+                    "message": format!("MCP 工具源不可用，相关工具本轮不会暴露：{source_names}"),
+                    "kind": "mcp_source_readiness",
+                    "sources": unavailable_sources,
+                }),
+            }),
+            session_id,
+            source.clone(),
+        );
+        let _ = self
+            .deps
+            .eventing
+            .persist_notification(session_id, envelope)
             .await;
     }
 }

@@ -15,6 +15,7 @@ pub fn preset_to_runtime_mcp_server(preset: &McpPreset) -> RuntimeMcpServer {
         name: preset.key.clone(),
         transport: preset.transport.clone(),
         uses_relay: preset_uses_relay(preset),
+        readiness: Default::default(),
     })
 }
 
@@ -89,6 +90,7 @@ pub fn resolve_preset_mcp_server(
         name: preset.key.clone(),
         uses_relay: preset.route_policy.uses_relay(&transport),
         transport,
+        readiness: Default::default(),
     })
 }
 

@@ -120,6 +120,7 @@ fn companion_mailbox_service_from_runtime(
     AgentRunMailboxService::new(
         repos.lifecycle_run_repo.as_ref(),
         repos.lifecycle_agent_repo.as_ref(),
+        repos.project_agent_repo.as_ref(),
         repos.agent_frame_repo.as_ref(),
         repos.execution_anchor_repo.as_ref(),
         repos.project_backend_access_repo.as_ref(),
@@ -2766,6 +2767,7 @@ mod companion_tests {
                     cwd: None,
                 },
                 uses_relay: false,
+                readiness: Default::default(),
             }],
             CompanionSliceMode::Compact,
         )
@@ -2815,6 +2817,7 @@ mod companion_tests {
                     cwd: None,
                 },
                 uses_relay: false,
+                readiness: Default::default(),
             }],
             CompanionSliceMode::WorkflowOnly,
         )

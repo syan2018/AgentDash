@@ -22,8 +22,8 @@ use crate::platform::memory_discovery::MemoryDiscoveryOutput;
 pub mod capability_delta;
 
 pub use capability_delta::{
-    CapabilityStateDelta, DefaultMountDelta, NamedEntityDelta, SetDelta, VfsSurfaceDelta,
-    compute_capability_state_delta,
+    CapabilityStateDelta, DefaultMountDelta, McpServerReadinessSummary, NamedEntityDelta, SetDelta,
+    VfsSurfaceDelta, compute_capability_state_delta,
 };
 
 /// 连接器类型
@@ -401,9 +401,6 @@ pub struct ToolDimension {
     /// AgentRun 当前可执行 MCP surface 的权威来源是 AgentFrame revision；
     /// 此列表服务 capability replay、tool policy 关联和 runtime 工具装配快照。
     pub mcp_servers: Vec<RuntimeMcpServer>,
-    /// 工具发现阶段连接失败的 MCP server 摘要；用于 agent context 提示。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub unavailable_mcp_servers: Vec<String>,
 }
 
 /// Companion 维度的运行态。
@@ -658,7 +655,6 @@ impl CapabilityState {
                     &other.tool.tool_policy,
                 ),
                 mcp_servers: self.tool.mcp_servers.clone(),
-                unavailable_mcp_servers: self.tool.unavailable_mcp_servers.clone(),
             },
             companion: self.companion.clone(),
             vfs: self.vfs.clone(),
@@ -703,6 +699,50 @@ fn merge_tool_policy_for_intersection(
 
 // ── Runtime MCP Server ──────────────────────────────────────
 
+/// Runtime MCP source 的工具发现就绪状态。
+///
+/// 状态属于具体 MCP source，而不是 `ToolDimension` 的旁路字段。这样执行面、
+/// capability delta 与上下文帧都能从同一个 source 投影当前可用性。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RuntimeMcpSourceReadiness {
+    Pending,
+    Ready {
+        tool_count: usize,
+    },
+    Unavailable {
+        reason_code: String,
+        message: String,
+    },
+}
+
+impl Default for RuntimeMcpSourceReadiness {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+impl RuntimeMcpSourceReadiness {
+    pub fn ready(tool_count: usize) -> Self {
+        Self::Ready { tool_count }
+    }
+
+    pub fn unavailable(reason_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Unavailable {
+            reason_code: reason_code.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable { .. })
+    }
+}
+
 /// Runtime-resolved MCP server for the executable surface.
 ///
 /// relay 标记是 server 的内禀属性，不应作为独立的 `HashSet<String>` 旁路传递。
@@ -712,12 +752,29 @@ pub struct RuntimeMcpServer {
     pub transport: McpTransportConfig,
     /// 是否通过 relay backend 代理而非云端直连。
     pub uses_relay: bool,
+    /// 工具发现阶段对该 source 的结构化就绪状态。
+    #[serde(default, skip_serializing_if = "RuntimeMcpSourceReadiness::is_pending")]
+    pub readiness: RuntimeMcpSourceReadiness,
 }
 
 // MCP transport 配置统一归 domain，spi 直接复用，避免领域/SPI 两份等价定义漂移。
 pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 
-impl RuntimeMcpServer {}
+impl RuntimeMcpServer {
+    pub fn new(name: String, transport: McpTransportConfig, uses_relay: bool) -> Self {
+        Self {
+            name,
+            transport,
+            uses_relay,
+            readiness: RuntimeMcpSourceReadiness::Pending,
+        }
+    }
+
+    pub fn with_readiness(mut self, readiness: RuntimeMcpSourceReadiness) -> Self {
+        self.readiness = readiness;
+        self
+    }
+}
 
 /// 按 relay 标记分组：返回 (relay_servers, direct_servers)。
 pub fn partition_runtime_mcp_servers(

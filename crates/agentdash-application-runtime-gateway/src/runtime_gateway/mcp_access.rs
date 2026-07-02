@@ -51,6 +51,7 @@ impl CurrentSurfaceRuntimeMcpAccess {
         self.mcp_tool_discovery
             .discover_tool_entries(discovery_request(surface))
             .await
+            .map(|outcome| outcome.tools)
             .map_err(runtime_mcp_error_from_connector)
     }
 }
@@ -160,7 +161,9 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_agent_types::{AgentTool, AgentToolError, ContentPart, ToolUpdateCallback};
-    use agentdash_application_ports::mcp_discovery::McpToolDiscoveryRequest;
+    use agentdash_application_ports::mcp_discovery::{
+        McpToolDiscoveryOutcome, McpToolDiscoveryRequest,
+    };
     use agentdash_application_ports::runtime_gateway_mcp_surface::RuntimeGatewayMcpSurface;
     use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorSource};
     use agentdash_domain::common::{Mount, MountCapability};
@@ -235,7 +238,7 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
+        ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
             *self
                 .captured_backend
                 .lock()
@@ -243,7 +246,10 @@ mod tests {
                 .call_context
                 .as_ref()
                 .and_then(|context| context.backend_anchor.clone());
-            Ok(entries_for_request(&request, false))
+            Ok(McpToolDiscoveryOutcome {
+                tools: entries_for_request(&request, false),
+                sources: Vec::new(),
+            })
         }
     }
 
@@ -254,8 +260,11 @@ mod tests {
         async fn discover_tool_entries(
             &self,
             request: McpToolDiscoveryRequest,
-        ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
-            Ok(entries_for_request(&request, true))
+        ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
+            Ok(McpToolDiscoveryOutcome {
+                tools: entries_for_request(&request, true),
+                sources: Vec::new(),
+            })
         }
     }
 
@@ -363,6 +372,7 @@ mod tests {
                         headers: Vec::new(),
                     },
                     uses_relay: true,
+                    readiness: Default::default(),
                 }],
                 active_turn_id: None,
                 identity: None,

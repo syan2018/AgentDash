@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "检查后端改动是否符合 runtime/session/API 层边界。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 unavailable 错误是否从 placement 到 API 保持用户可见。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 required 与 optional backend launch 行为是否覆盖启动链路。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查无 backend placement 时 runtime surface 不暴露 backend-bound capability。"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "检查 ProjectAgent workspace/backend routing 跨层契约。"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "检查前端表单、类型和验证是否符合项目约定。"}
+{"file": ".trellis/spec/shared/index.md", "reason": "检查共享配置字段的默认值和生成类型一致性。"}

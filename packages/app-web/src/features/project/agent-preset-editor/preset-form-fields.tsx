@@ -232,6 +232,20 @@ export function PresetFormFields({
         </select>
       </div>
 
+      <div>
+        <label className="agentdash-form-label">运行环境</label>
+        <select
+          value={form.backend_requirement}
+          onChange={(e) =>
+            patchForm({ backend_requirement: e.target.value === "optional" ? "optional" : "required" })
+          }
+          className="agentdash-form-select"
+        >
+          <option value="required">必须有可用机器</option>
+          <option value="optional">机器可选</option>
+        </select>
+      </div>
+
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <div>
           <label className="agentdash-form-label">模型</label>

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端改动入口索引，确认 runtime session、agentrun、API 错误映射相关规范。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "backend requirement 失败需要映射为用户可见 unavailable 错误。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "launch planning 与 RuntimeSession 启动链路需要支持 optional backend placement。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "runtime surface 和 backend-bound capability 的可见性必须与真实 backend placement 对齐。"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "ProjectAgent 与 backend workspace routing 的跨层契约需要保持一致。"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 ProjectAgent preset 表单与类型更新需要遵循前端规范入口。"}
+{"file": ".trellis/spec/shared/index.md", "reason": "跨包配置字段与生成类型需要遵循共享契约规范。"}

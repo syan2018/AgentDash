@@ -7,6 +7,7 @@ use agentdash_agent_protocol::{
 };
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_domain::DomainError;
+use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MailboxDelivery, MailboxDrainMode,
@@ -303,6 +304,7 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
 struct MailboxSteeringFixture {
     runs: Arc<MemoryLifecycleRunRepository>,
     agents: Arc<MemoryLifecycleAgentRepository>,
+    project_agents: Arc<MemoryProjectAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
     backend_access: Arc<MemoryProjectBackendAccessRepository>,
@@ -323,6 +325,7 @@ impl MailboxSteeringFixture {
     async fn new(fail_events: bool) -> Self {
         let runs = Arc::new(MemoryLifecycleRunRepository::default());
         let agents = Arc::new(MemoryLifecycleAgentRepository::default());
+        let project_agents = Arc::new(MemoryProjectAgentRepository);
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
         let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
@@ -355,6 +358,7 @@ impl MailboxSteeringFixture {
         Self {
             runs,
             agents,
+            project_agents,
             frames,
             anchors,
             backend_access,
@@ -383,6 +387,7 @@ impl MailboxSteeringFixture {
         AgentRunMailboxService::new(
             self.runs.as_ref(),
             self.agents.as_ref(),
+            self.project_agents.as_ref(),
             self.frames.as_ref(),
             self.anchors.as_ref(),
             self.backend_access.as_ref(),
@@ -422,6 +427,47 @@ impl MailboxSteeringFixture {
         );
         self.mailbox.insert(message.clone()).await;
         message
+    }
+}
+
+struct MemoryProjectAgentRepository;
+
+#[async_trait::async_trait]
+impl ProjectAgentRepository for MemoryProjectAgentRepository {
+    async fn create(&self, _agent: &ProjectAgent) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn get_by_id(&self, _id: Uuid) -> Result<Option<ProjectAgent>, DomainError> {
+        Ok(None)
+    }
+
+    async fn get_by_project_and_id(
+        &self,
+        _project_id: Uuid,
+        _id: Uuid,
+    ) -> Result<Option<ProjectAgent>, DomainError> {
+        Ok(None)
+    }
+
+    async fn get_by_project_and_name(
+        &self,
+        _project_id: Uuid,
+        _name: &str,
+    ) -> Result<Option<ProjectAgent>, DomainError> {
+        Ok(None)
+    }
+
+    async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<ProjectAgent>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn update(&self, _agent: &ProjectAgent) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn delete(&self, _project_id: Uuid, _id: Uuid) -> Result<(), DomainError> {
+        Ok(())
     }
 }
 

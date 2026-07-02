@@ -160,6 +160,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 run.project_id,
                 run.id,
                 agent.id,
+                agent.project_agent_id,
                 &runtime_session_id,
                 command.backend_selection.clone(),
             )
@@ -470,6 +471,7 @@ impl<'a> AgentRunMailboxService<'a> {
         project_id: Uuid,
         run_id: Uuid,
         agent_id: Uuid,
+        project_agent_id: Option<Uuid>,
         runtime_session_id: &str,
         requested_selection: Option<BackendSelectionInput>,
     ) -> Result<LaunchPlanningInput, WorkflowApplicationError> {
@@ -524,9 +526,30 @@ impl<'a> AgentRunMailboxService<'a> {
                 }
             }
         };
+        let backend_requirement = match project_agent_id {
+            Some(project_agent_id) => {
+                let Some(project_agent) = self
+                    .project_agent_repo
+                    .get_by_project_and_id(project_id, project_agent_id)
+                    .await?
+                else {
+                    return Err(WorkflowApplicationError::NotFound(format!(
+                        "ProjectAgent {project_agent_id} 不存在"
+                    )));
+                };
+                Some(
+                    project_agent
+                        .preset_config()
+                        .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?
+                        .backend_requirement_or_default(),
+                )
+            }
+            None => None,
+        };
 
         Ok(LaunchPlanningInput {
             backend_selection: selection,
+            backend_requirement,
             authorized_backend_ids,
         })
     }

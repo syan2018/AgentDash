@@ -9,6 +9,7 @@ use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
     MessageStreamProjectionRef, MessageStreamTraceKind,
 };
+use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     AgentRunMailboxState, ConsumptionBarrier, MAILBOX_DELIVERY_RESULT_UNKNOWN, MailboxDelivery,
@@ -67,6 +68,7 @@ pub(crate) use receipts::{outcome_from_message, outcome_from_result_json};
 pub struct AgentRunMailboxService<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
+    project_agent_repo: &'a dyn ProjectAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
@@ -83,6 +85,7 @@ impl<'a> AgentRunMailboxService<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
+        project_agent_repo: &'a dyn ProjectAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
         project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
@@ -96,6 +99,7 @@ impl<'a> AgentRunMailboxService<'a> {
         Self {
             lifecycle_run_repo,
             lifecycle_agent_repo,
+            project_agent_repo,
             agent_frame_repo,
             execution_anchor_repo,
             project_backend_access_repo,

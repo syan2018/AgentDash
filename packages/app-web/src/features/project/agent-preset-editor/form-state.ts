@@ -1,5 +1,6 @@
 import type {
   AgentPreset,
+  AgentBackendRequirement,
   CapabilityDirective,
   CapabilityKey,
   ProjectVfsMountExposureGrant,
@@ -10,6 +11,7 @@ import {
   directiveKind,
   directivePath,
   isThinkingLevel,
+  isAgentBackendRequirement,
   parseCapabilityPath,
 } from "../../../types";
 import {
@@ -36,6 +38,7 @@ export interface PresetFormState {
   thinking_level: ThinkingLevel | "";
   permission_policy: string;
   system_prompt: string;
+  backend_requirement: AgentBackendRequirement;
   project_vfs_mount_exposure_grants: ProjectVfsMountExposureGrant[];
   skill_asset_keys: string[];
   capability_directives: CapabilityDirective[];
@@ -191,6 +194,9 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     thinking_level: isThinkingLevel(cfg.thinking_level) ? cfg.thinking_level : "",
     permission_policy: String(cfg.permission_policy ?? ""),
     system_prompt: String(cfg.system_prompt ?? ""),
+    backend_requirement: isAgentBackendRequirement(cfg.backend_requirement)
+      ? cfg.backend_requirement
+      : "required",
     project_vfs_mount_exposure_grants: rawProjectVfsMountExposureGrants,
     skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capabilityDirectives,
@@ -210,6 +216,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.thinking_level) config.thinking_level = form.thinking_level;
   if (form.permission_policy.trim()) config.permission_policy = form.permission_policy.trim();
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
+  config.backend_requirement = form.backend_requirement;
   if (form.project_vfs_mount_exposure_grants.length > 0) {
     config.project_vfs_mount_exposure_grants = form.project_vfs_mount_exposure_grants;
   }

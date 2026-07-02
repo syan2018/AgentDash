@@ -19,6 +19,14 @@ pub enum ThinkingLevel {
     Xhigh,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentBackendRequirement {
+    #[default]
+    Required,
+    Optional,
+}
+
 // ── AgentPresetConfig ─────────────────────────────────────────────────
 
 /// Agent 配置存储层的权威类型。
@@ -47,6 +55,8 @@ pub struct AgentPresetConfig {
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_requirement: Option<AgentBackendRequirement>,
 
     /// Agent 级能力指令。前端、API、存储与 Resolver 使用同一套 directive 表示。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,6 +108,7 @@ impl AgentPresetConfig {
             system_prompt,
             display_name,
             description,
+            backend_requirement,
             capability_directives,
             project_vfs_mount_exposure_grants,
             skill_asset_keys,
@@ -123,6 +134,10 @@ impl AgentPresetConfig {
             permission_policy: self.permission_policy.clone(),
             system_prompt: self.system_prompt.clone(),
         }
+    }
+
+    pub fn backend_requirement_or_default(&self) -> AgentBackendRequirement {
+        self.backend_requirement.unwrap_or_default()
     }
 
     /// 从 DB JSON 反序列化为权威配置结构。
@@ -214,6 +229,7 @@ struct AgentPresetConfigWire {
     system_prompt: Option<String>,
     display_name: Option<String>,
     description: Option<String>,
+    backend_requirement: Option<AgentBackendRequirement>,
     capability_directives: Option<Vec<ToolCapabilityDirective>>,
     mcp_preset_keys: Option<Vec<String>>,
     project_vfs_mount_exposure_grants: Option<Vec<ProjectVfsMountExposureGrant>>,
@@ -239,6 +255,7 @@ impl<'de> Deserialize<'de> for AgentPresetConfig {
             system_prompt: wire.system_prompt,
             display_name: wire.display_name,
             description: wire.description,
+            backend_requirement: wire.backend_requirement,
             capability_directives: wire.capability_directives,
             project_vfs_mount_exposure_grants: wire.project_vfs_mount_exposure_grants,
             skill_asset_keys: wire.skill_asset_keys,
@@ -325,6 +342,7 @@ mod tests {
             "project_vfs_mount_exposure_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
             "default_companion_enabled": true,
             "extra_companions": ["deep-reviewer"],
+            "backend_requirement": "optional",
             "capability_directives": [{ "add": "workflow_management" }]
         }))
         .expect("valid preset config");
@@ -344,6 +362,10 @@ mod tests {
             Some(1)
         );
         assert_eq!(config.default_companion_enabled, Some(true));
+        assert_eq!(
+            config.backend_requirement,
+            Some(AgentBackendRequirement::Optional)
+        );
         assert_eq!(
             config.extra_companions.as_deref(),
             Some(["deep-reviewer".to_string()].as_slice())
@@ -495,6 +517,26 @@ mod tests {
         }));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn preset_config_backend_requirement_defaults_to_required() {
+        let config = AgentPresetConfig::from_json(&serde_json::json!({}))
+            .expect("empty config should parse");
+
+        assert_eq!(
+            config.backend_requirement_or_default(),
+            AgentBackendRequirement::Required
+        );
+
+        let optional = AgentPresetConfig::from_json(&serde_json::json!({
+            "backend_requirement": "optional"
+        }))
+        .expect("optional requirement should parse");
+        assert_eq!(
+            optional.backend_requirement_or_default(),
+            AgentBackendRequirement::Optional
+        );
     }
 
     #[test]

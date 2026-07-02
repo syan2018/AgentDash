@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use agentdash_agent_protocol::{UserInputBlock, text_user_input_blocks};
+use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_spi::{AgentConfig, AuthIdentity};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,8 @@ impl LaunchPromptInput {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LaunchPlanningInput {
     pub backend_selection: Option<BackendSelectionInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_requirement: Option<AgentBackendRequirement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authorized_backend_ids: Vec<String>,
 }

@@ -323,6 +323,7 @@ pub(crate) async fn build_session_runtime(
     let runtime_mailbox_port = mailbox_runtime_port(AgentRunMailboxRuntimeBoundaryDeps {
         lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
         lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+        project_agent_repo: repos.project_agent_repo.clone(),
         agent_frame_repo: repos.agent_frame_repo.clone(),
         execution_anchor_repo: repos.execution_anchor_repo.clone(),
         project_backend_access_repo: repos.project_backend_access_repo.clone(),

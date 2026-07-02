@@ -8,6 +8,7 @@ use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionLivePortError, RuntimeSessionMailboxAutoResumeRequest,
     RuntimeSessionMailboxRuntimePort,
 };
+use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxRepository, ConsumptionBarrier, MailboxDrainMode, MailboxSourceIdentity,
     SteeringStopEffect,
@@ -37,6 +38,7 @@ use super::mailbox::{AgentRunMailboxScheduleTrigger, AgentRunMailboxService};
 pub struct AgentRunMailboxRuntimeBoundaryDeps {
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
@@ -316,6 +318,7 @@ fn mailbox_service_from_deps(
     AgentRunMailboxService::new(
         deps.lifecycle_run_repo.as_ref(),
         deps.lifecycle_agent_repo.as_ref(),
+        deps.project_agent_repo.as_ref(),
         deps.agent_frame_repo.as_ref(),
         deps.execution_anchor_repo.as_ref(),
         deps.project_backend_access_repo.as_ref(),

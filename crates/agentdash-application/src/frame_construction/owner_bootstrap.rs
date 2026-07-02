@@ -216,12 +216,17 @@ impl<'a> OwnerBootstrapComposer<'a> {
                 vfs.as_ref(),
             )
             .await?;
-        cap_output.workspace_module =
-            crate::agent_run::runtime_capability::project_workspace_module_dimension(
-                spec.visible_workspace_module_refs.as_deref(),
-            );
-        let runtime_mcp_servers =
-            normalize_owner_bootstrap_mcp_projection(&mut cap_output, &spec.request_mcp_servers);
+        let backend_bound_surface = vfs_has_runtime_backend_anchor(vfs.as_ref());
+        apply_owner_backend_surface_capabilities(
+            &mut cap_output,
+            spec.visible_workspace_module_refs.as_deref(),
+            backend_bound_surface,
+        );
+        let runtime_mcp_servers = normalize_owner_bootstrap_mcp_projection(
+            &mut cap_output,
+            &spec.request_mcp_servers,
+            backend_bound_surface,
+        );
         // guidelines / memory / skill baseline 由 launch-time 单入口
         // (`FrameConstructionService::apply_launch_context_discovery`) 在 runtime surface
         // 闭包后从最终 launch VFS 统一派生，owner bootstrap 不再各自 derive。
@@ -827,15 +832,47 @@ async fn resolve_owner_workflow_tool_directives(
 fn normalize_owner_bootstrap_mcp_projection(
     capability_state: &mut CapabilityState,
     request_mcp_servers: &[agentdash_spi::RuntimeMcpServer],
+    include_backend_bound_mcp: bool,
 ) -> Vec<agentdash_spi::RuntimeMcpServer> {
     let mut servers = Vec::new();
-    servers.extend(request_mcp_servers.iter().cloned());
-    servers.extend(capability_state.tool.mcp_servers.iter().cloned());
+    servers.extend(
+        request_mcp_servers
+            .iter()
+            .filter(|server| include_backend_bound_mcp || !server.uses_relay)
+            .cloned(),
+    );
+    let removed_backend_bound_caps = capability_state
+        .tool
+        .mcp_servers
+        .iter()
+        .filter(|server| !include_backend_bound_mcp && server.uses_relay)
+        .map(capability_for_runtime_mcp_server)
+        .collect::<Vec<_>>();
+    for cap in removed_backend_bound_caps {
+        capability_state.tool.capabilities.remove(&cap);
+    }
+    if !include_backend_bound_mcp {
+        capability_state
+            .tool
+            .mcp_servers
+            .retain(|server| !server.uses_relay);
+    }
+    servers.extend(
+        capability_state
+            .tool
+            .mcp_servers
+            .iter()
+            .filter(|server| include_backend_bound_mcp || !server.uses_relay)
+            .cloned(),
+    );
     normalize_runtime_mcp_servers(&mut servers);
 
     // Request-level MCP servers are a runtime override surface. ProjectAgent MCP
     // presets must already be granted by ToolCapabilityDirective + CapabilityResolver.
-    for server in request_mcp_servers {
+    for server in request_mcp_servers
+        .iter()
+        .filter(|server| include_backend_bound_mcp || !server.uses_relay)
+    {
         capability_state
             .tool
             .capabilities
@@ -843,6 +880,41 @@ fn normalize_owner_bootstrap_mcp_projection(
     }
     capability_state.tool.mcp_servers = servers.clone();
     servers
+}
+
+fn apply_owner_backend_surface_capabilities(
+    capability_state: &mut CapabilityState,
+    visible_workspace_module_refs: Option<&[String]>,
+    include_backend_bound_surface: bool,
+) {
+    if include_backend_bound_surface {
+        capability_state.workspace_module =
+            crate::agent_run::runtime_capability::project_workspace_module_dimension(
+                visible_workspace_module_refs,
+            );
+        return;
+    }
+
+    capability_state.workspace_module = agentdash_spi::WorkspaceModuleDimension::default();
+    capability_state
+        .tool
+        .capabilities
+        .remove(&ToolCapability::new(
+            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+        ));
+    capability_state
+        .tool
+        .enabled_clusters
+        .remove(&agentdash_spi::ToolCluster::WorkspaceModule);
+    capability_state
+        .tool
+        .tool_policy
+        .remove(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE);
+}
+
+fn vfs_has_runtime_backend_anchor(vfs: Option<&Vfs>) -> bool {
+    vfs.and_then(Vfs::default_mount)
+        .is_some_and(|mount| !mount.backend_id.trim().is_empty())
 }
 
 fn normalize_runtime_mcp_servers(servers: &mut Vec<agentdash_spi::RuntimeMcpServer>) {
@@ -953,6 +1025,7 @@ mod tests {
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
             std::slice::from_ref(&request_server),
+            true,
         );
 
         assert_eq!(servers, vec![request_server.clone()]);
@@ -985,6 +1058,7 @@ mod tests {
         let servers = normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
             &[runtime_mcp_server("shared", "http://request/mcp")],
+            true,
         );
 
         let names = servers
@@ -1024,6 +1098,7 @@ mod tests {
         normalize_owner_bootstrap_mcp_projection(
             &mut capability_state,
             std::slice::from_ref(&request_server),
+            true,
         );
 
         assert!(
@@ -1039,6 +1114,92 @@ mod tests {
                 .tool
                 .capabilities
                 .contains(&ToolCapability::custom_mcp("agentdash-workflow-tools-123"))
+        );
+    }
+
+    #[test]
+    fn owner_bootstrap_mcp_projection_removes_relay_mcp_without_backend_surface() {
+        let mut relay_server = runtime_mcp_server("local_tools", "http://relay/mcp");
+        relay_server.uses_relay = true;
+        let mut cloud_server = runtime_mcp_server("cloud_tools", "http://cloud/mcp");
+        cloud_server.uses_relay = false;
+        let mut capability_state = CapabilityState::default();
+        capability_state.tool.mcp_servers = vec![relay_server.clone(), cloud_server.clone()];
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("local_tools"));
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::custom_mcp("cloud_tools"));
+
+        let servers = normalize_owner_bootstrap_mcp_projection(
+            &mut capability_state,
+            std::slice::from_ref(&relay_server),
+            false,
+        );
+
+        assert_eq!(servers, vec![cloud_server.clone()]);
+        assert_eq!(capability_state.tool.mcp_servers, vec![cloud_server]);
+        assert!(
+            !capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("local_tools"))
+        );
+        assert!(
+            capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::custom_mcp("cloud_tools"))
+        );
+    }
+
+    #[test]
+    fn owner_bootstrap_backend_surface_removes_workspace_module_without_backend_anchor() {
+        let mut capability_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::WorkspaceModule]);
+        capability_state
+            .tool
+            .capabilities
+            .insert(ToolCapability::new(
+                agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE,
+            ));
+        capability_state.tool.tool_policy.insert(
+            agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE.to_string(),
+            Default::default(),
+        );
+
+        apply_owner_backend_surface_capabilities(
+            &mut capability_state,
+            Some(&["canvas:dashboard".to_string()]),
+            false,
+        );
+
+        assert_eq!(
+            capability_state.workspace_module,
+            agentdash_spi::WorkspaceModuleDimension::default()
+        );
+        assert!(
+            !capability_state
+                .tool
+                .enabled_clusters
+                .contains(&agentdash_spi::ToolCluster::WorkspaceModule)
+        );
+        assert!(
+            !capability_state
+                .tool
+                .capabilities
+                .contains(&ToolCapability::new(
+                    agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE
+                ))
+        );
+        assert!(
+            !capability_state
+                .tool
+                .tool_policy
+                .contains_key(agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE)
         );
     }
 

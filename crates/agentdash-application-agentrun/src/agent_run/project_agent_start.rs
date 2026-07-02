@@ -148,6 +148,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
         AgentRunMailboxService::new(
             self.lifecycle_run_repo,
             self.lifecycle_agent_repo,
+            self.project_agent_repo,
             self.agent_frame_repo,
             self.execution_anchor_repo,
             self.project_backend_access_repo,

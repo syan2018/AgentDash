@@ -31,6 +31,12 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
   );
 }
 
+export type AgentBackendRequirement = "required" | "optional";
+
+export function isAgentBackendRequirement(value: unknown): value is AgentBackendRequirement {
+  return value === "required" || value === "optional";
+}
+
 export interface ProjectVfsMountExposureGrant {
   [key: string]: JsonValue | undefined;
   mount_id: string;
@@ -47,6 +53,7 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   system_prompt?: string;
   display_name?: string;
   description?: string;
+  backend_requirement?: AgentBackendRequirement;
   capability_directives?: CapabilityDirective[];
   project_vfs_mount_exposure_grants?: ProjectVfsMountExposureGrant[];
   skill_asset_keys?: string[];

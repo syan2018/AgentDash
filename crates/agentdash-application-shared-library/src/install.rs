@@ -534,6 +534,7 @@ fn agent_template_preset_config(
         system_prompt: config.system_prompt,
         display_name,
         description,
+        backend_requirement: None,
         capability_directives: (!dependency_mcp_directives.is_empty())
             .then_some(dependency_mcp_directives),
         project_vfs_mount_exposure_grants: None,

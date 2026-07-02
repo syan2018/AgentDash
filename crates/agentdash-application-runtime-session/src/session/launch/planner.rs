@@ -8,6 +8,7 @@ use agentdash_application_ports::launch::{
     BackendSelectionInput, BackendSelectionInputMode, LaunchCommand, LaunchPlanningInput,
 };
 use agentdash_domain::backend::{BackendExecutionLease, RuntimeBackendAnchor};
+use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
@@ -298,24 +299,38 @@ impl<'a> LaunchPlanner<'a> {
         executor_id: &str,
         reason_tag: &str,
     ) -> Result<Option<ExecutionPlacementPlan>, ConnectorError> {
+        let backend_requirement = planning_input
+            .backend_requirement
+            .unwrap_or(AgentBackendRequirement::Optional);
+        let backend_required = backend_requirement == AgentBackendRequirement::Required;
+        let explicit_selection = planning_input.backend_selection.is_some();
         let Some(transport) = self.deps.backend_execution_transport.as_ref() else {
-            if planning_input.backend_selection.is_some() {
+            if explicit_selection || backend_required {
                 return Err(ConnectorError::InvalidConfig(
-                    "backend selection 已指定，但 session runtime 未注入 backend execution placement transport"
+                    "backend placement 已要求，但 session runtime 未注入 backend execution placement transport"
                         .to_string(),
                 ));
             }
             return Ok(None);
         };
         let Some(lease_repo) = self.deps.backend_execution_lease_repo.as_ref() else {
-            if planning_input.backend_selection.is_some() {
+            if explicit_selection || backend_required {
                 return Err(ConnectorError::InvalidConfig(
-                    "backend selection 已指定，但 session runtime 未注入 backend execution lease repository"
+                    "backend placement 已要求，但 session runtime 未注入 backend execution lease repository"
                         .to_string(),
                 ));
             }
             return Ok(None);
         };
+
+        if backend_required
+            && !explicit_selection
+            && planning_input.authorized_backend_ids.is_empty()
+        {
+            return Err(ConnectorError::ConnectionFailed(
+                "当前 Project 没有已授权的 backend".to_string(),
+            ));
+        }
 
         let request = match planning_input.backend_selection.as_ref() {
             Some(selection) => Some(selection_request_from_input(
@@ -324,7 +339,10 @@ impl<'a> LaunchPlanner<'a> {
                 &planning_input.authorized_backend_ids,
                 reason_tag,
             )?),
-            None if has_available_relay_executor(transport.as_ref(), executor_id) => {
+            None if runtime_backend_anchor.is_some()
+                || backend_required
+                || has_available_relay_executor(transport.as_ref(), executor_id) =>
+            {
                 Some(selection_request_from_runtime_anchor(
                     executor_id,
                     runtime_backend_anchor,
@@ -338,9 +356,25 @@ impl<'a> LaunchPlanner<'a> {
             return Ok(None);
         };
 
-        let mut placement =
-            resolve_backend_execution_placement(transport.as_ref(), lease_repo.as_ref(), &request)
-                .await?;
+        let mut placement = match resolve_backend_execution_placement(
+            transport.as_ref(),
+            lease_repo.as_ref(),
+            &request,
+        )
+        .await
+        {
+            Ok(placement) => placement,
+            Err(error)
+                if backend_requirement == AgentBackendRequirement::Optional
+                    && !explicit_selection =>
+            {
+                return match error {
+                    ConnectorError::ConnectionFailed(_) => Ok(None),
+                    other => Err(other),
+                };
+            }
+            Err(error) => return Err(error),
+        };
         let mut lease = BackendExecutionLease::claimed(
             placement.backend_id.clone(),
             session_id.to_string(),

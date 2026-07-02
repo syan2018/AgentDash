@@ -37,6 +37,7 @@ describe("ProjectAgent preset form state capability directives", () => {
 
     const saved = formToPreset(form);
     expect(saved.config).toEqual({
+      backend_requirement: "required",
       capability_directives: [
         { add: "mcp:abc-config-analyzer" },
         { remove: "mcp:abc-config-analyzer::ABCConfigAnalyzer_get_file_content" },
@@ -55,6 +56,7 @@ describe("ProjectAgent preset form state capability directives", () => {
       "abc-config-analyzer",
     ]);
     expect(formToPreset(form).config).toEqual({
+      backend_requirement: "required",
       capability_directives: [
         { add: "mcp:abc-config-analyzer" },
       ],
@@ -117,5 +119,25 @@ describe("ProjectAgent preset form state capability directives", () => {
     )).toBe("mcp:abc-config-analyzer::ABCConfigAnalyzer_inspect_json_content");
     expect(() => mcpCapabilityKey("bad::key")).toThrow("MCP Preset key 非法");
     expect(() => mcpToolCapabilityPath("abc", "bad::tool")).toThrow("MCP tool name 非法");
+  });
+
+  it("backend requirement 缺省展示为 required 并参与保存", () => {
+    const form = presetToForm(presetWithConfig({}));
+
+    expect(form.backend_requirement).toBe("required");
+    expect(formToPreset(form).config).toEqual({
+      backend_requirement: "required",
+    });
+  });
+
+  it("backend requirement 保存 optional", () => {
+    const form = presetToForm(presetWithConfig({
+      backend_requirement: "optional",
+    }));
+
+    expect(form.backend_requirement).toBe("optional");
+    expect(formToPreset(form).config).toEqual({
+      backend_requirement: "optional",
+    });
   });
 });

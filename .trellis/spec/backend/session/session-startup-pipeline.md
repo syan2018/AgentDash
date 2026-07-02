@@ -88,6 +88,97 @@ Frame construction 可以消费 runtime facts，但这些 facts 一旦进入 `Fr
 
 Context endpoint、权限展示、audit 和 inspector 都从 `AgentFrame` / `FrameLaunchEnvelope` 同源投影。API route 的职责是 auth/permission、DTO 转换、调用 use case、映射 response DTO。
 
+## Scenario: ProjectAgent Backend Requirement
+
+### 1. Scope / Trigger
+
+- Trigger: ProjectAgent preset 可以声明 backend 是否为硬性运行依赖。
+- Scope: `AgentPresetConfig.backend_requirement`、ProjectAgent preset editor、AgentRun mailbox launch planning、backend execution placement、ProjectAgent owner frame construction、runtime MCP / workspace module / backend-bound capability projection。
+
+### 2. Signatures
+
+```rust
+#[serde(rename_all = "snake_case")]
+pub enum AgentBackendRequirement {
+    Required,
+    Optional,
+}
+
+pub struct AgentPresetConfig {
+    pub backend_requirement: Option<AgentBackendRequirement>,
+    // other preset fields omitted
+}
+
+pub struct LaunchPlanningInput {
+    pub backend_selection: Option<BackendSelectionInput>,
+    pub backend_requirement: Option<AgentBackendRequirement>,
+    pub authorized_backend_ids: Vec<String>,
+}
+```
+
+Frontend ProjectAgent config 使用同名 snake_case 字段：
+
+```ts
+type AgentBackendRequirement = "required" | "optional";
+
+interface AgentPresetConfig {
+  backend_requirement?: AgentBackendRequirement;
+}
+```
+
+### 3. Contracts
+
+- `backend_requirement` 缺省按 `required` 解释，原因是存量 ProjectAgent 默认依赖 backend-bound workspace / local capability。
+- ProjectAgent mailbox launch planning 必须从 ProjectAgent preset config 解析 requirement，并写入持久化 mailbox `launch_planning_input`，原因是排队后实际 launch 需要消费同一份运行环境要求。
+- `required` 模式下，没有授权 backend、没有在线可用 executor、或 workspace binding backend 不可用，必须返回用户可见 unavailable / connection failure。
+- `optional` 模式下，自动 backend placement 解析失败可以产出无 backend placement 的 launch；显式 `backend_selection` 仍按授权、在线状态和 executor 可用性校验。
+- ProjectAgent frame construction 只有在存在真实在线 backend-bound workspace 时才构造 backend-bound `main` surface。
+- 无 backend anchor 的 ProjectAgent surface 不投影 relay MCP、workspace module、terminal、extension host 等 backend-bound capability，原因是 runtime surface 必须真实表达当前可执行能力。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 语义 |
+| --- | --- |
+| config 缺少 `backend_requirement` | 解析为 `required` |
+| `backend_requirement = required` 且 Project 无授权 backend | `ConnectorError::ConnectionFailed`，API 映射为 unavailable |
+| `backend_requirement = required` 且无在线 executor | `ConnectorError::ConnectionFailed`，API 映射为 unavailable |
+| `backend_requirement = optional` 且自动选择无可用 backend | 允许 launch，无 backend placement |
+| `backend_requirement = optional` 且显式 backend 离线或未授权 | 返回用户可见错误 |
+| 无 backend anchor 的 ProjectAgent frame | 不包含 backend-bound `main` workspace、relay MCP、workspace module 和本机 runtime capability |
+
+### 5. Good/Base/Bad Cases
+
+- Good: cloud-native ProjectAgent 配置 `optional`，Project 当前没有在线 backend，AgentRun 仍创建并投递，runtime surface 只包含云端可用能力。
+- Good: ProjectAgent 配置 `optional` 且用户显式选择某个 backend，目标 backend 离线时返回 unavailable 提示。
+- Base: 存量 ProjectAgent config 没有该字段，前后端均展示并执行 `required`。
+- Boundary: optional 只表达“可无 backend placement”；一旦 surface 声明了 backend-bound 能力，该能力必须来自真实 backend anchor。
+
+### 6. Tests Required
+
+- Domain test: `AgentPresetConfig` 解析缺省值为 `required`，并能保存 / 读取 `optional`。
+- Runtime placement test: `required` 无可用 backend 返回 connection failure；`optional` 自动选择失败允许无 placement；显式离线 backend 仍失败。
+- Frame construction test: 无 backend anchor 时 relay MCP 和 workspace module capability 不进入 runtime surface。
+- AgentRun mailbox test: ProjectAgent config 的 `backend_requirement` 进入持久化 `LaunchPlanningInput`。
+- Frontend test: ProjectAgent preset 表单缺省展示 `required`，并能保存 `optional`。
+
+### 7. Boundary vs Canonical
+
+#### Boundary
+
+```text
+ProjectAgent(optional)
+  -> 无 backend placement
+  -> runtime surface 仍携带 backend-bound main / relay MCP / workspace module
+```
+
+#### Canonical
+
+```text
+ProjectAgent(optional)
+  -> 无 backend placement
+  -> runtime surface 只保留不依赖本机 backend 的能力
+```
+
 ## Capability Projection Normalization
 
 Session runtime surface、VFS、MCP、Skill baseline 与 `CapabilityState` 是同一份 frame construction projection 的不同维度。

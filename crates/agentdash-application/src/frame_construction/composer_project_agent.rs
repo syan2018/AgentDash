@@ -1,12 +1,15 @@
 //! ProjectAgent compose 路径 — 最简单的 owner bootstrap（无 workflow / story 依赖）。
 
+use agentdash_domain::common::AgentBackendRequirement;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun, SubjectRef};
+use agentdash_domain::workspace::{Workspace, WorkspaceBinding};
 use agentdash_spi::ConnectorError;
 
 use crate::agent_run::frame::AgentFrameSurfaceExt;
 use crate::agent_run::frame::FrameLaunchEnvelope;
 use crate::agent_run::frame::FrameLaunchEnvelopeConstructionInput;
 use crate::agent_run::{build_project_agent_context, resolve_project_workspace};
+use crate::workspace::resolve_workspace_binding_with_allowed_backends;
 
 use super::subject_assignment::{SubjectContextAssignment, SubjectContextAssignmentResolver};
 use super::workflow_projection::resolve_active_workflow_projection_from_message_stream_trace;
@@ -48,9 +51,10 @@ pub(super) async fn compose(
     let agent_context = build_project_agent_context(&agent_run_repos, &project_agent)
         .await
         .map_err(connector_internal)?;
-    let workspace = resolve_project_workspace(&agent_run_repos, &project)
-        .await
-        .map_err(connector_internal)?;
+    let backend_requirement = agent_context.preset_config.backend_requirement_or_default();
+    let workspace =
+        resolve_project_agent_workspace(svc, &agent_run_repos, &project, backend_requirement)
+            .await?;
     let mut subject_assignment =
         resolve_project_agent_subject_assignment(svc, run.id, agent.id, run.project_id).await?;
     let subject_owner_ctx = subject_assignment
@@ -142,6 +146,77 @@ pub(super) async fn compose(
         &input.requested_runtime_commands,
     )
     .await
+}
+
+async fn resolve_project_agent_workspace(
+    svc: &FrameConstructionService,
+    agent_run_repos: &agentdash_application_agentrun::agent_run_repository_set::RepositorySet,
+    project: &agentdash_domain::project::Project,
+    backend_requirement: AgentBackendRequirement,
+) -> Result<Option<Workspace>, ConnectorError> {
+    let Some(workspace) = resolve_project_workspace(agent_run_repos, project)
+        .await
+        .map_err(connector_internal)?
+    else {
+        return Ok(None);
+    };
+    let active_accesses = svc
+        .repos
+        .project_backend_access_repo
+        .list_active_by_project(project.id)
+        .await
+        .map_err(connector_internal)?;
+    let allowed_backend_ids = active_accesses
+        .into_iter()
+        .map(|access| access.backend_id.trim().to_string())
+        .filter(|backend_id| !backend_id.is_empty())
+        .collect::<std::collections::HashSet<_>>();
+    let resolved = resolve_workspace_binding_with_allowed_backends(
+        svc.availability.as_ref(),
+        &workspace,
+        Some(&allowed_backend_ids),
+    )
+    .await;
+    let resolved = match resolved {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            return match backend_requirement {
+                AgentBackendRequirement::Required => {
+                    Err(ConnectorError::ConnectionFailed(error.to_string()))
+                }
+                AgentBackendRequirement::Optional => Ok(None),
+            };
+        }
+    };
+    if !svc.availability.is_online(&resolved.backend_id).await {
+        return match backend_requirement {
+            AgentBackendRequirement::Required => Err(ConnectorError::ConnectionFailed(format!(
+                "Workspace `{}` 的 backend `{}` 当前不在线",
+                workspace.name, resolved.backend_id
+            ))),
+            AgentBackendRequirement::Optional => Ok(None),
+        };
+    }
+    Ok(Some(workspace_with_selected_binding(
+        workspace,
+        resolved.binding_id,
+    )))
+}
+
+fn workspace_with_selected_binding(mut workspace: Workspace, binding_id: uuid::Uuid) -> Workspace {
+    let selected = workspace
+        .bindings
+        .iter()
+        .find(|binding| binding.id == binding_id)
+        .cloned();
+    if let Some(binding) = selected {
+        workspace.bindings = vec![WorkspaceBinding {
+            workspace_id: workspace.id,
+            ..binding
+        }];
+        workspace.default_binding_id = Some(binding_id);
+    }
+    workspace
 }
 
 async fn resolve_project_agent_subject_assignment(

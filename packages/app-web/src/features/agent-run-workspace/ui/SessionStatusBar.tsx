@@ -76,6 +76,9 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
   if (!hasTasks && !hasMailbox) return null;
 
   const pendingCount = props.messages.length;
+  const waitingItems = props.mailbox?.waiting_items ?? [];
+  const waitingCount = waitingItems.length;
+  const currentWait = waitingItems[0] ?? null;
   const paused = Boolean(props.mailbox?.paused);
 
   return (
@@ -104,13 +107,22 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
                 )}
               </>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
-                会话消息
-              </span>
+              <>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+                  {currentWait
+                    ? `${currentWait.source_label ?? currentWait.kind}: ${currentWait.preview ?? "等待外部事件"}`
+                    : "会话消息"}
+                </span>
+              </>
             )}
             {paused && (
               <span className="shrink-0 rounded-[6px] bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
                 已暂停
+              </span>
+            )}
+            {waitingCount > 0 && (
+              <span className="shrink-0 rounded-[6px] bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
+                {waitingCount} 个等待
               </span>
             )}
             {hasMailbox && pendingCount > 0 && (

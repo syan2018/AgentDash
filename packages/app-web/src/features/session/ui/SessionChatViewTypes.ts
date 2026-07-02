@@ -7,6 +7,7 @@ import type {
   MailboxMessageView,
   MailboxStateView,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
@@ -53,6 +54,7 @@ export interface SessionChatCommandState {
 
 export interface SessionChatMailboxModel {
   messages: MailboxMessageView[];
+  waiting_items: ConversationWaitingItemView[];
   state?: MailboxStateView;
   paused: boolean;
   user_attention: boolean;

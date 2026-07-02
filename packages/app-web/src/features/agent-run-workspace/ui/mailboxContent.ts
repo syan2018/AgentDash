@@ -11,7 +11,12 @@ export function mailboxHasContent(
       (!mailbox?.hide_system_steer_messages || m.origin === "user"),
   );
   const pending = messages.filter((m) => m.delivery.kind !== "steer_active_turn");
+  const waitingCount = mailbox?.waiting_items.length ?? 0;
   return Boolean(
-    steer.length > 0 || pending.length > 0 || mailbox?.user_attention || mailbox?.paused,
+    steer.length > 0 ||
+      pending.length > 0 ||
+      waitingCount > 0 ||
+      mailbox?.user_attention ||
+      mailbox?.paused,
   );
 }

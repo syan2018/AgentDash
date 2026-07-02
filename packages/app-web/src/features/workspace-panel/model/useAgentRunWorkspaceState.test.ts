@@ -123,6 +123,7 @@ describe("AgentRun workspace refresh state", () => {
           paused: false,
           user_attention: false,
           messages: [],
+          waiting_items: [],
         },
         resource_surface: runtimeSurface,
         diagnostics: [],

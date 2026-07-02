@@ -325,6 +325,7 @@ export function projectSessionChatMailboxModel(
 
   return {
     messages: mailbox?.messages ?? [],
+    waiting_items: mailbox?.waiting_items ?? [],
     state: mailbox?.state,
     paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
     user_attention: Boolean(mailbox?.user_attention),

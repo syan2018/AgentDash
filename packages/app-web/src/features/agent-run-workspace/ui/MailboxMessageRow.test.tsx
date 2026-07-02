@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type {
   SessionChatCommandModel,
   SessionChatMailboxModel,
@@ -32,6 +33,18 @@ const mailboxMessage: MailboxMessageView = {
   can_recall: true,
 };
 
+const waitingItem: ConversationWaitingItemView = {
+  wait_id: "wait-1",
+  gate_id: "gate-1",
+  kind: "companion",
+  source_ref: "child-agent-1",
+  correlation_ref: "dispatch-1",
+  status: "open",
+  source_label: "Research Agent",
+  preview: "等待协作 Agent 返回调研结果",
+  created_at: "2026-07-02T10:15:30.000Z",
+};
+
 function renderMailboxList(options: {
   messages?: MailboxMessageView[];
   mailbox?: Partial<SessionChatMailboxModel>;
@@ -42,6 +55,7 @@ function renderMailboxList(options: {
   const messages = options.messages ?? [mailboxMessage];
   const mailbox: SessionChatMailboxModel = {
     messages,
+    waiting_items: options.mailbox?.waiting_items ?? [],
     paused: false,
     user_attention: false,
     hide_system_steer_messages: false,
@@ -291,5 +305,23 @@ describe("MailboxMessageList", () => {
     });
 
     expect(markup).toContain("[图]");
+  });
+
+  it("renders waiting items from the workspace conversation mailbox projection", () => {
+    const markup = renderMailboxList({
+      messages: [],
+      mailbox: {
+        waiting_items: [waitingItem],
+      },
+    });
+
+    expect(markup).toContain("Waiting");
+    expect(markup).toContain("Companion");
+    expect(markup).toContain("Research Agent");
+    expect(markup).toContain("等待协作 Agent 返回调研结果");
+    expect(markup).toContain("等待中");
+    expect(markup).toContain("创建 2026-07-02 10:15");
+    expect(markup).not.toContain("gate-1");
+    expect(markup).not.toContain("dispatch-1");
   });
 });

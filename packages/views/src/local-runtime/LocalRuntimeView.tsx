@@ -9,7 +9,6 @@ import {
   normalizeMcpLocalServer,
 } from '@agentdash/core/local-runtime'
 import type {
-  DesktopApiSnapshot,
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
   DesktopRuntimeSettingsClient,
@@ -59,7 +58,6 @@ export interface LocalRuntimeViewProps {
 
 export interface LocalRuntimeDiagnosticsContext {
   cloud_api: RuntimeDiagnosticsCloudApiInput
-  desktop_api_snapshot: DesktopApiSnapshot | null
   backends: RuntimeDiagnosticsBackendFact[]
   runtime_summaries: RuntimeDiagnosticsRuntimeSummaryFact[]
 }
@@ -78,7 +76,6 @@ export function LocalRuntimeView({
   const [serverUrl, setServerUrl] = useState(defaultServerUrl)
   const [accessToken, setAccessToken] = useState(defaultAccessToken)
   const [profileId, setProfileId] = useState(defaultProfileId)
-  const [machineId, setMachineId] = useState('')
   const [machineLabel, setMachineLabel] = useState('')
   const [backendName, setBackendName] = useState(defaultBackendName)
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([])
@@ -179,7 +176,6 @@ export function LocalRuntimeView({
         target: null,
         message: null,
       },
-      desktop_api_snapshot: diagnosticsContext?.desktop_api_snapshot ?? null,
       local_runtime: snapshot,
       backends: diagnosticsContext?.backends ?? [],
       runtime_summaries: diagnosticsContext?.runtime_summaries ?? [],
@@ -231,7 +227,6 @@ export function LocalRuntimeView({
     setServerUrl(profile.server_url)
     setAccessToken(profile.access_token || defaultAccessToken)
     setProfileId(profile.profile_id || defaultProfileId)
-    setMachineId(profile.machine_id || '')
     setMachineLabel(profile.machine_label ?? '')
     setBackendName(profile.name ?? profile.machine_label ?? defaultBackendName)
     setWorkspaceRoots(profile.workspace_roots)
@@ -390,6 +385,7 @@ export function LocalRuntimeView({
 
   const stateLabel = snapshot ? stateText(snapshot.state) : '未启动'
   const isRunning = snapshot?.state === 'running'
+  const runtimeDisplayName = snapshot?.name || backendName || machineLabel || '本机运行时'
 
   return (
     <div className="space-y-4">
@@ -413,8 +409,8 @@ export function LocalRuntimeView({
         </CardHeader>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <RuntimeStat label="Backend" value={snapshot?.backend_id ?? '—'} />
-          <RuntimeStat label="本机身份" value={machineLabel || machineId || '保存 profile 后生成'} />
+          <RuntimeStat label="本机连接" value={runtimeDisplayName} />
+          <RuntimeStat label="工作目录" value={`${workspaceRoots.length} 个 roots`} />
           <RuntimeStat label="Scope" value="Personal / private" />
           <RuntimeStat label="能力" value={`${snapshot?.mcp_server_count ?? 0} MCP · ${snapshot?.executor_enabled ? 'Executor 开启' : 'Executor 关闭'}`} />
         </div>
@@ -551,13 +547,7 @@ export function LocalRuntimeView({
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label="本机身份 ID">
-              <TextInput value={machineId || '保存 profile 后由桌面端生成'} readOnly />
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                只读 local runtime identity，保存或启动时由桌面端覆盖。
-              </p>
-            </Field>
-            <Field label="Backend 名称">
+            <Field label="本机连接名">
               <TextInput
                 value={backendName}
                 onChange={(event) => setBackendName(event.target.value)}
@@ -779,7 +769,6 @@ function RuntimeDiagnosticsOverview({
   const relayState = diagnostics.relay_connection?.state ?? 'not_configured'
   const chain = [
     diagnostics.cloud_api,
-    diagnostics.desktop_api,
     diagnostics.local_runtime,
     diagnostics.runner,
     diagnostics.relay_connection
@@ -814,11 +803,11 @@ function RuntimeDiagnosticsOverview({
       >
         <h2 className="text-base font-semibold text-foreground">运行状态诊断</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          按事实源区分 Cloud API、Desktop API、Local Runtime、Runner 与 relay 连接。
+          按事实源区分 Cloud API、Local Runtime、Runner 与 relay 连接。
         </p>
       </CardHeader>
 
-      <div className="grid gap-2 md:grid-cols-5">
+      <div className="grid gap-2 md:grid-cols-4">
         {chain.map((layer) => (
           <div key={layer.label} className="rounded-[8px] border border-border bg-background/80 px-3 py-2">
             <div className="flex items-center gap-2">
@@ -861,7 +850,6 @@ function RuntimeDiagnosticsOverview({
           {diagnostics.registration ? (
             <div className="mt-2 grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
               <DiagnosticsRow label="来源" value={registrationSourceText(diagnostics.registration.source)} />
-              <DiagnosticsRow label="Backend" value={diagnostics.registration.backend_id} mono />
               <DiagnosticsRow label="机器" value={diagnostics.registration.machine_label ?? diagnostics.registration.machine_id ?? '-'} />
               <DiagnosticsRow label="Scope" value={scopeText(diagnostics.registration.share_scope_kind, diagnostics.registration.share_scope_id)} />
               <DiagnosticsRow label="能力槽" value={diagnostics.registration.capability_slot ?? 'default'} mono />

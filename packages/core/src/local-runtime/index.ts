@@ -78,10 +78,6 @@ export interface DesktopApiSnapshot {
   database_url?: string | null
 }
 
-export interface DesktopApiLayerStatus extends ApiLayerStatus {
-  raw_state: DesktopApiSnapshot['state'] | null
-}
-
 export interface LocalRuntimeLayerStatus extends ApiLayerStatus {
   raw_state: LocalRuntimeState | null
   owner: string | null
@@ -153,7 +149,6 @@ export interface DesktopRuntimeSettingsClient {
 export interface RuntimeDiagnosticsSnapshot {
   generated_at: string
   cloud_api: ApiLayerStatus
-  desktop_api: DesktopApiLayerStatus | null
   local_runtime: LocalRuntimeLayerStatus | null
   runner: RunnerLayerStatus | null
   relay_connection: RelayConnectionStatus | null
@@ -202,7 +197,6 @@ export interface RuntimeDiagnosticsCloudApiInput {
 export interface RuntimeDiagnosticsInput {
   generated_at?: string
   cloud_api: RuntimeDiagnosticsCloudApiInput
-  desktop_api_snapshot?: DesktopApiSnapshot | null
   local_runtime?: LocalRuntimeStatus | null
   backends?: RuntimeDiagnosticsBackendFact[]
   runtime_summaries?: RuntimeDiagnosticsRuntimeSummaryFact[]
@@ -376,7 +370,6 @@ export function createRuntimeDiagnosticsSnapshot(input: RuntimeDiagnosticsInput)
       target: input.cloud_api.target,
       message: cloudApiMessage(input.cloud_api),
     },
-    desktop_api: input.desktop_api_snapshot ? desktopApiLayer(input.desktop_api_snapshot) : null,
     local_runtime: localRuntimeLayer(input.local_runtime ?? null),
     runner: runnerBackend ? runnerLayer(runnerBackend, runnerSummary) : null,
     relay_connection: input.local_runtime?.relay_connection ?? null,
@@ -390,29 +383,6 @@ function cloudApiMessage(input: RuntimeDiagnosticsCloudApiInput): string | null 
   if (input.message) return input.message
   if (input.event_stream_state) return `Project event stream: ${input.event_stream_state}`
   return null
-}
-
-function desktopApiLayer(snapshot: DesktopApiSnapshot): DesktopApiLayerStatus {
-  const state = desktopApiLayerState(snapshot.state)
-  return {
-    state,
-    label: 'Desktop API',
-    target: snapshot.origin || null,
-    message: snapshot.message ?? null,
-    raw_state: snapshot.state,
-  }
-}
-
-function desktopApiLayerState(state: DesktopApiSnapshot['state']): LayerState {
-  switch (state) {
-    case 'running':
-      return 'healthy'
-    case 'starting':
-      return 'checking'
-    case 'error':
-    case 'stopped':
-      return 'unavailable'
-  }
 }
 
 function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayerStatus | null {
@@ -440,7 +410,7 @@ function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayer
   return {
     state: localRuntimeLayerState(status.state),
     label: 'Local Runtime',
-    target: status.backend_id || null,
+    target: status.name || null,
     message: status.message,
     raw_state: status.state,
     owner: status.owner || null,

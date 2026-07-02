@@ -5,6 +5,8 @@ import { useCurrentUserStore } from "../../stores/currentUserStore";
 import { useAuthStore } from "../../stores/authStore";
 import { useTheme } from "../../hooks/use-theme";
 import { UserAvatar } from "../ui/user-avatar";
+import type { BackendConfig } from "../../types";
+import type { SidebarBackendGroups } from "./sidebarBackendVisibility";
 
 // 底栏共享 popover：事件流移除（无人关注），仅保留后端 + 主题
 export type FooterPanelKey = "backend" | "theme";
@@ -15,7 +17,7 @@ interface SidebarFooterProps {
   activePanel: FooterPanelKey | null;
   onTogglePanel: (key: FooterPanelKey) => void;
   onClosePanel: () => void;
-  backends: import("../../types").BackendConfig[];
+  backendGroups: SidebarBackendGroups;
   connectionState: string;
   currentUser: ReturnType<typeof useCurrentUserStore.getState>["currentUser"];
   rememberedPath: string;
@@ -25,7 +27,7 @@ export function SidebarFooter({
   activePanel,
   onTogglePanel,
   onClosePanel,
-  backends,
+  backendGroups,
   connectionState,
   currentUser,
   rememberedPath,
@@ -64,7 +66,8 @@ export function SidebarFooter({
     return () => document.removeEventListener("mousedown", handler);
   }, [activePanel, onClosePanel]);
 
-  const backendOnline = backends.filter((b) => b.online).length;
+  const visibleBackends = [...backendGroups.projectBackends, ...backendGroups.personalBackends];
+  const backendOnline = visibleBackends.filter((b) => b.online).length;
   const backendDotClass = backendOnline > 0 ? "bg-emerald-500" : "bg-muted-foreground/30";
 
   const panelTitle =
@@ -155,7 +158,7 @@ export function SidebarFooter({
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-3">
               {activePanel === "backend" && (
-                <BackendPanel backends={backends} connectionState={connectionState} />
+                <BackendPanel backendGroups={backendGroups} connectionState={connectionState} />
               )}
               {activePanel === "theme" && <ThemePanel />}
             </div>
@@ -389,14 +392,21 @@ function UserCard() {
 // ─── BackendPanel：平面化（行 + 分割线，无嵌套 card） ────────
 
 function BackendPanel({
-  backends,
+  backendGroups,
   connectionState,
 }: {
-  backends: import("../../types").BackendConfig[];
+  backendGroups: SidebarBackendGroups;
   connectionState: string;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(
-    backends.length === 1 ? backends[0].id : null,
+  const backends = [...backendGroups.projectBackends, ...backendGroups.personalBackends];
+  const [expandedKey, setExpandedKey] = useState<string | null>(
+    backends.length === 1
+      ? backendGroups.projectBackends[0]
+        ? `project:${backendGroups.projectBackends[0].id}`
+        : backendGroups.personalBackends[0]
+          ? `personal:${backendGroups.personalBackends[0].id}`
+          : null
+      : null,
   );
 
   const streamLabel =
@@ -419,77 +429,23 @@ function BackendPanel({
       {backends.length === 0 ? (
         <p className="px-2 py-2 text-xs text-muted-foreground">暂无后端</p>
       ) : (
-        <div>
-          {backends.map((backend) => {
-            const isExpanded = expandedId === backend.id;
-            const executors = backend.capabilities?.executors ?? [];
-            const availableCount = executors.filter((e) => e.available).length;
-            return (
-              <div key={backend.id}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary/50"
-                  onClick={() => setExpandedId((prev) => (prev === backend.id ? null : backend.id))}
-                >
-                  <span
-                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{backend.name}</span>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {backend.online
-                      ? `${availableCount} 执行器`
-                      : backend.backend_type === "local"
-                        ? "本机"
-                        : "远程"}
-                  </span>
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
-                {isExpanded && (
-                  <div className="space-y-2 px-2 pb-2 pt-1 text-[11px]">
-                    {backend.online && executors.length > 0 && (
-                      <div>
-                        <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">执行器</p>
-                        <div className="flex flex-wrap gap-1">
-                          {executors.map((ex) => (
-                            <span
-                              key={ex.id}
-                              className={`inline-block rounded-[6px] px-1.5 py-0.5 text-[10px] ${
-                                ex.available
-                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                                  : "bg-secondary text-muted-foreground"
-                              }`}
-                            >
-                              {ex.name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <span>{backend.backend_type === "local" ? "本机" : "远程"}</span>
-                      <span>·</span>
-                      <span>{backend.online ? "在线" : "离线"}</span>
-                      <span>·</span>
-                      <span className="truncate font-mono">{backend.id}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="space-y-2">
+          <BackendGroup
+            groupKey="project"
+            title="当前项目可用"
+            emptyText="当前项目暂无可用后端"
+            backends={backendGroups.projectBackends}
+            expandedKey={expandedKey}
+            onToggle={setExpandedKey}
+          />
+          <BackendGroup
+            groupKey="personal"
+            title="我的连接"
+            emptyText="暂无个人连接"
+            backends={backendGroups.personalBackends}
+            expandedKey={expandedKey}
+            onToggle={setExpandedKey}
+          />
         </div>
       )}
 
@@ -498,6 +454,131 @@ function BackendPanel({
         <span className={`inline-block h-1.5 w-1.5 rounded-full ${streamDotClass}`} />
         <span className="text-[11px] text-muted-foreground">项目同步 · {streamLabel}</span>
       </div>
+    </div>
+  );
+}
+
+function BackendGroup({
+  groupKey,
+  title,
+  emptyText,
+  backends,
+  expandedKey,
+  onToggle,
+}: {
+  groupKey: "project" | "personal";
+  title: string;
+  emptyText: string;
+  backends: BackendConfig[];
+  expandedKey: string | null;
+  onToggle: React.Dispatch<React.SetStateAction<string | null>>;
+}) {
+  return (
+    <section>
+      <p className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{title}</p>
+      {backends.length === 0 ? (
+        <p className="px-2 py-1 text-[11px] text-muted-foreground/70">{emptyText}</p>
+      ) : (
+        <div>
+          {backends.map((backend) => {
+            const rowKey = `${groupKey}:${backend.id}`;
+            return (
+              <BackendRow
+                key={rowKey}
+                backend={backend}
+                isExpanded={expandedKey === rowKey}
+                onToggle={() => onToggle((prev) => (prev === rowKey ? null : rowKey))}
+              />
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BackendRow({
+  backend,
+  isExpanded,
+  onToggle,
+}: {
+  backend: BackendConfig;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const executors = backend.capabilities?.executors ?? [];
+  const availableCount = executors.filter((e) => e.available).length;
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary/50"
+        onClick={onToggle}
+      >
+        <span
+          className={`inline-block h-2 w-2 shrink-0 rounded-full ${backend.online ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+        />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{backend.name}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {backend.online
+            ? `${availableCount} 执行器`
+            : backend.backend_type === "local"
+              ? "本机"
+              : "远程"}
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {isExpanded && (
+        <div className="px-2 pb-2 pt-1 text-[11px]">
+          {backend.online && executors.length > 0 && (
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex items-center gap-1.5">
+                <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">执行器</span>
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {executors.map((ex) => (
+                    <span
+                      key={ex.id}
+                      className={`inline-block rounded-[6px] px-1.5 py-0.5 text-[10px] ${
+                        ex.available
+                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                          : "bg-secondary text-muted-foreground"
+                      }`}
+                    >
+                      {ex.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <BackendMeta backend={backend} />
+            </div>
+          )}
+          {(!backend.online || executors.length === 0) && <BackendMeta backend={backend} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BackendMeta({ backend }: { backend: BackendConfig }) {
+  return (
+    <div className="flex shrink-0 flex-nowrap items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground">
+      <span>{backend.backend_type === "local" ? "本机" : "远程"}</span>
+      <span>·</span>
+      <span>{backend.online ? "在线" : "离线"}</span>
     </div>
   );
 }

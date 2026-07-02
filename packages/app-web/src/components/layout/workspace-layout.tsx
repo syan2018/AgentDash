@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { useProjectStore } from "../../stores/projectStore";
@@ -7,10 +7,12 @@ import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
-import type { Project } from "../../types";
+import { listProjectBackendAccess } from "../../services/backendAccess";
+import type { Project, ProjectBackendAccess } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
 import { AgentRunShortcutList } from "./AgentRunShortcutList";
 import { AppErrorBoundary } from "../error/AppErrorBoundary";
+import { selectSidebarBackendGroups } from "./sidebarBackendVisibility";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
 type NavKey = "agent" | "story" | "assets" | "routine";
@@ -93,6 +95,7 @@ export function WorkspaceLayout() {
   const { currentUser } = useCurrentUserStore();
 
   const [activeFooterPanel, setActiveFooterPanel] = useState<FooterPanelKey | null>(null);
+  const [backendAccesses, setBackendAccesses] = useState<ProjectBackendAccess[]>([]);
 
   const isSettingsRoute = location.pathname === "/settings";
   const rememberedPath = useMemo(() => {
@@ -108,6 +111,33 @@ export function WorkspaceLayout() {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
+
+  const refreshBackendAccesses = useCallback(() => {
+    if (!currentProjectId) {
+      setBackendAccesses([]);
+      return;
+    }
+    let alive = true;
+    void listProjectBackendAccess(currentProjectId)
+      .then((items) => {
+        if (alive) setBackendAccesses(items);
+      })
+      .catch(() => {
+        if (alive) setBackendAccesses([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [currentProjectId]);
+
+  useEffect(() => refreshBackendAccesses(), [refreshBackendAccesses]);
+
+  useEffect(() => {
+    if (activeFooterPanel === "backend") {
+      return refreshBackendAccesses();
+    }
+    return undefined;
+  }, [activeFooterPanel, refreshBackendAccesses]);
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");
@@ -139,6 +169,11 @@ export function WorkspaceLayout() {
     }
     return result;
   }, [isSettingsRoute, rememberedPath]);
+
+  const backendGroups = useMemo(
+    () => selectSidebarBackendGroups(backends, backendAccesses, currentUser),
+    [backends, backendAccesses, currentUser],
+  );
 
   const toggleFooterPanel = (key: FooterPanelKey) => {
     setActiveFooterPanel((prev) => (prev === key ? null : key));
@@ -195,7 +230,7 @@ export function WorkspaceLayout() {
           activePanel={activeFooterPanel}
           onTogglePanel={toggleFooterPanel}
           onClosePanel={() => setActiveFooterPanel(null)}
-          backends={backends}
+          backendGroups={backendGroups}
           connectionState={connectionState}
           currentUser={currentUser}
           rememberedPath={rememberedPath}

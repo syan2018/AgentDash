@@ -24,7 +24,6 @@ import {
   createCloudApiDiagnosticsInput,
   runtimeSummaryDiagnosticsFacts,
 } from "../model/runtimeDiagnostics";
-import type { DesktopApiSnapshot } from "@agentdash/core/local-runtime";
 import type { BackendConfig, BackendRuntimeSummary } from "../../../types";
 
 // ---------------------------------------------------------------------------
@@ -78,23 +77,7 @@ function DesktopLocalRuntimePanel({
   const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
   const browseDirectory = useMemo(() => getDesktopBrowseDirectory(), []);
   const desktopApp = useMemo(() => getDesktopAppBridge(), []);
-  const [desktopApiSnapshot, setDesktopApiSnapshot] = useState<DesktopApiSnapshot | null>(null);
   const [defaultServerUrl, setDefaultServerUrl] = useState(() => resolveDefaultLocalRuntimeServerUrl());
-
-  useEffect(() => {
-    if (!desktopApp) return;
-    let alive = true;
-    const refreshDesktopApi = async () => {
-      const snapshot = await desktopApp.getDesktopApiSnapshot().catch(() => null);
-      if (alive) setDesktopApiSnapshot(snapshot);
-    };
-    void refreshDesktopApi();
-    const timer = window.setInterval(refreshDesktopApi, 1500);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [desktopApp]);
 
   useEffect(() => {
     let alive = true;
@@ -127,7 +110,6 @@ function DesktopLocalRuntimePanel({
           target: API_ORIGIN || "http://127.0.0.1:17301",
           eventConnectionState,
         }),
-        desktop_api_snapshot: desktopApiSnapshot,
         backends: backendDiagnosticsFacts(backends),
         runtime_summaries: runtimeSummaryDiagnosticsFacts(runtimeSummaries),
       }}
@@ -141,15 +123,18 @@ function DesktopLocalRuntimePanel({
 function ScopeTabs({
   activePanel,
   includeLocalRuntime,
+  includeSystemScope,
   onChange,
 }: {
   activePanel: SettingsPanel;
   includeLocalRuntime: boolean;
+  includeSystemScope: boolean;
   onChange: (scope: SettingsPanel) => void;
 }) {
-  const panels: SettingsPanel[] = includeLocalRuntime
-    ? ["system", "user", "local-runtime"]
-    : ["system", "user"];
+  const panels: SettingsPanel[] = [];
+  if (includeSystemScope) panels.push("system");
+  panels.push("user");
+  if (includeLocalRuntime) panels.push("local-runtime");
   return (
     <div className="flex flex-wrap gap-2">
       {panels.map((scope) => (
@@ -189,7 +174,7 @@ export function SettingsPage() {
   } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
   const eventConnectionState = useEventStore((state) => state.connectionState);
-  const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
+  const [activePanel, setActivePanel] = useState<SettingsPanel>("user");
   const [toast, setToast] = useState<string | null>(null);
   const [llmDiscoveryRefreshKey, setLlmDiscoveryRefreshKey] = useState(0);
   const routeState = (location.state as SettingsNavigationState | null) ?? null;
@@ -214,6 +199,12 @@ export function SettingsPage() {
     void fetchBackends();
     void fetchBackendRuntimeSummaries();
   }, [fetchBackends, fetchBackendRuntimeSummaries]);
+
+  useEffect(() => {
+    if (activePanel === "system" && !canManageSystemScope) {
+      setActivePanel("user");
+    }
+  }, [activePanel, canManageSystemScope]);
 
   useEffect(() => {
     if (!scopeRequest) return;
@@ -277,19 +268,24 @@ export function SettingsPage() {
           <div>
             <h1 className="text-xl font-semibold text-foreground">设置</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              管理系统级配置和用户偏好。
+              管理当前账号可用的配置和偏好。
             </p>
           </div>
         </div>
 
         <SectionCard title="Scope">
-          <ScopeTabs activePanel={activePanel} includeLocalRuntime={includeLocalRuntime} onChange={setActivePanel} />
+          <ScopeTabs
+            activePanel={activePanel}
+            includeLocalRuntime={includeLocalRuntime}
+            includeSystemScope={canManageSystemScope}
+            onChange={setActivePanel}
+          />
           <div className="space-y-1 text-xs text-muted-foreground">
             <p>当前 scope：{SETTINGS_PANEL_LABELS[activePanel]}</p>
             {activePanel === "local-runtime" && (
               <p>本机运行时是 desktop-only scope，只管理当前桌面端与目标 server 的本机连接、根目录、能力和诊断日志。</p>
             )}
-            {activePanel === "system" && (
+            {activePanel === "system" && canManageSystemScope && (
               <p>system scope 仅 personal 模式或管理员可访问，适合放全局执行器、LLM Provider 和系统级 Agent 配置。</p>
             )}
             {activePanel === "user" && (
@@ -312,12 +308,6 @@ export function SettingsPage() {
             cloudApiChecking={coordinatorLoading || loading}
             eventConnectionState={eventConnectionState}
           />
-        )}
-
-        {activePanel === "system" && !canManageSystemScope && (
-          <div className="rounded-[8px] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            当前企业身份不是管理员，system scope 设置已被收口。你仍然可以查看和维护 user / project scope。
-          </div>
         )}
 
         {activePanel === "system" && canManageSystemScope && (

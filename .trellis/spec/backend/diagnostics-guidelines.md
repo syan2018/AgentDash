@@ -106,7 +106,7 @@ diag!(Info, Subsystem::Relay, backend_id = %bid, "本机后端注册完成，进
 
 ## 查询端点
 
-`GET /api/diagnostics`（`secured_api` 下，自动套鉴权）。query 参数：`subsystem`、`session_id`、`run_id`、`backend_id`、`level`（最低级别）、`since_ms`、`limit`（有上限设防）。
+`GET /api/diagnostics` 是 public API 下的只读排障入口。query 参数：`subsystem`、`session_id`、`run_id`、`backend_id`、`level`（最低级别）、`since_ms`、`limit`（有上限设防）。
 
 **语义**：端点服务「近期」诊断（读环形缓冲，进程重启清空）；**历史完整记录在 JSON 文件**（端点不解析文件）。不要把它误解为全量历史 API。
 

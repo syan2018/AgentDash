@@ -111,7 +111,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(file_picker::router())
         .merge(discovery::router())
         .merge(discovered_options::router())
-        .merge(diagnostics::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::authenticate_request,
@@ -124,6 +123,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(routines::public_router())
         .merge(runner_registration_tokens::public_router())
         .merge(extension_package_artifacts::public_router())
+        .merge(diagnostics::router())
         .merge(secured_api)
         .with_state(state.clone());
 

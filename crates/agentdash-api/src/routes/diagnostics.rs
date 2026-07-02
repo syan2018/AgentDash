@@ -4,7 +4,7 @@
 //! 容量有限且**进程重启即清空**。完整历史落在 JSON line 滚动日志文件
 //! （`AGENTDASH_LOG_DIR`，默认 `./logs/`），本端点不解析文件。
 //!
-//! 端点 merge 进 `secured_api`，自动套 `authenticate_request` 鉴权，无需单独加中间件。
+//! 端点挂在 public API 下，作为服务认证链路异常时仍可访问的只读排障入口。
 
 use std::sync::Arc;
 

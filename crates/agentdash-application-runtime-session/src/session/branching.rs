@@ -771,9 +771,17 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_agent_protocol::{
-        TraceInfo, UserInputSubmissionKind, UserInputSubmittedNotification,
-        codex_app_server_protocol as codex,
+        ItemCompletedNotification, TraceInfo, UserInputSubmissionKind,
+        UserInputSubmittedNotification, codex_app_server_protocol as codex,
     };
+    use agentdash_agent_types::{
+        AgentInputMessage, ContentPart, ProjectionKind, ProjectionOrigin, ToolCallInfo,
+    };
+    use agentdash_spi::session_persistence::{
+        SessionLineageStore, SessionMetaStore, SessionProjectionStore, SessionStoreError,
+        SessionStoreResult,
+    };
+    use async_trait::async_trait;
 
     use super::*;
     use crate::session::memory_persistence::MemorySessionPersistence;
@@ -820,6 +828,213 @@ mod tests {
         })
     }
 
+    fn turn_completed(session_id: &str, turn_id: &str) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::TurnCompleted(codex::TurnCompletedNotification {
+                thread_id: session_id.to_string(),
+                turn: codex::Turn {
+                    id: turn_id.to_string(),
+                    items: Vec::new(),
+                    items_view: codex::TurnItemsView::NotLoaded,
+                    status: codex::TurnStatus::Completed,
+                    error: None,
+                    started_at: None,
+                    completed_at: Some(chrono::Utc::now().timestamp()),
+                    duration_ms: None,
+                },
+            }),
+            session_id,
+            platform_source(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id.to_string()),
+            entry_index: None,
+        })
+    }
+
+    fn dynamic_tool_call(
+        session_id: &str,
+        turn_id: &str,
+        index: u32,
+        tool_call_id: &str,
+        status: codex::DynamicToolCallStatus,
+    ) -> BackboneEnvelope {
+        let content_items = matches!(
+            status,
+            codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
+        )
+        .then(|| {
+            vec![codex::DynamicToolCallOutputContentItem::InputText {
+                text: format!("{tool_call_id} result"),
+            }]
+        });
+        let item = codex::ThreadItem::DynamicToolCall {
+            id: tool_call_id.to_string(),
+            namespace: None,
+            tool: "Read".to_string(),
+            arguments: serde_json::json!({ "path": "Cargo.toml" }),
+            status,
+            content_items,
+            success: Some(true),
+            duration_ms: None,
+        };
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item,
+                session_id.to_string(),
+                turn_id.to_string(),
+            )),
+            session_id,
+            platform_source(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id.to_string()),
+            entry_index: Some(index),
+        })
+    }
+
+    fn basic_fork_request(parent_session_id: &str) -> SessionForkRequest {
+        SessionForkRequest {
+            parent_session_id: parent_session_id.to_string(),
+            title: Some("child".to_string()),
+            fork_point_ref: None,
+            fork_point_compaction_id: None,
+            metadata_json: serde_json::json!({}),
+        }
+    }
+
+    fn compaction_commit(
+        session_id: &str,
+        compaction_id: &str,
+        source_end_event_seq: u64,
+    ) -> NewCompactionProjectionCommit {
+        let segment_id = format!("{compaction_id}-context");
+        NewCompactionProjectionCommit {
+            completed_event: BackboneEnvelope::new(
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                    key: "context_compacted".to_string(),
+                    value: serde_json::json!({ "compaction_id": compaction_id }),
+                }),
+                session_id,
+                platform_source(),
+            ),
+            compaction: SessionCompactionRecord {
+                id: compaction_id.to_string(),
+                session_id: session_id.to_string(),
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version: 1,
+                lifecycle_item_id: format!("{compaction_id}-item"),
+                start_event_seq: 1,
+                completed_event_seq: None,
+                failed_event_seq: None,
+                status: SessionCompactionStatus::ProjectionCommitted,
+                trigger: "test".to_string(),
+                reason: Some("test".to_string()),
+                phase: Some("pre_provider".to_string()),
+                strategy: "summary_prefix".to_string(),
+                budget_scope: Some(SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string()),
+                base_head_event_seq: Some(source_end_event_seq),
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(source_end_event_seq),
+                first_kept_event_seq: Some(source_end_event_seq.saturating_add(1)),
+                summary: "summary".to_string(),
+                replacement_projection_json: serde_json::json!({}),
+                token_stats_json: serde_json::json!({}),
+                diagnostics_json: serde_json::json!({}),
+                created_by: Some("test".to_string()),
+                created_at_ms: 1,
+                completed_at_ms: Some(2),
+            },
+            segments: vec![SessionProjectionSegmentRecord {
+                id: segment_id,
+                session_id: session_id.to_string(),
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version: 1,
+                sort_order: 0,
+                segment_type: "context_envelope".to_string(),
+                origin: "projection".to_string(),
+                synthetic: true,
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(source_end_event_seq),
+                source_refs_json: serde_json::json!({}),
+                generated_by_compaction_id: Some(compaction_id.to_string()),
+                content_json: serde_json::json!({
+                    "messages": [AgentInputMessage {
+                        message_ref: MessageRef {
+                            turn_id: "turn-1".to_string(),
+                            entry_index: 0,
+                        },
+                        projection_kind: ProjectionKind::ModelContext,
+                        message: AgentMessage::assistant("summary"),
+                        origin: ProjectionOrigin::Event,
+                        synthetic: false,
+                        source_event_seq: Some(source_end_event_seq),
+                        source_range: None,
+                        projection_segment_id: None,
+                        provenance: serde_json::json!({}),
+                    }]
+                }),
+                token_estimate: Some(8),
+                created_at_ms: 2,
+            }],
+            head: SessionProjectionHeadRecord {
+                session_id: session_id.to_string(),
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version: 1,
+                head_event_seq: 0,
+                active_compaction_id: Some(compaction_id.to_string()),
+                updated_by_event_seq: None,
+                updated_at_ms: 0,
+            },
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailingProjectionStore {
+        inner: Arc<MemorySessionPersistence>,
+    }
+
+    #[async_trait]
+    impl SessionProjectionStore for FailingProjectionStore {
+        async fn list_projection_segments(
+            &self,
+            session_id: &str,
+            projection_kind: &str,
+            projection_version: u64,
+        ) -> SessionStoreResult<Vec<SessionProjectionSegmentRecord>> {
+            self.inner
+                .list_projection_segments(session_id, projection_kind, projection_version)
+                .await
+        }
+
+        async fn read_projection_head(
+            &self,
+            session_id: &str,
+            projection_kind: &str,
+        ) -> SessionStoreResult<Option<SessionProjectionHeadRecord>> {
+            self.inner
+                .read_projection_head(session_id, projection_kind)
+                .await
+        }
+
+        async fn upsert_projection_head(
+            &self,
+            head: SessionProjectionHeadRecord,
+        ) -> SessionStoreResult<()> {
+            self.inner.upsert_projection_head(head).await
+        }
+
+        async fn commit_compaction_projection(
+            &self,
+            _session_id: &str,
+            _commit: NewCompactionProjectionCommit,
+        ) -> SessionStoreResult<CompactionProjectionCommitResult> {
+            Err(SessionStoreError::InvalidInput(
+                "projection commit failed for test".to_string(),
+            ))
+        }
+    }
+
     #[tokio::test]
     async fn fork_session_materializes_child_initial_projection() {
         let (_persistence, stores) = test_stores();
@@ -836,13 +1051,7 @@ mod tests {
 
         let service = SessionBranchingService::new(stores.clone());
         let result = service
-            .fork_session(SessionForkRequest {
-                parent_session_id: "parent".to_string(),
-                title: Some("child".to_string()),
-                fork_point_ref: None,
-                fork_point_compaction_id: None,
-                metadata_json: serde_json::json!({}),
-            })
+            .fork_session(basic_fork_request("parent"))
             .await
             .expect("fork 应成功");
 
@@ -933,5 +1142,253 @@ mod tests {
             .expect("应能按 rollback head 恢复 context");
         assert_eq!(context.messages.len(), 1);
         assert_eq!(context.messages[0].message.first_text(), Some("one"));
+    }
+
+    #[tokio::test]
+    async fn fork_message_ref_requires_completed_turn() {
+        let (_persistence, stores) = test_stores();
+        stores
+            .meta
+            .create_session(&session_meta("parent"))
+            .await
+            .expect("应能创建 parent");
+        stores
+            .events
+            .append_event("parent", &user_message("parent", "turn-1", 0, "hello"))
+            .await
+            .expect("应能写入 parent message");
+
+        let service = SessionBranchingService::new(stores.clone());
+        let mut request = basic_fork_request("parent");
+        request.fork_point_ref = Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 0,
+        });
+
+        let unfinished = service.fork_session(request.clone()).await;
+        assert!(matches!(
+            unfinished,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+
+        stores
+            .events
+            .append_event("parent", &turn_completed("parent", "turn-1"))
+            .await
+            .expect("应能写入 turn completed");
+
+        let completed = service
+            .fork_session(request)
+            .await
+            .expect("completed turn message ref fork 应成功");
+        let context = ContextProjector::new(stores)
+            .build_model_context(&completed.child_session.id)
+            .await
+            .expect("应能恢复 child context");
+        assert_eq!(context.messages.len(), 1);
+        assert_eq!(context.messages[0].message.first_text(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn fork_rejects_assistant_tool_call_boundary() {
+        let (_persistence, stores) = test_stores();
+        stores
+            .meta
+            .create_session(&session_meta("parent"))
+            .await
+            .expect("应能创建 parent");
+        stores
+            .events
+            .append_event("parent", &user_message("parent", "turn-1", 0, "hello"))
+            .await
+            .expect("应能写入 user message");
+        stores
+            .events
+            .append_event(
+                "parent",
+                &dynamic_tool_call(
+                    "parent",
+                    "turn-1",
+                    1,
+                    "tool-1",
+                    codex::DynamicToolCallStatus::Completed,
+                ),
+            )
+            .await
+            .expect("应能写入 tool call");
+        stores
+            .events
+            .append_event("parent", &turn_completed("parent", "turn-1"))
+            .await
+            .expect("应能写入 turn completed");
+
+        let mut request = basic_fork_request("parent");
+        request.fork_point_ref = Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 1,
+        });
+
+        let result = SessionBranchingService::new(stores)
+            .fork_session(request)
+            .await;
+        assert!(matches!(
+            result,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[test]
+    fn fork_rejects_incomplete_tool_result_group_boundary() {
+        let entries = vec![
+            ProjectedEntry::event(
+                MessageRef {
+                    turn_id: "turn-1".to_string(),
+                    entry_index: 1,
+                },
+                ProjectionKind::Transcript,
+                AgentMessage::Assistant {
+                    content: vec![ContentPart::text("tool use")],
+                    tool_calls: vec![
+                        ToolCallInfo {
+                            id: "tool-1".to_string(),
+                            call_id: Some("tool-1".to_string()),
+                            name: "Read".to_string(),
+                            arguments: serde_json::json!({}),
+                        },
+                        ToolCallInfo {
+                            id: "tool-2".to_string(),
+                            call_id: Some("tool-2".to_string()),
+                            name: "Read".to_string(),
+                            arguments: serde_json::json!({}),
+                        },
+                    ],
+                    stop_reason: None,
+                    error_message: None,
+                    usage: None,
+                    timestamp: None,
+                },
+                Some(2),
+            ),
+            ProjectedEntry::event(
+                MessageRef {
+                    turn_id: "turn-1".to_string(),
+                    entry_index: 2,
+                },
+                ProjectionKind::Transcript,
+                AgentMessage::tool_result_full(
+                    "tool-1",
+                    Some("tool-1".to_string()),
+                    Some("Read".to_string()),
+                    vec![ContentPart::text("first result")],
+                    None,
+                    false,
+                ),
+                Some(3),
+            ),
+        ];
+
+        let result = validate_fork_point_message_boundary(&entries, 1, &entries[1]);
+        assert!(matches!(
+            result,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[tokio::test]
+    async fn fork_rejects_compaction_that_extends_past_message_ref() {
+        let (persistence, stores) = test_stores();
+        stores
+            .meta
+            .create_session(&session_meta("parent"))
+            .await
+            .expect("应能创建 parent");
+        stores
+            .events
+            .append_event("parent", &user_message("parent", "turn-1", 0, "hello"))
+            .await
+            .expect("应能写入 user message");
+        stores
+            .events
+            .append_event("parent", &turn_completed("parent", "turn-1"))
+            .await
+            .expect("应能写入 turn completed");
+        persistence
+            .commit_compaction_projection("parent", compaction_commit("parent", "compact-1", 2))
+            .await
+            .expect("应能写入 compaction");
+        persistence
+            .upsert_projection_head(SessionProjectionHeadRecord {
+                session_id: "parent".to_string(),
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version: 1,
+                head_event_seq: 3,
+                active_compaction_id: None,
+                updated_by_event_seq: Some(3),
+                updated_at_ms: 3,
+            })
+            .await
+            .expect("应能清空 active compaction head");
+
+        let mut request = basic_fork_request("parent");
+        request.fork_point_ref = Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 0,
+        });
+        request.fork_point_compaction_id = Some("compact-1".to_string());
+
+        let result = SessionBranchingService::new(stores)
+            .fork_session(request)
+            .await;
+        assert!(matches!(
+            result,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+    }
+
+    #[tokio::test]
+    async fn fork_cleans_child_session_when_projection_commit_fails() {
+        let (persistence, stores) = test_stores();
+        stores
+            .meta
+            .create_session(&session_meta("parent"))
+            .await
+            .expect("应能创建 parent");
+        stores
+            .events
+            .append_event("parent", &user_message("parent", "turn-1", 0, "hello"))
+            .await
+            .expect("应能写入 parent message");
+
+        let failing_stores = SessionStoreSet {
+            meta: persistence.clone(),
+            events: persistence.clone(),
+            terminal_effects: persistence.clone(),
+            runtime_commands: persistence.clone(),
+            compactions: persistence.clone(),
+            projections: Arc::new(FailingProjectionStore {
+                inner: persistence.clone(),
+            }),
+            lineage: persistence.clone(),
+        };
+
+        let result = SessionBranchingService::new(failing_stores)
+            .fork_session(basic_fork_request("parent"))
+            .await;
+        assert!(matches!(
+            result,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+
+        let sessions = persistence
+            .list_sessions()
+            .await
+            .expect("应能读取 sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "parent");
+        let children = persistence
+            .list_session_children("parent", None, None)
+            .await
+            .expect("应能读取 lineage children");
+        assert!(children.is_empty());
     }
 }

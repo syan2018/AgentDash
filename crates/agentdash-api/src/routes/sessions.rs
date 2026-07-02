@@ -889,13 +889,20 @@ fn session_message_ref_to_application(value: SessionMessageRefDto) -> MessageRef
     }
 }
 
-/// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
+/// Internal diagnostics: POST /sessions/{id}/fork — 基于当前模型投影创建可恢复 trace child。
 pub async fn fork_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<CreateSessionForkRequest>,
 ) -> Result<Json<SessionForkResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let result = state
         .services
         .session_branching
@@ -925,12 +932,19 @@ pub async fn fork_session(
     }))
 }
 
-/// GET /sessions/{id}/lineage — 返回当前 session 的父边、祖先与直接 children。
+/// Internal diagnostics: GET /sessions/{id}/lineage — 返回 runtime trace 的父边、祖先与直接 children。
 pub async fn get_session_lineage(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionLineageViewResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let view = state
         .services
         .session_branching
@@ -946,13 +960,20 @@ pub async fn get_session_lineage(
     }))
 }
 
-/// POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
+/// Internal diagnostics: POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
 pub async fn rollback_session_projection(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<RollbackSessionProjectionRequest>,
 ) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let result = state
         .services
         .session_branching

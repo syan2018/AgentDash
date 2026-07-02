@@ -43,11 +43,16 @@ use agentdash_spi::AgentConfig;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::dto::{
+    ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
+};
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
@@ -56,6 +61,7 @@ use crate::{
             agent_run_message_command_response, backend_selection_input, mailbox_message_view,
             mailbox_message_visible, mailbox_state_view,
         },
+        sessions,
         vfs_surfaces::dto as vfs_surface_dto,
     },
     rpc::{ApiError, ApiErrorWithCode},
@@ -113,6 +119,34 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/control",
+            axum::routing::get(get_agent_run_runtime_control),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/events",
+            axum::routing::get(list_agent_run_runtime_events),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
+            axum::routing::get(get_agent_run_runtime_context_projection),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit",
+            axum::routing::get(get_agent_run_runtime_context_audit),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson",
+            axum::routing::get(agent_run_runtime_stream_ndjson),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
+            axum::routing::post(approve_agent_run_tool_call),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
+            axum::routing::post(reject_agent_run_tool_call),
         )
 }
 
@@ -798,6 +832,143 @@ async fn cancel_agent_run(
     .await
     .map_err(ApiError::from)?;
     Ok(Json(agent_run_command_receipt_contract(receipt)))
+}
+
+async fn get_agent_run_runtime_control(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_runtime_control(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+    )
+    .await
+}
+
+async fn list_agent_run_runtime_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<SessionEventsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::list_session_events(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        Query(query),
+    )
+    .await
+}
+
+async fn get_agent_run_runtime_context_projection(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_context_projection(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+    )
+    .await
+}
+
+async fn get_agent_run_runtime_context_audit(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ContextAuditQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_context_audit(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        Query(query),
+    )
+    .await
+}
+
+async fn agent_run_runtime_stream_ndjson(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Query(query): Query<NdjsonStreamQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::session_stream_ndjson(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        headers,
+        Query(query),
+    )
+    .await
+}
+
+async fn approve_agent_run_tool_call(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::approve_tool_call(
+        State(state),
+        CurrentUser(current_user),
+        Path((runtime_session_id, tool_call_id)),
+    )
+    .await
+}
+
+async fn reject_agent_run_tool_call(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
+    Json(req): Json<RejectToolApprovalRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::reject_tool_call(
+        State(state),
+        CurrentUser(current_user),
+        Path((runtime_session_id, tool_call_id)),
+        Json(req),
+    )
+    .await
+}
+
+async fn resolve_agent_run_delivery_runtime(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<String, ApiError> {
+    let context = resolve_agent_run_context(
+        state,
+        current_user,
+        run_id,
+        agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    context.delivery_runtime_session_id.ok_or_else(|| {
+        ApiError::Conflict(format!(
+            "AgentRun {} / {} 缺少 delivery runtime",
+            context.run.id, context.agent.id
+        ))
+    })
 }
 
 async fn resolve_agent_run_context(

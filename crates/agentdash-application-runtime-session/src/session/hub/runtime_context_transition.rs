@@ -64,6 +64,7 @@ pub(crate) fn build_initial_capability_state_frame(
         state_delta: Some(&state_delta),
         tool_schemas,
         skill_entries: &capability_state.skill.skills,
+        skill_cluster_meta: &capability_state.skill.cluster_meta,
         before_memory_inventory: None,
         after_memory_inventory: &capability_state.memory.inventory,
         companion_agents: &capability_state.companion.agents,
@@ -205,6 +206,7 @@ impl SessionRuntimeInner {
                 state_delta: Some(&state_delta),
                 tool_schemas: input.tool_schemas,
                 skill_entries: &pending_after_state.skill.skills,
+                skill_cluster_meta: &pending_after_state.skill.cluster_meta,
                 before_memory_inventory: Some(&pending_event_before_state.memory.inventory),
                 after_memory_inventory: &pending_after_state.memory.inventory,
                 companion_agents: &pending_after_state.companion.agents,
@@ -281,6 +283,7 @@ fn build_live_context_frame(
         state_delta: Some(state_delta),
         tool_schemas,
         skill_entries: &input.after_state.skill.skills,
+        skill_cluster_meta: &input.after_state.skill.cluster_meta,
         before_memory_inventory: input
             .before_state
             .as_ref()
@@ -305,6 +308,7 @@ struct RuntimeContextUpdateFrameInput<'a> {
     state_delta: Option<&'a CapabilityStateDelta>,
     tool_schemas: &'a [RuntimeToolSchemaEntry],
     skill_entries: &'a [agentdash_spi::context::capability::SkillEntry],
+    skill_cluster_meta: &'a [agentdash_spi::SkillClusterMeta],
     before_memory_inventory: Option<&'a MemoryDiscoveryOutput>,
     after_memory_inventory: &'a MemoryDiscoveryOutput,
     companion_agents: &'a [agentdash_spi::context::capability::CompanionAgentEntry],
@@ -356,6 +360,7 @@ impl RuntimeContextUpdateFrame {
         if let Some(d) = dimension::skill::SkillDimensionDelta::from_state_delta(
             input.state_delta,
             input.skill_entries,
+            input.skill_cluster_meta,
         ) {
             dimensions.push(d);
         }

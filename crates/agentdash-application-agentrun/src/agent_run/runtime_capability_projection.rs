@@ -521,6 +521,15 @@ pub fn normalize_capability_state_dimensions(
     state.vfs.active = active_vfs;
     state.tool.mcp_servers = mcp_servers;
     state.skill.skills = session_capabilities.skills.clone();
+    state.skill.cluster_meta = session_capabilities
+        .skill_clusters
+        .iter()
+        .map(|c| agentdash_spi::SkillClusterMeta {
+            provider_key: c.provider_key.clone(),
+            display_name: c.display_name.clone(),
+            model_summary: c.model_summary.clone(),
+        })
+        .collect();
 }
 
 pub fn merge_live_vfs_skill_entries(

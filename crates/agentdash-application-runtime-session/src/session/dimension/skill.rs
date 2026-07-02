@@ -1,5 +1,6 @@
-﻿//! Skill 维度 — 追踪 skill 的增删与变更。
+//! Skill 维度 — 追踪 skill 的增删与变更。
 
+use agentdash_spi::SkillClusterMeta;
 use agentdash_spi::context::capability::SkillEntry;
 use agentdash_spi::context_usage_kind;
 use agentdash_spi::hooks::{ContextFrameSection, RuntimeSkillEntry};
@@ -12,12 +13,14 @@ pub(crate) struct SkillDimensionDelta {
     pub added: Vec<RuntimeSkillEntry>,
     pub removed: Vec<RuntimeSkillEntry>,
     pub changed: Vec<RuntimeSkillEntry>,
+    pub cluster_meta: Vec<SkillClusterMeta>,
 }
 
 impl SkillDimensionDelta {
     pub fn from_state_delta(
         state_delta: Option<&CapabilityStateDelta>,
         skill_entries: &[SkillEntry],
+        cluster_meta: &[SkillClusterMeta],
     ) -> Option<Box<dyn DimensionDelta>> {
         let state_delta = state_delta?;
         if state_delta.skills.is_empty() {
@@ -71,6 +74,7 @@ impl SkillDimensionDelta {
                 .iter()
                 .map(|n| lookup(n))
                 .collect(),
+            cluster_meta: cluster_meta.to_vec(),
         };
         Some(Box::new(delta))
     }
@@ -94,31 +98,72 @@ impl DimensionDelta for SkillDimensionDelta {
             Some(node) => format!("## Skill Delta — Step Transition: {node}"),
             None => "## Skill Delta".to_string(),
         }];
-        append_skill_lines(&mut lines, "Added Skills", &self.added, "已加入");
-        append_skill_lines(&mut lines, "Removed Skills", &self.removed, "已移除");
-        append_skill_lines(&mut lines, "Changed Skills", &self.changed, "定义已变更");
+        render_grouped_skill_lines(&mut lines, "Added Skills", &self.added, "已加入", &self.cluster_meta);
+        render_grouped_skill_lines(&mut lines, "Removed Skills", &self.removed, "已移除", &self.cluster_meta);
+        render_grouped_skill_lines(&mut lines, "Changed Skills", &self.changed, "定义已变更", &self.cluster_meta);
         lines.join("\n")
     }
 }
 
-fn append_skill_lines(
+fn render_grouped_skill_lines(
     lines: &mut Vec<String>,
     title: &str,
     values: &[RuntimeSkillEntry],
     suffix: &str,
+    cluster_meta: &[SkillClusterMeta],
 ) {
     if values.is_empty() {
         return;
     }
+
     lines.push(format!("### {title}"));
-    for skill in values {
-        if skill.description.is_empty() {
-            lines.push(format!("- `{}` — {suffix}", skill.name));
-        } else {
-            lines.push(format!(
-                "- `{}`: {} (path: `{}`) — {suffix}",
-                skill.name, skill.description, skill.file_path
-            ));
+
+    if cluster_meta.is_empty() {
+        for skill in values {
+            lines.push(format_skill_line(skill, suffix));
         }
+        return;
+    }
+
+    // Group skills by provider_key, preserving cluster registration order.
+    let mut rendered_providers: Vec<&str> = Vec::new();
+    for cluster in cluster_meta {
+        let group: Vec<&RuntimeSkillEntry> = values
+            .iter()
+            .filter(|s| s.provider_key == cluster.provider_key)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        rendered_providers.push(&cluster.provider_key);
+        lines.push(format!("#### {}", cluster.display_name));
+        if let Some(summary) = &cluster.model_summary {
+            lines.push(format!("> {summary}"));
+        }
+        for skill in &group {
+            lines.push(format_skill_line(skill, suffix));
+        }
+    }
+
+    // Render any skills whose provider_key didn't match a known cluster (fallback).
+    let ungrouped: Vec<&RuntimeSkillEntry> = values
+        .iter()
+        .filter(|s| !rendered_providers.contains(&s.provider_key.as_str()))
+        .collect();
+    if !ungrouped.is_empty() {
+        for skill in &ungrouped {
+            lines.push(format_skill_line(skill, suffix));
+        }
+    }
+}
+
+fn format_skill_line(skill: &RuntimeSkillEntry, suffix: &str) -> String {
+    if skill.description.is_empty() {
+        format!("- `{}` — {suffix}", skill.name)
+    } else {
+        format!(
+            "- `{}`: {} (path: `{}`) — {suffix}",
+            skill.name, skill.description, skill.file_path
+        )
     }
 }

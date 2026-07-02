@@ -425,6 +425,19 @@ pub struct VfsDimension {
 pub struct SkillDimension {
     /// 当前 session 可见的 skills（由 workspace 发现链路产出）。
     pub skills: Vec<SkillEntry>,
+    /// Provider cluster 元数据——用于按 provider 分组渲染给 model。
+    /// 顺序即 provider 注册顺序，渲染时应保留。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cluster_meta: Vec<SkillClusterMeta>,
+}
+
+/// Skill provider cluster 的轻量元数据（仅用于 model context 分组渲染）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillClusterMeta {
+    pub provider_key: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_summary: Option<String>,
 }
 
 /// Workspace module 可见性裁切模式。

@@ -166,7 +166,7 @@ pub async fn get_session_runtime_control(
             state.as_ref(),
             &current_user,
             project_id,
-            ProjectPermission::View,
+            ProjectPermission::Use,
         )
         .await?;
     }
@@ -1028,7 +1028,7 @@ pub async fn delete_session(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state
@@ -1051,7 +1051,7 @@ pub async fn approve_tool_call(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state
@@ -1078,7 +1078,7 @@ pub async fn reject_tool_call(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state

@@ -117,7 +117,7 @@ pub async fn list_surface_mount_entries(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Use).await?;
 
     check_mount_available(&state, &vfs, &mount_id).await?;
 
@@ -170,7 +170,7 @@ pub async fn read_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Use).await?;
 
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
@@ -209,7 +209,7 @@ pub async fn read_surface_file_blob(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Use).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     let result = state
@@ -300,7 +300,8 @@ pub async fn upload_surface_file_blob(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
     let raw_path = target_path.unwrap_or_else(|| format!("assets/{filename}"));
     let result = state
         .services
@@ -337,7 +338,8 @@ pub async fn write_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
 
     check_mount_available(&state, &vfs, &req.mount_id).await?;
     let result = state
@@ -375,7 +377,8 @@ pub async fn create_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
     let result = state
         .services
@@ -411,7 +414,8 @@ pub async fn delete_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
     let normalized_path =
         agentdash_application_vfs::normalize_mount_relative_path(&req.path, false)
             .map_err(ApiError::BadRequest)?;
@@ -448,7 +452,8 @@ pub async fn rename_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
     let from_path = agentdash_application_vfs::normalize_mount_relative_path(&req.from_path, false)
         .map_err(ApiError::BadRequest)?;
     let to_path = agentdash_application_vfs::normalize_mount_relative_path(&req.to_path, false)
@@ -494,7 +499,7 @@ pub async fn stat_surface_file(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Use).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     let entry = state
@@ -528,7 +533,8 @@ pub async fn apply_surface_patch(
         agentdash_application_ports::vfs_surface_runtime::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
             .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
-        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Configure)
+            .await?;
 
     check_mount_available(&state, &vfs, &req.mount_id).await?;
     let result = state

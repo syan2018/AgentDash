@@ -23,8 +23,8 @@ pub enum BackendPermission {
 impl BackendPermission {
     fn project_permission(self) -> ProjectPermission {
         match self {
-            BackendPermission::View => ProjectPermission::View,
-            BackendPermission::Manage => ProjectPermission::Edit,
+            BackendPermission::View => ProjectPermission::Use,
+            BackendPermission::Manage => ProjectPermission::Configure,
         }
     }
 

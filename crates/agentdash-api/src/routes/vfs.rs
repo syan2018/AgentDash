@@ -50,7 +50,7 @@ pub async fn list_vfs(
             state.as_ref(),
             &current_user,
             ws_id,
-            ProjectPermission::View,
+            ProjectPermission::Use,
         )
         .await?;
         let _ = workspace;
@@ -90,7 +90,7 @@ pub async fn list_address_entries(
                 &state,
                 &current_user,
                 &query.workspace_id,
-                ProjectPermission::View,
+                ProjectPermission::Use,
             )
             .await?;
             require_backend_online(&state, &workspace).await?;

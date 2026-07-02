@@ -80,7 +80,7 @@ pub async fn list_skill_assets(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -111,7 +111,7 @@ pub async fn create_skill_asset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -134,13 +134,9 @@ pub async fn get_skill_asset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<SkillAssetItemPath>,
 ) -> Result<Json<SkillAssetDto>, ApiError> {
-    let (_project_id, asset) = load_asset_with_project(
-        state.as_ref(),
-        &current_user,
-        &path,
-        ProjectPermission::View,
-    )
-    .await?;
+    let (_project_id, asset) =
+        load_asset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Use)
+            .await?;
     Ok(Json(asset.into()))
 }
 
@@ -154,7 +150,7 @@ pub async fn update_skill_asset(
         state.as_ref(),
         &current_user,
         &path,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -186,7 +182,7 @@ pub async fn delete_skill_asset(
         state.as_ref(),
         &current_user,
         &path,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
@@ -202,13 +198,9 @@ pub async fn read_skill_asset_file_blob(
     Path(path): Path<SkillAssetItemPath>,
     Query(query): Query<SkillAssetFileBlobQuery>,
 ) -> Result<Response, ApiError> {
-    let (_project_id, asset) = load_asset_with_project(
-        state.as_ref(),
-        &current_user,
-        &path,
-        ProjectPermission::View,
-    )
-    .await?;
+    let (_project_id, asset) =
+        load_asset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Use)
+            .await?;
     let normalized_path = query.path.trim().replace('\\', "/");
     let file = asset
         .files
@@ -237,7 +229,7 @@ pub async fn import_remote_skill_asset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -266,7 +258,7 @@ pub async fn upload_skill_assets(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 

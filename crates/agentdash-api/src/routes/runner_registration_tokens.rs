@@ -57,7 +57,7 @@ async fn create_token(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -90,7 +90,7 @@ async fn list_tokens(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let tokens = list_runner_registration_tokens(&state.repos, project_id).await?;
@@ -112,7 +112,7 @@ async fn revoke_token(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let token = revoke_runner_registration_token(&state.repos, project_id, token_id.trim()).await?;
@@ -131,7 +131,7 @@ async fn rotate_token(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let rotated = rotate_runner_registration_token(

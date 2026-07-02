@@ -25,7 +25,7 @@ pub async fn list_terminals(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let terminals = state.services.terminal_cache.list_terminals(&session_id);
@@ -256,7 +256,7 @@ async fn load_terminal_for_user(
         state.as_ref(),
         current_user,
         &term_state.session_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(term_state)

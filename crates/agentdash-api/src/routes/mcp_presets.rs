@@ -85,7 +85,7 @@ pub async fn list_mcp_presets(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -116,7 +116,7 @@ pub async fn create_mcp_preset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -133,13 +133,9 @@ pub async fn get_mcp_preset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<McpPresetItemPath>,
 ) -> Result<Json<McpPresetResponse>, ApiError> {
-    let (project_id, preset) = load_preset_with_project(
-        state.as_ref(),
-        &current_user,
-        &path,
-        ProjectPermission::View,
-    )
-    .await?;
+    let (project_id, preset) =
+        load_preset_with_project(state.as_ref(), &current_user, &path, ProjectPermission::Use)
+            .await?;
     debug_assert_eq!(preset.project_id, project_id);
     Ok(Json(preset.into()))
 }
@@ -157,7 +153,7 @@ pub async fn update_mcp_preset(
         state.as_ref(),
         &current_user,
         &path,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -180,7 +176,7 @@ pub async fn delete_mcp_preset(
         state.as_ref(),
         &current_user,
         &path,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -204,7 +200,7 @@ pub async fn clone_mcp_preset(
         state.as_ref(),
         &current_user,
         &path,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -261,7 +257,7 @@ pub async fn probe_mcp_transport_handler(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 

@@ -127,7 +127,7 @@ pub async fn get_project_agent_runs(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -225,7 +225,7 @@ pub async fn delete_project_agent_run(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -323,7 +323,7 @@ pub async fn get_agent_run_workspace(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let mut view = agent_run_workspace_view(
@@ -464,7 +464,7 @@ pub async fn submit_agent_run_composer_input(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -538,7 +538,7 @@ async fn get_agent_run_mailbox(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(
@@ -557,7 +557,7 @@ async fn delete_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -601,7 +601,7 @@ async fn resume_agent_run_mailbox(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -647,7 +647,7 @@ async fn promote_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -694,7 +694,7 @@ async fn move_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let message_id = parse_uuid(&message_id, "message_id")?;
@@ -728,7 +728,7 @@ async fn get_agent_run_mailbox_message_content(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let message_id = parse_uuid(&message_id, "message_id")?;
@@ -759,7 +759,7 @@ async fn cancel_agent_run(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {

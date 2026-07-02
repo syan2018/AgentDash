@@ -182,9 +182,9 @@ async fn resolve_scope(
                 current_user,
                 project_id,
                 if require_write {
-                    ProjectPermission::Edit
+                    ProjectPermission::Configure
                 } else {
-                    ProjectPermission::View
+                    ProjectPermission::Use
                 },
             )
             .await?;

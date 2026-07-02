@@ -392,7 +392,7 @@ impl AuthProvider for BuiltinPersonalAuthProvider {
         //
         // 个人模式只有一个固定本地用户（见 `BuiltinPersonalAuthProvider::from_env`），不存在
         // 企业 SSO/代理头那种「该身份不属于有效组织」之类的粗粒度入口限制需要在这里拦截。
-        // 按 `AuthProvider::authorize` 契约，领域级授权（Project grant、owner/editor/viewer、
+        // 按 `AuthProvider::authorize` 契约，领域级授权（Project grant、owner/editor/member、
         // 共享等）由宿主应用层负责，本 Provider 一律放行 —— 这是有意设计，不是缺失的鉴权。
         //
         // 该 `debug_assert!` 把「只在 Personal 模式下成立」这一前提固化为显式不变量：

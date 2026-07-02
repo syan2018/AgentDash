@@ -68,7 +68,7 @@ pub async fn get_run_tasks(
     Path(run_id): Path<String>,
     Query(query): Query<RunTaskPlanQuery>,
 ) -> Result<Json<RunTaskPlanResponse>, ApiError> {
-    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::View).await?;
+    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Use).await?;
     let view = list_run_tasks(
         state.repos.lifecycle_run_repo.as_ref(),
         run.id,
@@ -84,7 +84,7 @@ pub async fn create_run_task_route(
     Path(run_id): Path<String>,
     Json(req): Json<CreateRunTaskRequest>,
 ) -> Result<Json<RunTaskCommandResponse>, ApiError> {
-    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Edit).await?;
+    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Use).await?;
     let result = create_run_task(
         state.repos.lifecycle_run_repo.as_ref(),
         run.id,
@@ -100,7 +100,7 @@ pub async fn update_run_task_route(
     Path((run_id, task_id)): Path<(String, String)>,
     Json(req): Json<UpdateRunTaskRequest>,
 ) -> Result<Json<RunTaskCommandResponse>, ApiError> {
-    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Edit).await?;
+    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Use).await?;
     let task_id = parse_uuid(&task_id, "task_id")?;
     let result = update_run_task(
         state.repos.lifecycle_run_repo.as_ref(),
@@ -118,7 +118,7 @@ pub async fn update_run_task_status_route(
     Path((run_id, task_id)): Path<(String, String)>,
     Json(req): Json<UpdateRunTaskStatusRequest>,
 ) -> Result<Json<RunTaskCommandResponse>, ApiError> {
-    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Edit).await?;
+    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Use).await?;
     let task_id = parse_uuid(&task_id, "task_id")?;
     let result = transition_run_task_status(
         state.repos.lifecycle_run_repo.as_ref(),
@@ -135,7 +135,7 @@ pub async fn archive_run_task_route(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<RunTaskCommandResponse>, ApiError> {
-    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Edit).await?;
+    let run = load_authorized_run(&state, &current_user, &run_id, ProjectPermission::Use).await?;
     let task_id = parse_uuid(&task_id, "task_id")?;
     let result = archive_run_task(state.repos.lifecycle_run_repo.as_ref(), run.id, task_id).await?;
     Ok(Json(command_response(result)))
@@ -152,7 +152,7 @@ pub async fn get_agent_run_tasks(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     query
@@ -178,7 +178,7 @@ pub async fn create_agent_run_task_route(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let result = create_run_task(

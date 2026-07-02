@@ -50,13 +50,13 @@ import { ContextTab } from "../features/project/settings/ContextTab";
 const PROJECT_ROLE_OPTIONS: Array<{ value: ProjectRole; label: string }> = [
   { value: "owner", label: "Owner" },
   { value: "editor", label: "Editor" },
-  { value: "viewer", label: "Viewer" },
+  { value: "member", label: "Member" },
 ];
 
 const PROJECT_ROLE_LABELS: Record<ProjectRole, string> = {
   owner: "Owner",
   editor: "Editor",
-  viewer: "Viewer",
+  member: "Member",
 };
 
 const DIRECTORY_SEARCH_LIMIT = 20;
@@ -151,7 +151,7 @@ export function ProjectSettingsPage() {
   const [directoryGroupsStatus, setDirectoryGroupsStatus] = useState<DirectoryResponseStatus | null>(null);
   const [isDirectoryLoading, setIsDirectoryLoading] = useState(false);
   const [pickerSelections, setPickerSelections] = useState<SelectedSubject[]>([]);
-  const [grantRole, setGrantRole] = useState<ProjectRole>("viewer");
+  const [grantRole, setGrantRole] = useState<ProjectRole>("member");
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [stallTimeoutMs, setStallTimeoutMs] = useState("");
@@ -219,7 +219,7 @@ export function ProjectSettingsPage() {
     setStallTimeoutMs(project.config.scheduling?.stall_timeout_ms != null ? String(project.config.scheduling.stall_timeout_ms) : "");
     setDeleteConfirmValue("");
     setPickerSelections([]);
-    setGrantRole("viewer");
+    setGrantRole("member");
     setDirectoryUsers([]);
     setDirectoryGroups([]);
     setDirectoryUsersStatus(null);
@@ -337,7 +337,7 @@ export function ProjectSettingsPage() {
     );
   }
 
-  const canEditProject = project.access.can_edit;
+  const canEditProject = project.access.can_configure;
   const canManageSharing = project.access.can_manage_sharing;
   const pendingSelections = pickerSelections.filter((s) =>
     s.type === "user" ? !grantedUserIds.has(s.id) : !grantedGroupIds.has(s.id),

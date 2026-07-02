@@ -10,8 +10,8 @@ pub fn canvas_access_projection(
     let is_owner = canvas.owner_user_id.as_deref() == Some(current_user.user_id.as_str());
     let is_publisher =
         canvas.published_by_user_id.as_deref() == Some(current_user.user_id.as_str());
-    let can_view_project = project_access.can_view_project();
-    let can_edit_project = project_access.can_edit_project();
+    let can_use_project = project_access.can_use_project();
+    let can_configure_project = project_access.can_configure_project();
     let can_manage_project = project_access.can_manage_project_sharing();
     let is_admin_bypass = project_access.can_admin_bypass();
 
@@ -22,14 +22,14 @@ pub fn canvas_access_projection(
             CanvasAccessProjection {
                 can_view,
                 can_edit_source,
-                can_publish: can_edit_source && can_edit_project,
+                can_publish: can_edit_source && can_configure_project,
                 can_manage_shared: is_admin_bypass,
                 can_copy: can_view,
                 runtime_write_allowed: can_edit_source,
             }
         }
         CanvasScope::Project => {
-            let can_view = can_view_project;
+            let can_view = can_use_project;
             let can_manage_shared = can_view && (can_manage_project || is_publisher);
             CanvasAccessProjection {
                 can_view,

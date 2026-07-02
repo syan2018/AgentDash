@@ -158,7 +158,7 @@ impl RelayMcpServer {
         Parameters(params): Parameters<GetProjectParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let id = Self::parse_uuid(&params.project_id, "project_id")?;
-        let project = self.require_project(id, McpProjectPermission::View).await?;
+        let project = self.require_project(id, McpProjectPermission::Use).await?;
 
         let stories = self
             .services
@@ -205,7 +205,7 @@ impl RelayMcpServer {
         use agentdash_domain::story::Story;
 
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
-        self.require_project(project_id, McpProjectPermission::Edit)
+        self.require_project(project_id, McpProjectPermission::Configure)
             .await?;
 
         let story = Story::new(project_id, params.title, params.description);
@@ -234,7 +234,7 @@ impl RelayMcpServer {
         Parameters(params): Parameters<ListStoriesParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
-        self.require_project(project_id, McpProjectPermission::View)
+        self.require_project(project_id, McpProjectPermission::Use)
             .await?;
 
         let stories = self
@@ -277,7 +277,7 @@ impl RelayMcpServer {
             .await
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", &params.story_id))?;
-        self.require_project(story.project_id, McpProjectPermission::View)
+        self.require_project(story.project_id, McpProjectPermission::Use)
             .await?;
 
         let task_projection = agentdash_application::task::plan::build_story_task_projection(
@@ -323,7 +323,7 @@ impl RelayMcpServer {
             .await
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", &params.story_id))?;
-        self.require_project(story.project_id, McpProjectPermission::Edit)
+        self.require_project(story.project_id, McpProjectPermission::Configure)
             .await?;
 
         let new_status: agentdash_domain::story::StoryStatus =
@@ -354,7 +354,7 @@ impl RelayMcpServer {
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
 
         let mut project = self
-            .require_project(project_id, McpProjectPermission::Edit)
+            .require_project(project_id, McpProjectPermission::Configure)
             .await?;
 
         if let Some(context_containers) = params.context_containers {

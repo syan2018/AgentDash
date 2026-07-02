@@ -10,7 +10,7 @@ export type AgentPreset = { name: string, agent_type: string, config: JsonValue,
 
 export type DeletedProjectSubjectGrantResponse = { project_id: string, subject_type: ProjectSubjectType, subject_id: string, };
 
-export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_view: boolean, can_edit: boolean, can_manage_sharing: boolean, via_admin_bypass: boolean, via_template_visibility: boolean, };
+export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_use: boolean, can_configure: boolean, can_manage_sharing: boolean, via_admin_bypass: boolean, via_template_visibility: boolean, };
 
 export type ProjectConfig = { default_agent_type: string | null, default_workspace_id: string | null, agent_presets: Array<AgentPreset>, context_containers: Array<ContextContainerDefinition>, scheduling: SchedulingConfig, };
 
@@ -20,7 +20,7 @@ export type ProjectEventStreamEnvelope = { "type": "Connected", "data": { last_e
 
 export type ProjectResponse = { id: string, name: string, description: string, config: ProjectConfig, created_by_user_id: string, updated_by_user_id: string, visibility: ProjectVisibility, is_template: boolean, cloned_from_project_id: string | null, access: ProjectAccessSummaryResponse, created_at: string, updated_at: string, };
 
-export type ProjectRole = "owner" | "editor" | "viewer";
+export type ProjectRole = "owner" | "editor" | "member";
 
 export type ProjectStateChange = { id: number, project_id: string, entity_id: string, kind: ProjectStateChangeKind, payload: Record<string, JsonValue>, backend_id: string | null, created_at: string, };
 

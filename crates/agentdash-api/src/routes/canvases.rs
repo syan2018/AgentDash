@@ -220,7 +220,7 @@ pub async fn get_canvas_by_mount(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let canvas =
@@ -586,7 +586,7 @@ pub async fn get_agent_run_canvas_runtime_observation(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let observation = latest_runtime_observation(&state.repos, &context)
@@ -612,7 +612,7 @@ pub async fn upsert_agent_run_canvas_runtime_observation(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let input = CanvasRuntimeObservationInput {
@@ -645,7 +645,7 @@ pub async fn get_agent_run_canvas_interaction_snapshot(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let snapshot = latest_interaction_snapshot(&state.repos, &context)
@@ -671,7 +671,7 @@ pub async fn upsert_agent_run_canvas_interaction_snapshot(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let input = CanvasInteractionSnapshotInput {
@@ -699,7 +699,7 @@ pub async fn get_agent_run_canvas_runtime_snapshot(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_surface = resolve_current_runtime_surface_for_project_for_api(
@@ -742,7 +742,7 @@ pub async fn upsert_agent_run_canvas_runtime_binding(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let current_user_context = project_authorization_context(&current_user);
@@ -792,7 +792,7 @@ pub async fn invoke_agent_run_canvas_runtime_action(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     resolve_current_runtime_surface_for_project_for_api(
@@ -837,7 +837,7 @@ pub async fn submit_agent_run_canvas_agent_input(
         &run_id,
         &agent_id,
         &canvas_mount_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     if req.client_command_id.trim().is_empty() {

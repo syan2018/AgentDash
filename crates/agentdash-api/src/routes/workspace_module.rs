@@ -57,7 +57,7 @@ pub async fn get_project_workspace_modules(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -97,7 +97,7 @@ pub async fn present_workspace_module(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 

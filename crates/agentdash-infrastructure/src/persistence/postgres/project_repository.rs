@@ -330,7 +330,7 @@ fn parse_project_role(value: &str) -> Result<ProjectRole, DomainError> {
     match value {
         "owner" => Ok(ProjectRole::Owner),
         "editor" => Ok(ProjectRole::Editor),
-        "viewer" => Ok(ProjectRole::Viewer),
+        "member" => Ok(ProjectRole::Member),
         _ => Err(DomainError::InvalidConfig(format!(
             "project_subject_grants.role: 未知值 `{value}`"
         ))),
@@ -419,12 +419,12 @@ mod tests {
             project.id,
             ProjectSubjectType::Group,
             "eng".to_string(),
-            ProjectRole::Viewer,
+            ProjectRole::Member,
             "owner".to_string(),
         );
         ProjectRepository::upsert_subject_grant(&repo, &grant)
             .await
-            .expect("应能插入 group viewer grant");
+            .expect("应能插入 group member grant");
 
         let updated_grant = ProjectSubjectGrant::new(
             project.id,

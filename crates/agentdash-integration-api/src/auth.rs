@@ -175,7 +175,7 @@ pub trait AuthProvider: Send + Sync {
     /// - 企业代理头已声明该用户不是有效组织成员
     /// - 某身份仅允许访问一部分顶层入口
     ///
-    /// 领域级授权（Project grants、共享、owner/editor/viewer 等）应由宿主应用层负责。
+    /// 领域级授权（Project grants、共享、owner/editor/member 等）应由宿主应用层负责。
     ///
     /// 返回 `Ok(false)` 时框架返回 403。
     async fn authorize(

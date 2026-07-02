@@ -288,8 +288,8 @@ pub async fn require_project_permission(
     }
 
     let action = match permission {
-        ProjectPermission::View => "查看",
-        ProjectPermission::Edit => "编辑",
+        ProjectPermission::Use => "使用",
+        ProjectPermission::Configure => "配置",
         ProjectPermission::ManageSharing => "管理共享",
     };
     Err(ApiError::Forbidden(format!(

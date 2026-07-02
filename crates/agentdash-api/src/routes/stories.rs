@@ -35,7 +35,7 @@ pub async fn list_stories(
     let stories = if let Some(project_id) = &query.project_id {
         let pid = Uuid::parse_str(project_id)
             .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
-        load_project_with_permission(state.as_ref(), &current_user, pid, ProjectPermission::View)
+        load_project_with_permission(state.as_ref(), &current_user, pid, ProjectPermission::Use)
             .await?;
         list_project_stories(&state.repos, pid).await?
     } else {
@@ -74,7 +74,7 @@ pub async fn create_story(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let default_workspace_id = req
@@ -119,7 +119,7 @@ pub async fn get_story(
         state.as_ref(),
         &current_user,
         story_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -139,7 +139,7 @@ pub async fn update_story(
         state.as_ref(),
         &current_user,
         story_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -218,7 +218,7 @@ pub async fn delete_story(
         state.as_ref(),
         &current_user,
         story_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -238,7 +238,7 @@ pub async fn get_story_task_projection(
         state.as_ref(),
         &current_user,
         story_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let view = build_story_task_projection(

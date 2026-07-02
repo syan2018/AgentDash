@@ -20,7 +20,7 @@ pub(crate) async fn resolve_surface_from_source(
     source: &ResolvedVfsSurfaceSource,
 ) -> Result<ResolvedVfsSurface, ApiError> {
     let (surface, _vfs) =
-        resolve_surface_bundle(state, current_user, source, ProjectPermission::View).await?;
+        resolve_surface_bundle(state, current_user, source, ProjectPermission::Use).await?;
     Ok(surface)
 }
 

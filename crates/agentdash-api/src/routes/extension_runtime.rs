@@ -94,7 +94,7 @@ pub async fn get_project_extension_runtime(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let installations = state
@@ -119,7 +119,7 @@ pub async fn invoke_project_extension_runtime_action(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -181,7 +181,7 @@ pub async fn invoke_project_extension_runtime_channel(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -258,7 +258,7 @@ pub async fn uninstall_extension_installation_route(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let output = uninstall_extension_installation(
@@ -290,7 +290,7 @@ pub async fn get_project_extension_webview_asset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let asset = read_extension_package_webview_asset(

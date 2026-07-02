@@ -134,7 +134,7 @@ around enterprise needs:
 
 - personal and enterprise authentication modes;
 - Project-level user and group grants;
-- owner/editor/viewer access roles;
+- owner/editor/member access roles;
 - system, user, and project settings scopes;
 - project-scoped runner registration;
 - backend access and workspace routing;

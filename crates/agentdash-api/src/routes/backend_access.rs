@@ -52,7 +52,7 @@ pub async fn list_project_backend_access(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -113,7 +113,7 @@ pub async fn create_project_backend_access(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let backend_id = normalize_required("backend_id", &req.backend_id)?;
@@ -155,7 +155,7 @@ pub async fn update_project_backend_access(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let mut access = load_access_for_project(&state, project_id, access_id).await?;
@@ -202,7 +202,7 @@ pub async fn revoke_project_backend_access(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let access = load_access_for_project(&state, project_id, access_id).await?;
@@ -227,7 +227,7 @@ pub async fn list_project_backend_inventory(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let access = load_access_for_project(&state, project_id, access_id).await?;
@@ -256,7 +256,7 @@ pub async fn register_project_backend_inventory(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
@@ -283,7 +283,7 @@ pub async fn list_workspace_candidates(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(
@@ -305,7 +305,7 @@ pub async fn sync_workspace_bindings(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let result = sync_project_backend_workspace_bindings(&state.repos, project_id).await?;
@@ -324,7 +324,7 @@ pub async fn browse_project_backend_access(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let access = load_access_for_project(&state, project_id, access_id).await?;

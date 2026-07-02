@@ -157,7 +157,7 @@ impl McpHttpRouterState {
             &self.services,
             identity,
             story.project_id,
-            McpProjectPermission::View,
+            McpProjectPermission::Use,
         )
         .await
         .map_err(mcp_error_response)?;
@@ -196,7 +196,7 @@ impl McpHttpRouterState {
             &self.services,
             identity,
             project_id,
-            McpProjectPermission::View,
+            McpProjectPermission::Use,
         )
         .await
         .map_err(mcp_error_response)?;

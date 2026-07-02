@@ -257,7 +257,7 @@ interface ProjectDropdownProps {
 const PROJECT_ROLE_LABELS: Record<NonNullable<Project["access"]["role"]>, string> = {
   owner: "Owner",
   editor: "Editor",
-  viewer: "Viewer",
+  member: "Member",
 };
 const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
   private: "私有",

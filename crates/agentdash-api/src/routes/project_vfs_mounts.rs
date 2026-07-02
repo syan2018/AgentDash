@@ -58,7 +58,7 @@ pub async fn list_vfs_mounts(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -83,7 +83,7 @@ pub async fn create_vfs_mount(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -132,7 +132,7 @@ pub async fn get_vfs_mount(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let mount_id = path.mount_id.trim();
@@ -156,7 +156,7 @@ pub async fn update_vfs_mount(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let old_mount_id = path.mount_id.trim().to_string();
@@ -208,7 +208,7 @@ pub async fn delete_vfs_mount(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let mount_id = path.mount_id.trim();

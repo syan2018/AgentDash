@@ -68,7 +68,7 @@ impl std::fmt::Display for ProjectVisibility {
 pub enum ProjectRole {
     Owner,
     Editor,
-    Viewer,
+    Member,
 }
 
 impl ProjectRole {
@@ -76,7 +76,7 @@ impl ProjectRole {
         match self {
             Self::Owner => "owner",
             Self::Editor => "editor",
-            Self::Viewer => "viewer",
+            Self::Member => "member",
         }
     }
 }

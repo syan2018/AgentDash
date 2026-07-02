@@ -25,6 +25,7 @@ use agentdash_contracts::backend::{
     BackendExecutionSelectionMode, BackendExecutorCapabilityResponse,
     BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeExecutorResponse,
     BackendRuntimeHealthResponse, BackendRuntimeSummaryResponse, BackendShareScopeKind,
+    CapabilityHealthAction, CapabilityHealthDomain, CapabilityHealthItem, CapabilityHealthStatus,
     BackendType, BackendVisibility, BackendWithStatusResponse, BackendWorkspaceInventoryResponse,
     BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
     CreateProjectBackendAccessRequest, ProjectBackendAccessMode, ProjectBackendAccessResponse,
@@ -406,6 +407,10 @@ fn main() {
             export_all::<BackendExecutorCapabilityResponse>(dir);
             export_all::<BackendMcpServerCapabilityResponse>(dir);
             export_all::<BackendCapabilitiesResponse>(dir);
+            export_all::<CapabilityHealthStatus>(dir);
+            export_all::<CapabilityHealthDomain>(dir);
+            export_all::<CapabilityHealthAction>(dir);
+            export_all::<CapabilityHealthItem>(dir);
             export_all::<BackendExecutionSelectionMode>(dir);
             export_all::<BackendExecutionLeaseState>(dir);
             export_all::<BackendRuntimeExecutorResponse>(dir);

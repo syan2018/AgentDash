@@ -11,6 +11,20 @@ export type LocalRuntimeState =
   | 'stopped'
   | 'error'
 
+export interface LocalCapabilityHealthAction {
+  kind: string
+  label: string
+}
+
+export interface LocalCapabilityHealthItem {
+  id: string
+  domain: string
+  status: 'ready' | 'degraded' | 'unavailable'
+  label: string
+  summary: string
+  actions: LocalCapabilityHealthAction[]
+}
+
 export interface LocalRuntimeStatus {
   state: LocalRuntimeState
   owner: string
@@ -20,6 +34,7 @@ export interface LocalRuntimeStatus {
   workspace_roots: string[]
   executor_enabled: boolean
   mcp_server_count: number
+  capability_health: LocalCapabilityHealthItem[]
   message: string | null
   last_error: string | null
   last_attempt_at: string | null
@@ -76,6 +91,7 @@ export interface LocalRuntimeLayerStatus extends ApiLayerStatus {
   workspace_roots: string[]
   executor_enabled: boolean
   mcp_server_count: number
+  capability_health: LocalCapabilityHealthItem[]
   last_error: string | null
   last_attempt_at: string | null
   next_retry_at: string | null
@@ -414,6 +430,7 @@ function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayer
       workspace_roots: [],
       executor_enabled: false,
       mcp_server_count: 0,
+      capability_health: [],
       last_error: null,
       last_attempt_at: null,
       next_retry_at: null,
@@ -433,6 +450,7 @@ function localRuntimeLayer(status: LocalRuntimeStatus | null): LocalRuntimeLayer
     workspace_roots: status.workspace_roots,
     executor_enabled: status.executor_enabled,
     mcp_server_count: status.mcp_server_count,
+    capability_health: status.capability_health ?? [],
     last_error: status.last_error,
     last_attempt_at: status.last_attempt_at,
     next_retry_at: status.next_retry_at,

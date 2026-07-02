@@ -280,6 +280,9 @@ fn supervisor_snapshot(
         mcp_server_count: previous
             .map(|snapshot| snapshot.mcp_server_count)
             .unwrap_or(0),
+        capability_health: previous
+            .map(|snapshot| snapshot.capability_health.clone())
+            .unwrap_or_default(),
         message,
         last_error,
         last_attempt_at,

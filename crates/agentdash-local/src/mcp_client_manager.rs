@@ -20,6 +20,7 @@ use tokio::sync::RwLock;
 
 use crate::local_backend_config::McpLocalServerEntry;
 use crate::process_window::hide_window_for_tokio_command;
+use crate::runtime::{LocalCapabilityHealthAction, LocalCapabilityHealthItem};
 
 // ─── Client Manager ──────────────────────────────────────
 
@@ -27,6 +28,7 @@ pub struct McpClientManager {
     config: Vec<McpLocalServerEntry>,
     protect_mode: bool,
     clients: RwLock<HashMap<String, RunningService<RoleClient, ()>>>,
+    health: RwLock<HashMap<String, LocalCapabilityHealthItem>>,
 }
 
 #[derive(Clone)]
@@ -41,6 +43,7 @@ impl McpClientManager {
             config,
             protect_mode,
             clients: RwLock::new(HashMap::new()),
+            health: RwLock::new(HashMap::new()),
         }
     }
 
@@ -55,24 +58,79 @@ impl McpClientManager {
             .collect()
     }
 
+    /// 返回当前 MCP capability health 快照
+    pub async fn capability_health_snapshot(&self) -> Vec<LocalCapabilityHealthItem> {
+        self.health.read().await.values().cloned().collect()
+    }
+
+    async fn mark_ready(&self, server_name: &str) {
+        let mut health = self.health.write().await;
+        health.insert(
+            server_name.to_string(),
+            LocalCapabilityHealthItem {
+                id: format!("mcp:{server_name}"),
+                domain: "mcp".to_string(),
+                status: "ready".to_string(),
+                label: server_name.to_string(),
+                summary: "已连接".to_string(),
+                actions: Vec::new(),
+            },
+        );
+    }
+
+    async fn mark_unavailable(&self, server_name: &str, error: &str) {
+        let mut health = self.health.write().await;
+        health.insert(
+            server_name.to_string(),
+            LocalCapabilityHealthItem {
+                id: format!("mcp:{server_name}"),
+                domain: "mcp".to_string(),
+                status: "unavailable".to_string(),
+                label: server_name.to_string(),
+                summary: error.to_string(),
+                actions: vec![
+                    LocalCapabilityHealthAction {
+                        kind: "probe".to_string(),
+                        label: "重新探测".to_string(),
+                    },
+                    LocalCapabilityHealthAction {
+                        kind: "view_logs".to_string(),
+                        label: "查看日志".to_string(),
+                    },
+                ],
+            },
+        );
+    }
+
     /// 列举指定 server 的工具
     pub async fn list_tools(
         &self,
         server: &McpServerRelay,
     ) -> Result<Vec<McpToolInfoRelay>, anyhow::Error> {
         let entry = resolved_server_entry(server);
-        let key = self.ensure_connected(&entry).await?;
+        let key = match self.ensure_connected(&entry).await {
+            Ok(k) => k,
+            Err(e) => {
+                self.mark_unavailable(&entry.name, &e.to_string()).await;
+                return Err(e);
+            }
+        };
 
         let clients = self.clients.read().await;
         let client = clients
             .get(&key)
             .ok_or_else(|| anyhow::anyhow!("MCP client 未找到: {}", entry.name))?;
 
-        let tools = client
-            .list_all_tools()
-            .await
-            .map_err(|e| anyhow::anyhow!("list_tools 失败: {e}"))?;
+        let tools = match client.list_all_tools().await {
+            Ok(t) => t,
+            Err(e) => {
+                let msg = format!("list_tools 失败: {e}");
+                self.mark_unavailable(&entry.name, &msg).await;
+                return Err(anyhow::anyhow!("{msg}"));
+            }
+        };
 
+        self.mark_ready(&entry.name).await;
         Ok(tools
             .into_iter()
             .map(|tool| McpToolInfoRelay {
@@ -91,7 +149,13 @@ impl McpClientManager {
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<ResponseMcpCallToolPayload, anyhow::Error> {
         let entry = resolved_server_entry(server);
-        let key = self.ensure_connected(&entry).await?;
+        let key = match self.ensure_connected(&entry).await {
+            Ok(k) => k,
+            Err(e) => {
+                self.mark_unavailable(&entry.name, &e.to_string()).await;
+                return Err(e);
+            }
+        };
 
         let clients = self.clients.read().await;
         let client = clients
@@ -104,11 +168,16 @@ impl McpClientManager {
             CallToolRequestParams::new(tool_name.to_string())
         };
 
-        let result = client
-            .call_tool(request)
-            .await
-            .map_err(|e| anyhow::anyhow!("call_tool 失败: {e}"))?;
+        let result = match client.call_tool(request).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("call_tool 失败: {e}");
+                self.mark_unavailable(&entry.name, &msg).await;
+                return Err(anyhow::anyhow!("{msg}"));
+            }
+        };
 
+        self.mark_ready(&entry.name).await;
         Ok(ResponseMcpCallToolPayload {
             server_name: entry.name,
             tool_name: tool_name.to_string(),

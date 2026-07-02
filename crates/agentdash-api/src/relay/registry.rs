@@ -448,7 +448,7 @@ mod tests {
                 executors: Vec::new(),
                 supports_cancel: true,
                 supports_discover_options: true,
-                mcp_servers: Vec::new(),
+                ..Default::default()
             },
             sender,
             connected_at: Utc::now(),
@@ -465,7 +465,7 @@ mod tests {
             }],
             supports_cancel: true,
             supports_discover_options: true,
-            mcp_servers: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -478,6 +478,7 @@ mod tests {
                 name: server_name.to_string(),
                 transport: "http".to_string(),
             }],
+            ..Default::default()
         }
     }
 

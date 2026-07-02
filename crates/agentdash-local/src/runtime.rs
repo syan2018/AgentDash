@@ -86,12 +86,31 @@ pub struct LocalRuntimeStatus {
     pub workspace_roots: Vec<String>,
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
+    pub capability_health: Vec<LocalCapabilityHealthItem>,
     pub message: Option<String>,
     pub last_error: Option<String>,
     pub last_attempt_at: Option<String>,
     pub next_retry_at: Option<String>,
     pub retry_count: Option<u32>,
     pub relay_connection: Option<ws_client::RelayConnectionStatus>,
+}
+
+/// 单个声明能力的健康状态。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LocalCapabilityHealthItem {
+    pub id: String,
+    pub domain: String,
+    pub status: String,
+    pub label: String,
+    pub summary: String,
+    #[serde(default)]
+    pub actions: Vec<LocalCapabilityHealthAction>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LocalCapabilityHealthAction {
+    pub kind: String,
+    pub label: String,
 }
 
 pub type LocalRuntimeSnapshot = LocalRuntimeStatus;
@@ -138,6 +157,7 @@ pub struct LocalRuntimeManager {
 struct RunningRuntime {
     config: LocalRuntimeConfig,
     session_runtime: Option<SessionRuntimeServices>,
+    mcp_manager: Option<Arc<McpClientManager>>,
     shutdown_tx: watch::Sender<bool>,
     status_tx: watch::Sender<LocalRuntimeStatus>,
     status_rx: watch::Receiver<LocalRuntimeStatus>,
@@ -194,6 +214,7 @@ impl LocalRuntimeManager {
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
         let session_runtime = ws_config.session_runtime.clone();
+        let mcp_manager = ws_config.mcp_manager.clone();
 
         tokio::spawn({
             let status_tx = status_tx.clone();
@@ -262,6 +283,7 @@ impl LocalRuntimeManager {
         *guard = Some(RunningRuntime {
             config,
             session_runtime,
+            mcp_manager,
             shutdown_tx,
             status_tx,
             status_rx,
@@ -360,9 +382,12 @@ impl LocalRuntimeManager {
 
     pub async fn snapshot(&self) -> Option<LocalRuntimeSnapshot> {
         let guard = self.inner.lock().await;
-        guard
-            .as_ref()
-            .map(|running| running.status_rx.borrow().clone())
+        let running = guard.as_ref()?;
+        let mut status = running.status_rx.borrow().clone();
+        if let Some(ref mcp) = running.mcp_manager {
+            status.capability_health = mcp.capability_health_snapshot().await;
+        }
+        Some(status)
     }
 }
 
@@ -649,6 +674,7 @@ fn status_from_config(
             .collect(),
         executor_enabled: config.executor_enabled,
         mcp_server_count: 0,
+        capability_health: Vec::new(),
         message,
         last_error,
         last_attempt_at: None,
@@ -733,6 +759,7 @@ fn status_from_ws_config(
             .as_ref()
             .map(|manager| manager.capability_entries().len())
             .unwrap_or(0),
+        capability_health: Vec::new(),
         message,
         last_error,
         last_attempt_at: None,

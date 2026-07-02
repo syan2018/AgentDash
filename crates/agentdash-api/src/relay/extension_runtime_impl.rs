@@ -229,7 +229,7 @@ mod tests {
                     executors: Vec::new(),
                     supports_cancel: true,
                     supports_discover_options: true,
-                    mcp_servers: Vec::new(),
+                    ..Default::default()
                 },
                 sender,
                 connected_at: Utc::now(),

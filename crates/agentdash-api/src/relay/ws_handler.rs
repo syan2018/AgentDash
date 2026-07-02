@@ -637,6 +637,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseToolFileList { .. }
             | RelayMessage::ResponseToolSearch { .. }
             | RelayMessage::ResponseBrowseDirectory { .. }
+            | RelayMessage::ResponseMcpProbeTransport { .. }
             | RelayMessage::ResponseMcpListTools { .. }
             | RelayMessage::ResponseMcpCallTool { .. }
             | RelayMessage::ResponseMcpClose { .. }
@@ -977,6 +978,17 @@ mod tests {
     fn extension_action_response_is_routed_to_pending_requests() {
         let response = RelayMessage::ResponseExtensionActionInvoke {
             id: "extension-action-1".to_string(),
+            payload: None,
+            error: None,
+        };
+
+        assert!(is_pending_response_message(&response));
+    }
+
+    #[test]
+    fn mcp_probe_response_is_routed_to_pending_requests() {
+        let response = RelayMessage::ResponseMcpProbeTransport {
+            id: "mcp-probe-1".to_string(),
             payload: None,
             error: None,
         };

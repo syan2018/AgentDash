@@ -840,7 +840,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 - stdio execution applies resolved `env` and `cwd` to the spawned process.
 - HTTP/SSE execution passes resolved `headers` into `StreamableHttpClientTransportConfig::custom_headers`; invalid header names/values fail the connection with a diagnostic.
 - Relay prompt `mcp_servers` parser accepts resolved servers with HTTP/SSE `headers` and stdio `cwd`, then projects them as `RuntimeMcpServer`.
-- One-shot relay probe uses the provided transport directly and never enters the manager connection pool.
+- One-shot relay probe uses the provided transport through the same local MCP connection behavior as the runtime panel probe, but runs on a temporary manager so probe clients are closed after `list_tools` and do not pollute the long-lived runtime manager pool.
 - One-shot relay probe failures return `ResponseMcpProbeTransportPayload { status: "error", ... }` with `error: None` at the relay envelope. Local runtime panel probe failures return `McpProbeResult { ok: false, ... }`. Connectivity failure is a probe result, not a command transport failure.
 
 ### 4. Validation & Error Matrix

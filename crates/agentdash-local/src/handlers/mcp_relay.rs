@@ -2,17 +2,14 @@
 
 use std::sync::Arc;
 
-use agentdash_process::{
-    ProcessDomain, background_tokio_command, background_tokio_command_with_cwd,
-};
 use agentdash_relay::*;
-use rmcp::transport::child_process::TokioChildProcess;
 
 use super::CommandDispatchPlan;
 use crate::mcp_client_manager::McpClientManager;
 
 /// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
 const PROBE_TIMEOUT_SECS: u64 = 15;
+const PROBE_SERVER_NAME: &str = "__agentdash_probe__";
 
 #[derive(Clone)]
 pub(super) struct McpCommandHandler {
@@ -26,8 +23,8 @@ impl McpCommandHandler {
 
     pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
         match msg {
-            RelayMessage::CommandMcpProbeTransport { .. }
-            | RelayMessage::CommandMcpListTools { .. }
+            RelayMessage::CommandMcpProbeTransport { .. } => Some(CommandDispatchPlan::BACKGROUND),
+            RelayMessage::CommandMcpListTools { .. }
             | RelayMessage::CommandMcpCallTool { .. }
             | RelayMessage::CommandMcpClose { .. } => Some(CommandDispatchPlan::INLINE),
             _ => None,
@@ -43,73 +40,22 @@ impl McpCommandHandler {
         use std::time::{Duration, Instant};
 
         let start = Instant::now();
-        let transport = payload.transport;
-
-        let probe_fut = async {
-            match &transport {
-                McpTransportConfigRelay::Stdio {
-                    command,
-                    args,
-                    env,
-                    cwd,
-                } => {
-                    let mut cmd = match cwd {
-                        Some(cwd) => {
-                            background_tokio_command_with_cwd(ProcessDomain::McpStdio, command, cwd)
-                        }
-                        None => background_tokio_command(ProcessDomain::McpStdio, command),
-                    };
-                    cmd.args(args);
-                    for var in env {
-                        cmd.env(&var.name, &var.value);
-                    }
-                    let child = TokioChildProcess::new(cmd)
-                        .map_err(|e| format!("spawn stdio 进程失败: {e}"))?;
-                    let client = rmcp::ServiceExt::serve((), child)
-                        .await
-                        .map_err(|e| format!("MCP 握手失败: {e}"))?;
-                    let tools = client
-                        .list_all_tools()
-                        .await
-                        .map_err(|e| format!("list_tools 失败: {e}"))?;
-                    let _ = client.cancel().await;
-                    Ok::<Vec<rmcp::model::Tool>, String>(tools)
-                }
-                McpTransportConfigRelay::Http { url, headers }
-                | McpTransportConfigRelay::Sse { url, headers } => {
-                    let headers = relay_headers_to_domain(headers);
-                    let worker = crate::mcp_connect::mcp_http_worker(url, &headers)
-                        .map_err(|error| error.to_string())?;
-                    let client = rmcp::ServiceExt::serve((), worker)
-                        .await
-                        .map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
-                    let tools = client
-                        .list_all_tools()
-                        .await
-                        .map_err(|e| format!("list_tools 失败: {e}"))?;
-                    let _ = client.cancel().await;
-                    Ok(tools)
-                }
-            }
+        let server = McpServerRelay {
+            name: PROBE_SERVER_NAME.to_string(),
+            transport: payload.transport,
         };
+        let manager = McpClientManager::new(Vec::new(), false);
+        let probe_fut = manager.probe_once(&server);
 
         match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), probe_fut).await {
             Ok(Ok(tools)) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
-                let tool_infos: Vec<McpToolInfoRelay> = tools
-                    .into_iter()
-                    .map(|t| McpToolInfoRelay {
-                        name: t.name.to_string(),
-                        description: t.description.as_deref().unwrap_or("").to_string(),
-                        parameters_schema: serde_json::Value::Object((*t.input_schema).clone()),
-                    })
-                    .collect();
                 RelayMessage::ResponseMcpProbeTransport {
                     id,
                     payload: Some(ResponseMcpProbeTransportPayload {
                         status: "ok".to_string(),
                         latency_ms: Some(latency_ms),
-                        tools: Some(tool_infos),
+                        tools: Some(tools),
                         error: None,
                     }),
                     error: None,
@@ -121,7 +67,7 @@ impl McpCommandHandler {
                     status: "error".to_string(),
                     latency_ms: None,
                     tools: None,
-                    error: Some(err),
+                    error: Some(err.to_string()),
                 }),
                 error: None,
             },
@@ -231,16 +177,4 @@ impl McpCommandHandler {
             },
         }
     }
-}
-
-fn relay_headers_to_domain(
-    headers: &[McpHttpHeaderRelay],
-) -> Vec<agentdash_domain::mcp_preset::McpHttpHeader> {
-    headers
-        .iter()
-        .map(|header| agentdash_domain::mcp_preset::McpHttpHeader {
-            name: header.name.clone(),
-            value: header.value.clone(),
-        })
-        .collect()
 }

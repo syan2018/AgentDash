@@ -505,24 +505,20 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 
     let manager = McpClientManager::new(vec![server.clone()], true);
     let relay_server = local_server_to_relay_mcp_server(&server);
-    match manager.list_tools(&relay_server).await {
+    match manager.probe_once(&relay_server).await {
         Ok(tools) => {
             let tool_count = tools.len();
-            let _ = manager.close(&server.name).await;
             McpProbeResult {
                 ok: true,
                 tool_count,
                 message: format!("连接成功，发现 {tool_count} 个工具"),
             }
         }
-        Err(error) => {
-            let _ = manager.close(&server.name).await;
-            McpProbeResult {
-                ok: false,
-                tool_count: 0,
-                message: error.to_string(),
-            }
-        }
+        Err(error) => McpProbeResult {
+            ok: false,
+            tool_count: 0,
+            message: error.to_string(),
+        },
     }
 }
 

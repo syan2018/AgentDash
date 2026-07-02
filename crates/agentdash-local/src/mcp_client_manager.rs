@@ -144,6 +144,17 @@ impl McpClientManager {
             .collect())
     }
 
+    /// 一次性探测指定 server：连接、列举工具，然后关闭本次连接。
+    pub async fn probe_once(
+        &self,
+        server: &McpServerRelay,
+    ) -> Result<Vec<McpToolInfoRelay>, anyhow::Error> {
+        let server_name = server.name.clone();
+        let result = self.list_tools(server).await;
+        let _ = self.close(&server_name).await;
+        result
+    }
+
     /// 调用指定 server 上的工具
     pub async fn call_tool(
         &self,
@@ -301,8 +312,9 @@ fn connection_key_prefix(server_name: &str) -> Result<String, anyhow::Error> {
 
 fn truncate_error_summary(error: &str) -> String {
     let first_line = error.lines().next().unwrap_or(error);
-    let short = if first_line.len() > 80 {
-        format!("{}…", &first_line[..77])
+    let short = if first_line.chars().count() > 80 {
+        let prefix = first_line.chars().take(77).collect::<String>();
+        format!("{prefix}…")
     } else {
         first_line.to_string()
     };

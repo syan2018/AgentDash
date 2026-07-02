@@ -616,6 +616,24 @@ mod tests {
     }
 
     #[test]
+    fn mcp_probe_is_handled_in_background() {
+        let msg = RelayMessage::CommandMcpProbeTransport {
+            id: "mcp-probe-1".to_string(),
+            payload: CommandMcpProbeTransportPayload {
+                transport: McpTransportConfigRelay::Http {
+                    url: "http://127.0.0.1:7321/mcp".to_string(),
+                    headers: Vec::new(),
+                },
+            },
+        };
+
+        assert_eq!(
+            crate::handlers::dispatch_plan_for_message(&msg).execution_mode,
+            CommandExecutionMode::Background
+        );
+    }
+
+    #[test]
     fn ordinary_relay_messages_keep_inline_ordering() {
         let msg = RelayMessage::Ping {
             id: "ping-1".to_string(),

@@ -1673,3 +1673,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 47: ProjectAgent backend requirement 配置
+
+**Date**: 2026-07-02
+**Task**: ProjectAgent backend requirement 配置
+**Branch**: `main`
+
+### Summary
+
+实现 ProjectAgent backend_requirement required/optional：默认 required，optional 无 backend 时允许启动但不投影 backend-bound workspace、MCP 与 workspace module；前端 preset 表单增加运行环境选项并补充验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `698f09544` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

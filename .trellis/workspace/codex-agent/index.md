@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
-- **Last Active**: 2026-07-01
+- **Total Sessions**: 47
+- **Last Active**: 2026-07-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1675 | Active |
+| `journal-1.md` | ~1708 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-07-02 | ProjectAgent backend requirement 配置 | `698f09544` | `main` |
 | 46 | 2026-07-01 | 收束 ContextDeliveryPlan 上下文消费 | `bb3012f03`, `5fc544fee` | `main` |
 | 45 | 2026-06-30 | Session item id allocator 边界清理 | `af8498111`, `8c64df53f`, `c904134e3` | `codex/module-adversarial-review-cleanup` |
 | 44 | 2026-06-30 | 架构最终彻底收口 | `a060c570f`, `7bbf0d6d6`, `7f4ad320f`, `1de3a4dc8` | `codex/module-adversarial-review-cleanup` |

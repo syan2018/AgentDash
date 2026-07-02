@@ -343,8 +343,9 @@ fn runtime_canvas_project_access(
 fn project_authorization_context_from_identity(
     identity: &AuthIdentity,
 ) -> ProjectAuthorizationContext {
-    ProjectAuthorizationContext::new(
+    ProjectAuthorizationContext::new_with_subjects(
         identity.user_id.clone(),
+        vec![identity.subject.clone()],
         identity
             .groups
             .iter()

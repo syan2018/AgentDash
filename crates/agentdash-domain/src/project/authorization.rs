@@ -11,14 +11,32 @@ use crate::project::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectAuthorizationContext {
     pub user_id: String,
+    pub subject_ids: Vec<String>,
     pub group_ids: Vec<String>,
     pub is_admin: bool,
 }
 
 impl ProjectAuthorizationContext {
     pub fn new(user_id: String, group_ids: Vec<String>, is_admin: bool) -> Self {
+        let subject_ids = vec![user_id.clone()];
         Self {
             user_id,
+            subject_ids,
+            group_ids,
+            is_admin,
+        }
+    }
+
+    pub fn new_with_subjects(
+        user_id: String,
+        subject_ids: Vec<String>,
+        group_ids: Vec<String>,
+        is_admin: bool,
+    ) -> Self {
+        let subject_ids = normalize_subject_ids(&user_id, subject_ids);
+        Self {
+            user_id,
+            subject_ids,
             group_ids,
             is_admin,
         }
@@ -162,15 +180,28 @@ fn highest_role_for_subject(
     grants: &[ProjectSubjectGrant],
 ) -> Option<ProjectRole> {
     let group_ids = context.group_ids.iter().cloned().collect::<HashSet<_>>();
+    let subject_ids = context.subject_ids.iter().cloned().collect::<HashSet<_>>();
 
     grants
         .iter()
         .filter(|grant| match grant.subject_type {
-            ProjectSubjectType::User => grant.subject_id == context.user_id,
+            ProjectSubjectType::User => subject_ids.contains(&grant.subject_id),
             ProjectSubjectType::Group => group_ids.contains(&grant.subject_id),
         })
         .map(|grant| grant.role)
         .max_by_key(role_rank)
+}
+
+fn normalize_subject_ids(user_id: &str, subject_ids: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for subject_id in std::iter::once(user_id.to_string()).chain(subject_ids) {
+        let subject_id = subject_id.trim();
+        if subject_id.is_empty() || normalized.iter().any(|item| item == subject_id) {
+            continue;
+        }
+        normalized.push(subject_id.to_string());
+    }
+    normalized
 }
 
 fn role_rank(role: &ProjectRole) -> u8 {
@@ -322,6 +353,45 @@ mod tests {
         let service = ProjectAuthorizationService::new(&store);
         let access = service
             .resolve_project_access(&context("owner-user", &[], false), &project)
+            .await
+            .expect("resolve access");
+
+        assert!(access.can_view_project());
+        assert!(access.can_edit_project());
+        assert!(access.can_manage_project_sharing());
+    }
+
+    #[tokio::test]
+    async fn subject_alias_owner_grant_can_manage_project_sharing() {
+        let store = MemoryProjectStore::default();
+        let project = project(ProjectVisibility::Private);
+        ProjectRepository::create(&store, &project)
+            .await
+            .expect("create project");
+        ProjectRepository::upsert_subject_grant(
+            &store,
+            &ProjectSubjectGrant::new(
+                project.id,
+                ProjectSubjectType::User,
+                "canonical-user".to_string(),
+                ProjectRole::Owner,
+                "owner-user".to_string(),
+            ),
+        )
+        .await
+        .expect("grant owner");
+
+        let service = ProjectAuthorizationService::new(&store);
+        let access = service
+            .resolve_project_access(
+                &ProjectAuthorizationContext::new_with_subjects(
+                    "login-subject".to_string(),
+                    vec!["canonical-user".to_string()],
+                    Vec::new(),
+                    false,
+                ),
+                &project,
+            )
             .await
             .expect("resolve access");
 

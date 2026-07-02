@@ -329,15 +329,7 @@ pub async fn revoke_project_group(
 }
 
 fn project_authorization_context(current_user: &AuthIdentity) -> ProjectAuthorizationContext {
-    ProjectAuthorizationContext::new(
-        current_user.user_id.clone(),
-        current_user
-            .groups
-            .iter()
-            .map(|group| group.group_id.clone())
-            .collect(),
-        current_user.is_admin,
-    )
+    agentdash_application::project::project_authorization_context_from_identity(current_user)
 }
 
 fn project_authorization_service<'a>(

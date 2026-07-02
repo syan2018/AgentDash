@@ -77,7 +77,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - Session 事件、terminal effect outbox 与 runtime command store 的持久化 contract 放在 `agentdash-spi::session_persistence`，原因是这些 record 同时服务 application runtime 与 infrastructure adapter，不能把 infrastructure 绑定到 application 编排模块。
 - `RepositorySet` 放在 application 层，原因是应用用例需要组合多个 port，API 层不应直接知道具体 repository 实现。
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
-- Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
+- Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
 - Canvas access projection 放在 domain，原因是 Canvas 管理 API、Workspace Module descriptor、runtime VFS mount 暴露和 Canvas 文件操作都需要消费同一份 view/edit/runtime-write 语义；各 application adapter 只负责提供当前身份与 Project access 上下文。
 - `agentdash-executor` 直接维护 Codex app-server bridge，原因是本机进程生命周期、connector 能力声明与 Backbone 事件投影属于 AgentDash runtime 边界，外部编排 crate 不应成为该边界的事实源。
 - `agentdash-process` 承载 AgentDash 自有后台子进程启动 substrate，原因是本机 relay、MCP stdio、tool shell、workspace probe、function runner、desktop sidecar 和 Codex bridge 都可能从桌面 GUI 宿主触发 console 子进程；统一的 `ProcessVisibility` / `ProcessDomain` 边界让 Windows 后台启动静默、诊断可按 domain/program/cwd/visibility 回溯，且不记录 args/env 等 credential-bearing 值。

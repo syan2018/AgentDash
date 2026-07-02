@@ -18,15 +18,16 @@ pub fn canvas_runtime_mount_access(
     }
 
     let identity = identity?;
-    let current_user = ProjectAuthorizationContext {
-        user_id: identity.user_id.clone(),
-        group_ids: identity
+    let current_user = ProjectAuthorizationContext::new_with_subjects(
+        identity.user_id.clone(),
+        vec![identity.subject.clone()],
+        identity
             .groups
             .iter()
             .map(|group| group.group_id.clone())
             .collect(),
-        is_admin: identity.is_admin,
-    };
+        identity.is_admin,
+    );
     let project_access = ProjectAuthorization {
         role: None,
         via_admin_bypass: identity.is_admin,

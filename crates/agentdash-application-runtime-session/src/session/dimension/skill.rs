@@ -98,9 +98,27 @@ impl DimensionDelta for SkillDimensionDelta {
             Some(node) => format!("## Skill Delta — Step Transition: {node}"),
             None => "## Skill Delta".to_string(),
         }];
-        render_grouped_skill_lines(&mut lines, "Added Skills", &self.added, "已加入", &self.cluster_meta);
-        render_grouped_skill_lines(&mut lines, "Removed Skills", &self.removed, "已移除", &self.cluster_meta);
-        render_grouped_skill_lines(&mut lines, "Changed Skills", &self.changed, "定义已变更", &self.cluster_meta);
+        render_grouped_skill_lines(
+            &mut lines,
+            "Added Skills",
+            &self.added,
+            "已加入",
+            &self.cluster_meta,
+        );
+        render_grouped_skill_lines(
+            &mut lines,
+            "Removed Skills",
+            &self.removed,
+            "已移除",
+            &self.cluster_meta,
+        );
+        render_grouped_skill_lines(
+            &mut lines,
+            "Changed Skills",
+            &self.changed,
+            "定义已变更",
+            &self.cluster_meta,
+        );
         lines.join("\n")
     }
 }

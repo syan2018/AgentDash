@@ -1,4 +1,4 @@
-﻿//! FrameLaunchEnvelope — Session 启动的唯一类型体系。
+//! FrameLaunchEnvelope — Session 启动的唯一类型体系。
 //!
 //! ```text
 //! FrameRuntimeSurface  ← 只来自 AgentFrame 持久化 surface
@@ -579,7 +579,10 @@ mod tests {
 
         // runtime surface 闭包字段
         assert_eq!(port.runtime.working_directory, PathBuf::from("/workspace"));
-        assert_eq!(port.runtime.launch_surface.execution_profile.executor, "PI_AGENT");
+        assert_eq!(
+            port.runtime.launch_surface.execution_profile.executor,
+            "PI_AGENT"
+        );
         assert_eq!(port.runtime.launch_surface.vfs.mounts.len(), 1);
 
         // context projection 承载 discovery 派生物
@@ -594,7 +597,10 @@ mod tests {
         );
 
         // frame refs
-        assert_eq!(port.frame.surface.runtime_session_id.as_deref(), Some("sess"));
+        assert_eq!(
+            port.frame.surface.runtime_session_id.as_deref(),
+            Some("sess")
+        );
         assert!(port.frame.pending_frame.is_none());
     }
 }

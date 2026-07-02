@@ -48,8 +48,7 @@ pub use connector::{
     NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
     RuntimeVfsAccessPolicy, RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation,
     RuntimeVfsPathPattern, SetDelta, SkillClusterMeta, SkillDimension, ToolCapabilityFilter,
-    ToolCluster,
-    ToolDimension, VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension,
+    ToolCluster, ToolDimension, VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension,
     WorkspaceModuleVisibilityMode, compute_capability_state_delta, partition_runtime_mcp_servers,
     workspace_path_from_context,
 };

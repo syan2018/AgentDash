@@ -366,4 +366,3 @@ pub struct FrameAssemblyLaunchExtras {
     pub environment_variables: HashMap<String, String>,
     pub workspace_defaults: Option<Workspace>,
 }
-

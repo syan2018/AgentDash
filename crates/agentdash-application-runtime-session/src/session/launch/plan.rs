@@ -179,11 +179,7 @@ impl LaunchPlan {
             None
         };
         let identity = input.launch_envelope.command.identity.clone();
-        let runtime_backend_anchor = input
-            .launch_envelope
-            .runtime
-            .runtime_backend_anchor
-            .clone();
+        let runtime_backend_anchor = input.launch_envelope.runtime.runtime_backend_anchor.clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -330,11 +326,7 @@ impl LaunchPlan {
             pending_frame,
             resolved_payload: input.resolved_payload,
             title_hint,
-            discovered_guidelines: input
-                .launch_envelope
-                .context
-                .discovered_guidelines
-                .clone(),
+            discovered_guidelines: input.launch_envelope.context.discovered_guidelines.clone(),
             discovered_memory: input.launch_envelope.context.discovered_memory.clone(),
             context_bundle,
             launch_path,
@@ -627,10 +619,7 @@ mod tests {
             path: "AGENTS.md".to_string(),
             content: "使用中文交流".to_string(),
         };
-        input
-            .launch_envelope
-            .context
-            .discovered_guidelines = vec![guideline.clone()];
+        input.launch_envelope.context.discovered_guidelines = vec![guideline.clone()];
 
         let execution = LaunchPlan::build(input);
 
@@ -691,15 +680,21 @@ mod tests {
             created_at: 3,
             source_turn_id: None,
         }];
-        input.launch_envelope.diagnostics.resolution_trace.vfs_source =
-            Some("runtime_command.pending_vfs_overlay".to_string());
+        input
+            .launch_envelope
+            .diagnostics
+            .resolution_trace
+            .vfs_source = Some("runtime_command.pending_vfs_overlay".to_string());
         input
             .launch_envelope
             .diagnostics
             .resolution_trace
             .pending_overlay_applied = true;
-        input.launch_envelope.diagnostics.resolution_trace.mcp_source =
-            Some("runtime_command.pending_transition".to_string());
+        input
+            .launch_envelope
+            .diagnostics
+            .resolution_trace
+            .mcp_source = Some("runtime_command.pending_transition".to_string());
         input
             .launch_envelope
             .diagnostics

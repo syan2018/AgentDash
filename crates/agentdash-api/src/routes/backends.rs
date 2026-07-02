@@ -35,12 +35,12 @@ use agentdash_application::backend::{
     can_manage_global_backend_scope, ensure_local_runtime_record, list_backend_runtime_summaries,
     remove_backend_record,
 };
-use agentdash_relay::CapabilitiesPayload;
 use agentdash_application_runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
 };
+use agentdash_relay::CapabilitiesPayload;
 
 fn backend_authz(
     state: &AppState,
@@ -356,7 +356,10 @@ fn build_capability_health(
     // Executor health derived from summary
     for executor in executors {
         let (status, summary) = if !online {
-            (CapabilityHealthStatus::Unavailable, "Runtime 离线".to_string())
+            (
+                CapabilityHealthStatus::Unavailable,
+                "Runtime 离线".to_string(),
+            )
         } else if !executor.available {
             (CapabilityHealthStatus::Degraded, "不可用".to_string())
         } else if !executor.allocatable {

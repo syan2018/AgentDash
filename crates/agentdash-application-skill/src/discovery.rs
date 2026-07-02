@@ -141,7 +141,10 @@ mod tests {
 
         assert_eq!(dynamic.key, "skill_discovery");
         assert_eq!(dynamic.file_names, vec!["SKILL.md".to_string()]);
-        assert_eq!(dynamic.exact_paths, vec!["skills/review/SKILL.md".to_string()]);
+        assert_eq!(
+            dynamic.exact_paths,
+            vec!["skills/review/SKILL.md".to_string()]
+        );
         assert_eq!(dynamic.scan_prefixes, vec!["skills".to_string()]);
         assert!(dynamic.recursive);
         assert_eq!(dynamic.max_depth, Some(3));

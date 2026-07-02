@@ -287,8 +287,12 @@ impl FrameConstructionService {
 
         // Skill baseline 合入 launch capability state 与 surface draft，
         // 保持 capability delta 阶段消费统一发现结果。
-        envelope.runtime.launch_surface.capability_state.skill.skills =
-            discovery.session_capabilities.skills.clone();
+        envelope
+            .runtime
+            .launch_surface
+            .capability_state
+            .skill
+            .skills = discovery.session_capabilities.skills.clone();
         if let Some(state) = envelope.runtime.surface_draft.capability_state.as_mut() {
             state.skill.skills = discovery.session_capabilities.skills.clone();
         }
@@ -704,7 +708,8 @@ mod existing_surface_discovery_tests {
         let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 3, "existing_surface");
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&vfs).unwrap());
-        frame.execution_profile_json = Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
+        frame.execution_profile_json =
+            Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
         frame
     }
 
@@ -761,8 +766,7 @@ mod existing_surface_discovery_tests {
             Some(serde_json::to_value(&capability_without_vfs).unwrap());
         let command = LaunchCommand::http_prompt_input(LaunchPromptInput::from_text("hi"), None);
 
-        let result =
-            build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[]);
+        let result = build_envelope_from_frame(&frame, None, &command, None, "sess-existing", &[]);
 
         assert!(result.is_err());
     }

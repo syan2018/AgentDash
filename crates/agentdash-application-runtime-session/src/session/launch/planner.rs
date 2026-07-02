@@ -246,7 +246,11 @@ impl<'a> LaunchPlanner<'a> {
                 input.turn_id,
                 &input.planning_input,
                 Some(&typed_vfs),
-                input.launch_envelope.runtime.runtime_backend_anchor.as_ref(),
+                input
+                    .launch_envelope
+                    .runtime
+                    .runtime_backend_anchor
+                    .as_ref(),
                 &executor_config.executor,
                 command.reason_tag(),
             )

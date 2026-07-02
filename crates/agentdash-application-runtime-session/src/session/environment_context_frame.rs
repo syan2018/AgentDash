@@ -128,13 +128,17 @@ mod tests {
         assert!(frame.rendered_text.contains("## Environment"));
         assert!(frame.rendered_text.contains("Date: 2026-07-01 (UTC)"));
         assert!(frame.rendered_text.contains("Platform: linux x86_64"));
-        assert!(frame
-            .rendered_text
-            .contains("Model: claude-sonnet-4-20250514"));
+        assert!(
+            frame
+                .rendered_text
+                .contains("Model: claude-sonnet-4-20250514")
+        );
         assert!(frame.rendered_text.contains("Executor: PI_AGENT"));
-        assert!(frame
-            .rendered_text
-            .contains("Working directory: /workspace/project"));
+        assert!(
+            frame
+                .rendered_text
+                .contains("Working directory: /workspace/project")
+        );
     }
 
     #[test]

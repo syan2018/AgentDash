@@ -1740,3 +1740,36 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 49: AgentRun 删除入口
+
+**Date**: 2026-07-02
+**Task**: AgentRun 删除入口
+**Branch**: `main`
+
+### Summary
+
+新增 Project-scoped AgentRun 删除端点和前端主列表删除入口；删除前校验 Project 归属，并拒绝运行中或取消中的 RuntimeSession。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a6a15b91b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

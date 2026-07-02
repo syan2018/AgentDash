@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 48
+- **Total Sessions**: 49
 - **Last Active**: 2026-07-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1742 | Active |
+| `journal-1.md` | ~1775 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-07-02 | AgentRun 删除入口 | `a6a15b91b` | `main` |
 | 48 | 2026-07-02 | MCP Preset relay 探测目标收束 | `34cfe6a66`, `a915d898a` | `main` |
 | 47 | 2026-07-02 | ProjectAgent backend requirement 配置 | `698f09544` | `main` |
 | 46 | 2026-07-01 | 收束 ContextDeliveryPlan 上下文消费 | `bb3012f03`, `5fc544fee` | `main` |

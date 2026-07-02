@@ -31,7 +31,12 @@
    - 增加 Windows-gated local/runtime 或 integration test，覆盖对象输出命令。
    - 手动验收时在 terminal tab 输入 `pwd`、`Get-Location`、`dir`、`Get-ChildItem`、`Write-Output (Get-Location).Path`。
 
-7. 入口约束检查
+7. Environment ContextFrame Windows 提示
+   - 在 `environment_context_frame` 中按 Windows platform 追加 PowerShell 文本输出提示。
+   - 非 Windows platform 不出现该提示。
+   - 单元测试覆盖 rendered text 与 Environment section summary/body 的可见性。
+
+8. 入口约束检查
    - 搜索确认未新增旧 Session 形态终端入口。
    - 新前端代码不直接拼装旧 Session 形态 terminal path。
 
@@ -41,6 +46,7 @@
 - `pnpm --filter @agentdash/app-web test -- CommandExecutionCardBody`
 - `cargo test -p agentdash-api terminal`
 - `cargo test -p agentdash-local shell_session_manager`
+- `cargo test -p agentdash-application-runtime-session environment_context_frame`
 - Windows 环境执行 PowerShell terminal 手动验收。
 
 ## Risk Points

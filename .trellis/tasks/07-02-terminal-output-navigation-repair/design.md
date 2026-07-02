@@ -52,6 +52,8 @@ spawn 仍走 runtime surface target 解析。实现时不得引入新的旧 Sess
 
 本任务对 PowerShell 的“解决”是：确认并守住真实进程字节流边界，并用 Windows-gated 测试证明对象输出经过 PTY/PowerShell host formatting 后可见。
 
+同时，Agent 可见的操作提示应放在 `ContextFrame(kind="environment")` 的 Environment 段。该 frame 已经是 system/session policy context，描述当前 OS、架构、模型、executor 与工作目录；Windows-only PowerShell note 可以在这里提醒 Agent：对象输出在非交互工具或脚本路径中需要显式文本化，优先使用字符串字段、`Write-Output` 文本或专用文件工具。该提示不改变 terminal transport，也不作为前端显示修复的替代。
+
 测试失败时优先检查：
 
 - PTY 是否真正启动 PowerShell host。

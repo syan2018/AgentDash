@@ -15,6 +15,7 @@
 - 前端 history hydrate 只跑 `reduceStreamState`，而 reducer 明确过滤 terminal platform event；因此刷新页面、打开历史会话或先产生输出再打开 terminal tab 时，terminal store 可能没有历史输出。
 - 命令执行卡片当前把输出复制到 `promote-*` synthetic terminal，并打开 terminal tab。该 tab 看起来像真实交互终端，但没有真实后端进程，输入/resize 语义会误导用户。
 - 前端 terminal tab 新建和后端 terminal route 仍存在旧 Session 形态入口。实现方案不得新增、依赖或强化这类外露入口；若必须触及 spawn/list contract，应迁移到 AgentRun/workspace runtime surface 所属的命令面。
+- `ContextFrame(kind="environment")` 已在 connector startup context 中作为 system/session policy 投递，适合承载 Windows-only shell 操作提示。该提示服务 Agent 操作策略，不替代终端输出链路修复。
 
 ## Requirements
 
@@ -26,6 +27,7 @@
 6. PowerShell 对象输出必须被作为终端验收项验证：`pwd` / `Get-Location`、`dir` / `Get-ChildItem`、`Write-Output (Get-Location).Path` 都应在 terminal tab 中产生可见文本。
 7. 不新增对外旧 Session 形态终端入口；前端新代码不得直接拼装旧 Session 形态 terminal path。
 8. 不把 PowerShell 修复做成前端字符串拼接或对象 JSON 转换。若验收失败，应在执行准备或 PTY/pipe 字节流边界修复。
+9. Windows 环境下，Environment ContextFrame 应提示 Agent：PowerShell 部分命令返回对象，若通过非交互工具或脚本需要稳定文本输出，应显式选择字符串字段、`Write-Output` 文本或专用文件工具；交互终端仍以真实 PTY/stdout 字节流为准。
 
 ## Acceptance Criteria
 
@@ -36,6 +38,7 @@
 - [ ] 点击命令卡片查看输出/终端会展开 workspace panel 并激活目标 tab。
 - [ ] terminal input、resize、kill 在 relay/local 返回错误时向前端返回稳定错误，不再静默 204。
 - [ ] Windows PowerShell terminal 验收覆盖对象输出命令，证明输出来自真实 PTY/stdout 字节流并在前端可见。
+- [ ] Windows 环境下 Environment ContextFrame 包含 PowerShell 文本输出提示；非 Windows 环境不出现该提示。
 - [ ] 代码搜索确认本任务没有新增旧 Session 形态终端入口或新的前端直接拼路径调用。
 
 ## Out Of Scope

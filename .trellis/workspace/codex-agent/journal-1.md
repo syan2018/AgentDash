@@ -1808,3 +1808,38 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 51: 实现 Agent 并行等待与 mailbox 回传
+
+**Date**: 2026-07-03
+**Task**: 实现 Agent 并行等待与 mailbox 回传
+**Branch**: `codex/terminal-subagents-wait-integration`
+
+### Summary
+
+完成 AgentRun waiting_items 投影、companion/human/subagent mailbox wake envelope、terminal effect auto-resume dedup、前端等待状态展示与刷新测试，并同步 Trellis 契约。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d75d7504` | (see git log) |
+| `cd6240e86` | (see git log) |
+| `2483c9e50` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

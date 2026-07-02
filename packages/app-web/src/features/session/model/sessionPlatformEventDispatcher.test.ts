@@ -16,6 +16,8 @@ function resetTerminalStore(): void {
     terminals: new Map(),
     outputBuffers: new Map(),
     outputBufferBaseOffsets: new Map(),
+    outputBufferRevisions: new Map(),
+    projectedEventKeys: new Set(),
   });
 }
 
@@ -76,6 +78,7 @@ describe("dispatchSessionPlatformEvent", () => {
     useTerminalStore.getState().registerTerminal({
       id: "term-1",
       sessionId: "session-1",
+      capability: "interactive",
       cwd: ".",
       state: "running",
       createdAt: 1,
@@ -97,6 +100,40 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(handled).toBe(true);
     expect(terminal?.state).toBe("exited");
     expect(terminal?.exitCode).toBe(0);
+  });
+
+  it("重复投影同一个 terminal_output event 不重复追加", () => {
+    const event = platformEvent(1, {
+      kind: "terminal_output",
+      data: {
+        terminal_id: "term-1",
+        data: "hello",
+      },
+    });
+
+    expect(dispatchSessionPlatformEvent(event)).toBe(true);
+    expect(dispatchSessionPlatformEvent(event)).toBe(true);
+
+    expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
+  });
+
+  it("terminal_state_changed 可为未注册 terminal 建立 state-only projection", () => {
+    const handled = dispatchSessionPlatformEvent(platformEvent(1, {
+      kind: "terminal_state_changed",
+      data: {
+        terminal_id: "term-1",
+        state: "lost",
+        exit_code: null,
+        message: null,
+      },
+    }));
+
+    const terminal = useTerminalStore
+      .getState()
+      .getTerminalsForSession("session-1")[0];
+    expect(handled).toBe(true);
+    expect(terminal?.capability).toBe("state_only");
+    expect(terminal?.state).toBe("lost");
   });
 
   it("未知 platform event 不消费", () => {

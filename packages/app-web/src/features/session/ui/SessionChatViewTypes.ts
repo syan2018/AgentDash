@@ -11,6 +11,7 @@ import type { ExecutorConfig } from "../../../services/executor";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
+import type { OpenSessionWorkspacePanel } from "./SessionWorkspacePanelActionContext";
 
 export interface PromptTemplate {
   id: string;
@@ -140,4 +141,7 @@ export interface SessionChatViewProps {
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;
+
+  /** 页面级工作区面板打开能力；缺省时卡片不得直接写全局 tab store。 */
+  openWorkspacePanel?: OpenSessionWorkspacePanel;
 }

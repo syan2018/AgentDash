@@ -187,6 +187,98 @@ async function handleUninstall() {
 
 适用范围：写后无 stream invalidation 的 store。如果 store 已订阅事件流（`eventStore`、`sessionHistoryStore` 这类），由 reducer 接管失效，不需要手动 refetch。新建此类 store 时把"写操作的入口在哪里 fetch"写在 store 顶部注释里，避免漏配。
 
+## Terminal Store Capability Projection
+
+`useTerminalStore` 是 terminal tab 展示状态的事实源。它保存 session → terminal registry、
+bounded output buffer、retained base offset、output replacement revision，以及已投影 durable event key。
+
+### 1. Scope / Trigger
+
+- Trigger: terminal tab 同时展示真实交互终端、历史恢复状态和命令输出只读 replay。
+- Scope: `TerminalInfo`, `useTerminalStore`, terminal tab xterm input/resize binding, command output replay tab。
+
+### 2. Signatures
+
+```ts
+export type TerminalCapability =
+  | "interactive"
+  | "read_only_output"
+  | "state_only";
+
+export interface TerminalInfo {
+  id: string;
+  sessionId: string;
+  capability: TerminalCapability;
+  state: TerminalProcessState;
+  cwd: string;
+  exitCode?: number;
+  linkedItemId?: string;
+}
+```
+
+Store actions:
+
+```ts
+registerTerminal(info: TerminalInfo): void;
+updateTerminalState(terminalId, state, exitCode?, sessionId?): void;
+appendOutput(terminalId, data): void;
+replaceOutput(terminalId, data): void;
+projectOutputEvent(sessionId, eventSeq, terminalId, data): boolean;
+projectStateEvent(sessionId, eventSeq, terminalId, state, exitCode?): boolean;
+```
+
+### 3. Contracts
+
+- `interactive` means a backend terminal process exists or is being spawned; terminal tab may send input and resize requests.
+- `read_only_output` means xterm is a replay surface for command output; terminal tab renders output but does not send input or resize.
+- `state_only` means history/state projection has terminal identity and state but no confirmed browser registration metadata; terminal tab renders state and output but does not send input or resize.
+- `replaceOutput` increments an output revision so xterm can clear and replay rewritten command output.
+- `appendOutput` preserves bounded output and advances base offset when retained data is truncated.
+- `registerTerminal` may upgrade an existing `state_only` projection to `interactive` without losing retained output.
+- `projectOutputEvent` and `projectStateEvent` use `session_id:event_seq` as durable idempotence key.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| interactive terminal receives user input | terminal tab sends backend input command |
+| read-only output replay receives user input | terminal tab ignores input side effect |
+| state-only terminal receives resize | terminal tab ignores resize side effect |
+| command output changes from prefix extension | store appends suffix |
+| command output changes non-monotonically | store replaces output and bumps revision |
+| duplicate durable terminal event | store returns `false` and leaves output/state unchanged |
+| terminal removed | registry, output buffer, base offset, and output revision are removed |
+
+### 5. Good/Base/Bad Cases
+
+- Good: command execution card opens `terminal://output/<encoded item id>` backed by `read_only_output`.
+- Base: restored terminal state from history creates `state_only`, then live spawn/list metadata can register a richer terminal info.
+- Bad: synthetic command output id is registered as an interactive terminal, because input would target a backend process that does not exist.
+
+### 6. Tests Required
+
+- Store tests for bounded append/base offset, `replaceOutput` revision, duplicate durable event projection, and state-only creation.
+- Terminal URI tests for interactive and output replay round-trip, including malformed encoded replay URI.
+- Command card tests for read-only replay action and disabled action when no page-level workspace panel action exists.
+- Terminal tab tests or targeted assertions that only `interactive` binds backend input/resize side effects.
+
+### 7. Boundary Mismatch / Canonical
+
+```ts
+// Boundary mismatch: static command output is represented as a backend terminal.
+registerTerminal({ id: `promote-${item.id}`, capability: "interactive", ... });
+```
+
+```ts
+// Canonical: command output uses a replay identity and read-only capability.
+registerTerminal({
+  id: buildCommandOutputReplayTerminalId(item.id),
+  capability: "read_only_output",
+  linkedItemId: item.id,
+  ...
+});
+```
+
 ---
 
 ## 常见错误

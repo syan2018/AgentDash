@@ -702,6 +702,9 @@ export function AgentRunWorkspacePage({
                 onTaskPlanChanged={handleTaskPlanChanged}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
+                openWorkspacePanel={({ typeId, uri, options }) => {
+                  expandWorkspacePanel(typeId, uri, options);
+                }}
               />
             </div>
           </div>

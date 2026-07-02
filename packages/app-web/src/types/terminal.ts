@@ -11,9 +11,15 @@ export type TerminalProcessState =
   | "lost"
   | "killed";
 
+export type TerminalCapability =
+  | "interactive"
+  | "read_only_output"
+  | "state_only";
+
 export interface TerminalInfo {
   id: string;
   sessionId: string;
+  capability: TerminalCapability;
   backendId?: string;
   mountRootRef?: string;
   cwd: string;

@@ -232,6 +232,93 @@ Validation / tests：
 | connector 收到无序 context frames | PiAgent system prompt 按 delivery metadata 排序，仅拼接 system/developer 可消费 entries |
 | connector profile 消费 system/developer frame | 非 Pi connector 使用 `system_append`，PiAgent 使用 `consume` 并由 connector 按 delivery order 拼接 stable system prompt |
 
+## Environment Context Frame
+
+`environment` 是 connector startup context 中的 session policy frame。它描述当前 OS、arch、
+model、executor 和 working directory，并可携带只与运行环境相关的 Agent 操作提示。
+
+### 1. Scope / Trigger
+
+- Trigger: Agent 操作策略需要知道宿主环境差异，例如 Windows PowerShell 对象输出在非交互工具或脚本中的稳定文本化要求。
+- Scope: `crates/agentdash-application-runtime-session/src/session/environment_context_frame.rs`
+  生成的 `ContextFrame(kind = "environment")`。
+
+### 2. Signatures
+
+```rust
+pub struct EnvironmentFrameInput {
+    pub date_utc: String,
+    pub platform: String,
+    pub arch: String,
+    pub model_id: Option<String>,
+    pub executor: String,
+    pub working_directory: Option<String>,
+}
+
+ContextFrameSection::Environment {
+    title,
+    summary,
+    date,
+    platform,
+    model_id,
+    executor,
+    working_directory,
+}
+```
+
+### 3. Contracts
+
+- `kind` is `environment`.
+- Delivery remains connector startup context with session policy semantics.
+- `rendered_text` contains `Date`, `Platform`, `Executor`, and optional `Model` / `Working directory`.
+- When `platform` equals `windows` case-insensitively, `rendered_text` includes a PowerShell text output note:
+  - some PowerShell commands return objects;
+  - non-interactive tools or scripts that need stable text should select string fields, emit text with `Write-Output`, or use dedicated file tools;
+  - interactive terminals still rely on real PTY/stdout bytes.
+- Non-Windows platforms do not include the PowerShell note.
+- The section `summary` may mention the presence of the PowerShell text output note; the full instruction belongs in `rendered_text`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `platform = "windows"` | rendered text contains PowerShell text output note |
+| `platform = "Windows"` | rendered text contains PowerShell text output note |
+| `platform = "linux"` / `darwin` | no PowerShell text output note |
+| `model_id = None` | omit `Model:` line |
+| `working_directory = None` | omit `Working directory:` line |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Windows startup context tells the Agent how to request stable text from PowerShell script/tool paths while preserving terminal transport semantics.
+- Base: Linux startup context only reports environment facts and omits PowerShell-specific guidance.
+- Bad: Encoding or object-output guidance is added to frontend display code, where it cannot guide the Agent before command construction.
+
+### 6. Tests Required
+
+- Unit test for Windows rendered text containing object-output, `Write-Output`, and PTY/stdout wording.
+- Unit test for non-Windows rendered text and section summary omitting the note.
+- Unit test for optional fields staying omitted when input is `None`.
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```rust
+// A UI-only hint cannot influence Agent command construction.
+render_frontend_terminal_hint("PowerShell object output...");
+```
+
+#### Canonical
+
+```rust
+let frame = build_environment_context_frame(&EnvironmentFrameInput {
+    platform: "windows".to_string(),
+    ..input
+})?;
+assert!(frame.rendered_text.contains("Write-Output"));
+```
+
 ## Tool Hot Update
 
 MCP 或 capability 热更新流程：

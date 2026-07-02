@@ -8,9 +8,13 @@ import "@xterm/xterm/css/xterm.css";
 import { authenticatedFetch } from "../../../api/client";
 import { asRecord, requireStringField } from "../../../api/mappers";
 import { buildApiPath } from "../../../api/origin";
-import type { TerminalSpawnResult } from "../../../types/terminal";
+import type { TerminalCapability, TerminalSpawnResult } from "../../../types/terminal";
 import type { TabTypeDescriptor } from "../tab-type-registry";
 import { TerminalIcon } from "./icons";
+import {
+  buildInteractiveTerminalUri,
+  parseTerminalUri,
+} from "./terminal-uri";
 import { useTerminalStore } from "../../session/model/useTerminalStore";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 
@@ -46,7 +50,11 @@ interface TerminalViewProps {
 }
 
 function resolveTerminalTitle(uri: string): string {
-  const id = uri.replace("terminal://", "");
+  const parsed = parseTerminalUri(uri);
+  if (parsed?.mode === "output") {
+    return `输出: ${parsed.itemId.slice(0, 8)}`;
+  }
+  const id = parsed?.terminalId ?? "";
   return id && id !== "new" ? `终端: ${id.slice(0, 8)}` : "新终端";
 }
 
@@ -64,8 +72,10 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   // state 驱动 store 订阅；ref 供 onData/onResize 等事件闭包同步读取
   const [activeId, setActiveId] = useState(initialTerminalId);
   const realIdRef = useRef(initialTerminalId);
+  const isInteractiveRef = useRef(false);
   const [status, setStatus] = useState<"connecting" | "running" | "exited" | "error">("connecting");
   const lastWrittenOffsetRef = useRef(0);
+  const lastOutputRevisionRef = useRef(0);
 
   // ---------- xterm 实例生命周期（仅挂载/卸载） ----------
   useEffect(() => {
@@ -91,7 +101,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
 
     term.onData((data) => {
       const id = realIdRef.current;
-      if (!id || id === "new") return;
+      if (!isInteractiveRef.current || !id || id === "new") return;
       void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/input`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,7 +111,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
 
     term.onResize(({ cols, rows }) => {
       const id = realIdRef.current;
-      if (!id || id === "new") return;
+      if (!isInteractiveRef.current || !id || id === "new") return;
       void authenticatedFetch(buildApiPath(`/terminals/${encodeURIComponent(id)}/resize`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -133,10 +143,16 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   // ---------- 唯一的 xterm 写入路径：store outputBuffer → 增量 write ----------
   const output = useTerminalStore((s) => s.getOutput(activeId));
   const outputBaseOffset = useTerminalStore((s) => s.getOutputBaseOffset(activeId));
+  const outputRevision = useTerminalStore((s) => s.getOutputRevision(activeId));
 
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
+    if (lastOutputRevisionRef.current !== outputRevision) {
+      term.clear();
+      lastWrittenOffsetRef.current = outputBaseOffset;
+      lastOutputRevisionRef.current = outputRevision;
+    }
     // output 为空意味着还没有数据（新终端刚 spawn、或尚未收到会话事件）
     if (!output) return;
     const retainedEndOffset = outputBaseOffset + output.length;
@@ -146,7 +162,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
       term.write(pending);
       lastWrittenOffsetRef.current = retainedEndOffset;
     }
-  }, [output, outputBaseOffset]);
+  }, [output, outputBaseOffset, outputRevision]);
 
   // ---------- 终端状态同步 ----------
   const terminalState = useTerminalStore((s) => {
@@ -157,20 +173,38 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
     }
     return null;
   });
+  const terminalCapability: TerminalCapability = terminalState?.capability ?? (
+    activeId === "new" ? "interactive" : "state_only"
+  );
+  const isInteractiveTerminal = terminalCapability === "interactive";
 
   useEffect(() => {
-    if (terminalState?.state === "exited" || terminalState?.state === "killed") {
+    isInteractiveRef.current = isInteractiveTerminal && activeId !== "new";
+    if (xtermRef.current) {
+      xtermRef.current.options.disableStdin = !isInteractiveTerminal;
+    }
+  }, [activeId, isInteractiveTerminal]);
+
+  useEffect(() => {
+    if (terminalCapability === "read_only_output") {
+      setStatus(terminalState?.state === "running" ? "running" : "exited");
+    } else if (
+      terminalState?.state === "exited" ||
+      terminalState?.state === "killed" ||
+      terminalState?.state === "lost"
+    ) {
       setStatus("exited");
     } else if (terminalState?.state === "running") {
       setStatus("running");
     }
-  }, [terminalState?.state]);
+  }, [terminalCapability, terminalState?.state]);
 
   // ---------- 外部 prop 同步（promote / tab layout 恢复） ----------
   useEffect(() => {
     if (initialTerminalId !== "new" && initialTerminalId !== realIdRef.current) {
       realIdRef.current = initialTerminalId;
       lastWrittenOffsetRef.current = 0;
+      lastOutputRevisionRef.current = 0;
       if (xtermRef.current) xtermRef.current.clear();
       setActiveId(initialTerminalId);
       // 切换 activeId 后，useEffect[output] 会自动从 0 回放
@@ -192,13 +226,17 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
           }`}
         />
         <span>
-          {status === "connecting"
-            ? "连接中..."
-            : status === "running"
-              ? "运行中"
-              : status === "exited"
-                ? `已退出${terminalState?.exitCode !== undefined ? ` (${terminalState.exitCode})` : ""}`
-                : "错误"}
+          {terminalCapability === "read_only_output"
+            ? terminalState?.state === "running" ? "只读输出同步中" : "只读输出"
+            : terminalCapability === "state_only"
+              ? stateOnlyLabel(terminalState?.state, terminalState?.exitCode)
+              : status === "connecting"
+                ? "连接中..."
+                : status === "running"
+                  ? "运行中"
+                  : status === "exited"
+                    ? `已退出${terminalState?.exitCode !== undefined ? ` (${terminalState.exitCode})` : ""}`
+                    : "错误"}
         </span>
         <span className="ml-auto font-mono text-muted-foreground/50">
           {activeId !== "new" ? activeId.slice(0, 12) : ""}
@@ -242,6 +280,7 @@ async function spawnTerminal(
     useTerminalStore.getState().registerTerminal({
       id: realId,
       sessionId,
+      capability: "interactive",
       cwd: ".",
       state: "running",
       processId: data.process_id,
@@ -249,7 +288,7 @@ async function spawnTerminal(
     });
 
     if (tabId) {
-      const uri = `terminal://${realId}`;
+      const uri = buildInteractiveTerminalUri(realId);
       useWorkspaceTabStore.getState().updateTabUri(tabId, uri, resolveTerminalTitle(uri));
     }
 
@@ -323,7 +362,7 @@ export const terminalTabType: TabTypeDescriptor = {
   pinned: false,
 
   renderContent: (props) => {
-    const parsed = terminalTabType.parseUri?.(props.uri);
+    const parsed = parseTerminalUri(props.uri);
     const terminalId = parsed?.terminalId ?? "new";
     return (
       <TerminalView
@@ -337,12 +376,30 @@ export const terminalTabType: TabTypeDescriptor = {
 
   resolveTitle: resolveTerminalTitle,
 
-  parseUri: (uri) => {
-    const terminalId = uri.replace("terminal://", "");
-    return terminalId ? { terminalId } : null;
+  parseUri: (uri): Record<string, string> | null => {
+    const parsed = parseTerminalUri(uri);
+    if (!parsed) return null;
+    if (parsed.mode === "output") {
+      return {
+        terminalId: parsed.terminalId,
+        mode: parsed.mode,
+        itemId: parsed.itemId,
+      };
+    }
+    return { terminalId: parsed.terminalId, mode: parsed.mode };
   },
 
-  buildUri: ({ terminalId }) => `terminal://${terminalId ?? "new"}`,
+  buildUri: ({ terminalId }) => buildInteractiveTerminalUri(terminalId ?? "new"),
   defaultUri: "terminal://new",
   menuOrder: 30,
 };
+
+function stateOnlyLabel(state: string | undefined, exitCode: number | undefined): string {
+  if (state === "exited" || state === "killed" || state === "lost") {
+    return `历史状态: ${state}${exitCode !== undefined ? ` (${exitCode})` : ""}`;
+  }
+  if (state === "running" || state === "starting") {
+    return `历史状态: ${state}`;
+  }
+  return "历史状态";
+}

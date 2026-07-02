@@ -410,9 +410,8 @@ Payload contract:
 
 Contract:
 
-- `POST /sessions` 创建 project-scoped runtime trace，必须先校验调用者对 `project_id` 有 `Use` 权限。
-- 新入口提交 plain `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。
-- Project 归属写入 `LifecycleSubjectAssociation`，runtime trace/delivery refs 写入 `RuntimeSessionExecutionAnchor`，原因是 Session shell 只承载消息流，业务控制面反查需要稳定索引。
+- 产品入口提交 plain `ExecutionIntent(subject_ref=Project, agent_policy=create/reuse, runtime_policy=create_runtime_session)`，由 dispatch 创建或复用 `LifecycleRun`、`LifecycleAgent`、`AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`。保留的 RuntimeSession create route 只作为内部诊断/测试入口，并必须先校验调用者对 `project_id` 有 `Use` 权限。
+- Project 归属写入 `LifecycleSubjectAssociation`，runtime trace/delivery refs 写入 `RuntimeSessionExecutionAnchor`，原因是 RuntimeSession 只承载 trace 和 delivery refs，业务控制面反查需要稳定索引。
 - 显式 workflow launch 会创建或复用 `LifecycleRun.orchestrations[]` 中的 `OrchestrationInstance`，并把 runtime session trace anchor 绑定到 `orchestration_id + node_path + attempt`。
 
 ## Ready Gate

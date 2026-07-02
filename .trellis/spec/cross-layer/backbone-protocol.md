@@ -196,7 +196,19 @@ cache key 与 lifecycle VFS 路径必须共享一个 session scoped item identit
 
 ## NDJSON Session Stream
 
-`GET /api/acp/sessions/{id}/stream/ndjson`
+Product workspace stream:
+
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson
+```
+
+Diagnostic trace stream:
+
+```text
+GET /api/acp/sessions/{id}/stream/ndjson
+```
+
+The product stream resolves the current delivery RuntimeSession from AgentRun refs before opening the same Backbone NDJSON envelope. The diagnostic trace stream is retained for runtime inspection and must pass the same Project `Use` permission through `RuntimeSessionExecutionAnchor`.
 
 每行 JSON：
 

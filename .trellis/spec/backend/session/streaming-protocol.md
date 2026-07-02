@@ -11,7 +11,14 @@ GET /api/events/stream/ndjson?project_id=<uuid>
 Header: x-stream-since-id: <i64> (optional)
 ```
 
-会话事件流：
+AgentRun runtime 事件流：
+
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson
+Header: x-stream-since-id: <u64>
+```
+
+诊断会话事件流：
 
 ```text
 GET /api/acp/sessions/{id}/stream/ndjson
@@ -28,7 +35,9 @@ Query: since_id=<u64> (direct debugging only)
 - `BackendRuntimeChanged { backend_id }` 只触发后端 runtime 状态刷新，不推进 `state_changes` 游标。
 - `Heartbeat { timestamp }` 只用于保活。
 
-## Session Stream Contract
+## Runtime Stream Contract
+
+AgentRun runtime stream 从 run / agent refs 解析当前 delivery RuntimeSession 后，返回同一组 NDJSON envelope。诊断 session stream 从 runtime trace identity 出发，必须通过 `RuntimeSessionExecutionAnchor` 完成 Project `Use` 校验。两条入口共享 event envelope，产品前端优先使用 AgentRun runtime stream。
 
 连接确认行：
 

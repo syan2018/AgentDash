@@ -778,7 +778,7 @@ mod tests {
     }
 }
 
-/// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
+/// Internal diagnostics: GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
 pub async fn get_session_context_projection(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1025,7 +1025,7 @@ pub async fn rollback_session_projection(
     }))
 }
 
-/// GET /sessions/{id}/meta — 返回完整 session meta。
+/// Internal diagnostics: GET /sessions/{id}/meta — 返回完整 runtime trace meta。
 pub async fn get_session_meta(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1034,7 +1034,7 @@ pub async fn get_session_meta(
     get_session(State(state), CurrentUser(current_user), Path(session_id)).await
 }
 
-/// PATCH /sessions/{id}/meta — 用户手动修改会话 meta。
+/// Internal diagnostics: PATCH /sessions/{id}/meta — 修改 runtime trace meta。
 pub async fn update_session_meta(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1364,7 +1364,7 @@ fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
     tags
 }
 
-/// `GET /sessions/{id}/context/audit` —— 返回 session 的 Fragment 审计时间线。
+/// Internal diagnostics: `GET /sessions/{id}/context/audit` —— 返回 runtime trace 的 Fragment 审计时间线。
 ///
 /// 返回按 `at_ms` 升序的事件列表（审计总线内部已保持插入顺序）。
 pub async fn get_session_context_audit(

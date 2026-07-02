@@ -1,5 +1,5 @@
 /**
- * Session Runtime State — 通过后端 `/sessions/{id}/runtime-control` 直接查询。
+ * Runtime trace diagnostic state. AgentRun workspace uses AgentRun scoped runtime control.
  *
  * 不再遍历 lifecycleStore 的 frame cache 做本地反查，
  * 而是让后端通过 RuntimeSessionExecutionAnchor 返回 Session control view。

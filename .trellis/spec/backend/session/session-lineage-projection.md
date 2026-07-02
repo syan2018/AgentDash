@@ -41,3 +41,109 @@ DTOs live in `agentdash-contracts::session` and are generated to `packages/app-w
 ## Ownership Boundary
 
 `session_lineage` explains runtime branch topology and restore provenance. Business visibility is projected through `LifecycleSubjectAssociation` and `AgentLineage`; runtime fork routes return trace refs, while product surfaces decide visibility through subject / agent / run views.
+
+## Scenario: AgentRun Product Fork Over RuntimeSession Projection
+
+### 1. Scope / Trigger
+
+- Trigger: product fork / fork-submit creates a user-visible AgentRun from a stable RuntimeSession projection boundary.
+- Scope: `AgentRunForkService`, `SessionBranchingService::fork_session`, `agent_run_lineages`, `RuntimeSessionExecutionAnchor`, AgentRun command receipts, mailbox delivery, workspace projection, and generated workflow contracts.
+
+RuntimeSession lineage remains the projection provenance layer. AgentRun fork is the product use case because it also creates control-plane ownership, workspace navigation, command idempotency, mailbox intake, and cross-run lineage.
+
+### 2. Signatures
+
+Product HTTP surface:
+
+```text
+POST /agent-runs/{run_id}/agents/{agent_id}/fork
+POST /agent-runs/{run_id}/agents/{agent_id}/fork-submit
+POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
+```
+
+Runtime primitive:
+
+```rust
+SessionBranchingService::fork_session(parent_session_id, fork_point_ref, options)
+```
+
+Durable product lineage:
+
+```sql
+agent_run_lineages.parent_run_id
+agent_run_lineages.parent_agent_id
+agent_run_lineages.child_run_id
+agent_run_lineages.child_agent_id
+agent_run_lineages.relation_kind = 'fork'
+agent_run_lineages.parent_runtime_session_id
+agent_run_lineages.child_runtime_session_id
+agent_run_lineages.fork_point_event_seq
+agent_run_lineages.fork_point_ref_json
+agent_run_lineages.forked_by_user_id
+agent_run_lineages.metadata_json
+```
+
+Ownership facts:
+
+```sql
+lifecycle_runs.created_by_user_id
+lifecycle_agents.created_by_user_id
+```
+
+### 3. Contracts
+
+- `AgentRunForkService` claims the outer AgentRun command receipt before creating a child RuntimeSession. The request digest includes current user, parent run / agent refs, fork point, optional input, and executor/backend selection.
+- `SessionBranchingService::fork_session` validates the model-visible boundary and materializes child RuntimeSession projection only. It does not create LifecycleRun, LifecycleAgent, AgentFrame, mailbox messages, or product lineage.
+- `AgentRunForkMaterializationPort` adopts the child RuntimeSession into a new LifecycleRun / LifecycleAgent / AgentFrame and writes `agent_run_lineages` in one persistence transaction.
+- `fork-submit` writes the submitted `Vec<UserInputBlock>` into the child AgentRun mailbox. Parent AgentRun mailbox and parent RuntimeSession event stream remain unchanged.
+- `AgentRunForkOutcomeView` returns `outcome="forked"`, parent refs, child refs, lineage ref, optional child mailbox result, and `redirect={run_id, agent_id}`.
+- Project `Use` allows reading visible parent AgentRun and creating a current-user fork. Project `Configure` is not required for AgentRun participation.
+- AgentRun owner is `created_by_user_id == current_user.user_id` unless a future explicit control grant says otherwise. Project owner/editor does not silently become owner of another user's AgentRun.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Caller lacks Project `Use` on parent project | reject before runtime fork |
+| Parent AgentRun has no current delivery RuntimeSession | return conflict / delivery_missing |
+| Fork point ref is outside current projection head | return invalid fork point |
+| Fork point lands on incomplete user/assistant/tool-result boundary | return unstable fork point; no child RuntimeSession |
+| Duplicate command receipt accepted | replay stored child refs, mailbox result, and redirect |
+| Duplicate command receipt pending with no accepted refs | return retryable conflict; do not create another child RuntimeSession |
+| Runtime fork succeeds, AgentRun materialization fails | best-effort delete child RuntimeSession and mark receipt terminal failed with diagnostics |
+| Materialization succeeds, fork-submit mailbox write fails | preserve child AgentRun refs in diagnostics; response must distinguish mailbox failure from explicit fork success |
+| Non-owner submits to a visible AgentRun | create child AgentRun owned by current user and deliver input to child mailbox |
+| Owner explicitly forks own AgentRun | create child AgentRun as exploration branch; parent remains unchanged |
+
+### 5. Good/Base/Bad Cases
+
+- Good: member opens another user's visible AgentRun, submits input, receives `outcome="forked"` and navigates to a child AgentRun whose mailbox contains the input.
+- Good: owner clicks fork on a stable assistant round, receives child refs, and continues from that boundary without mutating parent mailbox.
+- Base: repeated explicit fork with the same `client_command_id` replays the same child refs.
+- Boundary mismatch: returning a child RuntimeSession id alone leaves the browser without AgentRun ownership, mailbox, or navigation facts.
+- Canonical flow: RuntimeSession projection fork is immediately adopted into an AgentRun and exposed through AgentRun scoped contracts.
+
+### 6. Tests Required
+
+- RuntimeSession branching tests cover stable message refs, unfinished turns, assistant tool-call boundaries, incomplete tool-result groups, compaction fork points, and projection cleanup.
+- Application tests cover explicit fork, fork-submit, current-user ownership, cross-run lineage, duplicate replay, pending duplicate conflict, terminal failure replay, and parent immutability.
+- API tests cover Project `Use` permission, no Project `Configure` requirement for participation, `composer-submit` fork outcome, and retained diagnostic Session route permission.
+- Frontend tests cover fork redirect navigation, round action disabled reasons, and no product caller using raw Session fork / lineage / rollback services.
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```text
+diagnostic runtime trace fork -> child runtime trace id -> browser continues without AgentRun ownership
+```
+
+#### Canonical
+
+```text
+POST /agent-runs/{run}/agents/{agent}/fork
+  -> AgentRunForkService
+  -> SessionBranchingService::fork_session
+  -> AgentRunForkMaterializationPort
+  -> AgentRunForkOutcomeView { child_run_id, child_agent_id, redirect }
+```

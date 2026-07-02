@@ -166,11 +166,11 @@ return result.envelope;
 
 ## Session Runtime Projection DTO
 
-Session workspace panel、context overview 与 VFS tab 以 `runtime_surface: ResolvedVfsSurface` 作为运行时 mount 展示、默认 mount、可浏览性与编辑能力的唯一 UI 输入。`ExecutionVfs` 保留为 session context DTO 中的 runtime 诊断信息；界面读取 final projection DTO，可以保证 pending runtime patch、VFS overlay 与后端 capability projection 完成后，前端展示的是最终生效的地址空间。
+AgentRun workspace panel、context overview 与 VFS tab 以 AgentRun workspace snapshot 的 `resource_surface: ResolvedVfsSurface` 和 AgentRun scoped runtime endpoints 作为产品 UI 输入。`ExecutionVfs` 保留为 RuntimeSession context DTO 中的 runtime 诊断信息；界面读取 final projection DTO，可以保证 pending runtime patch、VFS overlay 与后端 capability projection 完成后，前端展示的是最终生效的地址空间。
 
-Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfaceSource` 解析 preview surface；Session 入口直接消费 `session_runtime` 的 `runtime_surface`。两类入口共享 VFS browser 组件，但各自的 surface 来源显式表达，方便在跨层测试里验证 preview 与 runtime 语义。
+Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfaceSource` 解析 preview surface；AgentRun 入口消费 workspace snapshot 的 `resource_surface`，RuntimeSession detail 才直接消费 `session_runtime` 的 diagnostic surface。两类入口共享 VFS browser 组件，但各自的 surface 来源显式表达，方便在跨层测试里验证 preview、AgentRun workspace 与 trace/detail 语义。
 
-Session 右侧 WorkspacePanel 消费 current runtime projection state。该 state 以 `runtime_session_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{canvas_mount_id}`；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
+AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{canvas_mount_id}`；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
 
 ## AgentRun Conversation DTO
 
@@ -182,6 +182,8 @@ AgentRun command handlers 以 `ConversationCommandView.enabled`、`unavailable_r
 ProjectAgent draft start 使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`。启动成功后前端只用 `run_ref` / `agent_ref` 导航并刷新 AgentRun workspace；首轮输入是否 queued/launched/failed 由 `initial_message: AgentRunMessageCommandResponse` 和后续 workspace/mailbox projection 表达。前端不从 `runtime_session_id`、可选 `turn_id` 或 HTTP success 派生聊天投递状态，原因是 draft workspace materialization 与 connector accepted 是不同边界。
 
 AgentRun 右侧 WorkspacePanel 使用 snapshot `resource_surface: ResolvedVfsSurface`。该 surface 来自 AgentRun 当前 frame 的 typed VFS surface，并由后端 AgentRun surface resolver 叠加 `RuntimeSessionExecutionAnchor` 锚定的 `agent_run_session` lifecycle mount；RuntimeSession detail 仍可以用 `ResolvedVfsSurfaceSource::SessionRuntime` 展示 trace/detail 视角。两条入口共享 browser 组件，但 AgentRun producer 是 snapshot resource surface，原因是 AgentRun workspace 需要浏览当前 delivery session 的执行证据，而不是数据库层 run inventory。
+
+AgentRun fork/copy round action 消费 generated DTO：fork point 使用 `SessionMessageRefDto` 或后端等价 turn boundary，fork response 使用 `AgentRunForkOutcomeView` / `AgentRunMessageCommandResponse.fork` 中的 child refs 与 redirect。前端不手写 fork outcome union，原因是 `forked`、duplicate replay、mailbox failure 和 redirect 字段需要与后端命令 receipt 保持同一 wire contract。
 
 ---
 

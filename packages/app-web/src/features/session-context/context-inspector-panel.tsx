@@ -5,7 +5,7 @@
  * 每个 fragment 一行。首版支持 scope / slot / source_prefix 过滤，只读，不提供编辑/
  * 禁用按钮（PRD D5 决策）。
  *
- * 数据来自 `/sessions/{id}/context/audit`，3 秒轮询刷新。
+ * Context audit panel. AgentRun workspace uses AgentRun scoped context audit; trace detail can fall back to runtime trace diagnostics.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

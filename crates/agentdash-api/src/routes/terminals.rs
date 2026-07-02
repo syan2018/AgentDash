@@ -15,7 +15,7 @@ use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::sessions::ensure_session_permission;
 use crate::{app_state::AppState, rpc::ApiError};
 
-/// GET /api/sessions/:session_id/terminals
+/// Internal diagnostics: GET /api/sessions/:session_id/terminals
 pub async fn list_terminals(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

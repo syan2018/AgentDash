@@ -11,7 +11,7 @@
 - Story / Task / AgentRun / Workflow 等业务状态以后端为准，前端不自行推断权威状态。
 - Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` / `AgentRunWorkspaceView` 为准；用户可见执行工作台展示 AgentRun Workspace，`RuntimeSession` trace view 只展示 trace，不作为业务执行归属事实源。
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
-- Session workspace panel、context overview 和 VFS tab 以 `runtime_surface` 作为 runtime mount 展示与浏览能力的唯一 UI 输入。
+- AgentRun workspace 的 runtime feed、context overview 和 VFS tab 以 AgentRun scoped runtime endpoints 与 `runtime_surface` 作为 UI 输入；RuntimeSession detail 仅作为内部 trace/diagnostic 视角。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。
 - Workspace tab、runtime data context 和 tab descriptor contract 放在 `features/workspace-runtime`，原因是 extension-runtime、workspace-panel 与 canvas-panel 都需要消费同一 workspace runtime surface，但不应形成 feature 间双向依赖。
 
@@ -120,6 +120,96 @@ const target = selectVfsBackendTarget(runtimeSurface.vfs.mounts, {
   initialMountId: requestedMountId,
   defaultMountId: runtimeSurface.vfs.default_mount_id,
 })
+```
+
+## Scenario: AgentRun Workspace Runtime Feed And Round Actions
+
+### 1. Scope / Trigger
+
+- Trigger: AgentRun workspace needs runtime feed rendering, copy-last-reply actions, fork-from-boundary actions, and fork redirect handling without exposing Session as a product operation.
+- Scope: `AgentRunWorkspacePage`, `SessionChatView` as reusable runtime-feed component, AgentRun scoped services, generated workflow/session contracts, clipboard helper, navigation, and tests.
+
+### 2. Signatures
+
+Frontend service surface:
+
+```ts
+fetchAgentRunRuntimeEvents(runId, agentId, params)
+agentRunRuntimeStreamPath(runId, agentId, params)
+fetchAgentRunContextProjection(runId, agentId)
+fetchAgentRunContextAudit(runId, agentId)
+approveAgentRunToolCall(runId, agentId, toolCallId, request)
+rejectAgentRunToolCall(runId, agentId, toolCallId, request)
+forkAgentRun(runId, agentId, request)
+forkSubmitAgentRun(runId, agentId, request)
+submitAgentRunComposer(runId, agentId, request)
+```
+
+Round action model:
+
+```ts
+type RoundActionModel = {
+  copyLastAgentReply: {
+    enabled: boolean
+    text: string
+  }
+  forkFromHere: {
+    enabled: boolean
+    forkPointRef?: SessionMessageRefDto
+    disabledReason?: string
+  }
+}
+```
+
+### 3. Contracts
+
+- `AgentRunWorkspacePage` owns product identity: route params, workspace snapshot, command submit, fork redirect navigation, and user-visible action state.
+- `SessionChatView` may render runtime feed entries but executes only passed intents. It does not decide whether a submit mutates parent AgentRun or creates a fork.
+- Runtime stream and projection calls from product workspace use AgentRun refs. A runtime session id can appear as a trace ref inside generated DTOs, but browser code does not compose product URLs from it.
+- Composer submit handles `AgentRunMessageCommandResponse.fork` or equivalent fork outcome by navigating to `redirect.run_id + redirect.agent_id` and refreshing that workspace.
+- Copy action writes only the current conversation round's last readable agent reply. Tool results, user text, earlier assistant chunks, and reasoning-only entries are excluded from that clipboard payload.
+- Fork action sends a backend-provided stable `SessionMessageRefDto` / turn boundary. Frontend disabled state is UX guidance; backend remains the authority for boundary validity.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Runtime round has no readable final agent reply | copy action disabled with tooltip reason |
+| Runtime round is streaming or has incomplete tool-call boundary | fork action disabled with backend/user-facing reason |
+| Fork response has redirect refs | navigate to child AgentRun route and refresh workspace |
+| Composer submit returns fork outcome for non-owner | parent workspace is not appended optimistically; navigation follows child refs |
+| AgentRun scoped runtime request fails permission | show workspace command/feed error; do not fall back to raw Session product API |
+| Clipboard write fails | keep UI in current workspace and surface bounded failure state |
+
+### 5. Good/Base/Bad Cases
+
+- Good: user copies a round whose last assistant message is a short answer; clipboard contains exactly that answer text.
+- Good: user forks a stable completed round and lands in a child AgentRun workspace.
+- Base: owner submits in their own AgentRun and receives ordinary mailbox outcome without redirect.
+- Boundary mismatch: product component navigates by runtime trace identity after a fork, leaving no AgentRun ownership or mailbox projection.
+- Canonical flow: product component calls `forkAgentRun` and navigates by child `run_id + agent_id`.
+
+### 6. Tests Required
+
+- Frontend model tests cover round grouping, last-agent-reply extraction, no reply disabled state, and unstable boundary disabled state.
+- Service tests cover AgentRun scoped URLs for runtime events, stream, projection, tool approvals, fork, fork-submit, and composer submit.
+- Workspace tests cover fork redirect navigation, non-owner composer fork outcome, self-owned explicit fork action, and absence of product imports for raw Session fork / lineage / rollback helpers.
+- Typecheck must consume generated contracts directly for fork outcome and `SessionMessageRefDto`.
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```ts
+const result = await runtimeTraceForkDiagnostic(runtimeTraceId, { fork_point_ref })
+navigate(runtimeTraceDetailRoute(result.child_trace_id))
+```
+
+#### Canonical
+
+```ts
+const result = await forkAgentRun(runId, agentId, { fork_point_ref })
+navigate(agentRunRoute(result.redirect.run_id, result.redirect.agent_id))
 ```
 
 ## Contract Appendices

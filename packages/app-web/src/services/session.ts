@@ -67,7 +67,7 @@ export async function updateSessionTitle(id: string, title: string): Promise<Ses
   return api.patch<SessionMeta>(`/sessions/${encodeURIComponent(id)}/meta`, { title });
 }
 
-/** GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。 */
+/** Runtime trace diagnostic fallback for current model-context projection. */
 export async function fetchSessionContextProjection(
   sessionId: string,
 ): Promise<SessionProjectionViewResponse | null> {

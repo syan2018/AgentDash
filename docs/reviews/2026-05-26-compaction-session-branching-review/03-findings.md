@@ -68,7 +68,7 @@
 
 ### P2. Lineage UI 仍是诊断面板，不是完整分支体验
 
-证据：`SessionLineageView` 只展示 parent summary、计数和 direct children；项目列表的 `active-session-list.tsx` 对 relation `linkedChildren` 只渲染一层 `SessionRow`，不递归展示 fork 的 fork。前端服务层已有 `forkSession`、`rollbackSessionProjection`，但聊天页没有对应操作入口。
+证据：`SessionLineageView` 只展示 parent summary、计数和 direct children；项目列表的 `active-session-list.tsx` 对 relation `linkedChildren` 只渲染一层 `SessionRow`，不递归展示 fork 的 fork。当时服务层只有 runtime trace branching helpers，聊天页没有对应操作入口。
 
 影响：用户能看到“有分支”，但无法把 branching 当作日常工作流使用：不能从 lineage 面板跳 parent/child，不能看到完整 tree，不能从 UI 创建 fork/rollback，也看不到 branch summary/handoff。
 

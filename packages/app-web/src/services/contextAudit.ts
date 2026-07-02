@@ -1,7 +1,7 @@
 /**
  * Session Context Audit 客户端
  *
- * 对应后端 `GET /sessions/{id}/context/audit`，返回 Bundle / Fragment 的审计时间线。
+ * Runtime trace diagnostic fallback for Bundle / Fragment audit timeline.
  * 数据由 `InMemoryContextAuditBus` 按 session 环形缓冲提供，前端用于 Context Inspector
  * 面板渲染。
  */

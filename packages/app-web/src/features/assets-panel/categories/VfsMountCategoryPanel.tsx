@@ -24,6 +24,8 @@ import type {
   ProjectVfsMount,
   ProjectVfsMountContent,
 } from "../../../types";
+import type { ConfigurableProviderInfo } from "../../../generated/vfs-contracts";
+import { api } from "../../../api/client";
 import { VfsBrowser } from "../../vfs";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
@@ -53,6 +55,14 @@ interface VfsMountFormState {
 const ALL_CAPABILITIES: Capability[] = ["read", "write", "list", "search"];
 const DEFAULT_INLINE_CAPABILITIES: Capability[] = ["read", "write", "list", "search"];
 const DEFAULT_EXTERNAL_CAPABILITIES: Capability[] = ["read", "list", "search"];
+
+function useMountProviders() {
+  const [providers, setProviders] = useState<ConfigurableProviderInfo[]>([]);
+  useEffect(() => {
+    api.get<ConfigurableProviderInfo[]>("/mount-providers").then(setProviders).catch(() => {});
+  }, []);
+  return providers;
+}
 
 const EMPTY_FORM: VfsMountFormState = {
   mount_id: "",
@@ -186,14 +196,18 @@ export function VfsMountCategoryPanel() {
       setItems((prev) => [...prev, created]);
       bumpRevision(currentProjectId);
       showSuccess(`已创建 VFS Mount：${created.mount_id}`);
-      setForm(formFromMount(created));
-      setDetail({ kind: "edit", mountId: created.mount_id });
+      if (created.content.kind === "inline") {
+        setForm(formFromMount(created));
+        setDetail({ kind: "edit", mountId: created.mount_id });
+      } else {
+        closeDetail();
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : "创建 VFS Mount 失败");
     } finally {
       setIsSaving(false);
     }
-  }, [currentProjectId, detail, form, items, bumpRevision, showError, showSuccess]);
+  }, [currentProjectId, detail, form, items, bumpRevision, closeDetail, showError, showSuccess]);
 
   const handleSave = useCallback(async () => {
     if (!currentProjectId || detail.kind !== "edit") return;
@@ -232,14 +246,13 @@ export function VfsMountCategoryPanel() {
       );
       bumpRevision(currentProjectId);
       showSuccess(`已保存 VFS Mount：${updated.mount_id}`);
-      setForm(formFromMount(updated));
-      setDetail({ kind: "edit", mountId: updated.mount_id });
+      closeDetail();
     } catch (err) {
       showError(err instanceof Error ? err.message : "保存 VFS Mount 失败");
     } finally {
       setIsSaving(false);
     }
-  }, [currentProjectId, detail, form, items, bumpRevision, showError, showSuccess]);
+  }, [currentProjectId, detail, form, items, bumpRevision, closeDetail, showError, showSuccess]);
 
   const handleDelete = useCallback(async () => {
     if (!currentProjectId || !confirmDelete) return;
@@ -448,6 +461,7 @@ function VfsMountEditorDialog({
   onSave: () => void;
   onClose: () => void;
 }) {
+  const mountProviders = useMountProviders();
   if (mode.kind === "closed") return null;
   const isCreate = mode.kind === "create";
   const editingMountId = mode.kind === "edit" ? mode.mountId : null;
@@ -456,7 +470,9 @@ function VfsMountEditorDialog({
   };
 
   const isInline = form.content_kind === "inline";
-  const showVfsBrowser = !isCreate && isInline;
+  const showVfsBrowser = !isCreate;
+
+  const selectedProvider = mountProviders.find((p) => p.service_id === form.service_id) ?? null;
 
   return (
     <div
@@ -561,22 +577,53 @@ function VfsMountEditorDialog({
             {form.content_kind === "external_service" && (
               <>
                 <label className="block space-y-1.5">
-                  <span className="agentdash-form-label">service_id</span>
-                  <input
-                    value={form.service_id}
-                    onChange={(e) => updateField("service_id", e.target.value)}
-                    placeholder="例如 lifecycle_vfs"
+                  <span className="agentdash-form-label">Provider</span>
+                  <select
+                    value={form.service_id || "__select__"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__select__") return;
+                      const matched = mountProviders.find((p) => p.service_id === val);
+                      onFormChange({
+                        ...form,
+                        service_id: val,
+                        capabilities: matched
+                          ? (matched.supported_capabilities as Capability[])
+                          : form.capabilities,
+                      });
+                    }}
                     className="agentdash-form-input"
-                  />
+                  >
+                    <option value="__select__" disabled>
+                      选择 Provider…
+                    </option>
+                    {mountProviders.map((p) => (
+                      <option key={p.service_id} value={p.service_id}>
+                        {p.display_name}
+                      </option>
+                    ))}
+                    {form.service_id &&
+                      !mountProviders.some((p) => p.service_id === form.service_id) && (
+                        <option value={form.service_id}>
+                          {form.service_id}
+                          {mountProviders.length === 0 ? " (加载中…)" : ""}
+                        </option>
+                      )}
+                  </select>
                 </label>
                 <label className="block space-y-1.5">
-                  <span className="agentdash-form-label">root_ref</span>
+                  <span className="agentdash-form-label">Root Ref</span>
                   <input
                     value={form.root_ref}
                     onChange={(e) => updateField("root_ref", e.target.value)}
-                    placeholder="例如 lifecycle://run/..."
+                    placeholder={selectedProvider?.root_ref_hint || "请填写引用路径"}
                     className="agentdash-form-input"
                   />
+                  {selectedProvider?.root_ref_hint && (
+                    <p className="text-[11px] text-muted-foreground">
+                      格式: {selectedProvider.root_ref_hint}
+                    </p>
+                  )}
                 </label>
               </>
             )}
@@ -586,16 +633,24 @@ function VfsMountEditorDialog({
               <div className="flex flex-wrap gap-2">
                 {ALL_CAPABILITIES.map((cap) => {
                   const checked = form.capabilities.includes(cap);
+                  const supported =
+                    !selectedProvider ||
+                    selectedProvider.supported_capabilities.includes(cap);
                   return (
                     <label
                       key={cap}
-                      className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-                        checked ? "border-primary bg-primary/10" : "border-border"
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+                        !supported
+                          ? "cursor-not-allowed border-border/50 text-muted-foreground/50"
+                          : checked
+                            ? "cursor-pointer border-primary bg-primary/10"
+                            : "cursor-pointer border-border"
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={checked}
+                        disabled={!supported}
                         onChange={(e) => {
                           const next = e.target.checked
                             ? [...form.capabilities, cap]

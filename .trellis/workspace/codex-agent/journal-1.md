@@ -1773,3 +1773,38 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: 修复终端输出与跳转链路
+
+**Date**: 2026-07-03
+**Task**: 修复终端输出与跳转链路
+**Branch**: `codex/terminal-subagents-wait-integration`
+
+### Summary
+
+完成终端输出展示与跳转修复：基于 Trellis 调研拆分终端修复与并行等待任务，补齐 Windows Environment ContextFrame PowerShell 提示；前端 history/live terminal event 幂等投影到 terminal store，终端能力区分 interactive/read_only_output/state_only，命令输出改为只读 replay 并通过页面级 action 展开 workspace panel；后端 terminal input/resize/kill 校验 relay response，补 Windows PowerShell 对象输出测试与 code-spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9812555ec` | (see git log) |
+| `ae4875702` | (see git log) |
+| `7b149724a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

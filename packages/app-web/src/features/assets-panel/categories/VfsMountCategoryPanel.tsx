@@ -469,7 +469,6 @@ function VfsMountEditorDialog({
     onFormChange({ ...form, [key]: value });
   };
 
-  const isInline = form.content_kind === "inline";
   const showVfsBrowser = !isCreate;
 
   const selectedProvider = mountProviders.find((p) => p.service_id === form.service_id) ?? null;
@@ -698,4 +697,3 @@ function VfsMountEditorDialog({
     </div>
   );
 }
-

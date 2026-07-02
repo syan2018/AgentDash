@@ -36,6 +36,7 @@ import type {
   ToolSchemaDeltaSection,
   UnknownSection,
   UserPreferencesSection,
+  UserContextSection,
   VfsDeltaSection,
 } from "../../model/contextFrame";
 import { sectionKindToToken } from "../../model/contextFrame";
@@ -107,6 +108,8 @@ function sectionTitle(section: ContextFrameSection): string {
       return section.title || "User Preferences";
     case "project_guidelines":
       return section.title || "Project Guidelines";
+    case "user_context":
+      return section.title || "User Context";
     case "unknown_section":
       return `Unknown Section: ${section.original_kind}`;
   }
@@ -186,6 +189,8 @@ function sectionHint(section: ContextFrameSection): string | null {
       return `${section.items.length} items`;
     case "project_guidelines":
       return `${section.entries.length} files`;
+    case "user_context":
+      return section.provider || `${section.groups.length} groups`;
     case "unknown_section":
       return section.original_kind;
   }
@@ -225,6 +230,8 @@ function renderSectionBody(section: ContextFrameSection) {
       return <UserPreferencesBody section={section} />;
     case "project_guidelines":
       return <ProjectGuidelinesBody section={section} />;
+    case "user_context":
+      return <UserContextBody section={section} />;
     case "unknown_section":
       return <UnknownSectionBody section={section} />;
   }
@@ -861,6 +868,42 @@ function ProjectGuidelinesBody({ section }: { section: ProjectGuidelinesSection 
           )}
         </article>
       ))}
+    </div>
+  );
+}
+
+function UserContextBody({ section }: { section: UserContextSection }) {
+  const chips = [
+    section.user_id ? `user: ${section.user_id}` : null,
+    section.display_name ? `name: ${section.display_name}` : null,
+    section.email ? `email: ${section.email}` : null,
+    section.provider ? `provider: ${section.provider}` : null,
+  ].filter((item): item is string => item != null);
+
+  return (
+    <div className="space-y-2">
+      {section.summary && (
+        <p className="text-xs leading-relaxed text-foreground/75">{section.summary}</p>
+      )}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {chips.map((label) => (
+            <Chip key={label} label={label} />
+          ))}
+        </div>
+      )}
+      {section.groups.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {section.groups.map((group) => (
+            <Chip key={group} label={`group: ${group}`} />
+          ))}
+        </div>
+      )}
+      {section.extra != null && (
+        <div className={CB.codeBlock}>
+          <JsonTree data={section.extra} defaultDepth={2} />
+        </div>
+      )}
     </div>
   );
 }

@@ -24,19 +24,19 @@ Session lineage projection applies to AgentDash-owned cross-session fork and rol
 
 `ContextProjector` builds model input from projection heads. For fork materialization it can build at a specific event head and can build from an explicit compaction id. `context_envelope` segments are projection-origin, synthetic model input entries, and keep original message provenance under their segment provenance.
 
-## API Contract
+## Diagnostic API Contract
 
-The HTTP surface is exposed through ACP session routes:
+The retained HTTP routes are internal diagnostics for runtime trace inspection:
 
 - `POST /sessions/{id}/fork`
 - `GET /sessions/{id}/lineage`
 - `POST /sessions/{id}/projection/rollback`
 
-DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Runtime trace list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from direct `session_lineage` parent edges. Product control trees use `AgentLineage` and subject / agent views; session lineage stays a trace/debug projection.
+These routes must resolve the `RuntimeSessionExecutionAnchor` and apply Project `Use` permission before returning trace facts or mutating projection state. RuntimeSession lineage is not a product interaction surface because it does not materialize `LifecycleRun`, `LifecycleAgent`, `AgentFrame`, AgentRun mailbox, or cross-run AgentRun lineage facts.
 
-Session detail surfaces lineage through the same generated DTO. The chat view branch panel reads `GET /sessions/{id}/lineage` and displays parent source, relation status, fork point and direct children beside the model context projection view.
+DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Runtime trace list entries include `parent_session_id` and `parent_relation_kind`; diagnostic APIs derive these from direct `session_lineage` parent edges. Product control trees use AgentRun workspace projections and AgentRun scoped runtime endpoints, while session lineage stays a trace/debug projection.
 
-`POST /sessions/{id}/fork` always creates `SessionLineageRelationKind::Fork`. Other relation kinds remain trace facts of the lineage model; companion, spawned-agent and rollback-branch semantics are owned by lifecycle / agent services because they imply different lifecycle policy, visibility and restore behavior from an ordinary user fork.
+`SessionBranchingService::fork_session` always creates `SessionLineageRelationKind::Fork`. Other relation kinds remain trace facts of the lineage model; companion, spawned-agent and rollback-branch semantics are owned by lifecycle / agent services because they imply different lifecycle policy, visibility and restore behavior from an ordinary trace fork.
 
 ## Ownership Boundary
 

@@ -1,4 +1,5 @@
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_process::{ProcessDomain, background_tokio_command};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -7,9 +8,8 @@ use agentdash_domain::shared_library::ExtensionTemplatePayload;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
-use crate::process_window::hide_window_for_tokio_command;
 use crate::tool_executor::ToolExecutor;
 
 use super::host_api::resolve_host_api;
@@ -44,14 +44,14 @@ impl ExtensionHostProcess {
             tokio::fs::write(config.runner_dir.join(file_name), source).await?;
         }
         let runner_path = config.runner_dir.join(EXTENSION_HOST_RUNNER_ENTRY);
-        let mut command = Command::new(&config.node_command);
+        let mut command =
+            background_tokio_command(ProcessDomain::ExtensionHost, &config.node_command);
         command
             .arg("--experimental-vm-modules")
             .arg(&runner_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        hide_window_for_tokio_command(&mut command);
         let mut child = command.spawn().map_err(|error| {
             LocalExtensionHostError::Process(format!("启动 node extension host 失败: {error}"))
         })?;

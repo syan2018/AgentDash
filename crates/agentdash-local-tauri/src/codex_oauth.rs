@@ -91,16 +91,16 @@ pub async fn codex_oauth_start(
         },
     );
 
-    tokio::spawn(run_local_codex_oauth_flow(
+    tokio::spawn(run_local_codex_oauth_flow(LocalCodexOAuthFlowTask {
         flow_id,
         api_origin,
         access_token,
-        state,
+        expected_state: state,
         verifier,
         ipv4_listener,
         ipv6_listener,
         cancel_rx,
-    ));
+    }));
 
     Ok(flow)
 }
@@ -115,7 +115,7 @@ pub async fn codex_oauth_cancel(flow_id: String) -> Result<CodexOAuthStatusRespo
     cancel_remote_flow(&flow.api_origin, &flow.access_token, &flow_id).await
 }
 
-async fn run_local_codex_oauth_flow(
+struct LocalCodexOAuthFlowTask {
     flow_id: String,
     api_origin: String,
     access_token: String,
@@ -124,7 +124,20 @@ async fn run_local_codex_oauth_flow(
     ipv4_listener: TcpListener,
     ipv6_listener: Option<TcpListener>,
     cancel_rx: oneshot::Receiver<()>,
-) {
+}
+
+async fn run_local_codex_oauth_flow(task: LocalCodexOAuthFlowTask) {
+    let LocalCodexOAuthFlowTask {
+        flow_id,
+        api_origin,
+        access_token,
+        expected_state,
+        verifier,
+        ipv4_listener,
+        ipv6_listener,
+        cancel_rx,
+    } = task;
+
     let result = await_callback(
         ipv4_listener,
         ipv6_listener,

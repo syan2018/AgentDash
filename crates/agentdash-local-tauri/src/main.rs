@@ -3,8 +3,9 @@
 mod codex_oauth;
 
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_process::{ProcessDomain, background_std_command};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -16,8 +17,7 @@ use agentdash_local::{
     delete_desktop_runtime_profile, ensure_desktop_runtime_config, load_desktop_app_settings,
     load_desktop_runtime_profile_with_server_origin, local_mcp_servers_path,
     normalize_desktop_app_settings, normalize_desktop_runtime_start_request_with_server_origin,
-    probe_mcp_server, process_window::hide_window_for_std_command, save_desktop_app_settings,
-    save_desktop_runtime_profile_with_server_origin,
+    probe_mcp_server, save_desktop_app_settings, save_desktop_runtime_profile_with_server_origin,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use codex_oauth::{codex_oauth_cancel, codex_oauth_start};
@@ -941,13 +941,12 @@ fn spawn_desktop_api_sidecar(config: &DesktopApiConfig) -> anyhow::Result<Child>
         .port_or_known_default()
         .ok_or_else(|| anyhow::anyhow!("桌面端 API origin 缺少端口: {}", config.origin))?;
 
-    let mut command = Command::new(sidecar);
+    let mut command = background_std_command(ProcessDomain::DesktopSidecar, sidecar);
     command
         .env("AGENTDASH_BIND_HOST", host)
         .env("AGENTDASH_PORT", port.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    hide_window_for_std_command(&mut command);
     command
         .spawn()
         .map_err(|error| anyhow::anyhow!("启动桌面端 API sidecar 失败: {error}"))

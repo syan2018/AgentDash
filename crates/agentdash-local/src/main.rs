@@ -423,16 +423,17 @@ fn collect_setup_prompts(
     if args.config.name.is_none() {
         args.config.name = prompt_string("Runner name", Some(&config.runner_name))?;
     }
-    if args.config.workspace_roots.is_empty() && config.workspace_roots.is_empty() {
-        if let Some(value) = prompt_string("Workspace root (empty allowed)", None)? {
-            args.config.workspace_roots.push(PathBuf::from(value));
-        }
+    if args.config.workspace_roots.is_empty()
+        && config.workspace_roots.is_empty()
+        && let Some(value) = prompt_string("Workspace root (empty allowed)", None)?
+    {
+        args.config.workspace_roots.push(PathBuf::from(value));
     }
-    if args.config.executor_enabled == args.config.no_executor {
-        if let Some(value) = prompt_bool("Enable executor?", true)? {
-            args.config.executor_enabled = value;
-            args.config.no_executor = !value;
-        }
+    if args.config.executor_enabled == args.config.no_executor
+        && let Some(value) = prompt_bool("Enable executor?", true)?
+    {
+        args.config.executor_enabled = value;
+        args.config.no_executor = !value;
     }
     args.install_service = prompt_bool("Install as service?", true)?.unwrap_or(true);
     args.start =

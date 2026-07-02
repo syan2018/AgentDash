@@ -1,9 +1,9 @@
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_process::{ProcessDomain, background_tokio_command_with_cwd};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use crate::process_window::hide_window_for_tokio_command;
 use crate::tool_executor::{ToolError, is_absolute_like, resolve_existing_path_with_root};
 use crate::workspace_root_guard::WorkspaceRootGuard;
 
@@ -63,8 +63,6 @@ impl ProcessExecutor {
     ) -> Result<ProcessOutput, ToolError> {
         let cwd = self.resolve_cwd(workspace_root, cwd)?;
         diag!(Debug, Subsystem::AgentRun,
-
-            command = %command,
             workspace_root = workspace_root,
             cwd = %cwd.display(),
             "process_shell_exec"
@@ -86,16 +84,15 @@ impl ProcessExecutor {
     ) -> Result<ProcessOutput, ToolError> {
         let cwd = self.resolve_cwd(workspace_root, cwd)?;
         diag!(Debug, Subsystem::AgentRun,
-
-            command = %command,
-            args = ?args,
+            program = %command,
+            arg_count = args.len(),
             workspace_root = workspace_root,
             cwd = %cwd.display(),
             "process_argv_exec"
         );
 
-        let mut child = tokio::process::Command::new(command);
-        child.args(args).current_dir(cwd);
+        let mut child = background_tokio_command_with_cwd(ProcessDomain::ToolShell, command, &cwd);
+        child.args(args);
         apply_env_overlay(&mut child, env);
         run_output_command(child, timeout_ms).await
     }
@@ -107,7 +104,6 @@ async fn run_output_command(
 ) -> Result<ProcessOutput, ToolError> {
     let timeout_value = timeout_ms.unwrap_or(DEFAULT_PROCESS_TIMEOUT_MS);
     let timeout = Duration::from_millis(timeout_value);
-    hide_window_for_tokio_command(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     match tokio::time::timeout(timeout, command.output()).await {
@@ -130,7 +126,8 @@ fn apply_env_overlay(command: &mut tokio::process::Command, env: &[(String, Stri
 fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
     #[cfg(windows)]
     {
-        let mut shell = tokio::process::Command::new("powershell.exe");
+        let mut shell =
+            background_tokio_command_with_cwd(ProcessDomain::ToolShell, "powershell.exe", cwd);
         let command = format!(
             "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $OutputEncoding; {command}"
         );
@@ -141,15 +138,14 @@ fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-Command")
-            .arg(command)
-            .current_dir(cwd);
+            .arg(command);
         shell
     }
 
     #[cfg(not(windows))]
     {
-        let mut shell = tokio::process::Command::new("sh");
-        shell.arg("-c").arg(command).current_dir(cwd);
+        let mut shell = background_tokio_command_with_cwd(ProcessDomain::ToolShell, "sh", cwd);
+        shell.arg("-c").arg(command);
         shell
     }
 }

@@ -1,0 +1,10 @@
+[package]
+name = "agentdash-process"
+description = "AgentDash 本机进程启动 substrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-diagnostics = { workspace = true }
+tokio = { workspace = true }

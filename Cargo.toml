@@ -13,6 +13,7 @@ members = [
     "crates/agentdash-application-hooks",
     "crates/agentdash-application-shared-library",
     "crates/agentdash-diagnostics",
+    "crates/agentdash-process",
     "crates/agentdash-workspace-module",
     "crates/agentdash-application",
     "crates/agentdash-infrastructure",
@@ -31,11 +32,6 @@ members = [
     "crates/agentdash-local-tauri",
     "crates/agentdash-agent-protocol",
 ]
-exclude = [
-    "vendor/codex-utils-pty",
-]
-
-
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -95,6 +91,7 @@ agentdash-application-workflow = { path = "crates/agentdash-application-workflow
 agentdash-application-hooks = { path = "crates/agentdash-application-hooks" }
 agentdash-application-shared-library = { path = "crates/agentdash-application-shared-library" }
 agentdash-diagnostics = { path = "crates/agentdash-diagnostics" }
+agentdash-process = { path = "crates/agentdash-process" }
 agentdash-workspace-module = { path = "crates/agentdash-workspace-module" }
 agentdash-application = { path = "crates/agentdash-application" }
 agentdash-infrastructure = { path = "crates/agentdash-infrastructure" }
@@ -121,6 +118,3 @@ agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 ts-rs = { version = "11.1", features = ["serde-json-impl", "no-serde-warnings", "chrono-impl"] }
-
-[patch."https://github.com/openai/codex.git"]
-codex-utils-pty = { path = "vendor/codex-utils-pty" }

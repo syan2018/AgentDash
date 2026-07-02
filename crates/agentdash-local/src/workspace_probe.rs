@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use agentdash_process::{ProcessDomain, background_std_command, background_std_command_with_cwd};
 use agentdash_relay::{
     ResponseWorkspaceDetectPayload, WorkspaceGitProbePayload, WorkspaceP4ProbePayload,
 };
 use gix::bstr::ByteSlice;
-
-use crate::process_window::hide_window_for_std_command;
 
 pub fn detect_workspace(path: &Path) -> ResponseWorkspaceDetectPayload {
     detect_workspace_with_p4_context(path, None)
@@ -204,9 +202,8 @@ fn detect_p4_workspace(
 pub(crate) fn detect_p4_executable() -> Option<String> {
     let lookup = if cfg!(windows) { "where" } else { "which" };
     let candidate = if cfg!(windows) { "p4.exe" } else { "p4" };
-    let mut command = Command::new(lookup);
+    let mut command = background_std_command(ProcessDomain::WorkspaceProbe, lookup);
     command.arg(candidate);
-    hide_window_for_std_command(&mut command);
     let output = command.output().ok()?;
     if !output.status.success() {
         return None;
@@ -241,8 +238,9 @@ fn run_p4_tagged(
     args: &[&str],
     context: Option<&P4ProbeContext>,
 ) -> Result<HashMap<String, String>, String> {
-    let mut command = Command::new(executable);
-    command.current_dir(cwd).arg("-ztag").args(args);
+    let mut command =
+        background_std_command_with_cwd(ProcessDomain::WorkspaceProbe, executable, cwd);
+    command.arg("-ztag").args(args);
     if let Some(context) = context {
         if let Some(server_address) = context.server_address.as_deref() {
             command.env("P4PORT", server_address);
@@ -251,7 +249,6 @@ fn run_p4_tagged(
             command.env("P4CLIENT", client_name);
         }
     }
-    hide_window_for_std_command(&mut command);
     let output = command
         .output()
         .map_err(|err| format!("启动 p4 失败: {err}"))?;

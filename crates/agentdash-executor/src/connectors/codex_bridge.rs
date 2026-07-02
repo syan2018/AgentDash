@@ -13,6 +13,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     PlatformEvent, SourceInfo, TraceInfo,
 };
+use agentdash_process::{ProcessDomain, background_tokio_command_with_cwd};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
     ExecutionContext, ExecutionStream, PromptPayload,
@@ -221,18 +222,6 @@ fn executable_candidates(name: &str) -> Vec<String> {
     } else {
         vec![name.to_string()]
     }
-}
-
-fn spawn_codex_process(
-    command: &mut tokio::process::Command,
-) -> std::io::Result<tokio::process::Child> {
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    command.spawn()
 }
 
 fn codex_discovery_patch() -> json_patch::Patch {
@@ -643,21 +632,25 @@ impl AgentConnector for CodexBridgeConnector {
         })?;
         let prompt_text = build_prompt_text(&context, prompt)?;
 
-        let mut process = tokio::process::Command::new("npx");
+        let mut process = background_tokio_command_with_cwd(
+            ProcessDomain::CodexBridge,
+            "npx",
+            &context.session.working_directory,
+        );
         process
             .args(["-y", "@openai/codex@0.124.0", "app-server"])
             .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .current_dir(&context.session.working_directory)
             .env("NPM_CONFIG_LOGLEVEL", "error")
             .env("NODE_NO_WARNINGS", "1")
             .env("NO_COLOR", "1")
             .env("RUST_LOG", "error")
             .envs(context.session.environment_variables.clone());
 
-        let mut child = spawn_codex_process(&mut process)
+        let mut child = process
+            .spawn()
             .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
         let stdout = child.stdout.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string())

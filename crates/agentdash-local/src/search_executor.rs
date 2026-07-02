@@ -2,10 +2,10 @@ use agentdash_diagnostics::{Subsystem, diag};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agentdash_process::{ProcessDomain, background_tokio_command};
 use agentdash_relay::SearchHit;
 
 use crate::file_discovery_policy::FileDiscoveryPolicy;
-use crate::process_window::hide_window_for_tokio_command;
 use crate::tool_executor::{ToolError, resolve_existing_path_with_root, workspace_relative_path};
 
 const SEARCH_TIMEOUT_MS: u64 = 30_000;
@@ -73,13 +73,14 @@ async fn detect_ripgrep() -> Option<PathBuf> {
         vec!["rg"]
     };
     for name in candidates {
-        let mut command =
-            tokio::process::Command::new(if cfg!(windows) { "where" } else { "which" });
+        let mut command = background_tokio_command(
+            ProcessDomain::WorkspaceProbe,
+            if cfg!(windows) { "where" } else { "which" },
+        );
         command
             .arg(name)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
-        hide_window_for_tokio_command(&mut command);
         if let Ok(output) = command.output().await
             && output.status.success()
         {
@@ -100,7 +101,7 @@ async fn run_ripgrep(
     params: &SearchParams<'_>,
     policy: FileDiscoveryPolicy,
 ) -> Result<(Vec<SearchHit>, bool), ToolError> {
-    let mut cmd = tokio::process::Command::new(rg_path);
+    let mut cmd = background_tokio_command(ProcessDomain::WorkspaceProbe, rg_path);
     cmd.arg("--json")
         .arg("--max-count")
         .arg(params.max_results.to_string());
@@ -119,7 +120,6 @@ async fn run_ripgrep(
     }
 
     cmd.arg("--").arg(params.query).arg(search_dir);
-    hide_window_for_tokio_command(&mut cmd);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 

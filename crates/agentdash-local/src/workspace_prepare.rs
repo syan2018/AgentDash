@@ -1,13 +1,12 @@
 use std::path::Path;
-use std::process::Command;
 
 use agentdash_domain::workspace::{
     GitWorkspaceIdentityContract, GitWorkspaceMatchMode, P4WorkspaceIdentityContract,
     P4WorkspaceMatchMode, WorkspaceIdentityKind, normalize_identity_payload,
 };
+use agentdash_process::{ProcessDomain, background_std_command_with_cwd};
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
-use crate::process_window::hide_window_for_std_command;
 
 pub fn prepare_workspace(
     path: &Path,
@@ -195,9 +194,8 @@ fn prepare_p4_workspace(
 }
 
 fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
-    let mut command = Command::new("git");
-    command.current_dir(path).args(args);
-    hide_window_for_std_command(&mut command);
+    let mut command = background_std_command_with_cwd(ProcessDomain::WorkspaceProbe, "git", path);
+    command.args(args);
     let output = command
         .output()
         .map_err(|error| format!("启动 git 失败: {error}"))?;
@@ -216,11 +214,8 @@ fn run_git(path: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 fn git_ref_exists(path: &Path, reference: &str) -> Result<bool, String> {
-    let mut command = Command::new("git");
-    command
-        .current_dir(path)
-        .args(["rev-parse", "--verify", "--quiet", reference]);
-    hide_window_for_std_command(&mut command);
+    let mut command = background_std_command_with_cwd(ProcessDomain::WorkspaceProbe, "git", path);
+    command.args(["rev-parse", "--verify", "--quiet", reference]);
     let output = command
         .output()
         .map_err(|error| format!("检查 Git ref 失败: {error}"))?;
@@ -228,9 +223,8 @@ fn git_ref_exists(path: &Path, reference: &str) -> Result<bool, String> {
 }
 
 fn run_p4(path: &Path, args: &[&str]) -> Result<(), String> {
-    let mut command = Command::new("p4");
-    command.current_dir(path).args(args);
-    hide_window_for_std_command(&mut command);
+    let mut command = background_std_command_with_cwd(ProcessDomain::WorkspaceProbe, "p4", path);
+    command.args(args);
     let output = command
         .output()
         .map_err(|error| format!("启动 p4 失败: {error}"))?;
@@ -252,9 +246,8 @@ fn run_p4_tagged(
     path: &Path,
     args: &[&str],
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let mut command = Command::new("p4");
-    command.current_dir(path).arg("-ztag").args(args);
-    hide_window_for_std_command(&mut command);
+    let mut command = background_std_command_with_cwd(ProcessDomain::WorkspaceProbe, "p4", path);
+    command.arg("-ztag").args(args);
     let output = command
         .output()
         .map_err(|error| format!("启动 p4 失败: {error}"))?;

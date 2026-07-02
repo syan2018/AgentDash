@@ -8,6 +8,9 @@ use agentdash_application::mcp_relay_adapter::{
 };
 use agentdash_domain::mcp_preset::McpTransportConfig;
 use agentdash_mcp::render_content;
+use agentdash_process::{
+    ProcessDomain, background_tokio_command, background_tokio_command_with_cwd,
+};
 use agentdash_relay::{
     McpServerInfoRelay, McpServerRelay, McpToolInfoRelay, ResponseMcpCallToolPayload,
 };
@@ -19,7 +22,6 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use crate::local_backend_config::McpLocalServerEntry;
-use crate::process_window::hide_window_for_tokio_command;
 use crate::runtime::{LocalCapabilityHealthAction, LocalCapabilityHealthItem};
 
 // ─── Client Manager ──────────────────────────────────────
@@ -239,15 +241,16 @@ impl McpClientManager {
                 env,
                 cwd,
             } => {
-                let mut cmd = tokio::process::Command::new(command);
+                let mut cmd = match cwd {
+                    Some(cwd) => {
+                        background_tokio_command_with_cwd(ProcessDomain::McpStdio, command, cwd)
+                    }
+                    None => background_tokio_command(ProcessDomain::McpStdio, command),
+                };
                 cmd.args(args);
                 for var in env {
                     cmd.env(&var.name, &var.value);
                 }
-                if let Some(cwd) = cwd {
-                    cmd.current_dir(cwd);
-                }
-                hide_window_for_tokio_command(&mut cmd);
                 let transport = TokioChildProcess::new(cmd)
                     .map_err(|e| anyhow::anyhow!("spawn stdio MCP 进程失败: {e}"))?;
                 ().serve(transport)

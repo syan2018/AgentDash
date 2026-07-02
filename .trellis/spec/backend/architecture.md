@@ -80,6 +80,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
 - Canvas access projection 放在 domain，原因是 Canvas 管理 API、Workspace Module descriptor、runtime VFS mount 暴露和 Canvas 文件操作都需要消费同一份 view/edit/runtime-write 语义；各 application adapter 只负责提供当前身份与 Project access 上下文。
 - `agentdash-executor` 直接维护 Codex app-server bridge，原因是本机进程生命周期、connector 能力声明与 Backbone 事件投影属于 AgentDash runtime 边界，外部编排 crate 不应成为该边界的事实源。
+- `agentdash-process` 承载 AgentDash 自有后台子进程启动 substrate，原因是本机 relay、MCP stdio、tool shell、workspace probe、function runner、desktop sidecar 和 Codex bridge 都可能从桌面 GUI 宿主触发 console 子进程；统一的 `ProcessVisibility` / `ProcessDomain` 边界让 Windows 后台启动静默、诊断可按 domain/program/cwd/visibility 回溯，且不记录 args/env 等 credential-bearing 值。
 - Extension package artifact 独立于 LibraryAsset payload，原因是正式插件包是平台可下载、可校验、可审计的运行产物；owner 模型让 Project 本地导入与 LibraryAsset Marketplace 模板共享同一套 digest、storage 与访问校验。
 - Extension package archive object storage 端口放在 `agentdash-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。
 - Route module 自持 router 表，原因是 endpoint ownership 应与 handler/module ownership 对齐；根 router 只表达 secured/public 装配，避免跨资源长链路表成为协议事实源。

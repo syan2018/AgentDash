@@ -2,12 +2,14 @@
 
 use std::sync::Arc;
 
+use agentdash_process::{
+    ProcessDomain, background_tokio_command, background_tokio_command_with_cwd,
+};
 use agentdash_relay::*;
 use rmcp::transport::child_process::TokioChildProcess;
 
 use super::CommandDispatchPlan;
 use crate::mcp_client_manager::McpClientManager;
-use crate::process_window::hide_window_for_tokio_command;
 
 /// 一次性 probe 超时（秒）——覆盖进程 spawn + MCP 握手 + tools/list 全过程。
 const PROBE_TIMEOUT_SECS: u64 = 15;
@@ -51,15 +53,16 @@ impl McpCommandHandler {
                     env,
                     cwd,
                 } => {
-                    let mut cmd = tokio::process::Command::new(command);
+                    let mut cmd = match cwd {
+                        Some(cwd) => {
+                            background_tokio_command_with_cwd(ProcessDomain::McpStdio, command, cwd)
+                        }
+                        None => background_tokio_command(ProcessDomain::McpStdio, command),
+                    };
                     cmd.args(args);
                     for var in env {
                         cmd.env(&var.name, &var.value);
                     }
-                    if let Some(cwd) = cwd {
-                        cmd.current_dir(cwd);
-                    }
-                    hide_window_for_tokio_command(&mut cmd);
                     let child = TokioChildProcess::new(cmd)
                         .map_err(|e| format!("spawn stdio 进程失败: {e}"))?;
                     let client = rmcp::ServiceExt::serve((), child)

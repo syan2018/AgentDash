@@ -27,6 +27,7 @@ agentdash-application-vfs = { workspace = true }
 agentdash-domain.workspace = true
 agentdash-infrastructure.workspace = true
 agentdash-mcp.workspace = true
+agentdash-process = { workspace = true }
 codex-utils-pty.workspace = true
 codex-utils-output-truncation.workspace = true
 

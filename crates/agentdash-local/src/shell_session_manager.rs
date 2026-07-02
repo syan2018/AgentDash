@@ -277,7 +277,7 @@ impl ShellSessionManager {
                 payload.max_output_bytes,
             )
             .await
-            .map_err(|message| ToolError::InvalidPath(message))?;
+            .map_err(ToolError::InvalidPath)?;
         let (stdout, stderr, pty) = split_output(&read.chunks);
         Ok(ToolShellExecResponse {
             call_id: payload.call_id,

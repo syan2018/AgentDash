@@ -602,15 +602,15 @@ fn first_vec<T>(
     if let Some(value) = env {
         return (Some(value), ConfigSource::Env);
     }
-    if let Some(value) = file {
-        if !value.is_empty() {
-            return (Some(value), ConfigSource::File);
-        }
+    if let Some(value) = file
+        && !value.is_empty()
+    {
+        return (Some(value), ConfigSource::File);
     }
-    if let Some(value) = embedded {
-        if !value.is_empty() {
-            return (Some(value), ConfigSource::Embedded);
-        }
+    if let Some(value) = embedded
+        && !value.is_empty()
+    {
+        return (Some(value), ConfigSource::Embedded);
     }
     if let Some(value) = default {
         return (Some(value), ConfigSource::Default);

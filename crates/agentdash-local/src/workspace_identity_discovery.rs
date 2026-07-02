@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 use agentdash_domain::workspace::{
     P4WorkspaceIdentityContract, P4WorkspaceMatchMode, WorkspaceIdentityKind,
     identity_payload_from_detected_facts, identity_payload_matches_detected_facts,
     normalize_identity_payload,
 };
+use agentdash_process::{ProcessDomain, background_std_command, background_std_command_with_cwd};
 use agentdash_relay::{
     CommandWorkspaceDiscoverByIdentityPayload, ResponseWorkspaceDetectPayload,
     ResponseWorkspaceDiscoverByIdentityPayload, WorkspaceIdentityDiscoveryCandidateRelay,
@@ -15,7 +15,6 @@ use agentdash_relay::{
 };
 use serde_json::{Value, json};
 
-use crate::process_window::hide_window_for_std_command;
 use crate::tool_executor::resolve_detect_workspace_root;
 use crate::workspace_probe::{
     P4ProbeContext, detect_p4_executable, detect_workspace_with_p4_context, normalize_display_path,
@@ -362,12 +361,15 @@ impl P4Cli {
     }
 
     fn run(&self, args: &[String], cwd: Option<&Path>) -> Result<String, String> {
-        let mut command = Command::new(&self.executable);
+        let mut command = match cwd {
+            Some(cwd) => background_std_command_with_cwd(
+                ProcessDomain::WorkspaceProbe,
+                &self.executable,
+                cwd,
+            ),
+            None => background_std_command(ProcessDomain::WorkspaceProbe, &self.executable),
+        };
         command.args(args);
-        if let Some(cwd) = cwd {
-            command.current_dir(cwd);
-        }
-        hide_window_for_std_command(&mut command);
         let output = command
             .output()
             .map_err(|error| format!("启动 p4 失败: {error}"))?;

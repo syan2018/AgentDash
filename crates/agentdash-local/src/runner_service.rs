@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use agentdash_process::{ProcessDomain, background_std_command};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +107,8 @@ impl ServiceExecutor for RealServiceExecutor {
     }
 
     fn run(&mut self, program: &str, args: &[&str]) -> anyhow::Result<CommandOutput> {
-        let output = Command::new(program)
+        let mut command = background_std_command(ProcessDomain::RunnerService, program);
+        let output = command
             .args(args)
             .output()
             .with_context(|| format!("执行命令失败: {}", redact_command(program, args)))?;

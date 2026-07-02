@@ -24,17 +24,14 @@ pub struct McpProbeTransportInput {
     pub runtime_binding: Option<McpRuntimeBindingConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum McpProbeTarget {
+    #[default]
     DefaultUserLocal,
-    Backend { backend_id: String },
-}
-
-impl Default for McpProbeTarget {
-    fn default() -> Self {
-        Self::DefaultUserLocal
-    }
+    Backend {
+        backend_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

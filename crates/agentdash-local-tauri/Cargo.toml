@@ -10,6 +10,7 @@ build = "build.rs"
 agentdash-contracts = { path = "../agentdash-contracts" }
 agentdash-local = { path = "../agentdash-local", default-features = false }
 agentdash-relay = { path = "../agentdash-relay" }
+agentdash-process = { workspace = true }
 
 anyhow.workspace = true
 serde.workspace = true

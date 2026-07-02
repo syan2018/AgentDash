@@ -703,9 +703,10 @@ fn merge_tool_policy_for_intersection(
 ///
 /// 状态属于具体 MCP source，而不是 `ToolDimension` 的旁路字段。这样执行面、
 /// capability delta 与上下文帧都能从同一个 source 投影当前可用性。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RuntimeMcpSourceReadiness {
+    #[default]
     Pending,
     Ready {
         tool_count: usize,
@@ -714,12 +715,6 @@ pub enum RuntimeMcpSourceReadiness {
         reason_code: String,
         message: String,
     },
-}
-
-impl Default for RuntimeMcpSourceReadiness {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl RuntimeMcpSourceReadiness {

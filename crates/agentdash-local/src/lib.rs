@@ -16,7 +16,6 @@ mod materialization;
 mod mcp_client_manager;
 mod mcp_connect;
 mod process_executor;
-pub mod process_window;
 pub mod runner_claim;
 pub mod runner_config;
 mod runner_redaction;

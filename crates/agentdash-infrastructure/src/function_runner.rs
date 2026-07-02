@@ -6,10 +6,12 @@
 //! the corresponding activity event.
 
 use agentdash_domain::workflow::{ApiRequestExecutorSpec, BashExecExecutorSpec};
+use agentdash_process::{
+    ProcessDomain, background_tokio_command, background_tokio_command_with_cwd,
+};
 use agentdash_spi::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::process::Command;
 
 /// Function runner backed by `reqwest` + `tokio::process` + `tera`.
 #[derive(Debug, Default, Clone)]
@@ -72,14 +74,22 @@ impl FunctionRunner for DefaultFunctionRunner {
             .map(|arg| render_template(arg, context))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut command_builder = Command::new(command);
-        command_builder.args(args);
-        if let Some(working_directory) = &spec.working_directory {
-            let rendered = render_template(working_directory, context)?;
-            if !rendered.trim().is_empty() {
-                command_builder.current_dir(rendered);
+        let working_directory = spec
+            .working_directory
+            .as_ref()
+            .map(|template| render_template(template, context))
+            .transpose()?;
+        let mut command_builder = match working_directory
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(cwd) => {
+                background_tokio_command_with_cwd(ProcessDomain::FunctionRunner, &command, cwd)
             }
-        }
+            None => background_tokio_command(ProcessDomain::FunctionRunner, &command),
+        };
+        command_builder.args(args);
 
         let output = command_builder
             .output()

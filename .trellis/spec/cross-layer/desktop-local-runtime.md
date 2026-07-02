@@ -13,6 +13,90 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 - **Tauri commands**：profile / runtime / logs / MCP / open_external_url（定义在 `agentdash-local-tauri`）
 - **TS port**：`LocalRuntimeClient`（`@agentdash/core`），Tauri 适配层实现 `invoke()` 绑定
 
+## Scenario: AgentDash 后台进程启动 Substrate
+
+### 1. Scope / Trigger
+
+- Trigger: 本机 relay、MCP stdio、tool shell、workspace probe、function runner、desktop sidecar、Codex bridge 和 extension host 都可能从 Windows 桌面 GUI 宿主触发 console 子进程；后台子进程必须统一静默启动并保留可定位诊断。
+- Scope: `agentdash-process` crate、`agentdash-local`、`agentdash-local-tauri`、`agentdash-executor`、`agentdash-infrastructure` 的后台 spawn 边界；`scripts/`、`pnpm dev` 和用户显式 terminal surface 不属于该后台策略。
+
+### 2. Signatures
+
+```rust
+pub enum ProcessVisibility {
+    Background,
+    UserVisible,
+}
+
+pub enum ProcessDomain {
+    McpStdio,
+    ToolShell,
+    TerminalPty,
+    WorkspaceProbe,
+    FunctionRunner,
+    DesktopSidecar,
+    CodexBridge,
+    PostgresRuntime,
+    ExtensionHost,
+    RunnerService,
+}
+
+pub fn background_std_command(domain: ProcessDomain, program: impl AsRef<OsStr>) -> std::process::Command;
+pub fn background_std_command_with_cwd(domain: ProcessDomain, program: impl AsRef<OsStr>, cwd: impl AsRef<Path>) -> std::process::Command;
+pub fn background_tokio_command(domain: ProcessDomain, program: impl AsRef<OsStr>) -> tokio::process::Command;
+pub fn background_tokio_command_with_cwd(domain: ProcessDomain, program: impl AsRef<OsStr>, cwd: impl AsRef<Path>) -> tokio::process::Command;
+```
+
+### 3. Contracts
+
+- `Background` 子进程在 Windows 下应用无窗口创建策略，原因是这些进程的 stdout/stderr/stdin 由 AgentDash 捕获或协议消费，不应拥有独立 OS console surface。
+- `process_spawn` 诊断只记录 `domain`、`program`、`cwd`、`visibility`、`hidden_window`，原因是 args/env 可能携带 token、header、prompt 或 workspace 业务上下文。
+- HTTP/SSE MCP 只创建网络 transport；stdio MCP 才通过后台进程 substrate 启动本机 server。
+- Codex PTY / ConPTY 使用上游 `codex-utils-pty`，原因是 PTY 自身是 terminal surface；AgentDash 只治理外围后台 spawn。
+- `scripts/` 与 `pnpm dev` 保持开发者前台编排，原因是调试启动链需要可观察 stdout/stderr 和可手动停止的终端上下文。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| 后台 Rust 执行面新增裸 `Command::new` | `node scripts/check-background-process-spawn.js` 失败 |
+| 后台 Rust 执行面新增直接 `creation_flags(CREATE_NO_WINDOW)` | guard 失败，要求进入 `agentdash-process` |
+| HTTP/SSE MCP 连接 | 不创建本机子进程，只通过 HTTP worker 建连 |
+| stdio MCP 连接或 probe | 通过 `ProcessDomain::McpStdio` 创建后台 command |
+| Windows GUI host 下后台 spawn | `hidden_window=true` 诊断可见，子进程不弹独立 console |
+
+### 5. Good/Base/Bad Cases
+
+- Good: relay tool shell 用 `background_tokio_command_with_cwd(ProcessDomain::ToolShell, ...)` 启动 PowerShell，并由调用方 pipe stdout/stderr。
+- Good: Desktop API sidecar 用 `background_std_command(ProcessDomain::DesktopSidecar, ...)` 启动并将输出接到 null 或诊断通道。
+- Base: `pnpm dev` 仍由开发者终端启动，不经过 `agentdash-process`。
+- Bad: 在 handler 内直接 `tokio::process::Command::new("powershell.exe")`。
+
+### 6. Tests Required
+
+- Guard test command: `node scripts/check-background-process-spawn.js` 必须覆盖 `agentdash-local`、`agentdash-local-tauri`、`agentdash-executor`、`agentdash-infrastructure` 和 `agentdash-process`。
+- Rust check: `cargo check -p agentdash-local`、`cargo check -p agentdash-executor`、`cargo check -p agentdash-infrastructure` 覆盖主要后台 spawn 消费方。
+- MCP regression: HTTP/SSE transport 继续只走 `mcp_http_worker`；stdio transport 保留 env/cwd 传递。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let mut command = tokio::process::Command::new("powershell.exe");
+command.current_dir(cwd);
+```
+
+#### Correct
+
+```rust
+let mut command = background_tokio_command_with_cwd(
+    ProcessDomain::ToolShell,
+    "powershell.exe",
+    cwd,
+);
+```
+
 ## 核心约束
 
 ### API 与 Dashboard
@@ -576,6 +660,7 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 - `agentdash-local` 管理 Node-based extension host 子进程，通过 stdio JSON line 协议执行 activate / reload / invoke / health。
 - Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permission_guard.rs` 执行 host API 权限裁决、`schema.rs` 执行 JSON Schema 子集校验、`runner/agentdash-extension-host-runner.mjs` 承载 JS runtime 源码，`runner.rs` 只负责 `include_str!` 嵌入，原因是本机插件执行、协议、权限、schema validation 和 runner 分发会独立演进。
 - Extension bundle 作为 trusted local extension 在 Node runner context 中加载 self-contained ESM，原因是当前执行面使用本机 Node host 子进程承载插件代码；Host API facade 提供产品权限、协议稳定性与审计入口，不把 Node `vm` 作为不受信代码的安全隔离边界。
+- Node extension host 作为 AgentDash 外围后台 stdio 进程通过 `agentdash-process` substrate 启动，原因是桌面 GUI 宿主下该进程没有用户可见终端 surface，运行诊断只需要 domain/program/cwd/visibility 等启动事实。
 - `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
 - Host API 运行时裁决使用当前 action 或 provider channel method 的 `permissions` 声明；manifest 顶层 capability 用于安装摘要、依赖解析、可用性诊断和审计，原因是当前插件执行模型是 trusted local extension，不把顶层 capability 重复做成 deny path。
 - `ctx.api.runtime.invoke()` 优先调用当前 Project 已预加载 extension host 中注册的 runtime action；跨 extension action 调用要求当前 action 或 channel method 声明 `runtime.invoke:<action_key>` 或 `runtime.invoke`，并由 runner 限制 invocation depth，原因是 RuntimeGateway 已在 relay payload 中提供 Project enabled extension host surface，本机 runner 可以在同一 host process 内完成可信工具模型下的快速路由。
@@ -747,6 +832,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 - Backend selection may still use `server.name` to find a backend that declared the capability; command execution uses the payload `server.transport`.
 - Local `McpClientManager::capability_entries()` reports static configured server names as backend capabilities. It is not the source for runtime-resolved transport.
 - Local `McpClientManager::list_tools()` and `call_tool()` convert payload `McpServerRelay` through `agentdash_application::mcp_relay_adapter::relay_mcp_server_to_runtime` and connect with that transport.
+- Local stdio MCP 通过 AgentDash 外围后台进程 substrate 启动，原因是 stdio transport 是无 UI 的协议进程；HTTP/SSE MCP 仍是纯网络 transport；Codex PTY / ConPTY 走上游 `codex-utils-pty`，原因是 PTY 本身是终端 surface，窗口策略根因归属 AgentDash 外围后台 spawn 边界。
 - Local manager accepts project-scoped relay declarations by default; the project AgentFrame MCP surface is the runtime declaration source.
 - Local `mcp_protect_mode` defaults to `false`. When enabled in `local-backend.json`, the static local MCP catalog becomes the protect-mode allowlist and requires an exact server name + resolved transport match before connecting.
 - Connection pool identity is `server name + stable SHA-256 hash(serialized resolved transport)`. Same-name servers from different runtime contexts must not share a client when URL, headers, env, or cwd differ.

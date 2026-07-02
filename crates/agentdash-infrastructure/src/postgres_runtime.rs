@@ -1,4 +1,5 @@
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_process::{ProcessDomain, background_std_command};
 use anyhow::{Result, anyhow};
 use postgresql_embedded::{PostgreSQL, Settings};
 use sqlx::PgPool;
@@ -273,13 +274,13 @@ fn cleanup_stale_instance(data_dir: &Path) {
 fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
+        let _ = background_std_command(ProcessDomain::PostgresRuntime, "taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
             .output();
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("kill")
+        let _ = background_std_command(ProcessDomain::PostgresRuntime, "kill")
             .arg(pid.to_string())
             .output();
     }
@@ -291,7 +292,7 @@ fn kill_embedded_postgres_for_data_dir(data_dir: &Path) {
         let Ok(canonical_data_dir) = data_dir.canonicalize() else {
             return;
         };
-        let _ = std::process::Command::new("powershell")
+        let _ = background_std_command(ProcessDomain::PostgresRuntime, "powershell")
             .env("AGENTDASH_PG_DATA_DIR_TO_KILL", canonical_data_dir)
             .args([
                 "-NoProfile",
@@ -302,7 +303,7 @@ fn kill_embedded_postgres_for_data_dir(data_dir: &Path) {
     }
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("pkill")
+        let _ = background_std_command(ProcessDomain::PostgresRuntime, "pkill")
             .args(["-f", &format!("postgres.*{}", data_dir.display())])
             .output();
     }

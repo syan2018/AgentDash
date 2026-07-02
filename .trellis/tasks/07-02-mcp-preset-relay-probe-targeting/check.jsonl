@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查 Setup Action 仍通过 RuntimeGateway 入站"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查 cloud/local/desktop relay target 语义一致"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 generated DTO 与前端类型无漂移"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层 probe target 没有绕过权威事实源"}

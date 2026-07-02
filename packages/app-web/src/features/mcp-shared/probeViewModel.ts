@@ -1,4 +1,5 @@
 import type {
+  McpRoutePolicy,
   McpTransportConfig,
   ProbeMcpPresetResponse,
   ProbeMcpToolInfo,
@@ -143,10 +144,12 @@ export function mcpProbePlaceholderDescriptor(
 
 export function describeMcpProbeTransport(
   transportType: McpTransportConfig["type"],
+  routePolicy: McpRoutePolicy,
 ): string {
-  return transportType === "stdio"
-    ? "通过本机 relay 连接 stdio MCP Server 并调用 tools/list；15 秒超时"
-    : "实时连接 MCP Server 并调用 tools/list；15 秒超时";
+  if (routePolicy === "relay" || (routePolicy === "auto" && transportType === "stdio")) {
+    return "通过本机 relay 连接 MCP Server 并调用 tools/list；15 秒超时";
+  }
+  return "实时连接 MCP Server 并调用 tools/list；15 秒超时";
 }
 
 function truncateProbeMessage(message: string): string {

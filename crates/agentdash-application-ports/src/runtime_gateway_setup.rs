@@ -1,4 +1,4 @@
-use agentdash_domain::mcp_preset::{McpRuntimeBindingConfig, McpTransportConfig};
+use agentdash_domain::mcp_preset::{McpRoutePolicy, McpRuntimeBindingConfig, McpTransportConfig};
 use agentdash_domain::workspace::{WorkspaceBinding, WorkspaceIdentityKind};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,8 @@ pub const WORKSPACE_DISCOVER_BY_IDENTITY_ACTION: &str = "workspace.discover_by_i
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpProbeTransportInput {
     pub transport: McpTransportConfig,
+    #[serde(default)]
+    pub route_policy: McpRoutePolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_binding: Option<McpRuntimeBindingConfig>,
 }

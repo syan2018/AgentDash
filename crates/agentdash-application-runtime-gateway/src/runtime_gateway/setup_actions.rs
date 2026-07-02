@@ -549,6 +549,7 @@ mod tests {
                 env: vec![],
                 cwd: None,
             },
+            route_policy: agentdash_domain::mcp_preset::McpRoutePolicy::Auto,
             runtime_binding: None,
         })
         .expect("serialize input");

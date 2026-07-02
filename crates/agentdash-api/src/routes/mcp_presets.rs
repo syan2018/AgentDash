@@ -351,6 +351,7 @@ fn update_mcp_preset_input(req: UpdateMcpPresetRequest) -> UpdateMcpPresetInput 
 fn probe_mcp_transport_input(req: ProbeMcpPresetRequest) -> McpProbeTransportInput {
     McpProbeTransportInput {
         transport: mcp_transport_config(req.transport),
+        route_policy: mcp_route_policy(req.route_policy),
         runtime_binding: req.runtime_binding.map(mcp_runtime_binding_config),
     }
 }
@@ -556,6 +557,7 @@ mod tests {
                     value: "1".to_string(),
                 }],
             },
+            route_policy: McpRoutePolicy::Relay,
             runtime_binding: Some(sample_runtime_binding_dto(true)),
         });
 
@@ -569,6 +571,7 @@ mod tests {
                 }],
             }
         );
+        assert_eq!(input.route_policy, DomainMcpRoutePolicy::Relay);
         assert!(input.runtime_binding.expect("binding").bindings[0].required);
     }
 

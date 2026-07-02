@@ -476,17 +476,31 @@ function McpPresetCard({
   // probe 改为按需：缓存命中直接展示，无缓存只显示"尚未探测"，
   // 仅在用户点击"重新检测"时才真正发请求（避免每次切到 MCP Preset 页就并发 N 个 rmcp client）。
   const probeResult = useMcpProbeStore((state) =>
-    state.getCached(preset.project_id, preset.transport, preset.runtime_binding ?? null),
+    state.getCached(
+      preset.project_id,
+      preset.transport,
+      preset.route_policy,
+      preset.runtime_binding ?? null,
+    ),
   );
   const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
 
   const handleRecheck = useCallback(() => {
     setProbing(true);
-    void refreshProbe(preset.project_id, preset.transport, preset.runtime_binding ?? null).finally(
-      () => setProbing(false),
-    );
-  }, [refreshProbe, preset.project_id, preset.transport, preset.runtime_binding]);
+    void refreshProbe(
+      preset.project_id,
+      preset.transport,
+      preset.route_policy,
+      preset.runtime_binding ?? null,
+    ).finally(() => setProbing(false));
+  }, [
+    refreshProbe,
+    preset.project_id,
+    preset.transport,
+    preset.route_policy,
+    preset.runtime_binding,
+  ]);
 
   const menuItems = buildAssetMenuItems({
     primary: { label: isBuiltin ? "查看" : "编辑", onSelect: onEdit },
@@ -584,9 +598,9 @@ function ToolCapsulesBody({
 
   if (!probeView.showToolGrid) {
     return (
-      <div className={box}>
+      <div className={`${box} min-w-0`}>
         <span
-          className={probeBodyClassName(probeView.bodyTone, probeView.status)}
+          className={`min-w-0 break-words ${probeBodyClassName(probeView.bodyTone, probeView.status)}`}
           title={probeView.bodyTitle ?? undefined}
         >
           {probeView.bodyMessage}
@@ -664,7 +678,9 @@ function McpPresetDetailDialog({
   // 不依赖 preset id，因此新建模式也可以预先验证。共享 mcpProbeStore 缓存：
   // 同一 transport 在卡片上点过"重新检测"，进入详情就能直接看到结果。
   const cachedProbeResult = useMcpProbeStore((state) =>
-    currentProjectId ? state.getCached(currentProjectId, form.transport, form.runtime_binding) : null,
+    currentProjectId
+      ? state.getCached(currentProjectId, form.transport, form.route_policy, form.runtime_binding)
+      : null,
   );
   const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const [probing, setProbing] = useState(false);
@@ -678,7 +694,12 @@ function McpPresetDetailDialog({
     setProbing(true);
     setLocalProbeResult(null);
     try {
-      const result = await refreshProbe(currentProjectId, form.transport, form.runtime_binding);
+      const result = await refreshProbe(
+        currentProjectId,
+        form.transport,
+        form.route_policy,
+        form.runtime_binding,
+      );
       setLocalProbeResult(result);
     } finally {
       setProbing(false);
@@ -841,6 +862,7 @@ function McpPresetDetailDialog({
                 probing={probing}
                 result={probeResult}
                 transportType={form.transport.type}
+                routePolicy={form.route_policy}
                 onProbe={() => void runProbe()}
               />
             )}
@@ -1253,20 +1275,22 @@ function ProbePanel({
   probing,
   result,
   transportType,
+  routePolicy,
   onProbe,
 }: {
   probing: boolean;
   result: ProbeMcpPresetResponse | null;
   transportType: McpTransportConfig["type"];
+  routePolicy: McpRoutePolicy;
   onProbe: () => void;
 }) {
-  const subtitle = describeMcpProbeTransport(transportType);
+  const subtitle = describeMcpProbeTransport(transportType, routePolicy);
   const probeView = buildMcpProbeViewModel(result);
 
   return (
     <div className="rounded-[8px] border border-dashed border-border bg-secondary/30 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-medium text-foreground">连通性 & 工具发现</p>
           <p className="mt-0.5 text-[10px] text-muted-foreground/70">{subtitle}</p>
         </div>
@@ -1281,8 +1305,8 @@ function ProbePanel({
       </div>
 
       {probeView.detailMessage && (
-        <div className="mt-2.5">
-          <p className={`text-xs ${probeToneClassName(probeView.detailTone)}`}>
+        <div className="mt-2.5 min-w-0">
+          <p className={`break-words text-xs ${probeToneClassName(probeView.detailTone)}`}>
             {probeView.detailMessage}
           </p>
           {probeView.showToolGrid && (

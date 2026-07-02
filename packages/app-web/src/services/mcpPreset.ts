@@ -4,6 +4,7 @@ import type {
   CreateMcpPresetRequest,
   ListMcpPresetQuery,
   McpPresetDto,
+  McpRoutePolicy,
   McpRuntimeBindingConfig,
   McpTransportConfig,
   ProbeMcpPresetRequest,
@@ -81,15 +82,16 @@ export async function cloneMcpPreset(
  * 不绑定已落库的 Preset：调用方直接把当前要验证的 transport 配置传进来
  * （卡片用已保存的、detail dialog 用编辑中的），确保"所见即所测"。
  *
- * 后端约束：15 秒超时；stdio 通过本机 relay 探测，http/sse 使用 URL 直连探测。
+ * 后端约束：15 秒超时；route_policy=relay 或 stdio/auto 通过本机 relay 探测，其余使用 URL 直连探测。
  * 响应体形状为 tagged union（`status` 为 discriminator），展示层通过 probe view model 解释。
  */
 export async function probeMcpTransport(
   projectId: string,
   transport: McpTransportConfig,
+  routePolicy: McpRoutePolicy,
   runtimeBinding?: McpRuntimeBindingConfig | null,
 ): Promise<ProbeMcpPresetResponse> {
-  const input: ProbeMcpPresetRequest = { transport };
+  const input: ProbeMcpPresetRequest = { transport, route_policy: routePolicy };
   if (runtimeBinding) {
     input.runtime_binding = runtimeBinding;
   }

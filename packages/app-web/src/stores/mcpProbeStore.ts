@@ -6,7 +6,7 @@
  * 用户感知为"切其他 Tab 卡住"。
  *
  * 缓存策略：
- * - key = `${projectId}::${digest(transport + runtime_binding)}`，以 probe 输入内容为指纹
+ * - key = `${projectId}::${route_policy}::${digest(transport + runtime_binding)}`，以 probe 输入内容为指纹
  * - 默认不自动 probe；UI 进入时只读取缓存，无缓存则显示"尚未探测"
  * - 用户点击"重新检测" / "Test Connection" 才真正发请求并写入缓存
  *
@@ -16,6 +16,7 @@ import { create } from "zustand";
 
 import { probeMcpTransport } from "../services/mcpPreset";
 import type {
+  McpRoutePolicy,
   McpRuntimeBindingConfig,
   McpTransportConfig,
   ProbeMcpPresetResponse,
@@ -33,18 +34,21 @@ interface McpProbeState {
   getCached: (
     projectId: string,
     transport: McpTransportConfig,
+    routePolicy: McpRoutePolicy,
     runtimeBinding?: McpRuntimeBindingConfig | null,
   ) => ProbeMcpPresetResponse | null;
   /** 先读同 transport 缓存；未命中时再触发去重 probe。 */
   getOrRefresh: (
     projectId: string,
     transport: McpTransportConfig,
+    routePolicy: McpRoutePolicy,
     runtimeBinding?: McpRuntimeBindingConfig | null,
   ) => Promise<ProbeMcpPresetResponse>;
   /** 触发一次 probe 并把结果写入缓存。同 key 并发请求会去重。 */
   refresh: (
     projectId: string,
     transport: McpTransportConfig,
+    routePolicy: McpRoutePolicy,
     runtimeBinding?: McpRuntimeBindingConfig | null,
   ) => Promise<ProbeMcpPresetResponse>;
   invalidate: (projectId: string, transport?: McpTransportConfig) => void;
@@ -53,9 +57,10 @@ interface McpProbeState {
 function buildKey(
   projectId: string,
   transport: McpTransportConfig,
+  routePolicy: McpRoutePolicy,
   runtimeBinding?: McpRuntimeBindingConfig | null,
 ): string {
-  return `${projectId}::${digestTransport(transport)}::${digestRuntimeBinding(runtimeBinding)}`;
+  return `${projectId}::${routePolicy}::${digestTransport(transport)}::${digestRuntimeBinding(runtimeBinding)}`;
 }
 
 /**
@@ -101,25 +106,25 @@ export const useMcpProbeStore = create<McpProbeState>((set, get) => ({
   cache: {},
   inflight: {},
 
-  getCached: (projectId, transport, runtimeBinding) => {
-    const key = buildKey(projectId, transport, runtimeBinding);
+  getCached: (projectId, transport, routePolicy, runtimeBinding) => {
+    const key = buildKey(projectId, transport, routePolicy, runtimeBinding);
     return get().cache[key]?.result ?? null;
   },
 
-  getOrRefresh: (projectId, transport, runtimeBinding) => {
-    const cached = get().getCached(projectId, transport, runtimeBinding);
+  getOrRefresh: (projectId, transport, routePolicy, runtimeBinding) => {
+    const cached = get().getCached(projectId, transport, routePolicy, runtimeBinding);
     if (cached) return Promise.resolve(cached);
-    return get().refresh(projectId, transport, runtimeBinding);
+    return get().refresh(projectId, transport, routePolicy, runtimeBinding);
   },
 
-  refresh: (projectId, transport, runtimeBinding) => {
-    const key = buildKey(projectId, transport, runtimeBinding);
+  refresh: (projectId, transport, routePolicy, runtimeBinding) => {
+    const key = buildKey(projectId, transport, routePolicy, runtimeBinding);
     const existing = get().inflight[key];
     if (existing) return existing;
 
     const promise = (async () => {
       try {
-        const result = await probeMcpTransport(projectId, transport, runtimeBinding);
+        const result = await probeMcpTransport(projectId, transport, routePolicy, runtimeBinding);
         set((state) => ({
           cache: { ...state.cache, [key]: { result, fetchedAt: Date.now() } },
         }));
@@ -158,10 +163,14 @@ export const useMcpProbeStore = create<McpProbeState>((set, get) => ({
       });
       return;
     }
-    const key = buildKey(projectId, transport);
+    const keyPrefix = `${projectId}::`;
     set((state) => {
       const nextCache = { ...state.cache };
-      delete nextCache[key];
+      for (const key of Object.keys(nextCache)) {
+        if (key.startsWith(keyPrefix) && key.includes(`::${digestTransport(transport)}::`)) {
+          delete nextCache[key];
+        }
+      }
       return { cache: nextCache };
     });
   },

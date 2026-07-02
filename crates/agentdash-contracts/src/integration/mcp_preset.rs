@@ -346,6 +346,8 @@ pub struct ListMcpPresetQuery {
 pub struct ProbeMcpPresetRequest {
     pub transport: McpTransportConfigDto,
     #[serde(default)]
+    pub route_policy: McpRoutePolicy,
+    #[serde(default)]
     #[ts(optional)]
     pub runtime_binding: Option<McpRuntimeBindingConfigDto>,
 }

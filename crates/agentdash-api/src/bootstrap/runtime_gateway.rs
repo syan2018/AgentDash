@@ -83,6 +83,7 @@ impl McpProbeSetupPort for ApplicationMcpProbeSetupPort {
     ) -> Result<McpProbeTransportOutput, RuntimeGatewaySetupError> {
         let result = agentdash_application::mcp_preset::probe_transport_without_runtime_context(
             &input.transport,
+            input.route_policy,
             input.runtime_binding.as_ref(),
             self.relay.as_deref(),
             self.http_probe.as_ref(),

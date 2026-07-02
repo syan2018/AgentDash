@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Setup Action 和 mcp.probe_transport 的调用边界"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "桌面客户端、本机 runtime、relay command 的跨层边界"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Probe DTO 和 generated contract 的前端消费规则"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Probe 错误展示与布局约束"}
+{"file": "crates/agentdash-application/src/backend/authorization.rs", "reason": "MCP probe backend resolver 应复用 BackendAuthorizationService 的 owner/user scope/ProjectBackendAccess 规则"}
+{"file": "crates/agentdash-application/src/backend/management.rs", "reason": "Desktop enrollment 会写入 owner_user_id、share_scope=User、device.registration_source=desktop_access_token，可作为默认用户本机 backend 的筛选依据"}

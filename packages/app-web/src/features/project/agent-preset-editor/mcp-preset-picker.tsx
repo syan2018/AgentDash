@@ -42,7 +42,7 @@ function McpToolBlockList({
   const getCachedProbe = useMcpProbeStore((state) => state.getCached);
   const refreshProbe = useMcpProbeStore((state) => state.refresh);
   const probeResult = projectId
-    ? getCachedProbe(projectId, preset.transport, preset.runtime_binding)
+    ? getCachedProbe(projectId, preset.transport, preset.route_policy, preset.runtime_binding)
     : null;
   const probeView = useMemo(() => buildMcpProbeViewModel(probeResult), [probeResult]);
   const capabilityKey = mcpCapabilityKey(preset.key);
@@ -51,7 +51,7 @@ function McpToolBlockList({
     if (!projectId) return;
     setIsProbing(true);
     try {
-      await refreshProbe(projectId, preset.transport, preset.runtime_binding);
+      await refreshProbe(projectId, preset.transport, preset.route_policy, preset.runtime_binding);
     } finally {
       setIsProbing(false);
     }
@@ -66,7 +66,7 @@ function McpToolBlockList({
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span
-          className={`text-[10px] ${
+          className={`min-w-0 break-words text-[10px] ${
             probeView.detailTone === "danger"
               ? "text-destructive"
               : probeView.detailTone === "success"

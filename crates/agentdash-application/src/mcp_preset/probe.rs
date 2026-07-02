@@ -9,7 +9,8 @@
 use std::time::{Duration, Instant};
 
 use agentdash_domain::mcp_preset::{
-    McpHttpHeader, McpRuntimeBindingConfig, McpRuntimeBindingSource, McpTransportConfig,
+    McpHttpHeader, McpRoutePolicy, McpRuntimeBindingConfig, McpRuntimeBindingSource,
+    McpTransportConfig,
 };
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
@@ -44,22 +45,30 @@ pub struct ProbeTool {
 /// 根据 transport 配置执行 probe（连通性检查 + 工具发现合一）。
 ///
 /// 行为：
-/// - Http / Sse：建立临时连接 → `tools/list` → 关闭
-/// - Stdio：通过 relay 下发给本机后端探测；relay 不可用时返回 error
+/// - Relay policy：通过 relay 下发给本机后端探测；relay 不可用时返回 error
+/// - Direct HTTP / SSE：建立临时连接 → `tools/list` → 关闭
+/// - Direct Stdio：setup context 无本机进程语义，返回 unsupported
 pub async fn probe_transport(
     transport: &McpTransportConfig,
+    route_policy: McpRoutePolicy,
     relay: Option<&dyn McpRelayProvider>,
     http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
+    if route_policy.uses_relay(transport) {
+        return match relay {
+            Some(relay) => probe_via_relay(relay, transport).await,
+            None => ProbeResult::Error {
+                error: "本机 relay 未连接，无法探测 relay MCP transport".to_string(),
+            },
+        };
+    }
+
     match transport {
         McpTransportConfig::Http { url, headers } | McpTransportConfig::Sse { url, headers } => {
             probe_http(http_probe, url, headers).await
         }
-        McpTransportConfig::Stdio { .. } => match relay {
-            Some(relay) => probe_via_relay(relay, transport).await,
-            None => ProbeResult::Error {
-                error: "本机 relay 未连接，无法探测 Stdio transport".to_string(),
-            },
+        McpTransportConfig::Stdio { .. } => ProbeResult::Unsupported {
+            reason: "Direct Stdio transport 需要在本机 relay 中探测".to_string(),
         },
     }
 }
@@ -67,6 +76,7 @@ pub async fn probe_transport(
 /// 普通 Preset probe 没有 runtime context；required runtime binding 不能被静态探测伪装成功。
 pub async fn probe_transport_without_runtime_context(
     transport: &McpTransportConfig,
+    route_policy: McpRoutePolicy,
     runtime_binding: Option<&McpRuntimeBindingConfig>,
     relay: Option<&dyn McpRelayProvider>,
     http_probe: &dyn McpProbeTransport,
@@ -75,7 +85,7 @@ pub async fn probe_transport_without_runtime_context(
         return ProbeResult::Unsupported { reason };
     }
 
-    probe_transport(transport, relay, http_probe).await
+    probe_transport(transport, route_policy, relay, http_probe).await
 }
 
 fn required_runtime_binding_unsupported_reason(
@@ -180,6 +190,13 @@ mod tests {
     use super::*;
     use agentdash_domain::mcp_preset::{McpEnvVar, McpRuntimeBindingRule, McpRuntimeBindingTarget};
     use agentdash_infrastructure::RmcpProbeTransport;
+    use agentdash_spi::{
+        ConnectorError, RuntimeMcpServer,
+        platform::mcp_relay::{
+            RelayMcpCallContext, RelayMcpCallResult, RelayMcpListOutcome, RelayProbeResult,
+            RelayProbeTool,
+        },
+    };
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
@@ -199,6 +216,53 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct FakeRelayProbe {
+        transports: Arc<Mutex<Vec<McpTransportConfig>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl McpRelayProvider for FakeRelayProbe {
+        async fn list_relay_tools(
+            &self,
+            _requested_servers: &[RuntimeMcpServer],
+            _context: Option<RelayMcpCallContext>,
+        ) -> RelayMcpListOutcome {
+            RelayMcpListOutcome::default()
+        }
+
+        async fn call_relay_tool(
+            &self,
+            _server: &RuntimeMcpServer,
+            _tool_name: &str,
+            _arguments: Option<serde_json::Map<String, serde_json::Value>>,
+            _context: Option<RelayMcpCallContext>,
+        ) -> Result<RelayMcpCallResult, ConnectorError> {
+            Err(ConnectorError::Runtime(
+                "not implemented in probe test".to_string(),
+            ))
+        }
+
+        async fn probe_transport(
+            &self,
+            transport: &McpTransportConfig,
+        ) -> Result<RelayProbeResult, ConnectorError> {
+            self.transports
+                .lock()
+                .expect("transports lock")
+                .push(transport.clone());
+            Ok(RelayProbeResult {
+                status: "ok".to_string(),
+                latency_ms: Some(7),
+                tools: Some(vec![RelayProbeTool {
+                    name: "relay_tool".to_string(),
+                    description: "from relay".to_string(),
+                }]),
+                error: None,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn stdio_without_relay_returns_error() {
         let transport = McpTransportConfig::Stdio {
@@ -210,7 +274,14 @@ mod tests {
             }],
             cwd: None,
         };
-        match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
+        match probe_transport(
+            &transport,
+            McpRoutePolicy::Auto,
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
             ProbeResult::Error { error } => {
                 assert!(error.contains("relay"), "应提示 relay 不可用: {error}");
             }
@@ -224,7 +295,14 @@ mod tests {
             url: "http://127.0.0.1:1/mcp".to_string(),
             headers: vec![],
         };
-        match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
+        match probe_transport(
+            &transport,
+            McpRoutePolicy::Auto,
+            None,
+            &RmcpProbeTransport::new(),
+        )
+        .await
+        {
             ProbeResult::Error { error } => {
                 assert!(!error.is_empty(), "error 信息不应为空");
             }
@@ -245,11 +323,43 @@ mod tests {
             headers: vec![header.clone()],
         };
 
-        match probe_transport(&transport, None, &probe).await {
+        match probe_transport(&transport, McpRoutePolicy::Auto, None, &probe).await {
             ProbeResult::Ok { .. } => {}
             other => panic!("expected Ok from fake probe, got: {other:?}"),
         }
         assert_eq!(captured.lock().expect("headers lock").as_slice(), &[header]);
+    }
+
+    #[tokio::test]
+    async fn relay_policy_http_probe_uses_relay_transport() {
+        let relay = FakeRelayProbe::default();
+        let captured = relay.transports.clone();
+        let probe = CapturingHttpProbe::default();
+        let header = McpHttpHeader {
+            name: "x-session".to_string(),
+            value: "demo".to_string(),
+        };
+        let transport = McpTransportConfig::Http {
+            url: "http://127.0.0.1:7321/expose/mcp".to_string(),
+            headers: vec![header],
+        };
+
+        match probe_transport(&transport, McpRoutePolicy::Relay, Some(&relay), &probe).await {
+            ProbeResult::Ok { latency_ms, tools } => {
+                assert_eq!(latency_ms, 7);
+                assert_eq!(tools[0].name, "relay_tool");
+            }
+            other => panic!("expected Ok from relay probe, got: {other:?}"),
+        }
+
+        assert_eq!(
+            captured.lock().expect("transports lock").as_slice(),
+            &[transport]
+        );
+        assert!(
+            probe.headers.lock().expect("headers lock").is_empty(),
+            "HTTP direct probe should not run for relay policy"
+        );
     }
 
     #[test]
@@ -308,6 +418,7 @@ mod tests {
 
         match probe_transport_without_runtime_context(
             &transport,
+            McpRoutePolicy::Auto,
             Some(&runtime_binding),
             None,
             &RmcpProbeTransport::new(),
@@ -343,6 +454,7 @@ mod tests {
 
         match probe_transport_without_runtime_context(
             &transport,
+            McpRoutePolicy::Auto,
             Some(&runtime_binding),
             None,
             &RmcpProbeTransport::new(),

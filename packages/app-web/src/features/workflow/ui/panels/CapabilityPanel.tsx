@@ -392,7 +392,12 @@ function CapabilitiesEditor({
           return;
         }
         try {
-          const result = await getOrRefreshProbe(preset.project_id, preset.transport);
+          const result = await getOrRefreshProbe(
+            preset.project_id,
+            preset.transport,
+            preset.route_policy,
+            preset.runtime_binding,
+          );
           setToolCatalogCache((prev) => ({
             ...prev,
             [key]: mapMcpProbeToToolDescriptors({

@@ -116,7 +116,10 @@ pub fn backend_capabilities_response(
             .map(|item| CapabilityHealthItem {
                 id: item.id,
                 domain: item.domain.parse().unwrap_or(CapabilityHealthDomain::Mcp),
-                status: item.status.parse().unwrap_or(CapabilityHealthStatus::Unavailable),
+                status: item
+                    .status
+                    .parse()
+                    .unwrap_or(CapabilityHealthStatus::Unavailable),
                 label: item.label,
                 summary: item.summary,
                 actions: item

@@ -773,9 +773,16 @@ fn context_usage_items_from_section(
                 &trace,
             )]
         }
-        ContextFrameSection::Environment {
-            title, summary, ..
-        } => vec![context_usage_item(
+        ContextFrameSection::Environment { title, summary, .. } => vec![context_usage_item(
+            context_usage_kind::SYSTEM_DEVELOPER,
+            "System / Developer",
+            title,
+            summary,
+            "context_frame",
+            false,
+            &trace,
+        )],
+        ContextFrameSection::UserContext { title, summary, .. } => vec![context_usage_item(
             context_usage_kind::SYSTEM_DEVELOPER,
             "System / Developer",
             title,

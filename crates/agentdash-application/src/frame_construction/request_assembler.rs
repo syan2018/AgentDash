@@ -687,8 +687,8 @@ fn contribute_lifecycle_context(
 /// 该 fragment 会被 `preparation.rs::find_agent_identity_markdown` 拾取，
 /// 最终渲染进 Identity Frame 的 "## Agent Identity" section。
 fn inject_companion_role_fragment(prepared: &mut FrameAssemblyBuilder, child_session_id: &str) {
-    use agentdash_spi::context::injection::{ContextFragment, MergeStrategy};
     use agentdash_spi::context::bundle::SessionContextBundle;
+    use agentdash_spi::context::injection::{ContextFragment, MergeStrategy};
 
     let role_content = "\
 ## Agent Identity

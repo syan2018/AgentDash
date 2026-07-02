@@ -26,6 +26,7 @@ use crate::session::hub_support::{SessionProfile, TurnExecution};
 use crate::session::identity_context_frame::{IdentityFrameInput, build_identity_context_frames};
 use crate::session::memory_context_frame::{MemoryContextFrameInput, build_memory_context_frame};
 use crate::session::pending_action_context_frame::build_pending_action_context_frame;
+use crate::session::user_context_frame::{UserContextFrameInput, build_user_context_frame};
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::types::{HookSnapshotReloadTrigger, PromptLaunchPath, ResolvedPromptPayload};
 
@@ -137,15 +138,16 @@ impl TurnPreparer {
                     executor_id: None,
                 },
             );
-            let _ = deps.eventing.persist_notification(&session_id, envelope).await;
+            let _ = deps
+                .eventing
+                .persist_notification(&session_id, envelope)
+                .await;
         }
         let assembled_tool_schemas = assembled_tool_surface.schemas;
         context.turn.assembled_tools = assembled_tool_surface.tools;
         if !mcp_failures.is_empty() {
-            context.turn.capability_state.tool.unavailable_mcp_servers = mcp_failures
-                .iter()
-                .map(|f| f.summary.clone())
-                .collect();
+            context.turn.capability_state.tool.unavailable_mcp_servers =
+                mcp_failures.iter().map(|f| f.summary.clone()).collect();
         }
         if let Some(port) = deps.agent_run_effective_capability_port.as_ref() {
             let admission_metadata =
@@ -188,6 +190,13 @@ impl TurnPreparer {
             })
         } else {
             Vec::new()
+        };
+        let user_context_frame = if include_connector_startup_context {
+            build_user_context_frame(&UserContextFrameInput {
+                auth_identity: context.session.identity.as_ref(),
+            })
+        } else {
+            None
         };
         let environment_frame = if include_connector_startup_context {
             let date_utc = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -341,6 +350,10 @@ impl TurnPreparer {
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
         for frame in identity_frames {
+            accepted_context_frames_to_emit.push(frame.clone());
+            turn_context_frames.push(frame);
+        }
+        if let Some(frame) = user_context_frame {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }

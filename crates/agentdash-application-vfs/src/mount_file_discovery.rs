@@ -213,10 +213,7 @@ pub async fn discover_memory_vfs_files(
     Vec<MemoryDiscoveryVfsFile>,
     Vec<MountFileDiscoveryDiagnostic>,
 ) {
-    let dynamic_rules = rules
-        .iter()
-        .map(memory_rule_to_dynamic)
-        .collect::<Vec<_>>();
+    let dynamic_rules = rules.iter().map(memory_rule_to_dynamic).collect::<Vec<_>>();
     let result = discover_dynamic_mount_files(service, vfs, &dynamic_rules, identity).await;
     let files = result
         .files
@@ -326,9 +323,13 @@ pub async fn discover_dynamic_mount_files(
                 if emitted_for_rule >= max_files {
                     break;
                 }
-                let Ok(prefix) =
-                    normalize_rule_path(&rule_key, &mount.id, prefix, true, &mut result.diagnostics)
-                else {
+                let Ok(prefix) = normalize_rule_path(
+                    &rule_key,
+                    &mount.id,
+                    prefix,
+                    true,
+                    &mut result.diagnostics,
+                ) else {
                     continue;
                 };
 
@@ -638,10 +639,10 @@ mod tests {
     use super::*;
     use crate::provider::MountProviderRegistry;
     use crate::service::VfsService;
+    use crate::types::{ListResult, ReadResult};
     use agentdash_spi::platform::mount::{
         MountError, MountOperationContext, MountProvider, SearchQuery, SearchResult,
     };
-    use crate::types::{ListResult, ReadResult};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -886,7 +887,8 @@ mod tests {
             HashMap::from([("skills/blank/SKILL.md".to_string(), "   \n\t".to_string())]),
         );
 
-        let result = discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
+        let result =
+            discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
 
         assert!(result.files.is_empty());
         assert!(result.diagnostics.is_empty());
@@ -915,10 +917,7 @@ mod tests {
     async fn dynamic_scanner_respects_deny_metadata() {
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(StaticFileProvider {
-            files: HashMap::from([(
-                "skills/review/SKILL.md".to_string(),
-                "review".to_string(),
-            )]),
+            files: HashMap::from([("skills/review/SKILL.md".to_string(), "review".to_string())]),
         }));
         let service = VfsService::new(Arc::new(registry));
         let vfs = Vfs {
@@ -932,7 +931,8 @@ mod tests {
             links: Vec::new(),
         };
 
-        let result = discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
+        let result =
+            discover_dynamic_mount_files(&service, &vfs, &[skill_prefix_rule()], None).await;
 
         assert!(result.files.is_empty());
     }

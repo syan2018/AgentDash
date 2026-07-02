@@ -1,6 +1,7 @@
 use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgent;
+use agentdash_domain::workflow::LifecycleGate;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
 use crate::agent_run::lifecycle_read_model_facade::LifecycleSubjectAssociationView;
@@ -168,6 +169,40 @@ pub struct ConversationMailboxSnapshotModel {
     pub paused: bool,
     pub user_attention: bool,
     pub resume_command: Option<ConversationCommandModel>,
+    pub waiting_items: Vec<ConversationWaitingItemModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationWaitingItemModel {
+    pub wait_id: String,
+    pub gate_id: String,
+    pub kind: String,
+    pub source_ref: Option<String>,
+    pub correlation_ref: Option<String>,
+    pub status: String,
+    pub source_label: Option<String>,
+    pub preview: Option<String>,
+    pub created_at: String,
+    pub resolved_at: Option<String>,
+}
+
+impl ConversationWaitingItemModel {
+    pub fn from_lifecycle_gate(gate: &LifecycleGate) -> Self {
+        let payload = gate.payload_json.as_ref();
+        let kind = waiting_kind_from_gate(&gate.gate_kind, payload);
+        Self {
+            wait_id: gate.id.to_string(),
+            gate_id: gate.id.to_string(),
+            kind: kind.to_string(),
+            source_ref: Some(gate.id.to_string()),
+            correlation_ref: non_empty_string(Some(&gate.correlation_id)),
+            status: gate.status.clone(),
+            source_label: waiting_source_label(kind, payload),
+            preview: waiting_preview(payload),
+            created_at: gate.created_at.to_rfc3339(),
+            resolved_at: gate.resolved_at.map(|at| at.to_rfc3339()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,6 +531,7 @@ pub struct AgentConversationSnapshotInput {
     pub supports_steering: bool,
     pub mailbox_paused: bool,
     pub mailbox_visible_message_count: usize,
+    pub open_wait_items: Vec<ConversationWaitingItemModel>,
     pub resource_surface: Option<ResolvedVfsSurface>,
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateModel>,
     pub resource_diagnostics: Vec<ConversationDiagnosticModel>,
@@ -549,6 +585,7 @@ impl AgentConversationSnapshotResolver {
                 paused: input.mailbox_paused,
                 user_attention: input.mailbox_visible_message_count > 0 && input.mailbox_paused,
                 resume_command,
+                waiting_items: input.open_wait_items,
             },
             resource_surface: input.resource_surface,
             resource_surface_coordinate: input.resource_surface_coordinate,
@@ -877,6 +914,74 @@ fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
     }
 }
 
+fn waiting_kind_from_gate_kind(gate_kind: &str) -> &'static str {
+    match gate_kind {
+        "companion_human_request" | "orchestration_human_gate" => "human",
+        "companion_wait" | "companion_wait_blocking" | "companion_wait_follow_up" => "subagent",
+        "companion_parent_request" => "companion",
+        kind if kind.starts_with("companion_") => "companion",
+        kind if kind.starts_with("exec_") => "exec",
+        _ => "workflow",
+    }
+}
+
+fn waiting_kind_from_gate(gate_kind: &str, payload: Option<&serde_json::Value>) -> &'static str {
+    if gate_kind == "companion_wait"
+        && payload
+            .and_then(|payload| payload_string(payload, "request_type"))
+            .is_some()
+    {
+        return "human";
+    }
+    waiting_kind_from_gate_kind(gate_kind)
+}
+
+fn waiting_source_label(kind: &str, payload: Option<&serde_json::Value>) -> Option<String> {
+    payload
+        .and_then(|payload| {
+            [
+                "source_label",
+                "companion_label",
+                "label",
+                "request_type",
+                "plan_node_id",
+            ]
+            .iter()
+            .find_map(|key| payload_string(payload, key))
+        })
+        .or_else(|| Some(kind.to_string()))
+}
+
+fn waiting_preview(payload: Option<&serde_json::Value>) -> Option<String> {
+    payload.and_then(|payload| {
+        ["preview", "summary", "message", "title", "label"]
+            .iter()
+            .find_map(|key| payload_string(payload, key))
+            .or_else(|| {
+                payload.get("payload").and_then(|nested| {
+                    ["preview", "summary", "message", "title"]
+                        .iter()
+                        .find_map(|key| payload_string(nested, key))
+                })
+            })
+    })
+}
+
+fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn non_empty_string(value: Option<&String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn conversation_diagnostics(
     model_config: &ConversationModelConfigModel,
     mut resource_diagnostics: Vec<ConversationDiagnosticModel>,
@@ -928,6 +1033,7 @@ mod tests {
             supports_steering: true,
             mailbox_paused: false,
             mailbox_visible_message_count: 0,
+            open_wait_items: Vec::new(),
             resource_surface: None,
             resource_surface_coordinate: None,
             resource_diagnostics: Vec::new(),
@@ -1279,5 +1385,84 @@ mod tests {
             diagnostic.code == "resource_surface_lifecycle_mount_missing"
                 && diagnostic.severity == ValidationSeverityModel::Error
         }));
+    }
+
+    #[test]
+    fn open_companion_and_human_gates_are_projected_as_waiting_items() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let child_gate = LifecycleGate::open(
+            run_id,
+            Some(agent_id),
+            Some(Uuid::new_v4()),
+            "companion_wait_follow_up",
+            "dispatch-1",
+            Some(serde_json::json!({
+                "companion_label": "reviewer",
+                "summary": "Review the implementation",
+                "dispatch_id": "dispatch-1"
+            })),
+        );
+        let human_gate = LifecycleGate::open(
+            run_id,
+            Some(agent_id),
+            None,
+            "companion_human_request",
+            "human-request",
+            Some(serde_json::json!({
+                "request_type": "approval",
+                "payload": {
+                    "message": "Approve the release?"
+                }
+            })),
+        );
+        let blocking_human_gate = LifecycleGate::open(
+            run_id,
+            Some(agent_id),
+            None,
+            "companion_wait",
+            "human-wait-request",
+            Some(serde_json::json!({
+                "request_type": "approval",
+                "summary": "Waiting for approval"
+            })),
+        );
+
+        let mut input = snapshot_input(SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        });
+        input.open_wait_items = vec![
+            ConversationWaitingItemModel::from_lifecycle_gate(&child_gate),
+            ConversationWaitingItemModel::from_lifecycle_gate(&human_gate),
+            ConversationWaitingItemModel::from_lifecycle_gate(&blocking_human_gate),
+        ];
+
+        let snapshot = AgentConversationSnapshotResolver::resolve(input);
+
+        assert_eq!(snapshot.mailbox.waiting_items.len(), 3);
+        let child_wait = &snapshot.mailbox.waiting_items[0];
+        assert_eq!(child_wait.wait_id, child_gate.id.to_string());
+        assert_eq!(child_wait.gate_id, child_gate.id.to_string());
+        assert_eq!(child_wait.kind, "subagent");
+        assert_eq!(child_wait.status, "open");
+        assert_eq!(child_wait.correlation_ref.as_deref(), Some("dispatch-1"));
+        assert_eq!(child_wait.source_label.as_deref(), Some("reviewer"));
+        assert_eq!(
+            child_wait.preview.as_deref(),
+            Some("Review the implementation")
+        );
+
+        let human_wait = &snapshot.mailbox.waiting_items[1];
+        assert_eq!(human_wait.kind, "human");
+        assert_eq!(human_wait.source_label.as_deref(), Some("approval"));
+        assert_eq!(human_wait.preview.as_deref(), Some("Approve the release?"));
+        assert!(human_wait.resolved_at.is_none());
+
+        let blocking_human_wait = &snapshot.mailbox.waiting_items[2];
+        assert_eq!(blocking_human_wait.kind, "human");
+        assert_eq!(
+            blocking_human_wait.preview.as_deref(),
+            Some("Waiting for approval")
+        );
     }
 }

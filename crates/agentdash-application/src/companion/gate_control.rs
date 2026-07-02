@@ -2219,6 +2219,26 @@ mod tests {
             event_notifications[1].delivery_runtime_session_id,
             "child-session"
         );
+        drop(event_notifications);
+
+        let duplicate = service
+            .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
+                request_id: "dispatch-1".to_string(),
+                child_runtime_session_id: "child-session".to_string(),
+                resolved_turn_id: "turn-child-2".to_string(),
+                payload: serde_json::json!({
+                    "status": "completed",
+                    "summary": "duplicate",
+                    "findings": [],
+                    "follow_ups": [],
+                    "artifact_refs": [],
+                }),
+            })
+            .await
+            .expect("duplicate child result should be ignored");
+        assert!(duplicate.is_none());
+        assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
+        assert_eq!(delivery.event_notifications.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

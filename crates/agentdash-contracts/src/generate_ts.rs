@@ -199,11 +199,11 @@ use agentdash_contracts::workflow::{
     ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteAgentRunResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
+    ConversationModelConfigView, ConversationWaitingItemView, DefinitionSource,
+    DeleteAgentProcedureResponse, DeleteAgentRunResponse, DeleteHookPresetResponse,
+    DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
+    LaunchedAgentNodeDto, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
     RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionExecutionAnchorDto,
@@ -782,6 +782,7 @@ fn main() {
             export_all::<ConversationKeyboardMapView>(dir);
             export_all::<ConversationCommandSetView>(dir);
             export_all::<ConversationExecutionView>(dir);
+            export_all::<ConversationWaitingItemView>(dir);
             export_all::<ConversationMailboxSnapshotView>(dir);
             export_all::<ConversationDiagnosticView>(dir);
             export_all::<AgentConversationIdentity>(dir);

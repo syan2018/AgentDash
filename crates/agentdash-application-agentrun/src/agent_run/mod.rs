@@ -38,8 +38,8 @@ pub use conversation_snapshot::{
     ConversationMailboxSnapshotModel, ConversationModelConfigInput, ConversationModelConfigModel,
     ConversationModelConfigResolution, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ConversationModelConfigStatusModel,
-    ValidationSeverityModel, conversation_command_id_for, conversation_execution_state_code,
-    conversation_snapshot_id, merge_executor_config_fields,
+    ConversationWaitingItemModel, ValidationSeverityModel, conversation_command_id_for,
+    conversation_execution_state_code, conversation_snapshot_id, merge_executor_config_fields,
 };
 pub use delete_command::{
     AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteOutcome, AgentRunDeleteRepos,

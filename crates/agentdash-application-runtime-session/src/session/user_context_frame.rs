@@ -42,12 +42,7 @@ impl UserContextFrame {
             groups: identity
                 .groups
                 .iter()
-                .map(|g| {
-                    g.display_name
-                        .as_deref()
-                        .unwrap_or(&g.group_id)
-                        .to_string()
-                })
+                .map(|g| g.display_name.as_deref().unwrap_or(&g.group_id).to_string())
                 .collect(),
             provider: identity.provider.clone(),
             extra: identity.extra.clone(),
@@ -166,7 +161,11 @@ mod tests {
         assert_eq!(frame.delivery_channel, "connector_context");
         assert_eq!(frame.message_role, "system");
         assert!(frame.rendered_text.contains("- Name: Zhang San"));
-        assert!(frame.rendered_text.contains("- Email: zhangsan@example.com"));
+        assert!(
+            frame
+                .rendered_text
+                .contains("- Email: zhangsan@example.com")
+        );
         assert!(frame.rendered_text.contains("Backend Team, admin"));
     }
 

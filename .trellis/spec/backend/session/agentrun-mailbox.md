@@ -95,6 +95,28 @@ pub enum ConsumptionBarrier {
     AgentRunTurnBoundary,
     ManualResume,
 }
+
+pub struct ConversationMailboxSnapshotView {
+    pub paused: bool,
+    pub user_attention: bool,
+    pub resume_command: Option<ConversationCommandView>,
+    pub state: Option<MailboxStateView>,
+    pub messages: Vec<MailboxMessageView>,
+    pub waiting_items: Vec<ConversationWaitingItemView>,
+}
+
+pub struct ConversationWaitingItemView {
+    pub wait_id: String,
+    pub gate_id: String,
+    pub kind: String, // companion | subagent | human | exec | workflow
+    pub source_ref: Option<String>,
+    pub correlation_ref: Option<String>,
+    pub status: String,
+    pub source_label: Option<String>,
+    pub preview: Option<String>,
+    pub created_at: String,
+    pub resolved_at: Option<String>,
+}
 ```
 
 PostgreSQL source identity columns:
@@ -137,8 +159,11 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - `AgentLoopTurnBoundary + SteerActiveTurn + DrainMode::All` 在 AgentLoopTurn 结束后批量注入下一次 AgentLoopTurn，和 PiAgent `QueueMode::All` 语义对齐。
 - `AgentRunTurnBoundary + LaunchOrContinueTurn + DrainMode::One` 在 AgentRunTurn stop/terminal 边界最多消费一条普通 user-origin message。`BeforeStop` 命中时以 steering continuation 继续当前 loop；terminal callback 只作为 fallback。
 - Hook `UserPromptSubmit` 的 block/context injection 仍由 hook runtime 处理。hook 产出的 delivery message，包括 `AfterTurn` steering、`BeforeStop` steering、follow-up 和 anchored auto-resume，必须写入 mailbox envelope，并使用稳定 `source_dedup_key`。
+- Anchored hook auto-resume 是 terminal / exec completion 的 mailbox wake envelope。`source` 使用 `MailboxSourceIdentity::hook_auto_resume()` 并补齐 `source_ref=terminal_effect_id`、`correlation_ref={runtime_session_id}:{source_turn_id}:{terminal_event_seq}`、metadata 中的 `terminal_effect_id` / `terminal_event_seq` / `source_turn_id` / `runtime_session_id`。`source_dedup_key` 来自完整 source identity，原因是 terminal effect replay、process restart 和 terminal callback fallback 都需要落到同一个可审计 envelope，而不是按普通 command receipt 重复创建消息。
 - Hook `follow_up` 不是 mailbox delivery class；它归一为 `SteerActiveTurn { stop_effect: ContinueOnStop }`。
 - AgentRun Mailbox runtime adapter 在 Agent Loop 中只作为 `RuntimeTurnBoundaryDelegate` 参与组合。`after_turn` 负责把 hook steering / follow-up 归一为 mailbox envelope 并触发 AgentLoopTurnBoundary 调度，`before_stop` 负责 AgentRunTurnBoundary drain 并在有可消费 envelope 时继续当前 loop。压缩、上下文变换、工具策略与 provider request 观测分别由 hook runtime、admission 或对应 runtime facet 拥有，原因是 mailbox 的事实源是 durable delivery envelope 与 boundary drain state，而不是模型上下文、工具授权或 provider telemetry。
+- AgentRun conversation snapshot 的 waiting projection 读取 open `LifecycleGate` / lifecycle wait record，投影到 `ConversationMailboxSnapshotView.waiting_items`。mailbox message 只承载 wake/result envelope；等待事实由 gate/wait record 持有，原因是前端需要展示"正在等什么"，而 scheduler 需要消费"结果已经到达"。`companion_wait` gate 若 payload 含 `request_type`，投影为 `kind="human"`；companion follow-up / blocking review 投影为 `subagent`；`exec_*` gate 投影为 `exec`。
+- Companion / subagent / human result wake 使用 `namespace="companion"`、稳定 `source_ref=gate_id`、`correlation_ref=request_id|dispatch_id` 和 route metadata。wait 返回值只包含 `status`、`summary`、`timed_out`、`result_refs` 与 bounded preview；结果正文保留在 gate payload、mailbox message 或对应 projection 中，原因是 wait 是 activity watcher，不是大结果传输通道。
 - User-origin payload 可以在 queued/consuming 阶段短期持久以支持恢复；消费成功后按 retention policy 清理。preview、status、accepted refs 和 receipt result 继续保留用于投影与审计。
 - `Consuming` message 必须有 claim token、lease 和 attempt count。scheduler completion 必须比较 claim token 后才能写入 `Dispatched`、`Steered`、`Failed` 或恢复状态。
 - `Consuming` lease 过期且没有 accepted refs 时，message 进入 `Blocked` 并写入 `last_error="delivery_result_unknown"`。该状态表示 delivery 副作用边界不确定，普通 promote 不可重新排队，projection 必须给出 `can_promote=false`，原因是自动或误触重排都可能重复 launch/steer。
@@ -162,6 +187,10 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 | expired `Consuming` without accepted refs | status becomes `Blocked`, `last_error="delivery_result_unknown"`, claim fields are cleared, and ordinary promote remains unavailable |
 | expired `Consuming` with accepted refs | status is restored to terminal `Dispatched` / `Steered`, accepted refs are preserved, and `consumed_at` is set |
 | hook terminal effect replay | same `source_dedup_key` does not create duplicate system-origin envelope |
+| open lifecycle wait exists for current agent | workspace snapshot includes one `waiting_items` row with kind/source label/preview |
+| `companion_wait` payload contains `request_type` | waiting item kind is `human`, not subagent |
+| companion/human/subagent wait times out | tool result has `status=timed_out`, `timed_out=true`, and refs; gate remains durable for later resolution |
+| companion/human/subagent result retries | source identity dedup returns the existing mailbox message |
 | new Routine / Companion / channel source | assign a namespace/kind/source_ref/correlation_ref without changing scheduler branches |
 | platform broker receives capability grant request | broker creates durable request fact first; mailbox envelope appears only for AgentRun continuation response |
 | user-origin envelope consumed successfully | payload cleanup runs after accepted refs/result are recorded |
@@ -182,6 +211,9 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - Repository/API/application tests cover `delivery_result_unknown`: recovery blocks unknown delivery result, blocked rows are not claimed automatically, API projects `can_promote=false`, and promote returns conflict instead of requeueing.
 - Scheduler tests cover idle launch, running AgentLoopTurn-boundary drain-all, running no-steer AgentRunTurn-boundary drain-one, `BeforeStop` continuation, terminal fallback dedup, failed/interrupted pause, new user message after failure, promote, delete and manual resume.
 - Hook integration tests cover `AfterTurn` steering envelope, `BeforeStop` follow-up normalization, anchored hook auto-resume envelope and terminal effect replay dedup.
+- AgentRun workspace projection tests cover companion/subagent/human lifecycle gates, blocking human `companion_wait + request_type`, and `exec_*` gate kind mapping into `ConversationWaitingItemView`.
+- Companion wait tests cover timeout without closing the gate, resolved payload summary/ref extraction, source identity dedup, duplicate child result no-op, and parent mailbox wake envelope.
+- Terminal / exec wake tests cover hook auto-resume source identity: `source_ref=effect_id`, correlation includes runtime session / source turn / terminal event seq, and replay does not create a duplicate mailbox message.
 - API tests cover composer submit duplicate receipt, mailbox list/delete/promote/resume, typed conflict for expected active AgentRunTurn mismatch, and no route-local `send_next/enqueue/steer` branch as authority.
 - Companion platform boundary tests cover current missing broker diagnostic for `target=platform` capability grants until broker request facts and response continuation delivery exist.
 - Frontend tests cover service URLs, generated DTO consumption, mailbox row rendering by `status/barrier/delivery`, composer submit outcome refresh, and no hand-written pending DTO aliases.

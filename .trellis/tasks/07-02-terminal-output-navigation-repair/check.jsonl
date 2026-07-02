@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端 route/error/test 质量。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"检查 terminal PlatformEvent 语义未漂移，输出不进入聊天 feed。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"检查 history hydrate 与 live side effect 幂等边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端测试、组件与状态更新质量。"}
+{"file":".trellis/tasks/07-02-terminal-output-navigation-repair/research/backend-terminal-chain-and-powershell.md","reason":"检查实现是否覆盖后端调研发现和 PowerShell 验收点。"}
+{"file":".trellis/tasks/07-02-terminal-output-navigation-repair/research/frontend-terminal-display-navigation.md","reason":"检查实现是否覆盖前端展示/跳转/promotion 调研发现。"}

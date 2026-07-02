@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"AgentRun mailbox、companion、scheduler 和 migration 改动需要遵守后端规范。"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"本任务核心合同：mailbox envelope、delivery、barrier、drain、receipt 和 recovery。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"RuntimeSession 只能作为 delivery/runtime ref，不能重新成为 workspace command owner。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"mailbox/wait notification 和 frontend refresh 需要遵守 Backbone PlatformEvent 合同。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"新增/调整 AgentRun workspace DTO 后必须生成并由前端消费 generated contract。"}
+{"file":".trellis/spec/frontend/index.md","reason":"workspace waiting projection 和 mailbox UI 变更入口规范。"}
+{"file":".trellis/tasks/07-02-agent-parallel-wait-mailbox-implementation/research/current-mailbox-companion-parallel-capability.md","reason":"项目自有 mailbox/companion/parallel wait 现状和缺口调研。"}
+{"file":".trellis/tasks/07-02-agent-parallel-wait-mailbox-implementation/research/codex-reference-closure.md","reason":"Codex 闭合能力集参考与不可迁移边界调研。"}

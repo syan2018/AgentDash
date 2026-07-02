@@ -1706,3 +1706,37 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 48: MCP Preset relay 探测目标收束
+
+**Date**: 2026-07-02
+**Task**: MCP Preset relay 探测目标收束
+**Branch**: `main`
+
+### Summary
+
+修复 MCP Preset probe 按 route_policy 分流，并新增 application 层 backend target resolver，使 relay probe 默认路由到当前用户最近 claimed 的在线 Desktop local runtime。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `34cfe6a66` | (see git log) |
+| `a915d898a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

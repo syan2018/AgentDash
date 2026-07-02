@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
 import { SessionChatView } from "../features/session";
+import { CapabilityHealthNotice } from "@agentdash/views/local-runtime";
+import { useCapabilityHealth } from "../desktop/localRuntimeBridge";
 import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
@@ -87,6 +89,10 @@ export function AgentRunWorkspacePage({
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const fetchWorkspaceModules = useWorkspaceModuleStore((state) => state.fetchProject);
+  const capabilityHealthItems = useCapabilityHealth();
+  const capabilityHealthNotice = capabilityHealthItems.some((i) => i.status !== 'ready')
+    ? <CapabilityHealthNotice items={capabilityHealthItems} />
+    : undefined;
 
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
@@ -702,6 +708,7 @@ export function AgentRunWorkspacePage({
                 onTaskPlanChanged={handleTaskPlanChanged}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}
+                streamPrefixContent={capabilityHealthNotice}
               />
             </div>
           </div>

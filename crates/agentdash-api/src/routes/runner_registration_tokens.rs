@@ -153,8 +153,7 @@ async fn claim_runner(
     Json(req): Json<RunnerRegistrationClaimRequest>,
 ) -> Result<Json<RunnerRegistrationClaimResponse>, ApiError> {
     let registration_token = resolve_registration_token(&headers, req.registration_token)?;
-    let relay_ws_url = release_info::configured_relay_ws_url_from_env()
-        .unwrap_or_else(|| relay_ws_url_from_headers(&headers));
+    let relay_ws_url = relay_ws_url_from_headers(&headers);
     let result = claim_runner_registration_token(
         &state.repos,
         RunnerRegistrationClaimInput {
@@ -242,7 +241,7 @@ fn relay_ws_url_from_headers(headers: &HeaderMap) -> String {
     } else {
         "ws"
     };
-    format!("{ws_scheme}://{host}/ws/backend")
+    release_info::derive_relay_ws_url(&format!("{ws_scheme}://{host}"))
 }
 
 fn api_error_from_claim(error: RunnerRegistrationClaimError) -> ApiError {
@@ -304,6 +303,17 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn relay_ws_url_derives_from_api_host_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "127.0.0.1:3001".parse().expect("header value"));
+
+        assert_eq!(
+            relay_ws_url_from_headers(&headers),
+            "ws://127.0.0.1:3001/ws/backend"
+        );
     }
 
     #[test]

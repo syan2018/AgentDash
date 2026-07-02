@@ -7,6 +7,7 @@
  */
 
 import { api } from "../api/client";
+import { agentRunScopedPath, type AgentRunRuntimeTarget } from "./agentRunRuntime";
 
 export type FragmentScopeTag =
   | "runtime_agent"
@@ -62,5 +63,20 @@ export async function fetchContextAudit(
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return api.get<ContextAuditEvent[]>(
     `/sessions/${encodeURIComponent(sessionId)}/context/audit${suffix}`,
+  );
+}
+
+export async function fetchAgentRunContextAudit(
+  target: AgentRunRuntimeTarget,
+  params?: ContextAuditQueryParams,
+): Promise<ContextAuditEvent[]> {
+  const search = new URLSearchParams();
+  if (params?.since_ms != null) search.set("since_ms", String(params.since_ms));
+  if (params?.scope) search.set("scope", params.scope);
+  if (params?.slot) search.set("slot", params.slot);
+  if (params?.source_prefix) search.set("source_prefix", params.source_prefix);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return api.get<ContextAuditEvent[]>(
+    agentRunScopedPath(target, `/runtime/context/audit${suffix}`),
   );
 }

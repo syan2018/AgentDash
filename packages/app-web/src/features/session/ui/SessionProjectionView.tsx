@@ -4,10 +4,15 @@ import type {
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
 import { fetchSessionContextProjection } from "../../../services/session";
+import {
+  fetchAgentRunRuntimeContextProjection,
+  type AgentRunRuntimeTarget,
+} from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
 
 export interface SessionProjectionViewProps {
   sessionId: string | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
@@ -331,6 +336,7 @@ export function SessionProjectionViewPanel({
 
 export function SessionProjectionView({
   sessionId,
+  agentRunTarget = null,
   refreshKey = 0,
   tokenUsage = null,
   embedded = false,
@@ -347,14 +353,16 @@ export function SessionProjectionView({
     setIsLoading(true);
     setError(null);
     try {
-      const next = await fetchSessionContextProjection(sessionId);
+      const next = agentRunTarget
+        ? await fetchAgentRunRuntimeContextProjection(agentRunTarget)
+        : await fetchSessionContextProjection(sessionId);
       setProjection(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载模型上下文失败");
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [agentRunTarget, sessionId]);
 
   useEffect(() => {
     void refresh();

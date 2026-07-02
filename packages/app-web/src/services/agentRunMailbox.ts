@@ -1,16 +1,16 @@
 import { api } from "../api/client";
 import type {
   AgentRunCommandReceipt,
+  AgentRunForkRequest,
+  AgentRunForkResponse,
+  AgentRunForkSubmitRequest,
   AgentRunComposerSubmitRequest,
   AgentRunMailboxMessageContentView,
   AgentRunMailboxMoveRequest,
   AgentRunMessageCommandResponse,
 } from "../generated/agent-run-mailbox-contracts";
 import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
-
-function agentRunCommandPath(runId: string, agentId: string, route: string): string {
-  return `/agent-runs/${encodeURIComponent(runId)}/agents/${encodeURIComponent(agentId)}${route}`;
-}
+import { agentRunScopedPath } from "./agentRunRuntime";
 
 export async function submitAgentRunComposerInput(
   runId: string,
@@ -18,7 +18,29 @@ export async function submitAgentRunComposerInput(
   request: AgentRunComposerSubmitRequest,
 ): Promise<AgentRunMessageCommandResponse> {
   return api.post<AgentRunMessageCommandResponse>(
-    agentRunCommandPath(runId, agentId, "/composer-submit"),
+    agentRunScopedPath({ runId, agentId }, "/composer-submit"),
+    request,
+  );
+}
+
+export async function forkAgentRun(
+  runId: string,
+  agentId: string,
+  request: AgentRunForkRequest,
+): Promise<AgentRunForkResponse> {
+  return api.post<AgentRunForkResponse>(
+    agentRunScopedPath({ runId, agentId }, "/fork"),
+    request,
+  );
+}
+
+export async function submitAgentRunForkInput(
+  runId: string,
+  agentId: string,
+  request: AgentRunForkSubmitRequest,
+): Promise<AgentRunMessageCommandResponse> {
+  return api.post<AgentRunMessageCommandResponse>(
+    agentRunScopedPath({ runId, agentId }, "/fork-submit"),
     request,
   );
 }
@@ -30,9 +52,8 @@ export async function deleteAgentRunMailboxMessage(
   request: AgentRunCommandOnlyRequest,
 ): Promise<AgentRunMessageCommandResponse> {
   return api.delete<AgentRunMessageCommandResponse>(
-    agentRunCommandPath(
-      runId,
-      agentId,
+    agentRunScopedPath(
+      { runId, agentId },
       `/mailbox/messages/${encodeURIComponent(messageId)}`,
     ),
     request,
@@ -46,9 +67,8 @@ export async function promoteAgentRunMailboxMessage(
   request: AgentRunCommandOnlyRequest,
 ): Promise<AgentRunMessageCommandResponse> {
   return api.post<AgentRunMessageCommandResponse>(
-    agentRunCommandPath(
-      runId,
-      agentId,
+    agentRunScopedPath(
+      { runId, agentId },
       `/mailbox/messages/${encodeURIComponent(messageId)}/promote`,
     ),
     request,
@@ -61,7 +81,7 @@ export async function resumeAgentRunMailbox(
   request: AgentRunCommandOnlyRequest,
 ): Promise<AgentRunMessageCommandResponse> {
   return api.post<AgentRunMessageCommandResponse>(
-    agentRunCommandPath(runId, agentId, "/mailbox/resume"),
+    agentRunScopedPath({ runId, agentId }, "/mailbox/resume"),
     request,
   );
 }
@@ -73,9 +93,8 @@ export async function moveAgentRunMailboxMessage(
   request: AgentRunMailboxMoveRequest,
 ): Promise<{ ok: boolean; order_key: number }> {
   return api.put<{ ok: boolean; order_key: number }>(
-    agentRunCommandPath(
-      runId,
-      agentId,
+    agentRunScopedPath(
+      { runId, agentId },
       `/mailbox/messages/${encodeURIComponent(messageId)}/move`,
     ),
     request,
@@ -88,9 +107,8 @@ export async function fetchAgentRunMailboxMessageContent(
   messageId: string,
 ): Promise<AgentRunMailboxMessageContentView> {
   return api.get<AgentRunMailboxMessageContentView>(
-    agentRunCommandPath(
-      runId,
-      agentId,
+    agentRunScopedPath(
+      { runId, agentId },
       `/mailbox/messages/${encodeURIComponent(messageId)}/content`,
     ),
   );
@@ -101,5 +119,8 @@ export async function cancelAgentRun(
   agentId: string,
   request: AgentRunCommandOnlyRequest,
 ): Promise<AgentRunCommandReceipt> {
-  return api.post<AgentRunCommandReceipt>(agentRunCommandPath(runId, agentId, "/cancel"), request);
+  return api.post<AgentRunCommandReceipt>(
+    agentRunScopedPath({ runId, agentId }, "/cancel"),
+    request,
+  );
 }

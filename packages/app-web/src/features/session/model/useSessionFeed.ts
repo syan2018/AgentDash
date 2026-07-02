@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
@@ -25,6 +26,7 @@ import type {
 
 export interface UseSessionFeedOptions {
   sessionId: string;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   endpoint?: string;
   enableAggregation?: boolean;
   enabled?: boolean;
@@ -821,7 +823,7 @@ export function segmentByTurn(
 }
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
-  const { sessionId, endpoint, enableAggregation = true, enabled } = options;
+  const { sessionId, agentRunTarget = null, endpoint, enableAggregation = true, enabled } = options;
   const { prefs } = useDebugPrefs();
 
   const {
@@ -839,6 +841,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     sendCancel,
   } = useSessionStream({
     sessionId,
+    agentRunTarget,
     endpoint,
     enabled,
   });

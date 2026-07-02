@@ -22,7 +22,6 @@ import {
   type RichInputRef,
 } from "../../file-reference";
 import type { FileEntry } from "../../../services/filePicker";
-import { SessionLineageView } from "./SessionLineageView";
 import {
   SessionChatComposer,
   SessionChatStatusBar,
@@ -71,6 +70,7 @@ export function SessionChatView({
 }: SessionChatViewProps) {
   const {
     sessionId,
+    agentRunTarget,
     workspaceId,
     executorHint,
     agentDefaults,
@@ -99,7 +99,6 @@ export function SessionChatView({
   const [optimisticRunning, setOptimisticRunning] = useState(false);
   const [stableActionRunning, setStableActionRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [showLineageView, setShowLineageView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
@@ -142,10 +141,6 @@ export function SessionChatView({
     setSendError(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
-  }, [sessionId]);
-
-  useEffect(() => {
-    setShowLineageView(false);
   }, [sessionId]);
 
   // ─── 执行器配置 ──────────────────────────────────────
@@ -286,7 +281,11 @@ export function SessionChatView({
     sendCancel,
     streamingEntryId,
     tokenUsage,
-  } = useSessionFeed({ sessionId: streamSessionId, enabled: hasSession });
+  } = useSessionFeed({
+    sessionId: streamSessionId,
+    agentRunTarget,
+    enabled: hasSession,
+  });
 
   const projectionRefreshKey = useMemo(
     () => computeProjectionRefreshKey(rawEvents),
@@ -639,19 +638,8 @@ export function SessionChatView({
         <SessionChatStatusBar
           connectionColor={connectionColor}
           connectionLabel={connectionLabel}
-          hasSession={hasSession}
           isActionRunning={isActionRunning}
           isConnected={isConnected}
-          sessionId={sessionId}
-          showLineageView={showLineageView}
-          onToggleLineage={() => setShowLineageView((value) => !value)}
-        />
-      )}
-
-      {showLineageView && sessionId && (
-        <SessionLineageView
-          sessionId={sessionId}
-          refreshKey={projectionRefreshKey}
         />
       )}
 
@@ -681,11 +669,13 @@ export function SessionChatView({
         containerRef={containerRef}
         displayItems={displayItems}
         turnSegments={turnSegments}
+        agentRunTarget={agentRunTarget}
         hasSession={hasSession}
         isLoading={isLoading}
         sessionId={sessionId}
         streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
+        onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}
       />
 
@@ -724,6 +714,7 @@ export function SessionChatView({
           workspaceId={workspaceId}
           tokenUsage={tokenUsage}
           sessionId={sessionId}
+          agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
           onAtTrigger={handleAtTrigger}
           onFileSelected={handleFileSelected}

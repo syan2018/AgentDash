@@ -11,6 +11,10 @@ import { flushSync } from "react-dom";
 import {
   fetchSessionEvents,
 } from "../../../services/session";
+import {
+  fetchAgentRunRuntimeEvents,
+  type AgentRunRuntimeTarget,
+} from "../../../services/agentRunRuntime";
 import type {
   SessionDisplayEntry,
   SessionEventEnvelope,
@@ -28,6 +32,7 @@ import { dispatchSessionPlatformEvent } from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
   sessionId: string;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
   endpoint?: string;
@@ -59,6 +64,7 @@ const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
     sessionId,
+    agentRunTarget = null,
     enabled = true,
     endpoint,
     initialEntries,
@@ -178,7 +184,10 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       };
     }
 
-    const sourceKey = `${sessionId}|${endpoint ?? ""}`;
+    const agentRunKey = agentRunTarget
+      ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
+      : "";
+    const sourceKey = `${sessionId}|${agentRunKey}|${endpoint ?? ""}`;
     const shouldResetState = sourceKeyRef.current !== sourceKey;
     sourceKeyRef.current = sourceKey;
 
@@ -209,7 +218,9 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 
       try {
         while (!cancelled) {
-          const page = await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
+          const page = agentRunTarget
+            ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
+            : await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
           nextState = reduceStreamState(nextState, page.events);
           afterSeq = page.next_after_seq;
           if (!mountedRef.current || cancelled) return;
@@ -227,6 +238,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 
         transportRef.current = createSessionStreamTransport({
           sessionId,
+          agentRunTarget,
           endpoint,
           sinceId: nextState.lastAppliedSeq,
           onEvent: (event) => {
@@ -304,7 +316,14 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         transportRef.current = null;
       }
     };
-  }, [connectKey, enabled, endpoint, flushPendingEvents, sessionId]);
+  }, [
+    agentRunTarget,
+    connectKey,
+    enabled,
+    endpoint,
+    flushPendingEvents,
+    sessionId,
+  ]);
 
   const close = useCallback(() => {
     if (transportRef.current) {

@@ -3,6 +3,8 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
+import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type {
   useExecutorConfig,
   useExecutorDiscoveredOptions,
@@ -18,6 +20,7 @@ import {
 } from "../../file-reference";
 import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
 import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
+import { buildRoundActionModel, type RoundActionModel } from "../model/roundActions";
 import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
 import { SessionEntry } from "./SessionEntry";
@@ -87,10 +90,12 @@ function getItemKey(item: SessionDisplayItem): string {
 function ContextUsageRing({
   usage,
   sessionId,
+  agentRunTarget,
   refreshKey,
 }: {
   usage: TokenUsageInfo | null;
   sessionId: string | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
 }) {
   const [hover, setHover] = useState(false);
@@ -197,6 +202,7 @@ function ContextUsageRing({
         <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
           <SessionProjectionView
             sessionId={sessionId}
+            agentRunTarget={agentRunTarget}
             refreshKey={refreshKey}
             tokenUsage={usage}
             embedded
@@ -210,21 +216,13 @@ function ContextUsageRing({
 export function SessionChatStatusBar({
   connectionColor,
   connectionLabel,
-  hasSession,
   isActionRunning,
   isConnected,
-  sessionId,
-  showLineageView,
-  onToggleLineage,
 }: {
   connectionColor: string;
   connectionLabel: string;
-  hasSession: boolean;
   isActionRunning: boolean;
   isConnected: boolean;
-  sessionId: string | null;
-  showLineageView: boolean;
-  onToggleLineage: () => void;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
@@ -238,19 +236,6 @@ export function SessionChatStatusBar({
           {isConnected ? "接收中" : "执行中"}
         </span>
       )}
-      {hasSession && sessionId && (
-        <button
-          type="button"
-          onClick={onToggleLineage}
-          className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-            showLineageView
-              ? "border-primary/30 bg-primary/10 text-primary"
-              : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-          }`}
-        >
-          分支
-        </button>
-      )}
     </div>
   );
 }
@@ -259,21 +244,25 @@ export function SessionChatStream({
   containerRef,
   displayItems,
   turnSegments,
+  agentRunTarget,
   hasSession,
   isLoading,
   sessionId,
   streamingEntryId,
   streamPrefixContent,
+  onForkFromMessageRef,
   onScroll,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
   displayItems: SessionDisplayItem[];
   turnSegments?: TurnSegment[];
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   hasSession: boolean;
   isLoading: boolean;
   sessionId: string | null;
   streamingEntryId: string | null;
   streamPrefixContent?: ReactNode;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
 }) {
   return (
@@ -293,8 +282,10 @@ export function SessionChatStream({
               <TurnSection
                 key={segment.turnId ?? `gap-${idx}`}
                 segment={segment}
+                agentRunTarget={agentRunTarget}
                 sessionId={sessionId}
                 streamingEntryId={streamingEntryId}
+                onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
           ) : (
@@ -305,6 +296,7 @@ export function SessionChatStream({
                 <div key={key}>
                   <SessionEntry
                     item={item}
+                    agentRunTarget={agentRunTarget}
                     isStreaming={key === streamingEntryId}
                     sessionId={sessionId}
                     followedByMessage={followed}
@@ -415,12 +407,16 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
 
 function TurnSection({
   segment,
+  agentRunTarget,
   sessionId,
   streamingEntryId,
+  onForkFromMessageRef,
 }: {
   segment: TurnSegment;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   sessionId: string | null;
   streamingEntryId: string | null;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
   const isTerminal = segment.status !== "active";
   const terminalLabel = terminalTurnLabel(segment.status);
@@ -461,6 +457,7 @@ function TurnSection({
             <div key={key}>
               <SessionEntry
                 item={item}
+                agentRunTarget={agentRunTarget}
                 isStreaming={key === streamingEntryId}
                 sessionId={sessionId}
                 followedByMessage={followed}
@@ -468,6 +465,10 @@ function TurnSection({
             </div>
           );
         })}
+        <RoundActionToolbar
+          actionModel={buildRoundActionModel(segment)}
+          onForkFromMessageRef={onForkFromMessageRef}
+        />
       </div>
     );
   }
@@ -487,10 +488,101 @@ function TurnSection({
       {segment.finalOutput && (
         <SessionEntry
           item={segment.finalOutput}
+          agentRunTarget={agentRunTarget}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
           sessionId={sessionId}
         />
       )}
+      <RoundActionToolbar
+        actionModel={buildRoundActionModel(segment)}
+        onForkFromMessageRef={onForkFromMessageRef}
+      />
+    </div>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function ForkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="12" cy="18" r="2" />
+      <path d="M6 8v2a4 4 0 0 0 4 4h2" />
+      <path d="M18 8v2a4 4 0 0 1-4 4h-2" />
+      <path d="M12 14v2" />
+    </svg>
+  );
+}
+
+function RoundActionToolbar({
+  actionModel,
+  onForkFromMessageRef,
+}: {
+  actionModel: RoundActionModel;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [forking, setForking] = useState(false);
+  const forkPointRef = actionModel.forkFromHere.forkPointRef;
+  const canFork = Boolean(actionModel.forkFromHere.enabled && forkPointRef && onForkFromMessageRef);
+  const forkDisabledReason = onForkFromMessageRef
+    ? actionModel.forkFromHere.disabledReason
+    : "当前视图没有 AgentRun fork 入口。";
+
+  const handleCopy = async () => {
+    if (!actionModel.copyLastAgentReply.enabled) return;
+    await navigator.clipboard.writeText(actionModel.copyLastAgentReply.text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  const handleFork = async () => {
+    if (!canFork || !forkPointRef || !onForkFromMessageRef || forking) return;
+    setForking(true);
+    try {
+      await onForkFromMessageRef(forkPointRef);
+    } finally {
+      setForking(false);
+    }
+  };
+
+  if (!actionModel.copyLastAgentReply.enabled && !actionModel.forkFromHere.forkPointRef) {
+    return null;
+  }
+
+  return (
+    <div className="group/round-actions flex justify-end pt-1">
+      <div className="flex items-center gap-1 rounded-[8px] border border-border/40 bg-background/70 px-1 py-0.5 opacity-35 transition-opacity focus-within:opacity-100 hover:opacity-100">
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!actionModel.copyLastAgentReply.enabled}
+          title={actionModel.copyLastAgentReply.enabled ? "复制当前轮次最后一条 Agent 回复" : "当前轮次没有可复制的 Agent 回复"}
+          aria-label="复制当前轮次最后一条 Agent 回复"
+          onClick={() => { void handleCopy(); }}
+        >
+          {copied ? <span className="text-[10px] font-medium">OK</span> : <CopyIcon />}
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!canFork || forking}
+          title={canFork ? "从当前稳定轮次 fork AgentRun" : forkDisabledReason ?? "当前轮次不可 fork"}
+          aria-label="从当前稳定轮次 fork AgentRun"
+          onClick={() => { void handleFork(); }}
+        >
+          {forking ? <span className="h-3 w-3 animate-spin rounded-[8px] border border-current border-t-transparent" /> : <ForkIcon />}
+        </button>
+      </div>
     </div>
   );
 }
@@ -516,6 +608,7 @@ export function SessionChatComposer({
   workspaceId,
   tokenUsage,
   sessionId,
+  agentRunTarget,
   projectionRefreshKey,
   onAtTrigger,
   onFileSelected,
@@ -547,6 +640,7 @@ export function SessionChatComposer({
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
   sessionId: string | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
@@ -713,6 +807,7 @@ export function SessionChatComposer({
             <ContextUsageRing
               usage={tokenUsage}
               sessionId={sessionId}
+              agentRunTarget={agentRunTarget}
               refreshKey={projectionRefreshKey}
             />
             {showExecutorSelector && (

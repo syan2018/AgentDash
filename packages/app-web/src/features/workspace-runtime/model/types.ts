@@ -13,6 +13,7 @@ import type {
   Story,
   TaskSessionExecutorSummary,
 } from "../../../types";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
 export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 
@@ -45,6 +46,7 @@ export interface WorkspaceRuntimeData {
   projectId: string | null;
   sessionId: string | null;
   runtimeSessionId: string | null;
+  agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
   sessionMeta: SessionShellDto | null;

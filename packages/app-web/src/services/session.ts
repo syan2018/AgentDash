@@ -2,14 +2,9 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import { settingsApi } from "../api/settings";
 import type {
-  CreateSessionForkRequest,
   DeleteSessionResponse,
-  RollbackSessionProjectionRequest,
   SessionEventResponse,
   SessionEventsPageResponse,
-  SessionForkResponse,
-  SessionLineageViewResponse,
-  SessionProjectionRollbackResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
 import type { JsonValue } from "../generated/common-contracts";
@@ -84,30 +79,6 @@ export async function fetchSessionContextProjection(
     if ((err as ApiHttpError).status === 404) return null;
     throw err;
   }
-}
-
-export async function forkSession(
-  sessionId: string,
-  request: CreateSessionForkRequest = {},
-): Promise<SessionForkResponse> {
-  return api.post<SessionForkResponse>(
-    `/sessions/${encodeURIComponent(sessionId)}/fork`,
-    request,
-  );
-}
-
-export async function fetchSessionLineage(sessionId: string): Promise<SessionLineageViewResponse> {
-  return api.get<SessionLineageViewResponse>(`/sessions/${encodeURIComponent(sessionId)}/lineage`);
-}
-
-export async function rollbackSessionProjection(
-  sessionId: string,
-  request: RollbackSessionProjectionRequest,
-): Promise<SessionProjectionRollbackResponse> {
-  return api.post<SessionProjectionRollbackResponse>(
-    `/sessions/${encodeURIComponent(sessionId)}/projection/rollback`,
-    request,
-  );
 }
 
 function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatusValue {

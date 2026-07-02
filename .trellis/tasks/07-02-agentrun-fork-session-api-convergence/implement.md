@@ -24,7 +24,7 @@ Track work item status in this file. Each work item must keep explicit dependenc
 | B | completed | AgentRun ownership facts |
 | C | completed | Session surface safety and AgentRun runtime endpoints |
 | D | completed | AgentRun fork backend |
-| E | pending | Frontend fork and Session API convergence |
+| E | completed | Frontend fork and Session API convergence |
 | F | pending | Spec and final integration |
 
 ### A. Project Participation Permissions

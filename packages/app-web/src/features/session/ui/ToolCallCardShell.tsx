@@ -7,7 +7,13 @@
 
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
-import { approveToolCall, rejectToolCall } from "../../../services/executor";
+import {
+  approveToolCall,
+  approveToolCallForAgentRun,
+  rejectToolCall,
+  rejectToolCallForAgentRun,
+} from "../../../services/executor";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { ToolCardHeaderModel } from "./ToolCardHeader";
 import { ST } from "./bodies/cardBodyTokens";
 
@@ -25,6 +31,7 @@ export interface ToolCallCardShellProps {
   header: ToolCardHeaderModel;
   status: DisplayStatus;
   isPendingApproval?: boolean;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   sessionId?: string;
   itemId: string;
   durationMs?: number;
@@ -37,6 +44,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   header,
   status,
   isPendingApproval,
+  agentRunTarget,
   sessionId,
   itemId,
   durationMs,
@@ -85,11 +93,15 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   const elapsed = useElapsed(renderStatus === "inProgress");
 
   const handleApprove = async () => {
-    if (!sessionId || isSubmittingApproval) return;
+    if ((!agentRunTarget && !sessionId) || isSubmittingApproval) return;
     setApprovalError(null);
     setIsSubmittingApproval(true);
     try {
-      await approveToolCall(sessionId, itemId);
+      if (agentRunTarget) {
+        await approveToolCallForAgentRun(agentRunTarget, itemId);
+      } else if (sessionId) {
+        await approveToolCall(sessionId, itemId);
+      }
     } catch (error) {
       setApprovalError(error instanceof Error ? error.message : "审批失败");
     } finally {
@@ -98,11 +110,15 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
   };
 
   const handleReject = async () => {
-    if (!sessionId || isSubmittingApproval) return;
+    if ((!agentRunTarget && !sessionId) || isSubmittingApproval) return;
     setApprovalError(null);
     setIsSubmittingApproval(true);
     try {
-      await rejectToolCall(sessionId, itemId);
+      if (agentRunTarget) {
+        await rejectToolCallForAgentRun(agentRunTarget, itemId);
+      } else if (sessionId) {
+        await rejectToolCall(sessionId, itemId);
+      }
     } catch (error) {
       setApprovalError(error instanceof Error ? error.message : "拒绝失败");
     } finally {
@@ -180,7 +196,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
             </div>
           )}
 
-          {isPendingApproval && sessionId && (
+          {isPendingApproval && (agentRunTarget || sessionId) && (
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

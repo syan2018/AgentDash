@@ -6,8 +6,10 @@ import type {
   BackendSelectionRequestDto,
   MailboxMessageView,
   MailboxStateView,
+  SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
@@ -64,6 +66,7 @@ export interface SessionChatMailboxModel {
 
 export interface SessionChatModel {
   sessionId: string | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   workspaceId?: string | null;
   executorHint?: string | null;
   agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null;
@@ -95,6 +98,7 @@ export interface SessionChatViewIntents {
   resumeMailbox?: () => void;
   recallMailboxMessage?: (messageId: string) => void;
   moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  forkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   injectedInputConsumed?: () => void;
 }
 

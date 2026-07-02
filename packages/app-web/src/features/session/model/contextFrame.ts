@@ -88,6 +88,7 @@ export type ContextFrameSection =
   | CompactionSummarySection
   | UserPreferencesSection
   | ProjectGuidelinesSection
+  | UserContextSection
   | UnknownSection;
 
 export interface AssignmentContextSection {
@@ -296,6 +297,18 @@ export interface ProjectGuidelinesSection {
   entries: ProjectGuidelineEntry[];
 }
 
+export interface UserContextSection {
+  kind: "user_context";
+  title: string;
+  summary: string;
+  user_id?: string;
+  display_name?: string;
+  email?: string;
+  groups: string[];
+  provider?: string;
+  extra?: unknown;
+}
+
 export interface UnknownSection {
   kind: "unknown_section";
   original_kind: string;
@@ -404,7 +417,7 @@ function defaultDeliveryMetadata(
 }
 
 function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
-  if (frameKind === "identity") return "stable_system";
+  if (frameKind === "identity" || frameKind === "user_context") return "stable_system";
   if (frameKind === "system_guidelines") return "session_policy";
   if (frameKind === "compaction_summary") return "run_state";
   if (frameKind === "assignment_context") return "assignment";
@@ -416,6 +429,7 @@ function defaultDeliveryPhase(frameKind: string): ContextDeliveryPhase {
 
 function defaultDeliveryOrder(frameKind: string): number {
   if (frameKind === "identity") return 10;
+  if (frameKind === "user_context") return 12;
   if (frameKind === "system_guidelines") return 20;
   if (frameKind === "compaction_summary") return 30;
   if (frameKind === "assignment_context") return 40;
@@ -427,7 +441,7 @@ function defaultDeliveryOrder(frameKind: string): number {
 }
 
 function defaultCachePolicy(frameKind: string): ContextCachePolicy {
-  if (frameKind === "identity") return "static";
+  if (frameKind === "identity" || frameKind === "user_context") return "static";
   if (frameKind === "system_guidelines") return "session_digest";
   if (frameKind === "compaction_summary") return "runtime_state_digest";
   if (frameKind === "assignment_context") return "assignment_revision";
@@ -439,7 +453,7 @@ function defaultCachePolicy(frameKind: string): ContextCachePolicy {
 }
 
 function defaultModelChannel(frameKind: string, messageRole: string): ContextModelChannel {
-  if (frameKind === "identity" || frameKind === "system_guidelines") return "system";
+  if (frameKind === "identity" || frameKind === "user_context" || frameKind === "system_guidelines") return "system";
   if (
     frameKind === "memory_context"
     || frameKind === "compaction_summary"
@@ -646,6 +660,20 @@ function parseSection(value: unknown): ContextFrameSection | null {
       entries: entries
         .map(parseProjectGuidelineEntry)
         .filter((item): item is ProjectGuidelineEntry => item != null),
+    };
+  }
+  if (kind === "user_context") {
+    const groups = Array.isArray(value.groups) ? value.groups : [];
+    return {
+      kind,
+      title: readString(value.title) ?? "User Context",
+      summary: readString(value.summary) ?? "",
+      user_id: readString(value.user_id) ?? undefined,
+      display_name: readString(value.display_name) ?? undefined,
+      email: readString(value.email) ?? undefined,
+      groups: groups.map(readString).filter((item): item is string => item != null),
+      provider: readString(value.provider) ?? undefined,
+      extra: value.extra ?? undefined,
     };
   }
   return {
@@ -891,6 +919,10 @@ export function frameKindToToken(kind: string): ContextTokenInfo {
       return { token: "GUID", variant: "primary" };
     case "memory_context":
       return { token: "MEM", variant: "primary" };
+    case "user_context":
+      return { token: "USR", variant: "primary" };
+    case "environment":
+      return { token: "ENV", variant: "neutral" };
     default:
       return {
         token: (kind.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4) || "CTX").toUpperCase(),
@@ -934,6 +966,8 @@ export function sectionKindToToken(kind: ContextFrameSection["kind"]): ContextTo
       return { token: "PREF", variant: "primary" };
     case "project_guidelines":
       return { token: "GUID", variant: "primary" };
+    case "user_context":
+      return { token: "USR", variant: "primary" };
     case "unknown_section":
       return { token: "UNK", variant: "warning" };
   }

@@ -453,7 +453,7 @@ pub struct ContextConnectorProfile {
 
 fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
     match kind {
-        "identity" => ContextDeliveryPhase::StableSystem,
+        "identity" | "user_context" => ContextDeliveryPhase::StableSystem,
         "environment" | "system_guidelines" => ContextDeliveryPhase::SessionPolicy,
         "compaction_summary" => ContextDeliveryPhase::RunState,
         "assignment_context" => ContextDeliveryPhase::Assignment,
@@ -465,6 +465,7 @@ fn delivery_phase_for_kind(kind: &str) -> ContextDeliveryPhase {
 fn delivery_order_for_kind(kind: &str) -> u32 {
     match kind {
         "identity" => 10,
+        "user_context" => 12,
         "environment" => 15,
         "system_guidelines" => 20,
         "compaction_summary" => 30,
@@ -479,7 +480,7 @@ fn delivery_order_for_kind(kind: &str) -> u32 {
 
 fn cache_policy_for_kind(kind: &str) -> ContextCachePolicy {
     match kind {
-        "identity" => ContextCachePolicy::Static,
+        "identity" | "user_context" => ContextCachePolicy::Static,
         "environment" | "system_guidelines" => ContextCachePolicy::SessionDigest,
         "compaction_summary" => ContextCachePolicy::RuntimeStateDigest,
         "assignment_context" => ContextCachePolicy::AssignmentRevision,
@@ -495,7 +496,9 @@ fn model_channel_for_kind(
     message_role: &str,
 ) -> ContextModelChannel {
     match kind {
-        "identity" | "environment" | "system_guidelines" => ContextModelChannel::System,
+        "identity" | "user_context" | "environment" | "system_guidelines" => {
+            ContextModelChannel::System
+        }
         "memory_context" | "compaction_summary" | "assignment_context" => {
             ContextModelChannel::Context
         }
@@ -512,6 +515,7 @@ fn model_channel_for_kind(
 fn frontend_label_for_kind(kind: &str) -> &'static str {
     match kind {
         "identity" => "Identity",
+        "user_context" => "User Context",
         "environment" => "Environment",
         "system_guidelines" => "System Guidelines",
         "compaction_summary" => "Compaction Summary",
@@ -692,6 +696,23 @@ pub enum ContextFrameSection {
         summary: String,
         #[serde(default)]
         entries: Vec<ProjectGuidelineEntry>,
+    },
+    /// 操作者身份上下文（人类用户信息，由 AuthIdentity 投影）。
+    UserContext {
+        title: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        email: Option<String>,
+        #[serde(default)]
+        groups: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        extra: serde_json::Value,
     },
 }
 

@@ -1,0 +1,6 @@
+{"kind":"spec","path":".trellis/spec/backend/capability/architecture.md","reason":"CapabilityState and AgentRun effective capability invariants for MCP source surface."}
+{"kind":"spec","path":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"MCP tool schema provenance and CapabilityState.tool.mcp_servers contract."}
+{"kind":"spec","path":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"Turn preparation/commit ordering and launch surface normalization requirements."}
+{"kind":"spec","path":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"Relay/local MCP resolved transport and EventCapabilitiesChanged runtime health context."}
+{"kind":"research","path":".trellis/tasks/07-02-runtime-mcp-source-readiness/prd.md","reason":"Task-specific defects, requirements, and acceptance criteria."}
+{"kind":"research","path":".trellis/tasks/07-02-runtime-mcp-source-readiness/design.md","reason":"Approved scheme B design and scheme C migration reserve."}

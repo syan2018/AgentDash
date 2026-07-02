@@ -1,0 +1,5 @@
+{"kind":"spec","path":".trellis/spec/backend/capability/architecture.md","reason":"Check capability knowledge remains in the capability surface, not session path side fields."}
+{"kind":"spec","path":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"Check launch state, context frames, and accepted commit ordering."}
+{"kind":"spec","path":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Check platform event payloads stay structured and generated bindings are refreshed when changed."}
+{"kind":"spec","path":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Check generated DTO and TS contract drift if wire types change."}
+{"kind":"research","path":".trellis/tasks/07-02-runtime-mcp-source-readiness/implement.md","reason":"Task-specific validation commands and review gates."}

@@ -188,30 +188,32 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
-    AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
-    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
-    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ContinueLifecycleRunResponse, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, DefinitionSource, DeleteAgentProcedureResponse,
-    DeleteAgentRunResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto,
-    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology,
-    LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
-    OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
-    PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionExecutionAnchorDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationFeedMessage,
+    AgentConversationFeedSnapshot, AgentConversationIdentity, AgentConversationLifecycleContext,
+    AgentConversationMessageRefView, AgentConversationMessageRole, AgentConversationSnapshot,
+    AgentConversationSourceRangeView, AgentFrameRefDto, AgentFrameRuntimeView,
+    AgentProcedureContract, AgentProcedureResponse, AgentRunCommandOnlyRequest,
+    AgentRunCommandPreconditionView, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
+    AgentRunResourceSurfaceSourceAnchorView, AgentRunView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, AgentRunWorkspaceView, CapabilityCatalogEntryDto,
+    CapabilityCatalogResponse, CapabilityScopeDto, ContinueLifecycleRunResponse,
+    ConversationCommandKind, ConversationCommandPlacement, ConversationCommandSetView,
+    ConversationCommandStaleGuardView, ConversationCommandView, ConversationDiagnosticView,
+    ConversationEffectiveExecutorConfigView, ConversationExecutionStatus,
+    ConversationExecutionView, ConversationKeyboardMapView, ConversationMailboxSnapshotView,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    DefinitionSource, DeleteAgentProcedureResponse, DeleteAgentRunResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
+    HookPresetResponse, HookPresetsResponse, LaunchedAgentNodeDto, LifecycleExecutionEntry,
+    LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunTopology, LifecycleRunView,
+    LifecycleSubjectAssociationDto, OpenedHumanGateDto, OrchestrationExecutorDrainResultDto,
+    OrchestrationInstanceView, PlatformMcpScopeDto, PreflightWorkflowScriptRequest,
+    PreflightWorkflowScriptResponse, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    RuntimeNodeView, RuntimeSessionExecutionAnchorDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus,
+    SessionRuntimeControlPlaneView, SessionRuntimeControlView, SessionShellDto,
+    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -794,6 +796,11 @@ fn main() {
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
+            export_all::<AgentConversationMessageRefView>(dir);
+            export_all::<AgentConversationSourceRangeView>(dir);
+            export_all::<AgentConversationMessageRole>(dir);
+            export_all::<AgentConversationFeedMessage>(dir);
+            export_all::<AgentConversationFeedSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);

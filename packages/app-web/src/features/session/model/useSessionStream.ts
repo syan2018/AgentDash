@@ -12,6 +12,7 @@ import {
   fetchSessionEvents,
 } from "../../../services/session";
 import {
+  fetchAgentRunConversationFeed,
   fetchAgentRunRuntimeEvents,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
@@ -21,6 +22,7 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
+import { agentRunConversationFeedEntries } from "./agentRunConversationFeed";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -217,6 +219,22 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       let afterSeq = shouldResetState ? 0 : baseState.lastAppliedSeq;
 
       try {
+        if (agentRunTarget && shouldResetState) {
+          const feed = await fetchAgentRunConversationFeed(agentRunTarget);
+          const feedEntries = agentRunConversationFeedEntries(feed);
+          nextState = createInitialStreamState([
+            ...initialEntriesRef.current,
+            ...feedEntries,
+          ]);
+          afterSeq = Math.max(
+            nextState.lastAppliedSeq,
+            feed == null ? 0 : Number(feed.head_event_seq),
+          );
+          if (!mountedRef.current || cancelled) return;
+          setStreamState(nextState);
+          stateRef.current = nextState;
+        }
+
         while (!cancelled) {
           const page = agentRunTarget
             ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)

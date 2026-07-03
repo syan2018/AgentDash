@@ -822,6 +822,19 @@ describe("aggregateEntries — tool burst", () => {
     expect(segments[0]?.startedAtMs).toBe(1_700_000_000_000);
   });
 
+  it("T25c: projected AgentRun feed messages are stable completed turn segments", () => {
+    const projected = {
+      ...mkMessageEntry("projected-message", "inherited answer"),
+      projectedTranscriptStable: true,
+    };
+
+    const segments = segmentByTurn([projected], []);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.status).toBe("completed");
+    expect(segments[0]?.finalOutput).toBe(projected);
+  });
+
   it("T26: retry exhausted does not create a status-only turn segment", () => {
     const segments = segmentByTurn([], [
       rawTurnStarted(1),

@@ -5,6 +5,7 @@ import type {
   SessionEventsPageResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
+import type { AgentConversationFeedSnapshot } from "../generated/workflow-contracts";
 import type { SessionRuntimeControlView } from "../types";
 
 export interface AgentRunRuntimeTarget {
@@ -35,6 +36,19 @@ export async function fetchAgentRunRuntimeContextProjection(
   try {
     return await api.get<SessionProjectionViewResponse>(
       agentRunScopedPath(target, "/runtime/context/projection"),
+    );
+  } catch (err) {
+    if ((err as ApiHttpError).status === 404) return null;
+    throw err;
+  }
+}
+
+export async function fetchAgentRunConversationFeed(
+  target: AgentRunRuntimeTarget,
+): Promise<AgentConversationFeedSnapshot | null> {
+  try {
+    return await api.get<AgentConversationFeedSnapshot>(
+      agentRunScopedPath(target, "/conversation/feed"),
     );
   } catch (err) {
     if ((err as ApiHttpError).status === 404) return null;

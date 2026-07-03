@@ -2,7 +2,7 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use agentdash_agent::MessageRef;
+use agentdash_agent::{AgentMessage, ContentPart, MessageRef, ProjectedEntry};
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
@@ -27,7 +27,9 @@ use agentdash_contracts::agent_run_mailbox::{
 };
 use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
+    AgentConversationFeedMessage, AgentConversationFeedSnapshot, AgentConversationIdentity,
+    AgentConversationLifecycleContext, AgentConversationMessageRefView,
+    AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
     AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
     AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView,
     AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
@@ -92,6 +94,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/workspace",
             axum::routing::get(get_agent_run_workspace),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/conversation/feed",
+            axum::routing::get(get_agent_run_conversation_feed),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
@@ -383,6 +389,131 @@ pub async fn get_agent_run_workspace(
     Ok(Json(view))
 }
 
+pub async fn get_agent_run_conversation_feed(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<AgentConversationFeedSnapshot>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let runtime_session_id = context
+        .delivery_runtime_session_id
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
+        })?;
+    let envelope = state
+        .services
+        .session_eventing
+        .build_agent_context_envelope(runtime_session_id)
+        .await
+        .map_err(ApiError::from)?;
+    let projection_kind = envelope.projection_kind.as_str().to_string();
+    let projection_version = envelope.projection_version;
+    let head_event_seq = envelope.head_event_seq;
+    let active_compaction_id = envelope.active_compaction_id.clone();
+    let messages = envelope
+        .into_projected_transcript()
+        .entries
+        .into_iter()
+        .filter_map(agent_conversation_feed_message)
+        .collect::<Vec<_>>();
+
+    Ok(Json(AgentConversationFeedSnapshot {
+        run_ref: LifecycleRunRefDto {
+            run_id: context.run.id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: context.run.id.to_string(),
+            agent_id: context.agent.id.to_string(),
+        },
+        runtime_session_ref: Some(RuntimeSessionRefDto {
+            runtime_session_id: runtime_session_id.to_string(),
+        }),
+        projection_kind,
+        projection_version,
+        head_event_seq,
+        active_compaction_id,
+        message_count: messages.len() as u64,
+        messages,
+    }))
+}
+
+fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConversationFeedMessage> {
+    let role = agent_conversation_message_role(&entry.message);
+    let text = agent_conversation_message_text(&entry.message);
+    if text.trim().is_empty() {
+        return None;
+    }
+    let timestamp_ms = agent_conversation_message_timestamp_ms(&entry.message);
+    Some(AgentConversationFeedMessage {
+        message_ref: AgentConversationMessageRefView {
+            turn_id: entry.message_ref.turn_id,
+            entry_index: entry.message_ref.entry_index,
+        },
+        role,
+        text,
+        origin: entry.origin.as_str().to_string(),
+        synthetic: entry.synthetic,
+        projection_kind: entry.projection_kind.as_str().to_string(),
+        source_event_seq: entry.source_event_seq,
+        source_range: entry
+            .source_range
+            .map(|range| AgentConversationSourceRangeView {
+                start_event_seq: range.start_event_seq,
+                end_event_seq: range.end_event_seq,
+            }),
+        projection_segment_id: entry.projection_segment_id,
+        timestamp_ms,
+    })
+}
+
+fn agent_conversation_message_role(message: &AgentMessage) -> AgentConversationMessageRole {
+    match message {
+        AgentMessage::User { .. } => AgentConversationMessageRole::User,
+        AgentMessage::Assistant { .. } => AgentConversationMessageRole::Assistant,
+        AgentMessage::ToolResult { .. } => AgentConversationMessageRole::ToolResult,
+        AgentMessage::CompactionSummary { .. } => AgentConversationMessageRole::CompactionSummary,
+    }
+}
+
+fn agent_conversation_message_text(message: &AgentMessage) -> String {
+    match message {
+        AgentMessage::User { content, .. }
+        | AgentMessage::Assistant { content, .. }
+        | AgentMessage::ToolResult { content, .. } => content
+            .iter()
+            .filter_map(content_part_text)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        AgentMessage::CompactionSummary { summary, .. } => summary.trim().to_string(),
+    }
+}
+
+fn content_part_text(part: &ContentPart) -> Option<&str> {
+    match part {
+        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => Some(text.as_str()),
+        ContentPart::Image { .. } => None,
+    }
+}
+
+fn agent_conversation_message_timestamp_ms(message: &AgentMessage) -> Option<u64> {
+    match message {
+        AgentMessage::User { timestamp, .. }
+        | AgentMessage::Assistant { timestamp, .. }
+        | AgentMessage::ToolResult { timestamp, .. }
+        | AgentMessage::CompactionSummary { timestamp, .. } => *timestamp,
+    }
+}
+
 /// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
 ///
 /// 一次 `list_by_run` 拿全 run 的 lineage 边，内存建 forest：parent 至多一个，
@@ -435,43 +566,7 @@ async fn resolve_agent_run_lineage(
         }
         None => None,
     };
-    let cross_run_parent = match state
-        .repos
-        .agent_run_lineage_repo
-        .find_parent(run.id, agent.id)
-        .await
-        .map_err(ApiError::from)?
-    {
-        Some(lineage) => {
-            let parent_run = state
-                .repos
-                .lifecycle_run_repo
-                .get_by_id(lineage.parent_run_id)
-                .await
-                .map_err(ApiError::from)?;
-            let parent_agent = state
-                .repos
-                .lifecycle_agent_repo
-                .get(lineage.parent_agent_id)
-                .await
-                .map_err(ApiError::from)?;
-            match (parent_run, parent_agent) {
-                (Some(parent_run), Some(parent_agent)) => Some(
-                    lineage_ref_for_agent(
-                        state,
-                        &parent_run,
-                        &parent_agent,
-                        lineage.relation_kind,
-                        0,
-                    )
-                    .await?,
-                ),
-                _ => None,
-            }
-        }
-        None => None,
-    };
-    let parent = cross_run_parent.or(same_run_parent);
+    let parent = same_run_parent;
 
     let mut children = Vec::new();
     for lineage in lineages
@@ -498,33 +593,6 @@ async fn resolve_agent_run_lineage(
             );
         }
     }
-    for lineage in state
-        .repos
-        .agent_run_lineage_repo
-        .list_children(run.id, agent.id)
-        .await
-        .map_err(ApiError::from)?
-    {
-        let child_run = state
-            .repos
-            .lifecycle_run_repo
-            .get_by_id(lineage.child_run_id)
-            .await
-            .map_err(ApiError::from)?;
-        let child_agent = state
-            .repos
-            .lifecycle_agent_repo
-            .get(lineage.child_agent_id)
-            .await
-            .map_err(ApiError::from)?;
-        if let (Some(child_run), Some(child_agent)) = (child_run, child_agent) {
-            children.push(
-                lineage_ref_for_agent(state, &child_run, &child_agent, lineage.relation_kind, 0)
-                    .await?,
-            );
-        }
-    }
-
     Ok((parent, children))
 }
 

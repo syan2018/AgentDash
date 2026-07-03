@@ -582,6 +582,16 @@ function isAgentMessageItem(item: SessionDisplayItem): boolean {
   return (item as SessionDisplayEntry).event.type === "agent_message_delta";
 }
 
+function isProjectedTranscriptItem(item: SessionDisplayItem): boolean {
+  if ("projectedTranscriptStable" in item) {
+    return item.projectedTranscriptStable === true;
+  }
+  if ("entries" in item) {
+    return item.entries.some((entry) => entry.projectedTranscriptStable === true);
+  }
+  return false;
+}
+
 interface TurnMeta {
   status: TurnStatus;
   firstSeq: number;
@@ -764,7 +774,7 @@ export function segmentByTurn(
     }
     segments.push({
       turnId: currentTurnId,
-      status: meta?.status ?? "active",
+      status: meta?.status ?? (currentItems.some(isProjectedTranscriptItem) ? "completed" : "active"),
       startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,

@@ -1216,6 +1216,75 @@ pub struct AgentConversationSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentConversationMessageRefView {
+    pub turn_id: String,
+    pub entry_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationSourceRangeView {
+    #[ts(type = "number")]
+    pub start_event_seq: u64,
+    #[ts(type = "number")]
+    pub end_event_seq: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentConversationMessageRole {
+    User,
+    Assistant,
+    ToolResult,
+    CompactionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationFeedMessage {
+    pub message_ref: AgentConversationMessageRefView,
+    pub role: AgentConversationMessageRole,
+    pub text: String,
+    pub origin: String,
+    pub synthetic: bool,
+    pub projection_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub source_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_range: Option<AgentConversationSourceRangeView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub projection_segment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub timestamp_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationFeedSnapshot {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    pub projection_kind: String,
+    #[ts(type = "number")]
+    pub projection_version: u64,
+    #[ts(type = "number")]
+    pub head_event_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_compaction_id: Option<String>,
+    #[ts(type = "number")]
+    pub message_count: u64,
+    pub messages: Vec<AgentConversationFeedMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct AgentRunWorkspaceView {
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,

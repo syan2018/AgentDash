@@ -1,68 +1,142 @@
 import type { AgentConversationFeedSnapshot } from "../../../generated/workflow-contracts";
-import type { BackboneEvent, DynamicToolCallOutputContentItem } from "../../../generated/backbone-protocol";
-import type { SessionDisplayEntry } from "./types";
+import type {
+  BackboneEvent,
+  DynamicToolCallOutputContentItem,
+  UserInput,
+} from "../../../generated/backbone-protocol";
+import { createInitialStreamState, reduceStreamState } from "./sessionStreamReducer";
+import type { SessionDisplayEntry, SessionEventEnvelope } from "./types";
 
 type FeedMessage = AgentConversationFeedSnapshot["messages"][number];
+type FeedContentPart = NonNullable<FeedMessage["content_parts"]>[number];
 type FeedToolCall = NonNullable<FeedMessage["tool_calls"]>[number];
-
-function messageEventSeq(feed: AgentConversationFeedSnapshot): number {
-  return Number(feed.head_event_seq);
-}
 
 function messageTimestamp(message: FeedMessage): number {
   return message.timestamp_ms == null ? Date.now() : Number(message.timestamp_ms);
 }
 
-function messageItemId(message: FeedMessage): string {
-  return `projection:${message.role}:${message.message_ref.turn_id}:${message.message_ref.entry_index}`;
+function messageItemId(message: FeedMessage, suffix: string): string {
+  return `projection:${message.role}:${message.message_ref.turn_id}:${message.message_ref.entry_index}:${suffix}`;
+}
+
+function messageContentParts(message: FeedMessage): FeedContentPart[] {
+  return message.content_parts ?? [];
 }
 
 function messageToolCalls(message: FeedMessage): FeedToolCall[] {
   return message.tool_calls ?? [];
 }
 
-function userMessageEvent(
-  message: FeedMessage,
-  threadId: string,
-): BackboneEvent {
+function imageDataUrl(part: Extract<FeedContentPart, { type: "image" }>): string {
+  if (part.data.startsWith("data:")) {
+    return part.data;
+  }
+  return `data:${part.mime_type};base64,${part.data}`;
+}
+
+function userInputs(message: FeedMessage): UserInput[] {
+  const parts = messageContentParts(message);
+  if (parts.length === 0) {
+    return [{ type: "text", text: message.text, text_elements: [] }];
+  }
+  return parts.flatMap((part): UserInput[] => {
+    if (part.type === "image") {
+      return [{ type: "image", url: imageDataUrl(part) }];
+    }
+    if (part.type === "reasoning") {
+      return [{ type: "text", text: part.text, text_elements: [] }];
+    }
+    return [{ type: "text", text: part.text, text_elements: [] }];
+  });
+}
+
+function textParts(message: FeedMessage): string[] {
+  const parts = messageContentParts(message)
+    .filter((part) => part.type === "text")
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0);
+  if (parts.length > 0) return parts;
+  const fallback = message.text.trim();
+  return fallback.length > 0 ? [fallback] : [];
+}
+
+function reasoningParts(message: FeedMessage): string[] {
+  return messageContentParts(message)
+    .filter((part) => part.type === "reasoning")
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0);
+}
+
+function userMessageEvent(message: FeedMessage, threadId: string): BackboneEvent | null {
+  const content = userInputs(message);
+  if (content.length === 0) return null;
   return {
     type: "user_input_submitted",
     payload: {
       threadId,
       turnId: message.message_ref.turn_id,
-      itemId: messageItemId(message),
+      itemId: messageItemId(message, "user"),
       submissionKind: "prompt",
-      content: [{ type: "text", text: message.text, text_elements: [] }],
+      content,
     },
   };
 }
 
-function assistantMessageEvent(
-  message: FeedMessage,
-  threadId: string,
-): BackboneEvent {
+function assistantMessageEvent(message: FeedMessage, threadId: string): BackboneEvent | null {
+  const text = textParts(message).join("\n");
+  if (!text) return null;
   return {
-    type: "agent_message_delta",
+    type: "item_completed",
     payload: {
       threadId,
       turnId: message.message_ref.turn_id,
-      itemId: messageItemId(message),
-      delta: message.text,
+      completedAtMs: messageTimestamp(message),
+      item: {
+        type: "agentMessage",
+        id: messageItemId(message, "msg"),
+        text,
+        phase: null,
+        memoryCitation: null,
+      },
     },
   };
 }
 
-function compactionSummaryEvent(
-  message: FeedMessage,
-  threadId: string,
-): BackboneEvent {
+function reasoningEvent(message: FeedMessage, threadId: string): BackboneEvent | null {
+  const content = reasoningParts(message);
+  if (content.length === 0) return null;
   return {
-    type: "agent_message_delta",
+    type: "item_completed",
     payload: {
       threadId,
       turnId: message.message_ref.turn_id,
-      itemId: messageItemId(message),
-      delta: message.text,
+      completedAtMs: messageTimestamp(message),
+      item: {
+        type: "reasoning",
+        id: messageItemId(message, "reasoning"),
+        summary: [],
+        content,
+      },
+    },
+  };
+}
+
+function compactionSummaryEvent(message: FeedMessage, threadId: string): BackboneEvent | null {
+  const text = message.text.trim();
+  if (!text) return null;
+  return {
+    type: "item_completed",
+    payload: {
+      threadId,
+      turnId: message.message_ref.turn_id,
+      completedAtMs: messageTimestamp(message),
+      item: {
+        type: "agentMessage",
+        id: messageItemId(message, "compaction"),
+        text,
+        phase: null,
+        memoryCitation: null,
+      },
     },
   };
 }
@@ -72,9 +146,17 @@ function toolCallItemId(message: FeedMessage, toolCallId: string): string {
 }
 
 function toolCallOutputItems(result: FeedMessage | undefined): DynamicToolCallOutputContentItem[] | null {
-  const text = result?.text.trim();
-  if (!text) return null;
-  return [{ type: "inputText", text }];
+  if (!result) return null;
+  const contentItems = messageContentParts(result).flatMap((part): DynamicToolCallOutputContentItem[] => {
+    if (part.type === "image") {
+      return [{ type: "inputImage", imageUrl: imageDataUrl(part) }];
+    }
+    const text = part.text.trim();
+    return text ? [{ type: "inputText", text }] : [];
+  });
+  if (contentItems.length > 0) return contentItems;
+  const text = result.text.trim();
+  return text ? [{ type: "inputText", text }] : null;
 }
 
 function toolCallEvent(
@@ -83,7 +165,6 @@ function toolCallEvent(
   result: FeedMessage | undefined,
   threadId: string,
 ): BackboneEvent {
-  const itemId = toolCallItemId(message, toolCall.id);
   const toolResult = result?.tool_result;
   return {
     type: "item_completed",
@@ -93,7 +174,7 @@ function toolCallEvent(
       completedAtMs: messageTimestamp(result ?? message),
       item: {
         type: "dynamicToolCall",
-        id: itemId,
+        id: toolCallItemId(message, toolCall.id),
         namespace: null,
         tool: toolCall.name,
         arguments: toolCall.arguments,
@@ -106,13 +187,9 @@ function toolCallEvent(
   };
 }
 
-function orphanToolResultEvent(
-  message: FeedMessage,
-  threadId: string,
-): BackboneEvent | null {
+function orphanToolResultEvent(message: FeedMessage, threadId: string): BackboneEvent | null {
   const toolResult = message.tool_result;
   if (!toolResult) return null;
-  const itemId = toolCallItemId(message, toolResult.tool_call_id);
   return {
     type: "item_completed",
     payload: {
@@ -121,7 +198,7 @@ function orphanToolResultEvent(
       completedAtMs: messageTimestamp(message),
       item: {
         type: "dynamicToolCall",
-        id: itemId,
+        id: toolCallItemId(message, toolResult.tool_call_id),
         namespace: null,
         tool: toolResult.tool_name ?? "tool",
         arguments: toolResult.details ?? null,
@@ -132,25 +209,6 @@ function orphanToolResultEvent(
       },
     },
   };
-}
-
-function textMessageEvent(
-  message: FeedMessage,
-  threadId: string,
-): BackboneEvent | null {
-  if (message.text.trim().length === 0) {
-    return null;
-  }
-  if (message.role === "user") {
-    return userMessageEvent(message, threadId);
-  }
-  if (message.role === "assistant") {
-    return assistantMessageEvent(message, threadId);
-  }
-  if (message.role === "compaction_summary") {
-    return compactionSummaryEvent(message, threadId);
-  }
-  return null;
 }
 
 function toolResultByCallId(messages: FeedMessage[]): Map<string, FeedMessage> {
@@ -180,45 +238,98 @@ function messageEvents(
   representedToolCallIds: Set<string>,
 ): BackboneEvent[] {
   const events: BackboneEvent[] = [];
-  const textEvent = textMessageEvent(message, threadId);
-  if (textEvent) {
-    events.push(textEvent);
+  if (message.role === "user") {
+    const event = userMessageEvent(message, threadId);
+    if (event) events.push(event);
+    return events;
   }
   if (message.role === "assistant") {
+    const reasoning = reasoningEvent(message, threadId);
+    if (reasoning) events.push(reasoning);
+    const text = assistantMessageEvent(message, threadId);
+    if (text) events.push(text);
     for (const toolCall of messageToolCalls(message)) {
       events.push(toolCallEvent(message, toolCall, toolResults.get(toolCall.id), threadId));
     }
+    return events;
   }
   if (message.role === "tool_result" && message.tool_result && !representedToolCallIds.has(message.tool_result.tool_call_id)) {
-    const orphanEvent = orphanToolResultEvent(message, threadId);
-    if (orphanEvent) {
-      events.push(orphanEvent);
-    }
+    const event = orphanToolResultEvent(message, threadId);
+    if (event) events.push(event);
+    return events;
+  }
+  if (message.role === "compaction_summary") {
+    const event = compactionSummaryEvent(message, threadId);
+    if (event) events.push(event);
   }
   return events;
+}
+
+function sessionUpdateType(event: BackboneEvent): string {
+  return event.type;
+}
+
+function syntheticEnvelope(
+  message: FeedMessage,
+  event: BackboneEvent,
+  threadId: string,
+  eventSeq: number,
+): SessionEventEnvelope {
+  const timestamp = messageTimestamp(message);
+  return {
+    session_id: threadId,
+    event_seq: eventSeq,
+    occurred_at_ms: timestamp,
+    committed_at_ms: timestamp,
+    session_update_type: sessionUpdateType(event),
+    turn_id: message.message_ref.turn_id,
+    entry_index: message.message_ref.entry_index,
+    tool_call_id: event.type === "item_completed" && event.payload.item.type === "dynamicToolCall"
+      ? event.payload.item.id
+      : undefined,
+    notification: {
+      sessionId: threadId,
+      source: {
+        connectorId: "agent-run-conversation-feed",
+        connectorType: "projection",
+        executorId: null,
+      },
+      trace: {
+        turnId: message.message_ref.turn_id,
+        entryIndex: message.message_ref.entry_index,
+      },
+      observedAt: new Date(timestamp).toISOString(),
+      event,
+    },
+  };
+}
+
+export function agentRunConversationFeedEvents(
+  feed: AgentConversationFeedSnapshot | null,
+): SessionEventEnvelope[] {
+  if (!feed) return [];
+  const threadId = feed.runtime_session_ref?.runtime_session_id ?? "";
+  const toolResults = toolResultByCallId(feed.messages);
+  const representedToolCallIdsValue = representedToolCallIds(feed.messages);
+  const pending: Array<{ message: FeedMessage; event: BackboneEvent }> = [];
+  for (const message of feed.messages) {
+    for (const event of messageEvents(message, threadId, toolResults, representedToolCallIdsValue)) {
+      pending.push({ message, event });
+    }
+  }
+  const headSeq = Number(feed.head_event_seq);
+  const startSeq = Math.max(1, headSeq - pending.length + 1);
+  return pending.map(({ message, event }, index) => syntheticEnvelope(message, event, threadId, startSeq + index));
 }
 
 export function agentRunConversationFeedEntries(
   feed: AgentConversationFeedSnapshot | null,
 ): SessionDisplayEntry[] {
-  if (!feed) return [];
-  const runtimeSessionId = feed.runtime_session_ref?.runtime_session_id ?? "";
-  const eventSeq = messageEventSeq(feed);
-  const toolResults = toolResultByCallId(feed.messages);
-  const representedToolCallIdsValue = representedToolCallIds(feed.messages);
-  return feed.messages.flatMap((message): SessionDisplayEntry[] => {
-    return messageEvents(message, runtimeSessionId, toolResults, representedToolCallIdsValue).map((event, index) => ({
-      id: index === 0 ? messageItemId(message) : `${messageItemId(message)}:${index}`,
-      sessionId: runtimeSessionId,
-      timestamp: messageTimestamp(message),
-      eventSeq,
-      timelineOrder: { kind: "durable", seq: eventSeq },
-      event,
-      turnId: message.message_ref.turn_id,
-      entryIndex: message.message_ref.entry_index,
-      accumulatedText: message.text,
-      isStreaming: false,
-      projectedTranscriptStable: true,
-    }));
-  });
+  const events = agentRunConversationFeedEvents(feed);
+  const reduced = reduceStreamState(createInitialStreamState([]), events);
+  return reduced.entries.map((entry) => ({
+    ...entry,
+    isStreaming: false,
+    projectedTranscriptStable: true,
+  }));
 }

@@ -25,7 +25,9 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentConversationFeedMessage = { message_ref: AgentConversationMessageRefView, role: AgentConversationMessageRole, text: string, tool_calls?: Array<AgentConversationToolCallView>, tool_result?: AgentConversationToolResultView, origin: string, synthetic: boolean, projection_kind: string, source_event_seq?: number, source_range?: AgentConversationSourceRangeView, projection_segment_id?: string, timestamp_ms?: number, };
+export type AgentConversationContentPartView = { "type": "text", text: string, } | { "type": "image", mime_type: string, data: string, } | { "type": "reasoning", text: string, id?: string, signature?: string, };
+
+export type AgentConversationFeedMessage = { message_ref: AgentConversationMessageRefView, role: AgentConversationMessageRole, text: string, content_parts?: Array<AgentConversationContentPartView>, tool_calls?: Array<AgentConversationToolCallView>, tool_result?: AgentConversationToolResultView, origin: string, synthetic: boolean, projection_kind: string, source_event_seq?: number, source_range?: AgentConversationSourceRangeView, projection_segment_id?: string, timestamp_ms?: number, };
 
 export type AgentConversationFeedSnapshot = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, runtime_session_ref?: RuntimeSessionRefDto, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, message_count: number, messages: Array<AgentConversationFeedMessage>, };
 

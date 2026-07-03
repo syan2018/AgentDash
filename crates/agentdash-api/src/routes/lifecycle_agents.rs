@@ -27,8 +27,8 @@ use agentdash_contracts::agent_run_mailbox::{
 };
 use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{
-    AgentConversationFeedMessage, AgentConversationFeedSnapshot, AgentConversationIdentity,
-    AgentConversationLifecycleContext, AgentConversationMessageRefView,
+    AgentConversationContentPartView, AgentConversationFeedMessage, AgentConversationFeedSnapshot,
+    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationMessageRefView,
     AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
     AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
@@ -449,9 +449,14 @@ pub async fn get_agent_run_conversation_feed(
 fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConversationFeedMessage> {
     let role = agent_conversation_message_role(&entry.message);
     let text = agent_conversation_message_text(&entry.message);
+    let content_parts = agent_conversation_content_parts(&entry.message);
     let tool_calls = agent_conversation_tool_calls(&entry.message);
     let tool_result = agent_conversation_tool_result(&entry.message);
-    if text.trim().is_empty() && tool_calls.is_empty() && tool_result.is_none() {
+    if text.trim().is_empty()
+        && content_parts.is_empty()
+        && tool_calls.is_empty()
+        && tool_result.is_none()
+    {
         return None;
     }
     let timestamp_ms = agent_conversation_message_timestamp_ms(&entry.message);
@@ -462,6 +467,7 @@ fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConvers
         },
         role,
         text,
+        content_parts,
         tool_calls,
         tool_result,
         origin: entry.origin.as_str().to_string(),
@@ -477,6 +483,38 @@ fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConvers
         projection_segment_id: entry.projection_segment_id,
         timestamp_ms,
     })
+}
+
+fn agent_conversation_content_parts(
+    message: &AgentMessage,
+) -> Vec<AgentConversationContentPartView> {
+    let content = match message {
+        AgentMessage::User { content, .. }
+        | AgentMessage::Assistant { content, .. }
+        | AgentMessage::ToolResult { content, .. } => content,
+        AgentMessage::CompactionSummary { .. } => return Vec::new(),
+    };
+    content
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text { text } => {
+                AgentConversationContentPartView::Text { text: text.clone() }
+            }
+            ContentPart::Image { mime_type, data } => AgentConversationContentPartView::Image {
+                mime_type: mime_type.clone(),
+                data: data.clone(),
+            },
+            ContentPart::Reasoning {
+                text,
+                id,
+                signature,
+            } => AgentConversationContentPartView::Reasoning {
+                text: text.clone(),
+                id: id.clone(),
+                signature: signature.clone(),
+            },
+        })
+        .collect()
 }
 
 fn agent_conversation_tool_calls(message: &AgentMessage) -> Vec<AgentConversationToolCallView> {

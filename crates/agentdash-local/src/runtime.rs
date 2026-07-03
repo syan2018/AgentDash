@@ -1,6 +1,7 @@
 //! 本机 runtime 组装与生命周期管理。
+#![allow(clippy::items_after_test_module)]
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -459,20 +460,40 @@ pub async fn run_standalone_with_status_and_shutdown(
     runner_status: Option<RunnerStatusReporter>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
+    let backend_id = config.backend_id.clone();
     let mut ws_config = build_ws_config(&config).await?;
     ws_config.runner_status = runner_status;
     tokio::spawn(async move { ws_client::run_until_shutdown(ws_config, shutdown_rx).await })
         .await
-        .map_err(|error| anyhow::anyhow!("standalone runtime task join 失败: {error}"))?
+        .map_err(|error| {
+            let context = DiagnosticErrorContext::new("local_runtime.standalone", "task_join");
+            diag_error!(
+                Error,
+                Subsystem::Relay,
+                context = &context,
+                error = &error,
+                backend_id = %backend_id,
+                "standalone runtime task join 失败"
+            );
+            anyhow::anyhow!("standalone runtime task join 失败: {error}")
+        })?
 }
 
 pub fn canonicalize_workspace_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     roots
         .into_iter()
         .map(|path| {
-            std::fs::canonicalize(&path).unwrap_or_else(|_| {
-                diag!(Warn, Subsystem::Relay,
-        path = %path.display(), "无法规范化路径");
+            std::fs::canonicalize(&path).unwrap_or_else(|error| {
+                let context =
+                    DiagnosticErrorContext::new("local_runtime.workspace_roots", "canonicalize");
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    path_kind = "workspace_root",
+                    "无法规范化 workspace root，保留原始配置路径"
+                );
                 path
             })
         })
@@ -567,8 +588,17 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         );
 
         if let Err(error) = session_runtime.runtime.recover_interrupted_sessions().await {
-            diag!(Warn, Subsystem::Relay,
-        error = %error, "启动恢复 session 状态失败（非致命）");
+            let context =
+                DiagnosticErrorContext::new("local_runtime.session_runtime", "recover_interrupted");
+            diag_error!(
+                Warn,
+                Subsystem::Relay,
+                context = &context,
+                error = &error,
+                backend_id = %config.backend_id,
+                executor_enabled = config.executor_enabled,
+                "启动恢复 session 状态失败（非致命）"
+            );
         }
 
         diag!(Info, Subsystem::Relay, "Session runtime 已初始化");

@@ -1231,15 +1231,14 @@ mod tests {
                 .pending_actions
                 .write()
                 .expect("hook pending actions write lock poisoned");
-            let actions = guard
+            guard
                 .iter_mut()
                 .filter(|action| action.status == HookPendingActionStatus::Pending)
                 .map(|action| {
                     action.last_injected_at_ms = Some(chrono::Utc::now().timestamp_millis());
                     action.clone()
                 })
-                .collect();
-            actions
+                .collect()
         }
 
         fn enqueue_turn_start_notice(&self, notice: HookTurnStartNotice) {
@@ -1479,7 +1478,7 @@ mod tests {
             self.triggers
                 .lock()
                 .expect("recording provider lock poisoned")
-                .push(query.trigger.clone());
+                .push(query.trigger);
 
             Ok(match query.trigger {
                 HookTrigger::BeforeCompact => HookResolution {

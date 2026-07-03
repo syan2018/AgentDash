@@ -3,7 +3,7 @@
   "name": "diagnostics-quality-fixes",
   "title": "收束 diagnostics 调用点质量",
   "description": "基于诊断日志审计结果，规划主仓 diag!/diag_error! 调用点质量修复，补齐 operation/stage、错误对象和结构化上下文字段。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use axum::Json;
@@ -333,16 +333,23 @@ fn validate_terminal_command_response(
                 error: Some(error), ..
             },
         ) => {
-            diag!(Warn, Subsystem::Api,
+            let context = DiagnosticErrorContext::new("terminal.command", "relay_error_response");
+            diag_error!(
+                Warn,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
                 terminal_id = %terminal_id,
                 command = expected.command_name(),
-                error = %error,
+                relay_error_code = ?error.code,
                 "terminal relay command returned an error response"
             );
             Err(api_error_from_terminal_relay_error(error, expected))
         }
         (_, other) => {
             diag!(Error, Subsystem::Api,
+                operation = "terminal.command",
+                stage = "unexpected_response_type",
                 terminal_id = %terminal_id,
                 command = expected.command_name(),
                 response_id = %other.id(),
@@ -380,8 +387,12 @@ fn terminal_command_send_error(
     expected: TerminalCommandResponseKind,
     terminal_id: &str,
 ) -> ApiError {
-    diag!(Error, Subsystem::Api,
-        error = %error,
+    let context = DiagnosticErrorContext::new("terminal.command", "send_command");
+    diag_error!(
+        Error,
+        Subsystem::Api,
+        context = &context,
+        error = &error,
         terminal_id = %terminal_id,
         command = expected.command_name(),
         "terminal relay command failed"

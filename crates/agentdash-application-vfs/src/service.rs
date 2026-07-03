@@ -145,6 +145,7 @@ impl VfsService {
         vfs.mounts.clone()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resolve_provider_dispatch(
         &self,
         vfs: &Vfs,
@@ -207,6 +208,7 @@ impl VfsService {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn read_text_range_with_policy(
         &self,
         vfs: &Vfs,
@@ -600,6 +602,7 @@ impl VfsService {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn rename_text_with_policy(
         &self,
         vfs: &Vfs,

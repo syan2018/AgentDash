@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -438,12 +438,20 @@ impl<'a> ProjectAgentRunStartService<'a> {
                 )
                 .await
             {
-                diag!(Warn, Subsystem::AgentRun,
-
+                let diagnostic_context = DiagnosticErrorContext::new(
+                    "agent_run.project_agent_start",
+                    "cleanup_after_bind_failure",
+                );
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &cleanup_error,
+                    project_id = %command.project_id,
+                    project_agent_id = %command.project_agent_id,
                     runtime_session_id = %runtime_session_id,
                     run_id = %dispatch_result.runtime_refs.run_ref,
-                    error = %cleanup_error,
-                    "ProjectAgent 绑定失败后的空 runtime/lifecycle 清理失败"
+                    agent_id = %dispatch_result.runtime_refs.agent_ref,
+                    receipt_id = %claim.record.id,
+                    "ProjectAgent cleanup after binding failure failed"
                 );
             }
             mark_command_terminal_failed(self.repos.command_receipt_repo, claim.record.id, &error)
@@ -616,12 +624,17 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .cleanup_if_session_has_no_events(runtime_session_id, run_id)
             .await
         {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let diagnostic_context = DiagnosticErrorContext::new(
+                "agent_run.project_agent_start",
+                "cleanup_after_initial_message_failure",
+            );
+            diag_error!(Warn, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &cleanup_error,
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
-                error = %cleanup_error,
-                "ProjectAgent 首条 mailbox 消息失败后的空 runtime/lifecycle 清理失败"
+                receipt_id = %receipt_id,
+                "ProjectAgent cleanup after initial mailbox failure failed"
             );
         }
         mark_command_terminal_failed(self.repos.command_receipt_repo, receipt_id, error).await;

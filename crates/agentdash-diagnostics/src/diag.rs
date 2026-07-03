@@ -75,7 +75,7 @@ mod tests {
             .with_field("run_id", "run-1")
             .with_field("client_command_id", "cmd-1")
             .with_field("fork_point", "turn-1:2");
-        let error = std::io::Error::new(std::io::ErrorKind::Other, "database exploded");
+        let error = std::io::Error::other("database exploded");
 
         let detail = context.detail(&error);
 

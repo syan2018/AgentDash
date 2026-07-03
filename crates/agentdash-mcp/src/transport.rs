@@ -15,7 +15,7 @@
 //!                    └─────────────────────────────────────────────────┘
 //! ```
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -145,8 +145,16 @@ impl McpHttpRouterState {
             .get_by_id(story_id)
             .await
             .map_err(|error| {
-                diag!(Error, Subsystem::Mcp,
-        %story_id, ?error, "加载 Story 以建立 MCP HTTP 服务失败");
+                let context = DiagnosticErrorContext::new("mcp.http.story_service", "load_story")
+                    .with_field("story_id", story_id);
+                diag_error!(
+                    Error,
+                    Subsystem::Mcp,
+                    context = &context,
+                    error = &error,
+                    story_id = %story_id,
+                    "加载 Story 以建立 MCP HTTP 服务失败"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("加载 Story 失败: {error}"),

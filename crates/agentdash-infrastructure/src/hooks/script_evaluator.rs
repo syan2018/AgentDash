@@ -4,7 +4,7 @@
 //! shared engine, sandbox, AST cache and JSON bridge live in
 //! [`crate::script_runtime::RhaiScriptRuntime`].
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -31,8 +31,17 @@ impl RhaiHookScriptEvaluator {
                     preset_asts.insert(key.to_string(), ast);
                 }
                 Err(e) => {
-                    diag!(Error, Subsystem::Hooks,
-        preset_key = key, error = %e, "preset Rhai 脚本编译失败");
+                    let context =
+                        DiagnosticErrorContext::new("hooks.script_evaluator", "compile_preset")
+                            .with_field("preset_key", key);
+                    diag_error!(
+                        Error,
+                        Subsystem::Hooks,
+                        context = &context,
+                        error = &e,
+                        preset_key = key,
+                        "preset Rhai 脚本编译失败"
+                    );
                 }
             }
         }
@@ -185,13 +194,20 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
                 elapsed_us = elapsed.as_micros() as u64,
                 "rhai preset 执行完成"
             ),
-            Err(e) => diag!(Warn, Subsystem::Hooks,
-
-                preset = preset_key,
-                elapsed_us = elapsed.as_micros() as u64,
-                error = %e,
-                "rhai preset 执行失败"
-            ),
+            Err(e) => {
+                let context = DiagnosticErrorContext::new("hooks.script_evaluator", "eval_preset")
+                    .with_field("preset_key", preset_key)
+                    .with_field("elapsed_us", elapsed.as_micros());
+                diag_error!(
+                    Warn,
+                    Subsystem::Hooks,
+                    context = &context,
+                    error = &e,
+                    preset = preset_key,
+                    elapsed_us = elapsed.as_micros() as u64,
+                    "rhai preset 执行失败"
+                );
+            }
         }
         result
     }
@@ -215,13 +231,21 @@ impl HookScriptEvaluator for RhaiHookScriptEvaluator {
                 elapsed_us = elapsed.as_micros() as u64,
                 "rhai 自定义脚本执行完成"
             ),
-            Err(e) => diag!(Warn, Subsystem::Hooks,
-
-                script_hash = hash,
-                elapsed_us = elapsed.as_micros() as u64,
-                error = %e,
-                "rhai 自定义脚本执行失败"
-            ),
+            Err(e) => {
+                let context =
+                    DiagnosticErrorContext::new("hooks.script_evaluator", "eval_inline_script")
+                        .with_field("script_hash", hash)
+                        .with_field("elapsed_us", elapsed.as_micros());
+                diag_error!(
+                    Warn,
+                    Subsystem::Hooks,
+                    context = &context,
+                    error = &e,
+                    script_hash = hash,
+                    elapsed_us = elapsed.as_micros() as u64,
+                    "rhai 自定义脚本执行失败"
+                );
+            }
         }
         result
     }

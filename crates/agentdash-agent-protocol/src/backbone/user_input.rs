@@ -1,5 +1,5 @@
 use agentdash_agent_types::ContentPart;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -123,8 +123,10 @@ fn image_url_to_content_part(url: &str) -> ContentPart {
         Some((mime_type, data)) => ContentPart::image(mime_type, data),
         None => {
             diag!(Warn, Subsystem::AgentRun,
-
-                url = %truncate_for_log(url),
+                operation = "agent_protocol.user_input",
+                stage = "image_url_not_data",
+                url_scheme = %url.split_once(':').map(|(scheme, _)| scheme).unwrap_or("unknown"),
+                url_length = url.len(),
                 "图片 url 非 data URL，无法结构化携带，降级为文本占位（图片采集侧应传 data URL）"
             );
             ContentPart::text(format!("[引用图片: {url}]"))
@@ -158,10 +160,13 @@ fn local_image_to_content_part(path: &std::path::Path) -> ContentPart {
             ContentPart::image(mime_type, data)
         }
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
-                path = %path.display(),
-                error = %error,
+            let diagnostic_context =
+                DiagnosticErrorContext::new("agent_protocol.user_input", "local_image_read");
+            diag_error!(Warn, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &error,
+                path_extension = %path.extension().and_then(|ext| ext.to_str()).unwrap_or(""),
+                path_is_absolute = path.is_absolute(),
                 "本地图片读取失败，降级为文本占位"
             );
             ContentPart::text(format!("[引用本地图片: {}]", path.display()))
@@ -184,15 +189,6 @@ fn guess_image_mime(path: &std::path::Path) -> &'static str {
         Some("bmp") => "image/bmp",
         Some("svg") => "image/svg+xml",
         _ => "application/octet-stream",
-    }
-}
-
-fn truncate_for_log(value: &str) -> String {
-    const MAX: usize = 128;
-    if value.len() <= MAX {
-        value.to_string()
-    } else {
-        format!("{}…", &value[..MAX])
     }
 }
 

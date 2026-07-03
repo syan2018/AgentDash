@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
@@ -361,11 +361,17 @@ impl WorkspaceModuleRuntimeToolProvider {
         ) {
             Ok(anchor) => anchor,
             Err(error) => {
-                diag!(Warn, Subsystem::AgentRun,
-
+                let diagnostic_context = DiagnosticErrorContext::new(
+                    "workspace_module.runtime_tool_provider",
+                    "runtime_backend_anchor",
+                );
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
                     delivery_runtime_session_id = %delivery_runtime_session_id,
-                    error = %error,
-                    "workspace_module_invoke 装配为诊断工具：缺少 runtime backend anchor"
+                    project_id = %project_id,
+                    tool_name = "workspace_module_invoke",
+                    "workspace_module_invoke runtime backend anchor resolution failed"
                 );
                 tools.push(Arc::new(WorkspaceModuleInvokeUnavailableTool::new(vec![
                     InvokeRuntimeDependency::RuntimeBackendAnchor,

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_process::{ProcessDomain, background_std_command};
 use anyhow::{Result, anyhow};
 use postgresql_embedded::{PostgreSQL, Settings};
@@ -239,7 +239,25 @@ async fn try_reuse_running(
             Some((pool, display_url))
         }
         Err(e) => {
-            diag!(Warn, Subsystem::Infra, "复用连接失败: {e}");
+            let context =
+                DiagnosticErrorContext::new("postgres_runtime.embedded_reuse", "connect_pool")
+                    .with_field("database", database_name)
+                    .with_field("port", info.port)
+                    .with_field("pid", info.pid)
+                    .with_field("max_connections", max_connections)
+                    .with_field("pool_status", "reuse_connect_failed");
+            diag_error!(
+                Warn,
+                Subsystem::Infra,
+                context = &context,
+                error = &e,
+                database = %database_name,
+                port = info.port,
+                pid = info.pid,
+                max_connections,
+                pool_status = "reuse_connect_failed",
+                "复用 embedded PostgreSQL 连接失败"
+            );
             None
         }
     }
@@ -314,8 +332,17 @@ impl Drop for PostgresRuntime {
         if let Some(embedded) = self.embedded.take() {
             tokio::spawn(async move {
                 if let Err(err) = embedded.stop().await {
-                    diag!(Warn, Subsystem::Infra,
-        error = %err, "停止 embedded PostgreSQL 失败");
+                    let context =
+                        DiagnosticErrorContext::new("postgres_runtime.embedded_instance", "stop")
+                            .with_field("pool_status", "stop_failed");
+                    diag_error!(
+                        Warn,
+                        Subsystem::Infra,
+                        context = &context,
+                        error = &err,
+                        pool_status = "stop_failed",
+                        "停止 embedded PostgreSQL 失败"
+                    );
                 }
             });
         }

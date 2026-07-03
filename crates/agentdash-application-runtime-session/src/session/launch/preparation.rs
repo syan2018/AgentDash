@@ -1,5 +1,5 @@
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::{
@@ -481,10 +481,14 @@ async fn load_user_preferences(
         Ok(Some(setting)) => setting,
         Ok(None) => return Vec::new(),
         Err(error) => {
-            diag!(Warn, Subsystem::SessionLaunch,
-
+            let context =
+                DiagnosticErrorContext::new("session.launch.preparation", "load_user_preferences");
+            diag_error!(
+                Warn,
+                Subsystem::SessionLaunch,
+                context = &context,
+                error = &error,
                 user_id = %identity.user_id,
-                error = %error,
                 "读取 Pi Agent 用户偏好失败"
             );
             return Vec::new();

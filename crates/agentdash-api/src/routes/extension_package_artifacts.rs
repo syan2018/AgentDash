@@ -1,6 +1,6 @@
 //! Project Extension Package Artifact HTTP 路由。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use axum::Json;
@@ -317,8 +317,16 @@ pub(crate) fn extension_package_error_to_api(
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            diag!(Error, Subsystem::Api,
-        error = %error, "extension package artifact storage error");
+            let context =
+                DiagnosticErrorContext::new("extension_package_artifact.route", "storage");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
+                route = "extension_package_artifacts",
+                "extension package artifact storage error"
+            );
             ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),

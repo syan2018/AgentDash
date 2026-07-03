@@ -8,7 +8,7 @@
 //!
 //! 这是"安全网"行为：确保业务状态与 session 生命周期一致。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -42,6 +42,7 @@ pub struct TerminalCancelCoordinator {
 }
 
 impl TerminalCancelCoordinator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_runtime: SessionRuntimeService,
         _story_repo: Arc<dyn StoryRepository>,
@@ -93,14 +94,25 @@ impl TerminalCancelCoordinator {
             .await
         {
             Err(err) => {
-                diag!(Warn, Subsystem::Reconcile,
-
+                let context =
+                    DiagnosticErrorContext::new("reconcile.terminal_cancel", "cancel_agent_run")
+                        .with_field("story_id", story_id)
+                        .with_field("session_id", &command.runtime_session_id)
+                        .with_field("run_id", command.runtime_refs.run_ref)
+                        .with_field("agent_id", command.runtime_refs.agent_ref)
+                        .with_field("frame_id", command.runtime_refs.frame_ref);
+                diag_error!(
+                    Warn,
+                    Subsystem::Reconcile,
+                    context = &context,
+                    error = &err,
                     story_id = %story_id,
                     session_id = %command.runtime_session_id,
+                    run_id = %command.runtime_refs.run_ref,
+                    agent_id = %command.runtime_refs.agent_ref,
                     frame_ref = %command.runtime_refs.frame_ref,
                     orchestration_ref = ?command.runtime_refs.orchestration_ref(),
                     node_path = ?command.runtime_refs.node_path(),
-                    error = %err,
                     "终态取消协调器：Story 进入终态后取消关联 session 失败"
                 );
             }

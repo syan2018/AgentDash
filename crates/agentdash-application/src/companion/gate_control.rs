@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_application_workflow::gate::{
@@ -1080,11 +1080,23 @@ impl CompanionGateControlService {
                 payload: event.payload.clone(),
             };
             if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-                diag!(Warn, Subsystem::AgentRun,
-                    error = %error,
+                let mut context = DiagnosticErrorContext::new(
+                    "companion.gate_notification",
+                    "deliver_companion_event",
+                )
+                .with_field("gate_id", gate_id);
+                if let Some(agent_id) = diagnostic_agent_id {
+                    context = context.with_field("agent_id", agent_id);
+                }
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
                     gate_id = %gate_id,
-                    agent_id = diagnostic_agent_id.map(|id| id.to_string()).unwrap_or_else(|| "(unknown)".to_string()),
-                    "companion gate transition notification delivery failed");
+                    agent_id = ?diagnostic_agent_id,
+                    "companion gate transition notification delivery failed"
+                );
             }
         }
     }
@@ -2183,43 +2195,45 @@ mod tests {
             None
         );
 
-        let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
-        assert_eq!(mailbox_commands.len(), 1);
-        assert_eq!(mailbox_commands[0].gate_id, gate_id);
-        assert_eq!(mailbox_commands[0].request_id, "dispatch-1");
-        assert_eq!(mailbox_commands[0].run_id, run_id);
-        assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
-        assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
-        assert_eq!(
-            mailbox_commands[0].parent_delivery_runtime_session_id,
-            "parent-session"
-        );
-        assert!(
-            mailbox_commands[0]
-                .input_text
-                .contains("Companion child result is available.")
-        );
-        drop(mailbox_commands);
+        {
+            let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
+            assert_eq!(mailbox_commands.len(), 1);
+            assert_eq!(mailbox_commands[0].gate_id, gate_id);
+            assert_eq!(mailbox_commands[0].request_id, "dispatch-1");
+            assert_eq!(mailbox_commands[0].run_id, run_id);
+            assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
+            assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
+            assert_eq!(
+                mailbox_commands[0].parent_delivery_runtime_session_id,
+                "parent-session"
+            );
+            assert!(
+                mailbox_commands[0]
+                    .input_text
+                    .contains("Companion child result is available.")
+            );
+        }
 
-        let event_notifications = delivery.event_notifications.lock().unwrap();
-        assert_eq!(event_notifications.len(), 2);
-        assert_eq!(
-            event_notifications[0].event_type,
-            "companion_result_available"
-        );
-        assert_eq!(
-            event_notifications[0].delivery_runtime_session_id,
-            "parent-session"
-        );
-        assert_eq!(
-            event_notifications[1].event_type,
-            "companion_result_returned"
-        );
-        assert_eq!(
-            event_notifications[1].delivery_runtime_session_id,
-            "child-session"
-        );
-        drop(event_notifications);
+        {
+            let event_notifications = delivery.event_notifications.lock().unwrap();
+            assert_eq!(event_notifications.len(), 2);
+            assert_eq!(
+                event_notifications[0].event_type,
+                "companion_result_available"
+            );
+            assert_eq!(
+                event_notifications[0].delivery_runtime_session_id,
+                "parent-session"
+            );
+            assert_eq!(
+                event_notifications[1].event_type,
+                "companion_result_returned"
+            );
+            assert_eq!(
+                event_notifications[1].delivery_runtime_session_id,
+                "child-session"
+            );
+        }
 
         let duplicate = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
@@ -2322,13 +2336,12 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some(result.request_id.as_str())
         );
-        assert_eq!(
+        assert!(
             stored
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("parent_mailbox_delivery"))
-                .is_none(),
-            true
+                .is_none()
         );
         assert_eq!(
             result
@@ -2809,13 +2822,12 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some(gate_id.to_string().as_str())
         );
-        assert_eq!(
+        assert!(
             stored
                 .payload_json
                 .as_ref()
                 .and_then(|payload| payload.get("child_mailbox_delivery"))
-                .is_none(),
-            true
+                .is_none()
         );
         assert_eq!(
             stored

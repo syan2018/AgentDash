@@ -103,15 +103,15 @@ impl ContextFramePayload for UserContextFrame {
         if let Some(provider) = &self.provider {
             lines.push(format!("- Provider: {provider}"));
         }
-        if !self.extra.is_null() {
-            if let Some(obj) = self.extra.as_object() {
-                for (key, value) in obj {
-                    let val_str = match value {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    lines.push(format!("- {key}: {val_str}"));
-                }
+        if !self.extra.is_null()
+            && let Some(obj) = self.extra.as_object()
+        {
+            for (key, value) in obj {
+                let val_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                lines.push(format!("- {key}: {val_str}"));
             }
         }
         lines.join("\n")

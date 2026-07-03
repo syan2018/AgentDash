@@ -623,20 +623,19 @@ mod tests {
     fn companion_result_records_structured_return_channel_diagnostic() {
         use agentdash_domain::workflow::{WorkflowHookRuleSpec, WorkflowHookTrigger};
         let mut snapshot = snapshot_with_workflow("check", "checklist_passed");
-        if let Some(meta) = snapshot.metadata.as_mut() {
-            if let Some(aw) = meta.active_workflow.as_mut() {
-                if let Some(ec) = aw.effective_contract.as_mut() {
-                    ec.hook_rules.push(WorkflowHookRuleSpec {
-                        key: "result_channel".to_string(),
-                        trigger: WorkflowHookTrigger::CompanionResult,
-                        description: "companion result channel".to_string(),
-                        preset: Some("companion_result_channel".to_string()),
-                        params: None,
-                        script: None,
-                        enabled: true,
-                    });
-                }
-            }
+        if let Some(meta) = snapshot.metadata.as_mut()
+            && let Some(aw) = meta.active_workflow.as_mut()
+            && let Some(ec) = aw.effective_contract.as_mut()
+        {
+            ec.hook_rules.push(WorkflowHookRuleSpec {
+                key: "result_channel".to_string(),
+                trigger: WorkflowHookTrigger::CompanionResult,
+                description: "companion result channel".to_string(),
+                preset: Some("companion_result_channel".to_string()),
+                params: None,
+                script: None,
+                enabled: true,
+            });
         }
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {

@@ -4,7 +4,7 @@
 //! 超时的 session 会被自动取消（标记为 interrupted）。
 //! 这是平台级安全网，不依赖 Agent 判断。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::time::Duration;
 
 use super::runtime_control::SessionRuntimeService;
@@ -54,17 +54,27 @@ pub fn spawn_stall_detector(
 
             diag!(Warn, Subsystem::AgentRun,
 
+                operation = "session.stall_detector",
+                stage = "detect_stalled_sessions",
                 count = stalled.len(),
                 session_ids = ?stalled,
+                stall_timeout_ms,
                 "检测到 stalled session，正在取消"
             );
 
             for session_id in stalled {
                 if let Err(err) = session_runtime.cancel(&session_id).await {
-                    diag!(Warn, Subsystem::AgentRun,
-
+                    let context = DiagnosticErrorContext::new(
+                        "session.stall_detector",
+                        "cancel_stalled_session",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &err,
                         session_id = %session_id,
-                        error = %err,
+                        stall_timeout_ms,
                         "取消 stalled session 失败"
                     );
                 } else {

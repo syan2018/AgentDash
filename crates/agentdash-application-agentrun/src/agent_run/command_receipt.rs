@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -94,11 +94,13 @@ pub(crate) async fn mark_command_terminal_failed(
         .mark_terminal_failed(receipt_id, error.to_string())
         .await
     {
-        diag!(Warn, Subsystem::AgentRun,
-
+        let diagnostic_context =
+            DiagnosticErrorContext::new("agent_run.command_receipt", "mark_terminal_failed");
+        diag_error!(Warn, Subsystem::AgentRun,
+            context = &diagnostic_context,
+            error = &mark_error,
             receipt_id = %receipt_id,
-            error = %mark_error,
-            "写入 AgentRun command terminal_failed receipt 失败"
+            "Failed to write AgentRun command terminal_failed receipt"
         );
     }
 }

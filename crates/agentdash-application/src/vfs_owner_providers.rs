@@ -13,6 +13,7 @@ use crate::vfs::provider::MountProviderRegistryBuilder;
 use crate::vfs::{InlineFsMountProvider, RoutineMountProvider, SkillAssetFsMountProvider};
 
 pub trait MountProviderRegistryBuilderOwnerExt {
+    #[allow(clippy::too_many_arguments)]
     fn with_application_builtins(
         self,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -26,6 +27,7 @@ pub trait MountProviderRegistryBuilderOwnerExt {
 }
 
 impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
+    #[allow(clippy::too_many_arguments)]
     fn with_application_builtins(
         self,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,

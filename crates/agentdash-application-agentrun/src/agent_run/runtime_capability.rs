@@ -1336,9 +1336,10 @@ mod tests {
     #[test]
     fn workspace_module_round_trips_through_effective_capability_json() {
         // set allowlist → effective_capability_json → 还原 → Allowlist 保真
-        let mut state = CapabilityState::default();
-        state.workspace_module =
-            project_workspace_module_dimension(Some(&["ext:demo".to_string()]));
+        let state = CapabilityState {
+            workspace_module: project_workspace_module_dimension(Some(&["ext:demo".to_string()])),
+            ..Default::default()
+        };
         let surfaces = capability_state_to_frame_surfaces(&state);
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
         frame.effective_capability_json = surfaces.effective_capability_json;
@@ -1353,8 +1354,10 @@ mod tests {
         );
 
         // clear（空集）→ 下一 revision 重新投影 → All（不继承上一版名单）
-        let mut cleared = CapabilityState::default();
-        cleared.workspace_module = project_workspace_module_dimension(Some(&[]));
+        let cleared = CapabilityState {
+            workspace_module: project_workspace_module_dimension(Some(&[])),
+            ..Default::default()
+        };
         let cleared_surfaces = capability_state_to_frame_surfaces(&cleared);
         let mut next_frame = AgentFrame::new_initial(Uuid::new_v4());
         next_frame.effective_capability_json = cleared_surfaces.effective_capability_json;

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -75,10 +75,15 @@ pub async fn spawn_cron_scheduler(
     let entries = match load_cron_entries(&repos).await {
         Ok(entries) => entries,
         Err(err) => {
-            diag!(
+            let context = DiagnosticErrorContext::new("cron.scheduler.spawn", "load_entries")
+                .with_field("trigger_type", "scheduled");
+            diag_error!(
                 Error,
                 Subsystem::Cron,
-                "加载 Routine cron 调度条目失败，调度器不启动: {err}"
+                context = &context,
+                error = &err,
+                trigger_type = "scheduled",
+                "加载 Routine cron 调度条目失败，调度器不启动"
             );
             return;
         }
@@ -128,12 +133,19 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
         let schedule = match Schedule::from_str(cron_expression) {
             Ok(s) => s,
             Err(err) => {
-                diag!(Warn, Subsystem::Cron,
-
+                let context =
+                    DiagnosticErrorContext::new("cron.scheduler.load_entries", "parse_cron")
+                        .with_field("routine_id", routine.id)
+                        .with_field("cron", cron_expression);
+                diag_error!(
+                    Warn,
+                    Subsystem::Cron,
+                    context = &context,
+                    error = &err,
                     routine_id = %routine.id,
                     routine_name = %routine.name,
                     cron = cron_expression,
-                    "无效的 cron 表达式，跳过: {err}"
+                    "无效的 cron 表达式，跳过"
                 );
                 continue;
             }
@@ -232,8 +244,18 @@ async fn run_cron_loop(
                         entries = merge_entries(entries, fresh);
                     }
                     Err(err) => {
-                        diag!(Warn, Subsystem::Cron,
-        "热更新 Routine cron 条目失败，保持现有调度: {err}");
+                        let context = DiagnosticErrorContext::new("cron.scheduler.reload", "load_entries")
+                            .with_field("trigger_type", "scheduled")
+                            .with_field("existing_count", entries.len());
+                        diag_error!(
+                            Warn,
+                            Subsystem::Cron,
+                            context = &context,
+                            error = &err,
+                            trigger_type = "scheduled",
+                            existing_count = entries.len(),
+                            "热更新 Routine cron 条目失败，保持现有调度"
+                        );
                     }
                 }
             }
@@ -256,10 +278,16 @@ async fn run_cron_loop(
 
             tokio::spawn(async move {
                 if let Err(err) = executor.fire_scheduled(routine_id).await {
-                    diag!(Warn, Subsystem::Cron,
-
+                    let context =
+                        DiagnosticErrorContext::new("cron.scheduler.fire", "fire_scheduled")
+                            .with_field("routine_id", routine_id);
+                    diag_error!(
+                        Warn,
+                        Subsystem::Cron,
+                        context = &context,
+                        error = &err,
                         routine_id = %routine_id,
-                        "Routine cron 触发失败: {err}"
+                        "Routine cron 触发失败"
                     );
                 }
             });

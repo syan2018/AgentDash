@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
@@ -215,10 +215,16 @@ impl MailboxBoundaryStage<'_> {
             }
             Err(error) => {
                 if !matches!(error, WorkflowApplicationError::NotFound(_)) {
-                    diag!(Warn, Subsystem::AgentRun,
-
+                    let diagnostic_context = DiagnosticErrorContext::new(
+                        "agent_run.mailbox_runtime_adapter",
+                        "schedule_agent_loop_turn_boundary",
+                    );
+                    diag_error!(Warn, Subsystem::AgentRun,
+                        context = &diagnostic_context,
+                        error = &error,
                         runtime_session_id = %self.runtime_session_id,
-                        "AgentRun mailbox AgentLoopTurnBoundary 调度失败: {error}"
+                        trigger = "agent_loop_turn_boundary",
+                        "AgentRun mailbox AgentLoopTurnBoundary scheduling failed"
                     );
                 }
             }

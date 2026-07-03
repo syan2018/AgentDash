@@ -200,7 +200,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
 
         let mut child_run =
             LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
-        child_run.topology = input.parent_run.topology.clone();
+        child_run.topology = input.parent_run.topology;
         child_run.context = input.parent_run.context.clone();
         child_run.view_projection = input.parent_run.view_projection.clone();
 

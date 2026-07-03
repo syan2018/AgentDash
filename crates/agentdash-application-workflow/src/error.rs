@@ -1,5 +1,5 @@
 use agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::session_persistence::SessionStoreError;
@@ -45,8 +45,17 @@ impl From<ConnectorError> for WorkflowApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                diag!(Error, Subsystem::Workflow,
-        error = %error, "workflow connector IO error");
+                let context =
+                    DiagnosticErrorContext::new("workflow.error_conversion", "connector_io")
+                        .with_field("error_source", "connector");
+                diag_error!(
+                    Error,
+                    Subsystem::Workflow,
+                    context = &context,
+                    error = &error,
+                    error_source = "connector",
+                    "workflow connector IO error"
+                );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),

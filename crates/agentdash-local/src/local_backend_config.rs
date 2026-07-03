@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::path::PathBuf;
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
@@ -88,20 +88,27 @@ pub fn load_local_backend_config_for_root(root: &std::path::Path) -> LocalBacken
                 config
             }
             Err(error) => {
-                diag!(Warn, Subsystem::Infra,
-
-                    error = %error,
-                    path = %config_path.display(),
+                let context =
+                    DiagnosticErrorContext::new("local_backend_config.load", "parse_json");
+                diag_error!(
+                    Warn,
+                    Subsystem::Infra,
+                    context = &context,
+                    error = &error,
+                    config_file = LOCAL_BACKEND_CONFIG_FILENAME,
                     "Local backend 配置解析失败，使用默认配置"
                 );
                 LocalBackendConfigFile::default()
             }
         },
         Err(error) => {
-            diag!(Warn, Subsystem::Infra,
-
-                error = %error,
-                path = %config_path.display(),
+            let context = DiagnosticErrorContext::new("local_backend_config.load", "read_file");
+            diag_error!(
+                Warn,
+                Subsystem::Infra,
+                context = &context,
+                error = &error,
+                config_file = LOCAL_BACKEND_CONFIG_FILENAME,
                 "读取 local backend 配置失败，使用默认配置"
             );
             LocalBackendConfigFile::default()

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -77,13 +77,30 @@ pub async fn event_stream_ndjson(
                             }
                         } else {
                             diag!(Error, Subsystem::Api,
-        project_id = %project.id, "Project NDJSON StateChanged payload is not a JSON object");
+                                operation = "project_event_stream.ndjson",
+                                stage = "replay_state_change_payload",
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                "Project NDJSON StateChanged payload is not a JSON object"
+                            );
                         }
                     }
                 }
                 Err(err) => {
-                    diag!(Error, Subsystem::Api,
-        project_id = %project.id, error = %err, "Project NDJSON 事件流补发失败");
+                    let context = DiagnosticErrorContext::new(
+                        "project_event_stream.ndjson",
+                        "replay_state_changes",
+                    );
+                    diag_error!(
+                        Error,
+                        Subsystem::Api,
+                        context = &context,
+                        error = &err,
+                        route = "/api/events/stream",
+                        project_id = %project.id,
+                        cursor,
+                        "Project NDJSON 事件流补发失败"
+                    );
                 }
             }
         }
@@ -121,13 +138,30 @@ pub async fn event_stream_ndjson(
                                     }
                                 } else {
                                     diag!(Error, Subsystem::Api,
-        project_id = %project.id, "Project NDJSON StateChanged payload is not a JSON object");
+                                        operation = "project_event_stream.ndjson",
+                                        stage = "poll_state_change_payload",
+                                        route = "/api/events/stream",
+                                        project_id = %project.id,
+                                        "Project NDJSON StateChanged payload is not a JSON object"
+                                    );
                                 }
                             }
                         }
                         Err(err) => {
-                            diag!(Error, Subsystem::Api,
-        project_id = %project.id, error = %err, "Project NDJSON 事件流轮询 state_changes 失败");
+                            let context = DiagnosticErrorContext::new(
+                                "project_event_stream.ndjson",
+                                "poll_state_changes",
+                            );
+                            diag_error!(
+                                Error,
+                                Subsystem::Api,
+                                context = &context,
+                                error = &err,
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                cursor,
+                                "Project NDJSON 事件流轮询 state_changes 失败"
+                            );
                         }
                     }
                 }
@@ -141,11 +175,22 @@ pub async fn event_stream_ndjson(
                         }
                         Err(RecvError::Lagged(skipped)) => {
                             diag!(Warn, Subsystem::Api,
-        project_id = %project.id, skipped, "Project NDJSON 事件流 backend runtime 事件滞后");
+                                operation = "project_event_stream.ndjson",
+                                stage = "backend_runtime_event_lagged",
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                skipped,
+                                "Project NDJSON 事件流 backend runtime 事件滞后"
+                            );
                         }
                         Err(RecvError::Closed) => {
                             diag!(Warn, Subsystem::Api,
-        project_id = %project.id, "Project NDJSON 事件流 backend runtime 事件通道已关闭");
+                                operation = "project_event_stream.ndjson",
+                                stage = "backend_runtime_event_closed",
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                "Project NDJSON 事件流 backend runtime 事件通道已关闭"
+                            );
                             break;
                         }
                     }
@@ -219,8 +264,16 @@ fn to_ndjson_line<T: Serialize>(value: &T) -> Option<Bytes> {
             Some(Bytes::from(raw))
         }
         Err(err) => {
-            diag!(Error, Subsystem::Api,
-        error = %err, "序列化 NDJSON 事件失败");
+            let context =
+                DiagnosticErrorContext::new("project_event_stream.ndjson", "serialize_event");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                route = "/api/events/stream",
+                "序列化 NDJSON 事件失败"
+            );
             None
         }
     }

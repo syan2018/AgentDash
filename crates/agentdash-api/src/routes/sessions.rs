@@ -1,4 +1,6 @@
-use agentdash_diagnostics::{Subsystem, diag};
+#![allow(clippy::items_after_test_module)]
+
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -1312,8 +1314,15 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            diag!(Error, Subsystem::Api,
-        error = %err, "序列化 Session NDJSON 消息失败");
+            let context = DiagnosticErrorContext::new("session_trace.ndjson", "serialize_event");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                route = "/api/sessions/{id}/trace.ndjson",
+                "序列化 Session NDJSON 消息失败"
+            );
             None
         }
     }

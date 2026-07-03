@@ -1,6 +1,6 @@
 //! McpRelayProvider 实现 — 基于 BackendRegistry 的 MCP relay 工具发现与调用
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use async_trait::async_trait;
 
 use agentdash_application::mcp_relay_adapter;
@@ -12,7 +12,7 @@ use agentdash_spi::platform::mcp_relay::{
     RelayMcpSourceOutcome, RelayMcpToolInfo, RelayProbeResult, RelayProbeTarget, RelayProbeTool,
 };
 
-use super::registry::BackendRegistry;
+use super::registry::{BackendRegistry, relay_message_kind};
 
 #[async_trait]
 impl McpRelayProvider for BackendRegistry {
@@ -32,14 +32,19 @@ impl McpRelayProvider for BackendRegistry {
             {
                 Ok(id) => id,
                 Err(error) => {
+                    let context =
+                        DiagnosticErrorContext::new("relay.mcp.list_tools", "resolve_backend")
+                            .with_field("server", server_name);
+                    diag_error!(
+                        Warn,
+                        Subsystem::Relay,
+                        context = &context,
+                        error = &error,
+                        server = %server_name,
+                        "relay MCP list_tools 缺少可用 runtime backend anchor，跳过 server"
+                    );
                     let message = format!(
                         "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
-                    );
-                    diag!(Warn, Subsystem::Relay,
-
-                        server = %server_name,
-                        error = %error,
-                        "relay MCP list_tools 缺少可用 runtime backend anchor，跳过 server"
                     );
                     sources.push(RelayMcpSourceOutcome::unavailable(
                         server.clone(),
@@ -56,6 +61,8 @@ impl McpRelayProvider for BackendRegistry {
                     server: mcp_relay_adapter::runtime_mcp_server_to_relay(server),
                 },
             };
+            let request_id = cmd.id().to_string();
+            let message_kind = relay_message_kind(&cmd);
 
             match self
                 .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(30))
@@ -81,10 +88,23 @@ impl McpRelayProvider for BackendRegistry {
                 Ok(RelayMessage::ResponseMcpListTools {
                     error: Some(err), ..
                 }) => {
-                    diag!(Warn, Subsystem::Relay,
-
+                    let context =
+                        DiagnosticErrorContext::new("relay.mcp.list_tools", "relay_response_error")
+                            .with_field("backend_id", &backend_id)
+                            .with_field("server", server_name)
+                            .with_field("request_id", &request_id)
+                            .with_field("message_kind", message_kind)
+                            .with_field("error_code", err.code.as_str());
+                    diag_error!(
+                        Warn,
+                        Subsystem::Relay,
+                        context = &context,
+                        error = &err,
+                        backend_id = %backend_id,
                         server = %server_name,
-                        error = %err.message,
+                        request_id = %request_id,
+                        message_kind = %message_kind,
+                        error_code = err.code.as_str(),
                         "relay MCP list_tools 失败"
                     );
                     sources.push(RelayMcpSourceOutcome::unavailable(
@@ -93,10 +113,18 @@ impl McpRelayProvider for BackendRegistry {
                         err.message,
                     ));
                 }
-                Ok(_) => {
-                    diag!(Warn, Subsystem::Relay,
-
+                Ok(other) => {
+                    let response_kind = relay_message_kind(&other);
+                    diag!(
+                        Warn,
+                        Subsystem::Relay,
+                        operation = "relay.mcp.list_tools",
+                        stage = "unexpected_response",
+                        backend_id = %backend_id,
                         server = %server_name,
+                        request_id = %request_id,
+                        message_kind = %message_kind,
+                        response_kind = %response_kind,
                         "relay MCP list_tools 返回意外消息类型"
                     );
                     sources.push(RelayMcpSourceOutcome::unavailable(
@@ -106,10 +134,21 @@ impl McpRelayProvider for BackendRegistry {
                     ));
                 }
                 Err(e) => {
-                    diag!(Warn, Subsystem::Relay,
-
+                    let context =
+                        DiagnosticErrorContext::new("relay.mcp.list_tools", "send_command")
+                            .with_field("backend_id", &backend_id)
+                            .with_field("server", server_name)
+                            .with_field("request_id", &request_id)
+                            .with_field("message_kind", message_kind);
+                    diag_error!(
+                        Warn,
+                        Subsystem::Relay,
+                        context = &context,
+                        error = &e,
+                        backend_id = %backend_id,
                         server = %server_name,
-                        error = %e,
+                        request_id = %request_id,
+                        message_kind = %message_kind,
                         "relay MCP list_tools 通信失败"
                     );
                     sources.push(RelayMcpSourceOutcome::unavailable(
@@ -136,6 +175,19 @@ impl McpRelayProvider for BackendRegistry {
             .resolve_backend_for_relay_mcp(server_name, context.as_ref())
             .await
             .map_err(|error| {
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("relay.mcp.call_tool", "resolve_backend")
+                        .with_field("server", server_name)
+                        .with_field("tool_name", tool_name);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &diagnostic_context,
+                    error = &error,
+                    server = %server_name,
+                    tool_name = %tool_name,
+                    "relay MCP call_tool 缺少可用 runtime backend anchor"
+                );
                 ConnectorError::ConnectionFailed(format!(
                     "无法解析 relay MCP server '{server_name}' 的 runtime backend anchor: {error}"
                 ))
@@ -149,11 +201,33 @@ impl McpRelayProvider for BackendRegistry {
                 arguments,
             },
         };
+        let request_id = cmd.id().to_string();
+        let message_kind = relay_message_kind(&cmd);
 
         let resp = self
             .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(120))
             .await
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+            .map_err(|e| {
+                let context = DiagnosticErrorContext::new("relay.mcp.call_tool", "send_command")
+                    .with_field("backend_id", &backend_id)
+                    .with_field("server", server_name)
+                    .with_field("tool_name", tool_name)
+                    .with_field("request_id", &request_id)
+                    .with_field("message_kind", message_kind);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &e,
+                    backend_id = %backend_id,
+                    server = %server_name,
+                    tool_name = %tool_name,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    "relay MCP call_tool 通信失败"
+                );
+                ConnectorError::ConnectionFailed(e.to_string())
+            })?;
 
         match resp {
             RelayMessage::ResponseMcpCallTool {
@@ -166,10 +240,49 @@ impl McpRelayProvider for BackendRegistry {
             }),
             RelayMessage::ResponseMcpCallTool {
                 error: Some(err), ..
-            } => Err(ConnectorError::Runtime(err.message)),
-            _ => Err(ConnectorError::Runtime(
-                "MCP relay 返回意外响应类型".to_string(),
-            )),
+            } => {
+                let context =
+                    DiagnosticErrorContext::new("relay.mcp.call_tool", "relay_response_error")
+                        .with_field("backend_id", &backend_id)
+                        .with_field("server", server_name)
+                        .with_field("tool_name", tool_name)
+                        .with_field("request_id", &request_id)
+                        .with_field("message_kind", message_kind)
+                        .with_field("error_code", err.code.as_str());
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &err,
+                    backend_id = %backend_id,
+                    server = %server_name,
+                    tool_name = %tool_name,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    error_code = err.code.as_str(),
+                    "relay MCP call_tool 失败"
+                );
+                Err(ConnectorError::Runtime(err.message))
+            }
+            other => {
+                let response_kind = relay_message_kind(&other);
+                diag!(
+                    Warn,
+                    Subsystem::Relay,
+                    operation = "relay.mcp.call_tool",
+                    stage = "unexpected_response",
+                    backend_id = %backend_id,
+                    server = %server_name,
+                    tool_name = %tool_name,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    response_kind = %response_kind,
+                    "relay MCP call_tool 返回意外消息类型"
+                );
+                Err(ConnectorError::Runtime(
+                    "MCP relay 返回意外响应类型".to_string(),
+                ))
+            }
         }
     }
 
@@ -186,11 +299,30 @@ impl McpRelayProvider for BackendRegistry {
                 transport: mcp_relay_adapter::mcp_transport_to_relay(transport),
             },
         };
+        let request_id = cmd.id().to_string();
+        let message_kind = relay_message_kind(&cmd);
 
         let resp = self
             .send_command_with_timeout(&backend_id, cmd, std::time::Duration::from_secs(20))
             .await
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+            .map_err(|e| {
+                let context =
+                    DiagnosticErrorContext::new("relay.mcp.probe_transport", "send_command")
+                        .with_field("backend_id", &backend_id)
+                        .with_field("request_id", &request_id)
+                        .with_field("message_kind", message_kind);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &e,
+                    backend_id = %backend_id,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    "relay MCP probe_transport 通信失败"
+                );
+                ConnectorError::ConnectionFailed(e.to_string())
+            })?;
 
         match resp {
             RelayMessage::ResponseMcpProbeTransport {
@@ -212,15 +344,50 @@ impl McpRelayProvider for BackendRegistry {
             }),
             RelayMessage::ResponseMcpProbeTransport {
                 error: Some(err), ..
-            } => Ok(RelayProbeResult {
-                status: "error".to_string(),
-                latency_ms: None,
-                tools: None,
-                error: Some(err.message),
-            }),
-            _ => Err(ConnectorError::Runtime(
-                "MCP probe relay 返回意外响应类型".to_string(),
-            )),
+            } => {
+                let context = DiagnosticErrorContext::new(
+                    "relay.mcp.probe_transport",
+                    "relay_response_error",
+                )
+                .with_field("backend_id", &backend_id)
+                .with_field("request_id", &request_id)
+                .with_field("message_kind", message_kind)
+                .with_field("error_code", err.code.as_str());
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &err,
+                    backend_id = %backend_id,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    error_code = err.code.as_str(),
+                    "relay MCP probe_transport 失败"
+                );
+                Ok(RelayProbeResult {
+                    status: "error".to_string(),
+                    latency_ms: None,
+                    tools: None,
+                    error: Some(err.message),
+                })
+            }
+            other => {
+                let response_kind = relay_message_kind(&other);
+                diag!(
+                    Warn,
+                    Subsystem::Relay,
+                    operation = "relay.mcp.probe_transport",
+                    stage = "unexpected_response",
+                    backend_id = %backend_id,
+                    request_id = %request_id,
+                    message_kind = %message_kind,
+                    response_kind = %response_kind,
+                    "relay MCP probe_transport 返回意外消息类型"
+                );
+                Err(ConnectorError::Runtime(
+                    "MCP probe relay 返回意外响应类型".to_string(),
+                ))
+            }
         }
     }
 }

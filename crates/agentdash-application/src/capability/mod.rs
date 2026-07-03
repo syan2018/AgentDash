@@ -34,7 +34,7 @@ pub use session_workflow_context::{
 pub use tool_catalog::{query_capability_catalog, query_tool_catalog};
 
 use crate::repository_set::RepositorySet;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 
 /// 加载 project 级 MCP Preset 并展开为 resolver 消费的 map。
 ///
@@ -47,10 +47,14 @@ pub async fn load_available_presets(
     match repos.mcp_preset_repo.list_by_project(project_id).await {
         Ok(presets) => presets.into_iter().map(|p| (p.key.clone(), p)).collect(),
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let context = DiagnosticErrorContext::new("capability.mcp_presets", "list_by_project")
+                .with_field("project_id", project_id);
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
                 project_id = %project_id,
-                error = %error,
                 "加载 project MCP Preset 列表失败,mcp:<X> 能力无法解析为 RuntimeMcpServer"
             );
             Default::default()

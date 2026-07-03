@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -142,11 +142,17 @@ pub async fn authenticate_request(
                         return Err(map_auth_error(err));
                     }
                     Err(store_err) => {
-                        diag!(Error, Subsystem::Auth,
-
+                        let context = DiagnosticErrorContext::new(
+                            "auth.request.authenticate",
+                            "session_store_fallback",
+                        );
+                        diag_error!(
+                            Error,
+                            Subsystem::Auth,
+                            context = &context,
+                            error = &store_err,
                             method = %auth_request.method,
                             path = %auth_request.path,
-                            error = %store_err,
                             "认证 provider 失败且数据库回源异常"
                         );
                         return Err(ApiError::ServiceUnavailable(
@@ -253,11 +259,15 @@ pub async fn persist_identity_snapshot_or_service_unavailable(
     persist_identity_snapshot(state, identity)
         .await
         .map_err(|err| {
-            diag!(Error, Subsystem::Auth,
-
+            let context =
+                DiagnosticErrorContext::new("auth.identity_projection", "persist_snapshot");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
                 user_id = %identity.user_id,
                 auth_mode = %identity.auth_mode,
-                error = %err,
                 "写入用户身份投影失败"
             );
             ApiError::ServiceUnavailable("用户身份目录不可用".to_string())
@@ -351,20 +361,28 @@ pub async fn load_workspace_and_project_with_permission(
 fn log_auth_failure(request: &AuthRequest, err: &AuthError) {
     match err {
         AuthError::InvalidCredentials | AuthError::Forbidden(_) | AuthError::BadRequest(_) => {
-            diag!(Warn, Subsystem::Auth,
-
+            let context =
+                DiagnosticErrorContext::new("auth.request.authenticate", "provider_rejected");
+            diag_error!(
+                Warn,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
                 method = %request.method,
                 path = %request.path,
-                error = %err,
                 "请求认证失败"
             );
         }
         AuthError::ServiceUnavailable(_) => {
-            diag!(Error, Subsystem::Auth,
-
+            let context =
+                DiagnosticErrorContext::new("auth.request.authenticate", "provider_unavailable");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
                 method = %request.method,
                 path = %request.path,
-                error = %err,
                 "认证服务不可用"
             );
         }

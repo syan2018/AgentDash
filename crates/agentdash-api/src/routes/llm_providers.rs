@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -1074,10 +1074,14 @@ fn admin_provider_dto(
         match resolve_global_credential(&provider, state.secrets.llm_provider_secret.as_ref()) {
             Ok(global) => global,
             Err(error) => {
-                diag!(Warn, Subsystem::Api,
-
+                let context =
+                    DiagnosticErrorContext::new("llm_provider.admin_dto", "decrypt_global_secret");
+                diag_error!(
+                    Warn,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &error,
                     provider = %provider.slug,
-                    error = %error,
                     "LLM Provider 全局密钥无法解密，管理员需要重新保存"
                 );
                 None

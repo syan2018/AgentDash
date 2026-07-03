@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -184,20 +184,32 @@ pub async fn run_until_shutdown(
                 retry_count = 0;
                 diag!(Info, Subsystem::Relay, "WebSocket 连接成功");
 
-                if let Err(e) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
+                if let Err(error) = run_session(ws_stream, &config, shutdown_rx.clone()).await {
                     report_relay_status(
                         &config,
-                        RelayConnectionStatus::reconnecting(&config, retry_count, e.to_string()),
+                        RelayConnectionStatus::reconnecting(
+                            &config,
+                            retry_count,
+                            error.to_string(),
+                        ),
                     );
                     report_status(
                         &config.runner_status,
                         "retrying",
                         Some("session_error"),
-                        &e.to_string(),
+                        &error.to_string(),
                     )
                     .await;
-                    diag!(Error, Subsystem::Relay,
-        error = %redact_secret(&e.to_string()), "会话异常终止");
+                    let context = DiagnosticErrorContext::new("local_runtime.ws.run", "session");
+                    diag_error!(
+                        Error,
+                        Subsystem::Relay,
+                        context = &context,
+                        error = &error,
+                        backend_id = %config.backend_id,
+                        retry_count = retry_count,
+                        "本机 WebSocket 会话异常终止"
+                    );
                 } else if *shutdown_rx.borrow() {
                     report_status(&config.runner_status, "stopped", None, "runner 已停止").await;
                     report_relay_status(
@@ -222,20 +234,29 @@ pub async fn run_until_shutdown(
                     .await;
                 }
             }
-            Err(e) => {
+            Err(error) => {
                 report_relay_status(
                     &config,
-                    RelayConnectionStatus::reconnecting(&config, retry_count, e.to_string()),
+                    RelayConnectionStatus::reconnecting(&config, retry_count, error.to_string()),
                 );
                 report_status(
                     &config.runner_status,
                     "retrying",
                     Some("connect_failed"),
-                    &e.to_string(),
+                    &error.to_string(),
                 )
                 .await;
-                diag!(Error, Subsystem::Relay,
-        error = %redact_secret(&e.to_string()), "WebSocket 连接失败");
+                let context = DiagnosticErrorContext::new("local_runtime.ws.connect", "connect");
+                diag_error!(
+                    Error,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %config.backend_id,
+                    retry_count = retry_count,
+                    target = %redact_secret(&config.cloud_url),
+                    "本机 WebSocket 连接失败"
+                );
             }
         }
 
@@ -321,7 +342,7 @@ async fn run_session(
     };
     match ack_timeout {
         Ok(Some(Ok(msg))) => {
-            if let Some(relay_msg) = parse_ws_message(&msg) {
+            if let Some(relay_msg) = parse_ws_message(&msg, &config.backend_id) {
                 match &relay_msg {
                     RelayMessage::RegisterAck { payload, .. } => {
                         report_relay_status(config, RelayConnectionStatus::registered(config));
@@ -373,7 +394,7 @@ async fn run_session(
             msg = read.next() => {
                 match msg {
                     Some(Ok(ws_msg)) => {
-                        if let Some(relay_msg) = parse_ws_message(&ws_msg) {
+                        if let Some(relay_msg) = parse_ws_message(&ws_msg, &config.backend_id) {
                             let dispatch_plan = handler.dispatch_plan(&relay_msg);
                             if dispatch_plan.execution_mode == CommandExecutionMode::Background {
                                 let handler = handler.clone();
@@ -404,9 +425,19 @@ async fn run_session(
                             }
                         }
                     }
-                    Some(Err(e)) => {
-                        diag!(Error, Subsystem::Relay,
-        error = %e, "WebSocket 读取错误");
+                    Some(Err(error)) => {
+                        let context = DiagnosticErrorContext::new(
+                            "local_runtime.ws.session",
+                            "read_message",
+                        );
+                        diag_error!(
+                            Error,
+                            Subsystem::Relay,
+                            context = &context,
+                            error = &error,
+                            backend_id = %config.backend_id,
+                            "WebSocket 读取错误"
+                        );
                         break;
                     }
                     None => {
@@ -421,13 +452,21 @@ async fn run_session(
                     Some(relay_msg) => {
                         if outbound_tx.send(relay_msg).is_err() {
                             diag!(Warn, Subsystem::Relay,
-        "relay event 写出通道已关闭");
+                                operation = "local_runtime.ws.session",
+                                stage = "event_channel_send",
+                                backend_id = %config.backend_id,
+                                "relay event 写出通道已关闭"
+                            );
                             break;
                         }
                     }
                     None => {
                         diag!(Warn, Subsystem::Relay,
-        "事件通道关闭");
+                            operation = "local_runtime.ws.session",
+                            stage = "event_channel_recv",
+                            backend_id = %config.backend_id,
+                            "事件通道关闭"
+                        );
                         break;
                     }
                 }
@@ -445,7 +484,11 @@ async fn run_session(
                     };
                     if outbound_tx.send(relay_msg).is_err() {
                         diag!(Warn, Subsystem::Relay,
-        "capability changed event 写出通道已关闭");
+                            operation = "local_runtime.ws.session",
+                            stage = "capability_event_send",
+                            backend_id = %config.backend_id,
+                            "capability changed event 写出通道已关闭"
+                        );
                         break;
                     }
                 }
@@ -461,10 +504,34 @@ async fn run_session(
                 match writer_result {
                     Ok(Ok(())) => diag!(Info, Subsystem::Relay,
         "WebSocket 写出任务结束"),
-                    Ok(Err(e)) => diag!(Error, Subsystem::Relay,
-        error = %e, "WebSocket 写出错误"),
-                    Err(e) => diag!(Error, Subsystem::Relay,
-        error = %e, "WebSocket 写出任务异常结束"),
+                    Ok(Err(error)) => {
+                        let context = DiagnosticErrorContext::new(
+                            "local_runtime.ws.session",
+                            "write_message",
+                        );
+                        diag_error!(
+                            Error,
+                            Subsystem::Relay,
+                            context = &context,
+                            error = &error,
+                            backend_id = %config.backend_id,
+                            "WebSocket 写出错误"
+                        );
+                    }
+                    Err(error) => {
+                        let context = DiagnosticErrorContext::new(
+                            "local_runtime.ws.session",
+                            "writer_task_join",
+                        );
+                        diag_error!(
+                            Error,
+                            Subsystem::Relay,
+                            context = &context,
+                            error = &error,
+                            backend_id = %config.backend_id,
+                            "WebSocket 写出任务异常结束"
+                        );
+                    }
                 }
                 break;
             }
@@ -501,8 +568,14 @@ async fn report_status(
         _ => Ok(()),
     };
     if let Err(error) = result {
-        diag!(Warn, Subsystem::Relay,
-            error = %redact_secret(&error.to_string()),
+        let context = DiagnosticErrorContext::new("local_runtime.runner_status", "snapshot_write");
+        diag_error!(
+            Warn,
+            Subsystem::Relay,
+            context = &context,
+            error = &error,
+            state = %state,
+            code = %code.unwrap_or("none"),
             "写入 runner status snapshot 失败"
         );
     }
@@ -556,13 +629,22 @@ async fn build_capabilities(
     }
 }
 
-fn parse_ws_message(msg: &Message) -> Option<RelayMessage> {
+fn parse_ws_message(msg: &Message, backend_id: &str) -> Option<RelayMessage> {
     match msg {
         Message::Text(text) => match serde_json::from_str::<RelayMessage>(text.as_ref()) {
             Ok(relay_msg) => Some(relay_msg),
-            Err(e) => {
-                diag!(Warn, Subsystem::Relay,
-        error = %e, "无法解析 WebSocket 消息");
+            Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("local_runtime.ws.session", "deserialize");
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %backend_id,
+                    message_len = text.len(),
+                    "无法解析 WebSocket 消息"
+                );
                 None
             }
         },

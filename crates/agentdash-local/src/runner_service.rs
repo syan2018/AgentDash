@@ -856,8 +856,10 @@ mod tests {
 
     #[test]
     fn windows_status_maps_running_and_missing_service() {
-        let mut missing = RecordingExecutor::default();
-        missing.sc_query_code = Some(1060);
+        let mut missing = RecordingExecutor {
+            sc_query_code: Some(1060),
+            ..Default::default()
+        };
         let missing_result = windows_status(
             &mut missing,
             windows_action_commands(ServiceAction::Status, &test_context()),

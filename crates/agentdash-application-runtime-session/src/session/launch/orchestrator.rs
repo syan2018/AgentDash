@@ -2,7 +2,7 @@ use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
 };
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::ConnectorError;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -63,6 +63,18 @@ impl SessionLaunchOrchestrator {
                     .turn_supervisor
                     .clear_turn_and_hook(session_id)
                     .await;
+                let context =
+                    DiagnosticErrorContext::new("session.launch.orchestrator", "load_session_meta");
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &e,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    launch_reason = reason,
+                    "读取 session meta 失败，session launch 终止"
+                );
                 return Err(ConnectorError::Runtime(format!(
                     "读取 session {sid} meta 失败: {e}"
                 )));
@@ -72,6 +84,20 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| {
+                let context = DiagnosticErrorContext::new(
+                    "session.launch.orchestrator",
+                    "load_requested_runtime_commands",
+                );
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    launch_reason = reason,
+                    "读取 requested runtime commands 失败，session launch 终止"
+                );
                 ConnectorError::Runtime(format!(
                     "读取 session `{sid}` requested runtime commands 失败: {error}"
                 ))
@@ -108,6 +134,22 @@ impl SessionLaunchOrchestrator {
                     .turn_supervisor
                     .clear_turn_and_hook(session_id)
                     .await;
+                let context = DiagnosticErrorContext::new(
+                    "session.launch.orchestrator",
+                    "build_launch_envelope",
+                );
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    launch_reason = reason,
+                    had_existing_runtime,
+                    requested_runtime_command_count = requested_runtime_commands.len(),
+                    "Frame launch envelope 构造失败，session launch 终止"
+                );
                 return Err(error);
             }
         };
@@ -185,6 +227,18 @@ impl SessionLaunchOrchestrator {
             Ok(launch_plan) => launch_plan,
             Err(error) => {
                 deps.turn_supervisor.clear_turn_and_hook(session_id).await;
+                let context =
+                    DiagnosticErrorContext::new("session.launch.orchestrator", "plan_launch");
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    had_existing_runtime,
+                    "session launch planning 失败"
+                );
                 return Err(error);
             }
         };
@@ -207,9 +261,23 @@ impl SessionLaunchOrchestrator {
         {
             Ok(prepared) => prepared,
             Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("session.launch.orchestrator", "prepare_turn");
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    had_existing_runtime,
+                    "session launch turn preparation 失败"
+                );
                 fail_claimed_backend_execution(
                     deps,
                     backend_execution.as_ref(),
+                    session_id,
+                    &turn_id,
                     format!("turn preparation failed: {error}"),
                 )
                 .await;
@@ -229,9 +297,22 @@ impl SessionLaunchOrchestrator {
         {
             Ok(accepted) => accepted,
             Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("session.launch.orchestrator", "start_connector");
+                diag_error!(
+                    Error,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    "session launch connector start 失败"
+                );
                 fail_claimed_backend_execution(
                     deps,
                     backend_execution.as_ref(),
+                    session_id,
+                    &turn_id,
                     format!("connector start failed: {error}"),
                 )
                 .await;
@@ -279,19 +360,33 @@ impl SessionLaunchOrchestrator {
 async fn fail_claimed_backend_execution(
     deps: &SessionLaunchDeps,
     placement: Option<&ExecutionPlacementPlan>,
+    session_id: &str,
+    turn_id: &str,
     reason: String,
 ) {
-    let Some(lease_id) = placement.and_then(|placement| placement.lease_id) else {
+    let Some(placement) = placement else {
+        return;
+    };
+    let Some(lease_id) = placement.lease_id else {
         return;
     };
     let Some(repo) = deps.backend_execution_lease_repo.as_ref() else {
         return;
     };
     if let Err(error) = repo.fail(lease_id, Some(reason), chrono::Utc::now()).await {
-        diag!(Warn, Subsystem::SessionLaunch,
-
+        let context =
+            DiagnosticErrorContext::new("session.launch.backend_execution", "mark_lease_failed");
+        diag_error!(
+            Warn,
+            Subsystem::SessionLaunch,
+            context = &context,
+            error = &error,
+            session_id = %session_id,
+            turn_id = %turn_id,
+            backend_id = %placement.backend_id,
+            executor_id = %placement.executor_id,
+            selection_mode = ?placement.selection_mode,
             lease_id = %lease_id,
-            error = %error,
             "标记 backend execution lease failed 失败"
         );
     }

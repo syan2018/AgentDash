@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -541,11 +541,15 @@ async fn build_provider_entry_from_db(
     {
         Ok(credential) => credential,
         Err(error) => {
-            diag!(Error, Subsystem::AgentRun,
-
+            let diagnostic_context =
+                DiagnosticErrorContext::new("pi_agent.provider_registry", "credential_resolution");
+            diag_error!(Error, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &error,
                 provider = %db_provider.slug,
-                error = %error,
-                "PiAgentConnector: Provider 凭据解析失败"
+                credential_mode = %db_provider.credential_mode,
+                connector_kind = "pi_agent",
+                "PiAgentConnector provider credential resolution failed"
             );
             return Err(ProviderUnavailableReason::CredentialResolutionFailed(
                 error.to_string(),

@@ -450,6 +450,7 @@ fn normalize_rule_path(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn try_read_dynamic_file(
     service: &VfsService,
     vfs: &Vfs,

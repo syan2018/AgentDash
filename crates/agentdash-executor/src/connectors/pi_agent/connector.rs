@@ -2,7 +2,7 @@
 ///
 /// 与 `CodexBridgeConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -980,12 +980,36 @@ impl AgentConnector for PiAgentConnector {
                 Ok(Ok(_messages)) => {}
                 Ok(Err(e)) => {
                     let error = ConnectorError::Runtime(format!("Pi Agent loop 错误: {e}"));
-                    diag!(Error, Subsystem::AgentRun, "{error}");
+                    let diagnostic_context =
+                        DiagnosticErrorContext::new("pi_agent.connector.prompt", "agent_loop");
+                    diag_error!(
+                        Error,
+                        Subsystem::AgentRun,
+                        context = &diagnostic_context,
+                        error = &error,
+                        session_id = %session_id_owned,
+                        turn_id = %turn_id,
+                        connector_kind = "pi_agent",
+                        executor_id = "PI_AGENT",
+                        "Pi Agent loop failed"
+                    );
                     let _ = tx.send(Err(error)).await;
                 }
                 Err(e) => {
                     let error = ConnectorError::Runtime(format!("Pi Agent task panic: {e}"));
-                    diag!(Error, Subsystem::AgentRun, "{error}");
+                    let diagnostic_context =
+                        DiagnosticErrorContext::new("pi_agent.connector.prompt", "task_join");
+                    diag_error!(
+                        Error,
+                        Subsystem::AgentRun,
+                        context = &diagnostic_context,
+                        error = &error,
+                        session_id = %session_id_owned,
+                        turn_id = %turn_id,
+                        connector_kind = "pi_agent",
+                        executor_id = "PI_AGENT",
+                        "Pi Agent task join failed"
+                    );
                     let _ = tx.send(Err(error)).await;
                 }
             }

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,8 +16,9 @@ use agentdash_spi::RelayMcpCallContext;
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RegisterBackendError {
+    #[error("backend already online: {backend_id}")]
     AlreadyOnline { backend_id: String },
 }
 
@@ -317,6 +318,8 @@ impl BackendRegistry {
         let Some(context) = context else {
             diag!(Warn, Subsystem::Relay,
 
+                operation = "relay.mcp.resolve_backend",
+                stage = "missing_context",
                 server = %server_name,
                 "relay MCP runtime context 缺失，跳过 backend fallback"
             );
@@ -328,12 +331,19 @@ impl BackendRegistry {
         let anchor = context
             .require_backend_anchor("relay_mcp")
             .inspect_err(|error| {
-                diag!(Warn, Subsystem::Relay,
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("relay.mcp.resolve_backend", "require_anchor")
+                        .with_field("session_id", &context.session_id)
+                        .with_field("server", server_name);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &diagnostic_context,
+                    error = error,
 
                     session_id = %context.session_id,
                     turn_id = ?context.turn_id,
                     server = %server_name,
-                    error = %error,
                     "relay MCP runtime context 缺少 backend anchor，跳过 backend fallback"
                 );
             })?;
@@ -345,6 +355,8 @@ impl BackendRegistry {
 
         diag!(Warn, Subsystem::Relay,
 
+            operation = "relay.mcp.resolve_backend",
+            stage = "backend_offline",
             session_id = %context.session_id,
             turn_id = ?context.turn_id,
             backend_id = %backend_id,
@@ -377,14 +389,36 @@ impl BackendRegistry {
         timeout: std::time::Duration,
     ) -> Result<RelayMessage, BackendCommandError> {
         let msg_id = msg.id().to_string();
+        let message_kind = relay_message_kind(&msg);
 
         let sender = {
             let backends = self.backends.read().await;
-            let backend = backends
-                .get(backend_id)
-                .ok_or_else(|| BackendCommandError::Offline {
-                    backend_id: backend_id.to_string(),
-                })?;
+            let backend = match backends.get(backend_id) {
+                Some(backend) => backend,
+                None => {
+                    let error = BackendCommandError::Offline {
+                        backend_id: backend_id.to_string(),
+                    };
+                    let context = DiagnosticErrorContext::new(
+                        "relay.registry.send_command",
+                        "resolve_backend",
+                    )
+                    .with_field("backend_id", backend_id)
+                    .with_field("request_id", &msg_id)
+                    .with_field("message_kind", message_kind);
+                    diag_error!(
+                        Warn,
+                        Subsystem::Relay,
+                        context = &context,
+                        error = &error,
+                        backend_id = %backend_id,
+                        request_id = %msg_id,
+                        message_kind = %message_kind,
+                        "relay command cannot be sent because backend is offline"
+                    );
+                    return Err(error);
+                }
+            };
             backend.sender.clone()
         };
 
@@ -399,24 +433,74 @@ impl BackendRegistry {
 
         if sender.send(msg).is_err() {
             self.pending.write().await.remove(&msg_id);
-            return Err(BackendCommandError::SendFailed {
+            let error = BackendCommandError::SendFailed {
                 backend_id: backend_id.to_string(),
-            });
+            };
+            let context =
+                DiagnosticErrorContext::new("relay.registry.send_command", "backend_channel_send")
+                    .with_field("backend_id", backend_id)
+                    .with_field("request_id", &msg_id)
+                    .with_field("message_kind", message_kind);
+            diag_error!(
+                Warn,
+                Subsystem::Relay,
+                context = &context,
+                error = &error,
+                backend_id = %backend_id,
+                request_id = %msg_id,
+                message_kind = %message_kind,
+                "relay command channel send failed"
+            );
+            return Err(error);
         }
 
         let resp = match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(resp)) => resp,
             Ok(Err(_)) => {
                 self.pending.write().await.remove(&msg_id);
-                return Err(BackendCommandError::ResponseDropped {
+                let error = BackendCommandError::ResponseDropped {
                     backend_id: backend_id.to_string(),
-                });
+                };
+                let context =
+                    DiagnosticErrorContext::new("relay.registry.send_command", "response_dropped")
+                        .with_field("backend_id", backend_id)
+                        .with_field("request_id", &msg_id)
+                        .with_field("message_kind", message_kind);
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %backend_id,
+                    request_id = %msg_id,
+                    message_kind = %message_kind,
+                    "relay command response channel dropped"
+                );
+                return Err(error);
             }
             Err(_) => {
                 self.pending.write().await.remove(&msg_id);
-                return Err(BackendCommandError::Timeout {
+                let error = BackendCommandError::Timeout {
                     backend_id: backend_id.to_string(),
-                });
+                };
+                let context =
+                    DiagnosticErrorContext::new("relay.registry.send_command", "response_timeout")
+                        .with_field("backend_id", backend_id)
+                        .with_field("request_id", &msg_id)
+                        .with_field("message_kind", message_kind)
+                        .with_field("timeout_ms", timeout.as_millis());
+                diag_error!(
+                    Warn,
+                    Subsystem::Relay,
+                    context = &context,
+                    error = &error,
+                    backend_id = %backend_id,
+                    request_id = %msg_id,
+                    message_kind = %message_kind,
+                    timeout_ms = timeout.as_millis(),
+                    "relay command response timed out"
+                );
+                return Err(error);
             }
         };
 
@@ -426,6 +510,90 @@ impl BackendRegistry {
     #[cfg(test)]
     async fn drop_pending_for_test(&self, msg_id: &str) {
         self.pending.write().await.remove(msg_id);
+    }
+}
+
+pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
+    match msg {
+        RelayMessage::Register { .. } => "register",
+        RelayMessage::RegisterAck { .. } => "register_ack",
+        RelayMessage::Ping { .. } => "ping",
+        RelayMessage::Pong { .. } => "pong",
+        RelayMessage::CommandPrompt { .. } => "command.prompt",
+        RelayMessage::CommandCancel { .. } => "command.cancel",
+        RelayMessage::CommandSteer { .. } => "command.steer",
+        RelayMessage::CommandDiscover { .. } => "command.discover",
+        RelayMessage::CommandDiscoverOptions { .. } => "command.discover_options",
+        RelayMessage::CommandWorkspaceDetect { .. } => "command.workspace_detect",
+        RelayMessage::CommandWorkspaceDetectGit { .. } => "command.workspace_detect_git",
+        RelayMessage::CommandWorkspaceDiscoverByIdentity { .. } => {
+            "command.workspace_discover_by_identity"
+        }
+        RelayMessage::CommandBrowseDirectory { .. } => "command.browse_directory",
+        RelayMessage::CommandToolFileRead { .. } => "command.tool.file_read",
+        RelayMessage::CommandToolFileReadBinary { .. } => "command.tool.file_read_binary",
+        RelayMessage::CommandToolFileWrite { .. } => "command.tool.file_write",
+        RelayMessage::CommandToolFileDelete { .. } => "command.tool.file_delete",
+        RelayMessage::CommandToolFileRename { .. } => "command.tool.file_rename",
+        RelayMessage::CommandToolApplyPatch { .. } => "command.tool.apply_patch",
+        RelayMessage::CommandToolShellExec { .. } => "command.tool.shell_exec",
+        RelayMessage::CommandToolShellRead { .. } => "command.tool.shell_read",
+        RelayMessage::CommandToolShellInput { .. } => "command.tool.shell_input",
+        RelayMessage::CommandToolShellTerminate { .. } => "command.tool.shell_terminate",
+        RelayMessage::CommandVfsMaterialize { .. } => "command.vfs.materialize",
+        RelayMessage::CommandToolFileList { .. } => "command.tool.file_list",
+        RelayMessage::CommandToolSearch { .. } => "command.tool.search",
+        RelayMessage::ResponsePrompt { .. } => "response.prompt",
+        RelayMessage::ResponseCancel { .. } => "response.cancel",
+        RelayMessage::ResponseSteer { .. } => "response.steer",
+        RelayMessage::ResponseDiscover { .. } => "response.discover",
+        RelayMessage::ResponseWorkspaceDetect { .. } => "response.workspace_detect",
+        RelayMessage::ResponseWorkspaceDetectGit { .. } => "response.workspace_detect_git",
+        RelayMessage::ResponseWorkspaceDiscoverByIdentity { .. } => {
+            "response.workspace_discover_by_identity"
+        }
+        RelayMessage::ResponseBrowseDirectory { .. } => "response.browse_directory",
+        RelayMessage::ResponseToolFileRead { .. } => "response.tool.file_read",
+        RelayMessage::ResponseToolFileReadBinary { .. } => "response.tool.file_read_binary",
+        RelayMessage::ResponseToolFileWrite { .. } => "response.tool.file_write",
+        RelayMessage::ResponseToolFileDelete { .. } => "response.tool.file_delete",
+        RelayMessage::ResponseToolFileRename { .. } => "response.tool.file_rename",
+        RelayMessage::ResponseToolApplyPatch { .. } => "response.tool.apply_patch",
+        RelayMessage::ResponseToolShellExec { .. } => "response.tool.shell_exec",
+        RelayMessage::ResponseToolShellRead { .. } => "response.tool.shell_read",
+        RelayMessage::ResponseToolShellInput { .. } => "response.tool.shell_input",
+        RelayMessage::ResponseToolShellTerminate { .. } => "response.tool.shell_terminate",
+        RelayMessage::ResponseVfsMaterialize { .. } => "response.vfs.materialize",
+        RelayMessage::ResponseToolFileList { .. } => "response.tool.file_list",
+        RelayMessage::ResponseToolSearch { .. } => "response.tool.search",
+        RelayMessage::EventCapabilitiesChanged { .. } => "event.capabilities_changed",
+        RelayMessage::EventSessionNotification { .. } => "event.session_notification",
+        RelayMessage::EventSessionStateChanged { .. } => "event.session_state_changed",
+        RelayMessage::EventDiscoverOptionsPatch { .. } => "event.discover_options_patch",
+        RelayMessage::CommandMcpProbeTransport { .. } => "command.mcp_probe_transport",
+        RelayMessage::CommandMcpListTools { .. } => "command.mcp_list_tools",
+        RelayMessage::CommandMcpCallTool { .. } => "command.mcp_call_tool",
+        RelayMessage::CommandMcpClose { .. } => "command.mcp_close",
+        RelayMessage::CommandExtensionActionInvoke { .. } => "command.extension_action_invoke",
+        RelayMessage::CommandExtensionChannelInvoke { .. } => "command.extension_channel_invoke",
+        RelayMessage::ResponseMcpProbeTransport { .. } => "response.mcp_probe_transport",
+        RelayMessage::ResponseMcpListTools { .. } => "response.mcp_list_tools",
+        RelayMessage::ResponseMcpCallTool { .. } => "response.mcp_call_tool",
+        RelayMessage::ResponseMcpClose { .. } => "response.mcp_close",
+        RelayMessage::ResponseExtensionActionInvoke { .. } => "response.extension_action_invoke",
+        RelayMessage::ResponseExtensionChannelInvoke { .. } => "response.extension_channel_invoke",
+        RelayMessage::EventToolShellOutput { .. } => "event.tool.shell_output",
+        RelayMessage::CommandTerminalSpawn { .. } => "command.terminal.spawn",
+        RelayMessage::CommandTerminalInput { .. } => "command.terminal.input",
+        RelayMessage::CommandTerminalResize { .. } => "command.terminal.resize",
+        RelayMessage::CommandTerminalKill { .. } => "command.terminal.kill",
+        RelayMessage::ResponseTerminalSpawn { .. } => "response.terminal.spawn",
+        RelayMessage::ResponseTerminalInput { .. } => "response.terminal.input",
+        RelayMessage::ResponseTerminalResize { .. } => "response.terminal.resize",
+        RelayMessage::ResponseTerminalKill { .. } => "response.terminal.kill",
+        RelayMessage::EventTerminalOutput { .. } => "event.terminal.output",
+        RelayMessage::EventTerminalStateChanged { .. } => "event.terminal.state_changed",
+        RelayMessage::Error { .. } => "error",
     }
 }
 

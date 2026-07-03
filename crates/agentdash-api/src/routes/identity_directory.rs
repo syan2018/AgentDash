@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
@@ -130,9 +130,19 @@ pub async fn list_directory_users(
                 apply_projected_user_fields(&state, &mut response.items).await;
                 return Ok(Json(response).into_response());
             }
-            Err(DirectoryProviderError::Unavailable(message)) => {
-                diag!(Warn, Subsystem::Api,
-        error = %message, "身份目录 provider 不可用，回退到本地 user projection");
+            Err(DirectoryProviderError::Unavailable(err)) => {
+                let context = DiagnosticErrorContext::new(
+                    "identity_directory.list_users",
+                    "provider_unavailable",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    route = "/api/directory/users",
+                    "身份目录 provider 不可用，回退到本地 user projection"
+                );
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -166,9 +176,19 @@ pub async fn list_directory_groups(
                 let response = provider_group_search_response(result);
                 return Ok(Json(response).into_response());
             }
-            Err(DirectoryProviderError::Unavailable(message)) => {
-                diag!(Warn, Subsystem::Api,
-        error = %message, "身份目录 provider 不可用，回退到本地 group projection");
+            Err(DirectoryProviderError::Unavailable(err)) => {
+                let context = DiagnosticErrorContext::new(
+                    "identity_directory.list_groups",
+                    "provider_unavailable",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    route = "/api/directory/groups",
+                    "身份目录 provider 不可用，回退到本地 group projection"
+                );
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -190,9 +210,19 @@ pub async fn list_directory_group_tree(
     if let Some(provider) = &state.identity_directory_provider {
         match provider.list_group_children(query.tree_request()).await {
             Ok(result) => return Ok(Json(provider_tree_response(result))),
-            Err(DirectoryProviderError::Unavailable(message)) => {
-                diag!(Warn, Subsystem::Api,
-        error = %message, "身份目录 provider 不可用，回退到本地 group projection tree");
+            Err(DirectoryProviderError::Unavailable(err)) => {
+                let context = DiagnosticErrorContext::new(
+                    "identity_directory.group_tree",
+                    "provider_unavailable",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    route = "/api/directory/groups/tree",
+                    "身份目录 provider 不可用，回退到本地 group projection tree"
+                );
             }
             Err(error) => return Err(map_provider_error(error)),
         }
@@ -543,9 +573,17 @@ fn map_provider_error(error: DirectoryProviderError) -> ApiError {
             ApiError::NotFound(format!("目录主体未找到: {kind} {key}"))
         }
         DirectoryProviderError::Unavailable(message) => ApiError::ServiceUnavailable(message),
-        DirectoryProviderError::Internal(message) => {
-            diag!(Error, Subsystem::Api,
-        error = %message, "身份目录 provider 内部错误");
+        DirectoryProviderError::Internal(err) => {
+            let context =
+                DiagnosticErrorContext::new("identity_directory.route", "provider_internal");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                route = "identity_directory",
+                "身份目录 provider 内部错误"
+            );
             ApiError::Internal("身份目录服务错误".to_string())
         }
     }

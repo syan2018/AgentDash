@@ -3,7 +3,7 @@
 //! This adapter registers only workflow builder helpers. The helpers construct
 //! serializable builder documents and do not execute workflow side effects.
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::WorkflowScriptEvaluator;
 use rhai::{Dynamic, Engine};
 
@@ -161,13 +161,21 @@ impl WorkflowScriptEvaluator for RhaiWorkflowScriptEvaluator {
                 elapsed_us = elapsed.as_micros() as u64,
                 "rhai workflow 脚本执行完成"
             ),
-            Err(e) => diag!(Warn, Subsystem::Workflow,
-
-                script_hash = hash,
-                elapsed_us = elapsed.as_micros() as u64,
-                error = %e,
-                "rhai workflow 脚本执行失败"
-            ),
+            Err(e) => {
+                let context =
+                    DiagnosticErrorContext::new("workflow.script_evaluator", "eval_script")
+                        .with_field("script_hash", hash)
+                        .with_field("elapsed_us", elapsed.as_micros());
+                diag_error!(
+                    Warn,
+                    Subsystem::Workflow,
+                    context = &context,
+                    error = &e,
+                    script_hash = hash,
+                    elapsed_us = elapsed.as_micros() as u64,
+                    "rhai workflow 脚本执行失败"
+                );
+            }
         }
 
         result

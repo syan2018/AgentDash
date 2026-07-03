@@ -5,7 +5,7 @@
 //! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
 
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -151,11 +151,16 @@ impl SessionTurnProcessor {
             Err(error) => {
                 // terminal 持久化失败仍然释放 active turn，避免 session 永久卡住。
                 deps.turn_supervisor.clear_active_turn(&session_id).await;
-                diag!(Error, Subsystem::AgentRun,
-
+                let context =
+                    DiagnosticErrorContext::new("session.turn_processor", "persist_terminal_event");
+                diag_error!(
+                    Error,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
                     session_id = %session_id,
                     turn_id = %turn_id,
-                    error = %error,
+                    terminal_kind = ?terminal_kind,
                     "Turn terminal event 持久化失败，跳过 terminal effect outbox"
                 );
                 return;
@@ -178,12 +183,19 @@ impl SessionTurnProcessor {
             {
                 Ok(event) => Some(event),
                 Err(error) => {
-                    diag!(Error, Subsystem::AgentRun,
-
+                    let context = DiagnosticErrorContext::new(
+                        "session.turn_processor",
+                        "persist_rewind_marker",
+                    );
+                    diag_error!(
+                        Error,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &error,
                         session_id = %session_id,
                         turn_id = %turn_id,
                         terminal_event_seq,
-                        error = %error,
+                        terminal_kind = ?terminal_kind,
                         "Session rewind marker 持久化失败，仍释放 active turn"
                     );
                     None

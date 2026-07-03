@@ -3,7 +3,7 @@
 //! 负责把各来源 contributions（agent / workflow）+ MCP 候选 归约为 session
 //! 的有效能力状态：`CapabilityState`。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::McpPreset;
@@ -262,8 +262,20 @@ impl CapabilityResolver {
         platform: &PlatformConfig,
     ) -> CapabilityResolverOutput {
         Self::resolve_checked(input, platform).unwrap_or_else(|error| {
-            diag!(Warn, Subsystem::AgentRun,
-        error = %error, "CapabilityResolver resolve 降级为非严格 MCP 解析");
+            let context = DiagnosticErrorContext::new("capability.resolver", "resolve_checked")
+                .with_field("project_id", input.owner_ctx.project_id())
+                .with_field("owner_type", format!("{:?}", input.owner_ctx.owner_type()))
+                .with_field("contribution_count", input.contributions.len());
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
+                project_id = %input.owner_ctx.project_id(),
+                owner_type = ?input.owner_ctx.owner_type(),
+                contribution_count = input.contributions.len(),
+                "CapabilityResolver resolve 降级为非严格 MCP 解析"
+            );
             CapabilityState::default()
         })
     }

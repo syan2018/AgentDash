@@ -50,23 +50,23 @@ impl<'a> TaskPlanWorkspace<'a> {
     ) -> Result<serde_json::Value, TaskPlanWorkspaceError> {
         let run_id = query.run_id.unwrap_or(scope.run_id);
         self.ensure_run_scope(scope, run_id).await?;
-        if query.mode == TaskPlanReadMode::Projection {
-            if let Some(story_id) = query.story_id {
-                let projection = build_story_task_projection(
-                    self.lifecycle_run_repo,
-                    self.lifecycle_subject_association_repo,
-                    scope.project_id,
-                    story_id,
-                )
-                .await
-                .map_err(TaskPlanWorkspaceError::execution)?;
-                return Ok(serde_json::json!({
-                    "mode": "projection",
-                    "scope": scope_json(scope, run_id),
-                    "story_id": story_id,
-                    "tasks": projection.tasks.iter().map(projection_item_json).collect::<Vec<_>>(),
-                }));
-            }
+        if query.mode == TaskPlanReadMode::Projection
+            && let Some(story_id) = query.story_id
+        {
+            let projection = build_story_task_projection(
+                self.lifecycle_run_repo,
+                self.lifecycle_subject_association_repo,
+                scope.project_id,
+                story_id,
+            )
+            .await
+            .map_err(TaskPlanWorkspaceError::execution)?;
+            return Ok(serde_json::json!({
+                "mode": "projection",
+                "scope": scope_json(scope, run_id),
+                "story_id": story_id,
+                "tasks": projection.tasks.iter().map(projection_item_json).collect::<Vec<_>>(),
+            }));
         }
 
         let filter = RunTaskPlanFilter {

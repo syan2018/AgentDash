@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 /// CompositeConnector — 多连接器组合路由
 ///
 /// 维护一组子连接器，将执行请求根据 executor ID 路由到正确的连接器。

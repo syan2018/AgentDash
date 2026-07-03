@@ -2059,8 +2059,10 @@ mod tests {
 
     fn workspace_module_execution_context(project_id: Uuid) -> ExecutionContext {
         let working_directory = PathBuf::from(".");
-        let mut vfs = Vfs::default();
-        vfs.source_project_id = Some(project_id.to_string());
+        let vfs = Vfs {
+            source_project_id: Some(project_id.to_string()),
+            ..Default::default()
+        };
         let mut capability_state = CapabilityState::from_clusters([ToolCluster::WorkspaceModule]);
         capability_state.workspace_module = WorkspaceModuleDimension::all();
         capability_state

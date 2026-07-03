@@ -444,23 +444,21 @@ pub async fn unpublish_project_canvas(
         ));
     }
 
-    if let Some(source_id) = shared.published_from_canvas_id {
-        if let Some(mut source) = repos
+    if let Some(source_id) = shared.published_from_canvas_id
+        && let Some(mut source) = repos
             .canvas_repo()
             .get_by_id(source_id)
             .await
             .map_err(ApplicationError::from)?
-        {
-            if source.shared_canvas_id == Some(shared.id) {
-                source.shared_canvas_id = None;
-                source.touch();
-                repos
-                    .canvas_repo()
-                    .update(&source)
-                    .await
-                    .map_err(ApplicationError::from)?;
-            }
-        }
+        && source.shared_canvas_id == Some(shared.id)
+    {
+        source.shared_canvas_id = None;
+        source.touch();
+        repos
+            .canvas_repo()
+            .update(&source)
+            .await
+            .map_err(ApplicationError::from)?;
     }
 
     repos

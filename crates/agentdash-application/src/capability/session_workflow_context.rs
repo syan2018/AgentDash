@@ -14,7 +14,7 @@
 //! 错误处理哲学：repo 报错 / 未找到 / 未配置统一返回 `None`，
 //! 只记录 `tracing::warn!`，不中断 session 创建。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -87,11 +87,19 @@ async fn resolve_for_project_agent(
         Ok(Some(agent)) => agent,
         Ok(None) => return None,
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let context = DiagnosticErrorContext::new(
+                "capability.session_workflow_context",
+                "load_project_agent",
+            )
+            .with_field("project_id", project_id)
+            .with_field("project_agent_id", project_agent_id);
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
                 project_id = %project_id,
                 project_agent_id = %project_agent_id,
-                error = %error,
                 "resolve_session_workflow_context: 读取 ProjectAgent 失败，返回空 workflow 上下文"
             );
             return None;
@@ -116,10 +124,17 @@ async fn resolve_for_story(
     let agents = match repos.project_agent.list_by_project(project_id).await {
         Ok(agents) => agents,
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let context = DiagnosticErrorContext::new(
+                "capability.session_workflow_context",
+                "list_story_project_agents",
+            )
+            .with_field("project_id", project_id);
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
                 project_id = %project_id,
-                error = %error,
                 "resolve_session_workflow_context: Story - 读取 ProjectAgent 列表失败"
             );
             return None;
@@ -160,11 +175,19 @@ async fn resolve_from_lifecycle_key(
             return None;
         }
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let context = DiagnosticErrorContext::new(
+                "capability.session_workflow_context",
+                "load_lifecycle_definition",
+            )
+            .with_field("project_id", project_id)
+            .with_field("lifecycle_key", lifecycle_key);
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
-                error = %error,
                 "resolve_session_workflow_context: 读取 lifecycle 定义失败"
             );
             return None;
@@ -205,12 +228,21 @@ async fn resolve_from_lifecycle_key(
             return None;
         }
         Err(error) => {
-            diag!(Warn, Subsystem::AgentRun,
-
+            let context = DiagnosticErrorContext::new(
+                "capability.session_workflow_context",
+                "load_workflow_definition",
+            )
+            .with_field("project_id", project_id)
+            .with_field("lifecycle_key", lifecycle_key)
+            .with_field("procedure_key", procedure_key);
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
                 procedure_key = %procedure_key,
-                error = %error,
                 "resolve_session_workflow_context: 读取 workflow 定义失败"
             );
             return None;

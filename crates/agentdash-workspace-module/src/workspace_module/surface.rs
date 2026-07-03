@@ -19,7 +19,7 @@ use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
     WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentation,
 };
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::canvas::{
     CANVAS_SYSTEM_SKILL_NAME, Canvas, CanvasAccessAction, CanvasAccessProjection,
     CanvasDataBinding, CanvasInteractionSnapshot, CanvasRepository, CanvasRuntimeObservation,
@@ -1414,8 +1414,16 @@ async fn inject_present_diagnostic(
         .inject_agent_run_notification(notification)
         .await
     {
-        diag!(Warn, Subsystem::AgentRun,
-        %error, "workspace_module_present 诊断事件注入失败");
+        let diagnostic_context =
+            DiagnosticErrorContext::new("workspace_module.surface", "inject_present_diagnostic");
+        diag_error!(Warn, Subsystem::AgentRun,
+            context = &diagnostic_context,
+            error = &error,
+            session_id = %runtime_context.delivery_runtime_session_id(),
+            turn_id = %turn_id,
+            event_kind = "workspace_module_present_failed",
+            "workspace_module_present diagnostic notification injection failed"
+        );
     }
 }
 

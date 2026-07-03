@@ -72,6 +72,29 @@ diag_error!(
 
 ---
 
+## Warn / Error 诊断上下文
+
+`Warn` / `Error` 级诊断即使没有错误对象，也应在关键协议、状态机和后台任务边界补充 `operation` 与 `stage` 字段：
+
+```rust
+diag!(
+    Warn,
+    Subsystem::Relay,
+    operation = "relay.ws.handle_message",
+    stage = "unmatched_response",
+    backend_id = %backend_id,
+    request_id = %request_id,
+    message_kind,
+    "relay 收到无法匹配的 response"
+);
+```
+
+这样做的原因是部署内测中的失败经常表现为「没有 Rust error 对象，但状态已经偏离预期」：例如 channel closed、broadcast lag、unexpected response type、missing cache entry、ready timeout、配置缺项或协议 variant 不匹配。`operation` / `stage` 让 `/api/diagnostics`、JSON 日志和 stdout 能按稳定操作名检索同一类问题；`message` 只保留人类可读摘要，关联事实放进结构化字段。
+
+如果失败分支持有 `Error` / `anyhow::Error` / `Box<dyn Error>` / `Result::Err(e)`，使用 `diag_error!`；如果只是 `Ok(None)`、超时耗尽、通道关闭、状态不一致等无错误对象场景，使用 `diag!(Warn/Error, ...)` 并补齐 `operation`、`stage` 和可关联字段。
+
+---
+
 ## 级别约定
 
 | 级别 | 使用场景 |

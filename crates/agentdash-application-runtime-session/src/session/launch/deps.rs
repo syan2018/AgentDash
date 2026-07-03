@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -296,10 +296,14 @@ impl TurnCommitDeps {
             }
             Ok(None) => {}
             Err(error) => {
-                diag!(Warn, Subsystem::SessionLaunch,
-
+                let context =
+                    DiagnosticErrorContext::new("session.launch.commit", "apply_auto_title");
+                diag_error!(
+                    Warn,
+                    Subsystem::SessionLaunch,
+                    context = &context,
+                    error = &error,
                     session_id = %session_id,
-                    error = %error,
                     "自动标题写入失败"
                 );
             }

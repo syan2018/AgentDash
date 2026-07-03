@@ -154,9 +154,11 @@ async fn run_ripgrep(
 
         let Ok(rel_path) = workspace_relative_path(Path::new(abs_path), workspace_root) else {
             diag!(Warn, Subsystem::AgentRun,
-
-                path = abs_path,
-                workspace_root = %workspace_root.display(),
+                operation = "local_runtime.search.execute",
+                stage = "workspace_relative_path",
+                path_len = abs_path.len(),
+                workspace_root_kind = "registered_workspace_root",
+                process_domain = %ProcessDomain::ToolShell.as_str(),
                 "ripgrep returned path outside workspace root"
             );
             continue;

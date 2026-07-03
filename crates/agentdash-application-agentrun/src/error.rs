@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::session_persistence::SessionStoreError;
@@ -45,8 +45,15 @@ impl From<ConnectorError> for ApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                diag!(Error, Subsystem::AgentRun,
-        error = %error, "agentrun connector IO error");
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("agent_run.error_mapping", "connector_io");
+                diag_error!(Error, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    error_source = "connector",
+                    io_error_kind = ?error.kind(),
+                    "AgentRun connector IO error"
+                );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
@@ -56,8 +63,14 @@ impl From<ConnectorError> for ApplicationError {
 
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
-        diag!(Error, Subsystem::AgentRun,
-        error = %error, "agentrun IO error");
+        let diagnostic_context = DiagnosticErrorContext::new("agent_run.error_mapping", "io");
+        diag_error!(Error, Subsystem::AgentRun,
+            context = &diagnostic_context,
+            error = &error,
+            error_source = "application",
+            io_error_kind = ?error.kind(),
+            "AgentRun IO error"
+        );
         Self::Internal("内部 IO 错误".to_string())
     }
 }
@@ -105,8 +118,15 @@ impl From<ConnectorError> for WorkflowApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                diag!(Error, Subsystem::AgentRun,
-        error = %error, "agentrun workflow connector IO error");
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("agent_run.error_mapping", "workflow_connector_io");
+                diag_error!(Error, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    error_source = "workflow_connector",
+                    io_error_kind = ?error.kind(),
+                    "AgentRun workflow connector IO error"
+                );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),

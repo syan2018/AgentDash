@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -361,8 +361,16 @@ impl AppState {
             if report.has_errors() {
                 for phase in &report.phases {
                     for err in &phase.errors {
-                        diag!(Warn, Subsystem::Api,
-        phase = phase.phase, error = %err, "启动对账阶段出错");
+                        let context =
+                            DiagnosticErrorContext::new("app_state.bootstrap", "boot_reconcile");
+                        diag_error!(
+                            Warn,
+                            Subsystem::Api,
+                            context = &context,
+                            error = &err,
+                            phase = phase.phase,
+                            "启动对账阶段出错"
+                        );
                     }
                 }
             }

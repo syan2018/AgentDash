@@ -2328,7 +2328,7 @@ fn log_agent_run_fork_route_error(
     let error_context = DiagnosticErrorContext::new("agent_run.fork", "route");
     diag_error!(Error, Subsystem::Api,
         context = &error_context,
-        error = error,
+        error = &error,
         route = route,
         run_id = %run_id,
         agent_id = %agent_id,

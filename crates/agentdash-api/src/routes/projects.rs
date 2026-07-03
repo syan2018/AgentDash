@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_application::project::{
@@ -617,9 +617,18 @@ fn map_directory_resolve_error(
             "{subject_label} `{subject_id}` 不存在于身份目录中，暂时无法授权"
         )),
         DirectoryProviderError::Unavailable(message) => ApiError::ServiceUnavailable(message),
-        DirectoryProviderError::Internal(message) => {
-            diag!(Error, Subsystem::Api,
-        error = %message, "身份目录 provider 解析 Project 授权主体失败");
+        DirectoryProviderError::Internal(err) => {
+            let context =
+                DiagnosticErrorContext::new("project_sharing.resolve_subject", "provider_internal");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                subject_label,
+                route = "project_sharing",
+                "身份目录 provider 解析 Project 授权主体失败"
+            );
             ApiError::Internal("身份目录服务错误".to_string())
         }
     }

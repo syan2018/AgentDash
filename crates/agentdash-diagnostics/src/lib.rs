@@ -95,7 +95,7 @@ mod tests {
             let context = DiagnosticErrorContext::new("agent_run.fork", "materialization")
                 .with_field("run_id", "run-1")
                 .with_field("client_command_id", "cmd-1");
-            let error = std::io::Error::new(std::io::ErrorKind::Other, "database exploded");
+            let error = std::io::Error::other("database exploded");
             diag_error!(
                 Error,
                 Subsystem::AgentRun,

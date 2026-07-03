@@ -21,7 +21,7 @@ use super::SessionRuntimeInner;
 use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxAutoResumeRequest;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
     HookEffect, HookInjection, HookRuntimeAccess, HookRuntimeEvaluationQuery,
@@ -85,8 +85,8 @@ impl SessionRuntimeInner {
             .await
         {
             Ok(resolution) => {
-                if resolution.refresh_snapshot {
-                    let _ = hook_runtime
+                if resolution.refresh_snapshot
+                    && let Err(error) = hook_runtime
                         .refresh_from_provenance(HookRuntimeRefreshQuery {
                             provenance: RuntimeAdapterProvenance::runtime_session(
                                 hook_runtime.session_id().to_string(),
@@ -95,7 +95,21 @@ impl SessionRuntimeInner {
                             ),
                             reason: Some(refresh_reason.to_string()),
                         })
-                        .await;
+                        .await
+                {
+                    let context =
+                        DiagnosticErrorContext::new("session.hook_dispatch", "refresh_snapshot");
+                    diag_error!(
+                        Warn,
+                        Subsystem::Hooks,
+                        context = &context,
+                        error = &error,
+                        session_id = %session_id,
+                        turn_id = %turn_id_value.as_deref().unwrap_or(""),
+                        trigger = ?trigger,
+                        refresh_reason,
+                        "session hook snapshot refresh 失败"
+                    );
                 }
                 let effects = resolution.effects.clone();
                 let trace_injections = resolution.injections.clone();
@@ -121,12 +135,26 @@ impl SessionRuntimeInner {
                     // 活跃 in-process connector 会通过 trace_broadcast → hook_trace_rx
                     // 把同一条 trace 发回 turn stream。Hub 侧只在没有 live runtime
                     // 时兜底持久化，避免前端出现重复 Hook 卡片。
-                    if !self.has_live_executor_session(session_id).await {
-                        if let Some(envelope) =
+                    if !self.has_live_executor_session(session_id).await
+                        && let Some(envelope) =
                             build_hook_trace_envelope(session_id, turn_id, source.clone(), &trace)
-                        {
-                            let _ = self.persist_notification(session_id, envelope).await;
-                        }
+                        && let Err(error) = self.persist_notification(session_id, envelope).await
+                    {
+                        let context = DiagnosticErrorContext::new(
+                            "session.hook_dispatch",
+                            "persist_fallback_hook_trace",
+                        );
+                        diag_error!(
+                            Warn,
+                            Subsystem::Hooks,
+                            context = &context,
+                            error = &error,
+                            session_id = %session_id,
+                            turn_id = %turn_id_value.as_deref().unwrap_or(""),
+                            trigger = ?trigger,
+                            trace_sequence = trace.sequence,
+                            "fallback hook trace 持久化失败"
+                        );
                     }
                 }
                 if !trace_injections.is_empty() {
@@ -144,11 +172,15 @@ impl SessionRuntimeInner {
                 HookTriggerDispatchResult { effects }
             }
             Err(error) => {
-                diag!(Warn, Subsystem::Hooks,
-
+                let context = DiagnosticErrorContext::new("session.hook_dispatch", "evaluate_hook");
+                diag_error!(
+                    Warn,
+                    Subsystem::Hooks,
+                    context = &context,
+                    error = &error,
                     session_id = %session_id,
+                    turn_id = %turn_id_value.as_deref().unwrap_or(""),
                     trigger = ?trigger,
-                    error = %error,
                     "session hook 评估失败"
                 );
                 HookTriggerDispatchResult::default()
@@ -226,7 +258,12 @@ impl SessionRuntimeInner {
         } else {
             diag!(Warn, Subsystem::Hooks,
 
+                operation = "session.hook_auto_resume",
+                stage = "auto_resume_limit",
                 session_id = %session_id,
+                effect_id = %request.effect_id,
+                turn_id = %request.turn_id,
+                terminal_event_seq = request.terminal_event_seq,
                 max = MAX_HOOK_AUTO_RESUMES,
                 "Hook auto-resume: 达到上限，放弃续跑"
             );
@@ -264,12 +301,20 @@ impl SessionRuntimeInner {
             }
             Ok(false) => AutoResumeMailboxRoute::NoAnchor,
             Err(error) => {
-                diag!(Warn, Subsystem::Hooks,
-
+                let context = DiagnosticErrorContext::new(
+                    "session.hook_auto_resume",
+                    "create_mailbox_envelope",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::Hooks,
+                    context = &context,
+                    error = &error,
                     session_id = %request.session_id,
                     effect_id = %request.effect_id,
-                    error = %error,
-                    payload = ?request.payload,
+                    turn_id = %request.turn_id,
+                    terminal_event_seq = request.terminal_event_seq,
+                    payload_key_count = request.payload.as_object().map(|object| object.len()).unwrap_or(0),
                     "Hook auto-resume mailbox envelope 创建失败"
                 );
                 AutoResumeMailboxRoute::Failed(error.to_string())
@@ -304,10 +349,14 @@ impl SessionRuntimeInner {
                 .launch_command(&session_id, command, LaunchPlanningInput::default())
                 .await
             {
-                diag!(Warn, Subsystem::Hooks,
-
+                let context =
+                    DiagnosticErrorContext::new("session.hook_auto_resume", "launch_unanchored");
+                diag_error!(
+                    Warn,
+                    Subsystem::Hooks,
+                    context = &context,
+                    error = &e,
                     session_id = %session_id,
-                    error = %e,
                     "Hook auto-resume launch 失败"
                 );
             }

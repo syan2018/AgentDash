@@ -289,6 +289,7 @@ impl<'a> LaunchPlanner<'a> {
         Ok(launch_plan)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_backend_execution_placement(
         &self,
         session_id: &str,

@@ -272,21 +272,16 @@ impl ShellExecTool {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellExecOperation {
+    #[default]
     Start,
     Read,
     Write,
     Status,
     Resize,
     Terminate,
-}
-
-impl Default for ShellExecOperation {
-    fn default() -> Self {
-        Self::Start
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -777,6 +772,7 @@ fn shell_session_terminate_text(
     lines.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn shell_exec_result_text(
     original_command: &str,
     rewritten_command: &str,
@@ -824,6 +820,7 @@ fn cwd_for_display(cwd: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn platform_shell_result_text(
     command: &str,
     cwd: &str,

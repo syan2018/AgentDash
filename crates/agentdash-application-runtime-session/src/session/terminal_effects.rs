@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::io;
 use std::sync::Arc;
 
@@ -214,6 +214,10 @@ impl SessionTerminalEffectDispatcher {
         effect: NewTerminalEffectRecord,
         executor: TerminalEffectExecutor,
     ) {
+        let session_id = effect.session_id.clone();
+        let turn_id = effect.turn_id.clone();
+        let terminal_event_seq = effect.terminal_event_seq;
+        let effect_type = effect.effect_type.as_str().to_string();
         match self
             .deps
             .terminal_effects
@@ -224,9 +228,17 @@ impl SessionTerminalEffectDispatcher {
                 .effects
                 .push(EnqueuedTerminalEffect { record, executor }),
             Err(error) => {
-                diag!(Error, Subsystem::AgentRun,
-
-                    error = %error,
+                let context =
+                    DiagnosticErrorContext::new("session.terminal_effects", "enqueue_outbox");
+                diag_error!(
+                    Error,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    terminal_event_seq,
+                    effect_type = %effect_type,
                     "Terminal effect outbox 写入失败，终态事实已保留"
                 );
             }
@@ -236,11 +248,20 @@ impl SessionTerminalEffectDispatcher {
     pub async fn execute_enqueued(&self, batch: EnqueuedTerminalEffects) {
         for item in batch.effects {
             if let Err(error) = self.execute_one(item.clone()).await {
-                diag!(Warn, Subsystem::AgentRun,
-
+                let context =
+                    DiagnosticErrorContext::new("session.terminal_effects", "execute_enqueued");
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    session_id = %item.record.session_id,
+                    turn_id = %item.record.turn_id,
                     effect_id = %item.record.id,
                     effect_type = item.record.effect_type.as_str(),
-                    error = %error,
+                    terminal_event_seq = item.record.terminal_event_seq,
+                    attempt = item.record.attempt_count.saturating_add(1),
+                    retry_count = item.record.attempt_count,
                     "Terminal effect 执行失败"
                 );
             }
@@ -263,14 +284,34 @@ impl SessionTerminalEffectDispatcher {
         let mut attempted = 0;
         for record in records {
             let executor = self.replay_executor_for(&record).await;
+            let session_id = record.session_id.clone();
+            let turn_id = record.turn_id.clone();
+            let effect_id = record.id;
+            let effect_type = record.effect_type.as_str().to_string();
+            let terminal_event_seq = record.terminal_event_seq;
+            let attempt = record.attempt_count.saturating_add(1);
+            let retry_count = record.attempt_count;
             attempted += 1;
             if let Err(error) = self
                 .execute_one(EnqueuedTerminalEffect { record, executor })
                 .await
             {
-                diag!(Warn, Subsystem::AgentRun,
-
-                    error = %error,
+                let context = DiagnosticErrorContext::new(
+                    "session.terminal_effects",
+                    "replay_durable_outbox",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    effect_id = %effect_id,
+                    effect_type = %effect_type,
+                    terminal_event_seq,
+                    attempt,
+                    retry_count,
                     "Terminal effect durable replay 失败"
                 );
             }
@@ -416,8 +457,13 @@ impl SessionTerminalEffectDispatcher {
                 if !supported.contains(&effect.kind.as_str()) {
                     diag!(Warn, Subsystem::AgentRun,
 
+                        operation = "session.terminal_effects",
+                        stage = "validate_hook_effect_kind",
                         session_id = %record.session_id,
+                        turn_id = %record.turn_id,
+                        effect_id = %record.id,
                         effect_kind = %effect.kind,
+                        supported_count = supported.len(),
                         supported = ?supported,
                         "Hook 产出了 handler 未声明支持的 effect kind"
                     );

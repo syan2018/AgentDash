@@ -1,6 +1,6 @@
 //! Agent prompt / cancel / discover 命令处理
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -122,6 +122,20 @@ impl PromptCommandHandler {
         let mcp_servers = match relay_mcp_servers_to_runtime(&payload.mcp_servers) {
             Ok(servers) => servers,
             Err(error) => {
+                let context = DiagnosticErrorContext::new(
+                    "local_runtime.prompt.handle",
+                    "mcp_servers_decode",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    command_id = %id,
+                    session_id = %session_id,
+                    mcp_server_count = payload.mcp_servers.len(),
+                    "command.prompt MCP server 配置非法"
+                );
                 return RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
@@ -135,6 +149,20 @@ impl PromptCommandHandler {
         let workspace_root = match self.tool_executor.validate_workspace_root(mount_root_ref) {
             Ok(path) => path,
             Err(error) => {
+                let context = DiagnosticErrorContext::new(
+                    "local_runtime.prompt.handle",
+                    "workspace_root_validate",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    command_id = %id,
+                    session_id = %session_id,
+                    mount_root_ref_len = mount_root_ref.len(),
+                    "command.prompt workspace root 校验失败"
+                );
                 return RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
@@ -179,6 +207,21 @@ impl PromptCommandHandler {
             match prepare_result {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
+                    let context = DiagnosticErrorContext::new(
+                        "local_runtime.prompt.handle",
+                        "workspace_prepare",
+                    );
+                    diag_error!(
+                        Error,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &error,
+                        command_id = %id,
+                        session_id = %session_id,
+                        follow_up = follow_up.is_some(),
+                        workspace_identity_kind = ?payload.workspace_identity_kind,
+                        "command.prompt workspace prepare 失败"
+                    );
                     return RelayMessage::ResponsePrompt {
                         id,
                         payload: None,
@@ -188,6 +231,21 @@ impl PromptCommandHandler {
                     };
                 }
                 Err(error) => {
+                    let context = DiagnosticErrorContext::new(
+                        "local_runtime.prompt.handle",
+                        "workspace_prepare_join",
+                    );
+                    diag_error!(
+                        Error,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &error,
+                        command_id = %id,
+                        session_id = %session_id,
+                        follow_up = follow_up.is_some(),
+                        workspace_identity_kind = ?payload.workspace_identity_kind,
+                        "command.prompt workspace prepare 任务失败"
+                    );
                     return RelayMessage::ResponsePrompt {
                         id,
                         payload: None,
@@ -199,6 +257,7 @@ impl PromptCommandHandler {
             }
         }
 
+        let mcp_server_count = mcp_servers.len();
         let command = LaunchCommand::local_relay_prompt_input(
             typed_relay_prompt_user_input(payload.input, payload.env, executor_config),
             mcp_servers,
@@ -249,8 +308,19 @@ impl PromptCommandHandler {
                 }
             }
             Err(e) => {
-                diag!(Error, Subsystem::AgentRun,
-        session_id = %session_id, error = %e, "Agent 启动失败");
+                let context =
+                    DiagnosticErrorContext::new("local_runtime.prompt.handle", "launch_command");
+                diag_error!(
+                    Error,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &e,
+                    command_id = %id,
+                    session_id = %session_id,
+                    follow_up = follow_up.is_some(),
+                    mcp_server_count = mcp_server_count,
+                    "Agent 启动失败"
+                );
                 RelayMessage::ResponsePrompt {
                     id,
                     payload: None,
@@ -286,11 +356,24 @@ impl PromptCommandHandler {
                 }),
                 error: None,
             },
-            Err(e) => RelayMessage::ResponseCancel {
-                id,
-                payload: None,
-                error: Some(RelayError::runtime_error(e.to_string())),
-            },
+            Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("local_runtime.prompt.cancel", "cancel_session");
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    command_id = %id,
+                    session_id = %payload.session_id,
+                    "command.cancel 失败"
+                );
+                RelayMessage::ResponseCancel {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(error.to_string())),
+                }
+            }
         }
     }
 
@@ -328,11 +411,25 @@ impl PromptCommandHandler {
                 }),
                 error: None,
             },
-            Err(e) => RelayMessage::ResponseSteer {
-                id,
-                payload: None,
-                error: Some(RelayError::runtime_error(e.to_string())),
-            },
+            Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("local_runtime.prompt.steer", "steer_session");
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    command_id = %id,
+                    session_id = %payload.session_id,
+                    expected_turn_id = ?payload.expected_turn_id,
+                    "command.steer 失败"
+                );
+                RelayMessage::ResponseSteer {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(error.to_string())),
+                }
+            }
         }
     }
 
@@ -397,7 +494,7 @@ async fn release_session_forwarder(
 async fn forward_session_notifications(
     session_runtime: SessionRuntimeServices,
     session_id: &str,
-    _turn_id: &str,
+    turn_id: &str,
     event_tx: mpsc::UnboundedSender<RelayMessage>,
 ) {
     let mut rx = session_runtime.eventing.ensure_session(session_id).await;
@@ -419,7 +516,10 @@ async fn forward_session_notifications(
                 if event_tx.send(relay_msg).is_err() {
                     diag!(Warn, Subsystem::AgentRun,
 
+                        operation = "local_runtime.session_notifications",
+                        stage = "event_channel_send",
                         session_id = %session_id,
+                        turn_id = %turn_id,
                         "事件通道已关闭，停止通知转发"
                     );
                     break;
@@ -428,6 +528,8 @@ async fn forward_session_notifications(
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                 diag!(Warn, Subsystem::AgentRun,
 
+                    operation = "local_runtime.session_notifications",
+                    stage = "broadcast_lagged",
                     session_id = %session_id,
                     skipped = n,
                     "通知流落后，跳过部分消息"

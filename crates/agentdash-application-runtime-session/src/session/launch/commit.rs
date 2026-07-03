@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::{ConnectorError, McpServerReadinessSummary};
 
 use super::connector_start::ConnectorAcceptedTurn;
@@ -127,8 +127,12 @@ impl TurnCommitter {
             diag!(
                 Warn,
                 Subsystem::SessionLaunch,
-                session_id,
-                "accepted launch control-plane commit: {diagnostic}"
+                operation = "session.launch.commit",
+                stage = "accepted_launch_control_plane_diagnostic",
+                session_id = %session_id,
+                turn_id = %turn_id,
+                diagnostic = %diagnostic,
+                "accepted launch control-plane commit diagnostic"
             );
         }
 
@@ -231,16 +235,35 @@ async fn commit_runtime_commands_applied(
         .await
     {
         let error_message = error.to_string();
-        diag!(Error, Subsystem::SessionLaunch,
-
+        let context =
+            DiagnosticErrorContext::new("session.launch.commit_runtime_commands", "mark_applied");
+        diag_error!(
+            Error,
+            Subsystem::SessionLaunch,
+            context = &context,
+            error = &error,
             session_id = %session_id,
-            error = %error_message,
+            pending_command_count = pending_command_ids.len(),
             "标记 requested runtime commands applied 失败，改写为 failed 以避免下一轮重复应用"
         );
         if let Err(failed_error) = runtime_command_store
             .mark_runtime_commands_failed(pending_command_ids, error_message.clone())
             .await
         {
+            let context = DiagnosticErrorContext::new(
+                "session.launch.commit_runtime_commands",
+                "mark_failed_after_applied_error",
+            );
+            diag_error!(
+                Error,
+                Subsystem::SessionLaunch,
+                context = &context,
+                error = &failed_error,
+                session_id = %session_id,
+                pending_command_count = pending_command_ids.len(),
+                applied_error = %error_message,
+                "标记 requested runtime commands failed 也失败"
+            );
             return Err(ConnectorError::Runtime(format!(
                 "runtime command applied/failed 状态提交均失败: applied_error={error_message}; failed_error={failed_error}"
             )));

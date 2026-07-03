@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::{
@@ -168,11 +168,18 @@ impl SessionEventingService {
                 event.notification = notification;
             }
             Err(error) => {
-                diag!(Warn, Subsystem::AgentRun,
-
+                let context = DiagnosticErrorContext::new(
+                    "session.eventing.broadcast_persisted_event",
+                    "bound_envelope_for_broadcast",
+                );
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
                     session_id = %session_id,
                     event_seq = event.event_seq,
-                    error = %error,
+                    event_kind = event.session_update_type.as_str(),
                     "SessionEventingService broadcast guard 无法测量 BackboneEnvelope，继续发送已持久化事件"
                 );
             }
@@ -316,7 +323,10 @@ impl SessionEventingService {
         {
             diag!(Warn, Subsystem::AgentRun,
 
+                operation = "session.eventing.project_source_session_title",
+                stage = "executor_session_guard",
                 session_id = %session_id,
+                event_kind = "source_session_title_updated",
                 source = %source,
                 expected_executor_session_id = %expected,
                 actual_executor_session_id = %actual,
@@ -423,6 +433,7 @@ impl SessionEventingService {
         Ok(envelope)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn persist_session_rewound_marker(
         &self,
         session_id: &str,
@@ -1081,6 +1092,8 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
     if truncated_fields > 0 {
         diag!(Warn, Subsystem::AgentRun,
 
+            operation = "session.eventing.append_guard",
+            stage = "truncate_known_output_fields",
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),
@@ -1094,6 +1107,8 @@ fn bound_envelope_for_append(mut envelope: BackboneEnvelope) -> io::Result<Backb
     } else {
         diag!(Warn, Subsystem::AgentRun,
 
+            operation = "session.eventing.append_guard",
+            stage = "oversized_after_guard",
             session_id = %envelope.session_id,
             event_type = backbone_event_type_name_for_guard(&envelope.event),
             turn_id = envelope.trace.turn_id.as_deref(),

@@ -580,7 +580,7 @@ impl<'a> AgentRunMailboxService<'a> {
             SteeringDeliveryMode::DelegateReturn => "delegate",
             SteeringDeliveryMode::LiveSteer => "scheduler",
         };
-        let event_error = self
+        let event_error = match self
             .session_eventing
             .emit_user_input_submitted(
                 &message.runtime_session_id,
@@ -596,17 +596,27 @@ impl<'a> AgentRunMailboxService<'a> {
                 input,
             )
             .await
-            .err()
-            .map(|error| format!("AgentRun mailbox steering 事件写入失败: {error}"));
-        if let Some(error) = event_error.as_deref() {
-            diag!(Warn, Subsystem::AgentRun,
-                runtime_session_id = %message.runtime_session_id,
-                mailbox_message_id = %message.id,
-                delivery_mode = event_route,
-                error = %error,
-                "AgentRun mailbox steering accepted but event projection failed"
-            );
-        }
+        {
+            Ok(()) => None,
+            Err(error) => {
+                let event_error = format!("AgentRun mailbox steering 事件写入失败: {error}");
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("agent_run.mailbox.scheduler", "emit_steer_event");
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    runtime_session_id = %message.runtime_session_id,
+                    run_id = %run.id,
+                    agent_id = %agent.id,
+                    frame_id = %frame.id,
+                    mailbox_message_id = %message.id,
+                    active_turn_id = %active_turn_id,
+                    delivery_mode = event_route,
+                    "AgentRun mailbox steering accepted but event projection failed"
+                );
+                Some(event_error)
+            }
+        };
         let updated = self
             .mailbox_repo
             .mark_message_status(

@@ -1,4 +1,5 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::text_user_input_blocks;
@@ -168,8 +169,12 @@ impl RoutineExecutor {
                 execution.mark_failed(format!("模板渲染失败: {err}"));
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
+                    log_routine_persistence_update_failed(
+                        "mark_template_failed",
+                        routine_id,
+                        execution.id,
+                        &update_err,
+                    );
                 }
                 return Err(ApplicationError::InvalidConfig(err));
             }
@@ -182,8 +187,12 @@ impl RoutineExecutor {
                 execution.mark_failed(&reason);
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
+                    log_routine_persistence_update_failed(
+                        "mark_agent_config_failed",
+                        routine_id,
+                        execution.id,
+                        &update_err,
+                    );
                 }
                 return Err(err);
             }
@@ -201,8 +210,12 @@ impl RoutineExecutor {
                     if let Err(update_err) =
                         self.repos.routine_execution_repo.update(&execution).await
                     {
-                        diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
+                        log_routine_persistence_update_failed(
+                            "mark_workspace_admission_failed",
+                            routine_id,
+                            execution.id,
+                            &update_err,
+                        );
                     }
                     return Err(ApplicationError::InvalidConfig(reason));
                 }
@@ -212,8 +225,12 @@ impl RoutineExecutor {
                     if let Err(update_err) =
                         self.repos.routine_execution_repo.update(&execution).await
                     {
-                        diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入跳过）落库失败");
+                        log_routine_persistence_update_failed(
+                            "mark_workspace_admission_skipped",
+                            routine_id,
+                            execution.id,
+                            &update_err,
+                        );
                     }
                     return Ok(exec_id);
                 }
@@ -229,15 +246,23 @@ impl RoutineExecutor {
                 updated_routine.last_fired_at = Some(Utc::now());
                 updated_routine.updated_at = Utc::now();
                 if let Err(update_err) = self.repos.routine_repo.update(&updated_routine).await {
-                    diag!(Error, Subsystem::Cron,
-        routine_id = %updated_routine.id, error = %update_err, "更新 Routine（last_fired_at）落库失败");
+                    log_routine_persistence_update_failed(
+                        "update_last_fired",
+                        updated_routine.id,
+                        execution.id,
+                        &update_err,
+                    );
                 }
 
                 let exec_id = execution.id;
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 完成）落库失败");
+                    log_routine_persistence_update_failed(
+                        "mark_dispatch_completed",
+                        updated_routine.id,
+                        execution.id,
+                        &update_err,
+                    );
                 }
                 Ok(exec_id)
             }
@@ -245,8 +270,12 @@ impl RoutineExecutor {
                 execution.mark_failed(err.to_string());
                 if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
                 {
-                    diag!(Error, Subsystem::Cron,
-        execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（dispatch 失败）落库失败");
+                    log_routine_persistence_update_failed(
+                        "mark_dispatch_failed",
+                        routine_id,
+                        execution.id,
+                        &update_err,
+                    );
                 }
                 Err(err)
             }
@@ -517,6 +546,28 @@ fn runtime_refs_from_reuse_target(
         target.frame_id,
         orchestration_binding,
     )
+}
+
+fn log_routine_persistence_update_failed<E>(
+    stage: &'static str,
+    routine_id: Uuid,
+    execution_id: Uuid,
+    error: &E,
+) where
+    E: Debug + Display,
+{
+    let context = DiagnosticErrorContext::new("routine.executor.fire", stage)
+        .with_field("routine_id", routine_id)
+        .with_field("execution_id", execution_id);
+    diag_error!(
+        Error,
+        Subsystem::Cron,
+        context = &context,
+        error = &error,
+        routine_id = %routine_id,
+        execution_id = %execution_id,
+        "Routine persistence update failed"
+    );
 }
 
 fn map_routine_dispatch_error(error: LifecycleWorkflowApplicationError) -> ApplicationError {

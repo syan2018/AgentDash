@@ -1,4 +1,6 @@
-use agentdash_diagnostics::{Subsystem, diag};
+#![allow(clippy::items_after_test_module)]
+
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -343,12 +345,16 @@ fn spawn_initial_project_agent_mailbox_schedule(
             )
             .await
         {
-            diag!(Warn, Subsystem::Api,
-
+            let context =
+                DiagnosticErrorContext::new("project_agent.initial_mailbox_schedule", "schedule");
+            diag_error!(
+                Warn,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
                 runtime_session_id = %runtime_session_id,
                 run_id = %run_id,
                 agent_id = %agent_id,
-                error = %error,
                 "ProjectAgent 初始 mailbox 后台调度失败"
             );
         } else {

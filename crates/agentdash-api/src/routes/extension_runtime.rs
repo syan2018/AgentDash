@@ -1,6 +1,6 @@
 //! Project Extension Runtime HTTP 路由。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use axum::Json;
@@ -383,8 +383,15 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            diag!(Error, Subsystem::Api,
-        error = %error, "extension package artifact storage error");
+            let context = DiagnosticErrorContext::new("extension_runtime.webview_asset", "storage");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
+                route = "/api/projects/{project_id}/extension-runtime/webviews/{extension_key}/{asset_path}",
+                "extension package artifact storage error"
+            );
             ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),

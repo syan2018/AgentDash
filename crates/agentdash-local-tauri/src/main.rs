@@ -2,7 +2,7 @@
 
 mod codex_oauth;
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_process::{ProcessDomain, background_std_command};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -17,7 +17,8 @@ use agentdash_local::{
     delete_desktop_runtime_profile, ensure_desktop_runtime_config, load_desktop_app_settings,
     load_desktop_runtime_profile_with_server_origin, local_mcp_servers_path,
     normalize_desktop_app_settings, normalize_desktop_runtime_start_request_with_server_origin,
-    probe_mcp_server, save_desktop_app_settings, save_desktop_runtime_profile_with_server_origin,
+    probe_mcp_server, redact_secret, save_desktop_app_settings,
+    save_desktop_runtime_profile_with_server_origin,
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use codex_oauth::{codex_oauth_cancel, codex_oauth_start};
@@ -509,9 +510,15 @@ async fn record_desktop_ensure_retry(runtime: &DesktopRunnerHost, event: Desktop
             Some(event.next_retry_at.clone()),
         )
         .await;
-    diag!(Warn, Subsystem::Api,
+    let error = redact_secret(&event.error);
+    let context = DiagnosticErrorContext::new("desktop.runtime.ensure", "wait_for_api_ready");
+    diag_error!(
+        Warn,
+        Subsystem::Api,
+        context = &context,
+        error = &error,
         attempt = event.attempt,
-        error = %event.error,
+        retry_count = event.attempt.saturating_sub(1),
         "领取本机 runtime 失败，等待 server 就绪后重试"
     );
 }
@@ -521,6 +528,15 @@ fn initialize_desktop_runner_host(state: DesktopState) {
         let settings = match load_desktop_app_settings() {
             Ok(settings) => settings,
             Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("desktop.runtime.initialize", "load_settings");
+                diag_error!(
+                    Error,
+                    Subsystem::Infra,
+                    context = &context,
+                    error = &error,
+                    "读取桌面设置失败，无法判断 runtime 自动连接策略"
+                );
                 state
                     .runtime
                     .mark_error(
@@ -550,6 +566,15 @@ fn initialize_desktop_runner_host(state: DesktopState) {
                 return;
             }
             Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("desktop.runtime.initialize", "load_profile");
+                diag_error!(
+                    Error,
+                    Subsystem::Infra,
+                    context = &context,
+                    error = &error,
+                    "读取桌面本机 runtime profile 失败"
+                );
                 state
                     .runtime
                     .mark_error("读取桌面本机 runtime profile 失败", error)
@@ -599,8 +624,14 @@ fn main() {
                 }
                 api.prevent_close();
                 if let Err(error) = window.hide() {
-                    diag!(Warn, Subsystem::Infra,
-                        error = %error,
+                    let context =
+                        DiagnosticErrorContext::new("desktop.window.lifecycle", "hide_to_tray");
+                    diag_error!(
+                        Warn,
+                        Subsystem::Infra,
+                        context = &context,
+                        error = &error,
+                        window_label = MAIN_WINDOW_LABEL,
                         "关闭窗口时隐藏到托盘失败"
                     );
                 }
@@ -622,8 +653,12 @@ fn main() {
                     DesktopApiMode::Sidecar => start_desktop_api_sidecar(state_for_api, api_config),
                 },
                 Err(message) => {
-                    diag!(Error, Subsystem::Api,
-                        error = %message,
+                    diag!(
+                        Error,
+                        Subsystem::Api,
+                        operation = "desktop.api.configure",
+                        stage = "parse_config",
+                        error_kind = "invalid_desktop_api_config",
                         "桌面端 API 配置无效"
                     );
                     let state_for_error = state.clone();
@@ -827,6 +862,15 @@ async fn record_tray_status(state: DesktopState) {
 async fn request_desktop_quit(app: AppHandle, state: DesktopState) {
     state.request_explicit_quit();
     if let Err(error) = state.runtime.stop(StopReason::UserRequested).await {
+        let context = DiagnosticErrorContext::new("desktop.lifecycle.quit", "stop_runtime");
+        diag_error!(
+            Warn,
+            Subsystem::Infra,
+            context = &context,
+            error = &error,
+            stop_reason = "user_requested",
+            "显式退出前停止本机 runtime 失败"
+        );
         state
             .runtime
             .record_log(
@@ -844,8 +888,13 @@ fn apply_startup_window_visibility(app: &AppHandle) {
     let settings = match load_desktop_app_settings() {
         Ok(settings) => settings,
         Err(error) => {
-            diag!(Warn, Subsystem::Infra,
-                error = %error,
+            let context =
+                DiagnosticErrorContext::new("desktop.window.startup_visibility", "load_settings");
+            diag_error!(
+                Warn,
+                Subsystem::Infra,
+                context = &context,
+                error = &error,
                 "读取桌面端启动窗口设置失败，使用默认显示行为"
             );
             DesktopAppSettings::default()
@@ -856,8 +905,14 @@ fn apply_startup_window_visibility(app: &AppHandle) {
         if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL)
             && let Err(error) = window.hide()
         {
-            diag!(Warn, Subsystem::Infra,
-                error = %error,
+            let context =
+                DiagnosticErrorContext::new("desktop.window.startup_visibility", "hide_window");
+            diag_error!(
+                Warn,
+                Subsystem::Infra,
+                context = &context,
+                error = &error,
+                window_label = MAIN_WINDOW_LABEL,
                 "按启动到托盘设置隐藏主窗口失败"
             );
         }
@@ -871,44 +926,66 @@ fn restore_main_window(app: &AppHandle) {
         return;
     };
     if let Err(error) = window.show() {
-        diag!(Warn, Subsystem::Infra,
-            error = %error,
+        let context = DiagnosticErrorContext::new("desktop.window.restore", "show_window");
+        diag_error!(
+            Warn,
+            Subsystem::Infra,
+            context = &context,
+            error = &error,
+            window_label = MAIN_WINDOW_LABEL,
             "显示 AgentDash 主窗口失败"
         );
     }
     if let Err(error) = window.unminimize() {
-        diag!(Warn, Subsystem::Infra,
-            error = %error,
+        let context = DiagnosticErrorContext::new("desktop.window.restore", "unminimize_window");
+        diag_error!(
+            Warn,
+            Subsystem::Infra,
+            context = &context,
+            error = &error,
+            window_label = MAIN_WINDOW_LABEL,
             "还原 AgentDash 主窗口失败"
         );
     }
     if let Err(error) = window.set_focus() {
-        diag!(Warn, Subsystem::Infra,
-            error = %error,
+        let context = DiagnosticErrorContext::new("desktop.window.restore", "focus_window");
+        diag_error!(
+            Warn,
+            Subsystem::Infra,
+            context = &context,
+            error = &error,
+            window_label = MAIN_WINDOW_LABEL,
             "聚焦 AgentDash 主窗口失败"
         );
     }
 }
 
 fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
-    let sidecar = match config.sidecar.as_deref() {
-        Some(sidecar) => sidecar,
-        None => {
-            let origin = config.origin.clone();
-            tauri::async_runtime::spawn(async move {
-                state
-                    .api
-                    .mark_error_origin(origin, "未配置桌面端 API sidecar 命令".to_string())
-                    .await;
-            });
-            return;
-        }
-    };
+    if config.sidecar.is_none() {
+        diag!(Error, Subsystem::Api,
+            operation = "desktop.api.sidecar",
+            stage = "config_missing",
+            process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+            program_kind = "desktop_api_sidecar",
+            sidecar_configured = false,
+            "未配置桌面端 API sidecar 命令"
+        );
+        let origin = config.origin.clone();
+        tauri::async_runtime::spawn(async move {
+            state
+                .api
+                .mark_error_origin(origin, "未配置桌面端 API sidecar 命令".to_string())
+                .await;
+        });
+        return;
+    }
 
     diag!(Info, Subsystem::Api,
 
         origin = %config.origin,
-        sidecar = %sidecar,
+        process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+        program_kind = "desktop_api_sidecar",
+        sidecar_configured = true,
         "Tauri 桌面端启动 API sidecar"
     );
 
@@ -920,6 +997,18 @@ fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
             });
         }
         Err(error) => {
+            let context = DiagnosticErrorContext::new("desktop.api.sidecar", "spawn_process");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
+                origin = %config.origin,
+                process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+                program_kind = "desktop_api_sidecar",
+                sidecar_configured = true,
+                "启动桌面端 API sidecar 失败"
+            );
             let origin = config.origin.clone();
             tauri::async_runtime::spawn(async move {
                 state.api.mark_error_origin(origin, error.to_string()).await;
@@ -972,19 +1061,32 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
             Ok(response) => {
                 if attempt % 20 == 0 {
                     diag!(Warn, Subsystem::Api,
-
+                        operation = "desktop.api.sidecar_readiness",
+                        stage = "health_status",
                         attempt,
+                        retry_count = attempt - 1,
                         status = %response.status(),
+                        origin = %origin,
+                        process_domain = %ProcessDomain::DesktopSidecar.as_str(),
                         "等待桌面端 API sidecar 就绪"
                     );
                 }
             }
             Err(error) => {
                 if attempt % 20 == 0 {
-                    diag!(Warn, Subsystem::Api,
-
-                        attempt,
-                        error = %error,
+                    let context = DiagnosticErrorContext::new(
+                        "desktop.api.sidecar_readiness",
+                        "health_request",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::Api,
+                        context = &context,
+                        error = &error,
+                        attempt = attempt,
+                        retry_count = attempt - 1,
+                        origin = %origin,
+                        process_domain = %ProcessDomain::DesktopSidecar.as_str(),
                         "等待桌面端 API sidecar 就绪"
                     );
                 }
@@ -993,6 +1095,15 @@ async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
+    diag!(Error, Subsystem::Api,
+        operation = "desktop.api.sidecar_readiness",
+        stage = "timeout",
+        attempt = 240,
+        retry_count = 239,
+        origin = %origin,
+        process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+        "桌面端 API sidecar 未在 120s 内就绪"
+    );
     api.mark_error_origin(origin, "桌面端 API sidecar 未在 120s 内就绪".to_string())
         .await;
 }
@@ -1065,8 +1176,16 @@ impl DesktopApiManager {
                 *guard = Some(child);
             }
             Err(error) => {
-                diag!(Error, Subsystem::Api,
-        error = %error, "记录桌面端 API sidecar 句柄失败");
+                let context = DiagnosticErrorContext::new("desktop.api.sidecar", "store_handle");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &error,
+                    process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+                    program_kind = "desktop_api_sidecar",
+                    "记录桌面端 API sidecar 句柄失败"
+                );
             }
         }
     }
@@ -1075,15 +1194,31 @@ impl DesktopApiManager {
         let child = match self.sidecar.lock() {
             Ok(mut guard) => guard.take(),
             Err(error) => {
-                diag!(Error, Subsystem::Api,
-        error = %error, "停止桌面端 API sidecar 时锁已污染");
+                let context = DiagnosticErrorContext::new("desktop.api.sidecar", "take_handle");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &error,
+                    process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+                    program_kind = "desktop_api_sidecar",
+                    "停止桌面端 API sidecar 时锁已污染"
+                );
                 None
             }
         };
         if let Some(mut child) = child {
             if let Err(error) = child.kill() {
-                diag!(Warn, Subsystem::Api,
-        error = %error, "终止桌面端 API sidecar 失败");
+                let context = DiagnosticErrorContext::new("desktop.api.sidecar", "kill_process");
+                diag_error!(
+                    Warn,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &error,
+                    process_domain = %ProcessDomain::DesktopSidecar.as_str(),
+                    program_kind = "desktop_api_sidecar",
+                    "终止桌面端 API sidecar 失败"
+                );
             }
             let _ = child.wait();
             let api = self.clone();

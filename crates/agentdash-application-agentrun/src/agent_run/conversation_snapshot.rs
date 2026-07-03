@@ -800,6 +800,7 @@ fn conversation_commands(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn command_view(
     input: &ConversationCommandAvailabilityInput,
     kind: ConversationCommandKindModel,

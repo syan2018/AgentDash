@@ -954,6 +954,7 @@ mod tests {
 
     // ─── Helper ──────────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     fn make_service<'a>(
         run_repo: &'a dyn LifecycleRunRepository,
         workflow_graph_repo: &'a dyn WorkflowGraphRepository,

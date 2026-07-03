@@ -234,9 +234,11 @@ mod tests {
         }
 
         async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
-            Ok((self.asset.project_id == project_id)
-                .then(|| vec![self.asset.clone()])
-                .unwrap_or_default())
+            Ok(if self.asset.project_id == project_id {
+                vec![self.asset.clone()]
+            } else {
+                Vec::new()
+            })
         }
 
         async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {

@@ -33,38 +33,6 @@ impl CapabilityKeyDimensionDelta {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_capability_key_delta_does_not_create_section() {
-        let effective = BTreeSet::from(["file_read".to_string()]);
-
-        let section = CapabilityKeyDimensionDelta::from_delta(
-            &SetDelta::default(),
-            &effective,
-            Some(&CapabilityStateDelta::default()),
-        );
-
-        assert!(section.is_none());
-    }
-
-    #[test]
-    fn capability_key_delta_with_additions_creates_section() {
-        let effective = BTreeSet::from(["file_read".to_string()]);
-        let delta = SetDelta {
-            added: vec!["file_read".to_string()],
-            removed: Vec::new(),
-        };
-
-        let section = CapabilityKeyDimensionDelta::from_delta(&delta, &effective, None)
-            .expect("non-empty capability key delta should render");
-
-        assert!(section.has_changes());
-    }
-}
-
 impl DimensionDelta for CapabilityKeyDimensionDelta {
     fn has_changes(&self) -> bool {
         !self.added.is_empty() || !self.removed.is_empty()
@@ -121,5 +89,37 @@ impl DimensionDelta for CapabilityKeyDimensionDelta {
         sections.push(format!("### Effective Capabilities\n{caps_block}"));
 
         sections.join("\n\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_capability_key_delta_does_not_create_section() {
+        let effective = BTreeSet::from(["file_read".to_string()]);
+
+        let section = CapabilityKeyDimensionDelta::from_delta(
+            &SetDelta::default(),
+            &effective,
+            Some(&CapabilityStateDelta::default()),
+        );
+
+        assert!(section.is_none());
+    }
+
+    #[test]
+    fn capability_key_delta_with_additions_creates_section() {
+        let effective = BTreeSet::from(["file_read".to_string()]);
+        let delta = SetDelta {
+            added: vec!["file_read".to_string()],
+            removed: Vec::new(),
+        };
+
+        let section = CapabilityKeyDimensionDelta::from_delta(&delta, &effective, None)
+            .expect("non-empty capability key delta should render");
+
+        assert!(section.has_changes());
     }
 }

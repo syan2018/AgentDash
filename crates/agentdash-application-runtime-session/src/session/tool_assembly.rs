@@ -2,7 +2,7 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_application_ports::mcp_discovery::{
     McpToolDiscovery, McpToolDiscoveryRequest, McpToolSourceOutcome,
 };
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::RuntimeToolSchemaEntry;
 use agentdash_spi::{ExecutionContext, RuntimeMcpServer};
@@ -35,11 +35,19 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 all_schemas.extend(runtime_tool_schema_entries_from_tools(&tools));
                 all_tools.extend(tools);
             }
-            Err(e) => diag!(Warn, Subsystem::AgentRun,
-
-                session_id = %session_id,
-                "runtime tool 构建失败: {e}"
-            ),
+            Err(e) => {
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("session.tool_assembly", "runtime_tool_build");
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &e,
+                    session_id = %session_id,
+                    turn_id = %context.session.turn_id,
+                    "Runtime tool build failed"
+                );
+            }
         }
     }
 
@@ -67,9 +75,17 @@ pub(crate) async fn assemble_tool_surface_for_execution_context(
                 all_tools.extend(outcome.tools.into_iter().map(|entry| entry.tool));
             }
             Err(e) => {
-                diag!(Warn, Subsystem::AgentRun,
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("session.tool_assembly", "mcp_tool_discovery");
+                diag_error!(
+                    Warn,
+                    Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &e,
                     session_id = %session_id,
-                    "MCP 工具发现失败: {e}"
+                    turn_id = %context.session.turn_id,
+                    mcp_server_count = context.session.mcp_servers.len(),
+                    "MCP tool discovery failed"
                 );
                 mcp_sources.extend(context.session.mcp_servers.iter().cloned().map(|server| {
                     McpToolSourceOutcome::unavailable(server, "discovery_failed", e.to_string())
@@ -92,8 +108,11 @@ fn finalize_tool_surface(
     dedupe_tool_schemas(&mut schemas);
     if let Some(message) = duplicate_callable_tool_diagnostic(&tools, &schemas) {
         diag!(Warn, Subsystem::AgentRun,
+            operation = "session.tool_assembly",
+            stage = "validate_callable_tool_names",
             session_id = %session_id,
-            "runtime callable tool name 冲突，跳过本轮工具 surface: {message}"
+            diagnostic = %message,
+            "runtime callable tool name 冲突，跳过本轮工具 surface"
         );
         return AssembledToolSurface::default();
     }

@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::DomainError;
 use agentdash_spi::ConnectorError;
 
@@ -44,8 +44,17 @@ impl From<ConnectorError> for ApplicationError {
                 Self::Internal(message)
             }
             ConnectorError::Io(error) => {
-                diag!(Error, Subsystem::Infra,
-        error = %error, "connector IO error");
+                let context =
+                    DiagnosticErrorContext::new("application.error_conversion", "connector_io")
+                        .with_field("error_source", "connector");
+                diag_error!(
+                    Error,
+                    Subsystem::Infra,
+                    context = &context,
+                    error = &error,
+                    error_source = "connector",
+                    "connector IO error"
+                );
                 Self::Internal("内部连接器 IO 错误".to_string())
             }
             ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
@@ -128,8 +137,16 @@ impl From<agentdash_application_lifecycle::WorkflowApplicationError> for Applica
 
 impl From<std::io::Error> for ApplicationError {
     fn from(error: std::io::Error) -> Self {
-        diag!(Error, Subsystem::Infra,
-        error = %error, "application IO error");
+        let context = DiagnosticErrorContext::new("application.error_conversion", "io")
+            .with_field("error_source", "std_io");
+        diag_error!(
+            Error,
+            Subsystem::Infra,
+            context = &context,
+            error = &error,
+            error_source = "std_io",
+            "application IO error"
+        );
         Self::Internal("内部 IO 错误".to_string())
     }
 }

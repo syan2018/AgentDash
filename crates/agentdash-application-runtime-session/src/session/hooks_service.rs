@@ -164,6 +164,7 @@ impl SessionHookService {
         self.ensure_hook_runtime_for_hook_target(target, None).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn resolve_hook_runtime(
         &self,
         session_id: &str,
@@ -200,26 +201,27 @@ impl SessionHookService {
                 .await;
         }
 
-        if let Some(ref hs) = existing {
-            if validate_hook_runtime_target(hs.as_ref(), &resolved_target.hook_target).is_err() {
-                return self
-                    .reload_hook_runtime_for_frame(
-                        &resolved_target.hook_target,
-                        &resolved_target.frame,
-                        turn_id,
-                        executor_config.executor.as_str(),
-                        executor_config.permission_policy.as_deref(),
-                        working_directory,
-                        "hook_runtime_launch_target_rebuild",
-                    )
-                    .await;
-            }
+        if let Some(ref hs) = existing
+            && validate_hook_runtime_target(hs.as_ref(), &resolved_target.hook_target).is_err()
+        {
+            return self
+                .reload_hook_runtime_for_frame(
+                    &resolved_target.hook_target,
+                    &resolved_target.frame,
+                    turn_id,
+                    executor_config.executor.as_str(),
+                    executor_config.permission_policy.as_deref(),
+                    working_directory,
+                    "hook_runtime_launch_target_rebuild",
+                )
+                .await;
             // The cached runtime is already bound to the immutable AgentFrame target.
             // Rebuilding is reserved for frame-id changes; same-target turns reuse it.
         }
         Ok(existing)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reload_hook_runtime_for_frame(
         &self,
         target: &AgentFrameHookRuntimeTarget,

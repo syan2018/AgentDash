@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -99,8 +99,15 @@ impl IntoResponse for ApiError {
 impl From<std::io::Error> for ApiError {
     /// session 持久化层统一返回 `io::Error`，对外一律视为 500 Internal。
     fn from(err: std::io::Error) -> Self {
-        diag!(Error, Subsystem::Api,
-        error = %err, "session persistence IO error");
+        let context = DiagnosticErrorContext::new("api.error_map", "session_persistence_io");
+        diag_error!(
+            Error,
+            Subsystem::Api,
+            context = &context,
+            error = &err,
+            error_kind = ?err.kind(),
+            "session persistence IO error"
+        );
         ApiError::Internal(String::from("内部 IO 错误"))
     }
 }
@@ -111,14 +118,28 @@ impl From<agentdash_spi::session_persistence::SessionStoreError> for ApiError {
         match err {
             E::NotFound(message) => ApiError::NotFound(message),
             E::InvalidInput(message) | E::InvalidData(message) => ApiError::BadRequest(message),
-            E::Database(message) => {
-                diag!(Error, Subsystem::Api,
-        error = %message, "session persistence database error");
+            E::Database(err) => {
+                let context =
+                    DiagnosticErrorContext::new("api.error_map", "session_persistence_database");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    "session persistence database error"
+                );
                 ApiError::Internal(String::from("内部数据库错误"))
             }
-            E::Internal(message) => {
-                diag!(Error, Subsystem::Api,
-        error = %message, "session persistence internal error");
+            E::Internal(err) => {
+                let context =
+                    DiagnosticErrorContext::new("api.error_map", "session_persistence_internal");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &err,
+                    "session persistence internal error"
+                );
                 ApiError::Internal(String::from("内部会话持久化错误"))
             }
         }
@@ -169,8 +190,15 @@ impl From<agentdash_spi::ConnectorError> for ApiError {
             E::ConnectionFailed(message) => ApiError::ServiceUnavailable(message),
             E::SpawnFailed(message) | E::Runtime(message) => ApiError::Internal(message),
             E::Io(error) => {
-                diag!(Error, Subsystem::Api,
-        error = %error, "connector IO error");
+                let context = DiagnosticErrorContext::new("api.error_map", "connector_io");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &error,
+                    error_kind = ?error.kind(),
+                    "connector IO error"
+                );
                 ApiError::Internal(String::from("内部连接器 IO 错误"))
             }
             E::Json(error) => ApiError::BadRequest(error.to_string()),

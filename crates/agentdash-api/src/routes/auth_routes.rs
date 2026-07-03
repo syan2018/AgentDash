@@ -9,6 +9,7 @@ use agentdash_contracts::auth::{
     AuthStartRequest, AuthStartResponse, CurrentUser as CurrentUserResponse, LoginCredentials,
     LoginFieldDescriptor, LoginMetadata, LoginMode, LoginResponse,
 };
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_integration_api::{
     AuthCallbackRequest, AuthStartRequest as ProviderAuthStartRequest,
     LoginCredentials as ProviderLoginCredentials, LoginMetadata as ProviderLoginMetadata,
@@ -53,7 +54,20 @@ pub async fn login(
         .auth_session_service
         .save_login_session(&response.access_token, &response.identity)
         .await
-        .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
+        .map_err(|err| {
+            let context = DiagnosticErrorContext::new("auth.login", "save_session");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
+                route = "/api/auth/login",
+                user_id = %response.identity.user_id,
+                auth_mode = %response.identity.auth_mode,
+                "认证登录会话落库失败"
+            );
+            ApiError::ServiceUnavailable(format!("认证会话落库失败: {err}"))
+        })?;
 
     let identity = response.identity;
     Ok(Json(LoginResponse {
@@ -124,7 +138,20 @@ pub async fn oidc_callback(
         .auth_session_service
         .save_login_session(&response.access_token, &response.identity)
         .await
-        .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
+        .map_err(|err| {
+            let context = DiagnosticErrorContext::new("auth.oidc_callback", "save_session");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
+                route = "/api/auth/oidc/callback",
+                user_id = %response.identity.user_id,
+                auth_mode = %response.identity.auth_mode,
+                "OIDC 登录会话落库失败"
+            );
+            ApiError::ServiceUnavailable(format!("认证会话落库失败: {err}"))
+        })?;
 
     let redirect_to =
         oidc_callback_redirect(response.redirect_to.as_deref(), &response.access_token);
@@ -139,11 +166,34 @@ pub async fn oidc_callback(
         .header(header::LOCATION, redirect_to)
         .header(
             header::SET_COOKIE,
-            HeaderValue::from_str(&cookie)
-                .map_err(|e| ApiError::ServiceUnavailable(format!("生成登录 Cookie 失败: {e}")))?,
+            HeaderValue::from_str(&cookie).map_err(|err| {
+                let context =
+                    DiagnosticErrorContext::new("auth.oidc_callback", "build_cookie_header");
+                diag_error!(
+                    Error,
+                    Subsystem::Auth,
+                    context = &context,
+                    error = &err,
+                    route = "/api/auth/oidc/callback",
+                    "生成登录 Cookie 失败"
+                );
+                ApiError::ServiceUnavailable(format!("生成登录 Cookie 失败: {err}"))
+            })?,
         )
         .body(axum::body::Body::empty())
-        .map_err(|e| ApiError::ServiceUnavailable(format!("生成登录跳转响应失败: {e}")))
+        .map_err(|err| {
+            let context =
+                DiagnosticErrorContext::new("auth.oidc_callback", "build_redirect_response");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
+                route = "/api/auth/oidc/callback",
+                "生成登录跳转响应失败"
+            );
+            ApiError::ServiceUnavailable(format!("生成登录跳转响应失败: {err}"))
+        })
 }
 
 fn oidc_post_login_redirect() -> String {
@@ -296,7 +346,18 @@ pub async fn logout(
         .auth_session_service
         .revoke_token(token)
         .await
-        .map_err(|e| ApiError::ServiceUnavailable(format!("注销会话失败: {e}")))?;
+        .map_err(|err| {
+            let context = DiagnosticErrorContext::new("auth.logout", "revoke_token");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
+                route = "/api/auth/logout",
+                "注销会话失败"
+            );
+            ApiError::ServiceUnavailable(format!("注销会话失败: {err}"))
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -316,7 +377,19 @@ pub async fn revoke_token(
         .auth_session_service
         .revoke_token(&req.access_token)
         .await
-        .map_err(|e| ApiError::ServiceUnavailable(format!("撤销会话失败: {e}")))?;
+        .map_err(|err| {
+            let context = DiagnosticErrorContext::new("auth.revoke", "revoke_token");
+            diag_error!(
+                Error,
+                Subsystem::Auth,
+                context = &context,
+                error = &err,
+                route = "/api/auth/revoke",
+                admin_user_id = %current_user.user_id,
+                "撤销会话失败"
+            );
+            ApiError::ServiceUnavailable(format!("撤销会话失败: {err}"))
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }

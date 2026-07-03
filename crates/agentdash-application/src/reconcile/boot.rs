@@ -7,7 +7,7 @@
 //! 运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use crate::session::SessionRuntimeService;
@@ -111,8 +111,18 @@ async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> Phase
             }
         }
         Err(err) => {
-            diag!(Warn, Subsystem::Reconcile,
-        error = %err, "Phase 1 (Session Recovery) 出错（非致命）");
+            let context = DiagnosticErrorContext::new("reconcile.boot", "session_recovery")
+                .with_field("phase", "session_recovery")
+                .with_field("fatal", false);
+            diag_error!(
+                Warn,
+                Subsystem::Reconcile,
+                context = &context,
+                error = &err,
+                phase = "session_recovery",
+                fatal = false,
+                "Phase 1 (Session Recovery) 出错（非致命）"
+            );
             PhaseReport {
                 phase: "session_recovery",
                 reconciled: 0,
@@ -147,8 +157,18 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
             }
         }
         Err(err) => {
-            diag!(Error, Subsystem::Reconcile,
-        error = %err, "Phase 2 (Task View Projection) 失败");
+            let context = DiagnosticErrorContext::new("reconcile.boot", "task_view_projection")
+                .with_field("phase", "task_view_projection")
+                .with_field("fatal", true);
+            diag_error!(
+                Error,
+                Subsystem::Reconcile,
+                context = &context,
+                error = &err,
+                phase = "task_view_projection",
+                fatal = true,
+                "Phase 2 (Task View Projection) 失败"
+            );
             PhaseReport {
                 phase: "task_view_projection",
                 reconciled: 0,

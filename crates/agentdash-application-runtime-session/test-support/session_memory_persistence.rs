@@ -1023,10 +1023,10 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
                 meta.last_turn_id = Some(turn_id);
                 meta.last_terminal_message = message;
                 meta.last_delivery_status = terminal_kind.into();
-            } else if key == "executor_session_bound" {
-                if let Some(esid) = value.as_str() {
-                    meta.executor_session_id = Some(esid.to_string());
-                }
+            } else if key == "executor_session_bound"
+                && let Some(esid) = value.as_str()
+            {
+                meta.executor_session_id = Some(esid.to_string());
             }
         }
         _ => {}
@@ -1425,6 +1425,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
     match event {
         BackboneEvent::AgentMessageDelta(_) => "agent_message_delta",

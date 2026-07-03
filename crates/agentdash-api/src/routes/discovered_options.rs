@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use axum::{
@@ -40,6 +40,7 @@ pub async fn discovered_options_stream(
             .map(std::path::PathBuf::from)
             .filter(|p| p.is_absolute());
 
+        let has_working_dir = working_dir.is_some();
         match connector.discover_options_stream_with_context(&q.executor, DiscoveryContext {
             working_dir,
             identity: Some(current_user),
@@ -55,6 +56,18 @@ pub async fn discovered_options_stream(
                 }
             }
             Err(e) => {
+                let context =
+                    DiagnosticErrorContext::new("discovered_options.stream", "connector_discover");
+                diag_error!(
+                    Error,
+                    Subsystem::Api,
+                    context = &context,
+                    error = &e,
+                    route = "/api/agents/discovered-options/stream",
+                    executor = %q.executor,
+                    has_working_dir,
+                    "执行器发现选项流启动失败"
+                );
                 if let Some(line) = to_ndjson_line(&serde_json::json!({ "Error": e.to_string() })) {
                     yield Ok(line);
                 }
@@ -90,8 +103,16 @@ fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            diag!(Error, Subsystem::Api,
-        error = %err, "序列化 discovered_options NDJSON 消息失败");
+            let context =
+                DiagnosticErrorContext::new("discovered_options.stream", "serialize_event");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                route = "/api/agents/discovered-options/stream",
+                "序列化 discovered_options NDJSON 消息失败"
+            );
             None
         }
     }

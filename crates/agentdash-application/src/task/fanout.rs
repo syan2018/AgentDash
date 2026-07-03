@@ -217,25 +217,25 @@ fn selector_matches(selector: &TaskFanoutSelector, candidate: &TaskFanoutCandida
     if !selector.include_archived && candidate.task.archived_at.is_some() {
         return false;
     }
-    if let Some(task_ids) = &selector.task_ids {
-        if !task_ids.contains(&candidate.task.id) {
-            return false;
-        }
+    if let Some(task_ids) = &selector.task_ids
+        && !task_ids.contains(&candidate.task.id)
+    {
+        return false;
     }
-    if let Some(statuses) = &selector.statuses {
-        if !statuses.contains(&candidate.task.status) {
-            return false;
-        }
+    if let Some(statuses) = &selector.statuses
+        && !statuses.contains(&candidate.task.status)
+    {
+        return false;
     }
-    if let Some(owner_agent_id) = selector.owner_agent_id {
-        if candidate.task.owner_agent_id != Some(owner_agent_id) {
-            return false;
-        }
+    if let Some(owner_agent_id) = selector.owner_agent_id
+        && candidate.task.owner_agent_id != Some(owner_agent_id)
+    {
+        return false;
     }
-    if let Some(assigned_agent_id) = selector.assigned_agent_id {
-        if candidate.task.assigned_agent_id != Some(assigned_agent_id) {
-            return false;
-        }
+    if let Some(assigned_agent_id) = selector.assigned_agent_id
+        && candidate.task.assigned_agent_id != Some(assigned_agent_id)
+    {
+        return false;
     }
     true
 }

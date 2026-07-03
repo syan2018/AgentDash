@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::SourceInfo;
@@ -41,10 +41,17 @@ impl SessionRuntimeService {
             match self.connector.cancel(session_id).await {
                 Ok(()) => {}
                 Err(err) => {
-                    diag!(Warn, Subsystem::AgentRun,
-
+                    let context = DiagnosticErrorContext::new(
+                        "session.runtime_control.cancel",
+                        "connector_cancel",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::AgentRun,
+                        context = &context,
+                        error = &err,
                         session_id = %session_id,
-                        error = %err,
+                        turn_id = %cancel_snapshot.current_turn_id.as_deref().unwrap_or(""),
                         "connector.cancel 失败，继续通过 turn processor 兜底终止"
                     );
                 }
@@ -58,14 +65,20 @@ impl SessionRuntimeService {
                 {
                     diag!(Warn, Subsystem::AgentRun,
 
+                        operation = "session.runtime_control.cancel",
+                        stage = "send_terminal_to_processor",
                         session_id = %session_id,
+                        turn_id = %cancel_snapshot.current_turn_id.as_deref().unwrap_or(""),
                         "向 turn processor 发送 Terminal 失败（通道可能已关闭）"
                     );
                 }
             } else {
                 diag!(Warn, Subsystem::AgentRun,
 
+                    operation = "session.runtime_control.cancel",
+                    stage = "missing_processor_tx",
                     session_id = %session_id,
+                    turn_id = %cancel_snapshot.current_turn_id.as_deref().unwrap_or(""),
                     "running=true 但 processor_tx 缺失，无法向 turn processor 发送终止信号"
                 );
             }
@@ -126,7 +139,10 @@ impl SessionRuntimeService {
             }
             diag!(Warn, Subsystem::AgentRun,
 
+                operation = "session.runtime_control.recover_interrupted_sessions",
+                stage = "mark_running_as_interrupted",
                 session_id = %meta.id,
+                turn_id = %meta.last_turn_id.as_deref().unwrap_or(""),
                 "启动恢复：session 上次未正常结束，标记为 interrupted"
             );
             let turn_id = meta

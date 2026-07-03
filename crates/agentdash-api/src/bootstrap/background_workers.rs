@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,8 +26,16 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
         }
         Ok(_) => {}
         Err(error) => {
-            diag!(Warn, Subsystem::Api,
-        error = %error, "terminal effect outbox 恢复执行失败");
+            let context =
+                DiagnosticErrorContext::new("background_workers.start", "replay_terminal_effects");
+            diag_error!(
+                Warn,
+                Subsystem::Api,
+                context = &context,
+                error = &error,
+                batch_limit = 100,
+                "terminal effect outbox 恢复执行失败"
+            );
         }
     }
 
@@ -70,8 +78,19 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                     diag!(Info, Subsystem::Api, deleted = count, "已清理过期认证会话")
                 }
                 Ok(_) => {}
-                Err(err) => diag!(Warn, Subsystem::Api,
-        error = %err, "清理过期认证会话失败"),
+                Err(err) => {
+                    let context = DiagnosticErrorContext::new(
+                        "background_workers.auth_session_cleanup",
+                        "cleanup_expired_sessions",
+                    );
+                    diag_error!(
+                        Warn,
+                        Subsystem::Api,
+                        context = &context,
+                        error = &err,
+                        "清理过期认证会话失败"
+                    );
+                }
             }
         }
     });

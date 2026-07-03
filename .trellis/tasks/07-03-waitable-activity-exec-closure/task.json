@@ -1,0 +1,29 @@
+{
+  "id": "waitable-activity-exec-closure",
+  "name": "waitable-activity-exec-closure",
+  "title": "补齐通用 waitable activity 与 exec 交互闭环",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-07-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-03-exec-terminal-blocker-repair",
+    "07-03-waitable-activity-module"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

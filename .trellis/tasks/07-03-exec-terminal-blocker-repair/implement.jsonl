@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/prd.md", "reason": "Parent constraints, task split and no-/sessions control requirement."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/design.md", "reason": "Overall architecture and Phase A boundary."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/main-evidence.md", "reason": "Current exec, relay/local, ContextFrame and frontend evidence anchors."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/codex-crate-reuse.md", "reason": "Exec child dependency decision for codex-utils-pty, output truncation and reference-only protocol crates."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/subagent-current-chain.md", "reason": "Detailed current chain map for runtime tools, VFS exec, relay/local shell and frontend projection."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Runtime tool assembly and Environment ContextFrame contract."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "RuntimeSession as delivery/trace ref and AgentRun command ownership constraints."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Frontend projection identity and command-owner boundaries."}

@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/prd.md", "reason": "Parent requirements and cross-task constraints."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/design.md", "reason": "Overall waitable activity architecture and data flow."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/subagent-codex-reference.md", "reason": "Codex wait and exec lifecycle reference model."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/codex-crate-reuse.md", "reason": "Wait module boundary for Codex crate reuse: local backend helpers only, no Codex process protocol handles in activity records."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/subagent-current-chain.md", "reason": "Current companion, mailbox, VFS exec and frontend chain map."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/main-evidence.md", "reason": "Main evidence anchors for wait module boundaries."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox source identity, waiting item and wake envelope contract."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "AgentRun workspace ownership and RuntimeSession trace boundary."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Frontend projection and lifecycle identity rules."}

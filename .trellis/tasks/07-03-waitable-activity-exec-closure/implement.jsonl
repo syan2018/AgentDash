@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/subagent-codex-reference.md", "reason": "Codex reference capability model for exec lifecycle, wait behavior, mailbox/subagent activity, and non-portable identity boundaries."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/subagent-current-chain.md", "reason": "Current AgentDashboard runtime tool, VFS exec, relay/local shell, companion wait, mailbox and frontend projection chain map."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/main-evidence.md", "reason": "Main-session evidence with concrete file anchors and final gap analysis."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/codex-crate-reuse.md", "reason": "Codex crate reuse decision: direct local PTY/truncation reuse, protocol reference-only boundaries and redundant dependency cleanup."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox delivery authority, waiting item projection, wake envelope, source identity and dedup contracts."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Runtime tool surface assembly and Environment ContextFrame contract, including Windows PowerShell guidance location."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "RuntimeSession boundary as delivery/trace ref and AgentRun workspace command ownership constraints."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Runtime action/tool declaration boundary and process capability admission principles."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Frontend runtime/lifecycle projection identity and prohibition against RuntimeSession as lifecycle command owner."}

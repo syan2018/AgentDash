@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/07-03-exec-terminal-blocker-repair/prd.md", "reason": "Child acceptance criteria for exec and terminal blocker repair."}
+{"file": ".trellis/tasks/07-03-exec-terminal-blocker-repair/design.md", "reason": "Shell session control bridge, canonical terminal id and frontend projection design."}
+{"file": ".trellis/tasks/07-03-exec-terminal-blocker-repair/implement.md", "reason": "Focused implementation and validation checklist."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/codex-crate-reuse.md", "reason": "Check approved crate reuse and redundant dependency cleanup."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Check ContextFrame and tool surface behavior."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check frontend projection remains observation-only."}

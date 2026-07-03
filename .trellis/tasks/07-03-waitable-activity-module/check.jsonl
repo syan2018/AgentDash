@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/07-03-waitable-activity-module/prd.md", "reason": "Child acceptance criteria for common wait module."}
+{"file": ".trellis/tasks/07-03-waitable-activity-module/design.md", "reason": "WaitActivity owner, service, adapters and mailbox wake design."}
+{"file": ".trellis/tasks/07-03-waitable-activity-module/implement.md", "reason": "Implementation and validation checklist."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check mailbox delivery authority and waiting projection."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check RuntimeSession boundary remains trace/delivery only."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check frontend projection identity and contract consumption."}

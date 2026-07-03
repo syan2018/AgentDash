@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/prd.md", "reason": "Parent acceptance criteria and non-negotiable constraints for final integration review."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/design.md", "reason": "Architecture boundaries and data flow to verify implementation against."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/implement.md", "reason": "Phased checklist and validation plan for child tasks and final PR."}
+{"file": ".trellis/tasks/07-03-waitable-activity-exec-closure/research/codex-crate-reuse.md", "reason": "Verify implementation keeps Codex crate reuse limited to approved local/backend helpers and does not add protocol/runtime coupling."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check mailbox scheduler, source dedup, wait/wake and waiting item behavior."}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "Check tool catalog assembly and Environment ContextFrame behavior."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check RuntimeSession remains delivery/trace and AgentRun workspace remains command owner."}
+{"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Check frontend projection and generated contracts keep lifecycle/runtime identities separate."}

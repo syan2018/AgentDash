@@ -2,6 +2,7 @@ use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
     AgentRunForkMaterializationPort, AgentRunForkMaterializationResult,
 };
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     AgentFrame, AgentRunLineage, AgentRunLineageRepository, DeliveryBindingStatus, LifecycleAgent,
@@ -168,13 +169,55 @@ async fn materialize_forked_agent_run_tx(
         input.metadata_json,
     );
 
-    let mut tx = pool.begin().await.map_err(db_err)?;
-    insert_lifecycle_run_tx(&mut tx, &child_run).await?;
-    insert_lifecycle_agent_tx(&mut tx, &child_agent).await?;
-    insert_agent_frame_tx(&mut tx, &child_frame).await?;
-    upsert_anchor_tx(&mut tx, &anchor).await?;
-    insert_agent_run_lineage_tx(&mut tx, &lineage).await?;
-    tx.commit().await.map_err(db_err)?;
+    let context = AgentRunForkMaterializationLogContext {
+        parent_run_id: input.parent_run.id,
+        parent_agent_id: input.parent_agent.id,
+        parent_frame_id: input.parent_frame.id,
+        parent_runtime_session_id: lineage.parent_runtime_session_id.clone(),
+        child_run_id: child_run.id,
+        child_agent_id: child_agent.id,
+        child_frame_id: child_frame.id,
+        child_runtime_session_id: lineage.child_runtime_session_id.clone(),
+        lineage_id: lineage.id,
+        forked_by_user_id: lineage.forked_by_user_id.clone(),
+    };
+
+    let mut tx = pool.begin().await.map_err(db_err).map_err(|error| {
+        log_agent_run_fork_materialization_error("begin_transaction", &context, &error);
+        error
+    })?;
+    insert_lifecycle_run_tx(&mut tx, &child_run)
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_materialization_error("insert_lifecycle_run", &context, &error);
+            error
+        })?;
+    insert_lifecycle_agent_tx(&mut tx, &child_agent)
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_materialization_error("insert_lifecycle_agent", &context, &error);
+            error
+        })?;
+    insert_agent_frame_tx(&mut tx, &child_frame)
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_materialization_error("insert_agent_frame", &context, &error);
+            error
+        })?;
+    upsert_anchor_tx(&mut tx, &anchor).await.map_err(|error| {
+        log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, &error);
+        error
+    })?;
+    insert_agent_run_lineage_tx(&mut tx, &lineage)
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_materialization_error("insert_agent_run_lineage", &context, &error);
+            error
+        })?;
+    tx.commit().await.map_err(db_err).map_err(|error| {
+        log_agent_run_fork_materialization_error("commit_transaction", &context, &error);
+        error
+    })?;
 
     Ok(AgentRunForkMaterializationResult {
         child_run,
@@ -182,6 +225,66 @@ async fn materialize_forked_agent_run_tx(
         child_frame,
         lineage,
     })
+}
+
+#[derive(Debug, Clone)]
+struct AgentRunForkMaterializationLogContext {
+    parent_run_id: Uuid,
+    parent_agent_id: Uuid,
+    parent_frame_id: Uuid,
+    parent_runtime_session_id: String,
+    child_run_id: Uuid,
+    child_agent_id: Uuid,
+    child_frame_id: Uuid,
+    child_runtime_session_id: String,
+    lineage_id: Uuid,
+    forked_by_user_id: String,
+}
+
+fn log_agent_run_fork_materialization_error(
+    stage: &'static str,
+    context: &AgentRunForkMaterializationLogContext,
+    error: &DomainError,
+) {
+    let diagnostic_context = agent_run_fork_materialization_diagnostic_context(stage, context);
+    diag_error!(Error, Subsystem::AgentRun,
+        context = &diagnostic_context,
+        error = error,
+        parent_run_id = %context.parent_run_id,
+        parent_agent_id = %context.parent_agent_id,
+        parent_frame_id = %context.parent_frame_id,
+        parent_runtime_session_id = %context.parent_runtime_session_id,
+        child_run_id = %context.child_run_id,
+        child_agent_id = %context.child_agent_id,
+        child_frame_id = %context.child_frame_id,
+        child_runtime_session_id = %context.child_runtime_session_id,
+        lineage_id = %context.lineage_id,
+        forked_by_user_id = %context.forked_by_user_id,
+        "AgentRun fork materialization failed"
+    );
+}
+
+fn agent_run_fork_materialization_diagnostic_context(
+    stage: &str,
+    context: &AgentRunForkMaterializationLogContext,
+) -> DiagnosticErrorContext {
+    DiagnosticErrorContext::new("agent_run.fork_materialization", stage)
+        .with_field("parent_run_id", context.parent_run_id)
+        .with_field("parent_agent_id", context.parent_agent_id)
+        .with_field("parent_frame_id", context.parent_frame_id)
+        .with_field(
+            "parent_runtime_session_id",
+            &context.parent_runtime_session_id,
+        )
+        .with_field("child_run_id", context.child_run_id)
+        .with_field("child_agent_id", context.child_agent_id)
+        .with_field("child_frame_id", context.child_frame_id)
+        .with_field(
+            "child_runtime_session_id",
+            &context.child_runtime_session_id,
+        )
+        .with_field("lineage_id", context.lineage_id)
+        .with_field("forked_by_user_id", &context.forked_by_user_id)
 }
 
 async fn insert_agent_run_lineage(

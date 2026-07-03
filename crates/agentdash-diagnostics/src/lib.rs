@@ -9,15 +9,19 @@
 //! - [`DiagnosticBuffer`] / [`DiagnosticLayer`]：有界环形缓冲 + tracing 层，
 //!   供查询端点读取"近期"诊断。
 //! - [`DiagnosticRecord`] / [`DiagnosticFilter`]：记录结构与查询条件。
+//! - [`diag_error!`] / [`DiagnosticErrorContext`]：统一错误诊断的 operation /
+//!   stage / context detail 构造与发射模板。
 //!
 //! 本 crate 是低层、零业务依赖的库；**不**装配订阅器（不调用 `.init()`），
 //! 订阅器装配只在 `agentdash-api` 的 main。
 
+mod diag;
 mod layer;
 mod macros;
 mod record;
 mod subsystem;
 
+pub use diag::DiagnosticErrorContext;
 pub use layer::{DEFAULT_CAPACITY, DiagnosticBuffer, DiagnosticFilter, DiagnosticLayer};
 pub use record::DiagnosticRecord;
 pub use subsystem::Subsystem;
@@ -83,6 +87,62 @@ mod tests {
         assert_eq!(r.session_id.as_deref(), Some("sess-9"));
         assert_eq!(r.fields.get("attempt").and_then(|v| v.as_u64()), Some(3));
         assert!(r.fields.contains_key("detail"));
+    }
+
+    #[test]
+    fn diag_error_emits_standard_error_context_fields() {
+        let buffer = with_buffer(16, || {
+            let context = DiagnosticErrorContext::new("agent_run.fork", "materialization")
+                .with_field("run_id", "run-1")
+                .with_field("client_command_id", "cmd-1");
+            let error = std::io::Error::new(std::io::ErrorKind::Other, "database exploded");
+            diag_error!(
+                Error,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
+                run_id = "run-1",
+                client_command_id = "cmd-1",
+                "AgentRun fork failed"
+            );
+        });
+
+        let r = &buffer.query(&DiagnosticFilter::default())[0];
+        assert_eq!(r.subsystem, "agent_run");
+        assert_eq!(r.level, "error");
+        assert_eq!(r.message, "AgentRun fork failed");
+        assert_eq!(
+            r.fields.get("operation").and_then(|v| v.as_str()),
+            Some("agent_run.fork")
+        );
+        assert_eq!(
+            r.fields.get("stage").and_then(|v| v.as_str()),
+            Some("materialization")
+        );
+        assert!(
+            r.fields
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .is_some_and(|value| value.contains("database exploded"))
+        );
+        assert!(
+            r.fields
+                .get("diagnostic_context")
+                .and_then(|v| v.as_str())
+                .is_some_and(|value| value.contains("agent_run.fork"))
+        );
+        assert!(
+            r.fields
+                .get("error")
+                .and_then(|v| v.as_str())
+                .is_some_and(|value| value.contains("database exploded"))
+        );
+        assert!(
+            r.fields
+                .get("error_debug")
+                .and_then(|v| v.as_str())
+                .is_some_and(|value| value.contains("database exploded"))
+        );
     }
 
     #[test]

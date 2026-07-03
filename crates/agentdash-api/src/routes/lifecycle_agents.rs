@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -612,11 +612,13 @@ pub async fn submit_agent_run_composer_input(
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
     if context.run.created_by_user_id != current_user.user_id {
         let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+        let current_user_id = current_user.user_id.clone();
+        let client_command_id = req.client_command_id.clone();
         let response = service
             .fork_submit(AgentRunForkSubmitCommand {
                 parent_run_id: context.run.id,
                 parent_agent_id: context.agent.id,
-                current_user_id: current_user.user_id.clone(),
+                current_user_id: current_user_id.clone(),
                 title: None,
                 fork_point_ref: None,
                 metadata_json: None,
@@ -627,7 +629,18 @@ pub async fn submit_agent_run_composer_input(
                 identity: Some(current_user),
             })
             .await
-            .map_err(ApiError::from)?;
+            .map_err(|error| {
+                log_agent_run_fork_route_error(
+                    "composer-submit:auto-fork",
+                    context.run.id,
+                    context.agent.id,
+                    &current_user_id,
+                    &client_command_id,
+                    None,
+                    &error,
+                );
+                ApiError::from(error)
+            })?;
         return Ok(Json(agent_run_fork_submit_message_response(response)));
     }
     let service = agent_run_mailbox_service(state.as_ref(), &agent_run_repos);
@@ -679,18 +692,32 @@ async fn fork_agent_run(
     .await?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let current_user_id = current_user.user_id.clone();
+    let client_command_id = req.client_command_id.clone();
+    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
     let result = service
         .explicit_fork(AgentRunForkCommand {
             parent_run_id: context.run.id,
             parent_agent_id: context.agent.id,
-            current_user_id: current_user.user_id,
+            current_user_id: current_user_id.clone(),
             title: req.title,
-            fork_point_ref: req.fork_point_ref.map(message_ref_from_contract),
+            fork_point_ref: fork_point_ref.clone(),
             metadata_json: req.metadata_json,
             client_command_id: req.client_command_id,
         })
         .await
-        .map_err(ApiError::from)?;
+        .map_err(|error| {
+            log_agent_run_fork_route_error(
+                "fork-agent-run",
+                context.run.id,
+                context.agent.id,
+                &current_user_id,
+                &client_command_id,
+                fork_point_ref.as_ref(),
+                &error,
+            );
+            ApiError::from(error)
+        })?;
     Ok(Json(agent_run_fork_response(result)))
 }
 
@@ -723,13 +750,16 @@ async fn fork_submit_agent_run(
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let current_user_id = current_user.user_id.clone();
+    let client_command_id = req.client_command_id.clone();
+    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
     let result = service
         .fork_submit(AgentRunForkSubmitCommand {
             parent_run_id: context.run.id,
             parent_agent_id: context.agent.id,
-            current_user_id: current_user.user_id.clone(),
+            current_user_id: current_user_id.clone(),
             title: req.title,
-            fork_point_ref: req.fork_point_ref.map(message_ref_from_contract),
+            fork_point_ref: fork_point_ref.clone(),
             metadata_json: req.metadata_json,
             input: req.input,
             client_command_id: req.client_command_id,
@@ -738,7 +768,18 @@ async fn fork_submit_agent_run(
             identity: Some(current_user),
         })
         .await
-        .map_err(ApiError::from)?;
+        .map_err(|error| {
+            log_agent_run_fork_route_error(
+                "fork-submit-agent-run",
+                context.run.id,
+                context.agent.id,
+                &current_user_id,
+                &client_command_id,
+                fork_point_ref.as_ref(),
+                &error,
+            );
+            ApiError::from(error)
+        })?;
     Ok(Json(agent_run_fork_submit_message_response(result)))
 }
 
@@ -2088,6 +2129,42 @@ fn message_ref_from_contract(value: SessionMessageRefDto) -> MessageRef {
         turn_id: value.turn_id,
         entry_index: value.entry_index,
     }
+}
+
+fn log_agent_run_fork_route_error(
+    route: &'static str,
+    run_id: Uuid,
+    agent_id: Uuid,
+    current_user_id: &str,
+    client_command_id: &str,
+    fork_point_ref: Option<&MessageRef>,
+    error: &(impl std::fmt::Debug + std::fmt::Display),
+) {
+    let fork_point = message_ref_log_label(fork_point_ref);
+    let diagnostic_context = DiagnosticErrorContext::new("agent_run.fork", "route")
+        .with_field("route", route)
+        .with_field("run_id", run_id)
+        .with_field("agent_id", agent_id)
+        .with_field("current_user_id", current_user_id)
+        .with_field("client_command_id", client_command_id)
+        .with_field("fork_point", &fork_point);
+    diag_error!(Error, Subsystem::Api,
+        context = &diagnostic_context,
+        error = error,
+        route = route,
+        run_id = %run_id,
+        agent_id = %agent_id,
+        current_user_id = %current_user_id,
+        client_command_id = %client_command_id,
+        fork_point = %fork_point,
+        "AgentRun fork route failed"
+    );
+}
+
+fn message_ref_log_label(value: Option<&MessageRef>) -> String {
+    value
+        .map(|message_ref| format!("{}:{}", message_ref.turn_id, message_ref.entry_index))
+        .unwrap_or_else(|| "head".to_string())
 }
 
 fn agent_run_workspace_command_policy<'a>(

@@ -6,6 +6,7 @@ use agentdash_application_ports::agent_run_fork_materialization::{
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_application_runtime_session::session::{SessionBranchingService, SessionForkRequest};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::agent_run_mailbox::{AgentRunMailboxMessage, MailboxSourceIdentity};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
@@ -193,10 +194,15 @@ impl<'a> AgentRunForkService<'a> {
                 "current_user_id 不能为空".to_string(),
             ));
         }
+        let log_context = AgentRunForkLogContext::from_command(&command);
 
         let parent = self
             .resolve_parent(command.parent_run_id, command.parent_agent_id)
-            .await?;
+            .await
+            .map_err(|error| {
+                log_agent_run_fork_stage_error("resolve_parent", &log_context, None, None, &error);
+                error
+            })?;
         let request_digest = digest_command_request(&serde_json::json!({
             "kind": command.command_kind.as_str(),
             "current_user_id": &command.current_user_id,
@@ -211,7 +217,17 @@ impl<'a> AgentRunForkService<'a> {
             "input": command.submit.as_ref().map(|submit| &submit.input),
             "executor_config": command.submit.as_ref().and_then(|submit| submit.executor_config.as_ref()),
             "backend_selection": command.submit.as_ref().and_then(|submit| submit.backend_selection.as_ref()),
-        }))?;
+        }))
+        .map_err(|error| {
+            log_agent_run_fork_stage_error(
+                "request_digest",
+                &log_context,
+                Some(&parent),
+                None,
+                &error,
+            );
+            error
+        })?;
         let claim = claim_agent_run_command_receipt(
             self.repos.agent_run_command_receipt_repo,
             "agent_run_fork",
@@ -223,7 +239,17 @@ impl<'a> AgentRunForkService<'a> {
             command.client_command_id.clone(),
             request_digest,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_stage_error(
+                "receipt_claim",
+                &log_context,
+                Some(&parent),
+                None,
+                &error,
+            );
+            error
+        })?;
         if claim.duplicate {
             return self.replay_duplicate(claim.record).await;
         }
@@ -248,6 +274,13 @@ impl<'a> AgentRunForkService<'a> {
             Ok(result) => result,
             Err(error) => {
                 let app_error = workflow_error_from_session_fork(error);
+                log_agent_run_fork_stage_error(
+                    "session_branching",
+                    &log_context,
+                    Some(&parent),
+                    None,
+                    &app_error,
+                );
                 mark_command_terminal_failed(
                     self.repos.agent_run_command_receipt_repo,
                     claim.record.id,
@@ -282,6 +315,13 @@ impl<'a> AgentRunForkService<'a> {
             Ok(result) => result,
             Err(error) => {
                 let app_error = workflow_error_from_materialization(error);
+                log_agent_run_fork_stage_error(
+                    "materialization",
+                    &log_context,
+                    Some(&parent),
+                    Some(&fork_result.child_session.id),
+                    &app_error,
+                );
                 self.cleanup_child_runtime(&fork_result.child_session.id)
                     .await;
                 mark_command_terminal_failed(
@@ -326,6 +366,13 @@ impl<'a> AgentRunForkService<'a> {
             {
                 Ok(result) => result,
                 Err(error) => {
+                    log_agent_run_fork_stage_error(
+                        "child_mailbox_submit",
+                        &log_context,
+                        Some(&parent),
+                        Some(&materialized.lineage.child_runtime_session_id),
+                        &error,
+                    );
                     mark_command_terminal_failed(
                         self.repos.agent_run_command_receipt_repo,
                         claim.record.id,
@@ -348,13 +395,33 @@ impl<'a> AgentRunForkService<'a> {
                 .repos
                 .agent_run_command_receipt_repo
                 .attach_mailbox_message(claim.record.id, message.id)
-                .await?;
+                .await
+                .map_err(|error| {
+                    log_agent_run_fork_stage_error(
+                        "receipt_attach_mailbox_message",
+                        &log_context,
+                        Some(&parent),
+                        Some(&materialized.lineage.child_runtime_session_id),
+                        &error,
+                    );
+                    error
+                })?;
         }
         let accepted = self
             .repos
             .agent_run_command_receipt_repo
             .mark_accepted(claim.record.id, child_refs.clone())
-            .await?;
+            .await
+            .map_err(|error| {
+                log_agent_run_fork_stage_error(
+                    "receipt_mark_accepted",
+                    &log_context,
+                    Some(&parent),
+                    Some(&materialized.lineage.child_runtime_session_id),
+                    &error,
+                );
+                error
+            })?;
         let result_json = fork_result_json(
             &parent_refs,
             &child_refs,
@@ -366,7 +433,17 @@ impl<'a> AgentRunForkService<'a> {
             .repos
             .agent_run_command_receipt_repo
             .store_result_json(claim.record.id, result_json)
-            .await?;
+            .await
+            .map_err(|error| {
+                log_agent_run_fork_stage_error(
+                    "receipt_store_result",
+                    &log_context,
+                    Some(&parent),
+                    Some(&materialized.lineage.child_runtime_session_id),
+                    &error,
+                );
+                error
+            })?;
         let receipt = if stored.updated_at >= accepted.updated_at {
             stored
         } else {
@@ -543,6 +620,111 @@ struct ResolvedForkParent {
     frame: AgentFrame,
     runtime_session_id: String,
     _selection: DeliveryRuntimeSelection,
+}
+
+#[derive(Debug, Clone)]
+struct AgentRunForkLogContext {
+    command_kind: &'static str,
+    parent_run_id: Uuid,
+    parent_agent_id: Uuid,
+    current_user_id: String,
+    client_command_id: String,
+    fork_point: String,
+}
+
+impl AgentRunForkLogContext {
+    fn from_command(command: &AgentRunForkExecutionCommand) -> Self {
+        Self {
+            command_kind: command.command_kind.as_str(),
+            parent_run_id: command.parent_run_id,
+            parent_agent_id: command.parent_agent_id,
+            current_user_id: command.current_user_id.clone(),
+            client_command_id: command.client_command_id.clone(),
+            fork_point: message_ref_log_label(command.fork_point_ref.as_ref()),
+        }
+    }
+}
+
+fn log_agent_run_fork_stage_error<E>(
+    stage: &'static str,
+    context: &AgentRunForkLogContext,
+    parent: Option<&ResolvedForkParent>,
+    child_runtime_session_id: Option<&str>,
+    error: &E,
+) where
+    E: std::fmt::Debug + std::fmt::Display,
+{
+    let parent_run_id = parent
+        .map(|parent| parent.run.id)
+        .unwrap_or(context.parent_run_id);
+    let parent_agent_id = parent
+        .map(|parent| parent.agent.id)
+        .unwrap_or(context.parent_agent_id);
+    let parent_frame_id = parent
+        .map(|parent| parent.frame.id.to_string())
+        .unwrap_or_else(|| "unresolved".to_string());
+    let parent_runtime_session_id = parent
+        .map(|parent| parent.runtime_session_id.as_str())
+        .unwrap_or("unresolved");
+    let child_runtime_session_id = child_runtime_session_id.unwrap_or("unavailable");
+    let diagnostic_context = agent_run_fork_stage_diagnostic_context(
+        stage,
+        context,
+        parent,
+        Some(child_runtime_session_id),
+    );
+    diag_error!(Error, Subsystem::AgentRun,
+        context = &diagnostic_context,
+        error = error,
+        command_kind = context.command_kind,
+        parent_run_id = %parent_run_id,
+        parent_agent_id = %parent_agent_id,
+        parent_frame_id = %parent_frame_id,
+        parent_runtime_session_id = %parent_runtime_session_id,
+        child_runtime_session_id = %child_runtime_session_id,
+        current_user_id = %context.current_user_id,
+        client_command_id = %context.client_command_id,
+        fork_point = %context.fork_point,
+        "AgentRun fork service stage failed"
+    );
+}
+
+fn agent_run_fork_stage_diagnostic_context(
+    stage: &str,
+    context: &AgentRunForkLogContext,
+    parent: Option<&ResolvedForkParent>,
+    child_runtime_session_id: Option<&str>,
+) -> DiagnosticErrorContext {
+    let parent_run_id = parent
+        .map(|parent| parent.run.id)
+        .unwrap_or(context.parent_run_id);
+    let parent_agent_id = parent
+        .map(|parent| parent.agent.id)
+        .unwrap_or(context.parent_agent_id);
+    let parent_frame_id = parent
+        .map(|parent| parent.frame.id.to_string())
+        .unwrap_or_else(|| "unresolved".to_string());
+    let parent_runtime_session_id = parent
+        .map(|parent| parent.runtime_session_id.as_str())
+        .unwrap_or("unresolved");
+    let child_runtime_session_id = child_runtime_session_id.unwrap_or("unavailable");
+
+    DiagnosticErrorContext::new("agent_run.fork", stage)
+        .with_field("command_kind", context.command_kind)
+        .with_field("parent_run_id", parent_run_id)
+        .with_field("parent_agent_id", parent_agent_id)
+        .with_field("parent_frame_id", parent_frame_id)
+        .with_field("parent_runtime_session_id", parent_runtime_session_id)
+        .with_field("child_runtime_session_id", child_runtime_session_id)
+        .with_field("current_user_id", &context.current_user_id)
+        .with_field("client_command_id", &context.client_command_id)
+        .with_field("fork_point", &context.fork_point)
+}
+
+fn message_ref_log_label(value: Option<&MessageRef>) -> String {
+    value
+        .map(|message_ref| format!("{}:{}", message_ref.turn_id, message_ref.entry_index))
+        .unwrap_or_else(|| "head".to_string())
 }
 
 fn base_refs(

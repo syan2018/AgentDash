@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     Json,
@@ -10,6 +11,7 @@ use axum::{
 };
 
 use agentdash_application_vfs::{ListOptions, ReadResult, ResourceRef};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 
 use crate::{
     app_state::AppState,
@@ -121,6 +123,10 @@ pub async fn list_surface_mount_entries(
 
     check_mount_available(&state, &vfs, &mount_id).await?;
 
+    let path = query.path.unwrap_or_else(|| ".".to_string());
+    let pattern = query.pattern;
+    let recursive = query.recursive.unwrap_or(false);
+    let started_at = Instant::now();
     let listed = state
         .services
         .vfs_service
@@ -128,15 +134,36 @@ pub async fn list_surface_mount_entries(
             &vfs,
             &mount_id,
             ListOptions {
-                path: query.path.unwrap_or_else(|| ".".to_string()),
-                pattern: query.pattern,
-                recursive: query.recursive.unwrap_or(false),
+                path: path.clone(),
+                pattern: pattern.clone(),
+                recursive,
             },
             None,
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(format!("VFS surface 条目检索失败: {e}")))?;
+        .map_err(|e| {
+            let context = DiagnosticErrorContext::new("vfs_surface.list_entries", "route")
+                .with_field("surface_ref", &surface_ref)
+                .with_field("mount_id", &mount_id)
+                .with_field("path", &path)
+                .with_field("user_id", &current_user.user_id);
+            diag_error!(
+                Warn,
+                Subsystem::Vfs,
+                context = &context,
+                error = &e,
+                surface_ref = %surface_ref,
+                mount_id = %mount_id,
+                path = %path,
+                recursive,
+                pattern_present = pattern.as_ref().is_some_and(|value| !value.is_empty()),
+                user_id = %current_user.user_id,
+                duration_ms = started_at.elapsed().as_millis(),
+                "VFS surface entries list failed"
+            );
+            ApiError::Internal(format!("VFS surface 条目检索失败: {e}"))
+        })?;
 
     Ok(Json(SurfaceEntriesResponse {
         surface_ref,
@@ -174,6 +201,7 @@ pub async fn read_surface_file(
 
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
+    let started_at = Instant::now();
     let result: ReadResult = state
         .services
         .vfs_service
@@ -187,7 +215,26 @@ pub async fn read_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(format!("VFS surface 文件读取失败: {e}")))?;
+        .map_err(|e| {
+            let context = DiagnosticErrorContext::new("vfs_surface.read_file", "route")
+                .with_field("surface_ref", &req.surface_ref)
+                .with_field("mount_id", &req.mount_id)
+                .with_field("path", &req.path)
+                .with_field("user_id", &current_user.user_id);
+            diag_error!(
+                Warn,
+                Subsystem::Vfs,
+                context = &context,
+                error = &e,
+                surface_ref = %req.surface_ref,
+                mount_id = %req.mount_id,
+                path = %req.path,
+                user_id = %current_user.user_id,
+                duration_ms = started_at.elapsed().as_millis(),
+                "VFS surface file read failed"
+            );
+            ApiError::Internal(format!("VFS surface 文件读取失败: {e}"))
+        })?;
 
     Ok(Json(SurfaceReadFileResponse {
         surface_ref: req.surface_ref,
@@ -502,6 +549,8 @@ pub async fn stat_surface_file(
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Use).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
+    let path = req.path;
+    let started_at = Instant::now();
     let entry = state
         .services
         .vfs_service
@@ -509,13 +558,32 @@ pub async fn stat_surface_file(
             &vfs,
             &ResourceRef {
                 mount_id: req.mount_id.clone(),
-                path: req.path,
+                path: path.clone(),
             },
             None,
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(format!("VFS surface stat 失败: {e}")))?;
+        .map_err(|e| {
+            let context = DiagnosticErrorContext::new("vfs_surface.stat_file", "route")
+                .with_field("surface_ref", &req.surface_ref)
+                .with_field("mount_id", &req.mount_id)
+                .with_field("path", &path)
+                .with_field("user_id", &current_user.user_id);
+            diag_error!(
+                Warn,
+                Subsystem::Vfs,
+                context = &context,
+                error = &e,
+                surface_ref = %req.surface_ref,
+                mount_id = %req.mount_id,
+                path = %path,
+                user_id = %current_user.user_id,
+                duration_ms = started_at.elapsed().as_millis(),
+                "VFS surface file stat failed"
+            );
+            ApiError::Internal(format!("VFS surface stat 失败: {e}"))
+        })?;
 
     Ok(Json(surface_stat_response(
         req.surface_ref,

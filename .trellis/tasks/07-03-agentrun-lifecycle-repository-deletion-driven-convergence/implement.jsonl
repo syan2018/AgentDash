@@ -1,0 +1,21 @@
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/prd.md","reason":"本重构任务的最终目标、要求、验收和范围约束。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/design.md","reason":"目标架构、删除矩阵、仓储分类、数据流和数据库策略。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/decisions.md","reason":"D-001 到 D-019 的正式架构决策和开放问题回填结果。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/inventory.md","reason":"WI-00 代码事实清点、仓储/表/API/frontend 分类和执行结论。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/target-state.md","reason":"重构前后状态图、目标控制流和最终收口检查目标。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/work-items/README.md","reason":"可分发工作项索引、依赖图和执行规则。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/references/adversarial-first-principles-review.md","reason":"第一性原理对抗审查和 P0/P1 偏离证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/aggregate-ownership.md","reason":"AgentRun/LifecycleRun/LifecycleAgent 聚合归属研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/runtime-session-internal-model.md","reason":"RuntimeSession 内部 trace substrate 和 SessionPersistence 拆分研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/command-mailbox-delivery.md","reason":"CommandReceipt、Mailbox、DeliveryAttempt 三层事实研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/agentframe-context-surface.md","reason":"AgentFrame canonical surface 和 ContextDeliveryRecord 研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/fork-lineage-baseline.md","reason":"AgentRunForkRecord、baseline 和 runtime lineage 降级研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/projection-permission-api-frontend.md","reason":"Projection rebuildability、permission、API/frontend product identity 研究证据。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/database-physical-design.md","reason":"JSONB/child table/independent table 和冗余表清理研究证据。"}
+{"file":".trellis/spec/project-overview.md","reason":"项目级 Lifecycle、AgentFrame、RuntimeSessionExecutionAnchor 现行架构背景。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"AgentRun workspace、mailbox、runtime trace 和前后端契约要求。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"RuntimeSession 和 session trace 后端架构约束。"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"AgentRun mailbox 既有规范和执行语义。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"Lifecycle workflow/control-plane 现行规范。"}
+{"file":".trellis/spec/backend/workflow/lifecycle-run-link.md","reason":"LifecycleSubjectAssociation、RuntimeSessionExecutionAnchor 与 control tree 关系规范。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"前端 AgentRun workspace 与 RuntimeSession trace 的产品边界。"}

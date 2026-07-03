@@ -1,0 +1,14 @@
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/target-state.md","reason":"最终收口检查 C-001 到 C-013/C-012B 的验收基准。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/decisions.md","reason":"检查实现是否遵守 D-001 到 D-019，尤其是已回填的执行结论。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/inventory.md","reason":"检查仓储、表、route、DTO、frontend state 是否按 WI-00 分类落地。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/work-items/README.md","reason":"检查工作项依赖顺序和完成标准是否被遵守。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/work-items/WI-12-database-migration-verification.md","reason":"检查 migration、FK/cascade、冗余表 ledger 和数据迁移验证。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/database-physical-design.md","reason":"复核表级删除/合并/降级是否符合物理设计研究结论。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/projection-permission-api-frontend.md","reason":"复核 projection rebuildability、permission 和前端 product identity 清理。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/runtime-session-internal-model.md","reason":"复核 RuntimeSession 内部化和 trace store 拆分。"}
+{"file":".trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence/research/command-mailbox-delivery.md","reason":"复核 command/mailbox/delivery 三层事实和 mailbox owner 修正。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"数据库 migration、约束和持久化质量检查。"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"repository/port 边界和 RepositorySet cleanup 检查。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"生成 contracts 与前后端数据流一致性检查。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端生成类型、runtime_session_id product 依赖清理和类型安全检查。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Runtime stream/Backbone event 与 AgentRun product stream 边界检查。"}

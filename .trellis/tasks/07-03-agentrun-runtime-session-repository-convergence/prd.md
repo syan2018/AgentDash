@@ -23,6 +23,7 @@
 - `session_events` 是 append-only event log，只负责把 envelope 放入某个 RuntimeSession 的有序日志中。
 - `PersistedSessionEvent` 是 envelope 落库后的视图：event log 坐标 + envelope + 从 envelope 派生的传输字段。
 - `sessions.last_*`、`lifecycle_agents.current_delivery_*` 等字段是 shell/read model 投影，不能反向成为 terminal truth 或业务归属事实。
+- `AgentFrame` row / adoption 与 effective surface transition 是两层语义：fork child 可以拥有 child-scoped frame copy；模型可见 context update 由 effective surface 变化驱动。
 
 近期已经完成一处关键收口：`session_events` 持久化不再保存 `session_update_type / turn_id / entry_index / tool_call_id` flatten 列，repository 从 `notification_json` 中的 `BackboneEnvelope` 派生这些传输视图字段。
 
@@ -198,6 +199,7 @@ flowchart LR
 | `session_lineage` 与 `agent_run_lineages` | 合理双层 lineage | runtime provenance 和产品 lineage 分层保留 |
 | `agent_run_mailbox` 与 `UserInputSubmitted` event | 合理双层事实 | mailbox 是 intent；session event 是 runtime accepted fact |
 | `AgentFrame` 与 RuntimeSession capability/cache | 合理投影 | AgentFrame 是 surface 事实源；RuntimeSession 只缓存执行期投影 |
+| parent / child `AgentFrame` 内容等价 copy | 合理控制面投影 | fork child initial frame 表达 inherited baseline；ContextFrame emission 由 effective surface transition 驱动 |
 | raw `/sessions/*` API 与 `/agent-runs/*` API | 产品入口重复风险 | raw session API 限定为内部诊断/trace；产品交互走 AgentRun scoped API |
 | `LifecycleRun/LifecycleAgent` 与 AgentRun 产品语义 | 父子层级关系，不是命名错位 | Lifecycle 是 AgentRun 的标准父层级；AgentRun 产品交互挂在 Lifecycle Agent 上 |
 
@@ -255,6 +257,7 @@ raw session endpoint 仅保留内部诊断、trace inspection、runtime projecti
 - `session_events` schema 不重新引入 flatten fact columns。
 - fork point 校验只读取 envelope terminal fact。
 - current delivery 和 execution anchor 的写入/读取职责可测试。
+- fork child initial `AgentFrame` 的 inherited baseline 语义可测试；ContextFrame 生成由 effective surface transition 判定，而不是由 frame row/id 或 RuntimeSession launch path 判定。
 
 ## Work Items
 
@@ -285,6 +288,7 @@ raw session endpoint 仅保留内部诊断、trace inspection、runtime projecti
 6. AgentRun fork / mailbox / lineage 流程复核
    - 确保 fork/fork-submit 写 child mailbox，不写 parent RuntimeSession。
    - 确保 product lineage 和 runtime lineage 各自落在正确仓储。
+   - 明确 fork child initial `AgentFrame` 是 inherited baseline；复核 fork-submit 首轮 ContextFrame 只表达 effective surface transition。
 
 7. 规格与测试补齐
    - 更新 `.trellis/spec/` 中的长期边界说明。
@@ -298,6 +302,7 @@ raw session endpoint 仅保留内部诊断、trace inspection、runtime projecti
 - [ ] `lifecycle_agents.current_delivery_*` 与 `runtime_session_execution_anchors` 的职责差异有设计说明和测试计划。
 - [ ] raw session API 的产品边界被明确：只做诊断/trace，不作为产品交互入口。
 - [ ] fork/fork-submit 的 runtime lineage、product lineage、mailbox、command receipt 写入关系被设计文档和测试覆盖。
+- [ ] fork child initial `AgentFrame` 的 inherited baseline 语义被设计文档和测试覆盖；ContextFrame emission 由 effective surface transition 驱动。
 - [ ] 实现前补齐 `design.md` 和 `implement.md`，并由用户确认后再 `task.py start`。
 
 ## Out Of Scope

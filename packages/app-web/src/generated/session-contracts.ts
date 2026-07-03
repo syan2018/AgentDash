@@ -2,18 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { SessionMessageRefDto } from "./agent-run-mailbox-contracts";
 import type { BackboneEnvelope } from "./backbone-protocol";
-
-export type ApproveToolCallResponse = { approved: boolean, session_id: string, tool_call_id: string, };
-
-export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
-
-export type DeleteSessionResponse = { deleted: boolean, session_id: string, };
-
-export type RejectToolCallResponse = { rejected: boolean, session_id: string, tool_call_id: string, };
-
-export type RollbackSessionProjectionRequest = { target_event_seq: number, active_compaction_id?: string, reason?: string, };
 
 export type SessionAttachmentContextContributionResponse = { name: string, tokens: number, };
 
@@ -28,10 +17,6 @@ export type SessionContextUsageItemResponse = { kind: string, label: string, nam
 export type SessionEventResponse = { session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, };
 
 export type SessionEventsPageResponse = { snapshot_seq: number, events: Array<SessionEventResponse>, has_more: boolean, next_after_seq: number, };
-
-export type SessionForkChildSessionResponse = { id: string, title: string, created_at: number, updated_at: number, last_event_seq: number, };
-
-export type SessionForkResponse = { parent_session_id: string, child_session: SessionForkChildSessionResponse, lineage: SessionLineageRecordResponse, child_initial_compaction_id: string, projection_version: number, head_event_seq: number, };
 
 export type SessionLineageRecordResponse = { child_session_id: string, parent_session_id: string, relation_kind: SessionLineageRelationKindDto, fork_point_event_seq?: number, fork_point_ref_json: JsonValue, fork_point_compaction_id?: string, status: SessionLineageStatusDto, created_at_ms: number, updated_at_ms: number, metadata_json: JsonValue, };
 
@@ -51,8 +36,6 @@ export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number
 ephemeral_epoch: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "ephemeral_event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
 
 export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
-
-export type SessionProjectionRollbackResponse = { session_id: string, event: SessionEventResponse, head_event_seq: number, active_compaction_id?: string, projection_version: number, updated_by_event_seq?: number, };
 
 export type SessionProjectionSegmentProvenanceResponse = { compaction_id?: string, projection_version?: number, segment_type?: string, strategy?: string, trigger?: string, phase?: string, };
 

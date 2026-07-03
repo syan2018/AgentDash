@@ -143,14 +143,12 @@ use agentdash_contracts::routine::{
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
-    RejectToolCallResponse, RollbackSessionProjectionRequest, SessionCommandStateResponse,
-    SessionEventResponse, SessionEventsPageResponse, SessionForkChildSessionResponse,
-    SessionForkResponse, SessionLineageRecordResponse, SessionLineageRelationKindDto,
-    SessionLineageStatusDto, SessionLineageViewResponse, SessionMessageRefDto,
-    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
-    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
-    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
+    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
+    SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
+    SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+    SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
+    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -582,9 +580,6 @@ fn main() {
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionCommandStateResponse>(dir);
-            export_all::<DeleteSessionResponse>(dir);
-            export_all::<ApproveToolCallResponse>(dir);
-            export_all::<RejectToolCallResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
@@ -593,13 +588,8 @@ fn main() {
             export_all::<SessionLineageRelationKindDto>(dir);
             export_all::<SessionLineageStatusDto>(dir);
             export_all::<SessionMessageRefDto>(dir);
-            export_all::<CreateSessionForkRequest>(dir);
-            export_all::<RollbackSessionProjectionRequest>(dir);
             export_all::<SessionLineageRecordResponse>(dir);
-            export_all::<SessionForkChildSessionResponse>(dir);
-            export_all::<SessionForkResponse>(dir);
             export_all::<SessionLineageViewResponse>(dir);
-            export_all::<SessionProjectionRollbackResponse>(dir);
         },
     );
 

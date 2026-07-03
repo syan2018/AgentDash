@@ -2,7 +2,6 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import { settingsApi } from "../api/settings";
 import type {
-  DeleteSessionResponse,
   SessionEventResponse,
   SessionEventsPageResponse,
   SessionProjectionViewResponse,
@@ -57,14 +56,6 @@ export async function fetchSessionEvents(
   return api.get<SessionEventsPageResponse>(
     `/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`,
   );
-}
-
-export async function deleteSession(id: string): Promise<DeleteSessionResponse> {
-  return api.delete<DeleteSessionResponse>(`/sessions/${encodeURIComponent(id)}`);
-}
-
-export async function updateSessionTitle(id: string, title: string): Promise<SessionMeta> {
-  return api.patch<SessionMeta>(`/sessions/${encodeURIComponent(id)}/meta`, { title });
 }
 
 /** Runtime trace diagnostic fallback for current model-context projection. */

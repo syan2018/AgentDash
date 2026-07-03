@@ -126,29 +126,6 @@ pub struct SessionCommandStateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct DeleteSessionResponse {
-    pub deleted: bool,
-    pub session_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct ApproveToolCallResponse {
-    pub approved: bool,
-    pub session_id: String,
-    pub tool_call_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RejectToolCallResponse {
-    pub rejected: bool,
-    pub session_id: String,
-    pub tool_call_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct SessionProjectionSourceRangeResponse {
     #[ts(type = "number")]
     pub start_event_seq: u64,
@@ -377,36 +354,6 @@ impl From<MessageRef> for SessionMessageRefDto {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateSessionForkRequest {
-    #[serde(default)]
-    #[ts(optional)]
-    pub title: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub fork_point_ref: Option<SessionMessageRefDto>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub fork_point_compaction_id: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub metadata_json: Option<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RollbackSessionProjectionRequest {
-    #[ts(type = "number")]
-    pub target_event_seq: u64,
-    #[serde(default)]
-    #[ts(optional)]
-    pub active_compaction_id: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionLineageRecordResponse {
@@ -447,32 +394,6 @@ impl From<SessionLineageRecord> for SessionLineageRecordResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionForkChildSessionResponse {
-    pub id: String,
-    pub title: String,
-    #[ts(type = "number")]
-    pub created_at: i64,
-    #[ts(type = "number")]
-    pub updated_at: i64,
-    #[ts(type = "number")]
-    pub last_event_seq: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionForkResponse {
-    pub parent_session_id: String,
-    pub child_session: SessionForkChildSessionResponse,
-    pub lineage: SessionLineageRecordResponse,
-    pub child_initial_compaction_id: String,
-    #[ts(type = "number")]
-    pub projection_version: u64,
-    #[ts(type = "number")]
-    pub head_event_seq: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct SessionLineageViewResponse {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -480,23 +401,6 @@ pub struct SessionLineageViewResponse {
     pub lineage: Option<SessionLineageRecordResponse>,
     pub ancestors: Vec<SessionLineageRecordResponse>,
     pub children: Vec<SessionLineageRecordResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionProjectionRollbackResponse {
-    pub session_id: String,
-    pub event: SessionEventResponse,
-    #[ts(type = "number")]
-    pub head_event_seq: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub active_compaction_id: Option<String>,
-    #[ts(type = "number")]
-    pub projection_version: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub updated_by_event_seq: Option<u64>,
 }
 
 fn is_zero(value: &u64) -> bool {

@@ -21,19 +21,15 @@ use crate::routes::lifecycle_views::{
     session_runtime_control_status_to_contract,
 };
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_agent::MessageRef;
 use agentdash_application_agentrun::agent_run as agentrun_read;
 use agentdash_application_runtime_session::session::{
-    SessionContextProjectionReadModel, SessionExecutionState, SessionForkRequest, SessionMeta,
-    SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
+    SessionContextProjectionReadModel, SessionExecutionState, SessionMeta,
 };
 use agentdash_contracts::session::{
-    CreateSessionForkRequest, DeleteSessionResponse, RollbackSessionProjectionRequest,
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
     SessionContextUsageCategoryResponse, SessionContextUsageItemResponse, SessionEventResponse,
-    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
-    SessionLineageViewResponse, SessionMessageContextBreakdownResponse, SessionMessageRefDto,
-    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionEventsPageResponse, SessionLineageViewResponse, SessionMessageContextBreakdownResponse,
+    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse,
     SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
     SessionToolContextContributionResponse,
@@ -48,7 +44,7 @@ use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, SessionEventsQuery,
-    SessionExecutionStateResponse, UpdateSessionMetaRequest,
+    SessionExecutionStateResponse,
 };
 
 /// Session trace 权限检查通过 RuntimeSessionExecutionAnchor 进入 LifecycleRun project。
@@ -86,18 +82,12 @@ const RUNTIME_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
-        .route(
-            "/sessions/{id}",
-            axum::routing::get(get_session).delete(delete_session),
-        )
+        .route("/sessions/{id}", axum::routing::get(get_session))
         .route(
             "/sessions/{id}/runtime-control",
             axum::routing::get(get_session_runtime_control),
         )
-        .route(
-            "/sessions/{id}/meta",
-            axum::routing::get(get_session_meta).patch(update_session_meta),
-        )
+        .route("/sessions/{id}/meta", axum::routing::get(get_session_meta))
         .route(
             "/sessions/{id}/state",
             axum::routing::get(get_session_state),
@@ -113,11 +103,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/sessions/{id}/lineage",
             axum::routing::get(get_session_lineage),
-        )
-        .route("/sessions/{id}/fork", axum::routing::post(fork_session))
-        .route(
-            "/sessions/{id}/projection/rollback",
-            axum::routing::post(rollback_session_projection),
         )
         .route(
             "/sessions/{id}/context/audit",
@@ -758,17 +743,6 @@ mod tests {
             "image/png image #0"
         );
     }
-
-    #[test]
-    fn session_message_ref_mapper_preserves_fork_point_coordinate() {
-        let message_ref = session_message_ref_to_application(SessionMessageRefDto {
-            turn_id: "turn-1".to_string(),
-            entry_index: 7,
-        });
-
-        assert_eq!(message_ref.turn_id, "turn-1");
-        assert_eq!(message_ref.entry_index, 7);
-    }
 }
 
 /// Internal diagnostics: GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
@@ -904,56 +878,6 @@ fn session_context_projection_to_response(
     }
 }
 
-fn session_message_ref_to_application(value: SessionMessageRefDto) -> MessageRef {
-    MessageRef {
-        turn_id: value.turn_id,
-        entry_index: value.entry_index,
-    }
-}
-
-/// Internal diagnostics: POST /sessions/{id}/fork — 基于当前模型投影创建可恢复 trace child。
-pub async fn fork_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    Json(req): Json<CreateSessionForkRequest>,
-) -> Result<Json<SessionForkResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let result = state
-        .services
-        .session_branching
-        .fork_session(SessionForkRequest {
-            parent_session_id: session_id.clone(),
-            title: req.title,
-            fork_point_ref: req.fork_point_ref.map(session_message_ref_to_application),
-            fork_point_compaction_id: req.fork_point_compaction_id,
-            metadata_json: req.metadata_json.unwrap_or_else(|| serde_json::json!({})),
-        })
-        .await
-        .map_err(api_error_from_io)?;
-
-    Ok(Json(SessionForkResponse {
-        parent_session_id: result.parent_session_id,
-        child_session: SessionForkChildSessionResponse {
-            id: result.child_session.id,
-            title: result.child_session.title,
-            created_at: result.child_session.created_at,
-            updated_at: result.child_session.updated_at,
-            last_event_seq: result.child_session.last_event_seq,
-        },
-        lineage: result.lineage.into(),
-        child_initial_compaction_id: result.projection_commit.compaction.id,
-        projection_version: result.projection_commit.head.projection_version,
-        head_event_seq: result.projection_commit.head.head_event_seq,
-    }))
-}
-
 /// Internal diagnostics: GET /sessions/{id}/lineage — 返回 runtime trace 的父边、祖先与直接 children。
 pub async fn get_session_lineage(
     State(state): State<Arc<AppState>>,
@@ -982,42 +906,6 @@ pub async fn get_session_lineage(
     }))
 }
 
-/// Internal diagnostics: POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
-pub async fn rollback_session_projection(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    Json(req): Json<RollbackSessionProjectionRequest>,
-) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let result = state
-        .services
-        .session_branching
-        .rollback_model_projection(ApplicationProjectionRollbackRequest {
-            session_id: session_id.clone(),
-            target_event_seq: req.target_event_seq,
-            active_compaction_id: req.active_compaction_id,
-            reason: req.reason,
-        })
-        .await
-        .map_err(api_error_from_io)?;
-
-    Ok(Json(SessionProjectionRollbackResponse {
-        session_id,
-        event: result.event.into(),
-        head_event_seq: result.head.head_event_seq,
-        active_compaction_id: result.head.active_compaction_id,
-        projection_version: result.head.projection_version,
-        updated_by_event_seq: result.head.updated_by_event_seq,
-    }))
-}
-
 /// Internal diagnostics: GET /sessions/{id}/meta — 返回完整 runtime trace meta。
 pub async fn get_session_meta(
     State(state): State<Arc<AppState>>,
@@ -1025,71 +913,6 @@ pub async fn get_session_meta(
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
     get_session(State(state), CurrentUser(current_user), Path(session_id)).await
-}
-
-/// Internal diagnostics: PATCH /sessions/{id}/meta — 修改 runtime trace meta。
-pub async fn update_session_meta(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    Json(req): Json<UpdateSessionMetaRequest>,
-) -> Result<Json<SessionMeta>, ApiError> {
-    if req.title.is_none() {
-        return Err(ApiError::BadRequest("必须提供 title".to_string()));
-    }
-    if let Some(title) = req.title.as_deref()
-        && title.trim().is_empty()
-    {
-        return Err(ApiError::BadRequest("标题不能为空".to_string()));
-    }
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let meta = state
-        .services
-        .session_core
-        .update_session_meta(&session_id, |meta| {
-            if let Some(title) = req.title.as_deref() {
-                let title = title.trim();
-                if !title.is_empty() {
-                    meta.title = title.to_string();
-                    meta.title_source = TitleSource::User;
-                }
-            }
-        })
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
-
-    Ok(Json(meta))
-}
-
-pub async fn delete_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<DeleteSessionResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .session_core
-        .delete_session(&session_id)
-        .await?;
-    Ok(Json(DeleteSessionResponse {
-        deleted: true,
-        session_id,
-    }))
 }
 
 /// Session trace stream（Fetch Streaming / NDJSON）

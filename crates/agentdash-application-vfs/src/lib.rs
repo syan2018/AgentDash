@@ -100,4 +100,7 @@ pub use surface_query::build_surface_summary;
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
     ListResult, MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,
+    ShellSessionOutputChunk, ShellSessionReadRequest, ShellSessionResizeRequest,
+    ShellSessionSnapshot, ShellSessionTerminateRequest, ShellSessionTerminateResult,
+    ShellSessionWriteRequest, ShellSessionWriteResult,
 };

@@ -52,7 +52,7 @@ impl EnvironmentContextFrame {
     }
 }
 
-const WINDOWS_POWERSHELL_TEXT_OUTPUT_NOTE: &str = "Windows PowerShell output: some commands return objects. For non-interactive tools or scripts that need stable text, explicitly select string fields, emit text with Write-Output, or use dedicated file tools. Interactive terminals still rely on real PTY/stdout bytes.";
+const WINDOWS_POWERSHELL_TEXT_OUTPUT_NOTE: &str = "Windows shell: the real OS shell is PowerShell. Compose commands with PowerShell syntax, not bash-only operators like && or || true. Some commands such as Get-Location and Get-ChildItem return objects; for non-interactive tools or scripts that need stable text, explicitly select string fields and emit strings, for example Write-Output (Get-Location).Path or Get-ChildItem | ForEach-Object { Write-Output $_.FullName }. Prefer dedicated VFS file tools for inspect/read/search. Interactive terminals still rely on real PTY/stdout bytes.";
 
 impl ContextFramePayload for EnvironmentContextFrame {
     fn id(&self, created_at_ms: i64) -> String {
@@ -201,8 +201,18 @@ mod tests {
         })
         .expect("environment frame");
 
-        assert!(frame.rendered_text.contains("some commands return objects"));
+        assert!(
+            frame
+                .rendered_text
+                .contains("the real OS shell is PowerShell")
+        );
+        assert!(frame.rendered_text.contains("PowerShell syntax"));
+        assert!(frame.rendered_text.contains("&& or || true"));
+        assert!(frame.rendered_text.contains("Get-Location"));
+        assert!(frame.rendered_text.contains("Get-ChildItem"));
+        assert!(frame.rendered_text.contains("return objects"));
         assert!(frame.rendered_text.contains("Write-Output"));
+        assert!(frame.rendered_text.contains("dedicated VFS file tools"));
         assert!(frame.rendered_text.contains("real PTY/stdout bytes"));
         let environment_section = frame
             .sections

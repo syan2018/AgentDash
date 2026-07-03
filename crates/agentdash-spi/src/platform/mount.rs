@@ -316,10 +316,21 @@ pub struct ExecRequest {
     pub cwd: String,
     pub command: String,
     pub timeout_ms: Option<u64>,
+    /// 由调用方预分配的终端 ID。提供后 provider 应以它作为 exec 活动的
+    /// canonical continuation ref，并将运行时输出映射到同一个终端活动。
+    pub terminal_id: Option<String>,
     /// 由 ShellExecTool 生成的流式输出关联 ID。
     /// relay_fs 会将此 ID 作为 `ToolShellExecPayload.call_id`，
     /// 使 `EventToolShellOutput` 能路由回 `ShellOutputRegistry`。
     pub streaming_call_id: Option<String>,
+    /// shell_start 等待首包输出/终态的窗口；到期后进程继续由 provider 持有。
+    pub yield_time_ms: Option<u64>,
+    /// provider 侧 retained output buffer 的每 session 上限。
+    pub max_output_bytes: Option<usize>,
+    /// 是否使用 PTY 执行。
+    pub tty: bool,
+    pub cols: Option<u16>,
+    pub rows: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -334,6 +345,66 @@ pub struct ExecResult {
     pub next_seq: Option<u64>,
     pub truncated: bool,
     pub omitted_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionReadRequest {
+    pub terminal_id: String,
+    pub after_seq: Option<u64>,
+    pub wait_ms: Option<u64>,
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionWriteRequest {
+    pub terminal_id: String,
+    pub data: String,
+    pub close_stdin: bool,
+    pub wait_ms: Option<u64>,
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionResizeRequest {
+    pub terminal_id: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionTerminateRequest {
+    pub terminal_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionSnapshot {
+    pub state: String,
+    pub exit_code: Option<i32>,
+    pub chunks: Vec<ShellSessionOutputChunk>,
+    pub next_seq: u64,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionOutputChunk {
+    pub seq: u64,
+    pub stream: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionWriteResult {
+    pub accepted: bool,
+    pub stdin_closed: bool,
+    pub snapshot: ShellSessionSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellSessionTerminateResult {
+    pub status: String,
+    pub state: String,
+    pub exit_code: Option<i32>,
 }
 
 // ============================================================================
@@ -566,6 +637,58 @@ pub trait MountProvider: Send + Sync {
         let _ = (mount, request, ctx);
         Err(MountError::NotSupported(format!(
             "provider `{}` does not support exec",
+            self.provider_id()
+        )))
+    }
+
+    async fn shell_session_read(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionReadRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ShellSessionSnapshot, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support shell_session_read",
+            self.provider_id()
+        )))
+    }
+
+    async fn shell_session_write(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionWriteRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ShellSessionWriteResult, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support shell_session_write",
+            self.provider_id()
+        )))
+    }
+
+    async fn shell_session_resize(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionResizeRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support shell_session_resize",
+            self.provider_id()
+        )))
+    }
+
+    async fn shell_session_terminate(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionTerminateRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ShellSessionTerminateResult, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support shell_session_terminate",
             self.provider_id()
         )))
     }

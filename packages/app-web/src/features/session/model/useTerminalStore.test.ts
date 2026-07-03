@@ -108,4 +108,16 @@ describe("useTerminalStore", () => {
 
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
   });
+
+  it("按 session event seq 幂等投影 terminal state", () => {
+    const store = useTerminalStore.getState();
+
+    expect(store.projectStateEvent("session-1", 10, "term-1", "running")).toBe(true);
+    expect(useTerminalStore.getState().projectStateEvent("session-1", 10, "term-1", "exited", 0)).toBe(false);
+
+    const terminal = useTerminalStore.getState().getTerminalsForSession("session-1")[0];
+    expect(terminal?.id).toBe("term-1");
+    expect(terminal?.state).toBe("running");
+    expect(terminal?.exitCode).toBeUndefined();
+  });
 });

@@ -28,6 +28,7 @@ use agentdash_application_ports::agent_run_surface::{
     AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
 };
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
+use agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache;
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
@@ -36,6 +37,7 @@ use agentdash_application_runtime_session::session::{
     SessionToolResultCache, SessionToolResultCachePut,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
+use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
 use agentdash_application_vfs::{VfsMaterializationService, VfsService};
 use agentdash_domain::canvas::Canvas;
 use agentdash_domain::llm_provider::{
@@ -66,6 +68,47 @@ use crate::relay::registry::BackendRegistry;
 #[derive(Clone)]
 struct ApplicationWorkspaceModuleAgentRunBridge {
     inner: SharedSessionToolServicesHandle,
+}
+
+#[derive(Clone)]
+struct RuntimeShellTerminalRegistry {
+    terminal_cache: Arc<SessionTerminalCache>,
+}
+
+impl RuntimeShellTerminalRegistry {
+    fn new(terminal_cache: Arc<SessionTerminalCache>) -> Self {
+        Self { terminal_cache }
+    }
+}
+
+impl ShellTerminalRegistry for RuntimeShellTerminalRegistry {
+    fn register_shell_terminal(&self, registration: ShellTerminalRegistration) {
+        self.terminal_cache.register_terminal_with_metadata(
+            &registration.session_id,
+            &registration.terminal_id,
+            &registration.backend_id,
+            None,
+            Some(&registration.mount_id),
+            Some(&registration.cwd),
+            Some(&registration.capability),
+        );
+    }
+
+    fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration> {
+        let state = self.terminal_cache.get_terminal(terminal_id)?;
+        Some(ShellTerminalRegistration {
+            session_id: state.session_id,
+            terminal_id: state.terminal_id,
+            mount_id: state.mount_id?,
+            backend_id: state.backend_id,
+            cwd: state.cwd.unwrap_or_default(),
+            capability: state.capability.unwrap_or_else(|| "state_only".to_string()),
+        })
+    }
+
+    fn remove_shell_terminal(&self, terminal_id: &str) {
+        self.terminal_cache.remove_terminal(terminal_id);
+    }
 }
 
 #[async_trait]
@@ -141,6 +184,7 @@ pub(crate) struct SessionBootstrapInput {
     pub vfs_service: Arc<VfsService>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    pub terminal_cache: Arc<SessionTerminalCache>,
     pub mcp_tool_discovery: Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>,
     pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     pub platform_config: SharedPlatformConfig,
@@ -183,6 +227,7 @@ pub(crate) async fn build_session_runtime(
         vfs_service,
         vfs_materialization_service,
         shell_output_registry,
+        terminal_cache,
         mcp_tool_discovery,
         function_runner,
         platform_config,
@@ -235,6 +280,7 @@ pub(crate) async fn build_session_runtime(
             vfs_service: vfs_service.clone(),
             vfs_materialization_service,
             shell_output_registry,
+            terminal_cache,
             session_services_handle: session_services_handle.clone(),
             workspace_module_agent_run_bridge_handle: workspace_module_agent_run_bridge_handle
                 .clone(),
@@ -421,6 +467,7 @@ struct SessionRuntimeToolComposerDeps {
     vfs_service: Arc<VfsService>,
     vfs_materialization_service: Arc<VfsMaterializationService>,
     shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
+    terminal_cache: Arc<SessionTerminalCache>,
     session_services_handle: SharedSessionToolServicesHandle,
     workspace_module_agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
     workspace_module_runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
@@ -442,7 +489,10 @@ fn build_session_runtime_tool_composer(
 
     let vfs_provider = VfsRuntimeToolProvider::new(deps.vfs_service, Some(inline_persister))
         .with_materialization_service(deps.vfs_materialization_service)
-        .with_shell_output_registry(deps.shell_output_registry);
+        .with_shell_output_registry(deps.shell_output_registry)
+        .with_terminal_registry(Arc::new(RuntimeShellTerminalRegistry::new(
+            deps.terminal_cache,
+        )));
     let workflow_provider = WorkflowRuntimeToolProvider::new(
         deps.repos.to_lifecycle_repository_set(),
         agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle,

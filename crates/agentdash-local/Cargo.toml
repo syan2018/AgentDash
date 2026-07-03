@@ -60,7 +60,6 @@ sha2 = "0.10"
 tar.workspace = true
 postgresql_embedded = { workspace = true }
 gix = { version = "0.83.0", default-features = false, features = ["revision", "sha1"] }
-portable-pty = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"

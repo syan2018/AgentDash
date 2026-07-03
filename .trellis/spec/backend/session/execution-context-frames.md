@@ -272,8 +272,11 @@ ContextFrameSection::Environment {
 - Delivery remains connector startup context with session policy semantics.
 - `rendered_text` contains `Date`, `Platform`, `Executor`, and optional `Model` / `Working directory`.
 - When `platform` equals `windows` case-insensitively, `rendered_text` includes a PowerShell text output note:
+  - the real OS shell is PowerShell, so command composition examples should use PowerShell syntax;
+  - PowerShell-only composition guidance is included because non-interactive shell tools forward text to the real host shell rather than emulating bash;
   - some PowerShell commands return objects;
   - non-interactive tools or scripts that need stable text should select string fields, emit text with `Write-Output`, or use dedicated file tools;
+  - examples include `Write-Output (Get-Location).Path` and `Get-ChildItem | ForEach-Object { Write-Output $_.FullName }`;
   - interactive terminals still rely on real PTY/stdout bytes.
 - Non-Windows platforms do not include the PowerShell note.
 - The section `summary` may mention the presence of the PowerShell text output note; the full instruction belongs in `rendered_text`.
@@ -296,7 +299,7 @@ ContextFrameSection::Environment {
 
 ### 6. Tests Required
 
-- Unit test for Windows rendered text containing object-output, `Write-Output`, and PTY/stdout wording.
+- Unit test for Windows rendered text containing real PowerShell shell wording, object-output examples, `Write-Output`, dedicated VFS file tools, and PTY/stdout wording.
 - Unit test for non-Windows rendered text and section summary omitting the note.
 - Unit test for optional fields staying omitted when input is `None`.
 

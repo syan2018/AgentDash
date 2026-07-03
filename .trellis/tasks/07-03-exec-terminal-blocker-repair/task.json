@@ -3,7 +3,7 @@
   "name": "exec-terminal-blocker-repair",
   "title": "修复 exec 续读与终端观察阻断",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

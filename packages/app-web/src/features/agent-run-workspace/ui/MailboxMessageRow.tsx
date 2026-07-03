@@ -8,6 +8,8 @@ import type {
   SessionChatCommandModel,
   SessionChatMailboxModel,
 } from "../../session/ui/SessionChatViewTypes";
+import { useSessionWorkspacePanelAction } from "../../session/ui/SessionWorkspacePanelActionContext";
+import { terminalUriForWaitingItem } from "../model/waitingTerminal";
 import { mailboxHasContent } from "./mailboxContent";
 
 interface MailboxMessageListProps {
@@ -296,6 +298,7 @@ function SectionLabel({ label, count }: { label: string; count: number }) {
 }
 
 function WaitingItemRow({ item }: { item: ConversationWaitingItemView }) {
+  const openWorkspacePanel = useSessionWorkspacePanelAction();
   const kindLabel = waitingKindLabel(item.kind);
   const sourceLabel = item.source_label?.trim() || kindLabel;
   const preview = item.preview?.trim() || "等待外部事件";
@@ -303,6 +306,16 @@ function WaitingItemRow({ item }: { item: ConversationWaitingItemView }) {
   const timeLabel = item.resolved_at
     ? `完成 ${formatTimestamp(item.resolved_at)}`
     : `创建 ${formatTimestamp(item.created_at)}`;
+  const terminalUri = terminalUriForWaitingItem(item);
+  const canOpenTerminal = Boolean(openWorkspacePanel && terminalUri);
+  const handleOpenTerminal = useCallback(() => {
+    if (!openWorkspacePanel || !terminalUri) return;
+    openWorkspacePanel({
+      typeId: "terminal",
+      uri: terminalUri,
+      options: { refreshContent: true },
+    });
+  }, [openWorkspacePanel, terminalUri]);
 
   return (
     <div className="group relative">
@@ -325,6 +338,17 @@ function WaitingItemRow({ item }: { item: ConversationWaitingItemView }) {
         <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium ${waitingStatusClassName(item.status)}`}>
           {statusLabel}
         </span>
+        {terminalUri && (
+          <button
+            type="button"
+            onClick={handleOpenTerminal}
+            disabled={!canOpenTerminal}
+            title={canOpenTerminal ? "打开对应终端" : "当前页面没有工作区面板"}
+            className="shrink-0 rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            打开终端
+          </button>
+        )}
       </div>
     </div>
   );

@@ -92,6 +92,7 @@ impl TerminalCommandHandler {
             .input_shell(ToolShellInputPayload {
                 session_id: payload.terminal_id.clone(),
                 data: payload.data,
+                close_stdin: false,
                 wait_ms: Some(0),
                 max_bytes: None,
             })

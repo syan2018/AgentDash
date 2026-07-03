@@ -6,12 +6,16 @@ use agentdash_application_vfs::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, GrepQuery,
     ListOptions, ListResult, MountEditCapabilities, MountError, MountOperationContext,
     MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
-    normalize_mount_relative_path,
+    ShellSessionOutputChunk, ShellSessionReadRequest, ShellSessionResizeRequest,
+    ShellSessionSnapshot, ShellSessionTerminateRequest, ShellSessionTerminateResult,
+    ShellSessionWriteRequest, ShellSessionWriteResult, normalize_mount_relative_path,
 };
 use agentdash_relay::{
-    RelayMessage, ToolApplyPatchPayload, ToolFileDeletePayload, ToolFileListPayload,
-    ToolFileReadPayload, ToolFileRenamePayload, ToolFileWritePayload, ToolSearchPayload,
-    ToolShellExecPayload, ToolShellSessionState,
+    RelayMessage, ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload,
+    ToolFileDeletePayload, ToolFileListPayload, ToolFileReadPayload, ToolFileRenamePayload,
+    ToolFileWritePayload, ToolSearchPayload, ToolShellExecPayload, ToolShellInputPayload,
+    ToolShellReadPayload, ToolShellReadResponse, ToolShellSessionState, ToolShellTerminatePayload,
+    ToolShellTerminateStatus,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -41,6 +45,49 @@ fn shell_state_name(state: ToolShellSessionState) -> &'static str {
         ToolShellSessionState::Lost => "lost",
         ToolShellSessionState::Closed => "closed",
     }
+}
+
+fn shell_terminate_status_name(status: ToolShellTerminateStatus) -> &'static str {
+    match status {
+        ToolShellTerminateStatus::Killed => "killed",
+        ToolShellTerminateStatus::AlreadyExited => "already_exited",
+        ToolShellTerminateStatus::UnknownSession => "unknown_session",
+    }
+}
+
+fn shell_stream_name(stream: ShellOutputStream) -> &'static str {
+    match stream {
+        ShellOutputStream::Stdout => "stdout",
+        ShellOutputStream::Stderr => "stderr",
+        ShellOutputStream::Pty => "pty",
+    }
+}
+
+fn shell_snapshot_from_read(payload: ToolShellReadResponse) -> ShellSessionSnapshot {
+    ShellSessionSnapshot {
+        state: shell_state_name(payload.state).to_string(),
+        exit_code: payload.exit_code,
+        chunks: payload
+            .chunks
+            .into_iter()
+            .map(|chunk| ShellSessionOutputChunk {
+                seq: chunk.seq,
+                stream: shell_stream_name(chunk.stream).to_string(),
+                data: chunk.data,
+            })
+            .collect(),
+        next_seq: payload.next_seq,
+        truncated: payload.truncation.truncated,
+        omitted_bytes: payload.truncation.omitted_bytes,
+    }
+}
+
+fn shell_control_relay_timeout(wait_ms: Option<u64>) -> std::time::Duration {
+    std::time::Duration::from_millis(
+        wait_ms
+            .unwrap_or(0)
+            .saturating_add(SHELL_EXEC_RPC_TIMEOUT_MS),
+    )
 }
 
 /// 通过 `BackendRegistry` 将文件与 shell 操作转发到本机后端。
@@ -618,12 +665,15 @@ impl MountProvider for RelayFsMountProvider {
                     payload: ToolShellExecPayload {
                         call_id,
                         command: request.command.clone(),
+                        terminal_id: request.terminal_id.clone(),
                         mount_root_ref: mount.root_ref.clone(),
                         cwd: if cwd.is_empty() { None } else { Some(cwd) },
                         timeout_ms: request.timeout_ms,
-                        yield_time_ms: Some(DEFAULT_SHELL_EXEC_YIELD_MS),
-                        max_output_bytes: None,
-                        tty: false,
+                        yield_time_ms: request.yield_time_ms.or(Some(DEFAULT_SHELL_EXEC_YIELD_MS)),
+                        max_output_bytes: request.max_output_bytes,
+                        tty: request.tty,
+                        cols: request.cols,
+                        rows: request.rows,
                     },
                 },
                 shell_exec_relay_timeout(request.timeout_ms),
@@ -653,6 +703,165 @@ impl MountProvider for RelayFsMountProvider {
             } => Err(MountError::OperationFailed(error.message)),
             other => Err(MountError::OperationFailed(format!(
                 "shell_exec 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn shell_session_read(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionReadRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<ShellSessionSnapshot, MountError> {
+        let response = self
+            .backends
+            .send_command_with_timeout(
+                &mount.backend_id,
+                RelayMessage::CommandToolShellRead {
+                    id: RelayMessage::new_id("mp-shell-read"),
+                    payload: ToolShellReadPayload {
+                        session_id: request.terminal_id.clone(),
+                        after_seq: request.after_seq,
+                        wait_ms: request.wait_ms,
+                        max_bytes: request.max_bytes,
+                    },
+                },
+                shell_control_relay_timeout(request.wait_ms),
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolShellRead {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(shell_snapshot_from_read(payload)),
+            RelayMessage::ResponseToolShellRead {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "shell_read 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn shell_session_write(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionWriteRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<ShellSessionWriteResult, MountError> {
+        let response = self
+            .backends
+            .send_command_with_timeout(
+                &mount.backend_id,
+                RelayMessage::CommandToolShellInput {
+                    id: RelayMessage::new_id("mp-shell-input"),
+                    payload: ToolShellInputPayload {
+                        session_id: request.terminal_id.clone(),
+                        data: request.data.clone(),
+                        close_stdin: request.close_stdin,
+                        wait_ms: request.wait_ms,
+                        max_bytes: request.max_bytes,
+                    },
+                },
+                shell_control_relay_timeout(request.wait_ms),
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolShellInput {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(ShellSessionWriteResult {
+                accepted: payload.accepted,
+                stdin_closed: payload.stdin_closed,
+                snapshot: shell_snapshot_from_read(payload.read),
+            }),
+            RelayMessage::ResponseToolShellInput {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "shell_input 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn shell_session_resize(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionResizeRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandTerminalResize {
+                    id: RelayMessage::new_id("mp-shell-resize"),
+                    payload: TerminalResizePayload {
+                        terminal_id: request.terminal_id.clone(),
+                        cols: request.cols,
+                        rows: request.rows,
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseTerminalResize { error: None, .. } => Ok(()),
+            RelayMessage::ResponseTerminalResize {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "terminal_resize 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn shell_session_terminate(
+        &self,
+        mount: &Mount,
+        request: &ShellSessionTerminateRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<ShellSessionTerminateResult, MountError> {
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolShellTerminate {
+                    id: RelayMessage::new_id("mp-shell-terminate"),
+                    payload: ToolShellTerminatePayload {
+                        session_id: request.terminal_id.clone(),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolShellTerminate {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(ShellSessionTerminateResult {
+                status: shell_terminate_status_name(payload.status).to_string(),
+                state: shell_state_name(payload.state).to_string(),
+                exit_code: payload.exit_code,
+            }),
+            RelayMessage::ResponseToolShellTerminate {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "shell_terminate 返回意外响应: {}",
                 other.id()
             ))),
         }

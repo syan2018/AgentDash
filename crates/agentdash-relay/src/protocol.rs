@@ -1151,18 +1151,22 @@ mod tests {
             payload: ToolShellExecPayload {
                 call_id: "call-1".to_string(),
                 command: "cargo check".to_string(),
+                terminal_id: Some("term-1".to_string()),
                 mount_root_ref: "D:/workspace".to_string(),
                 cwd: Some("crates/agentdash-local".to_string()),
                 timeout_ms: None,
                 yield_time_ms: Some(750),
                 max_output_bytes: Some(65_536),
                 tty: false,
+                cols: None,
+                rows: None,
             },
         };
         let json = serde_json::to_value(&start).expect("serialize start");
         assert_eq!(json["type"], "command.tool.shell_exec");
         assert_eq!(json["payload"]["yield_time_ms"], 750);
         assert_eq!(json["payload"]["max_output_bytes"], 65_536);
+        assert_eq!(json["payload"]["terminal_id"], "term-1");
         let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize start");
         assert_eq!(decoded.id(), "shell-start-1");
 

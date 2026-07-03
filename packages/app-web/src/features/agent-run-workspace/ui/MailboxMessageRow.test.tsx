@@ -7,6 +7,8 @@ import type {
   SessionChatCommandModel,
   SessionChatMailboxModel,
 } from "../../session/ui/SessionChatViewTypes";
+import { SessionWorkspacePanelActionProvider } from "../../session/ui/SessionWorkspacePanelActionProvider";
+import { terminalUriForWaitingItem } from "../model/waitingTerminal";
 import { MailboxMessageList } from "./MailboxMessageRow";
 
 const mailboxMessage: MailboxMessageView = {
@@ -45,12 +47,25 @@ const waitingItem: ConversationWaitingItemView = {
   created_at: "2026-07-02T10:15:30.000Z",
 };
 
+const execWaitingItem: ConversationWaitingItemView = {
+  wait_id: "term-running-1",
+  gate_id: "term-running-1",
+  kind: "exec",
+  source_ref: "term-running-1",
+  correlation_ref: "shell-call-1",
+  status: "open",
+  source_label: "PowerShell",
+  preview: "pnpm test",
+  created_at: "2026-07-03T09:00:00.000Z",
+};
+
 function renderMailboxList(options: {
   messages?: MailboxMessageView[];
   mailbox?: Partial<SessionChatMailboxModel>;
   promoteCommand?: SessionChatCommandModel;
   deleteCommand?: SessionChatCommandModel;
   onRecall?: (messageId: string) => void;
+  openWorkspacePanel?: () => void;
 }) {
   const messages = options.messages ?? [mailboxMessage];
   const mailbox: SessionChatMailboxModel = {
@@ -64,7 +79,7 @@ function renderMailboxList(options: {
     promoteAction: options.promoteCommand ?? options.mailbox?.promoteAction,
     deleteAction: options.deleteCommand ?? options.mailbox?.deleteAction,
   };
-  return renderToStaticMarkup(
+  const content = (
     <MailboxMessageList
       messages={messages}
       mailbox={mailbox}
@@ -72,7 +87,15 @@ function renderMailboxList(options: {
       onDelete={() => {}}
       onResume={() => {}}
       onRecall={options.onRecall}
-    />,
+    />
+  );
+  if (!options.openWorkspacePanel) {
+    return renderToStaticMarkup(content);
+  }
+  return renderToStaticMarkup(
+    <SessionWorkspacePanelActionProvider openWorkspacePanel={options.openWorkspacePanel}>
+      {content}
+    </SessionWorkspacePanelActionProvider>,
   );
 }
 
@@ -323,5 +346,39 @@ describe("MailboxMessageList", () => {
     expect(markup).toContain("创建 2026-07-02 10:15");
     expect(markup).not.toContain("gate-1");
     expect(markup).not.toContain("dispatch-1");
+  });
+
+  it("builds terminal open URI from exec waiting item source ref", () => {
+    expect(terminalUriForWaitingItem(execWaitingItem)).toBe("terminal://term-running-1");
+    expect(terminalUriForWaitingItem(waitingItem)).toBeNull();
+  });
+
+  it("shows terminal open action for exec waiting items when workspace panel action exists", () => {
+    const markup = renderMailboxList({
+      messages: [],
+      mailbox: {
+        waiting_items: [execWaitingItem],
+      },
+      openWorkspacePanel: () => {},
+    });
+
+    expect(markup).toContain("Exec");
+    expect(markup).toContain("PowerShell");
+    expect(markup).toContain("pnpm test");
+    expect(markup).toContain("打开终端");
+    expect(markup).toContain("打开对应终端");
+    expect(markup).not.toContain("disabled=\"\"");
+  });
+
+  it("does not invent a terminal action for non-exec waiting items", () => {
+    const markup = renderMailboxList({
+      messages: [],
+      mailbox: {
+        waiting_items: [waitingItem],
+      },
+      openWorkspacePanel: () => {},
+    });
+
+    expect(markup).not.toContain("打开终端");
   });
 });

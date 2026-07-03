@@ -244,6 +244,7 @@ impl AppState {
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,
                 shell_output_registry: shell_output_registry.clone(),
+                terminal_cache: terminal_cache.clone(),
                 mcp_tool_discovery: mcp_tool_discovery.clone(),
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),

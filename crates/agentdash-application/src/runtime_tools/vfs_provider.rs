@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
 use crate::vfs::service::VfsService;
 use crate::vfs::tools::factory::{VfsToolFactory, VfsToolFactoryInput};
+use crate::vfs::tools::fs::ShellTerminalRegistry;
 use crate::vfs::{VfsMaterializationService, VfsMaterializationTransport};
 
 use super::provider::{runtime_session_id_from_context, shared_runtime_vfs_from_context};
@@ -17,6 +18,7 @@ pub struct VfsRuntimeToolProvider {
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     materialization: Option<Arc<VfsMaterializationService>>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
 }
 
 impl VfsRuntimeToolProvider {
@@ -29,6 +31,7 @@ impl VfsRuntimeToolProvider {
             inline_persister,
             materialization: None,
             shell_output_registry: None,
+            terminal_registry: None,
         }
     }
 
@@ -37,6 +40,11 @@ impl VfsRuntimeToolProvider {
         registry: Arc<agentdash_relay::ShellOutputRegistry>,
     ) -> Self {
         self.shell_output_registry = Some(registry);
+        self
+    }
+
+    pub fn with_terminal_registry(mut self, registry: Arc<dyn ShellTerminalRegistry>) -> Self {
+        self.terminal_registry = Some(registry);
         self
     }
 
@@ -73,6 +81,7 @@ impl RuntimeToolProvider for VfsRuntimeToolProvider {
         Ok(VfsToolFactory::new(self.service.clone())
             .with_materialization(self.materialization.clone())
             .with_shell_output_registry(self.shell_output_registry.clone())
+            .with_terminal_registry(self.terminal_registry.clone())
             .build_tools(VfsToolFactoryInput {
                 shared_vfs,
                 overlay,

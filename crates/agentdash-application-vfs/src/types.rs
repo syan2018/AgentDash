@@ -1,6 +1,8 @@
 pub use agentdash_spi::platform::mount::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
-    ListResult, ReadResult, RuntimeFileEntry,
+    ListResult, ReadResult, RuntimeFileEntry, ShellSessionOutputChunk, ShellSessionReadRequest,
+    ShellSessionResizeRequest, ShellSessionSnapshot, ShellSessionTerminateRequest,
+    ShellSessionTerminateResult, ShellSessionWriteRequest, ShellSessionWriteResult,
 };
 
 pub const RUNTIME_FILE_CONTENT_KIND_ATTR: &str = "content_kind";

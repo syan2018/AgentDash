@@ -55,6 +55,9 @@ pub struct ToolApplyPatchPayload {
 pub struct ToolShellExecPayload {
     pub call_id: String,
     pub command: String,
+    /// 调用方预分配的终端 ID。省略时本机后端自行分配。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
     /// shell 允许访问的工作区根目录边界。
     /// 若未提供 `cwd`，执行器默认在该目录下启动命令。
     pub mount_root_ref: String,
@@ -76,6 +79,10 @@ pub struct ToolShellExecPayload {
     /// 使用 PTY 执行；省略或 false 时使用 stdout/stderr pipe。
     #[serde(default, skip_serializing_if = "is_false")]
     pub tty: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cols: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +103,9 @@ pub struct ToolShellInputPayload {
     pub session_id: String,
     /// 空字符串表示 poll/read wait，不向 stdin 写入字节。
     pub data: String,
+    /// 写入后关闭 stdin；用于向等待 EOF 的进程发出输入结束信号。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub close_stdin: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

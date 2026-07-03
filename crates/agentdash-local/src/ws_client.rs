@@ -600,12 +600,15 @@ mod tests {
             payload: ToolShellExecPayload {
                 call_id: "call-1".to_string(),
                 command: "cargo check".to_string(),
+                terminal_id: None,
                 mount_root_ref: "D:/workspace".to_string(),
                 cwd: None,
                 timeout_ms: Some(30_000),
                 yield_time_ms: Some(1_000),
                 max_output_bytes: None,
                 tty: false,
+                cols: None,
+                rows: None,
             },
         };
 

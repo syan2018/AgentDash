@@ -20,6 +20,12 @@ pub struct TerminalState {
     pub terminal_id: String,
     pub session_id: String,
     pub backend_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability: Option<String>,
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
@@ -42,10 +48,34 @@ impl SessionTerminalCache {
         backend_id: &str,
         process_id: Option<u32>,
     ) {
+        self.register_terminal_with_metadata(
+            session_id,
+            terminal_id,
+            backend_id,
+            process_id,
+            None,
+            None,
+            None,
+        );
+    }
+
+    pub fn register_terminal_with_metadata(
+        &self,
+        session_id: &str,
+        terminal_id: &str,
+        backend_id: &str,
+        process_id: Option<u32>,
+        mount_id: Option<&str>,
+        cwd: Option<&str>,
+        capability: Option<&str>,
+    ) {
         let state = TerminalState {
             terminal_id: terminal_id.to_string(),
             session_id: session_id.to_string(),
             backend_id: backend_id.to_string(),
+            mount_id: mount_id.map(str::to_string),
+            cwd: cwd.map(str::to_string),
+            capability: capability.map(str::to_string),
             state: "starting".to_string(),
             exit_code: None,
             process_id,

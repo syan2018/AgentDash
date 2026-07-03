@@ -37,6 +37,7 @@ struct ShellSession {
     session_id: String,
     call_id: Option<String>,
     terminal_id: Option<String>,
+    tty: bool,
     state: ToolShellSessionState,
     exit_code: Option<i32>,
     handle: Arc<ProcessHandle>,
@@ -254,17 +255,20 @@ impl ShellSessionManager {
             .process_executor()
             .resolve_cwd(&payload.mount_root_ref, payload.cwd.as_deref())?;
         let (program, args) = shell_program_and_args(&payload.command);
-        let session_id = RelayMessage::new_id("shell");
+        let session_id = payload
+            .terminal_id
+            .clone()
+            .unwrap_or_else(|| RelayMessage::new_id("shell"));
         let spec = ShellSpawnSpec {
             program,
             args,
             cwd,
             env: current_env(),
             tty: payload.tty,
-            cols: 80,
-            rows: 24,
+            cols: payload.cols.unwrap_or(80),
+            rows: payload.rows.unwrap_or(24),
             call_id: Some(payload.call_id.clone()),
-            terminal_id: None,
+            terminal_id: Some(session_id.clone()),
             max_output_bytes: payload.max_output_bytes.unwrap_or(DEFAULT_OUTPUT_BYTES_CAP),
             timeout_ms: payload.timeout_ms,
         };
@@ -384,6 +388,10 @@ impl ShellSessionManager {
                 accepted = false;
                 stdin_closed = true;
             }
+        }
+        if payload.close_stdin {
+            handle.close_stdin();
+            stdin_closed = true;
         }
 
         let read_wait = if payload.wait_ms.is_some() {
@@ -525,6 +533,7 @@ impl ShellSessionManager {
             session_id: session_id.clone(),
             call_id: spec.call_id.clone(),
             terminal_id: terminal_id.clone(),
+            tty: spec.tty,
             state: ToolShellSessionState::Running,
             exit_code: None,
             handle,
@@ -597,12 +606,14 @@ impl ShellSessionManager {
             let Some(session) = table.sessions.get_mut(session_id) else {
                 return;
             };
-            let stream =
-                if session.terminal_id.is_some() && matches!(stream, ShellOutputStream::Stdout) {
-                    ShellOutputStream::Pty
-                } else {
-                    stream
-                };
+            let stream = if session.tty
+                && session.terminal_id.is_some()
+                && matches!(stream, ShellOutputStream::Stdout)
+            {
+                ShellOutputStream::Pty
+            } else {
+                stream
+            };
             let chunk = session.buffer.push(stream, data.clone());
             let live_output = session.live_output.push(&chunk.data);
             session.updated_at = Instant::now();
@@ -799,7 +810,13 @@ fn shell_program_and_args(command: &str) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
         let command = format!(
-            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = $OutputEncoding; {command}"
+            "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); \
+             [Console]::OutputEncoding = $OutputEncoding; \
+             & {{ {command} }} | Out-String -Width 200 -Stream; \
+             $__agentdash_success = $?; \
+             $__agentdash_native_exit = $LASTEXITCODE; \
+             if ($null -ne $__agentdash_native_exit) {{ exit $__agentdash_native_exit }}; \
+             if ($__agentdash_success) {{ exit 0 }} else {{ exit 1 }}"
         );
         (
             "powershell.exe".to_string(),
@@ -898,7 +915,8 @@ mod tests {
             .read_session(session_id, after_seq, Some(5_000), Some(16 * 1024))
             .await
             .expect("read shell session");
-        for _ in 0..20 {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
             if is_terminal_shell_state(latest.state) {
                 return latest;
             }
@@ -924,12 +942,15 @@ mod tests {
             .start_shell(ToolShellExecPayload {
                 call_id: "call-1".to_string(),
                 command: command_print_then_sleep(),
+                terminal_id: None,
                 mount_root_ref: workspace.path().to_string_lossy().to_string(),
                 cwd: None,
                 timeout_ms: None,
                 yield_time_ms: Some(1_500),
                 max_output_bytes: Some(16 * 1024),
                 tty: false,
+                cols: None,
+                rows: None,
             })
             .await
             .expect("start shell");
@@ -976,12 +997,15 @@ mod tests {
             .start_shell(ToolShellExecPayload {
                 call_id: "call-stdin".to_string(),
                 command: command.to_string(),
+                terminal_id: None,
                 mount_root_ref: workspace.path().to_string_lossy().to_string(),
                 cwd: None,
                 timeout_ms: None,
                 yield_time_ms: Some(10),
                 max_output_bytes: Some(16 * 1024),
                 tty: false,
+                cols: None,
+                rows: None,
             })
             .await
             .expect("start shell");
@@ -990,6 +1014,7 @@ mod tests {
             .input_shell(ToolShellInputPayload {
                 session_id: response.session_id,
                 data: "hello\n".to_string(),
+                close_stdin: false,
                 wait_ms: Some(2_000),
                 max_bytes: Some(16 * 1024),
             })
@@ -1029,12 +1054,15 @@ mod tests {
             .start_shell(ToolShellExecPayload {
                 call_id: "call-powershell-objects".to_string(),
                 command,
+                terminal_id: None,
                 mount_root_ref: workspace_root.to_string_lossy().to_string(),
                 cwd: None,
                 timeout_ms: None,
                 yield_time_ms: Some(5_000),
                 max_output_bytes: Some(64 * 1024),
                 tty: false,
+                cols: None,
+                rows: None,
             })
             .await
             .expect("start powershell object command");
@@ -1080,12 +1108,15 @@ mod tests {
             .start_shell(ToolShellExecPayload {
                 call_id: "call-timeout".to_string(),
                 command: command_sleep_long(),
+                terminal_id: None,
                 mount_root_ref: workspace.path().to_string_lossy().to_string(),
                 cwd: None,
                 timeout_ms: Some(300),
                 yield_time_ms: Some(50),
                 max_output_bytes: Some(16 * 1024),
                 tty: false,
+                cols: None,
+                rows: None,
             })
             .await
             .expect("start shell");
@@ -1119,12 +1150,15 @@ mod tests {
             .start_shell(ToolShellExecPayload {
                 call_id: "call-trunc".to_string(),
                 command: command.to_string(),
+                terminal_id: None,
                 mount_root_ref: workspace.path().to_string_lossy().to_string(),
                 cwd: None,
                 timeout_ms: None,
                 yield_time_ms: Some(2_000),
                 max_output_bytes: Some(80),
                 tty: false,
+                cols: None,
+                rows: None,
             })
             .await
             .expect("start shell");

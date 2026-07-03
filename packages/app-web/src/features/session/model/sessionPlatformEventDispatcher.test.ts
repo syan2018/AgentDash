@@ -136,6 +136,33 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(terminal?.state).toBe("lost");
   });
 
+  it("keeps output and state projection on the same terminal id when output arrives first", () => {
+    expect(dispatchSessionPlatformEvent(platformEvent(1, {
+      kind: "terminal_output",
+      data: {
+        terminal_id: "term-running-1",
+        data: "ready\n",
+      },
+    }))).toBe(true);
+
+    expect(dispatchSessionPlatformEvent(platformEvent(2, {
+      kind: "terminal_state_changed",
+      data: {
+        terminal_id: "term-running-1",
+        state: "running",
+        exit_code: null,
+        message: null,
+      },
+    }))).toBe(true);
+
+    const store = useTerminalStore.getState();
+    const terminal = store.getTerminalsForSession("session-1")[0];
+    expect(store.getOutput("term-running-1")).toBe("ready\n");
+    expect(terminal?.id).toBe("term-running-1");
+    expect(terminal?.capability).toBe("state_only");
+    expect(terminal?.state).toBe("running");
+  });
+
   it("未知 platform event 不消费", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
       kind: "mailbox_state_changed",

@@ -8,7 +8,7 @@ use crate::inline_persistence::InlineContentOverlay;
 use crate::service::VfsService;
 use crate::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
-    ShellExecTool,
+    ShellExecTool, ShellTerminalRegistry,
 };
 
 #[derive(Clone)]
@@ -16,6 +16,7 @@ pub struct VfsToolFactory {
     service: Arc<VfsService>,
     materialization: Option<Arc<VfsMaterializationService>>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
+    terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
 }
 
 impl VfsToolFactory {
@@ -24,6 +25,7 @@ impl VfsToolFactory {
             service,
             materialization: None,
             shell_output_registry: None,
+            terminal_registry: None,
         }
     }
 
@@ -40,6 +42,14 @@ impl VfsToolFactory {
         shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     ) -> Self {
         self.shell_output_registry = shell_output_registry;
+        self
+    }
+
+    pub fn with_terminal_registry(
+        mut self,
+        terminal_registry: Option<Arc<dyn ShellTerminalRegistry>>,
+    ) -> Self {
+        self.terminal_registry = terminal_registry;
         self
     }
 
@@ -132,6 +142,9 @@ impl VfsToolFactory {
                 .with_capability_state(input.flow.clone());
             if let Some(ref registry) = self.shell_output_registry {
                 shell_tool = shell_tool.with_shell_output_registry(registry.clone());
+            }
+            if let Some(ref registry) = self.terminal_registry {
+                shell_tool = shell_tool.with_terminal_registry(registry.clone());
             }
             tools.push(Arc::new(shell_tool));
         }

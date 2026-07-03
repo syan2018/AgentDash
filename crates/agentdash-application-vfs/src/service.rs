@@ -698,6 +698,98 @@ impl VfsService {
         result
     }
 
+    pub async fn shell_session_read_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        request: &ShellSessionReadRequest,
+    ) -> Result<ShellSessionSnapshot, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            access_policy,
+            mount_id,
+            MountCapability::Exec,
+            RuntimeVfsOperation::Exec,
+            "",
+            true,
+            None,
+        )?;
+        dispatch
+            .provider
+            .shell_session_read(&dispatch.mount, request, &dispatch.ctx)
+            .await
+    }
+
+    pub async fn shell_session_write_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        request: &ShellSessionWriteRequest,
+    ) -> Result<ShellSessionWriteResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            access_policy,
+            mount_id,
+            MountCapability::Exec,
+            RuntimeVfsOperation::Exec,
+            "",
+            true,
+            None,
+        )?;
+        dispatch
+            .provider
+            .shell_session_write(&dispatch.mount, request, &dispatch.ctx)
+            .await
+    }
+
+    pub async fn shell_session_resize_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        request: &ShellSessionResizeRequest,
+    ) -> Result<(), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            access_policy,
+            mount_id,
+            MountCapability::Exec,
+            RuntimeVfsOperation::Exec,
+            "",
+            true,
+            None,
+        )?;
+        dispatch
+            .provider
+            .shell_session_resize(&dispatch.mount, request, &dispatch.ctx)
+            .await
+    }
+
+    pub async fn shell_session_terminate_with_policy(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        request: &ShellSessionTerminateRequest,
+    ) -> Result<ShellSessionTerminateResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            access_policy,
+            mount_id,
+            MountCapability::Exec,
+            RuntimeVfsOperation::Exec,
+            "",
+            true,
+            None,
+        )?;
+        dispatch
+            .provider
+            .shell_session_terminate(&dispatch.mount, request, &dispatch.ctx)
+            .await
+    }
+
     pub async fn stat(
         &self,
         vfs: &Vfs,
@@ -1166,7 +1258,13 @@ impl VfsService {
             cwd: dispatch.path,
             command: request.command.clone(),
             timeout_ms: request.timeout_ms,
+            terminal_id: request.terminal_id.clone(),
             streaming_call_id: request.streaming_call_id.clone(),
+            yield_time_ms: request.yield_time_ms,
+            max_output_bytes: request.max_output_bytes,
+            tty: request.tty,
+            cols: request.cols,
+            rows: request.rows,
         };
         let started_at = Instant::now();
         let result = dispatch

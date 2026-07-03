@@ -142,7 +142,6 @@ export function SingleEntry({
           status={card.status}
           isPendingApproval={isPendingApproval}
           agentRunTarget={agentRunTarget}
-          sessionId={sessionId ?? undefined}
           itemId={threadItem.id}
           durationMs={card.durationMs}
         >

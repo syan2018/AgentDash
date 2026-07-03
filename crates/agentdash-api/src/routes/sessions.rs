@@ -28,8 +28,7 @@ use agentdash_application_runtime_session::session::{
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
-    RejectToolCallResponse, RollbackSessionProjectionRequest,
+    CreateSessionForkRequest, DeleteSessionResponse, RollbackSessionProjectionRequest,
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
     SessionContextUsageCategoryResponse, SessionContextUsageItemResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
@@ -48,8 +47,8 @@ use agentdash_domain::workflow::{LifecycleRun, RuntimeSessionExecutionAnchor};
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest,
-    SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
+    ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, SessionEventsQuery,
+    SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
 /// Session trace 权限检查通过 RuntimeSessionExecutionAnchor 进入 LifecycleRun project。
@@ -123,14 +122,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/sessions/{id}/context/audit",
             axum::routing::get(get_session_context_audit),
-        )
-        .route(
-            "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
-            axum::routing::post(approve_tool_call),
-        )
-        .route(
-            "/sessions/{id}/tool-approvals/{tool_call_id}/reject",
-            axum::routing::post(reject_tool_call),
         )
         .route(
             "/sessions/{id}/stream/ndjson",
@@ -1098,59 +1089,6 @@ pub async fn delete_session(
     Ok(Json(DeleteSessionResponse {
         deleted: true,
         session_id,
-    }))
-}
-
-pub async fn approve_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((session_id, tool_call_id)): Path<(String, String)>,
-) -> Result<Json<ApproveToolCallResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .session_control
-        .approve_tool_call(&session_id, &tool_call_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(ApproveToolCallResponse {
-        approved: true,
-        session_id,
-        tool_call_id,
-    }))
-}
-
-pub async fn reject_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((session_id, tool_call_id)): Path<(String, String)>,
-    Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<Json<RejectToolCallResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    state
-        .services
-        .session_control
-        .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(RejectToolCallResponse {
-        rejected: true,
-        session_id,
-        tool_call_id,
     }))
 }
 

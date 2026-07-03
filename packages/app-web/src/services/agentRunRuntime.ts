@@ -1,11 +1,15 @@
 import { api, type ApiHttpError } from "../api/client";
 import type {
-  ApproveToolCallResponse,
-  RejectToolCallResponse,
   SessionEventsPageResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
-import type { AgentConversationFeedSnapshot } from "../generated/workflow-contracts";
+import type {
+  AgentRunToolCallApprovalResponse,
+  AgentRunToolCallRejectionResponse,
+} from "../generated/agent-run-mailbox-contracts";
+import type {
+  AgentConversationFeedSnapshot,
+} from "../generated/workflow-contracts";
 import type { SessionRuntimeControlView } from "../types";
 
 export interface AgentRunRuntimeTarget {
@@ -65,8 +69,8 @@ export async function fetchAgentRunRuntimeControl(
 export async function approveAgentRunToolCall(
   target: AgentRunRuntimeTarget,
   toolCallId: string,
-): Promise<ApproveToolCallResponse> {
-  return api.post<ApproveToolCallResponse>(
+): Promise<AgentRunToolCallApprovalResponse> {
+  return api.post<AgentRunToolCallApprovalResponse>(
     agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/approve`),
     {},
   );
@@ -76,8 +80,8 @@ export async function rejectAgentRunToolCall(
   target: AgentRunRuntimeTarget,
   toolCallId: string,
   reason?: string,
-): Promise<RejectToolCallResponse> {
-  return api.post<RejectToolCallResponse>(
+): Promise<AgentRunToolCallRejectionResponse> {
+  return api.post<AgentRunToolCallRejectionResponse>(
     agentRunScopedPath(target, `/runtime/tool-approvals/${encodeURIComponent(toolCallId)}/reject`),
     { reason },
   );

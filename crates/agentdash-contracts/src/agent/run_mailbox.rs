@@ -107,6 +107,24 @@ pub struct AgentRunMessageAcceptedRefs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct AgentRunToolCallApprovalResponse {
+    pub approved: bool,
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub tool_call_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunToolCallRejectionResponse {
+    pub rejected: bool,
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub tool_call_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct MailboxMessageView {
     pub id: String,
     pub origin: MailboxMessageOrigin,

@@ -10,7 +10,8 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse,
     AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+    AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
+    AgentRunToolCallRejectionResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
     RuntimeSessionCommandStateDto, SteeringStopEffect,
@@ -308,6 +309,8 @@ fn main() {
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
+            export_all::<AgentRunToolCallApprovalResponse>(dir);
+            export_all::<AgentRunToolCallRejectionResponse>(dir);
             export_all::<MailboxMessageStatus>(dir);
             export_all::<MailboxMessageOrigin>(dir);
             export_all::<MailboxSourceIdentity>(dir);

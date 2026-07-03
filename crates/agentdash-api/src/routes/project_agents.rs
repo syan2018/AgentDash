@@ -286,12 +286,6 @@ pub async fn create_project_agent_run(
         },
         initial_message: agent_run_message_command_response(dispatch.initial_message),
         effective_executor_config,
-        runtime_session_id: dispatch.runtime_session_id,
-        turn_id: if dispatch.turn_id.is_empty() {
-            None
-        } else {
-            Some(dispatch.turn_id)
-        },
         agent: summary,
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),

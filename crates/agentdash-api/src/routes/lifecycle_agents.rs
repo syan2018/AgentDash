@@ -28,7 +28,8 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
     AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
-    AgentRunMessageCommandResponse, MailboxMessageView, MailboxStateView,
+    AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
+    AgentRunToolCallRejectionResponse, MailboxMessageView, MailboxStateView,
 };
 use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{
@@ -1240,14 +1241,15 @@ async fn approve_agent_run_tool_call(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::approve_tool_call(
-        State(state),
-        CurrentUser(current_user),
-        Path((runtime_session_id, tool_call_id)),
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
     )
-    .await
+    .await?;
+    approve_tool_call_for_agent_run_delivery(state.as_ref(), &context, tool_call_id).await
 }
 
 async fn reject_agent_run_tool_call(
@@ -1256,15 +1258,69 @@ async fn reject_agent_run_tool_call(
     Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
     Json(req): Json<RejectToolApprovalRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::reject_tool_call(
-        State(state),
-        CurrentUser(current_user),
-        Path((runtime_session_id, tool_call_id)),
-        Json(req),
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
     )
-    .await
+    .await?;
+    reject_tool_call_for_agent_run_delivery(state.as_ref(), &context, tool_call_id, req.reason)
+        .await
+}
+
+async fn approve_tool_call_for_agent_run_delivery(
+    state: &AppState,
+    context: &AgentRunContext,
+    tool_call_id: String,
+) -> Result<Json<AgentRunToolCallApprovalResponse>, ApiError> {
+    let session_id = delivery_runtime_session_from_agent_run_context(context)?;
+    state
+        .services
+        .session_control
+        .approve_tool_call(&session_id, &tool_call_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(Json(AgentRunToolCallApprovalResponse {
+        approved: true,
+        run_ref: LifecycleRunRefDto {
+            run_id: context.run.id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: context.run.id.to_string(),
+            agent_id: context.agent.id.to_string(),
+        },
+        tool_call_id,
+    }))
+}
+
+async fn reject_tool_call_for_agent_run_delivery(
+    state: &AppState,
+    context: &AgentRunContext,
+    tool_call_id: String,
+    reason: Option<String>,
+) -> Result<Json<AgentRunToolCallRejectionResponse>, ApiError> {
+    let session_id = delivery_runtime_session_from_agent_run_context(context)?;
+    state
+        .services
+        .session_control
+        .reject_tool_call(&session_id, &tool_call_id, reason)
+        .await
+        .map_err(ApiError::from)?;
+
+    Ok(Json(AgentRunToolCallRejectionResponse {
+        rejected: true,
+        run_ref: LifecycleRunRefDto {
+            run_id: context.run.id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: context.run.id.to_string(),
+            agent_id: context.agent.id.to_string(),
+        },
+        tool_call_id,
+    }))
 }
 
 async fn resolve_agent_run_delivery_runtime(
@@ -1281,7 +1337,13 @@ async fn resolve_agent_run_delivery_runtime(
         ProjectPermission::Use,
     )
     .await?;
-    context.delivery_runtime_session_id.ok_or_else(|| {
+    delivery_runtime_session_from_agent_run_context(&context)
+}
+
+fn delivery_runtime_session_from_agent_run_context(
+    context: &AgentRunContext,
+) -> Result<String, ApiError> {
+    context.delivery_runtime_session_id.clone().ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id

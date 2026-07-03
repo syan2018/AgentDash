@@ -46,6 +46,10 @@ export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandR
 
 export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
+export type AgentRunToolCallApprovalResponse = { approved: boolean, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, tool_call_id: string, };
+
+export type AgentRunToolCallRejectionResponse = { rejected: boolean, run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, tool_call_id: string, };
+
 export type BackendSelectionModeDto = "explicit" | "auto_idle" | "workspace_binding";
 
 export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backend_id?: string, };

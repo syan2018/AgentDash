@@ -222,13 +222,13 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         if (agentRunTarget && shouldResetState) {
           const feed = await fetchAgentRunConversationFeed(agentRunTarget);
           const feedEntries = agentRunConversationFeedEntries(feed);
-          const feedHeadSeq = feed == null ? 0 : Number(feed.head_event_seq);
+          const runtimeReplayStartSeq = feed == null ? 0 : Number(feed.runtime_replay_start_seq);
           nextState = createInitialStreamState([
             ...initialEntriesRef.current,
             ...feedEntries,
           ]);
-          nextState = { ...nextState, lastAppliedSeq: feedHeadSeq };
-          afterSeq = feedHeadSeq;
+          nextState = { ...nextState, lastAppliedSeq: runtimeReplayStartSeq };
+          afterSeq = runtimeReplayStartSeq;
           if (!mountedRef.current || cancelled) return;
           setStreamState(nextState);
           stateRef.current = nextState;

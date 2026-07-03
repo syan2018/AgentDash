@@ -2,7 +2,7 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use agentdash_agent::{AgentMessage, ContentPart, MessageRef, ProjectedEntry};
+use agentdash_agent::MessageRef;
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
@@ -10,6 +10,11 @@ use agentdash_application::runtime_session_agent_run_bridge::{
 use agentdash_application_agentrun::AgentRunRepositorySet;
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
+};
+use agentdash_application_agentrun::agent_run::{
+    AgentConversationContentPartModel, AgentConversationFeedInput,
+    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
+    AgentConversationMessageRoleModel,
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCommandReceiptView,
@@ -415,183 +420,126 @@ pub async fn get_agent_run_conversation_feed(
         .build_agent_context_envelope(runtime_session_id)
         .await
         .map_err(ApiError::from)?;
-    let projection_kind = envelope.projection_kind.as_str().to_string();
-    let projection_version = envelope.projection_version;
-    let head_event_seq = envelope.head_event_seq;
-    let active_compaction_id = envelope.active_compaction_id.clone();
-    let messages = envelope
-        .into_projected_transcript()
-        .entries
-        .into_iter()
-        .filter_map(agent_conversation_feed_message)
-        .collect::<Vec<_>>();
+    let model = AgentConversationFeedProjector::derive(AgentConversationFeedInput {
+        run: context.run,
+        agent: context.agent,
+        runtime_session_id: runtime_session_id.to_string(),
+        envelope,
+    });
 
-    Ok(Json(AgentConversationFeedSnapshot {
-        run_ref: LifecycleRunRefDto {
-            run_id: context.run.id.to_string(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: context.run.id.to_string(),
-            agent_id: context.agent.id.to_string(),
-        },
-        runtime_session_ref: Some(RuntimeSessionRefDto {
-            runtime_session_id: runtime_session_id.to_string(),
-        }),
-        projection_kind,
-        projection_version,
-        head_event_seq,
-        active_compaction_id,
-        message_count: messages.len() as u64,
-        messages,
-    }))
+    Ok(Json(agent_conversation_feed_snapshot(model)))
 }
 
-fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConversationFeedMessage> {
-    let role = agent_conversation_message_role(&entry.message);
-    let text = agent_conversation_message_text(&entry.message);
-    let content_parts = agent_conversation_content_parts(&entry.message);
-    let tool_calls = agent_conversation_tool_calls(&entry.message);
-    let tool_result = agent_conversation_tool_result(&entry.message);
-    if text.trim().is_empty()
-        && content_parts.is_empty()
-        && tool_calls.is_empty()
-        && tool_result.is_none()
-    {
-        return None;
-    }
-    let timestamp_ms = agent_conversation_message_timestamp_ms(&entry.message);
-    Some(AgentConversationFeedMessage {
-        message_ref: AgentConversationMessageRefView {
-            turn_id: entry.message_ref.turn_id,
-            entry_index: entry.message_ref.entry_index,
+fn agent_conversation_feed_snapshot(
+    model: AgentConversationFeedModel,
+) -> AgentConversationFeedSnapshot {
+    let messages = model
+        .messages
+        .into_iter()
+        .map(agent_conversation_feed_message)
+        .collect::<Vec<_>>();
+    AgentConversationFeedSnapshot {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.clone(),
         },
-        role,
-        text,
-        content_parts,
-        tool_calls,
-        tool_result,
-        origin: entry.origin.as_str().to_string(),
-        synthetic: entry.synthetic,
-        projection_kind: entry.projection_kind.as_str().to_string(),
-        source_event_seq: entry.source_event_seq,
-        source_range: entry
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id,
+            agent_id: model.agent_id,
+        },
+        runtime_session_ref: Some(RuntimeSessionRefDto {
+            runtime_session_id: model.runtime_session_id,
+        }),
+        projection_kind: model.projection_kind,
+        projection_version: model.projection_version,
+        head_event_seq: model.head_event_seq,
+        runtime_replay_start_seq: model.runtime_replay_start_seq,
+        active_compaction_id: model.active_compaction_id,
+        message_count: messages.len() as u64,
+        messages,
+    }
+}
+
+fn agent_conversation_feed_message(
+    message: AgentConversationFeedMessageModel,
+) -> AgentConversationFeedMessage {
+    AgentConversationFeedMessage {
+        message_ref: AgentConversationMessageRefView {
+            turn_id: message.message_ref.turn_id,
+            entry_index: message.message_ref.entry_index,
+        },
+        role: agent_conversation_message_role(message.role),
+        text: message.text,
+        content_parts: message
+            .content_parts
+            .into_iter()
+            .map(agent_conversation_content_part)
+            .collect(),
+        tool_calls: message
+            .tool_calls
+            .into_iter()
+            .map(|tool_call| AgentConversationToolCallView {
+                id: tool_call.id,
+                call_id: tool_call.call_id,
+                name: tool_call.name,
+                arguments: tool_call.arguments,
+            })
+            .collect(),
+        tool_result: message
+            .tool_result
+            .map(|tool_result| AgentConversationToolResultView {
+                tool_call_id: tool_result.tool_call_id,
+                call_id: tool_result.call_id,
+                tool_name: tool_result.tool_name,
+                details: tool_result.details,
+                is_error: tool_result.is_error,
+            }),
+        origin: message.origin,
+        synthetic: message.synthetic,
+        projection_kind: message.projection_kind,
+        source_event_seq: message.source_event_seq,
+        source_range: message
             .source_range
             .map(|range| AgentConversationSourceRangeView {
                 start_event_seq: range.start_event_seq,
                 end_event_seq: range.end_event_seq,
             }),
-        projection_segment_id: entry.projection_segment_id,
-        timestamp_ms,
-    })
-}
-
-fn agent_conversation_content_parts(
-    message: &AgentMessage,
-) -> Vec<AgentConversationContentPartView> {
-    let content = match message {
-        AgentMessage::User { content, .. }
-        | AgentMessage::Assistant { content, .. }
-        | AgentMessage::ToolResult { content, .. } => content,
-        AgentMessage::CompactionSummary { .. } => return Vec::new(),
-    };
-    content
-        .iter()
-        .map(|part| match part {
-            ContentPart::Text { text } => {
-                AgentConversationContentPartView::Text { text: text.clone() }
-            }
-            ContentPart::Image { mime_type, data } => AgentConversationContentPartView::Image {
-                mime_type: mime_type.clone(),
-                data: data.clone(),
-            },
-            ContentPart::Reasoning {
-                text,
-                id,
-                signature,
-            } => AgentConversationContentPartView::Reasoning {
-                text: text.clone(),
-                id: id.clone(),
-                signature: signature.clone(),
-            },
-        })
-        .collect()
-}
-
-fn agent_conversation_tool_calls(message: &AgentMessage) -> Vec<AgentConversationToolCallView> {
-    let AgentMessage::Assistant { tool_calls, .. } = message else {
-        return Vec::new();
-    };
-    tool_calls
-        .iter()
-        .map(|tool_call| AgentConversationToolCallView {
-            id: tool_call.id.clone(),
-            call_id: tool_call.call_id.clone(),
-            name: tool_call.name.clone(),
-            arguments: tool_call.arguments.clone(),
-        })
-        .collect()
-}
-
-fn agent_conversation_tool_result(
-    message: &AgentMessage,
-) -> Option<AgentConversationToolResultView> {
-    let AgentMessage::ToolResult {
-        tool_call_id,
-        call_id,
-        tool_name,
-        details,
-        is_error,
-        ..
-    } = message
-    else {
-        return None;
-    };
-    Some(AgentConversationToolResultView {
-        tool_call_id: tool_call_id.clone(),
-        call_id: call_id.clone(),
-        tool_name: tool_name.clone(),
-        details: details.clone(),
-        is_error: *is_error,
-    })
-}
-
-fn agent_conversation_message_role(message: &AgentMessage) -> AgentConversationMessageRole {
-    match message {
-        AgentMessage::User { .. } => AgentConversationMessageRole::User,
-        AgentMessage::Assistant { .. } => AgentConversationMessageRole::Assistant,
-        AgentMessage::ToolResult { .. } => AgentConversationMessageRole::ToolResult,
-        AgentMessage::CompactionSummary { .. } => AgentConversationMessageRole::CompactionSummary,
+        projection_segment_id: message.projection_segment_id,
+        timestamp_ms: message.timestamp_ms,
     }
 }
 
-fn agent_conversation_message_text(message: &AgentMessage) -> String {
-    match message {
-        AgentMessage::User { content, .. }
-        | AgentMessage::Assistant { content, .. }
-        | AgentMessage::ToolResult { content, .. } => content
-            .iter()
-            .filter_map(content_part_text)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        AgentMessage::CompactionSummary { summary, .. } => summary.trim().to_string(),
+fn agent_conversation_message_role(
+    role: AgentConversationMessageRoleModel,
+) -> AgentConversationMessageRole {
+    match role {
+        AgentConversationMessageRoleModel::User => AgentConversationMessageRole::User,
+        AgentConversationMessageRoleModel::Assistant => AgentConversationMessageRole::Assistant,
+        AgentConversationMessageRoleModel::ToolResult => AgentConversationMessageRole::ToolResult,
+        AgentConversationMessageRoleModel::CompactionSummary => {
+            AgentConversationMessageRole::CompactionSummary
+        }
     }
 }
 
-fn content_part_text(part: &ContentPart) -> Option<&str> {
+fn agent_conversation_content_part(
+    part: AgentConversationContentPartModel,
+) -> AgentConversationContentPartView {
     match part {
-        ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => Some(text.as_str()),
-        ContentPart::Image { .. } => None,
-    }
-}
-
-fn agent_conversation_message_timestamp_ms(message: &AgentMessage) -> Option<u64> {
-    match message {
-        AgentMessage::User { timestamp, .. }
-        | AgentMessage::Assistant { timestamp, .. }
-        | AgentMessage::ToolResult { timestamp, .. }
-        | AgentMessage::CompactionSummary { timestamp, .. } => *timestamp,
+        AgentConversationContentPartModel::Text { text } => {
+            AgentConversationContentPartView::Text { text }
+        }
+        AgentConversationContentPartModel::Image { mime_type, data } => {
+            AgentConversationContentPartView::Image { mime_type, data }
+        }
+        AgentConversationContentPartModel::Reasoning {
+            text,
+            id,
+            signature,
+        } => AgentConversationContentPartView::Reasoning {
+            text,
+            id,
+            signature,
+        },
     }
 }
 

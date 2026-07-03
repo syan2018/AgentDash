@@ -10,6 +10,7 @@ function feed(messages: AgentConversationFeedSnapshot["messages"]): AgentConvers
     projection_kind: "canonical",
     projection_version: 1,
     head_event_seq: 42,
+    runtime_replay_start_seq: 0,
     message_count: messages.length,
     messages,
   };

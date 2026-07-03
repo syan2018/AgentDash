@@ -10,6 +10,29 @@ import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
+  it("放行并渲染 session_branch_forked 事件", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_meta_update",
+        data: {
+          key: "session_branch_forked",
+          value: {
+            child_session_id: "sess-child",
+            parent_session_id: "sess-parent",
+            fork_point_event_seq: 42,
+            relation_kind: "fork",
+          },
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+    expect(markup).toContain("会话已分叉");
+    expect(markup).toContain("已从父会话分叉出当前会话");
+  });
+
   it("放行并渲染 context_frame 事件", () => {
     const frameData = sampleContextFrameData();
     const event: BackboneEvent = {

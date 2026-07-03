@@ -1331,6 +1331,8 @@ pub struct AgentConversationFeedSnapshot {
     pub projection_version: u64,
     #[ts(type = "number")]
     pub head_event_seq: u64,
+    #[ts(type = "number")]
+    pub runtime_replay_start_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_compaction_id: Option<String>,

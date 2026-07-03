@@ -1,5 +1,6 @@
 mod cancel_command;
 pub(crate) mod command_receipt;
+mod conversation_feed;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
@@ -26,6 +27,13 @@ pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };
 pub use command_receipt::AgentRunCommandReceiptView;
+pub use conversation_feed::{
+    AgentConversationContentPartModel, AgentConversationFeedInput,
+    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
+    AgentConversationMessageRefModel, AgentConversationMessageRoleModel,
+    AgentConversationSourceRangeModel, AgentConversationToolCallModel,
+    AgentConversationToolResultModel,
+};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,

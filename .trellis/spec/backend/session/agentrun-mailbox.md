@@ -246,3 +246,209 @@ completed terminal callback -> dequeue in-memory pending queue -> dispatch next 
 ```text
 BeforeStop/terminal fallback -> schedule(AgentRunTurnBoundary) -> claim one durable envelope -> continue or launch
 ```
+
+## Scenario: AgentRun Wait Activity Runtime Tool
+
+### 1. Scope / Trigger
+
+- Trigger: Agent needs a single operation to wait for parallel exec, companion/subagent, human response,
+  workflow gate and mailbox wake results without each source exposing its own wait protocol.
+- Scope: `agentdash-application::wait_activity`, runtime tool catalog assembly, `SessionTerminalCache`,
+  `LifecycleGateRepository`, `AgentRunMailboxRepository`, companion `wait=true` flow, and AgentRun workspace
+  waiting projection.
+
+This is a cross-layer contract because one Agent-facing tool must observe several source authorities while
+leaving result storage, terminal output, gate payloads, mailbox scheduling and frontend projection under their
+own owners.
+
+### 2. Signatures
+
+Application module layout:
+
+```text
+crates/agentdash-application/src/wait_activity/
+  mod.rs              # module declarations and public re-exports
+  provider.rs         # WaitRuntimeToolProvider and catalog binding
+  tool.rs             # WaitTool plus Agent-facing JSON schema execution
+  service.rs          # WaitActivityService orchestration and scope resolution
+  types.rs            # request/result/item/context/error types
+  sources/
+    exec.rs           # terminal cache adapter
+    lifecycle_gate.rs # companion/subagent/human/workflow gate adapter
+    mailbox.rs        # mailbox message observation adapter
+```
+
+Runtime provider and service surface:
+
+```rust
+pub struct WaitRuntimeToolProvider {
+    service: WaitActivityService,
+}
+
+impl SessionRuntimeToolProvider for WaitRuntimeToolProvider {
+    fn build_tools(&self, context: &SessionRuntimeToolBuildContext) -> Vec<Arc<dyn RuntimeTool>>;
+}
+
+pub struct WaitActivityService { /* source ports */ }
+
+impl WaitActivityService {
+    pub async fn wait(
+        &self,
+        request: WaitActivityRequest,
+        context: WaitToolContext,
+    ) -> Result<WaitActivityResult, WaitActivityError>;
+}
+```
+
+Tool name and input:
+
+```text
+tool name: wait
+capability_key: collaboration
+tool_path: collaboration::wait
+source: platform:collaboration
+```
+
+```json
+{
+  "activity_refs": ["term_..."],
+  "kinds": ["exec", "human"],
+  "timeout_ms": 10000,
+  "max_items": 10,
+  "after_cursor": "1783000000000"
+}
+```
+
+Tool output:
+
+```json
+{
+  "status": "ready",
+  "timed_out": false,
+  "cursor": "1783000001000",
+  "items": [
+    {
+      "activity_ref": "term_...",
+      "kind": "exec",
+      "status": "completed",
+      "source_ref": "term_...",
+      "correlation_ref": null,
+      "preview": "exit 0",
+      "result_refs": {},
+      "cursor": "1783000001000",
+      "next": {
+        "tool": "shell_exec",
+        "operation": "read",
+        "terminal_id": "term_..."
+      }
+    }
+  ]
+}
+```
+
+### 3. Contracts
+
+- `wait` is one AgentRun runtime tool registered by `WaitRuntimeToolProvider` in the session runtime tool
+  composer. The operation selector belongs inside the tool payload only when future wait sub-operations are
+  needed; source-specific top-level tools are not part of the contract because the Agent needs one generic
+  suspension point.
+- Runtime tool schema/admission metadata registers `wait` under the existing `collaboration` capability as
+  `collaboration::wait`. The reason is that `wait` observes structured request/response and activity-return
+  control-plane facts; it does not grant shell execution, file access, workflow mutation or mailbox draining.
+- `mod.rs` exposes the module boundary and re-exports the public provider/service/types. Tool execution,
+  catalog binding, orchestration and source adapters live in named files so the runtime tool entrypoint,
+  schema and source ownership stay searchable.
+- `activity_ref` uses the natural source root whenever one exists: exec uses `terminal_id`, LifecycleGate-backed
+  human/subagent/companion/workflow waits use `gate_id`, and mailbox wake observation uses `mailbox_message_id`.
+  A separate activity id is introduced only for a future source without a stable root.
+- `WaitToolContext` resolves the current delivery runtime session to `RuntimeSessionExecutionAnchor` when
+  possible and scopes gate/mailbox refs by `run_id + agent_id + frame_id`. RuntimeSession remains a delivery
+  trace ref; AgentRun control-plane identity owns the activity scope.
+- Exec waiting observes `SessionTerminalCache`; `starting | running` map to `running`, `exited` with zero exit
+  maps to `completed`, `exited` with non-zero exit maps to `failed`, `killed` maps to `cancelled`, and `lost`
+  maps to `lost`. Large stdout/stderr stays in terminal retained output and is fetched with
+  `shell_exec { operation: "read", terminal_id }`.
+- LifecycleGate waiting observes gate open/resolved facts. A wait call keeps refs it has already observed and
+  resolves them explicitly on later polls so a gate can still be returned after it leaves an open-gate list.
+  Timeout is a wait-call result and does not resolve, cancel or close the gate.
+- Companion `wait=true` and human wait flows call `WaitActivityService` for blocking observation, then read the
+  resolved gate payload as the result body source. Result delivery to a parent Agent still goes through the
+  mailbox source identity and scheduler boundary.
+- Mailbox waiting observes wake/result/completion messages and mailbox state changes. It does not claim,
+  drain, launch, steer or resume turns; scheduler remains the delivery authority.
+- AgentRun workspace snapshot can project current wait facts through `ConversationWaitingItemView`. Running exec
+  rows use `wait_id=terminal_id`, `gate_id=terminal_id`, `kind="exec"` and `source_ref=terminal_id`; terminal
+  output remains owned by the terminal projection.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `activity_refs` and `kinds` are both empty | Observe current AgentRun waitable sources in scope. |
+| explicit exec `terminal_id` belongs to another delivery runtime session | Omit it from results. |
+| explicit gate ref belongs to another run | Omit it from results. |
+| same-run child gate is observed by a parent/subagent wait | Return the scoped gate activity when it becomes ready. |
+| explicit mailbox message belongs to another run or agent | Omit it from results. |
+| `timeout_ms` exceeds server cap | Apply the cap and return a normal wait result. |
+| no relevant item changes before timeout | Return `status="timed_out"` and `timed_out=true`; source activity remains alive. |
+| `max_items` is missing or outside bounds | Apply the service default/bounds before returning summaries. |
+| `after_cursor` is present | Return only items updated after the cursor while keeping observed refs for the same wait call. |
+| exec completes with non-zero exit code | Return `kind="exec"`, `status="failed"` and a `shell_exec read` continuation. |
+| LifecycleGate resolves after leaving open projection | Return the resolved gate through its observed natural ref. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Agent starts a shell command, receives `terminal_id`, calls `wait(activity_refs=[terminal_id])`, then
+  reads output through `shell_exec(operation="read", terminal_id=...)` after completion.
+- Good: `companion_request(wait=true)` creates a LifecycleGate, waits through `WaitActivityService`, and returns
+  the resolved payload summary without closing the gate on timeout.
+- Base: Agent calls `wait(kinds=["human"])` and receives only current AgentRun human-response gates.
+- Base: AgentRun workspace shows a running exec row from terminal cache while terminal output remains in the
+  terminal tab/projection.
+- Bad: runtime tool, provider, service and source adapters are all implemented in the module root file, because
+  catalog registration, schema review and source adapter extension then require reading one mixed ownership unit.
+- Bad: wait drains mailbox messages directly, because mailbox scheduling, dedup and recovery must remain under
+  the scheduler.
+
+### 6. Tests Required
+
+- Runtime tool catalog test asserts `wait` is present after session tool composition.
+- Wait service tests cover timeout without cancellation, `after_cursor`, max item bounding and scoped explicit refs.
+- Exec adapter tests cover running timeout, completed zero exit, failed non-zero exit and `shell_exec read`
+  continuation shape.
+- LifecycleGate adapter tests cover open/resolved gates, same-run child gate visibility and resolved-after-open-list
+  behavior.
+- Companion wait tests assert `wait=true` uses `WaitActivityService` and preserves existing payload/result semantics.
+- Mailbox adapter tests assert wake/result observation does not claim or drain messages.
+- AgentRun workspace projection tests assert running exec terminal rows appear as `ConversationWaitingItemView`
+  entries without adding terminal output to mailbox messages.
+- Static grep/check tests assert no source-specific `wait_exec`/`wait_human` top-level tools and no product
+  `/sessions/*` wait/control route are introduced.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+wait_activity/mod.rs
+  -> WaitTool
+  -> WaitRuntimeToolProvider
+  -> WaitActivityService
+  -> exec/gate/mailbox polling details
+```
+
+#### Correct
+
+```text
+wait_activity/mod.rs
+  -> pub mod provider
+  -> pub mod service
+  -> pub mod tool
+  -> pub mod types
+  -> pub mod sources
+
+provider.rs -> catalog binding
+tool.rs     -> Agent-facing schema and RuntimeTool implementation
+service.rs  -> wait orchestration and scope
+sources/*   -> source authority adapters
+```

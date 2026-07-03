@@ -8,11 +8,13 @@ use async_trait::async_trait;
 use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
+use crate::wait_activity::WaitActivityService;
 
 #[derive(Clone)]
 pub struct CollaborationRuntimeToolProvider {
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
+    wait_service: Option<WaitActivityService>,
 }
 
 impl CollaborationRuntimeToolProvider {
@@ -23,7 +25,13 @@ impl CollaborationRuntimeToolProvider {
         Self {
             repos,
             session_services_handle,
+            wait_service: None,
         }
+    }
+
+    pub fn with_wait_service(mut self, wait_service: WaitActivityService) -> Self {
+        self.wait_service = Some(wait_service);
+        self
     }
 }
 
@@ -49,12 +57,18 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
             "companion_request",
             Some(ToolCluster::Collaboration),
         ) {
+            let wait_service = self.wait_service.clone().ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "companion_request 需要 WaitActivityService 才能构建统一等待路径".to_string(),
+                )
+            })?;
             tools.push(Arc::new(CompanionRequestTool::new(
                 self.repos.project_agent_repo.clone(),
                 self.repos.clone(),
                 self.session_services_handle.clone(),
                 companion_tool_context.clone(),
                 flow.companion.agents.clone(),
+                wait_service,
             )));
         }
         if flow.is_capability_tool_enabled(

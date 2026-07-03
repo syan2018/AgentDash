@@ -118,7 +118,8 @@ pub const CLUSTER_READ_TOOLS: &[&str] = &["mounts_list", "fs_read", "fs_glob", "
 pub const CLUSTER_WRITE_TOOLS: &[&str] = &["fs_apply_patch"];
 pub const CLUSTER_EXECUTE_TOOLS: &[&str] = &["shell_exec"];
 pub const CLUSTER_WORKFLOW_TOOLS: &[&str] = &["complete_lifecycle_node"];
-pub const CLUSTER_COLLABORATION_TOOLS: &[&str] = &["companion_request", "companion_respond"];
+pub const CLUSTER_COLLABORATION_TOOLS: &[&str] =
+    &["companion_request", "companion_respond", "wait"];
 pub const CLUSTER_TASK_TOOLS: &[&str] = &["task_read", "task_write"];
 pub const CLUSTER_WORKSPACE_MODULE_TOOLS: &[&str] = &[
     "workspace_module_list",
@@ -327,6 +328,13 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
             "companion_respond",
             "Companion Respond",
             "回传 companion 协作请求结果",
+            ToolCluster::Collaboration,
+            CAP_COLLABORATION,
+        ),
+        ToolDescriptor::platform(
+            "wait",
+            "Wait",
+            "等待当前 AgentRun 范围内的 exec、human、subagent、companion 或 mailbox 活动返回",
             ToolCluster::Collaboration,
             CAP_COLLABORATION,
         ),
@@ -854,6 +862,10 @@ mod tests {
         );
         assert_eq!(cluster_tools(ToolCluster::Write), &["fs_apply_patch"]);
         assert_eq!(cluster_tools(ToolCluster::Execute), &["shell_exec"]);
+        assert_eq!(
+            cluster_tools(ToolCluster::Collaboration),
+            &["companion_request", "companion_respond", "wait"]
+        );
     }
 
     #[test]

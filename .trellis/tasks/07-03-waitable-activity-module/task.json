@@ -3,7 +3,7 @@
   "name": "waitable-activity-module",
   "title": "补齐通用 waitable activity 与回传闭环",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

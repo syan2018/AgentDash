@@ -13,6 +13,7 @@ use agentdash_application::runtime_tools::{
     SharedSessionToolServicesHandle, TaskRuntimeToolProvider, VfsRuntimeToolProvider,
     WorkflowRuntimeToolProvider,
 };
+use agentdash_application::wait_activity::{WaitActivityService, WaitRuntimeToolProvider};
 use agentdash_application_agentrun::agent_run::{
     AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
     AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
@@ -487,6 +488,9 @@ fn build_session_runtime_tool_composer(
         ),
     );
 
+    let terminal_cache = deps.terminal_cache.clone();
+    let wait_service =
+        WaitActivityService::from_repository_set(deps.repos.clone(), terminal_cache.clone());
     let vfs_provider = VfsRuntimeToolProvider::new(deps.vfs_service, Some(inline_persister))
         .with_materialization_service(deps.vfs_materialization_service)
         .with_shell_output_registry(deps.shell_output_registry)
@@ -502,8 +506,10 @@ fn build_session_runtime_tool_composer(
     let collaboration_provider = CollaborationRuntimeToolProvider::new(
         deps.repos.clone(),
         deps.session_services_handle.clone(),
-    );
+    )
+    .with_wait_service(wait_service.clone());
     let task_provider = TaskRuntimeToolProvider::new(deps.repos.clone());
+    let wait_provider = WaitRuntimeToolProvider::from_service(wait_service);
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
         deps.repos.project_extension_installation_repo.clone(),
         deps.repos.project_repo.clone(),
@@ -520,6 +526,7 @@ fn build_session_runtime_tool_composer(
         Arc::new(workflow_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(collaboration_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(task_provider) as Arc<dyn RuntimeToolProvider>,
+        Arc::new(wait_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workspace_module_provider) as Arc<dyn RuntimeToolProvider>,
     ]))
 }

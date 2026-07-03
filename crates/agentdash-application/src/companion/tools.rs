@@ -6,7 +6,9 @@ use agentdash_agent_protocol::{
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
-use agentdash_domain::workflow::{LifecycleGateRepository, LifecycleTaskPlanItem};
+#[cfg(test)]
+use agentdash_domain::workflow::LifecycleGateRepository;
+use agentdash_domain::workflow::LifecycleTaskPlanItem;
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::capability::CompanionAgentEntry;
@@ -46,12 +48,12 @@ use crate::runtime_session_agent_run_bridge::{
     agent_run_session_launch,
 };
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::wait_activity::{WaitActivityService, WaitToolContext};
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
 pub use agentdash_spi::CompanionSliceMode;
 
 const COMPANION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-const COMPANION_WAIT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 const COMPANION_WAIT_PREVIEW_CHARS: usize = 2_000;
 
 struct SelectedCompanionAgent {
@@ -240,6 +242,7 @@ enum CompanionGateWaitOutcome {
     TimedOut,
 }
 
+#[cfg(test)]
 async fn wait_for_lifecycle_gate_resolution(
     gate_repo: &dyn LifecycleGateRepository,
     gate_id: Uuid,
@@ -683,6 +686,7 @@ pub struct CompanionRequestTool {
     session_services_handle: SharedSessionToolServicesHandle,
     tool_context: CompanionToolContext,
     companion_agents: Vec<CompanionAgentEntry>,
+    wait_service: WaitActivityService,
 }
 
 impl CompanionRequestTool {
@@ -692,6 +696,7 @@ impl CompanionRequestTool {
         session_services_handle: SharedSessionToolServicesHandle,
         tool_context: CompanionToolContext,
         companion_agents: Vec<CompanionAgentEntry>,
+        wait_service: WaitActivityService,
     ) -> Self {
         Self {
             project_agent_repo,
@@ -699,6 +704,7 @@ impl CompanionRequestTool {
             session_services_handle,
             tool_context,
             companion_agents,
+            wait_service,
         }
     }
 }
@@ -1192,14 +1198,25 @@ impl CompanionRequestTool {
         gate_id: Uuid,
         cancel: CancellationToken,
     ) -> Result<CompanionGateWaitOutcome, AgentToolError> {
-        wait_for_lifecycle_gate_resolution(
-            self.repos.lifecycle_gate_repo.as_ref(),
-            gate_id,
-            cancel,
-            COMPANION_WAIT_TIMEOUT,
-            COMPANION_WAIT_POLL_INTERVAL,
-        )
-        .await
+        let payload = self
+            .wait_service
+            .wait_for_lifecycle_gate_payload(
+                WaitToolContext {
+                    delivery_runtime_session_id: self
+                        .tool_context
+                        .delivery_runtime_session_id()
+                        .map(str::to_string),
+                    turn_id: self.tool_context.turn_id().to_string(),
+                },
+                gate_id,
+                cancel,
+                COMPANION_WAIT_TIMEOUT,
+            )
+            .await?;
+        Ok(match payload {
+            Some(payload) => CompanionGateWaitOutcome::Resolved(payload),
+            None => CompanionGateWaitOutcome::TimedOut,
+        })
     }
 
     /// target=parent 的执行逻辑：打开 parent frame 持有的 durable gate。
@@ -1424,14 +1441,7 @@ impl CompanionRequestTool {
                 )));
             }
 
-            let wait_outcome = wait_for_lifecycle_gate_resolution(
-                self.repos.lifecycle_gate_repo.as_ref(),
-                gate_id,
-                cancel,
-                COMPANION_WAIT_TIMEOUT,
-                COMPANION_WAIT_POLL_INTERVAL,
-            )
-            .await?;
+            let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
 
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
                 return Ok(AgentToolResult {

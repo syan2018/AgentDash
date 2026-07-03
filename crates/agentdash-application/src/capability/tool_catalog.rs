@@ -180,7 +180,7 @@ fn capability_metadata(key: &str) -> (&'static str, &'static str) {
         CAP_SHELL_EXECUTE => ("Shell 执行", "执行 shell 命令（shell_exec）"),
         CAP_WORKSPACE_MODULE => ("Workspace Module", "模块创建、调用与展示，包含 Canvas"),
         CAP_WORKFLOW => ("工作流", "工作流汇报与推进"),
-        CAP_COLLABORATION => ("协作", "多 agent 协作通道"),
+        CAP_COLLABORATION => ("协作", "结构化协作请求、回应与活动回传"),
         CAP_STORY_MANAGEMENT => ("Story 管理", "创建 / 调整 Story"),
         CAP_TASK => ("Task", "读取 / 维护 run-scoped Task"),
         CAP_RELAY_MANAGEMENT => ("Relay 管理", "Relay 后端管理"),

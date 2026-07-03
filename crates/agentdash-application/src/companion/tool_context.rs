@@ -41,6 +41,10 @@ impl CompanionToolContext {
         &self.turn_id
     }
 
+    pub(crate) fn delivery_runtime_session_id(&self) -> Option<&str> {
+        self.delivery_runtime_session_id.as_deref()
+    }
+
     pub(crate) fn hook_runtime(&self) -> Option<&SharedHookRuntime> {
         self.hook_runtime.as_ref()
     }

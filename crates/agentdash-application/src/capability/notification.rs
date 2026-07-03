@@ -25,7 +25,7 @@ pub fn capability_description(key: &str) -> &'static str {
         CAP_SHELL_EXECUTE => "Shell 命令执行",
         CAP_WORKSPACE_MODULE => "Workspace Module 创建、调用与展示（含 Canvas）",
         CAP_WORKFLOW => "Lifecycle 推进与产物上报",
-        CAP_COLLABORATION => "Companion 协作 + Hook action 解析",
+        CAP_COLLABORATION => "结构化协作请求、回应与活动回传",
         CAP_TASK => "Task 读取与维护（task_read / task_write）",
         CAP_STORY_MANAGEMENT => "Story 上下文管理、Task 创建与批量拆解、状态推进",
         CAP_RELAY_MANAGEMENT => "项目管理、Story 创建与状态变更",

@@ -1,4 +1,4 @@
-﻿//! 工具 Schema 维度 — 追踪真正新增给 Agent 的工具 schema。
+//! 工具 Schema 维度 — 追踪真正新增给 Agent 的工具 schema。
 //!
 //! 路径级的屏蔽 / 恢复 / 移除归 `ToolPathDelta`，此处不冗余。
 
@@ -578,6 +578,7 @@ fn platform_mcp_scope_key(scope: PlatformMcpScope) -> &'static str {
 #[cfg(test)]
 mod tests {
     use agentdash_spi::hooks::ContextFrameSection;
+    use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
 
     use super::*;
 
@@ -622,5 +623,27 @@ mod tests {
             }
             other => panic!("unexpected section: {other:?}"),
         }
+    }
+
+    #[test]
+    fn runtime_tool_schema_assigns_collaboration_metadata_to_wait() {
+        let schemas = runtime_tool_schema_entries(vec![ToolDefinition {
+            name: "wait".to_string(),
+            description: "Wait for AgentRun activity".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        }]);
+
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0].name, "wait");
+        assert_eq!(
+            schemas[0].capability_key.as_deref(),
+            Some(CAP_COLLABORATION)
+        );
+        assert_eq!(schemas[0].source.as_deref(), Some("platform:collaboration"));
+        assert_eq!(schemas[0].tool_path.as_deref(), Some("collaboration::wait"));
+        assert_eq!(
+            schemas[0].context_usage_kind.as_deref(),
+            Some(context_usage_kind::SYSTEM_TOOLS)
+        );
     }
 }

@@ -12,11 +12,11 @@ use agentdash_spi::session_persistence::{
 use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
-    backbone_event_type_name, compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
-    json_string, lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_row,
-    projection_from_envelope, projection_head_from_row, projection_segment_from_row,
-    runtime_command_from_row, sqlx_to_session_store_error, terminal_effect_from_row,
-    title_source_to_str, validate_commit_session,
+    compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64, json_string,
+    lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_envelope,
+    persisted_event_from_row, projection_from_envelope, projection_head_from_row,
+    projection_segment_from_row, runtime_command_from_row, sqlx_to_session_store_error,
+    terminal_effect_from_row, title_source_to_str, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -345,37 +345,27 @@ impl SessionEventStore for PostgresSessionRepository {
             .map_err(sqlx_to_session_store_error)?;
         let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
         let projection = projection_from_envelope(envelope);
-        let persisted = PersistedSessionEvent {
-            session_id: session_id.to_string(),
+        let persisted = persisted_event_from_envelope(
+            session_id.to_string(),
             event_seq,
-            occurred_at_ms: committed_at_ms,
             committed_at_ms,
-            session_update_type: backbone_event_type_name(&envelope.event).to_string(),
-            turn_id: projection.turn_id.clone(),
-            entry_index: projection.entry_index,
-            tool_call_id: projection.tool_call_id.clone(),
-            ephemeral: false,
-            notification: envelope.clone(),
-        };
+            committed_at_ms,
+            envelope.clone(),
+        );
         let notification_json = json_string(&persisted.notification, "notification_json")?;
         let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
 
         sqlx::query(
             r#"
             INSERT INTO session_events (
-                session_id, event_seq, occurred_at_ms, committed_at_ms,
-                session_update_type, turn_id, entry_index, tool_call_id, notification_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                session_id, event_seq, occurred_at_ms, committed_at_ms, notification_json
+            ) VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(session_id)
         .bind(event_seq_db)
         .bind(persisted.occurred_at_ms)
         .bind(persisted.committed_at_ms)
-        .bind(&persisted.session_update_type)
-        .bind(&persisted.turn_id)
-        .bind(persisted.entry_index.map(i64::from))
-        .bind(&persisted.tool_call_id)
         .bind(notification_json)
         .execute(&mut *tx)
         .await
@@ -424,7 +414,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
-                   session_update_type, turn_id, entry_index, tool_call_id, notification_json
+                   notification_json
             FROM session_events
             WHERE session_id = $1 AND event_seq > $2 AND event_seq <= $3
             ORDER BY event_seq ASC
@@ -462,7 +452,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
-                   session_update_type, turn_id, entry_index, tool_call_id, notification_json
+                   notification_json
             FROM session_events
             WHERE session_id = $1 AND event_seq > $2
             ORDER BY event_seq ASC
@@ -500,7 +490,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
-                   session_update_type, turn_id, entry_index, tool_call_id, notification_json
+                   notification_json
             FROM session_events
             WHERE session_id = $1
             ORDER BY event_seq ASC
@@ -527,7 +517,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
-                   session_update_type, turn_id, entry_index, tool_call_id, notification_json
+                   notification_json
             FROM session_events
             WHERE session_id = $1 AND event_seq >= $2
             ORDER BY event_seq ASC
@@ -1067,37 +1057,26 @@ impl SessionProjectionStore for PostgresSessionRepository {
             .map_err(sqlx_to_session_store_error)?;
         let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
         let projection = projection_from_envelope(&commit.completed_event);
-        let persisted = PersistedSessionEvent {
-            session_id: session_id.to_string(),
+        let persisted = persisted_event_from_envelope(
+            session_id.to_string(),
             event_seq,
-            occurred_at_ms: committed_at_ms,
             committed_at_ms,
-            session_update_type: backbone_event_type_name(&commit.completed_event.event)
-                .to_string(),
-            turn_id: projection.turn_id.clone(),
-            entry_index: projection.entry_index,
-            tool_call_id: projection.tool_call_id.clone(),
-            ephemeral: false,
-            notification: commit.completed_event.clone(),
-        };
+            committed_at_ms,
+            commit.completed_event.clone(),
+        );
         let notification_json = json_string(&persisted.notification, "notification_json")?;
         let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
         sqlx::query(
             r#"
             INSERT INTO session_events (
-                session_id, event_seq, occurred_at_ms, committed_at_ms,
-                session_update_type, turn_id, entry_index, tool_call_id, notification_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                session_id, event_seq, occurred_at_ms, committed_at_ms, notification_json
+            ) VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(session_id)
         .bind(event_seq_db)
         .bind(persisted.occurred_at_ms)
         .bind(persisted.committed_at_ms)
-        .bind(&persisted.session_update_type)
-        .bind(&persisted.turn_id)
-        .bind(persisted.entry_index.map(i64::from))
-        .bind(&persisted.tool_call_id)
         .bind(notification_json)
         .execute(&mut *tx)
         .await
@@ -1796,6 +1775,38 @@ mod tests {
             updated_at_ms: created_at_ms,
             metadata_json: serde_json::json!({}),
         }
+    }
+
+    #[tokio::test]
+    async fn session_events_persist_envelope_without_flattened_fact_columns() {
+        let Some(pool) = test_pg_pool("session_events_envelope_schema").await else {
+            return;
+        };
+        let repo = PostgresSessionRepository::new(pool.clone());
+        repo.initialize().await.expect("应能初始化 session 表");
+
+        let columns = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'session_events'
+            ORDER BY ordinal_position
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("应能读取 session_events schema");
+
+        assert_eq!(
+            columns,
+            vec![
+                "session_id".to_string(),
+                "event_seq".to_string(),
+                "occurred_at_ms".to_string(),
+                "committed_at_ms".to_string(),
+                "notification_json".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@ use agentdash_agent_types::{AgentContextEnvelope, AgentMessage, MessageRef, Proj
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 
 use super::context_projector::ContextProjector;
+use super::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
     SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
@@ -743,8 +744,16 @@ fn ensure_fork_point_turn_completed(
     let turn_id = entry.message_ref.turn_id.as_str();
     let completed = events.iter().any(|event| {
         event.event_seq >= event_seq
-            && event.turn_id.as_deref() == Some(turn_id)
-            && event.session_update_type == "turn_completed"
+            && event
+                .turn_id
+                .as_deref()
+                .or(event.notification.trace.turn_id.as_deref())
+                == Some(turn_id)
+            && matches!(
+                parse_turn_terminal_event_from_envelope(&event.notification),
+                Some((terminal_turn_id, TurnTerminalKind::Completed, _))
+                    if terminal_turn_id == turn_id
+            )
     });
     if completed {
         Ok(())
@@ -850,6 +859,16 @@ mod tests {
             turn_id: Some(turn_id.to_string()),
             entry_index: None,
         })
+    }
+
+    fn platform_turn_completed(session_id: &str, turn_id: &str) -> BackboneEnvelope {
+        crate::session::hub_support::build_turn_terminal_envelope(
+            session_id,
+            &platform_source(),
+            turn_id,
+            TurnTerminalKind::Completed,
+            Some("done".to_string()),
+        )
     }
 
     fn dynamic_tool_call(
@@ -1181,6 +1200,43 @@ mod tests {
             .fork_session(request)
             .await
             .expect("completed turn message ref fork 应成功");
+        let context = ContextProjector::new(stores)
+            .build_model_context(&completed.child_session.id)
+            .await
+            .expect("应能恢复 child context");
+        assert_eq!(context.messages.len(), 1);
+        assert_eq!(context.messages[0].message.first_text(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn fork_message_ref_accepts_platform_turn_terminal_completion() {
+        let (_persistence, stores) = test_stores();
+        stores
+            .meta
+            .create_session(&session_meta("parent"))
+            .await
+            .expect("应能创建 parent");
+        stores
+            .events
+            .append_event("parent", &user_message("parent", "turn-1", 0, "hello"))
+            .await
+            .expect("应能写入 parent message");
+        stores
+            .events
+            .append_event("parent", &platform_turn_completed("parent", "turn-1"))
+            .await
+            .expect("应能写入 turn terminal");
+
+        let mut request = basic_fork_request("parent");
+        request.fork_point_ref = Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 0,
+        });
+
+        let completed = SessionBranchingService::new(stores.clone())
+            .fork_session(request)
+            .await
+            .expect("platform turn_terminal completed 应允许 fork");
         let context = ContextProjector::new(stores)
             .build_model_context(&completed.child_session.id)
             .await

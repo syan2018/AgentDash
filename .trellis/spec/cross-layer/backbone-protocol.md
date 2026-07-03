@@ -170,7 +170,7 @@ cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
 
 定义在 `agentdash-application/src/session/persistence.rs`。
 
-`PersistedSessionEvent.notification` 字段即 `BackboneEnvelope`。`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是从 envelope 提取的便利索引字段。
+`PersistedSessionEvent.notification` 字段即 `BackboneEnvelope`。`session_events` 持久化只保存 event sequence、时间戳与 `notification_json`；`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是 repository 从 envelope 派生出的传输/内存视图字段。领域判断必须回到 `notification` 中的 typed event / trace 解析，派生字段只服务分页响应、NDJSON 和展示定位，不能落成独立事实源。
 
 Persisted `BackboneEnvelope` 必须表达模型和前端实际消费的 bounded fact。工具、MCP、shell、
 terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingService` 在 append/broadcast 前

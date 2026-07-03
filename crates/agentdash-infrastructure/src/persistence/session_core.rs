@@ -63,9 +63,7 @@ pub(crate) fn persisted_event_from_row<R>(row: &R) -> SessionStoreResult<Persist
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
-    for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
-    for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
     let notification_json = row.get::<String, _>("notification_json");
@@ -73,22 +71,35 @@ where
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let event_seq_i64 = row.get::<i64, _>("event_seq");
     let event_seq = parse_non_negative_u64(event_seq_i64, "session_events.event_seq")?;
-    let entry_index = row
-        .get::<Option<i64>, _>("entry_index")
-        .map(|value| parse_non_negative_u32(value, "session_events.entry_index"))
-        .transpose()?;
-    Ok(PersistedSessionEvent {
-        session_id: row.get::<String, _>("session_id"),
+    Ok(persisted_event_from_envelope(
+        row.get::<String, _>("session_id"),
         event_seq,
-        occurred_at_ms: row.get::<i64, _>("occurred_at_ms"),
-        committed_at_ms: row.get::<i64, _>("committed_at_ms"),
-        session_update_type: row.get::<String, _>("session_update_type"),
-        turn_id: row.get::<Option<String>, _>("turn_id"),
-        entry_index,
-        tool_call_id: row.get::<Option<String>, _>("tool_call_id"),
+        row.get::<i64, _>("occurred_at_ms"),
+        row.get::<i64, _>("committed_at_ms"),
+        notification,
+    ))
+}
+
+pub(crate) fn persisted_event_from_envelope(
+    session_id: String,
+    event_seq: u64,
+    occurred_at_ms: i64,
+    committed_at_ms: i64,
+    notification: BackboneEnvelope,
+) -> PersistedSessionEvent {
+    let projection = projection_from_envelope(&notification);
+    PersistedSessionEvent {
+        session_id,
+        event_seq,
+        occurred_at_ms,
+        committed_at_ms,
+        session_update_type: backbone_event_type_name(&notification.event).to_string(),
+        turn_id: projection.turn_id,
+        entry_index: projection.entry_index,
+        tool_call_id: projection.tool_call_id,
         ephemeral: false,
         notification,
-    })
+    }
 }
 
 pub(crate) fn terminal_effect_from_row<R>(row: &R) -> SessionStoreResult<TerminalEffectRecord>

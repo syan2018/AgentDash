@@ -182,41 +182,36 @@ async fn materialize_forked_agent_run_tx(
         forked_by_user_id: lineage.forked_by_user_id.clone(),
     };
 
-    let mut tx = pool.begin().await.map_err(db_err).map_err(|error| {
-        log_agent_run_fork_materialization_error("begin_transaction", &context, &error);
-        error
+    let mut tx = pool.begin().await.map_err(db_err).inspect_err(|error| {
+        log_agent_run_fork_materialization_error("begin_transaction", &context, error);
     })?;
     insert_lifecycle_run_tx(&mut tx, &child_run)
         .await
-        .map_err(|error| {
-            log_agent_run_fork_materialization_error("insert_lifecycle_run", &context, &error);
-            error
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("insert_lifecycle_run", &context, error);
         })?;
     insert_lifecycle_agent_tx(&mut tx, &child_agent)
         .await
-        .map_err(|error| {
-            log_agent_run_fork_materialization_error("insert_lifecycle_agent", &context, &error);
-            error
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("insert_lifecycle_agent", &context, error);
         })?;
     insert_agent_frame_tx(&mut tx, &child_frame)
         .await
-        .map_err(|error| {
-            log_agent_run_fork_materialization_error("insert_agent_frame", &context, &error);
-            error
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("insert_agent_frame", &context, error);
         })?;
-    upsert_anchor_tx(&mut tx, &anchor).await.map_err(|error| {
-        log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, &error);
-        error
-    })?;
+    upsert_anchor_tx(&mut tx, &anchor)
+        .await
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, error);
+        })?;
     insert_agent_run_lineage_tx(&mut tx, &lineage)
         .await
-        .map_err(|error| {
-            log_agent_run_fork_materialization_error("insert_agent_run_lineage", &context, &error);
-            error
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("insert_agent_run_lineage", &context, error);
         })?;
-    tx.commit().await.map_err(db_err).map_err(|error| {
-        log_agent_run_fork_materialization_error("commit_transaction", &context, &error);
-        error
+    tx.commit().await.map_err(db_err).inspect_err(|error| {
+        log_agent_run_fork_materialization_error("commit_transaction", &context, error);
     })?;
 
     Ok(AgentRunForkMaterializationResult {

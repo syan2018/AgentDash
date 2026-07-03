@@ -199,9 +199,8 @@ impl<'a> AgentRunForkService<'a> {
         let parent = self
             .resolve_parent(command.parent_run_id, command.parent_agent_id)
             .await
-            .map_err(|error| {
-                log_agent_run_fork_stage_error("resolve_parent", &log_context, None, None, &error);
-                error
+            .inspect_err(|error| {
+                log_agent_run_fork_stage_error("resolve_parent", &log_context, None, None, error);
             })?;
         let request_digest = digest_command_request(&serde_json::json!({
             "kind": command.command_kind.as_str(),
@@ -218,15 +217,14 @@ impl<'a> AgentRunForkService<'a> {
             "executor_config": command.submit.as_ref().and_then(|submit| submit.executor_config.as_ref()),
             "backend_selection": command.submit.as_ref().and_then(|submit| submit.backend_selection.as_ref()),
         }))
-        .map_err(|error| {
+        .inspect_err(|error| {
             log_agent_run_fork_stage_error(
                 "request_digest",
                 &log_context,
                 Some(&parent),
                 None,
-                &error,
+                error,
             );
-            error
         })?;
         let claim = claim_agent_run_command_receipt(
             self.repos.agent_run_command_receipt_repo,
@@ -240,15 +238,14 @@ impl<'a> AgentRunForkService<'a> {
             request_digest,
         )
         .await
-        .map_err(|error| {
+        .inspect_err(|error| {
             log_agent_run_fork_stage_error(
                 "receipt_claim",
                 &log_context,
                 Some(&parent),
                 None,
-                &error,
+                error,
             );
-            error
         })?;
         if claim.duplicate {
             return self.replay_duplicate(claim.record).await;
@@ -396,15 +393,14 @@ impl<'a> AgentRunForkService<'a> {
                 .agent_run_command_receipt_repo
                 .attach_mailbox_message(claim.record.id, message.id)
                 .await
-                .map_err(|error| {
+                .inspect_err(|error| {
                     log_agent_run_fork_stage_error(
                         "receipt_attach_mailbox_message",
                         &log_context,
                         Some(&parent),
                         Some(&materialized.lineage.child_runtime_session_id),
-                        &error,
+                        error,
                     );
-                    error
                 })?;
         }
         let accepted = self
@@ -412,15 +408,14 @@ impl<'a> AgentRunForkService<'a> {
             .agent_run_command_receipt_repo
             .mark_accepted(claim.record.id, child_refs.clone())
             .await
-            .map_err(|error| {
+            .inspect_err(|error| {
                 log_agent_run_fork_stage_error(
                     "receipt_mark_accepted",
                     &log_context,
                     Some(&parent),
                     Some(&materialized.lineage.child_runtime_session_id),
-                    &error,
+                    error,
                 );
-                error
             })?;
         let result_json = fork_result_json(
             &parent_refs,
@@ -434,15 +429,14 @@ impl<'a> AgentRunForkService<'a> {
             .agent_run_command_receipt_repo
             .store_result_json(claim.record.id, result_json)
             .await
-            .map_err(|error| {
+            .inspect_err(|error| {
                 log_agent_run_fork_stage_error(
                     "receipt_store_result",
                     &log_context,
                     Some(&parent),
                     Some(&materialized.lineage.child_runtime_session_id),
-                    &error,
+                    error,
                 );
-                error
             })?;
         let receipt = if stored.updated_at >= accepted.updated_at {
             stored

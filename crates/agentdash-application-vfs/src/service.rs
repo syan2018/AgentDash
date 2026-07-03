@@ -1,4 +1,4 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -261,7 +261,7 @@ impl VfsService {
             "read_text_range",
             &dispatch.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -356,7 +356,7 @@ impl VfsService {
             "read_text",
             &dispatch.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -413,7 +413,7 @@ impl VfsService {
             "read_binary",
             &dispatch.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -473,7 +473,7 @@ impl VfsService {
             "write_text",
             &dispatch.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -582,7 +582,7 @@ impl VfsService {
             "delete_text",
             &dispatch.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -693,7 +693,7 @@ impl VfsService {
             "rename_text",
             &format!("{from_path} -> {to_path}"),
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -750,7 +750,13 @@ impl VfsService {
             .provider
             .stat(&dispatch.mount, &path, &dispatch.ctx)
             .await;
-        log_vfs_operation_result(&dispatch.mount, "stat", &path, started_at, result.is_ok());
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "stat",
+            &path,
+            started_at,
+            result.as_ref().err(),
+        );
         match result {
             Ok(entry) => return Ok(entry),
             Err(MountError::NotSupported(_)) => {}
@@ -1079,7 +1085,7 @@ impl VfsService {
                     "list",
                     &opts.path,
                     started_at,
-                    result.is_ok(),
+                    result.as_ref().err(),
                 );
                 return result;
             }
@@ -1099,7 +1105,7 @@ impl VfsService {
                 "list",
                 &full_opts.path,
                 started_at,
-                full_result.is_ok(),
+                full_result.as_ref().err(),
             );
             let full_result = full_result?;
             let mut files = BTreeMap::new();
@@ -1136,7 +1142,7 @@ impl VfsService {
             "list",
             &opts.path,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -1178,7 +1184,7 @@ impl VfsService {
             "exec",
             &req.cwd,
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         result
     }
@@ -1273,7 +1279,7 @@ impl VfsService {
             "search_text",
             sq.path.as_deref().unwrap_or("."),
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         let result = result?;
         let truncated = result.truncated;
@@ -1347,7 +1353,7 @@ impl VfsService {
             "grep_text",
             gq.base.path.as_deref().unwrap_or("."),
             started_at,
-            result.is_ok(),
+            result.as_ref().err(),
         );
         let result = result?;
         let truncated = result.truncated;
@@ -1374,18 +1380,54 @@ fn log_vfs_operation_result(
     operation: &str,
     path: &str,
     started_at: Instant,
-    success: bool,
+    error: Option<&MountError>,
 ) {
-    diag!(Debug, Subsystem::Vfs,
+    let duration_ms = started_at.elapsed().as_millis();
+    if let Some(error) = error {
+        let context = DiagnosticErrorContext::new("vfs.mount_operation", operation)
+            .with_field("provider", &mount.provider)
+            .with_field("mount_id", &mount.id)
+            .with_field("backend_id", &mount.backend_id)
+            .with_field("path", path)
+            .with_field("error_kind", mount_error_kind(error));
+        diag_error!(
+            Warn,
+            Subsystem::Vfs,
+            context = &context,
+            error = error,
+            provider = %mount.provider,
+            mount_id = %mount.id,
+            backend_id = %mount.backend_id,
+            operation,
+            path,
+            duration_ms,
+            success = false,
+            error_kind = mount_error_kind(error),
+            "VFS mount operation failed"
+        );
+    } else {
+        diag!(
+            Debug,
+            Subsystem::Vfs,
+            provider = %mount.provider,
+            mount_id = %mount.id,
+            backend_id = %mount.backend_id,
+            operation,
+            path,
+            duration_ms,
+            success = true,
+            "VFS mount operation completed"
+        );
+    }
+}
 
-        provider = %mount.provider,
-        mount_id = %mount.id,
-        operation,
-        path,
-        duration_ms = started_at.elapsed().as_millis(),
-        success,
-        "VFS mount operation completed"
-    );
+fn mount_error_kind(error: &MountError) -> &'static str {
+    match error {
+        MountError::NotSupported(_) => "not_supported",
+        MountError::NotFound(_) => "not_found",
+        MountError::ProviderNotRegistered(_) => "provider_not_registered",
+        MountError::OperationFailed(_) => "operation_failed",
+    }
 }
 
 fn is_inline_mount(mount: &Mount) -> bool {

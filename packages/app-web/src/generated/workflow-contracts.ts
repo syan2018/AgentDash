@@ -25,7 +25,7 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentConversationFeedMessage = { message_ref: AgentConversationMessageRefView, role: AgentConversationMessageRole, text: string, origin: string, synthetic: boolean, projection_kind: string, source_event_seq?: number, source_range?: AgentConversationSourceRangeView, projection_segment_id?: string, timestamp_ms?: number, };
+export type AgentConversationFeedMessage = { message_ref: AgentConversationMessageRefView, role: AgentConversationMessageRole, text: string, tool_calls?: Array<AgentConversationToolCallView>, tool_result?: AgentConversationToolResultView, origin: string, synthetic: boolean, projection_kind: string, source_event_seq?: number, source_range?: AgentConversationSourceRangeView, projection_segment_id?: string, timestamp_ms?: number, };
 
 export type AgentConversationFeedSnapshot = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, runtime_session_ref?: RuntimeSessionRefDto, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, message_count: number, messages: Array<AgentConversationFeedMessage>, };
 
@@ -40,6 +40,10 @@ export type AgentConversationMessageRole = "user" | "assistant" | "tool_result" 
 export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
 
 export type AgentConversationSourceRangeView = { start_event_seq: number, end_event_seq: number, };
+
+export type AgentConversationToolCallView = { id: string, call_id?: string, name: string, arguments: JsonValue, };
+
+export type AgentConversationToolResultView = { tool_call_id: string, call_id?: string, tool_name?: string, details?: JsonValue, is_error: boolean, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 

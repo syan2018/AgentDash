@@ -30,10 +30,11 @@ use agentdash_contracts::workflow::{
     AgentConversationFeedMessage, AgentConversationFeedSnapshot, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationMessageRefView,
     AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView,
-    AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
-    AgentRunView, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
+    AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
+    AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView, AgentRunRefDto,
+    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
     ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
@@ -448,7 +449,9 @@ pub async fn get_agent_run_conversation_feed(
 fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConversationFeedMessage> {
     let role = agent_conversation_message_role(&entry.message);
     let text = agent_conversation_message_text(&entry.message);
-    if text.trim().is_empty() {
+    let tool_calls = agent_conversation_tool_calls(&entry.message);
+    let tool_result = agent_conversation_tool_result(&entry.message);
+    if text.trim().is_empty() && tool_calls.is_empty() && tool_result.is_none() {
         return None;
     }
     let timestamp_ms = agent_conversation_message_timestamp_ms(&entry.message);
@@ -459,6 +462,8 @@ fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConvers
         },
         role,
         text,
+        tool_calls,
+        tool_result,
         origin: entry.origin.as_str().to_string(),
         synthetic: entry.synthetic,
         projection_kind: entry.projection_kind.as_str().to_string(),
@@ -471,6 +476,44 @@ fn agent_conversation_feed_message(entry: ProjectedEntry) -> Option<AgentConvers
             }),
         projection_segment_id: entry.projection_segment_id,
         timestamp_ms,
+    })
+}
+
+fn agent_conversation_tool_calls(message: &AgentMessage) -> Vec<AgentConversationToolCallView> {
+    let AgentMessage::Assistant { tool_calls, .. } = message else {
+        return Vec::new();
+    };
+    tool_calls
+        .iter()
+        .map(|tool_call| AgentConversationToolCallView {
+            id: tool_call.id.clone(),
+            call_id: tool_call.call_id.clone(),
+            name: tool_call.name.clone(),
+            arguments: tool_call.arguments.clone(),
+        })
+        .collect()
+}
+
+fn agent_conversation_tool_result(
+    message: &AgentMessage,
+) -> Option<AgentConversationToolResultView> {
+    let AgentMessage::ToolResult {
+        tool_call_id,
+        call_id,
+        tool_name,
+        details,
+        is_error,
+        ..
+    } = message
+    else {
+        return None;
+    };
+    Some(AgentConversationToolResultView {
+        tool_call_id: tool_call_id.clone(),
+        call_id: call_id.clone(),
+        tool_name: tool_name.clone(),
+        details: details.clone(),
+        is_error: *is_error,
     })
 }
 

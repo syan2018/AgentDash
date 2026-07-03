@@ -1245,6 +1245,11 @@ pub struct AgentConversationFeedMessage {
     pub message_ref: AgentConversationMessageRefView,
     pub role: AgentConversationMessageRole,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<AgentConversationToolCallView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool_result: Option<AgentConversationToolResultView>,
     pub origin: String,
     pub synthetic: bool,
     pub projection_kind: String,
@@ -1260,6 +1265,34 @@ pub struct AgentConversationFeedMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub timestamp_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationToolCallView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub call_id: Option<String>,
+    pub name: String,
+    #[ts(type = "JsonValue")]
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationToolResultView {
+    pub tool_call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub details: Option<Value>,
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

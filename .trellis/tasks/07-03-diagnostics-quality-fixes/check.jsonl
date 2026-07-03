@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/diagnostics-guidelines.md","reason":"检查调用点是否遵循 diag!/diag_error!、Subsystem、字段与 clippy 守门规范"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查日志修复是否没有改动业务合同、错误返回和跨层语义"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/prd.md","reason":"检查验收项是否被覆盖或明确记录未覆盖原因"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/design.md","reason":"检查 implementation 是否符合修复策略和分片边界"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/research/diagnostics-quality-inventory.md","reason":"检查高优先级候选是否已处理或留有后续说明"}

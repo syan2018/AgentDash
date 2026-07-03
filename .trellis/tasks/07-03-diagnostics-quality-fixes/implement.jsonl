@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/diagnostics-guidelines.md","reason":"主仓 diagnostics facade、diag_error!、Subsystem 和 clippy 守门规范"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认日志质量修复不改变跨层业务合同和错误语义"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/prd.md","reason":"任务目标、范围、验收标准"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/design.md","reason":"修复策略、并行分片和非目标"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/implement.md","reason":"具体实施步骤、验证命令和 review 重点"}
+{"file":".trellis/tasks/07-03-diagnostics-quality-fixes/research/diagnostics-quality-inventory.md","reason":"本轮审计得出的主仓候选热点和优先级"}

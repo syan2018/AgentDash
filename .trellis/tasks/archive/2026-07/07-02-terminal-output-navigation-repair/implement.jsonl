@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/index.md","reason":"终端 route、relay、本机执行和 API error mapping 需要遵守后端分层规范。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"确认云端/本机 runtime 边界，避免把本机执行事实错误放到云端业务层。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"terminal spawn target 来自 AgentRun runtime surface，后续入口收束需要遵守 runtime gateway/current surface 边界。"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"terminal output/state 是 Backbone PlatformEvent，修复 history/live projection 必须遵守事件流合同。"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端状态、Hook、组件改动入口规范。"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"useSessionStream history hydrate 与 live side effect 边界是本任务关键约束。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"terminal store capability 与 workspace panel store 变更需要遵守 Zustand/store 分层。"}
+{"file":".trellis/tasks/07-02-terminal-output-navigation-repair/research/backend-terminal-chain-and-powershell.md","reason":"后端终端链路、PowerShell 字节流边界和 API response 缺陷调研。"}
+{"file":".trellis/tasks/07-02-terminal-output-navigation-repair/research/frontend-terminal-display-navigation.md","reason":"前端 terminal history hydrate、跳转、命令输出 promotion 缺陷调研。"}

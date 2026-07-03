@@ -275,11 +275,23 @@ describe("AgentRun conversation command state", () => {
         hide_system_steer_messages: true,
       },
       messages: [mailboxMessage()],
+      waiting_items: [
+        {
+          wait_id: "wait-1",
+          gate_id: "gate-1",
+          kind: "companion",
+          status: "open",
+          source_label: "Research Agent",
+          preview: "等待协作 Agent",
+          created_at: "2026-07-02T10:15:30.000Z",
+        },
+      ],
     };
 
     const model = projectSessionChatMailboxModel(commandState, mailbox);
 
     expect(model.messages).toEqual([mailboxMessage()]);
+    expect(model.waiting_items).toEqual(mailbox.waiting_items);
     expect(model.paused).toBe(true);
     expect(model.user_attention).toBe(true);
     expect(model.hide_system_steer_messages).toBe(true);

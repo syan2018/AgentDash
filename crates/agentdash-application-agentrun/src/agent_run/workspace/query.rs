@@ -17,8 +17,8 @@ use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExec
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     AgentRunOwnershipModel, ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionService, ValidationSeverityModel,
+    ConversationModelConfigSourceModel, ConversationWaitingItemModel, DeliveryRuntimeSelection,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
@@ -185,6 +185,15 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .get_state(run.id, agent.id)
             .await
             .map_err(WorkflowApplicationError::from)?;
+        let open_wait_items = self
+            .repos
+            .lifecycle_gate_repo
+            .list_open_for_agent(agent.id)
+            .await
+            .map_err(WorkflowApplicationError::from)?
+            .into_iter()
+            .map(|gate| ConversationWaitingItemModel::from_lifecycle_gate(&gate))
+            .collect::<Vec<_>>();
         let hide_system_steer_messages = load_hide_system_steer_messages_setting(
             self.repos.settings_repo.as_ref(),
             viewer_user_id.as_deref(),
@@ -233,6 +242,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 supports_steering,
                 mailbox_paused: mailbox.paused,
                 mailbox_visible_message_count,
+                open_wait_items,
                 resource_surface: resource_surface.clone(),
                 resource_surface_coordinate: resource_surface_coordinate.clone(),
                 resource_diagnostics,

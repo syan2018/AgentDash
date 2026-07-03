@@ -30,7 +30,10 @@ import {
   shouldFlushStreamEventImmediately,
   type SessionStreamState,
 } from "./sessionStreamReducer";
-import { dispatchSessionPlatformEvent } from "./sessionPlatformEventDispatcher";
+import {
+  dispatchSessionPlatformEvent,
+  projectSessionTerminalPlatformEvents,
+} from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
   sessionId: string;
@@ -238,6 +241,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
           const page = agentRunTarget
             ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
             : await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
+          projectSessionTerminalPlatformEvents(page.events, callbackRefs.current.onError);
           nextState = reduceStreamState(nextState, page.events);
           afterSeq = page.next_after_seq;
           if (!mountedRef.current || cancelled) return;

@@ -1001,6 +1001,72 @@ mod tests {
         assert!(stdout.contains("echo:hello"));
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_powershell_object_commands_emit_stdout_text() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let workspace_root = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+        let fixture_name = "agentdash-powershell-fixture.txt";
+        std::fs::write(workspace_root.join(fixture_name), "fixture").expect("fixture file");
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let manager =
+            ShellSessionManager::new(ToolExecutor::new(vec![workspace_root.clone()]), event_tx);
+        let command = [
+            "Write-Output 'AD_PWD'",
+            "pwd",
+            "Write-Output 'AD_GET_LOCATION'",
+            "Get-Location",
+            "Write-Output 'AD_DIR'",
+            "dir",
+            "Write-Output 'AD_GET_CHILD_ITEM'",
+            "Get-ChildItem",
+            "Write-Output 'AD_PATH'",
+            "Write-Output (Get-Location).Path",
+        ]
+        .join("; ");
+
+        let response = manager
+            .start_shell(ToolShellExecPayload {
+                call_id: "call-powershell-objects".to_string(),
+                command,
+                mount_root_ref: workspace_root.to_string_lossy().to_string(),
+                cwd: None,
+                timeout_ms: None,
+                yield_time_ms: Some(5_000),
+                max_output_bytes: Some(64 * 1024),
+                tty: false,
+            })
+            .await
+            .expect("start powershell object command");
+
+        let latest = wait_until_terminal(
+            &manager,
+            &response.session_id,
+            response.next_seq.checked_sub(1),
+        )
+        .await;
+        assert_eq!(latest.state, ToolShellSessionState::Completed);
+
+        let final_snapshot = manager
+            .read_session(&response.session_id, None, Some(0), Some(64 * 1024))
+            .await
+            .expect("read retained powershell output");
+        let (stdout, _, _) = split_output(&final_snapshot.chunks);
+        assert!(stdout.contains("AD_PWD"), "stdout={stdout:?}");
+        assert!(stdout.contains("AD_GET_LOCATION"), "stdout={stdout:?}");
+        assert!(stdout.contains("AD_DIR"), "stdout={stdout:?}");
+        assert!(stdout.contains("AD_GET_CHILD_ITEM"), "stdout={stdout:?}");
+        assert!(stdout.contains("AD_PATH"), "stdout={stdout:?}");
+        assert!(
+            stdout.matches("Path").count() >= 1,
+            "PowerShell object location output should include formatted Path text: {stdout:?}"
+        );
+        assert!(
+            stdout.matches(fixture_name).count() >= 2,
+            "dir and Get-ChildItem should both render the fixture file through stdout text: {stdout:?}"
+        );
+    }
+
     #[tokio::test]
     async fn timeout_ms_marks_running_session_timed_out() {
         let workspace = tempfile::tempdir().expect("workspace");

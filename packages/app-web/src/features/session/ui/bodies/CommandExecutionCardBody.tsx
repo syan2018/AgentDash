@@ -6,9 +6,13 @@
 
 import { memo, useEffect, useRef, useState, useCallback } from "react";
 import type { AgentDashThreadItem, ThreadItem } from "../../../../generated/backbone-protocol";
-import { useWorkspaceTabStore } from "../../../../stores/workspaceTabStore";
 import { useTerminalStore } from "../../model/useTerminalStore";
 import { formatBytes, parseBoundedOutputText, type BoundedOutputInfo } from "../../model/boundedOutput";
+import {
+  buildCommandOutputReplayTerminalId,
+  buildCommandOutputReplayTerminalUri,
+} from "../../../workspace-panel/tab-types/terminal-uri";
+import { useSessionWorkspacePanelAction } from "../SessionWorkspacePanelActionContext";
 import { CB } from "./cardBodyTokens";
 
 type CommandItem =
@@ -27,32 +31,61 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   sessionId,
 }: CommandExecutionCardBodyProps) {
   const outputRef = useRef<HTMLPreElement>(null);
+  const replayCreatedAtRef = useRef<number | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const openWorkspacePanel = useSessionWorkspacePanelAction();
   const status = item.status;
   const isRunning = status === "inProgress";
   const renderedOutput = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
   const boundedOutput = parseBoundedOutputText(renderedOutput);
+  const replayTerminalId = buildCommandOutputReplayTerminalId(item.id);
+  const replayTerminalUri = buildCommandOutputReplayTerminalUri(item.id);
+  const canOpenOutputReplay = Boolean(sessionId && openWorkspacePanel);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (replayCreatedAtRef.current == null) {
+      replayCreatedAtRef.current = Date.now();
+    }
+    const store = useTerminalStore.getState();
+    store.registerTerminal({
+      id: replayTerminalId,
+      sessionId,
+      capability: "read_only_output",
+      cwd: item.cwd ?? "",
+      state: isRunning ? "running" : "exited",
+      exitCode: item.exitCode ?? undefined,
+      linkedItemId: item.id,
+      createdAt: replayCreatedAtRef.current,
+      exitedAt: isRunning ? undefined : Date.now(),
+    });
+
+    if (renderedOutput == null) return;
+    const currentOutput = store.getOutput(replayTerminalId);
+    if (renderedOutput === currentOutput) return;
+    if (renderedOutput.startsWith(currentOutput)) {
+      store.appendOutput(replayTerminalId, renderedOutput.slice(currentOutput.length));
+      return;
+    }
+    store.replaceOutput(replayTerminalId, renderedOutput);
+  }, [
+    item.cwd,
+    item.exitCode,
+    item.id,
+    isRunning,
+    renderedOutput,
+    replayTerminalId,
+    sessionId,
+  ]);
 
   const handlePromote = useCallback(() => {
-    const promoteId = `promote-${item.id}`;
-    const store = useTerminalStore.getState();
-    if (!store.getOutput(promoteId) && renderedOutput) {
-      store.appendOutput(promoteId, renderedOutput);
-    }
-    if (sessionId) {
-      store.registerTerminal({
-        id: promoteId,
-        sessionId,
-        cwd: item.cwd ?? "platform://",
-        state: isRunning ? "running" : "exited",
-        exitCode: item.exitCode ?? undefined,
-        createdAt: Date.now(),
-      });
-    }
-    useWorkspaceTabStore
-      .getState()
-      .openOrActivate("terminal", `terminal://${promoteId}`);
-  }, [item.id, item.cwd, item.exitCode, renderedOutput, sessionId, isRunning]);
+    if (!openWorkspacePanel || !sessionId) return;
+    openWorkspacePanel({
+      typeId: "terminal",
+      uri: replayTerminalUri,
+      options: { refreshContent: true },
+    });
+  }, [openWorkspacePanel, replayTerminalUri, sessionId]);
 
   useEffect(() => {
     if (outputRef.current && isRunning) {
@@ -113,9 +146,11 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
         <button
           type="button"
           onClick={handlePromote}
+          disabled={!canOpenOutputReplay}
+          title={canOpenOutputReplay ? "查看只读命令输出" : "当前页面没有工作区面板"}
           className={`ml-auto ${CB.actionButton}`}
         >
-          在终端中查看
+          查看输出
         </button>
       </div>
     </div>

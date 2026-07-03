@@ -1148,6 +1148,31 @@ pub struct ConversationExecutionView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub struct ConversationWaitingItemView {
+    pub wait_id: String,
+    pub gate_id: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub correlation_ref: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preview: Option<String>,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub struct ConversationMailboxSnapshotView {
     pub visible_message_count: usize,
     pub paused: bool,
@@ -1160,6 +1185,8 @@ pub struct ConversationMailboxSnapshotView {
     pub state: Option<MailboxStateView>,
     #[serde(default)]
     pub messages: Vec<MailboxMessageView>,
+    #[serde(default)]
+    pub waiting_items: Vec<ConversationWaitingItemView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]

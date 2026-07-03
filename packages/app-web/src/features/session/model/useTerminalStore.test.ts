@@ -9,6 +9,8 @@ function resetTerminalStore(): void {
     terminals: new Map(),
     outputBuffers: new Map(),
     outputBufferBaseOffsets: new Map(),
+    outputBufferRevisions: new Map(),
+    projectedEventKeys: new Set(),
   });
 }
 
@@ -57,6 +59,7 @@ describe("useTerminalStore", () => {
     store.registerTerminal({
       id: "term-1",
       sessionId: "session-1",
+      capability: "interactive",
       cwd: ".",
       state: "running",
       createdAt: 1,
@@ -69,5 +72,40 @@ describe("useTerminalStore", () => {
     expect(nextStore.getOutput("term-1")).toBe("");
     expect(nextStore.getOutputBaseOffset("term-1")).toBe(0);
     expect(nextStore.getTerminalsForSession("session-1")).toEqual([]);
+  });
+
+  it("用 replaceOutput 重写只读回放输出并推进 revision", () => {
+    const store = useTerminalStore.getState();
+
+    store.replaceOutput("term-1", "first");
+    const afterFirst = useTerminalStore.getState();
+    expect(afterFirst.getOutput("term-1")).toBe("first");
+    expect(afterFirst.getOutputRevision("term-1")).toBe(1);
+
+    afterFirst.replaceOutput("term-1", "second");
+    const afterSecond = useTerminalStore.getState();
+    expect(afterSecond.getOutput("term-1")).toBe("second");
+    expect(afterSecond.getOutputRevision("term-1")).toBe(2);
+  });
+
+  it("对未注册 terminal 的状态事件创建 state-only projection", () => {
+    const store = useTerminalStore.getState();
+
+    store.updateTerminalState("term-1", "exited", 0, "session-1");
+
+    const terminal = useTerminalStore.getState().getTerminalsForSession("session-1")[0];
+    expect(terminal?.id).toBe("term-1");
+    expect(terminal?.capability).toBe("state_only");
+    expect(terminal?.state).toBe("exited");
+    expect(terminal?.exitCode).toBe(0);
+  });
+
+  it("按 session event seq 幂等投影 terminal output", () => {
+    const store = useTerminalStore.getState();
+
+    expect(store.projectOutputEvent("session-1", 10, "term-1", "hello")).toBe(true);
+    expect(useTerminalStore.getState().projectOutputEvent("session-1", 10, "term-1", "hello")).toBe(false);
+
+    expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
   });
 });

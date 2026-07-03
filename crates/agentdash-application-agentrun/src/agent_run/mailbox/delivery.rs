@@ -348,7 +348,7 @@ impl<'a> AgentRunMailboxService<'a> {
     pub async fn accept_hook_auto_resume_effect(
         &self,
         runtime_session_id: &str,
-        _effect_id: Uuid,
+        effect_id: Uuid,
         source_turn_id: String,
         terminal_event_seq: u64,
         input: Vec<UserInputBlock>,
@@ -358,6 +358,18 @@ impl<'a> AgentRunMailboxService<'a> {
             .await?;
         let payload_json =
             serde_json::to_value(&input).map_err(serialization_error("hook auto-resume input"))?;
+        let correlation_ref = format!("{runtime_session_id}:{source_turn_id}:{terminal_event_seq}");
+        let source = MailboxSourceIdentity::hook_auto_resume()
+            .with_source_ref(effect_id.to_string())
+            .with_correlation_ref(correlation_ref)
+            .with_metadata(serde_json::json!({
+                "terminal_effect_id": effect_id.to_string(),
+                "terminal_event_seq": terminal_event_seq,
+                "source_turn_id": source_turn_id,
+                "runtime_session_id": runtime_session_id,
+            }));
+        let source_dedup_key = mailbox_source_identity_dedup_key(&source)
+            .unwrap_or_else(|| format!("hook_auto_resume:{effect_id}:{terminal_event_seq}"));
         let _message = self
             .mailbox_repo
             .create_message_idempotent(NewAgentRunMailboxMessage {
@@ -365,16 +377,14 @@ impl<'a> AgentRunMailboxService<'a> {
                 agent_id: agent.id,
                 runtime_session_id: runtime_session_id.to_string(),
                 origin: MailboxMessageOrigin::Hook,
-                source: MailboxSourceIdentity::hook_auto_resume(),
+                source,
                 delivery: MailboxDelivery::ResumeLaunchSource {
                     launch_source: "hook_auto_resume".to_string(),
                 },
                 barrier: ConsumptionBarrier::ImmediateIfIdle,
                 drain_mode: MailboxDrainMode::One,
                 priority: 0,
-                source_dedup_key: Some(format!(
-                    "hook_auto_resume:{runtime_session_id}:{source_turn_id}:{terminal_event_seq}"
-                )),
+                source_dedup_key: Some(source_dedup_key),
                 queued_agent_run_turn_id: Some(source_turn_id),
                 expected_active_agent_run_turn_id: None,
                 command_receipt_id: None,

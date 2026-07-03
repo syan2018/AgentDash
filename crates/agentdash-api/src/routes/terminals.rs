@@ -12,6 +12,7 @@ use agentdash_relay::*;
 use crate::agent_run_runtime_surface::resolve_terminal_launch_target_for_api;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
+use crate::relay::registry::BackendCommandError;
 use crate::routes::sessions::ensure_session_permission;
 use crate::{app_state::AppState, rpc::ApiError};
 
@@ -146,7 +147,7 @@ pub async fn terminal_input(
         data: body.data,
     };
 
-    match state
+    let response = state
         .services
         .backend_registry
         .send_command(
@@ -157,16 +158,11 @@ pub async fn terminal_input(
             },
         )
         .await
-    {
-        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => {
-            diag!(Error, Subsystem::Api,
-        error = %e, terminal_id, "terminal input relay command failed");
-            Err(ApiError::ServiceUnavailable(String::from(
-                "终端输入命令发送失败",
-            )))
-        }
-    }
+        .map_err(|e| {
+            terminal_command_send_error(e, TerminalCommandResponseKind::Input, &terminal_id)
+        })?;
+    validate_terminal_command_response(response, TerminalCommandResponseKind::Input, &terminal_id)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 pub async fn terminal_resize(
@@ -183,7 +179,7 @@ pub async fn terminal_resize(
         rows: body.rows,
     };
 
-    match state
+    let response = state
         .services
         .backend_registry
         .send_command(
@@ -194,16 +190,15 @@ pub async fn terminal_resize(
             },
         )
         .await
-    {
-        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => {
-            diag!(Error, Subsystem::Api,
-        error = %e, terminal_id, "terminal resize relay command failed");
-            Err(ApiError::ServiceUnavailable(String::from(
-                "终端尺寸调整命令发送失败",
-            )))
-        }
-    }
+        .map_err(|e| {
+            terminal_command_send_error(e, TerminalCommandResponseKind::Resize, &terminal_id)
+        })?;
+    validate_terminal_command_response(
+        response,
+        TerminalCommandResponseKind::Resize,
+        &terminal_id,
+    )?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// DELETE /api/terminals/:terminal_id
@@ -219,7 +214,7 @@ pub async fn terminal_kill(
         signal: None,
     };
 
-    match state
+    let response = state
         .services
         .backend_registry
         .send_command(
@@ -230,16 +225,11 @@ pub async fn terminal_kill(
             },
         )
         .await
-    {
-        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => {
-            diag!(Error, Subsystem::Api,
-        error = %e, terminal_id, "terminal kill relay command failed");
-            Err(ApiError::ServiceUnavailable(String::from(
-                "终端结束命令发送失败",
-            )))
-        }
-    }
+        .map_err(|e| {
+            terminal_command_send_error(e, TerminalCommandResponseKind::Kill, &terminal_id)
+        })?;
+    validate_terminal_command_response(response, TerminalCommandResponseKind::Kill, &terminal_id)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn load_terminal_for_user(
@@ -260,4 +250,215 @@ async fn load_terminal_for_user(
     )
     .await?;
     Ok(term_state)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TerminalCommandResponseKind {
+    Input,
+    Resize,
+    Kill,
+}
+
+impl TerminalCommandResponseKind {
+    fn action_label(self) -> &'static str {
+        match self {
+            Self::Input => "终端输入",
+            Self::Resize => "终端尺寸调整",
+            Self::Kill => "终端结束",
+        }
+    }
+
+    fn command_name(self) -> &'static str {
+        match self {
+            Self::Input => "terminal input",
+            Self::Resize => "terminal resize",
+            Self::Kill => "terminal kill",
+        }
+    }
+
+    fn success_response_matches(self, response: &RelayMessage) -> bool {
+        matches!(
+            (self, response),
+            (
+                Self::Input,
+                RelayMessage::ResponseTerminalInput {
+                    payload: Some(_),
+                    error: None,
+                    ..
+                }
+            ) | (
+                Self::Resize,
+                RelayMessage::ResponseTerminalResize {
+                    payload: Some(_),
+                    error: None,
+                    ..
+                }
+            ) | (
+                Self::Kill,
+                RelayMessage::ResponseTerminalKill {
+                    payload: Some(_),
+                    error: None,
+                    ..
+                }
+            )
+        )
+    }
+}
+
+fn validate_terminal_command_response(
+    response: RelayMessage,
+    expected: TerminalCommandResponseKind,
+    terminal_id: &str,
+) -> Result<(), ApiError> {
+    if expected.success_response_matches(&response) {
+        return Ok(());
+    }
+
+    match (expected, response) {
+        (
+            TerminalCommandResponseKind::Input,
+            RelayMessage::ResponseTerminalInput {
+                error: Some(error), ..
+            },
+        )
+        | (
+            TerminalCommandResponseKind::Resize,
+            RelayMessage::ResponseTerminalResize {
+                error: Some(error), ..
+            },
+        )
+        | (
+            TerminalCommandResponseKind::Kill,
+            RelayMessage::ResponseTerminalKill {
+                error: Some(error), ..
+            },
+        ) => {
+            diag!(Warn, Subsystem::Api,
+                terminal_id = %terminal_id,
+                command = expected.command_name(),
+                error = %error,
+                "terminal relay command returned an error response"
+            );
+            Err(api_error_from_terminal_relay_error(error, expected))
+        }
+        (_, other) => {
+            diag!(Error, Subsystem::Api,
+                terminal_id = %terminal_id,
+                command = expected.command_name(),
+                response_id = %other.id(),
+                "terminal relay command returned an unexpected response type"
+            );
+            Err(ApiError::Internal(format!(
+                "{}返回了意外响应类型",
+                expected.action_label()
+            )))
+        }
+    }
+}
+
+fn api_error_from_terminal_relay_error(
+    error: RelayError,
+    expected: TerminalCommandResponseKind,
+) -> ApiError {
+    let message = format!("{}失败: {}", expected.action_label(), error.message);
+    match error.code {
+        RelayErrorCode::AuthFailed | RelayErrorCode::Forbidden => ApiError::Forbidden(message),
+        RelayErrorCode::NotFound => ApiError::NotFound(message),
+        RelayErrorCode::Conflict | RelayErrorCode::SessionBusy => ApiError::Conflict(message),
+        RelayErrorCode::InvalidMessage => ApiError::BadRequest(message),
+        RelayErrorCode::Timeout
+        | RelayErrorCode::ExecutorNotFound
+        | RelayErrorCode::ExecutorUnavailable => ApiError::ServiceUnavailable(message),
+        RelayErrorCode::SpawnFailed | RelayErrorCode::RuntimeError | RelayErrorCode::IoError => {
+            ApiError::Internal(message)
+        }
+    }
+}
+
+fn terminal_command_send_error(
+    error: BackendCommandError,
+    expected: TerminalCommandResponseKind,
+    terminal_id: &str,
+) -> ApiError {
+    diag!(Error, Subsystem::Api,
+        error = %error,
+        terminal_id = %terminal_id,
+        command = expected.command_name(),
+        "terminal relay command failed"
+    );
+    ApiError::ServiceUnavailable(format!("{}命令发送失败", expected.action_label()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_input_response_error_is_not_success() {
+        let error = validate_terminal_command_response(
+            RelayMessage::ResponseTerminalInput {
+                id: "resp-1".to_string(),
+                payload: None,
+                error: Some(RelayError::runtime_error("terminal missing")),
+            },
+            TerminalCommandResponseKind::Input,
+            "term-1",
+        )
+        .expect_err("relay error must fail");
+
+        assert!(
+            matches!(error, ApiError::Internal(message) if message.contains("terminal missing"))
+        );
+    }
+
+    #[test]
+    fn terminal_resize_requires_matching_response_type() {
+        let error = validate_terminal_command_response(
+            RelayMessage::ResponseTerminalInput {
+                id: "resp-1".to_string(),
+                payload: Some(TerminalInputResponse {
+                    terminal_id: "term-1".to_string(),
+                }),
+                error: None,
+            },
+            TerminalCommandResponseKind::Resize,
+            "term-1",
+        )
+        .expect_err("wrong response type must fail");
+
+        assert!(matches!(error, ApiError::Internal(message) if message.contains("意外响应类型")));
+    }
+
+    #[test]
+    fn terminal_kill_requires_success_payload() {
+        let error = validate_terminal_command_response(
+            RelayMessage::ResponseTerminalKill {
+                id: "resp-1".to_string(),
+                payload: None,
+                error: None,
+            },
+            TerminalCommandResponseKind::Kill,
+            "term-1",
+        )
+        .expect_err("missing payload must fail");
+
+        assert!(matches!(error, ApiError::Internal(message) if message.contains("意外响应类型")));
+    }
+
+    #[test]
+    fn terminal_kill_matching_success_is_ok() {
+        validate_terminal_command_response(
+            RelayMessage::ResponseTerminalKill {
+                id: "resp-1".to_string(),
+                payload: Some(TerminalKillResponse {
+                    terminal_id: "term-1".to_string(),
+                    status: "killed".to_string(),
+                }),
+                error: None,
+            },
+            TerminalCommandResponseKind::Kill,
+            "term-1",
+        )
+        .expect("matching success response");
+    }
 }

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 50
+- **Total Sessions**: 52
 - **Last Active**: 2026-07-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1815 | Active |
+| `journal-1.md` | ~1885 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 52 | 2026-07-03 | 实现 Agent 并行等待与 mailbox 回传 | `8d75d7504`, `cd6240e86`, `2483c9e50` | `codex/terminal-subagents-wait-integration` |
+| 51 | 2026-07-03 | 修复终端输出与跳转链路 | `9812555ec`, `ae4875702`, `7b149724a` | `codex/terminal-subagents-wait-integration` |
 | 50 | 2026-07-03 | AgentRun fork 与 Session API 收口 | `b130d0d45`, `00dd09253`, `31f095e4f`, `a4d2ed536`, `f0012025c`, `5ca329b76`, `111a2d0f7`, `d302ef467` | `main` |
 | 49 | 2026-07-02 | AgentRun 删除入口 | `a6a15b91b` | `main` |
 | 48 | 2026-07-02 | MCP Preset relay 探测目标收束 | `34cfe6a66`, `a915d898a` | `main` |

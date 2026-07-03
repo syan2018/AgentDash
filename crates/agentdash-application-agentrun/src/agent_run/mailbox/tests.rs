@@ -158,6 +158,218 @@ fn mailbox_intake_command_uses_explicit_source_dedup_without_source_refs() {
 }
 
 #[tokio::test]
+async fn companion_dispatch_intake_persists_child_mailbox_wake_envelope() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
+        .with_source_ref("dispatch-1")
+        .with_correlation_ref("dispatch-1")
+        .with_route("sub")
+        .with_metadata(serde_json::json!({
+            "wait": false,
+            "companion_label": "reviewer",
+        }));
+
+    let result = fixture
+        .service()
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: fixture.run.id,
+            agent_id: fixture.agent.id,
+            runtime_session_id: fixture.runtime_session_id.clone(),
+            origin: MailboxMessageOrigin::Companion,
+            source,
+            retain_payload: true,
+            schedule_on_submit: true,
+            input: text_user_input_blocks("review this"),
+            client_command_id: "companion-dispatch:dispatch-1".to_string(),
+            source_dedup_key: None,
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect("accept companion dispatch");
+
+    assert_eq!(result.outcome, AgentRunMailboxCommandOutcome::Queued);
+    let message = result.mailbox_message.expect("mailbox message");
+    assert_eq!(message.origin, MailboxMessageOrigin::Companion);
+    assert_eq!(message.source.namespace, "companion");
+    assert_eq!(message.source.kind, "dispatch");
+    assert_eq!(message.source.actor, "agent");
+    assert_eq!(message.source.route.as_deref(), Some("sub"));
+    assert_eq!(message.source.source_ref.as_deref(), Some("dispatch-1"));
+    assert_eq!(
+        message.source.correlation_ref.as_deref(),
+        Some("dispatch-1")
+    );
+    assert_eq!(
+        message.source_dedup_key.as_deref(),
+        Some("source:companion:dispatch:ref:dispatch-1:correlation:dispatch-1")
+    );
+    assert_eq!(message.delivery, MailboxDelivery::LaunchOrContinueTurn);
+    assert_eq!(message.barrier, ConsumptionBarrier::AgentRunTurnBoundary);
+    assert_eq!(message.drain_mode, MailboxDrainMode::One);
+    assert_eq!(
+        message.queued_agent_run_turn_id.as_deref(),
+        Some(fixture.active_turn_id.as_str())
+    );
+    assert_eq!(
+        message.expected_active_agent_run_turn_id.as_deref(),
+        Some(fixture.active_turn_id.as_str())
+    );
+    assert!(message.payload_json.is_some());
+    assert!(message.retain_payload);
+}
+
+#[tokio::test]
+async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    let gate_id = Uuid::new_v4();
+    let source = MailboxSourceIdentity::new("companion", "result", "agent")
+        .with_source_ref(gate_id.to_string())
+        .with_correlation_ref("dispatch-1")
+        .with_route("parent");
+
+    let first = fixture
+        .service()
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: fixture.run.id,
+            agent_id: fixture.agent.id,
+            runtime_session_id: fixture.runtime_session_id.clone(),
+            origin: MailboxMessageOrigin::Companion,
+            source: source.clone(),
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("result available"),
+            client_command_id: format!("companion-result:{gate_id}:attempt-1"),
+            source_dedup_key: Some("legacy-explicit-dedup".to_string()),
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect("first result");
+    let second = fixture
+        .service()
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: fixture.run.id,
+            agent_id: fixture.agent.id,
+            runtime_session_id: fixture.runtime_session_id.clone(),
+            origin: MailboxMessageOrigin::Companion,
+            source,
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("result available retry"),
+            client_command_id: format!("companion-result:{gate_id}:attempt-2"),
+            source_dedup_key: Some("legacy-explicit-dedup-changed".to_string()),
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect("second result");
+
+    let first_message = first.mailbox_message.expect("first message");
+    let second_message = second.mailbox_message.expect("second message");
+    assert_eq!(first_message.id, second_message.id);
+    assert_eq!(
+        first_message.source_dedup_key.as_deref(),
+        Some(format!("source:companion:result:ref:{gate_id}:correlation:dispatch-1").as_str())
+    );
+    let messages = fixture
+        .mailbox
+        .list_messages(fixture.run.id, fixture.agent.id)
+        .await
+        .expect("list messages");
+    assert_eq!(messages.len(), 1);
+}
+
+#[tokio::test]
+async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    let effect_id = Uuid::new_v4();
+    let source_turn_id = "terminal-turn-1".to_string();
+
+    fixture
+        .service()
+        .accept_hook_auto_resume_effect(
+            &fixture.runtime_session_id,
+            effect_id,
+            source_turn_id.clone(),
+            42,
+            text_user_input_blocks("resume after exec completion"),
+        )
+        .await
+        .expect("accept terminal auto-resume wake");
+    fixture
+        .service()
+        .accept_hook_auto_resume_effect(
+            &fixture.runtime_session_id,
+            effect_id,
+            source_turn_id.clone(),
+            42,
+            text_user_input_blocks("duplicate replay"),
+        )
+        .await
+        .expect("duplicate terminal auto-resume wake");
+
+    let messages = fixture
+        .mailbox
+        .list_messages(fixture.run.id, fixture.agent.id)
+        .await
+        .expect("list messages");
+    assert_eq!(messages.len(), 1);
+
+    let message = &messages[0];
+    assert_eq!(message.origin, MailboxMessageOrigin::Hook);
+    assert_eq!(message.source.namespace, "core");
+    assert_eq!(message.source.kind, "hook_auto_resume");
+    assert_eq!(message.source.actor, "system");
+    assert_eq!(
+        message.source.source_ref.as_deref(),
+        Some(effect_id.to_string().as_str())
+    );
+    assert_eq!(
+        message.source.correlation_ref.as_deref(),
+        Some(format!("{}:{source_turn_id}:42", fixture.runtime_session_id).as_str())
+    );
+    assert_eq!(
+        message.source_dedup_key.as_deref(),
+        Some(
+            format!(
+                "source:core:hook_auto_resume:ref:{effect_id}:correlation:{}:{source_turn_id}:42",
+                fixture.runtime_session_id
+            )
+            .as_str()
+        )
+    );
+    assert_eq!(
+        message.delivery,
+        MailboxDelivery::ResumeLaunchSource {
+            launch_source: "hook_auto_resume".to_string()
+        }
+    );
+    assert_eq!(message.barrier, ConsumptionBarrier::ImmediateIfIdle);
+    assert_eq!(message.drain_mode, MailboxDrainMode::One);
+    assert_eq!(
+        message.queued_agent_run_turn_id.as_deref(),
+        Some(source_turn_id.as_str())
+    );
+    assert_eq!(
+        message
+            .source
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("terminal_event_seq")),
+        Some(&serde_json::json!(42))
+    );
+    assert!(message.preview.contains("terminal event #42"));
+    assert!(message.retain_payload);
+}
+
+#[tokio::test]
 async fn mailbox_steering_event_projection_failure_is_consistent() {
     let delegate = MailboxSteeringFixture::new(true).await;
     let delegate_message = delegate
@@ -703,6 +915,21 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         message: NewAgentRunMailboxMessage,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
+        if let Some(source_dedup_key) = message.source_dedup_key.as_deref()
+            && let Some(existing) = self
+                .messages
+                .lock()
+                .await
+                .iter()
+                .find(|existing| {
+                    existing.run_id == message.run_id
+                        && existing.agent_id == message.agent_id
+                        && existing.source_dedup_key.as_deref() == Some(source_dedup_key)
+                })
+                .cloned()
+        {
+            return Ok(existing);
+        }
         self.create_message(message).await
     }
 
@@ -1106,14 +1333,43 @@ fn mailbox_message(
 }
 
 fn message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessage {
-    mailbox_message(
-        message.run_id,
-        message.agent_id,
-        &message.runtime_session_id,
-        message.delivery,
-        message.expected_active_agent_run_turn_id,
-        message.command_receipt_id,
-    )
+    let now = Utc::now();
+    AgentRunMailboxMessage {
+        id: Uuid::new_v4(),
+        run_id: message.run_id,
+        agent_id: message.agent_id,
+        runtime_session_id: message.runtime_session_id,
+        origin: message.origin,
+        source: message.source,
+        delivery: message.delivery,
+        barrier: message.barrier,
+        drain_mode: message.drain_mode,
+        status: MailboxMessageStatus::Queued,
+        priority: message.priority,
+        order_key: 0,
+        source_dedup_key: message.source_dedup_key,
+        queued_agent_run_turn_id: message.queued_agent_run_turn_id,
+        consuming_agent_run_turn_id: None,
+        expected_active_agent_run_turn_id: message.expected_active_agent_run_turn_id,
+        accepted_agent_run_turn_id: None,
+        accepted_protocol_turn_id: None,
+        claim_token: None,
+        claimed_at: None,
+        claim_expires_at: None,
+        command_receipt_id: message.command_receipt_id,
+        payload_json: message.payload_json,
+        executor_config_json: message.executor_config_json,
+        launch_planning_input: message.launch_planning_input,
+        preview: message.preview,
+        has_images: message.has_images,
+        retain_payload: message.retain_payload,
+        attempt_count: 0,
+        last_error: None,
+        created_at: now,
+        updated_at: now,
+        consumed_at: None,
+        deleted_at: None,
+    }
 }
 
 fn assert_error_contains(message: &AgentRunMailboxMessage, expected: &str) {

@@ -19,7 +19,12 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
   if (platform.kind === "terminal_output") {
     useTerminalStore
       .getState()
-      .appendOutput(platform.data.terminal_id, platform.data.data);
+      .projectOutputEvent(
+        event.session_id,
+        event.event_seq,
+        platform.data.terminal_id,
+        platform.data.data,
+      );
     return true;
   }
 
@@ -30,7 +35,9 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
     }
     useTerminalStore
       .getState()
-      .updateTerminalState(
+      .projectStateEvent(
+        event.session_id,
+        event.event_seq,
         platform.data.terminal_id,
         platform.data.state,
         platform.data.exit_code ?? undefined,
@@ -39,4 +46,13 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
   }
 
   return false;
+}
+
+export function projectSessionTerminalPlatformEvents(
+  events: readonly SessionEventEnvelope[],
+  onError?: (error: Error) => void,
+): void {
+  for (const event of events) {
+    dispatchSessionPlatformEvent(event, onError);
+  }
 }

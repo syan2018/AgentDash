@@ -46,9 +46,9 @@ use agentdash_contracts::workflow::{
     ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, DeleteAgentRunResponse, LifecycleRunRefDto,
-    LifecycleSubjectAssociationDto, RuntimeSessionRefDto, RuntimeSessionTraceMeta, SubjectRefDto,
-    ValidationSeverity,
+    ConversationModelConfigView, ConversationWaitingItemView, DeleteAgentRunResponse,
+    LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
+    RuntimeSessionTraceMeta, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -1711,6 +1711,12 @@ fn conversation_to_contract(
                 .map(conversation_command_to_contract),
             state: mailbox_state,
             messages: mailbox_messages,
+            waiting_items: conversation
+                .mailbox
+                .waiting_items
+                .into_iter()
+                .map(conversation_waiting_item_to_contract)
+                .collect(),
         },
         resource_surface: conversation
             .resource_surface
@@ -1723,6 +1729,23 @@ fn conversation_to_contract(
             .into_iter()
             .map(conversation_diagnostic_to_contract)
             .collect(),
+    }
+}
+
+fn conversation_waiting_item_to_contract(
+    item: app_agent_run::ConversationWaitingItemModel,
+) -> ConversationWaitingItemView {
+    ConversationWaitingItemView {
+        wait_id: item.wait_id,
+        gate_id: item.gate_id,
+        kind: item.kind,
+        source_ref: item.source_ref,
+        correlation_ref: item.correlation_ref,
+        status: item.status,
+        source_label: item.source_label,
+        preview: item.preview,
+        created_at: item.created_at,
+        resolved_at: item.resolved_at,
     }
 }
 
@@ -2136,7 +2159,7 @@ async fn build_agent_run_mailbox_view(
         ),
         messages: messages
             .into_iter()
-            .filter(|msg| mailbox_message_visible(msg))
+            .filter(mailbox_message_visible)
             .map(mailbox_message_view)
             .collect(),
     })

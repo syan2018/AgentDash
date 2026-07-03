@@ -38,6 +38,7 @@ import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionCha
 import { useImageAttachments } from "./composer/useImageAttachments";
 import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
+import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -67,6 +68,7 @@ export function SessionChatView({
   showStatusBar = true,
   promptTemplates,
   initialInputValue,
+  openWorkspacePanel,
 }: SessionChatViewProps) {
   const {
     sessionId,
@@ -632,7 +634,8 @@ export function SessionChatView({
   // ─── 渲染 ────────────────────────────────────────────
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <SessionWorkspacePanelActionProvider openWorkspacePanel={openWorkspacePanel}>
+      <div className="flex h-full flex-col overflow-hidden">
       {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
       {showStatusBar && (
         <SessionChatStatusBar
@@ -727,6 +730,7 @@ export function SessionChatView({
           onRemoveImage={imageAttach.removeAttachment}
         />
       </div>
-    </div>
+      </div>
+    </SessionWorkspacePanelActionProvider>
   );
 }

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查实现是否保持 mailbox durable envelope/scheduler/recovery 合同。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端 domain/application/repository/test 质量。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"若新增 wait record 或字段，需要检查 migration 合同。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查 generated DTO、前后端 contract 和 drift。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 workspace waiting UI 与 mailbox refresh 测试质量。"}
+{"file":".trellis/tasks/07-02-agent-parallel-wait-mailbox-implementation/research/current-mailbox-companion-parallel-capability.md","reason":"检查实现是否覆盖现有能力缺口。"}
+{"file":".trellis/tasks/07-02-agent-parallel-wait-mailbox-implementation/research/codex-reference-closure.md","reason":"检查实现是否只参考能力模型，不接入 Codex runtime。"}

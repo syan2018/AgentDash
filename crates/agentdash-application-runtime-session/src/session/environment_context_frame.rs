@@ -52,6 +52,8 @@ impl EnvironmentContextFrame {
     }
 }
 
+const WINDOWS_POWERSHELL_TEXT_OUTPUT_NOTE: &str = "Windows PowerShell output: some commands return objects. For non-interactive tools or scripts that need stable text, explicitly select string fields, emit text with Write-Output, or use dedicated file tools. Interactive terminals still rely on real PTY/stdout bytes.";
+
 impl ContextFramePayload for EnvironmentContextFrame {
     fn id(&self, created_at_ms: i64) -> String {
         format!("environment-{created_at_ms}")
@@ -78,9 +80,17 @@ impl ContextFramePayload for EnvironmentContextFrame {
     }
 
     fn sections(&self) -> Vec<ContextFrameSection> {
+        let summary = if self.is_windows() {
+            format!(
+                "{} {} | {} | PowerShell text output note",
+                self.platform, self.arch, self.date_utc
+            )
+        } else {
+            format!("{} {} | {}", self.platform, self.arch, self.date_utc)
+        };
         vec![ContextFrameSection::Environment {
             title: "Environment".to_string(),
-            summary: format!("{} {} | {}", self.platform, self.arch, self.date_utc),
+            summary,
             date: Some(self.date_utc.clone()),
             platform: Some(format!("{} {}", self.platform, self.arch)),
             model_id: self.model_id.clone(),
@@ -100,7 +110,16 @@ impl ContextFramePayload for EnvironmentContextFrame {
         if let Some(dir) = &self.working_directory {
             lines.push(format!("- Working directory: {dir}"));
         }
+        if self.is_windows() {
+            lines.push(format!("- {WINDOWS_POWERSHELL_TEXT_OUTPUT_NOTE}"));
+        }
         lines.join("\n")
+    }
+}
+
+impl EnvironmentContextFrame {
+    fn is_windows(&self) -> bool {
+        self.platform.eq_ignore_ascii_case("windows")
     }
 }
 
@@ -168,5 +187,56 @@ mod tests {
 
         assert!(!frame.rendered_text.contains("Model:"));
         assert!(!frame.rendered_text.contains("Working directory:"));
+    }
+
+    #[test]
+    fn windows_environment_frame_includes_powershell_text_output_note() {
+        let frame = build_environment_context_frame(&EnvironmentFrameInput {
+            date_utc: "2026-07-01",
+            platform: "windows",
+            arch: "x86_64",
+            model_id: None,
+            executor: "PI_AGENT",
+            working_directory: None,
+        })
+        .expect("environment frame");
+
+        assert!(frame.rendered_text.contains("some commands return objects"));
+        assert!(frame.rendered_text.contains("Write-Output"));
+        assert!(frame.rendered_text.contains("real PTY/stdout bytes"));
+        let environment_section = frame
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::Environment { summary, .. } => Some(summary),
+                _ => None,
+            })
+            .expect("environment section");
+        assert!(environment_section.contains("PowerShell text output note"));
+    }
+
+    #[test]
+    fn non_windows_environment_frame_omits_powershell_text_output_note() {
+        let frame = build_environment_context_frame(&EnvironmentFrameInput {
+            date_utc: "2026-07-01",
+            platform: "linux",
+            arch: "x86_64",
+            model_id: None,
+            executor: "PI_AGENT",
+            working_directory: None,
+        })
+        .expect("environment frame");
+
+        assert!(!frame.rendered_text.contains("some commands return objects"));
+        assert!(!frame.rendered_text.contains("Write-Output"));
+        let environment_section = frame
+            .sections
+            .iter()
+            .find_map(|section| match section {
+                ContextFrameSection::Environment { summary, .. } => Some(summary),
+                _ => None,
+            })
+            .expect("environment section");
+        assert!(!environment_section.contains("PowerShell text output note"));
     }
 }

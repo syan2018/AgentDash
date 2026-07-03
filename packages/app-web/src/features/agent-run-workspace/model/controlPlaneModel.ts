@@ -123,10 +123,17 @@ export function planAgentRunSystemEvent(
   switch (eventType) {
     case "hook_event":
     case "hook_action_resolved":
+      return {
+        hookRuntimeRefresh: { reason: eventType },
+      };
     case "companion_dispatch_registered":
     case "companion_result_available":
     case "companion_result_returned":
+    case "companion_human_request":
+    case "companion_human_response":
+    case "companion_review_request":
       return {
+        refreshWorkspaceState: true,
         hookRuntimeRefresh: { reason: eventType },
       };
     case "context_frame": {

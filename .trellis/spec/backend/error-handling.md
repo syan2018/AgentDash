@@ -84,3 +84,85 @@ PostgreSQL repository 通过 `agentdash-infrastructure::persistence::postgres::d
 - 其他数据库错误 -> `DomainError::Database`
 
 这样做的原因是 repository port 属于 domain 边界，上层只应消费业务可映射语义；数据库原始错误文本只进入日志或内部 message，不作为 HTTP 响应事实源。
+
+## Scenario: Relay Command HTTP Response Handling
+
+### 1. Scope / Trigger
+
+- Trigger: API route 通过 relay 向本机 backend 发送 command，并把 relay response 映射为 HTTP response。
+- Scope: `BackendRegistry::send_command(...)` 返回 `RelayMessage` 的 route handler，包含 terminal input / resize / kill 这类 fire-and-ack command。
+
+### 2. Signatures
+
+```rust
+let response: RelayMessage = backend_registry
+    .send_command(backend_id, RelayMessage::CommandTerminalInput { id, payload })
+    .await?;
+
+fn validate_terminal_command_response(
+    response: RelayMessage,
+    expected: TerminalCommandResponseKind,
+    terminal_id: &str,
+) -> Result<(), ApiError>;
+```
+
+### 3. Contracts
+
+- `send_command` 只证明 relay request/response matching 完成；route 还必须检查 response variant、`payload` 和 `error`。
+- 成功条件必须同时满足：
+  - response variant 与 command kind 一致。
+  - `payload: Some(_)`。
+  - `error: None`。
+- 同 variant response 携带 `error: Some(RelayError)` 时，route 按 `RelayErrorCode` 映射为稳定 `ApiError`。
+- response variant 不匹配、`payload: None` 且无 `error`，都属于协议异常，返回 `ApiError::Internal` 并写 diagnostic。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `ResponseTerminalInput { payload: Some(_), error: None }` for input | HTTP 204 |
+| `ResponseTerminalResize { payload: Some(_), error: None }` for resize | HTTP 204 |
+| `ResponseTerminalKill { payload: Some(_), error: None }` for kill | HTTP 204 |
+| 同 variant `error.code = NotFound` | `ApiError::NotFound` |
+| 同 variant `error.code = Forbidden/AuthFailed` | `ApiError::Forbidden` |
+| 同 variant `error.code = Conflict/SessionBusy` | `ApiError::Conflict` |
+| 同 variant `error.code = InvalidMessage` | `ApiError::BadRequest` |
+| 同 variant `error.code = Timeout/ExecutorUnavailable/ExecutorNotFound` | `ApiError::ServiceUnavailable` |
+| 同 variant `error.code = SpawnFailed/RuntimeError/IoError` | `ApiError::Internal` |
+| response variant 与 command kind 不一致 | `ApiError::Internal` |
+| `payload: None` 且 `error: None` | `ApiError::Internal` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: terminal resize 收到 `ResponseTerminalResize { payload: Some(...), error: None }` 后返回 204。
+- Base: 本机 backend 返回 terminal missing 的 `RelayErrorCode::NotFound`，HTTP response 使用 404 语义。
+- Bad: route 只把 `send_command(...).await` 的 `Ok(_)` 当作成功，会把本机 command failure 投影为 204。
+
+### 6. Tests Required
+
+- Unit test 覆盖同 variant relay error 不返回成功。
+- Unit test 覆盖 wrong response variant 返回 internal error。
+- Unit test 覆盖 `payload: None` 且无 error 返回 internal error。
+- Unit test 覆盖 matching success response 返回 `Ok(())`。
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```rust
+match backend_registry.send_command(...).await {
+    Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
+    Err(_) => Err(ApiError::ServiceUnavailable("命令发送失败".into())),
+}
+```
+
+#### Canonical
+
+```rust
+let response = backend_registry
+    .send_command(backend_id, command)
+    .await
+    .map_err(|error| map_send_error(error))?;
+validate_terminal_command_response(response, expected_kind, terminal_id)?;
+Ok(StatusCode::NO_CONTENT.into_response())
+```

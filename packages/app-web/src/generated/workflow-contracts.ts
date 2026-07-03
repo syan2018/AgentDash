@@ -196,11 +196,13 @@ export type ConversationExecutionView = { status: ConversationExecutionStatus, r
 
 export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
 
-export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, };
+export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, waiting_items: Array<ConversationWaitingItemView>, };
 
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 
 export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
+
+export type ConversationWaitingItemView = { wait_id: string, gate_id: string, kind: string, source_ref?: string, correlation_ref?: string, status: string, source_label?: string, preview?: string, created_at: string, resolved_at?: string, };
 
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 

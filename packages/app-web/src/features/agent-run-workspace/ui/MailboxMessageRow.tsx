@@ -3,6 +3,7 @@ import type {
   MailboxMessageStatus,
   MailboxMessageView,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type {
   SessionChatCommandModel,
   SessionChatMailboxModel,
@@ -42,6 +43,7 @@ export function MailboxSections({
   onRecall,
   onMove,
 }: MailboxMessageListProps) {
+  const waitingItems = mailbox?.waiting_items ?? [];
   const steerMessages = messages.filter(
     (m) => m.delivery.kind === "steer_active_turn" &&
       (!mailbox?.hide_system_steer_messages || m.origin === "user"),
@@ -57,6 +59,23 @@ export function MailboxSections({
 
   return (
     <>
+      {/* Waiting 区 */}
+      {waitingItems.length > 0 && (
+        <div>
+          <SectionLabel label="Waiting" count={waitingItems.length} />
+          {waitingItems.map((item, i) => (
+            <div key={item.wait_id}>
+              {i > 0 && <div className="mx-4 border-t border-border/20" />}
+              <WaitingItemRow item={item} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {waitingItems.length > 0 && (steerMessages.length > 0 || pendingMessages.length > 0) && (
+        <div className="border-t border-border/50" />
+      )}
+
       {/* Banner */}
       {showBanner && (
         <div className="border-b border-border/40 bg-warning/5 px-3 py-2">
@@ -171,6 +190,22 @@ const STATUS_LABELS: Record<MailboxMessageStatus, string> = {
   deleted: "已删除",
 };
 
+const WAIT_KIND_LABELS: Record<string, string> = {
+  companion: "Companion",
+  subagent: "Subagent",
+  human: "用户回应",
+  exec: "Exec",
+  workflow: "Workflow",
+};
+
+const WAIT_STATUS_LABELS: Record<string, string> = {
+  open: "等待中",
+  resolved: "已完成",
+  cancelled: "已取消",
+  failed: "失败",
+  expired: "已超时",
+};
+
 function mailboxSourceLabel(message: MailboxMessageView): string {
   const source = message.source;
   const explicitLabel = SOURCE_LABELS[source.display_label_key];
@@ -193,12 +228,28 @@ function mailboxSourceLabel(message: MailboxMessageView): string {
   }
 }
 
+function waitingKindLabel(kind: string): string {
+  return WAIT_KIND_LABELS[kind] ?? formatSourceKind(kind);
+}
+
+function waitingStatusLabel(status: string): string {
+  return WAIT_STATUS_LABELS[status] ?? formatSourceKind(status);
+}
+
 function formatSourceKind(value: string): string {
   return value
     .split(/[_-]+/)
     .filter((part) => part.length > 0)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatTimestamp(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length >= 16 && normalized[10] === "T") {
+    return normalized.slice(0, 16).replace("T", " ");
+  }
+  return normalized;
 }
 
 function mailboxStatusClassName(status: MailboxMessageStatus): string {
@@ -216,6 +267,20 @@ function mailboxStatusClassName(status: MailboxMessageStatus): string {
   }
 }
 
+function waitingStatusClassName(status: string): string {
+  switch (status) {
+    case "failed":
+      return "bg-destructive/10 text-destructive";
+    case "expired":
+      return "bg-warning/10 text-warning";
+    case "resolved":
+    case "cancelled":
+      return "border border-border bg-secondary text-muted-foreground";
+    default:
+      return "bg-info/10 text-info";
+  }
+}
+
 // ─── Section Label ────────────────────────────────────
 
 function SectionLabel({ label, count }: { label: string; count: number }) {
@@ -226,6 +291,41 @@ function SectionLabel({ label, count }: { label: string; count: number }) {
         <span className="ml-1 text-muted-foreground/30">·</span>
         <span className="ml-1 tabular-nums text-muted-foreground/30">{count}</span>
       </span>
+    </div>
+  );
+}
+
+function WaitingItemRow({ item }: { item: ConversationWaitingItemView }) {
+  const kindLabel = waitingKindLabel(item.kind);
+  const sourceLabel = item.source_label?.trim() || kindLabel;
+  const preview = item.preview?.trim() || "等待外部事件";
+  const statusLabel = waitingStatusLabel(item.status);
+  const timeLabel = item.resolved_at
+    ? `完成 ${formatTimestamp(item.resolved_at)}`
+    : `创建 ${formatTimestamp(item.created_at)}`;
+
+  return (
+    <div className="group relative">
+      <div className="flex h-9 items-center gap-2 px-3">
+        <div className="flex w-5 shrink-0 items-center justify-center">
+          <span className="h-2 w-2 rounded-[8px] bg-info/70" />
+        </div>
+        <span className="max-w-24 shrink-0 truncate rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {kindLabel}
+        </span>
+        <span className="max-w-32 shrink-0 truncate text-[11px] text-muted-foreground">
+          {sourceLabel}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px] leading-tight text-foreground/80">
+          {preview}
+        </span>
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60">
+          {timeLabel}
+        </span>
+        <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium ${waitingStatusClassName(item.status)}`}>
+          {statusLabel}
+        </span>
+      </div>
     </div>
   );
 }

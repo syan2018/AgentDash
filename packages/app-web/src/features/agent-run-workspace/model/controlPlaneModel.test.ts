@@ -206,6 +206,30 @@ describe("AgentRun control-plane model", () => {
     });
   });
 
+  it("plans workspace refresh from companion wait-related events", () => {
+    expect(planAgentRunSystemEvent(
+      "companion_human_request",
+      sessionMetaEvent("companion_human_request", {
+        gate_id: "gate-1",
+        companion_label: "Research Agent",
+      }),
+    )).toEqual({
+      refreshWorkspaceState: true,
+      hookRuntimeRefresh: { reason: "companion_human_request" },
+    });
+
+    expect(planAgentRunSystemEvent(
+      "companion_result_returned",
+      sessionMetaEvent("companion_result_returned", {
+        gate_id: "gate-1",
+        mailbox_message_id: "mailbox-1",
+      }),
+    )).toEqual({
+      refreshWorkspaceState: true,
+      hookRuntimeRefresh: { reason: "companion_result_returned" },
+    });
+  });
+
   it("plans capability refresh from context frame events", () => {
     const plan = planAgentRunSystemEvent(
       "context_frame",

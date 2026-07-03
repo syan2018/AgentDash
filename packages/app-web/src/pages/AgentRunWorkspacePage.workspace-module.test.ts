@@ -82,6 +82,7 @@ function workspaceView(
         paused: false,
         user_attention: false,
         messages: [],
+        waiting_items: [],
       },
       diagnostics: [],
     },

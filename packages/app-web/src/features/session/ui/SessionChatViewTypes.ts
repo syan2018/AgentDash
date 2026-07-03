@@ -8,11 +8,13 @@ import type {
   MailboxStateView,
   SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
+import type { OpenSessionWorkspacePanel } from "./SessionWorkspacePanelActionContext";
 
 export interface PromptTemplate {
   id: string;
@@ -54,6 +56,7 @@ export interface SessionChatCommandState {
 
 export interface SessionChatMailboxModel {
   messages: MailboxMessageView[];
+  waiting_items: ConversationWaitingItemView[];
   state?: MailboxStateView;
   paused: boolean;
   user_attention: boolean;
@@ -144,4 +147,7 @@ export interface SessionChatViewProps {
 
   /** 初始输入值（仅首次挂载时填充） */
   initialInputValue?: string;
+
+  /** 页面级工作区面板打开能力；缺省时卡片不得直接写全局 tab store。 */
+  openWorkspacePanel?: OpenSessionWorkspacePanel;
 }

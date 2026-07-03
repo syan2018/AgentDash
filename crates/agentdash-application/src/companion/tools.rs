@@ -6,7 +6,7 @@ use agentdash_agent_protocol::{
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
-use agentdash_domain::workflow::LifecycleTaskPlanItem;
+use agentdash_domain::workflow::{LifecycleGateRepository, LifecycleTaskPlanItem};
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::capability::CompanionAgentEntry;
@@ -38,7 +38,7 @@ use super::{
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
     AgentRunMailboxService, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionLaunchService,
+    SessionLaunchService, mailbox_source_identity_dedup_key,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
@@ -49,6 +49,10 @@ use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle}
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
 pub use agentdash_spi::CompanionSliceMode;
+
+const COMPANION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const COMPANION_WAIT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const COMPANION_WAIT_PREVIEW_CHARS: usize = 2_000;
 
 struct SelectedCompanionAgent {
     project_agent: ProjectAgent,
@@ -205,17 +209,112 @@ impl AgentRunCompanionMailboxDelivery {
     }
 }
 
+fn companion_wake_source(
+    kind: &'static str,
+    actor: &'static str,
+    route: &'static str,
+    gate_id: Uuid,
+    request_id: &str,
+    metadata: serde_json::Value,
+) -> MailboxSourceIdentity {
+    MailboxSourceIdentity::new("companion", kind, actor)
+        .with_source_ref(gate_id.to_string())
+        .with_correlation_ref(request_id.to_string())
+        .with_route(route)
+        .with_metadata(metadata)
+}
+
+fn companion_wake_source_dedup_key(source: &MailboxSourceIdentity) -> String {
+    mailbox_source_identity_dedup_key(source).unwrap_or_else(|| {
+        format!(
+            "source:{}:{}:fallback",
+            source.namespace.as_str(),
+            source.kind.as_str()
+        )
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CompanionGateWaitOutcome {
+    Resolved(serde_json::Value),
+    TimedOut,
+}
+
+async fn wait_for_lifecycle_gate_resolution(
+    gate_repo: &dyn LifecycleGateRepository,
+    gate_id: Uuid,
+    cancel: CancellationToken,
+    timeout: std::time::Duration,
+    poll_interval: std::time::Duration,
+) -> Result<CompanionGateWaitOutcome, AgentToolError> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let gate = gate_repo
+            .get(gate_id)
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(format!("gate 查询失败: {error}")))?
+            .ok_or_else(|| AgentToolError::ExecutionFailed(format!("gate {gate_id} 不存在")))?;
+
+        if !gate.is_open() {
+            return Ok(CompanionGateWaitOutcome::Resolved(
+                gate.payload_json.unwrap_or_else(|| serde_json::json!({})),
+            ));
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(CompanionGateWaitOutcome::TimedOut);
+        }
+
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                return Err(AgentToolError::ExecutionFailed(
+                    "companion wait 被取消".to_string(),
+                ));
+            }
+            _ = tokio::time::sleep(poll_interval) => {}
+        }
+    }
+}
+
+fn companion_wait_payload_status(payload: &serde_json::Value, default: &str) -> String {
+    payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn companion_wait_payload_summary(payload: &serde_json::Value) -> String {
+    payload
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("(无摘要)")
+        .to_string()
+}
+
+fn bounded_json_preview(payload: &serde_json::Value, max_chars: usize) -> String {
+    let mut preview = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
+    if preview.chars().count() > max_chars {
+        preview = preview.chars().take(max_chars).collect::<String>();
+        preview.push_str("...");
+    }
+    preview
+}
+
 #[async_trait]
 impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
     async fn deliver_child_result_to_parent(
         &self,
         command: CompanionParentMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-        let source = MailboxSourceIdentity::new("companion", "result", "agent")
-            .with_source_ref(command.gate_id.to_string())
-            .with_correlation_ref(command.request_id.clone())
-            .with_route("parent")
-            .with_metadata(serde_json::json!({
+        let source = companion_wake_source(
+            "result",
+            "agent",
+            "parent",
+            command.gate_id,
+            &command.request_id,
+            serde_json::json!({
                 "gate_id": command.gate_id.to_string(),
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
@@ -223,7 +322,9 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "child_agent_id": command.child_agent_id.to_string(),
                 "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
                 "resolved_turn_id": command.resolved_turn_id.clone(),
-            }));
+            }),
+        );
+        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -237,7 +338,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 source,
                 input_text: command.input_text,
                 client_command_id: format!("companion-result:{}", command.gate_id),
-                source_dedup_key: format!("companion_result:{}", command.gate_id),
+                source_dedup_key,
             },
         )
         .await
@@ -247,11 +348,13 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
         &self,
         command: CompanionParentRequestMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-        let source = MailboxSourceIdentity::new("companion", "parent_request", "agent")
-            .with_source_ref(command.gate_id.to_string())
-            .with_correlation_ref(command.request_id.clone())
-            .with_route("parent")
-            .with_metadata(serde_json::json!({
+        let source = companion_wake_source(
+            "parent_request",
+            "agent",
+            "parent",
+            command.gate_id,
+            &command.request_id,
+            serde_json::json!({
                 "gate_id": command.gate_id.to_string(),
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
@@ -260,7 +363,9 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
                 "turn_id": command.turn_id.clone(),
                 "wait": command.wait,
-            }));
+            }),
+        );
+        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -274,7 +379,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 source,
                 input_text: command.input_text,
                 client_command_id: format!("companion-parent-request:{}", command.gate_id),
-                source_dedup_key: format!("companion_parent_request:{}", command.gate_id),
+                source_dedup_key,
             },
         )
         .await
@@ -284,11 +389,13 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
         &self,
         command: CompanionParentResponseMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-        let source = MailboxSourceIdentity::new("companion", "parent_response", "agent")
-            .with_source_ref(command.gate_id.to_string())
-            .with_correlation_ref(command.request_id.clone())
-            .with_route("child")
-            .with_metadata(serde_json::json!({
+        let source = companion_wake_source(
+            "parent_response",
+            "agent",
+            "child",
+            command.gate_id,
+            &command.request_id,
+            serde_json::json!({
                 "gate_id": command.gate_id.to_string(),
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
@@ -296,7 +403,9 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "parent_delivery_runtime_session_id": command.parent_delivery_runtime_session_id.clone(),
                 "child_agent_id": command.child_agent_id.to_string(),
                 "resolved_turn_id": command.resolved_turn_id.clone(),
-            }));
+            }),
+        );
+        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -310,7 +419,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 source,
                 input_text: command.input_text,
                 client_command_id: format!("companion-parent-response:{}", command.gate_id),
-                source_dedup_key: format!("companion_parent_response:{}", command.gate_id),
+                source_dedup_key,
             },
         )
         .await
@@ -323,11 +432,13 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
         &self,
         command: CompanionHumanResponseMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-        let source = MailboxSourceIdentity::new("companion", "human_response", "human")
-            .with_source_ref(command.gate_id.to_string())
-            .with_correlation_ref(command.request_id.clone())
-            .with_route("human")
-            .with_metadata(serde_json::json!({
+        let source = companion_wake_source(
+            "human_response",
+            "human",
+            "human",
+            command.gate_id,
+            &command.request_id,
+            serde_json::json!({
                 "gate_id": command.gate_id.to_string(),
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
@@ -335,7 +446,9 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 "delivery_runtime_session_id": command.delivery_runtime_session_id.clone(),
                 "turn_id": command.turn_id.clone(),
                 "request_type": command.request_type.clone(),
-            }));
+            }),
+        );
+        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -349,7 +462,7 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 source,
                 input_text: command.input_text,
                 client_command_id: format!("companion-human-response:{}", command.gate_id),
-                source_dedup_key: format!("companion_human_response:{}", command.gate_id),
+                source_dedup_key,
             },
         )
         .await
@@ -956,36 +1069,50 @@ impl CompanionRequestTool {
                 AgentToolError::ExecutionFailed("dispatch 未创建 gate（内部错误）".to_string())
             })?;
 
-            let result_payload = self.poll_gate_until_resolved(gate_id, cancel).await?;
+            let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
+            if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
+                return Ok(AgentToolResult {
+                    content: vec![ContentPart::text(format!(
+                        "等待 companion `{companion_label}` 回传超时。\n- status: timed_out\n- gate_ref: {gate_id}\n- child_session_id: {}\n- child_turn_id: {}",
+                        dispatch_result.delivery_runtime_session_id,
+                        child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
+                    ))],
+                    is_error: false,
+                    details: Some(serde_json::json!({
+                        "dispatch_id": dispatch_plan.dispatch_id,
+                        "wait": true,
+                        "timed_out": true,
+                        "status": "timed_out",
+                        "summary": "等待 companion result 超时",
+                        "companion_label": companion_label,
+                        "result_refs": {
+                            "gate_ref": gate_id.to_string(),
+                            "run_ref": dispatch_result.run_ref.to_string(),
+                            "agent_ref": dispatch_result.agent_ref.to_string(),
+                            "frame_ref": dispatch_result.frame_ref.to_string(),
+                            "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                            "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                            "child_turn_id": child_turn_id.clone(),
+                            "mailbox_message_id": mailbox_message_id.clone(),
+                        },
+                    })),
+                });
+            }
 
-            let summary = result_payload
-                .get("summary")
-                .and_then(|v| v.as_str())
-                .unwrap_or("(无摘要)");
-            let status = result_payload
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let findings = result_payload
-                .get("findings")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n- ")
-                })
-                .unwrap_or_default();
+            let CompanionGateWaitOutcome::Resolved(result_payload) = wait_outcome else {
+                unreachable!("timed_out handled above");
+            };
+            let summary = companion_wait_payload_summary(&result_payload);
+            let status = companion_wait_payload_status(&result_payload, "unknown");
+            let result_preview =
+                bounded_json_preview(&result_payload, COMPANION_WAIT_PREVIEW_CHARS);
 
-            let mut text = format!(
-                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}",
+            let text = format!(
+                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
                 dispatch_result.delivery_runtime_session_id,
                 child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
                 mailbox_outcome,
             );
-            if !findings.is_empty() {
-                text.push_str(&format!("\n- findings:\n- {findings}"));
-            }
 
             return Ok(AgentToolResult {
                 content: vec![ContentPart::text(text)],
@@ -1008,7 +1135,18 @@ impl CompanionRequestTool {
                     "selected_agent_key": selected_companion.agent_key,
                     "status": status,
                     "summary": summary,
-                    "result": result_payload,
+                    "timed_out": false,
+                    "result_refs": {
+                        "gate_ref": gate_id.to_string(),
+                        "run_ref": dispatch_result.run_ref.to_string(),
+                        "agent_ref": dispatch_result.agent_ref.to_string(),
+                        "frame_ref": dispatch_result.frame_ref.to_string(),
+                        "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                        "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
+                        "child_turn_id": child_turn_id.clone(),
+                        "mailbox_message_id": mailbox_message_id.clone(),
+                    },
+                    "result_preview": result_preview,
                 })),
             });
         }
@@ -1048,35 +1186,20 @@ impl CompanionRequestTool {
         })
     }
 
-    /// 轮询 LifecycleGate 直到 resolved 或取消。
+    /// 轮询 LifecycleGate 直到 resolved、timeout 或取消。
     async fn poll_gate_until_resolved(
         &self,
         gate_id: Uuid,
         cancel: CancellationToken,
-    ) -> Result<serde_json::Value, AgentToolError> {
-        let poll_interval = std::time::Duration::from_millis(500);
-        loop {
-            let gate = self
-                .repos
-                .lifecycle_gate_repo
-                .get(gate_id)
-                .await
-                .map_err(|e| AgentToolError::ExecutionFailed(format!("gate 查询失败: {e}")))?
-                .ok_or_else(|| AgentToolError::ExecutionFailed(format!("gate {gate_id} 不存在")))?;
-
-            if !gate.is_open() {
-                return Ok(gate.payload_json.unwrap_or(serde_json::json!({})));
-            }
-
-            tokio::select! {
-                _ = tokio::time::sleep(poll_interval) => {},
-                _ = cancel.cancelled() => {
-                    return Err(AgentToolError::ExecutionFailed(
-                        "companion wait 被取消".to_string(),
-                    ));
-                }
-            }
-        }
+    ) -> Result<CompanionGateWaitOutcome, AgentToolError> {
+        wait_for_lifecycle_gate_resolution(
+            self.repos.lifecycle_gate_repo.as_ref(),
+            gate_id,
+            cancel,
+            COMPANION_WAIT_TIMEOUT,
+            COMPANION_WAIT_POLL_INTERVAL,
+        )
+        .await
     }
 
     /// target=parent 的执行逻辑：打开 parent frame 持有的 durable gate。
@@ -1301,58 +1424,67 @@ impl CompanionRequestTool {
                 )));
             }
 
-            // 轮询 gate 直到被 resolve 或取消
-            let poll_interval = std::time::Duration::from_millis(500);
-            let timeout = std::time::Duration::from_secs(300);
-            let deadline = tokio::time::Instant::now() + timeout;
-            let response_payload = loop {
-                if cancel.is_cancelled() {
-                    return Err(AgentToolError::ExecutionFailed(
-                        "等待用户回应时被取消".to_string(),
-                    ));
-                }
+            let wait_outcome = wait_for_lifecycle_gate_resolution(
+                self.repos.lifecycle_gate_repo.as_ref(),
+                gate_id,
+                cancel,
+                COMPANION_WAIT_TIMEOUT,
+                COMPANION_WAIT_POLL_INTERVAL,
+            )
+            .await?;
 
-                let g = self
-                    .repos
-                    .lifecycle_gate_repo
-                    .get(gate_id)
-                    .await
-                    .map_err(|e| AgentToolError::ExecutionFailed(format!("查询 gate 失败: {e}")))?
-                    .ok_or_else(|| AgentToolError::ExecutionFailed("gate 不存在".to_string()))?;
+            if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
+                return Ok(AgentToolResult {
+                    content: vec![ContentPart::text(format!(
+                        "等待用户回应超时。\n- status: timed_out\n- request_id: {request_id}\n- gate_ref: {gate_id}",
+                    ))],
+                    is_error: false,
+                    details: Some(serde_json::json!({
+                        "request_id": request_id,
+                        "wait": true,
+                        "timed_out": true,
+                        "status": "timed_out",
+                        "summary": "等待用户回应超时",
+                        "result_refs": {
+                            "gate_ref": gate_id.to_string(),
+                            "request_id": request_id.clone(),
+                            "run_ref": anchor.run_id.to_string(),
+                            "agent_ref": anchor.agent_id.to_string(),
+                            "frame_ref": anchor.frame_id.to_string(),
+                            "delivery_runtime_session_id": current_session_id,
+                        },
+                    })),
+                });
+            }
 
-                if !g.is_open() {
-                    break g.payload_json.unwrap_or(serde_json::json!({
-                        "status": "error",
-                        "summary": "gate 已关闭但无 payload"
-                    }));
-                }
-
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(AgentToolError::ExecutionFailed(
-                        "等待用户回应超时".to_string(),
-                    ));
-                }
-
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        return Err(AgentToolError::ExecutionFailed(
-                            "等待用户回应时被取消".to_string(),
-                        ));
-                    }
-                    _ = tokio::time::sleep(poll_interval) => {}
-                }
+            let CompanionGateWaitOutcome::Resolved(response_payload) = wait_outcome else {
+                unreachable!("timed_out handled above");
             };
+            let status = companion_wait_payload_status(&response_payload, "completed");
+            let summary = companion_wait_payload_summary(&response_payload);
+            let response_preview =
+                bounded_json_preview(&response_payload, COMPANION_WAIT_PREVIEW_CHARS);
 
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
-                    "用户已回应。\n- request_id: {request_id}\n- response: {}",
-                    serde_json::to_string_pretty(&response_payload).unwrap_or_default()
+                    "用户已回应。\n- request_id: {request_id}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
                 ))],
                 is_error: false,
                 details: Some(serde_json::json!({
                     "request_id": request_id,
                     "wait": true,
-                    "response_payload": response_payload,
+                    "timed_out": false,
+                    "status": status,
+                    "summary": summary,
+                    "result_refs": {
+                        "gate_ref": gate_id.to_string(),
+                        "request_id": request_id.clone(),
+                        "run_ref": anchor.run_id.to_string(),
+                        "agent_ref": anchor.agent_id.to_string(),
+                        "frame_ref": anchor.frame_id.to_string(),
+                        "delivery_runtime_session_id": current_session_id,
+                    },
+                    "response_preview": response_preview,
                 })),
             })
         } else {
@@ -2142,15 +2274,14 @@ async fn record_subagent_trace(
             .core
             .has_live_executor_session(session_id)
             .await;
-        if !has_live {
-            if let Some(notification) =
+        if !has_live
+            && let Some(notification) =
                 build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace)
-            {
-                let _ = session_services
-                    .eventing
-                    .inject_notification(session_id, notification)
-                    .await;
-            }
+        {
+            let _ = session_services
+                .eventing
+                .inject_notification(session_id, notification)
+                .await;
         }
     }
 }
@@ -2606,17 +2737,61 @@ fn companion_project_id_for_owner(
 #[cfg(test)]
 mod companion_tests {
     use super::{
-        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
-        build_companion_dispatch_prompt, build_companion_dispatch_slice,
-        build_companion_execution_slice, build_subagent_pending_action, companion_owner_candidates,
-        platform_capability_grant_missing_broker_error,
+        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice,
+        CompanionGateWaitOutcome, CompanionSliceMode, build_companion_dispatch_prompt,
+        build_companion_dispatch_slice, build_companion_execution_slice,
+        build_subagent_pending_action, companion_owner_candidates, companion_wake_source,
+        companion_wake_source_dedup_key, platform_capability_grant_missing_broker_error,
+        wait_for_lifecycle_gate_resolution,
     };
+    use agentdash_domain::workflow::{LifecycleGate, LifecycleGateRepository};
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     use crate::runtime_tools::SharedSessionToolServicesHandle;
+    #[derive(Default)]
+    struct MemoryGateRepo {
+        gates: Mutex<HashMap<Uuid, LifecycleGate>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LifecycleGateRepository for MemoryGateRepo {
+        async fn create(&self, gate: &LifecycleGate) -> Result<(), agentdash_domain::DomainError> {
+            self.gates.lock().unwrap().insert(gate.id, gate.clone());
+            Ok(())
+        }
+
+        async fn get(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<LifecycleGate>, agentdash_domain::DomainError> {
+            Ok(self.gates.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_open_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<LifecycleGate>, agentdash_domain::DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, gate: &LifecycleGate) -> Result<(), agentdash_domain::DomainError> {
+            self.gates.lock().unwrap().insert(gate.id, gate.clone());
+            Ok(())
+        }
+    }
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
@@ -2660,6 +2835,105 @@ mod companion_tests {
                 assert!(message.contains("ARCH-010"));
             }
             other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn companion_wake_source_has_stable_identity_and_dedup_key() {
+        let gate_id = Uuid::new_v4();
+        let source = companion_wake_source(
+            "result",
+            "agent",
+            "parent",
+            gate_id,
+            "dispatch-1",
+            serde_json::json!({ "gate_id": gate_id.to_string() }),
+        );
+
+        assert_eq!(source.namespace, "companion");
+        assert_eq!(source.kind, "result");
+        assert_eq!(source.actor, "agent");
+        assert_eq!(source.route.as_deref(), Some("parent"));
+        assert_eq!(
+            source.source_ref.as_deref(),
+            Some(gate_id.to_string().as_str())
+        );
+        assert_eq!(source.correlation_ref.as_deref(), Some("dispatch-1"));
+        assert_eq!(
+            companion_wake_source_dedup_key(&source),
+            format!("source:companion:result:ref:{gate_id}:correlation:dispatch-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn companion_gate_wait_returns_timeout_without_resolving_gate() {
+        let repo = MemoryGateRepo::default();
+        let gate = LifecycleGate::open(
+            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            "companion_wait",
+            "dispatch-1",
+            Some(serde_json::json!({ "status": "pending" })),
+        );
+        let gate_id = gate.id;
+        repo.create(&gate).await.expect("seed gate");
+
+        let outcome = wait_for_lifecycle_gate_resolution(
+            &repo,
+            gate_id,
+            CancellationToken::new(),
+            std::time::Duration::from_millis(2),
+            std::time::Duration::from_millis(1),
+        )
+        .await
+        .expect("wait outcome");
+
+        assert_eq!(outcome, CompanionGateWaitOutcome::TimedOut);
+        let stored = repo.get(gate_id).await.expect("load gate").expect("gate");
+        assert!(stored.is_open());
+    }
+
+    #[tokio::test]
+    async fn companion_gate_wait_returns_resolved_payload_refs_source() {
+        let repo = MemoryGateRepo::default();
+        let mut gate = LifecycleGate::open(
+            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            "companion_wait",
+            "dispatch-1",
+            Some(serde_json::json!({ "status": "pending" })),
+        );
+        let gate_id = gate.id;
+        gate.payload_json = Some(serde_json::json!({
+            "status": "completed",
+            "summary": "done",
+            "artifact_refs": ["mailbox:result"]
+        }));
+        gate.resolve("child-agent");
+        repo.create(&gate).await.expect("seed gate");
+
+        let outcome = wait_for_lifecycle_gate_resolution(
+            &repo,
+            gate_id,
+            CancellationToken::new(),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(1),
+        )
+        .await
+        .expect("wait outcome");
+
+        match outcome {
+            CompanionGateWaitOutcome::Resolved(payload) => {
+                assert_eq!(payload["status"], serde_json::json!("completed"));
+                assert_eq!(payload["summary"], serde_json::json!("done"));
+                assert_eq!(
+                    payload["artifact_refs"],
+                    serde_json::json!(["mailbox:result"])
+                );
+            }
+            CompanionGateWaitOutcome::TimedOut => panic!("resolved gate should not time out"),
         }
     }
 

@@ -246,9 +246,9 @@ fn log_agent_run_fork_materialization_error(
     context: &AgentRunForkMaterializationLogContext,
     error: &DomainError,
 ) {
-    let diagnostic_context = agent_run_fork_materialization_diagnostic_context(stage, context);
+    let error_context = agent_run_fork_materialization_error_context(stage, context);
     diag_error!(Error, Subsystem::AgentRun,
-        context = &diagnostic_context,
+        context = &error_context,
         error = error,
         parent_run_id = %context.parent_run_id,
         parent_agent_id = %context.parent_agent_id,
@@ -264,27 +264,11 @@ fn log_agent_run_fork_materialization_error(
     );
 }
 
-fn agent_run_fork_materialization_diagnostic_context(
+fn agent_run_fork_materialization_error_context(
     stage: &str,
-    context: &AgentRunForkMaterializationLogContext,
+    _context: &AgentRunForkMaterializationLogContext,
 ) -> DiagnosticErrorContext {
     DiagnosticErrorContext::new("agent_run.fork_materialization", stage)
-        .with_field("parent_run_id", context.parent_run_id)
-        .with_field("parent_agent_id", context.parent_agent_id)
-        .with_field("parent_frame_id", context.parent_frame_id)
-        .with_field(
-            "parent_runtime_session_id",
-            &context.parent_runtime_session_id,
-        )
-        .with_field("child_run_id", context.child_run_id)
-        .with_field("child_agent_id", context.child_agent_id)
-        .with_field("child_frame_id", context.child_frame_id)
-        .with_field(
-            "child_runtime_session_id",
-            &context.child_runtime_session_id,
-        )
-        .with_field("lineage_id", context.lineage_id)
-        .with_field("forked_by_user_id", &context.forked_by_user_id)
 }
 
 async fn insert_agent_run_lineage(

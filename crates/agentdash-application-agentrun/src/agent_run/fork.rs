@@ -667,14 +667,10 @@ fn log_agent_run_fork_stage_error<E>(
         .map(|parent| parent.runtime_session_id.as_str())
         .unwrap_or("unresolved");
     let child_runtime_session_id = child_runtime_session_id.unwrap_or("unavailable");
-    let diagnostic_context = agent_run_fork_stage_diagnostic_context(
-        stage,
-        context,
-        parent,
-        Some(child_runtime_session_id),
-    );
+    let error_context =
+        agent_run_fork_stage_error_context(stage, context, parent, Some(child_runtime_session_id));
     diag_error!(Error, Subsystem::AgentRun,
-        context = &diagnostic_context,
+        context = &error_context,
         error = error,
         command_kind = context.command_kind,
         parent_run_id = %parent_run_id,
@@ -689,36 +685,13 @@ fn log_agent_run_fork_stage_error<E>(
     );
 }
 
-fn agent_run_fork_stage_diagnostic_context(
+fn agent_run_fork_stage_error_context(
     stage: &str,
-    context: &AgentRunForkLogContext,
-    parent: Option<&ResolvedForkParent>,
-    child_runtime_session_id: Option<&str>,
+    _context: &AgentRunForkLogContext,
+    _parent: Option<&ResolvedForkParent>,
+    _child_runtime_session_id: Option<&str>,
 ) -> DiagnosticErrorContext {
-    let parent_run_id = parent
-        .map(|parent| parent.run.id)
-        .unwrap_or(context.parent_run_id);
-    let parent_agent_id = parent
-        .map(|parent| parent.agent.id)
-        .unwrap_or(context.parent_agent_id);
-    let parent_frame_id = parent
-        .map(|parent| parent.frame.id.to_string())
-        .unwrap_or_else(|| "unresolved".to_string());
-    let parent_runtime_session_id = parent
-        .map(|parent| parent.runtime_session_id.as_str())
-        .unwrap_or("unresolved");
-    let child_runtime_session_id = child_runtime_session_id.unwrap_or("unavailable");
-
     DiagnosticErrorContext::new("agent_run.fork", stage)
-        .with_field("command_kind", context.command_kind)
-        .with_field("parent_run_id", parent_run_id)
-        .with_field("parent_agent_id", parent_agent_id)
-        .with_field("parent_frame_id", parent_frame_id)
-        .with_field("parent_runtime_session_id", parent_runtime_session_id)
-        .with_field("child_runtime_session_id", child_runtime_session_id)
-        .with_field("current_user_id", &context.current_user_id)
-        .with_field("client_command_id", &context.client_command_id)
-        .with_field("fork_point", &context.fork_point)
 }
 
 fn message_ref_log_label(value: Option<&MessageRef>) -> String {

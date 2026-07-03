@@ -125,12 +125,7 @@ mod tests {
                 .and_then(|v| v.as_str())
                 .is_some_and(|value| value.contains("database exploded"))
         );
-        assert!(
-            r.fields
-                .get("diagnostic_context")
-                .and_then(|v| v.as_str())
-                .is_some_and(|value| value.contains("agent_run.fork"))
-        );
+        assert!(!r.fields.contains_key("diagnostic_context"));
         assert!(
             r.fields
                 .get("error")

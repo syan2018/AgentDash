@@ -2141,15 +2141,9 @@ fn log_agent_run_fork_route_error(
     error: &(impl std::fmt::Debug + std::fmt::Display),
 ) {
     let fork_point = message_ref_log_label(fork_point_ref);
-    let diagnostic_context = DiagnosticErrorContext::new("agent_run.fork", "route")
-        .with_field("route", route)
-        .with_field("run_id", run_id)
-        .with_field("agent_id", agent_id)
-        .with_field("current_user_id", current_user_id)
-        .with_field("client_command_id", client_command_id)
-        .with_field("fork_point", &fork_point);
+    let error_context = DiagnosticErrorContext::new("agent_run.fork", "route");
     diag_error!(Error, Subsystem::Api,
-        context = &diagnostic_context,
+        context = &error_context,
         error = error,
         route = route,
         run_id = %run_id,

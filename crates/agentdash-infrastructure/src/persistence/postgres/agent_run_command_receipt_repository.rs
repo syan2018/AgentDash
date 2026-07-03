@@ -2,6 +2,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandReceipt,
@@ -121,6 +122,15 @@ impl AgentRunCommandReceiptRepository for PostgresAgentRunCommandReceiptReposito
                     }
                     return Ok(AgentRunCommandClaim::Duplicate(existing));
                 }
+                log_command_receipt_db_error(
+                    "claim_insert",
+                    Some(created.id),
+                    Some(&created.scope_kind),
+                    Some(&created.scope_key),
+                    Some(created.command_kind.as_str()),
+                    Some(&created.client_command_id),
+                    &error,
+                );
                 Err(sql_err_for("agent_run_command_receipts", error))
             }
         }
@@ -245,6 +255,61 @@ fn digest_conflict(client_command_id: &str) -> DomainError {
         entity: "agent_run_command_receipt",
         constraint: "request_digest",
         message: format!("client_command_id `{client_command_id}` 已用于不同请求"),
+    }
+}
+
+fn log_command_receipt_db_error(
+    stage: &'static str,
+    receipt_id: Option<Uuid>,
+    scope_kind: Option<&str>,
+    scope_key: Option<&str>,
+    command_kind: Option<&str>,
+    client_command_id: Option<&str>,
+    error: &sqlx::Error,
+) {
+    let receipt_id = receipt_id
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
+    let scope_kind = scope_kind.unwrap_or("unavailable");
+    let scope_key = scope_key.unwrap_or("unavailable");
+    let command_kind = command_kind.unwrap_or("unavailable");
+    let client_command_id = client_command_id.unwrap_or("unavailable");
+    let db_code = database_error_code(error);
+    let db_constraint = database_error_constraint(error);
+    let context = DiagnosticErrorContext::new("agent_run.command_receipt", stage);
+
+    diag_error!(Error, Subsystem::AgentRun,
+        context = &context,
+        error = error,
+        table = "agent_run_command_receipts",
+        receipt_id = %receipt_id,
+        scope_kind = %scope_kind,
+        scope_key = %scope_key,
+        command_kind = %command_kind,
+        client_command_id = %client_command_id,
+        db_code = %db_code,
+        db_constraint = %db_constraint,
+        "AgentRun command receipt database operation failed"
+    );
+}
+
+fn database_error_code(error: &sqlx::Error) -> String {
+    match error {
+        sqlx::Error::Database(error) => error
+            .code()
+            .map(|code| code.into_owned())
+            .unwrap_or_else(|| "unavailable".to_string()),
+        _ => "unavailable".to_string(),
+    }
+}
+
+fn database_error_constraint(error: &sqlx::Error) -> String {
+    match error {
+        sqlx::Error::Database(error) => error
+            .constraint()
+            .map(str::to_string)
+            .unwrap_or_else(|| "unavailable".to_string()),
+        _ => "unavailable".to_string(),
     }
 }
 

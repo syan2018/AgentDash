@@ -43,14 +43,12 @@ diag!(Info, Subsystem::Relay, backend_id = %bid, "本机后端注册完成，进
 
 ## 标准错误诊断：`diag_error!`
 
-需要记录错误对象的诊断入口使用 `agentdash_diagnostics::diag_error!`，并配套 `DiagnosticErrorContext` 构造 operation / stage / 关联字段：
+需要记录错误对象的诊断入口使用 `agentdash_diagnostics::diag_error!`，并配套 `DiagnosticErrorContext` 构造 operation / stage：
 
 ```rust
 use agentdash_diagnostics::{diag_error, DiagnosticErrorContext, Subsystem};
 
-let context = DiagnosticErrorContext::new("agent_run.fork", "materialization")
-    .with_field("run_id", run_id)
-    .with_field("client_command_id", client_command_id);
+let context = DiagnosticErrorContext::new("agent_run.fork", "materialization");
 
 diag_error!(
     Error,
@@ -67,11 +65,10 @@ diag_error!(
 
 - `operation`：稳定操作名，如 `agent_run.fork`。
 - `stage`：操作内失败阶段，如 `materialization`、`receipt_claim`。
-- `detail`：由 operation / stage / context / error 组成的完整排障消息。
-- `diagnostic_context`：同一上下文的 JSON 形式，便于查询端和文件日志读取。
+- `detail`：由 operation / stage / error 组成的排障摘要。
 - `error` / `error_debug`：错误的 Display 与 Debug 表达。
 
-调用点继续补充 `run_id`、`session_id`、`backend_id` 和该 use case 自有的结构化字段。这样做的原因是错误诊断的消息结构属于 diagnostics facade 的公共契约，业务模块只提供上下文事实，不各自拼装错误消息模板。
+调用点继续补充 `run_id`、`session_id`、`backend_id` 和该 use case 自有的结构化字段，作为上下文事实的唯一结构化来源。这样做的原因是错误诊断的消息结构属于 diagnostics facade 的公共契约，业务模块只提供上下文事实，不各自拼装错误消息模板，也不重复嵌套同一批上下文字段。
 
 ---
 

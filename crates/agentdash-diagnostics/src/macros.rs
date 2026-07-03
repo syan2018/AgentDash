@@ -33,16 +33,15 @@ macro_rules! diag {
 /// 签名：
 /// `diag_error!(<Level>, <Subsystem>, context = <DiagnosticErrorContext>, error = <err>, <field>=<val>, ..., "message")`
 ///
-/// 该宏统一注入 `operation`、`stage`、`detail`、`diagnostic_context`、
-/// `error` 与 `error_debug` 字段。调用侧只需要补充具体 use case 的关联字段。
+/// 该宏统一注入 `operation`、`stage`、`detail`、`error` 与 `error_debug`
+/// 字段。调用侧只需要补充具体 use case 的关联字段。
 ///
 /// # 示例
 ///
 /// ```
 /// use agentdash_diagnostics::{diag_error, DiagnosticErrorContext, Subsystem};
 /// # let error = std::io::Error::new(std::io::ErrorKind::Other, "boom");
-/// let context = DiagnosticErrorContext::new("agent_run.fork", "materialization")
-///     .with_field("run_id", "run-1");
+/// let context = DiagnosticErrorContext::new("agent_run.fork", "materialization");
 /// diag_error!(
 ///     Error,
 ///     Subsystem::AgentRun,
@@ -58,14 +57,12 @@ macro_rules! diag_error {
         let __agentdash_diag_context = $context;
         let __agentdash_diag_error = $error;
         let __agentdash_diag_detail = __agentdash_diag_context.detail(__agentdash_diag_error);
-        let __agentdash_diag_context_json = __agentdash_diag_context.context_json();
         $crate::diag!(
             $level,
             $subsystem,
             operation = %__agentdash_diag_context.operation(),
             stage = %__agentdash_diag_context.stage(),
             detail = %__agentdash_diag_detail,
-            diagnostic_context = %__agentdash_diag_context_json,
             error = %__agentdash_diag_error,
             error_debug = ?__agentdash_diag_error,
             $($field)+

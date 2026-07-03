@@ -43,10 +43,8 @@ export {
   type SessionProjectionViewProps,
 } from "./SessionProjectionView";
 export {
-  SessionLineageView,
   SessionLineageViewPanel,
   type SessionLineageViewPanelProps,
-  type SessionLineageViewProps,
 } from "./SessionLineageView";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
 export {

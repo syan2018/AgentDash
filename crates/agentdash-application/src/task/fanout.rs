@@ -168,6 +168,7 @@ pub async fn fanout_tasks(
             .dispatch_task_subject(SubjectExecutionIntent {
                 project_id: candidate.project_id,
                 source: agentdash_domain::workflow::ExecutionSource::ParentAgent,
+                created_by_user_id: None,
                 subject_ref: SubjectRef::new("task", candidate.task.id),
                 parent_run_id: Some(candidate.owning_run_id),
                 parent_agent_id: command.parent_agent_id,

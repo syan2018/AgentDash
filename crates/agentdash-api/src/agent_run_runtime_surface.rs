@@ -46,7 +46,7 @@ pub(crate) async fn resolve_current_runtime_surface_for_api(
         state.as_ref(),
         current_user,
         surface.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(ApiCurrentRuntimeSurface::from(surface))
@@ -69,7 +69,7 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_api(
         state.as_ref(),
         current_user,
         surface.surface.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(ApiCurrentRuntimeSurfaceWithBackend::from(surface))
@@ -141,7 +141,7 @@ pub(crate) async fn resolve_terminal_launch_target_for_api(
         state.as_ref(),
         current_user,
         runtime_surface.surface.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     terminal_launch_target_from_current_surface(&runtime_surface)

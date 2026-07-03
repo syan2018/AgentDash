@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { useProjectStore } from "../../stores/projectStore";
@@ -112,12 +112,20 @@ export function WorkspaceLayout() {
     }
   }, [currentProjectId, fetchWorkspaces]);
 
-  const refreshBackendAccesses = useCallback(() => {
-    if (!currentProjectId) {
-      setBackendAccesses([]);
-      return;
-    }
+  const isBackendFooterPanelActive = activeFooterPanel === "backend";
+
+  useEffect(() => {
     let alive = true;
+
+    if (!currentProjectId) {
+      queueMicrotask(() => {
+        if (alive) setBackendAccesses([]);
+      });
+      return () => {
+        alive = false;
+      };
+    }
+
     void listProjectBackendAccess(currentProjectId)
       .then((items) => {
         if (alive) setBackendAccesses(items);
@@ -128,16 +136,7 @@ export function WorkspaceLayout() {
     return () => {
       alive = false;
     };
-  }, [currentProjectId]);
-
-  useEffect(() => refreshBackendAccesses(), [refreshBackendAccesses]);
-
-  useEffect(() => {
-    if (activeFooterPanel === "backend") {
-      return refreshBackendAccesses();
-    }
-    return undefined;
-  }, [activeFooterPanel, refreshBackendAccesses]);
+  }, [currentProjectId, isBackendFooterPanelActive]);
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");
@@ -257,7 +256,7 @@ interface ProjectDropdownProps {
 const PROJECT_ROLE_LABELS: Record<NonNullable<Project["access"]["role"]>, string> = {
   owner: "Owner",
   editor: "Editor",
-  viewer: "Viewer",
+  member: "Member",
 };
 const PROJECT_VISIBILITY_LABELS: Record<Project["visibility"], string> = {
   private: "私有",

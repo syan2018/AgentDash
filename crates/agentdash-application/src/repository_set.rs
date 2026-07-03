@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_application_agentrun::agent_run::ProjectAgentLifecycleLaunchPort;
 use agentdash_application_lifecycle::LifecycleDispatchFacade;
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
 use agentdash_application_ports::hook_workflow_projection::{
     HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
     HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
@@ -37,8 +38,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, AgentRunLineageRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallRepository,
 };
@@ -86,11 +87,13 @@ pub struct RepositorySet {
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+    pub agent_run_fork_materialization: Arc<dyn AgentRunForkMaterializationPort>,
     pub workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
     pub project_agent_lifecycle_launch: Arc<dyn ProjectAgentLifecycleLaunchPort>,
     pub routine_repo: Arc<dyn RoutineRepository>,
@@ -136,11 +139,13 @@ impl RepositorySet {
             lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
             lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
             agent_lineage_repo: self.agent_lineage_repo.clone(),
+            agent_run_lineage_repo: self.agent_run_lineage_repo.clone(),
             execution_anchor_repo: self.execution_anchor_repo.clone(),
             agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
             agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
             runtime_session_creator: self.runtime_session_creator.clone(),
             agent_frame_construction: self.agent_frame_construction.clone(),
+            agent_run_fork_materialization: self.agent_run_fork_materialization.clone(),
             project_agent_lifecycle_launch: self.project_agent_lifecycle_launch.clone(),
             routine_repo: self.routine_repo.clone(),
             routine_execution_repo: self.routine_execution_repo.clone(),

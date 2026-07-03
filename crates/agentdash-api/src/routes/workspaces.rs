@@ -54,7 +54,7 @@ pub async fn list_workspaces(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -113,7 +113,7 @@ pub async fn create_workspace(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -160,7 +160,7 @@ pub async fn get_workspace(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -178,7 +178,7 @@ pub async fn update_workspace(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -225,7 +225,7 @@ pub async fn update_workspace_status(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     workspace.status = req.status;
@@ -245,7 +245,7 @@ pub async fn delete_workspace(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -264,7 +264,7 @@ pub async fn detect_workspace(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -338,7 +338,7 @@ pub async fn discover_local_bindings(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -439,7 +439,7 @@ pub async fn bind_discovered(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 

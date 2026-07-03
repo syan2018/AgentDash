@@ -21,6 +21,7 @@ pub(crate) fn agent_run_message_command_response(
         mailbox_message: result.mailbox_message.map(mailbox_message_view),
         accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
         runtime_state: result.runtime_state.map(runtime_session_state_dto),
+        fork: None,
     }
 }
 

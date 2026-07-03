@@ -69,7 +69,7 @@ pub async fn list_workflows(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let definitions = state
@@ -166,7 +166,7 @@ pub async fn list_activity_lifecycles(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let definitions = state
@@ -192,7 +192,7 @@ pub async fn create_workflow_graph(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let definition = WorkflowGraph::new(WorkflowGraphDraft {
@@ -230,7 +230,7 @@ pub async fn get_workflow_graph(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(workflow_graph_to_contract_response(definition)?))
@@ -253,7 +253,7 @@ pub async fn update_workflow_graph(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     if let Some(name) = req.name {
@@ -289,7 +289,7 @@ pub async fn validate_workflow_graph(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     match WorkflowGraph::new(WorkflowGraphDraft {
@@ -336,7 +336,7 @@ pub async fn preflight_workflow_script(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -427,7 +427,7 @@ pub async fn delete_workflow_graph(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     state.repos.workflow_graph_repo.delete(id).await?;
@@ -444,7 +444,7 @@ pub async fn create_lifecycle_run(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
@@ -468,7 +468,7 @@ pub async fn create_and_continue_lifecycle_run(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
@@ -495,7 +495,7 @@ pub async fn continue_lifecycle_run(
         state.as_ref(),
         &current_user,
         run.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let result = lifecycle_command_service(&state)
@@ -517,7 +517,7 @@ pub async fn get_lifecycle_run(
         state.as_ref(),
         &current_user,
         run.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(lifecycle_run_to_contract_view(&state, &run).await?))
@@ -536,7 +536,7 @@ pub async fn submit_orchestration_human_decision(
         state.as_ref(),
         &current_user,
         run.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -572,7 +572,7 @@ pub async fn create_agent_procedure(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let definition = AgentProcedure::new(
@@ -604,7 +604,7 @@ pub async fn get_agent_procedure(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(agent_procedure_to_contract_response(definition)?))
@@ -627,7 +627,7 @@ pub async fn update_agent_procedure(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     if let Some(name) = req.name {
@@ -668,7 +668,7 @@ pub async fn validate_agent_procedure(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     match AgentProcedure::new(
@@ -716,7 +716,7 @@ pub async fn delete_agent_procedure(
         state.as_ref(),
         &current_user,
         definition.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let procedure_key = definition.key.clone();

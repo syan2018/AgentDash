@@ -71,7 +71,7 @@ pub async fn get_lifecycle_run_view(
         state.as_ref(),
         &current_user,
         run.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -109,7 +109,7 @@ pub async fn get_agent_frame_runtime(
         state.as_ref(),
         &current_user,
         view.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -142,7 +142,7 @@ pub async fn get_project_active_agents(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -163,14 +163,14 @@ async fn authorize_subject_execution_view(
         .first()
         .and_then(|run| Uuid::parse_str(&run.project_id).ok())
     {
-        load_project_with_permission(state, current_user, project_id, ProjectPermission::View)
+        load_project_with_permission(state, current_user, project_id, ProjectPermission::Use)
             .await?;
         return Ok(());
     }
 
     match subject.kind.as_str() {
         "project" => {
-            load_project_with_permission(state, current_user, subject.id, ProjectPermission::View)
+            load_project_with_permission(state, current_user, subject.id, ProjectPermission::Use)
                 .await?;
             Ok(())
         }
@@ -179,7 +179,7 @@ async fn authorize_subject_execution_view(
                 state,
                 current_user,
                 subject.id,
-                ProjectPermission::View,
+                ProjectPermission::Use,
             )
             .await?;
             Ok(())
@@ -190,7 +190,7 @@ async fn authorize_subject_execution_view(
                 state,
                 current_user,
                 run.project_id,
-                ProjectPermission::View,
+                ProjectPermission::Use,
             )
             .await?;
             Ok(())
@@ -234,7 +234,7 @@ async fn authorize_runtime_session_shell(
         })?;
     let run = load_lifecycle_run(state, anchor.run_id).await?;
     let project_id = run.project_id;
-    load_project_with_permission(state, current_user, project_id, ProjectPermission::View).await?;
+    load_project_with_permission(state, current_user, project_id, ProjectPermission::Use).await?;
     Ok(project_id)
 }
 

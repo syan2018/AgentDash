@@ -22,6 +22,16 @@ input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPrec
  */
 delivery_intent?: string, };
 
+export type AgentRunForkLineageView = { id: string, parent: AgentRunMessageAcceptedRefs, child: AgentRunMessageAcceptedRefs, relation_kind: string, fork_point_event_seq?: bigint, fork_point_ref?: SessionMessageRefDto, forked_by_user_id: string, created_at: string, };
+
+export type AgentRunForkOutcomeView = { outcome: string, parent_refs: AgentRunMessageAcceptedRefs, child_refs: AgentRunMessageAcceptedRefs, lineage: AgentRunForkLineageView, redirect: AgentRunRefDto, };
+
+export type AgentRunForkRequest = { client_command_id: string, title?: string, fork_point_ref?: SessionMessageRefDto, metadata_json?: JsonValue, };
+
+export type AgentRunForkResponse = { command_receipt: AgentRunCommandReceipt, outcome: string, parent_refs: AgentRunMessageAcceptedRefs, child_refs: AgentRunMessageAcceptedRefs, lineage: AgentRunForkLineageView, redirect: AgentRunRefDto, };
+
+export type AgentRunForkSubmitRequest = { input: Array<UserInput>, client_command_id: string, title?: string, fork_point_ref?: SessionMessageRefDto, metadata_json?: JsonValue, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto, };
+
 export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
 
 export type AgentRunMailboxMoveRequest = { after_message_id?: string, };
@@ -32,7 +42,7 @@ export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_r
 
 export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "resumed" | "blocked" | "failed";
 
-export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, };
+export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, fork?: AgentRunForkOutcomeView, };
 
 export type AgentRunRefDto = { run_id: string, agent_id: string, };
 
@@ -65,5 +75,7 @@ export type MailboxStateView = { paused: boolean, pause_reason?: string, message
 export type RuntimeSessionCommandStateDto = { status: string, turn_id?: string, message?: string, };
 
 export type RuntimeSessionRefDto = { runtime_session_id: string, };
+
+export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
 
 export type SteeringStopEffect = "none" | "continue_on_stop";

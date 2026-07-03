@@ -40,7 +40,7 @@ pub async fn event_stream_ndjson(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let resume_from = parse_stream_since_id(&headers)?;

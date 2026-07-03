@@ -17,8 +17,10 @@ vi.mock("../api/client", () => ({
 import {
   cancelAgentRun,
   deleteAgentRunMailboxMessage,
+  forkAgentRun,
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
+  submitAgentRunForkInput,
   submitAgentRunComposerInput,
 } from "./agentRunMailbox";
 import type { AgentRunCommandPreconditionView } from "../generated/agent-run-mailbox-contracts";
@@ -68,6 +70,38 @@ describe("lifecycle message service", () => {
         client_command_id: "command-composer",
         command: command("submit_message"),
         executor_config: { model_id: "gpt-test" },
+      },
+    );
+  });
+
+  it("forks AgentRun from a stable runtime message ref", async () => {
+    await forkAgentRun("run/1", "agent/1", {
+      client_command_id: "command-fork",
+      fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
+    });
+
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/fork",
+      {
+        client_command_id: "command-fork",
+        fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
+      },
+    );
+  });
+
+  it("submits fork input through the AgentRun fork-submit endpoint", async () => {
+    await submitAgentRunForkInput("run/1", "agent/1", {
+      input: [{ type: "text", text: "branch follow up", text_elements: [] }],
+      client_command_id: "command-fork-submit",
+      fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
+    });
+
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/fork-submit",
+      {
+        input: [{ type: "text", text: "branch follow up", text_elements: [] }],
+        client_command_id: "command-fork-submit",
+        fork_point_ref: { turn_id: "turn-1", entry_index: 3 },
       },
     );
   });

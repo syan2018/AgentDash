@@ -988,6 +988,7 @@ mod tests {
         AgentLaunchIntent {
             project_id,
             source: ExecutionSource::ProjectAgent,
+            created_by_user_id: None,
             subject_ref: Some(SubjectRef::new("project", project_id)),
             parent_run_id: None,
             parent_agent_id: None,
@@ -1004,6 +1005,7 @@ mod tests {
         AgentLaunchIntent {
             project_id,
             source: ExecutionSource::User,
+            created_by_user_id: None,
             subject_ref: Some(SubjectRef::new("story", story_id)),
             parent_run_id: None,
             parent_agent_id: None,
@@ -1020,6 +1022,7 @@ mod tests {
         SubjectExecutionIntent {
             project_id,
             source: ExecutionSource::User,
+            created_by_user_id: None,
             subject_ref: SubjectRef::new("task", task_id),
             parent_run_id: None,
             parent_agent_id: None,

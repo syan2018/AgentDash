@@ -32,7 +32,7 @@ pub async fn list_routines(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let routines = state.repos.routine_repo.list_by_project(project_id).await?;
@@ -85,7 +85,7 @@ pub async fn create_routine(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let project_agent_id = parse_uuid(&req.project_agent_id)?;
@@ -143,7 +143,7 @@ pub async fn get_routine(
     Path(id): Path<String>,
 ) -> Result<Json<RoutineResponse>, ApiError> {
     let routine =
-        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
+        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Use)
             .await?;
     Ok(Json(RoutineResponse::from(routine)))
 }
@@ -154,9 +154,13 @@ pub async fn update_routine(
     Path(id): Path<String>,
     Json(req): Json<UpdateRoutineRequest>,
 ) -> Result<Json<RoutineResponse>, ApiError> {
-    let mut routine =
-        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
-            .await?;
+    let mut routine = load_routine_with_permission(
+        state.as_ref(),
+        &current_user,
+        &id,
+        ProjectPermission::Configure,
+    )
+    .await?;
 
     if let Some(name) = req.name {
         let name = name.trim().to_string();
@@ -198,9 +202,13 @@ pub async fn delete_routine(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<DeletedFlagResponse>, ApiError> {
-    let routine =
-        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
-            .await?;
+    let routine = load_routine_with_permission(
+        state.as_ref(),
+        &current_user,
+        &id,
+        ProjectPermission::Configure,
+    )
+    .await?;
     state.repos.routine_repo.delete(routine.id).await?;
 
     state.services.cron_scheduler.notify_config_changed();
@@ -214,9 +222,13 @@ pub async fn enable_routine(
     Path(id): Path<String>,
     Json(req): Json<EnableRoutineRequest>,
 ) -> Result<Json<RoutineResponse>, ApiError> {
-    let mut routine =
-        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
-            .await?;
+    let mut routine = load_routine_with_permission(
+        state.as_ref(),
+        &current_user,
+        &id,
+        ProjectPermission::Configure,
+    )
+    .await?;
 
     routine.enabled = req.enabled;
     routine.updated_at = chrono::Utc::now();
@@ -238,7 +250,7 @@ pub async fn list_executions(
         state.as_ref(),
         &current_user,
         &routine_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let executions = state
@@ -259,9 +271,13 @@ pub async fn regenerate_webhook_token(
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, ApiError> {
-    let mut routine =
-        load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
-            .await?;
+    let mut routine = load_routine_with_permission(
+        state.as_ref(),
+        &current_user,
+        &id,
+        ProjectPermission::Configure,
+    )
+    .await?;
 
     let RoutineTriggerConfig::Webhook { endpoint_id, .. } = &routine.trigger_config else {
         return Err(ApiError::BadRequest(

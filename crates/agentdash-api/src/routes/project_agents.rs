@@ -125,7 +125,7 @@ pub async fn list_project_agents(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -173,7 +173,7 @@ pub async fn create_project_agent_run(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let project_agent_id = parse_project_agent_id(&agent_key)?;
@@ -505,7 +505,7 @@ pub async fn list_project_agent_configs(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -535,7 +535,7 @@ pub async fn create_project_agent(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -592,7 +592,7 @@ pub async fn update_project_agent(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let project_agent_id = parse_project_agent_id(&project_agent_id)?;
@@ -656,7 +656,7 @@ pub async fn delete_project_agent(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let project_agent_id = parse_project_agent_id(&project_agent_id)?;

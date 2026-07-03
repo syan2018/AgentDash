@@ -44,11 +44,11 @@
 
 ```typescript
 /**
- * 会话事件流 Hook
+ * AgentRun runtime 事件流 Hook
  *
  * 整合 Backbone 事件流管理和条目聚合逻辑
  */
-export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
+export function useAgentRunRuntimeStream(options: UseAgentRunRuntimeStreamOptions): UseAgentRunRuntimeStreamResult {
   // ...
 }
 ```
@@ -69,4 +69,3 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 - [前端开发指南](../frontend/index.md)
 - [后端开发指南](../backend/index.md)
 - [沟通规范](../communication.md)
-

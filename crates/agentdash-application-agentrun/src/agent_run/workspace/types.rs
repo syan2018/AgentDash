@@ -1,3 +1,4 @@
+use crate::agent_run::AgentRunOwnershipModel;
 use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
@@ -20,6 +21,7 @@ pub struct AgentRunWorkspaceQueryInput {
 pub struct AgentRunWorkspaceSnapshot {
     pub run: LifecycleRun,
     pub agent: LifecycleAgent,
+    pub ownership: AgentRunOwnershipModel,
     pub shell: AgentRunWorkspaceShellModel,
     pub delivery_runtime_session_id: Option<String>,
     pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,

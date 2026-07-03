@@ -1773,3 +1773,43 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: AgentRun fork 与 Session API 收口
+
+**Date**: 2026-07-03
+**Task**: AgentRun fork 与 Session API 收口
+**Branch**: `main`
+
+### Summary
+
+完成 AgentRun fork/session API convergence：收敛 Project Use/Configure 权限语义，补 AgentRun ownership 与 fork backend/frontend，保留 Session 为 runtime trace diagnostic surface，并更新 specs 与最终验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b130d0d45` | (see git log) |
+| `00dd09253` | (see git log) |
+| `31f095e4f` | (see git log) |
+| `a4d2ed536` | (see git log) |
+| `f0012025c` | (see git log) |
+| `5ca329b76` | (see git log) |
+| `111a2d0f7` | (see git log) |
+| `d302ef467` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

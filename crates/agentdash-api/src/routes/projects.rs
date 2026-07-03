@@ -114,7 +114,7 @@ pub async fn get_project(
         state.as_ref(),
         &current_user,
         &project,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -150,7 +150,7 @@ pub async fn update_project(
         if requires_owner {
             ProjectPermission::ManageSharing
         } else {
-            ProjectPermission::Edit
+            ProjectPermission::Configure
         },
     )
     .await?;
@@ -211,7 +211,7 @@ pub async fn clone_project(
         state.as_ref(),
         &current_user,
         &source_project,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -664,8 +664,8 @@ fn project_access_response(
 ) -> ProjectAccessSummaryResponse {
     ProjectAccessSummaryResponse {
         role: access.role.map(ContractProjectRole::from),
-        can_view: access.can_view_project(),
-        can_edit: access.can_edit_project(),
+        can_use: access.can_use_project(),
+        can_configure: access.can_configure_project(),
         can_manage_sharing: access.can_manage_project_sharing(),
         via_admin_bypass: access.via_admin_bypass,
         via_template_visibility: access.via_template_visibility,

@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/07-02-agentrun-fork-session-api-convergence/prd.md", "reason": "任务目标、范围、验收标准和待确认产品决策。"}
+{"file": ".trellis/tasks/07-02-agentrun-fork-session-api-convergence/design.md", "reason": "AgentRun fork、Session API 收口、ownership、API shape 和迁移设计。"}
+{"file": ".trellis/tasks/07-02-agentrun-fork-session-api-convergence/implement.md", "reason": "分阶段实现顺序、验证命令和 review gates。"}
+{"file": ".trellis/spec/backend/session/session-lineage-projection.md", "reason": "现有 RuntimeSession fork / lineage / projection 契约，是 AgentRun fork 的内部 building block。"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "AgentRun 用户输入、command receipt、mailbox envelope 和 scheduler 的权威合同。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "RuntimeSession 降级为内部 runtime trace 后，AgentFrame / launch envelope / anchor 的启动边界。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "fork 后权限与 capability grant 不继承父 Run 的设计依据。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端 AgentRun workspace 事实源和 Session 只作为 runtime trace 的边界约束。"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "前后端 DTO、HTTP JSON、runtime trace 与跨层事实源约束。"}
+{"file": "docs/reviews/2026-05-26-compaction-session-branching-review/03-findings.md", "reason": "历史 session branching review，包含 projection/fork/lineage 风险和已知收敛方向。"}

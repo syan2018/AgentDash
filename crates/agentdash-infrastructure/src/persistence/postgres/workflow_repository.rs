@@ -29,8 +29,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,topology,context,orchestrations,tasks,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,topology,context,orchestrations,tasks,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,created_by_user_id,topology,context,orchestrations,tasks,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,created_by_user_id,topology,context,orchestrations,tasks,view_projection,status,execution_log,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -419,10 +419,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
+        .bind(&run.created_by_user_id)
         .bind(topology_to_db(run.topology))
         .bind(serde_json::to_string(&run.context)?)
         .bind(serde_json::to_string(&run.orchestrations)?)
@@ -494,8 +495,9 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,topology=$2,context=$3,orchestrations=$4,tasks=$5,view_projection=$6,status=$7,execution_log=$8,updated_at=$9,last_activity_at=$10 WHERE id=$11")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,created_by_user_id=$2,topology=$3,context=$4,orchestrations=$5,tasks=$6,view_projection=$7,status=$8,execution_log=$9,updated_at=$10,last_activity_at=$11 WHERE id=$12")
             .bind(run.project_id.to_string())
+            .bind(&run.created_by_user_id)
             .bind(topology_to_db(run.topology))
             .bind(serde_json::to_string(&run.context)?)
             .bind(serde_json::to_string(&run.orchestrations)?)
@@ -638,6 +640,7 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
 struct LifecycleRunRow {
     id: String,
     project_id: String,
+    created_by_user_id: String,
     topology: String,
     context: String,
     orchestrations: String,
@@ -656,6 +659,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
+            created_by_user_id: row.created_by_user_id,
             topology: parse_topology(&row.topology)?,
             context: parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?,
             orchestrations: parse_json_column::<Vec<OrchestrationInstance>>(
@@ -794,6 +798,7 @@ mod workflow_claim_tests {
         LifecycleRunRow {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: uuid::Uuid::new_v4().to_string(),
+            created_by_user_id: "fixture-user".to_string(),
             topology: "plain".to_string(),
             context: "{}".to_string(),
             orchestrations: "[]".to_string(),

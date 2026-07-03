@@ -365,6 +365,10 @@ impl<'a> ProjectAgentRunStartService<'a> {
         let intent = AgentLaunchIntent {
             project_id: command.project_id,
             source: ExecutionSource::ProjectAgent,
+            created_by_user_id: command
+                .identity
+                .as_ref()
+                .map(|identity| identity.user_id.clone()),
             subject_ref: Some(subject_ref.clone()),
             parent_run_id: None,
             parent_agent_id: None,

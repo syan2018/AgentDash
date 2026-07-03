@@ -1,7 +1,8 @@
-use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use agentdash_agent::MessageRef;
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
@@ -11,21 +12,32 @@ use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
 use agentdash_application_agentrun::agent_run::{
+    AgentConversationContentPartModel, AgentConversationFeedInput,
+    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
+    AgentConversationMessageRoleModel,
+};
+use agentdash_application_agentrun::agent_run::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCommandReceiptView,
-    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos,
+    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
+    AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_contracts::agent_run_mailbox::{
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunMailboxMessageContentView,
-    AgentRunMailboxMoveRequest, AgentRunMailboxView, AgentRunMessageCommandResponse,
-    MailboxMessageView, MailboxStateView,
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
+    AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
+    AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
+    AgentRunMessageCommandResponse, MailboxMessageView, MailboxStateView,
 };
+use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::workflow::{
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
-    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunRefDto,
+    AgentConversationContentPartView, AgentConversationFeedMessage, AgentConversationFeedSnapshot,
+    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationMessageRefView,
+    AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
+    AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
+    AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
+    AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
     AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
@@ -43,19 +55,26 @@ use agentdash_spi::AgentConfig;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::dto::{
+    ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
+};
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
         agent_run_mailbox_contracts::{
-            agent_run_message_command_response, backend_selection_input, mailbox_message_view,
-            mailbox_message_visible, mailbox_state_view,
+            agent_run_message_accepted_refs, agent_run_message_command_response,
+            backend_selection_input, command_receipt_view, mailbox_command_outcome_view,
+            mailbox_message_view, mailbox_message_visible, mailbox_state_view,
         },
+        sessions,
         vfs_surfaces::dto as vfs_surface_dto,
     },
     rpc::{ApiError, ApiErrorWithCode},
@@ -83,8 +102,20 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/conversation/feed",
+            axum::routing::get(get_agent_run_conversation_feed),
+        )
+        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
             axum::routing::post(submit_agent_run_composer_input),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork",
+            axum::routing::post(fork_agent_run),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/fork-submit",
+            axum::routing::post(fork_submit_agent_run),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/mailbox",
@@ -114,6 +145,34 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/cancel",
             axum::routing::post(cancel_agent_run),
         )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/control",
+            axum::routing::get(get_agent_run_runtime_control),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/events",
+            axum::routing::get(list_agent_run_runtime_events),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
+            axum::routing::get(get_agent_run_runtime_context_projection),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit",
+            axum::routing::get(get_agent_run_runtime_context_audit),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson",
+            axum::routing::get(agent_run_runtime_stream_ndjson),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
+            axum::routing::post(approve_agent_run_tool_call),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
+            axum::routing::post(reject_agent_run_tool_call),
+        )
 }
 
 pub async fn get_project_agent_runs(
@@ -127,7 +186,7 @@ pub async fn get_project_agent_runs(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -225,7 +284,7 @@ pub async fn delete_project_agent_run(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -323,7 +382,7 @@ pub async fn get_agent_run_workspace(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let mut view = agent_run_workspace_view(
@@ -334,6 +393,154 @@ pub async fn get_agent_run_workspace(
     view.parent = parent;
     view.children = children;
     Ok(Json(view))
+}
+
+pub async fn get_agent_run_conversation_feed(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<AgentConversationFeedSnapshot>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let runtime_session_id = context
+        .delivery_runtime_session_id
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
+        })?;
+    let envelope = state
+        .services
+        .session_eventing
+        .build_agent_context_envelope(runtime_session_id)
+        .await
+        .map_err(ApiError::from)?;
+    let model = AgentConversationFeedProjector::derive(AgentConversationFeedInput {
+        run: context.run,
+        agent: context.agent,
+        runtime_session_id: runtime_session_id.to_string(),
+        envelope,
+    });
+
+    Ok(Json(agent_conversation_feed_snapshot(model)))
+}
+
+fn agent_conversation_feed_snapshot(
+    model: AgentConversationFeedModel,
+) -> AgentConversationFeedSnapshot {
+    let messages = model
+        .messages
+        .into_iter()
+        .map(agent_conversation_feed_message)
+        .collect::<Vec<_>>();
+    AgentConversationFeedSnapshot {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.clone(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id,
+            agent_id: model.agent_id,
+        },
+        runtime_session_ref: Some(RuntimeSessionRefDto {
+            runtime_session_id: model.runtime_session_id,
+        }),
+        projection_kind: model.projection_kind,
+        projection_version: model.projection_version,
+        head_event_seq: model.head_event_seq,
+        runtime_replay_start_seq: model.runtime_replay_start_seq,
+        active_compaction_id: model.active_compaction_id,
+        message_count: messages.len() as u64,
+        messages,
+    }
+}
+
+fn agent_conversation_feed_message(
+    message: AgentConversationFeedMessageModel,
+) -> AgentConversationFeedMessage {
+    AgentConversationFeedMessage {
+        message_ref: AgentConversationMessageRefView {
+            turn_id: message.message_ref.turn_id,
+            entry_index: message.message_ref.entry_index,
+        },
+        role: agent_conversation_message_role(message.role),
+        text: message.text,
+        content_parts: message
+            .content_parts
+            .into_iter()
+            .map(agent_conversation_content_part)
+            .collect(),
+        tool_calls: message
+            .tool_calls
+            .into_iter()
+            .map(|tool_call| AgentConversationToolCallView {
+                id: tool_call.id,
+                call_id: tool_call.call_id,
+                name: tool_call.name,
+                arguments: tool_call.arguments,
+            })
+            .collect(),
+        tool_result: message
+            .tool_result
+            .map(|tool_result| AgentConversationToolResultView {
+                tool_call_id: tool_result.tool_call_id,
+                call_id: tool_result.call_id,
+                tool_name: tool_result.tool_name,
+                details: tool_result.details,
+                is_error: tool_result.is_error,
+            }),
+        origin: message.origin,
+        synthetic: message.synthetic,
+        projection_kind: message.projection_kind,
+        source_event_seq: message.source_event_seq,
+        source_range: message
+            .source_range
+            .map(|range| AgentConversationSourceRangeView {
+                start_event_seq: range.start_event_seq,
+                end_event_seq: range.end_event_seq,
+            }),
+        projection_segment_id: message.projection_segment_id,
+        timestamp_ms: message.timestamp_ms,
+    }
+}
+
+fn agent_conversation_message_role(
+    role: AgentConversationMessageRoleModel,
+) -> AgentConversationMessageRole {
+    match role {
+        AgentConversationMessageRoleModel::User => AgentConversationMessageRole::User,
+        AgentConversationMessageRoleModel::Assistant => AgentConversationMessageRole::Assistant,
+        AgentConversationMessageRoleModel::ToolResult => AgentConversationMessageRole::ToolResult,
+        AgentConversationMessageRoleModel::CompactionSummary => {
+            AgentConversationMessageRole::CompactionSummary
+        }
+    }
+}
+
+fn agent_conversation_content_part(
+    part: AgentConversationContentPartModel,
+) -> AgentConversationContentPartView {
+    match part {
+        AgentConversationContentPartModel::Text { text } => {
+            AgentConversationContentPartView::Text { text }
+        }
+        AgentConversationContentPartModel::Image { mime_type, data } => {
+            AgentConversationContentPartView::Image { mime_type, data }
+        }
+        AgentConversationContentPartModel::Reasoning {
+            text,
+            id,
+            signature,
+        } => AgentConversationContentPartView::Reasoning {
+            text,
+            id,
+            signature,
+        },
+    }
 }
 
 /// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
@@ -354,7 +561,7 @@ async fn resolve_agent_run_lineage(
         .map_err(ApiError::from)?;
     let (children_map, _) = build_lineage_forest(&lineages);
 
-    let parent = match lineages
+    let same_run_parent = match lineages
         .iter()
         .find(|lineage| lineage.child_agent_id == agent.id)
         .and_then(|lineage| {
@@ -388,6 +595,7 @@ async fn resolve_agent_run_lineage(
         }
         None => None,
     };
+    let parent = same_run_parent;
 
     let mut children = Vec::new();
     for lineage in lineages
@@ -414,7 +622,6 @@ async fn resolve_agent_run_lineage(
             );
         }
     }
-
     Ok((parent, children))
 }
 
@@ -464,7 +671,7 @@ pub async fn submit_agent_run_composer_input(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -500,6 +707,39 @@ pub async fn submit_agent_run_composer_input(
         .map(serde_json::from_value::<AgentConfig>)
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+    if context.run.created_by_user_id != current_user.user_id {
+        let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+        let current_user_id = current_user.user_id.clone();
+        let client_command_id = req.client_command_id.clone();
+        let response = service
+            .fork_submit(AgentRunForkSubmitCommand {
+                parent_run_id: context.run.id,
+                parent_agent_id: context.agent.id,
+                current_user_id: current_user_id.clone(),
+                title: None,
+                fork_point_ref: None,
+                metadata_json: None,
+                input: req.input,
+                client_command_id: req.client_command_id,
+                executor_config,
+                backend_selection: backend_selection_input(req.backend_selection),
+                identity: Some(current_user),
+            })
+            .await
+            .map_err(|error| {
+                log_agent_run_fork_route_error(
+                    "composer-submit:auto-fork",
+                    context.run.id,
+                    context.agent.id,
+                    &current_user_id,
+                    &client_command_id,
+                    None,
+                    &error,
+                );
+                ApiError::from(error)
+            })?;
+        return Ok(Json(agent_run_fork_submit_message_response(response)));
+    }
     let service = agent_run_mailbox_service(state.as_ref(), &agent_run_repos);
     let response = service
         .accept_user_message(AgentRunMailboxUserMessageCommand {
@@ -528,6 +768,118 @@ pub async fn submit_agent_run_composer_input(
     Ok(Json(agent_run_message_command_response(response)))
 }
 
+async fn fork_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(req): Json<AgentRunForkRequest>,
+) -> Result<Json<AgentRunForkResponse>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let current_user_id = current_user.user_id.clone();
+    let client_command_id = req.client_command_id.clone();
+    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
+    let result = service
+        .explicit_fork(AgentRunForkCommand {
+            parent_run_id: context.run.id,
+            parent_agent_id: context.agent.id,
+            current_user_id: current_user_id.clone(),
+            title: req.title,
+            fork_point_ref: fork_point_ref.clone(),
+            metadata_json: req.metadata_json,
+            client_command_id: req.client_command_id,
+        })
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_route_error(
+                "fork-agent-run",
+                context.run.id,
+                context.agent.id,
+                &current_user_id,
+                &client_command_id,
+                fork_point_ref.as_ref(),
+                &error,
+            );
+            ApiError::from(error)
+        })?;
+    Ok(Json(agent_run_fork_response(result)))
+}
+
+async fn fork_submit_agent_run(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(req): Json<AgentRunForkSubmitRequest>,
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
+    if req.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
+    if req.input.is_empty() {
+        return Err(ApiError::BadRequest("input 不能为空".to_string()));
+    }
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let executor_config = req
+        .executor_config
+        .map(serde_json::from_value::<AgentConfig>)
+        .transpose()
+        .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let current_user_id = current_user.user_id.clone();
+    let client_command_id = req.client_command_id.clone();
+    let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
+    let result = service
+        .fork_submit(AgentRunForkSubmitCommand {
+            parent_run_id: context.run.id,
+            parent_agent_id: context.agent.id,
+            current_user_id: current_user_id.clone(),
+            title: req.title,
+            fork_point_ref: fork_point_ref.clone(),
+            metadata_json: req.metadata_json,
+            input: req.input,
+            client_command_id: req.client_command_id,
+            executor_config,
+            backend_selection: backend_selection_input(req.backend_selection),
+            identity: Some(current_user),
+        })
+        .await
+        .map_err(|error| {
+            log_agent_run_fork_route_error(
+                "fork-submit-agent-run",
+                context.run.id,
+                context.agent.id,
+                &current_user_id,
+                &client_command_id,
+                fork_point_ref.as_ref(),
+                &error,
+            );
+            ApiError::from(error)
+        })?;
+    Ok(Json(agent_run_fork_submit_message_response(result)))
+}
+
 async fn get_agent_run_mailbox(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -538,7 +890,7 @@ async fn get_agent_run_mailbox(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     Ok(Json(
@@ -557,7 +909,7 @@ async fn delete_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -601,7 +953,7 @@ async fn resume_agent_run_mailbox(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -647,7 +999,7 @@ async fn promote_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -694,7 +1046,7 @@ async fn move_agent_run_mailbox_message(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let message_id = parse_uuid(&message_id, "message_id")?;
@@ -728,7 +1080,7 @@ async fn get_agent_run_mailbox_message_content(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let message_id = parse_uuid(&message_id, "message_id")?;
@@ -759,7 +1111,7 @@ async fn cancel_agent_run(
         &current_user,
         &run_id,
         &agent_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
@@ -798,6 +1150,143 @@ async fn cancel_agent_run(
     .await
     .map_err(ApiError::from)?;
     Ok(Json(agent_run_command_receipt_contract(receipt)))
+}
+
+async fn get_agent_run_runtime_control(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_runtime_control(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+    )
+    .await
+}
+
+async fn list_agent_run_runtime_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<SessionEventsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::list_session_events(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        Query(query),
+    )
+    .await
+}
+
+async fn get_agent_run_runtime_context_projection(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_context_projection(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+    )
+    .await
+}
+
+async fn get_agent_run_runtime_context_audit(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Query(query): Query<ContextAuditQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::get_session_context_audit(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        Query(query),
+    )
+    .await
+}
+
+async fn agent_run_runtime_stream_ndjson(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Query(query): Query<NdjsonStreamQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::session_stream_ndjson(
+        State(state),
+        CurrentUser(current_user),
+        Path(runtime_session_id),
+        headers,
+        Query(query),
+    )
+    .await
+}
+
+async fn approve_agent_run_tool_call(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::approve_tool_call(
+        State(state),
+        CurrentUser(current_user),
+        Path((runtime_session_id, tool_call_id)),
+    )
+    .await
+}
+
+async fn reject_agent_run_tool_call(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
+    Json(req): Json<RejectToolApprovalRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let runtime_session_id =
+        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
+    sessions::reject_tool_call(
+        State(state),
+        CurrentUser(current_user),
+        Path((runtime_session_id, tool_call_id)),
+        Json(req),
+    )
+    .await
+}
+
+async fn resolve_agent_run_delivery_runtime(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<String, ApiError> {
+    let context = resolve_agent_run_context(
+        state,
+        current_user,
+        run_id,
+        agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    context.delivery_runtime_session_id.ok_or_else(|| {
+        ApiError::Conflict(format!(
+            "AgentRun {} / {} 缺少 delivery runtime",
+            context.run.id, context.agent.id
+        ))
+    })
 }
 
 async fn resolve_agent_run_context(
@@ -1338,6 +1827,7 @@ fn conversation_command_set_to_contract(
     commands: app_agent_run::ConversationCommandSetModel,
 ) -> ConversationCommandSetView {
     ConversationCommandSetView {
+        ownership: ownership_to_contract(commands.ownership),
         commands: commands
             .commands
             .into_iter()
@@ -1347,6 +1837,16 @@ fn conversation_command_set_to_contract(
             enter: commands.keyboard.enter,
             ctrl_enter: commands.keyboard.ctrl_enter,
         },
+    }
+}
+
+fn ownership_to_contract(
+    ownership: app_agent_run::AgentRunOwnershipModel,
+) -> AgentRunOwnershipView {
+    AgentRunOwnershipView {
+        run_created_by_user_id: ownership.run_created_by_user_id,
+        agent_created_by_user_id: ownership.agent_created_by_user_id,
+        current_user_controls_run: ownership.current_user_controls_run,
     }
 }
 
@@ -1525,6 +2025,7 @@ fn workspace_control_plane_from_conversation(
     AgentRunWorkspaceControlPlaneView {
         status,
         reason: conversation.execution.reason.clone(),
+        ownership: conversation.commands.ownership.clone(),
     }
 }
 
@@ -1653,6 +2154,110 @@ fn agent_run_mailbox_service<'a>(
     )
 }
 
+fn agent_run_fork_service<'a>(
+    state: &AppState,
+    agent_run_repos: &'a AgentRunRepositorySet,
+) -> AgentRunForkService<'a> {
+    AgentRunForkService::new(
+        agent_run_repos,
+        state.services.session_branching.clone(),
+        agent_run_session_core(state.services.session_core.clone()),
+        agent_run_mailbox_service(state, agent_run_repos),
+    )
+}
+
+fn agent_run_fork_submit_message_response(
+    result: AgentRunForkCommandResult,
+) -> AgentRunMessageCommandResponse {
+    let fork = agent_run_fork_outcome_view(&result);
+    AgentRunMessageCommandResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: mailbox_command_outcome_view(
+            result
+                .mailbox_outcome
+                .unwrap_or(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
+        ),
+        mailbox_message: result.mailbox_message.map(mailbox_message_view),
+        accepted_refs: Some(agent_run_message_accepted_refs(result.child_refs.clone())),
+        runtime_state: None,
+        fork: Some(fork),
+    }
+}
+
+fn agent_run_fork_response(result: AgentRunForkCommandResult) -> AgentRunForkResponse {
+    let fork = agent_run_fork_outcome_view(&result);
+    AgentRunForkResponse {
+        command_receipt: command_receipt_view(result.command_receipt),
+        outcome: fork.outcome,
+        parent_refs: fork.parent_refs,
+        child_refs: fork.child_refs,
+        lineage: fork.lineage,
+        redirect: fork.redirect,
+    }
+}
+
+fn agent_run_fork_outcome_view(result: &AgentRunForkCommandResult) -> AgentRunForkOutcomeView {
+    let parent_refs = agent_run_message_accepted_refs(result.parent_refs.clone());
+    let child_refs = agent_run_message_accepted_refs(result.child_refs.clone());
+    AgentRunForkOutcomeView {
+        outcome: "forked".to_string(),
+        parent_refs: parent_refs.clone(),
+        child_refs: child_refs.clone(),
+        lineage: AgentRunForkLineageView {
+            id: result.lineage.id.to_string(),
+            parent: parent_refs,
+            child: child_refs.clone(),
+            relation_kind: result.lineage.relation_kind.clone(),
+            fork_point_event_seq: result.lineage.fork_point_event_seq,
+            fork_point_ref: result
+                .lineage
+                .fork_point_ref_json
+                .clone()
+                .and_then(|value| serde_json::from_value::<SessionMessageRefDto>(value).ok()),
+            forked_by_user_id: result.lineage.forked_by_user_id.clone(),
+            created_at: result.lineage.created_at.to_rfc3339(),
+        },
+        redirect: child_refs.agent_ref,
+    }
+}
+
+fn message_ref_from_contract(value: SessionMessageRefDto) -> MessageRef {
+    MessageRef {
+        turn_id: value.turn_id,
+        entry_index: value.entry_index,
+    }
+}
+
+fn log_agent_run_fork_route_error(
+    route: &'static str,
+    run_id: Uuid,
+    agent_id: Uuid,
+    current_user_id: &str,
+    client_command_id: &str,
+    fork_point_ref: Option<&MessageRef>,
+    error: &(impl std::fmt::Debug + std::fmt::Display),
+) {
+    let fork_point = message_ref_log_label(fork_point_ref);
+    let error_context = DiagnosticErrorContext::new("agent_run.fork", "route");
+    diag_error!(Error, Subsystem::Api,
+        context = &error_context,
+        error = error,
+        route = route,
+        run_id = %run_id,
+        agent_id = %agent_id,
+        current_user_id = %current_user_id,
+        client_command_id = %client_command_id,
+        fork_point = %fork_point,
+        "AgentRun fork route failed"
+    );
+}
+
+fn message_ref_log_label(value: Option<&MessageRef>) -> String {
+    value
+        .map(|message_ref| format!("{}:{}", message_ref.turn_id, message_ref.entry_index))
+        .unwrap_or_else(|| "head".to_string())
+}
+
 fn agent_run_workspace_command_policy<'a>(
     state: &AppState,
     agent_run_repos: &'a AgentRunRepositorySet,
@@ -1739,13 +2344,92 @@ mod tests {
     use agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionRepositories;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentSource, DeliveryBindingStatus, LifecycleAgent,
-        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunLineage, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+        LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+        RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn agent_run_fork_response_preserves_redirect_and_lineage() {
+        let parent_run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_run_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let fork_point_ref = SessionMessageRefDto {
+            turn_id: "turn-1".to_string(),
+            entry_index: 2,
+        };
+        let lineage = AgentRunLineage::new_fork(
+            parent_run_id,
+            parent_agent_id,
+            child_run_id,
+            child_agent_id,
+            Some(12),
+            Some(serde_json::to_value(&fork_point_ref).expect("message ref should serialize")),
+            "parent-runtime",
+            "child-runtime",
+            "user-a",
+            Some(serde_json::json!({ "source": "api-test" })),
+        );
+
+        let response = agent_run_fork_response(AgentRunForkCommandResult {
+            command_receipt: AgentRunCommandReceiptView {
+                client_command_id: "cmd-fork".to_string(),
+                status: "accepted".to_string(),
+                duplicate: false,
+                message: None,
+            },
+            parent_refs: AgentRunAcceptedRefs {
+                run_id: parent_run_id,
+                agent_id: parent_agent_id,
+                frame_id: None,
+                frame_revision: None,
+                runtime_session_id: Some("parent-runtime".to_string()),
+                agent_run_turn_id: None,
+                protocol_turn_id: None,
+            },
+            child_refs: AgentRunAcceptedRefs {
+                run_id: child_run_id,
+                agent_id: child_agent_id,
+                frame_id: Some(child_frame_id),
+                frame_revision: Some(1),
+                runtime_session_id: Some("child-runtime".to_string()),
+                agent_run_turn_id: None,
+                protocol_turn_id: None,
+            },
+            lineage,
+            mailbox_outcome: Some(app_agent_run::AgentRunMailboxCommandOutcome::Queued),
+            mailbox_message: None,
+        });
+
+        assert_eq!(response.outcome, "forked");
+        assert_eq!(response.redirect.run_id, child_run_id.to_string());
+        assert_eq!(response.redirect.agent_id, child_agent_id.to_string());
+        assert_eq!(
+            response.lineage.parent.agent_ref.run_id,
+            parent_run_id.to_string()
+        );
+        assert_eq!(
+            response.lineage.child.agent_ref.run_id,
+            child_run_id.to_string()
+        );
+        assert_eq!(response.lineage.fork_point_event_seq, Some(12));
+        let response_fork_point_ref = response
+            .lineage
+            .fork_point_ref
+            .expect("fork point ref should be mapped");
+        assert_eq!(response_fork_point_ref.turn_id, fork_point_ref.turn_id);
+        assert_eq!(
+            response_fork_point_ref.entry_index,
+            fork_point_ref.entry_index
+        );
+        assert_eq!(response.lineage.forked_by_user_id, "user-a");
+    }
 
     #[derive(Default)]
     struct MemoryLifecycleRunRepository {

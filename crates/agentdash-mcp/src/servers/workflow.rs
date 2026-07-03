@@ -442,7 +442,7 @@ fn build_transitions(inputs: &[TransitionInput]) -> Result<Vec<ActivityTransitio
 impl WorkflowMcpServer {
     #[tool(description = "列出当前项目下所有 Workflow 和 Lifecycle 定义")]
     async fn list_workflows(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::View).await?;
+        self.require_project(McpProjectPermission::Use).await?;
         let workflows = self
             .services
             .agent_procedure_repo
@@ -486,7 +486,7 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<GetWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::View).await?;
+        self.require_project(McpProjectPermission::Use).await?;
         let workflow = self
             .services
             .agent_procedure_repo
@@ -510,7 +510,7 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<GetLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::View).await?;
+        self.require_project(McpProjectPermission::Use).await?;
         let lifecycle = self
             .services
             .workflow_graph_repo
@@ -534,7 +534,8 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let contract = build_contract(&params.contract)?;
 
         let definition = AgentProcedure::new(
@@ -562,7 +563,8 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let activities = build_activities(&params.activities)?;
         let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default())?;
 

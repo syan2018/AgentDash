@@ -36,7 +36,7 @@ pub async fn list_files(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;
@@ -66,7 +66,7 @@ pub async fn read_file(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;
@@ -91,7 +91,7 @@ pub async fn batch_read_files(
         state.as_ref(),
         &current_user,
         workspace_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;

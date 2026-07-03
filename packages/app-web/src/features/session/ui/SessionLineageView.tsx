@@ -1,14 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
 import type {
   SessionLineageRecordResponse,
   SessionLineageViewResponse,
 } from "../../../generated/session-contracts";
-import { fetchSessionLineage } from "../../../services/session";
-
-export interface SessionLineageViewProps {
-  sessionId: string | null;
-  refreshKey?: number;
-}
 
 export interface SessionLineageViewPanelProps {
   lineage: SessionLineageViewResponse | null;
@@ -172,43 +165,4 @@ export function SessionLineageViewPanel({
   );
 }
 
-export function SessionLineageView({
-  sessionId,
-  refreshKey = 0,
-}: SessionLineageViewProps) {
-  const [lineage, setLineage] = useState<SessionLineageViewResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!sessionId) {
-      setLineage(null);
-      return;
-    }
-    setIsLoading(true);
-    setError(null);
-    try {
-      const next = await fetchSessionLineage(sessionId);
-      setLineage(next);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载分支关系失败");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh, refreshKey]);
-
-  return (
-    <SessionLineageViewPanel
-      lineage={lineage}
-      isLoading={isLoading}
-      error={error}
-      onRefresh={() => void refresh()}
-    />
-  );
-}
-
-export default SessionLineageView;
+export default SessionLineageViewPanel;

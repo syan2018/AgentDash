@@ -102,7 +102,7 @@ pub async fn create_personal_canvas(
         repos.project_repo(),
         current_user,
         input.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -172,7 +172,7 @@ pub async fn list_canvases_for_user(
         repos.project_repo(),
         current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -241,7 +241,7 @@ pub async fn load_canvas_with_access(
         repos.project_repo(),
         current_user,
         canvas.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let access = canvas_access_projection(&canvas, current_user, &project_access);
@@ -292,7 +292,7 @@ pub async fn publish_canvas_to_project(
         repos.project_repo(),
         current_user,
         source.project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -390,7 +390,7 @@ pub async fn copy_canvas_to_personal(
         repos.project_repo(),
         current_user,
         source.project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -733,8 +733,8 @@ async fn require_project_access(
         .map_err(ApplicationError::from)?;
     if !access.allows(permission) {
         let action = match permission {
-            ProjectPermission::View => "查看",
-            ProjectPermission::Edit => "编辑",
+            ProjectPermission::Use => "使用",
+            ProjectPermission::Configure => "配置",
             ProjectPermission::ManageSharing => "管理共享",
         };
         return Err(ApplicationError::Forbidden(format!(

@@ -939,6 +939,15 @@ pub struct AgentRunWorkspaceControlPlaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub reason: Option<String>,
+    pub ownership: AgentRunOwnershipView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunOwnershipView {
+    pub run_created_by_user_id: String,
+    pub agent_created_by_user_id: String,
+    pub current_user_controls_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1116,6 +1125,7 @@ pub struct ConversationKeyboardMapView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ConversationCommandSetView {
+    pub ownership: AgentRunOwnershipView,
     #[serde(default)]
     pub commands: Vec<ConversationCommandView>,
     pub keyboard: ConversationKeyboardMapView,
@@ -1202,6 +1212,133 @@ pub struct AgentConversationSnapshot {
     pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateView>,
     #[serde(default)]
     pub diagnostics: Vec<ConversationDiagnosticView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationMessageRefView {
+    pub turn_id: String,
+    pub entry_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationSourceRangeView {
+    #[ts(type = "number")]
+    pub start_event_seq: u64,
+    #[ts(type = "number")]
+    pub end_event_seq: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentConversationMessageRole {
+    User,
+    Assistant,
+    ToolResult,
+    CompactionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationFeedMessage {
+    pub message_ref: AgentConversationMessageRefView,
+    pub role: AgentConversationMessageRole,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_parts: Vec<AgentConversationContentPartView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<AgentConversationToolCallView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool_result: Option<AgentConversationToolResultView>,
+    pub origin: String,
+    pub synthetic: bool,
+    pub projection_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub source_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_range: Option<AgentConversationSourceRangeView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub projection_segment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub timestamp_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentConversationContentPartView {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        data: String,
+    },
+    Reasoning {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        signature: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationToolCallView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub call_id: Option<String>,
+    pub name: String,
+    #[ts(type = "JsonValue")]
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationToolResultView {
+    pub tool_call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub details: Option<Value>,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentConversationFeedSnapshot {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    pub projection_kind: String,
+    #[ts(type = "number")]
+    pub projection_version: u64,
+    #[ts(type = "number")]
+    pub head_event_seq: u64,
+    #[ts(type = "number")]
+    pub runtime_replay_start_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_compaction_id: Option<String>,
+    #[ts(type = "number")]
+    pub message_count: u64,
+    pub messages: Vec<AgentConversationFeedMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

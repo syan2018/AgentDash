@@ -338,6 +338,8 @@ export interface SessionDisplayEntry {
   accumulatedText?: string;
   /** model 层解析后的 context frame，供 UI 直接渲染。 */
   contextFrame?: ContextFrame;
+  /** AgentRun conversation feed 投影消息：只用于 UI 分段稳定性，不是 runtime event fact。 */
+  projectedTranscriptStable?: boolean;
 }
 
 /** 工具调用聚合状态 */

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::session::SessionMessageRefDto;
 use crate::workflow::{
     AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, LifecycleRunRefDto,
     RuntimeSessionRefDto,
@@ -263,6 +264,84 @@ pub struct AgentRunMessageCommandResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub runtime_state: Option<RuntimeSessionCommandStateDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork: Option<AgentRunForkOutcomeView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunForkRequest {
+    pub client_command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_point_ref: Option<SessionMessageRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub metadata_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunForkSubmitRequest {
+    pub input: Vec<codex::UserInput>,
+    pub client_command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_point_ref: Option<SessionMessageRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub metadata_json: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "JsonValue")]
+    pub executor_config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub backend_selection: Option<BackendSelectionRequestDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunForkLineageView {
+    pub id: String,
+    pub parent: AgentRunMessageAcceptedRefs,
+    pub child: AgentRunMessageAcceptedRefs,
+    pub relation_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_point_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_point_ref: Option<SessionMessageRefDto>,
+    pub forked_by_user_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunForkOutcomeView {
+    pub outcome: String,
+    pub parent_refs: AgentRunMessageAcceptedRefs,
+    pub child_refs: AgentRunMessageAcceptedRefs,
+    pub lineage: AgentRunForkLineageView,
+    pub redirect: AgentRunRefDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunForkResponse {
+    pub command_receipt: AgentRunCommandReceipt,
+    pub outcome: String,
+    pub parent_refs: AgentRunMessageAcceptedRefs,
+    pub child_refs: AgentRunMessageAcceptedRefs,
+    pub lineage: AgentRunForkLineageView,
+    pub redirect: AgentRunRefDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

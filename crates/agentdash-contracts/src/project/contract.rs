@@ -187,7 +187,7 @@ impl From<agentdash_domain::project::ProjectVisibility> for ProjectVisibility {
 pub enum ProjectRole {
     Owner,
     Editor,
-    Viewer,
+    Member,
 }
 
 impl From<agentdash_domain::project::ProjectRole> for ProjectRole {
@@ -195,7 +195,7 @@ impl From<agentdash_domain::project::ProjectRole> for ProjectRole {
         match value {
             agentdash_domain::project::ProjectRole::Owner => Self::Owner,
             agentdash_domain::project::ProjectRole::Editor => Self::Editor,
-            agentdash_domain::project::ProjectRole::Viewer => Self::Viewer,
+            agentdash_domain::project::ProjectRole::Member => Self::Member,
         }
     }
 }
@@ -219,8 +219,8 @@ impl From<agentdash_domain::project::ProjectSubjectType> for ProjectSubjectType 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectAccessSummaryResponse {
     pub role: Option<ProjectRole>,
-    pub can_view: bool,
-    pub can_edit: bool,
+    pub can_use: bool,
+    pub can_configure: bool,
     pub can_manage_sharing: bool,
     pub via_admin_bypass: bool,
     pub via_template_visibility: bool,

@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
@@ -25,6 +26,7 @@ import type {
 
 export interface UseSessionFeedOptions {
   sessionId: string;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   endpoint?: string;
   enableAggregation?: boolean;
   enabled?: boolean;
@@ -580,6 +582,16 @@ function isAgentMessageItem(item: SessionDisplayItem): boolean {
   return (item as SessionDisplayEntry).event.type === "agent_message_delta";
 }
 
+function isProjectedTranscriptItem(item: SessionDisplayItem): boolean {
+  if ("projectedTranscriptStable" in item) {
+    return item.projectedTranscriptStable === true;
+  }
+  if ("entries" in item) {
+    return item.entries.some((entry) => entry.projectedTranscriptStable === true);
+  }
+  return false;
+}
+
 interface TurnMeta {
   status: TurnStatus;
   firstSeq: number;
@@ -762,7 +774,7 @@ export function segmentByTurn(
     }
     segments.push({
       turnId: currentTurnId,
-      status: meta?.status ?? "active",
+      status: meta?.status ?? (currentItems.some(isProjectedTranscriptItem) ? "completed" : "active"),
       startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,
@@ -821,7 +833,7 @@ export function segmentByTurn(
 }
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
-  const { sessionId, endpoint, enableAggregation = true, enabled } = options;
+  const { sessionId, agentRunTarget = null, endpoint, enableAggregation = true, enabled } = options;
   const { prefs } = useDebugPrefs();
 
   const {
@@ -839,6 +851,7 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     sendCancel,
   } = useSessionStream({
     sessionId,
+    agentRunTarget,
     endpoint,
     enabled,
   });

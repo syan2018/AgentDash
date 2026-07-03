@@ -54,6 +54,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
     payload: CreateProjectAgentRunRequest,
   ) => Promise<ProjectAgentRunStartResult>;
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
   refreshWorkspaceModuleCatalog: () => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
@@ -87,6 +88,7 @@ export function useAgentRunWorkspaceControlPlane({
   taskExecutorSummary = null,
   createProjectAgentRun,
   onDraftStarted,
+  onAgentRunRedirect,
   refreshAgentRunList,
   refreshWorkspaceModuleCatalog,
   openWorkspacePanel,
@@ -201,6 +203,7 @@ export function useAgentRunWorkspaceControlPlane({
     handleResumeMailbox,
     handleRecallMailboxMessage,
     handleMoveMailboxMessage,
+    handleForkFromMessageRef,
     recalledInput,
     clearRecalledInput,
   } = useAgentRunWorkspaceCommands({
@@ -215,6 +218,7 @@ export function useAgentRunWorkspaceControlPlane({
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
+    onAgentRunRedirect,
     resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
     isCompleteExecutorConfig,
     onDraftStarted,
@@ -312,11 +316,13 @@ export function useAgentRunWorkspaceControlPlane({
     resumeMailbox,
     recallMailboxMessage,
     moveMailboxMessage,
+    forkFromMessageRef: handleForkFromMessageRef,
     injectedInputConsumed: clearRecalledInput,
   }), [
     cancelAction,
     clearRecalledInput,
     deleteMailboxMessage,
+    handleForkFromMessageRef,
     moveMailboxMessage,
     promoteMailboxMessage,
     recallMailboxMessage,

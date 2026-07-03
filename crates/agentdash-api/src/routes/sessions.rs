@@ -138,9 +138,16 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
 
 pub async fn get_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let meta = state
         .services
         .session_core
@@ -155,6 +162,13 @@ pub async fn get_session_runtime_control(
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<SessionRuntimeControlView>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &runtime_session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let view = state
         .services
         .presentation_read_model_query
@@ -166,7 +180,7 @@ pub async fn get_session_runtime_control(
             state.as_ref(),
             &current_user,
             project_id,
-            ProjectPermission::View,
+            ProjectPermission::Use,
         )
         .await?;
     }
@@ -425,15 +439,16 @@ fn stream_event_payload(
 
 pub async fn get_session_state(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionExecutionStateResponse>, ApiError> {
-    state
-        .services
-        .session_core
-        .get_session_meta(&session_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
 
     let execution_state = state
         .services
@@ -538,10 +553,17 @@ fn serialized_string<T: serde::Serialize>(value: &T) -> String {
 
 pub async fn list_session_events(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<SessionEventsQuery>,
 ) -> Result<Json<SessionEventsPageResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let after_seq = query.after_seq.unwrap_or(0);
     let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
     let page = state
@@ -756,12 +778,19 @@ mod tests {
     }
 }
 
-/// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
+/// Internal diagnostics: GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
 pub async fn get_session_context_projection(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionProjectionViewResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let projection = state
         .services
         .session_eventing
@@ -889,13 +918,20 @@ fn session_message_ref_to_application(value: SessionMessageRefDto) -> MessageRef
     }
 }
 
-/// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
+/// Internal diagnostics: POST /sessions/{id}/fork — 基于当前模型投影创建可恢复 trace child。
 pub async fn fork_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<CreateSessionForkRequest>,
 ) -> Result<Json<SessionForkResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let result = state
         .services
         .session_branching
@@ -925,12 +961,19 @@ pub async fn fork_session(
     }))
 }
 
-/// GET /sessions/{id}/lineage — 返回当前 session 的父边、祖先与直接 children。
+/// Internal diagnostics: GET /sessions/{id}/lineage — 返回 runtime trace 的父边、祖先与直接 children。
 pub async fn get_session_lineage(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionLineageViewResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let view = state
         .services
         .session_branching
@@ -946,13 +989,20 @@ pub async fn get_session_lineage(
     }))
 }
 
-/// POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
+/// Internal diagnostics: POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
 pub async fn rollback_session_projection(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<RollbackSessionProjectionRequest>,
 ) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let result = state
         .services
         .session_branching
@@ -975,7 +1025,7 @@ pub async fn rollback_session_projection(
     }))
 }
 
-/// GET /sessions/{id}/meta — 返回完整 session meta。
+/// Internal diagnostics: GET /sessions/{id}/meta — 返回完整 runtime trace meta。
 pub async fn get_session_meta(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -984,10 +1034,10 @@ pub async fn get_session_meta(
     get_session(State(state), CurrentUser(current_user), Path(session_id)).await
 }
 
-/// PATCH /sessions/{id}/meta — 用户手动修改会话 meta。
+/// Internal diagnostics: PATCH /sessions/{id}/meta — 修改 runtime trace meta。
 pub async fn update_session_meta(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<UpdateSessionMetaRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
@@ -999,6 +1049,13 @@ pub async fn update_session_meta(
     {
         return Err(ApiError::BadRequest("标题不能为空".to_string()));
     }
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
 
     let meta = state
         .services
@@ -1028,7 +1085,7 @@ pub async fn delete_session(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state
@@ -1051,7 +1108,7 @@ pub async fn approve_tool_call(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state
@@ -1078,7 +1135,7 @@ pub async fn reject_tool_call(
         state.as_ref(),
         &current_user,
         &session_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
     state
@@ -1098,11 +1155,18 @@ pub async fn reject_tool_call(
 /// Session trace stream（Fetch Streaming / NDJSON）
 pub async fn session_stream_ndjson(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Query(query): Query<NdjsonStreamQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
         .or(query.since_id)
         .unwrap_or(0);
@@ -1300,15 +1364,22 @@ fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
     tags
 }
 
-/// `GET /sessions/{id}/context/audit` —— 返回 session 的 Fragment 审计时间线。
+/// Internal diagnostics: `GET /sessions/{id}/context/audit` —— 返回 runtime trace 的 Fragment 审计时间线。
 ///
 /// 返回按 `at_ms` 升序的事件列表（审计总线内部已保持插入顺序）。
 pub async fn get_session_context_audit(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<ContextAuditQuery>,
 ) -> Result<Json<Vec<ContextAuditEventDto>>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Use,
+    )
+    .await?;
     let scope = match query.scope.as_deref() {
         Some(raw) => match parse_scope_tag(raw) {
             Some(s) => Some(s),

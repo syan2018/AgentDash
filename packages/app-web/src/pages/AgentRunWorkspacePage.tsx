@@ -207,6 +207,13 @@ export function AgentRunWorkspacePage({
       frameId: agentRunDetailFrameId,
     };
   }, [agentRunDetailAgentId, agentRunDetailFrameId, agentRunDetailRunId]);
+  const agentRunRuntimeTarget = useMemo(() => {
+    if (!agentRunDetailRunId || !agentRunDetailAgentId) return null;
+    return {
+      runId: agentRunDetailRunId,
+      agentId: agentRunDetailAgentId,
+    };
+  }, [agentRunDetailAgentId, agentRunDetailRunId]);
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
@@ -400,6 +407,25 @@ export function AgentRunWorkspacePage({
     });
   }, [draftProjectIdValue, navigate]);
 
+  const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
+    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
+    navigate(`/agent-runs/${encodeURIComponent(target.runId)}/${encodeURIComponent(target.agentId)}`, {
+      state: {
+        trace_agent: {
+          display_name: workspaceTitle || "AgentRun",
+          executor_hint: draftProjectAgent?.executor.executor ?? traceAgentContext?.executor_hint,
+        },
+      },
+    });
+  }, [
+    draftProjectIdValue,
+    draftProjectAgent?.executor.executor,
+    navigate,
+    ownerProjectId,
+    traceAgentContext?.executor_hint,
+    workspaceTitle,
+  ]);
+
   const {
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
@@ -422,6 +448,7 @@ export function AgentRunWorkspacePage({
     taskExecutorSummary,
     createProjectAgentRun,
     onDraftStarted: handleDraftAgentRunStarted,
+    onAgentRunRedirect: handleAgentRunRedirect,
     refreshAgentRunList,
     refreshWorkspaceModuleCatalog,
     openWorkspacePanel: ({ typeId, uri, options }) => {
@@ -440,8 +467,9 @@ export function AgentRunWorkspacePage({
 
   const chatModel = useMemo(() => ({
     ...controlPlaneChatModel,
+    agentRunTarget: agentRunRuntimeTarget,
     workspaceId: chatWorkspaceId,
-  }), [chatWorkspaceId, controlPlaneChatModel]);
+  }), [agentRunRuntimeTarget, chatWorkspaceId, controlPlaneChatModel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -484,6 +512,7 @@ export function AgentRunWorkspacePage({
     projectId: ownerProjectId,
     sessionId: deliveryRuntimeSessionId,
     runtimeSessionId: deliveryRuntimeSessionId,
+    agentRunRuntimeTarget,
     sessionMeta: runtimeControl?.delivery_trace_meta
       ? {
           id: runtimeControl.delivery_trace_meta.runtime_session_ref.runtime_session_id,
@@ -514,6 +543,7 @@ export function AgentRunWorkspacePage({
   }), [
     ownerProjectId,
     deliveryRuntimeSessionId,
+    agentRunRuntimeTarget,
     runtimeControl,
     agentRunWorkspaceState.status,
     agentRunWorkspaceState.error,

@@ -261,6 +261,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-application-runtime-session",
  "agentdash-application-skill",
  "agentdash-application-vfs",
  "agentdash-contracts",
@@ -563,6 +564,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "agentdash-agent-protocol",
+ "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-process",

@@ -81,7 +81,7 @@ pub async fn list_extension_package_artifacts(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let artifacts = state
@@ -104,7 +104,7 @@ pub async fn upload_extension_package_artifact(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -168,7 +168,7 @@ pub async fn install_extension_package_artifact_route(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
     let installation = install_extension_package_artifact(
@@ -205,7 +205,7 @@ pub async fn download_extension_package_archive(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     extension_package_archive_response(state, project_id, artifact_id).await

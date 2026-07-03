@@ -1,4 +1,4 @@
-//! `diag!` 宏 —— 平台过程诊断的唯一入口。
+//! `diag!` 宏 —— 平台过程诊断的统一入口。
 //!
 //! 设计要点：宏展开为 [`tracing::event!`]（**不是** `tracing::info!/warn!/...`），
 //! 这样 clippy 的 `disallowed-macros` 封禁裸 `tracing::info!` 等不会误伤本 facade。
@@ -26,6 +26,48 @@ macro_rules! diag {
     ($level:ident, $subsystem:expr, $($field:tt)+) => {
         $crate::__diag_event!($level, $subsystem, $($field)+)
     };
+}
+
+/// 标准错误诊断入口宏。
+///
+/// 签名：
+/// `diag_error!(<Level>, <Subsystem>, context = <DiagnosticErrorContext>, error = <err>, <field>=<val>, ..., "message")`
+///
+/// 该宏统一注入 `operation`、`stage`、`detail`、`error` 与 `error_debug`
+/// 字段。调用侧只需要补充具体 use case 的关联字段。
+///
+/// # 示例
+///
+/// ```
+/// use agentdash_diagnostics::{diag_error, DiagnosticErrorContext, Subsystem};
+/// # let error = std::io::Error::new(std::io::ErrorKind::Other, "boom");
+/// let context = DiagnosticErrorContext::new("agent_run.fork", "materialization");
+/// diag_error!(
+///     Error,
+///     Subsystem::AgentRun,
+///     context = &context,
+///     error = &error,
+///     run_id = "run-1",
+///     "AgentRun fork failed"
+/// );
+/// ```
+#[macro_export]
+macro_rules! diag_error {
+    ($level:ident, $subsystem:expr, context = $context:expr, error = $error:expr, $($field:tt)+) => {{
+        let __agentdash_diag_context = $context;
+        let __agentdash_diag_error = $error;
+        let __agentdash_diag_detail = __agentdash_diag_context.detail(__agentdash_diag_error);
+        $crate::diag!(
+            $level,
+            $subsystem,
+            operation = %__agentdash_diag_context.operation(),
+            stage = %__agentdash_diag_context.stage(),
+            detail = %__agentdash_diag_detail,
+            error = %__agentdash_diag_error,
+            error_debug = ?__agentdash_diag_error,
+            $($field)+
+        )
+    }};
 }
 
 /// 内部宏：把 `diag!` 的 level token 映射到 `tracing::Level` 并展开为 `tracing::event!`。

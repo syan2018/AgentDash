@@ -86,7 +86,7 @@ resume 必须恢复模型当时实际看到的 bounded fact，而不是把会话
 | `projection_segment_id` | 派生内容对应的 projection segment |
 | `active_compaction_id` | envelope 当前使用的 active checkpoint |
 
-API `GET /sessions/{id}/context/projection` 返回当前 `model_context` projection view，前端 Context panel 用它展示模型当前可见 segments。Timeline 继续消费真实事件流，两者不互相替代。
+产品入口 `GET /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection` 通过当前 delivery `RuntimeSessionExecutionAnchor` 返回 `model_context` projection view，前端 AgentRun Context panel 用它展示模型当前可见 segments。保留的 `GET /sessions/{id}/context/projection` 只服务内部 trace/detail 诊断，并必须先解析 anchor 做 Project `Use` 校验。Timeline 继续消费真实事件流，两者不互相替代。
 
 projection view 同时返回 `context_usage` 分析数据，用于上下文查看窗口展示 Claude Code 粒度的主分类与二级详情。分类估算来自 `AgentContextEnvelope` 中的 projection segments 与统一 token estimation helper；provider usage 仍是总量和窗口压力的权威来源。这个拆分让窗口能够解释“当前模型可见内容的构成”，同时避免前端重复实现 message/tool/summary token 估算。
 

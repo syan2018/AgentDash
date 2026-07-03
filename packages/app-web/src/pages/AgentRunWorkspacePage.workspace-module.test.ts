@@ -11,7 +11,11 @@ import type {
   WorkspaceModuleDescriptor,
   WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
-import type { ConversationCommandView, ConversationKeyboardMapView } from "../generated/workflow-contracts";
+import type {
+  AgentRunOwnershipView,
+  ConversationCommandView,
+  ConversationKeyboardMapView,
+} from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import {
   activeCanvasMountIdsFromRuntimeSurface,
@@ -23,6 +27,12 @@ import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentedTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
+
+const ownership: AgentRunOwnershipView = {
+  run_created_by_user_id: "owner-user",
+  agent_created_by_user_id: "owner-user",
+  current_user_controls_run: true,
+};
 
 function workspaceView(
   controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
@@ -41,7 +51,7 @@ function workspaceView(
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },
     delivery_runtime_ref: { runtime_session_id: "session-1" },
-    control_plane: { status: controlStatus },
+    control_plane: { status: controlStatus, ownership },
     subject_associations: [],
     children: [],
     conversation: {
@@ -63,6 +73,7 @@ function workspaceView(
         missing_fields: [],
       },
       commands: {
+        ownership,
         commands,
         keyboard,
       },

@@ -136,7 +136,7 @@ pub async fn install_library_asset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -202,7 +202,7 @@ pub async fn publish_library_asset(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 
@@ -240,7 +240,7 @@ pub async fn get_project_asset_source_status(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let status = list_project_asset_source_status(

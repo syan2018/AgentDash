@@ -45,8 +45,8 @@ impl ProjectAuthorizationContext {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectPermission {
-    View,
-    Edit,
+    Use,
+    Configure,
     ManageSharing,
 }
 
@@ -58,11 +58,11 @@ pub struct ProjectAuthorization {
 }
 
 impl ProjectAuthorization {
-    pub fn can_view_project(&self) -> bool {
+    pub fn can_use_project(&self) -> bool {
         self.via_admin_bypass || self.via_template_visibility || self.role.is_some()
     }
 
-    pub fn can_edit_project(&self) -> bool {
+    pub fn can_configure_project(&self) -> bool {
         self.via_admin_bypass || matches!(self.role, Some(ProjectRole::Owner | ProjectRole::Editor))
     }
 
@@ -76,8 +76,8 @@ impl ProjectAuthorization {
 
     pub fn allows(&self, permission: ProjectPermission) -> bool {
         match permission {
-            ProjectPermission::View => self.can_view_project(),
-            ProjectPermission::Edit => self.can_edit_project(),
+            ProjectPermission::Use => self.can_use_project(),
+            ProjectPermission::Configure => self.can_configure_project(),
             ProjectPermission::ManageSharing => self.can_manage_project_sharing(),
         }
     }
@@ -130,7 +130,7 @@ where
             if self
                 .resolve_project_access(context, &project)
                 .await?
-                .can_view_project()
+                .can_use_project()
             {
                 visible.push(project);
             }
@@ -206,7 +206,7 @@ fn normalize_subject_ids(user_id: &str, subject_ids: Vec<String>) -> Vec<String>
 
 fn role_rank(role: &ProjectRole) -> u8 {
     match role {
-        ProjectRole::Viewer => 1,
+        ProjectRole::Member => 1,
         ProjectRole::Editor => 2,
         ProjectRole::Owner => 3,
     }
@@ -356,8 +356,8 @@ mod tests {
             .await
             .expect("resolve access");
 
-        assert!(access.can_view_project());
-        assert!(access.can_edit_project());
+        assert!(access.can_use_project());
+        assert!(access.can_configure_project());
         assert!(access.can_manage_project_sharing());
     }
 
@@ -395,8 +395,8 @@ mod tests {
             .await
             .expect("resolve access");
 
-        assert!(access.can_view_project());
-        assert!(access.can_edit_project());
+        assert!(access.can_use_project());
+        assert!(access.can_configure_project());
         assert!(access.can_manage_project_sharing());
     }
 
@@ -426,8 +426,8 @@ mod tests {
             .await
             .expect("resolve access");
 
-        assert!(access.can_view_project());
-        assert!(access.can_edit_project());
+        assert!(access.can_use_project());
+        assert!(access.can_configure_project());
         assert!(!access.can_manage_project_sharing());
     }
 
@@ -441,12 +441,12 @@ mod tests {
 
         let service = ProjectAuthorizationService::new(&store);
         let access = service
-            .resolve_project_access(&context("viewer", &[], false), &project)
+            .resolve_project_access(&context("member", &[], false), &project)
             .await
             .expect("resolve access");
 
-        assert!(access.can_view_project());
-        assert!(!access.can_edit_project());
+        assert!(access.can_use_project());
+        assert!(!access.can_configure_project());
         assert!(!access.can_manage_project_sharing());
     }
 
@@ -464,8 +464,8 @@ mod tests {
             .await
             .expect("resolve access");
 
-        assert!(access.can_view_project());
-        assert!(access.can_edit_project());
+        assert!(access.can_use_project());
+        assert!(access.can_configure_project());
         assert!(access.can_manage_project_sharing());
         assert!(access.can_admin_bypass());
     }

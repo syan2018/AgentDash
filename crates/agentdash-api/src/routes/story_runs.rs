@@ -41,7 +41,7 @@ pub async fn list_story_runs(
         state.as_ref(),
         &current_user,
         story_uuid,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 
@@ -64,7 +64,7 @@ pub async fn get_active_story_run(
         state.as_ref(),
         &current_user,
         story_uuid,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
 

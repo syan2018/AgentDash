@@ -33,8 +33,8 @@ pub async fn require_project_permission(
     }
 
     let action = match permission {
-        ApplicationProjectPermission::View => "查看",
-        ApplicationProjectPermission::Edit => "编辑",
+        ApplicationProjectPermission::Use => "使用",
+        ApplicationProjectPermission::Configure => "配置",
         ApplicationProjectPermission::ManageSharing => "管理共享",
     };
     Err(McpError::forbidden(format!(

@@ -102,6 +102,8 @@ pub struct AgentLaunchIntent {
     pub project_id: Uuid,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_ref: Option<SubjectRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<Uuid>,
@@ -121,6 +123,8 @@ pub struct AgentLaunchIntent {
 pub struct SubjectExecutionIntent {
     pub project_id: Uuid,
     pub source: ExecutionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_user_id: Option<String>,
     pub subject_ref: SubjectRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<Uuid>,
@@ -287,6 +291,7 @@ mod tests {
         let intent = ExecutionIntent::SubjectExecution(SubjectExecutionIntent {
             project_id: Uuid::new_v4(),
             source: ExecutionSource::ProjectAgent,
+            created_by_user_id: None,
             subject_ref: SubjectRef::new("project", Uuid::new_v4()),
             parent_run_id: None,
             parent_agent_id: None,

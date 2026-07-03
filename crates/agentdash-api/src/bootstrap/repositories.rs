@@ -20,6 +20,7 @@ use agentdash_application_shared_library::{
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
+    PostgresAgentRunForkMaterialization, PostgresAgentRunLineageRepository,
     PostgresAgentRunMailboxRepository, PostgresAuthSessionRepository,
     PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
@@ -135,6 +136,7 @@ pub(crate) async fn build_repositories(
     );
     let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
     let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
+    let agent_run_lineage_repo = Arc::new(PostgresAgentRunLineageRepository::new(pool.clone()));
     let execution_anchor_repo = Arc::new(
         agentdash_infrastructure::PostgresRuntimeSessionExecutionAnchorRepository::new(
             pool.clone(),
@@ -146,6 +148,8 @@ pub(crate) async fn build_repositories(
     let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
         agent_frame_repo.clone(),
     ));
+    let agent_run_fork_materialization =
+        Arc::new(PostgresAgentRunForkMaterialization::new(pool.clone()));
     let lifecycle_surface_projection = Arc::new(
         AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
     );
@@ -204,11 +208,13 @@ pub(crate) async fn build_repositories(
         lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
+        agent_run_lineage_repo: agent_run_lineage_repo.clone(),
         execution_anchor_repo: execution_anchor_repo.clone(),
         agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         agent_frame_construction,
+        agent_run_fork_materialization,
         workflow_agent_frame_materialization,
         project_agent_lifecycle_launch,
         routine_repo: routine_repo.clone(),

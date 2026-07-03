@@ -58,7 +58,7 @@ pub async fn list_project_extensions(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::View,
+        ProjectPermission::Use,
     )
     .await?;
     let items = list_project_extension_management_items(&state.repos, project_id).await?;
@@ -77,7 +77,7 @@ pub async fn import_extension_package(
         state.as_ref(),
         &current_user,
         project_id,
-        ProjectPermission::Edit,
+        ProjectPermission::Configure,
     )
     .await?;
 

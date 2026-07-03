@@ -9,8 +9,11 @@ import type {
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type {
+  AgentRunForkResponse,
   AgentRunCommandPreconditionView,
+  AgentRunMessageCommandResponse,
   BackendSelectionRequestDto,
+  SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
@@ -20,6 +23,7 @@ import {
   moveAgentRunMailboxMessage,
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
+  forkAgentRun,
   submitAgentRunComposerInput,
 } from "../../../services/agentRunMailbox";
 import type {
@@ -67,6 +71,7 @@ export interface UseAgentRunWorkspaceCommandsOptions {
   fetchAndIngestLifecycleRun: (runId: string) => Promise<unknown>;
   refreshWorkspaceState: () => Promise<unknown>;
   scheduleHookRuntimeRefresh: (reason: string, immediate?: boolean) => void;
+  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   resolveExecutorConfig: ResolveExecutorConfig;
   isCompleteExecutorConfig: IsCompleteExecutorConfig;
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
@@ -88,6 +93,7 @@ export interface UseAgentRunWorkspaceCommandsResult {
   handleResumeMailbox: () => Promise<void>;
   handleRecallMailboxMessage: (messageId: string) => Promise<void>;
   handleMoveMailboxMessage: (messageId: string, afterMessageId: string | null) => Promise<void>;
+  handleForkFromMessageRef: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   recalledInput: string | null;
   clearRecalledInput: () => void;
 }
@@ -102,6 +108,51 @@ class SilentCommandRefreshError extends Error {
 
 function newClientCommandId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function resolveAgentRunCommandRedirect(
+  response: AgentRunMessageCommandResponse,
+): { runId: string; agentId: string } | null {
+  const redirect = response.fork?.redirect;
+  if (!redirect) return null;
+  return {
+    runId: redirect.run_id,
+    agentId: redirect.agent_id,
+  };
+}
+
+interface ForkAgentRunFromMessageRefInput {
+  runId: string;
+  agentId: string;
+  forkPointRef: SessionMessageRefDto;
+  clientCommandId: string;
+  forkService: (
+    runId: string,
+    agentId: string,
+    request: { client_command_id: string; fork_point_ref: SessionMessageRefDto },
+  ) => Promise<AgentRunForkResponse>;
+  fetchAndIngestLifecycleRun: (runId: string) => Promise<unknown>;
+  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
+}
+
+export async function forkAgentRunFromMessageRef({
+  runId,
+  agentId,
+  forkPointRef,
+  clientCommandId,
+  forkService,
+  fetchAndIngestLifecycleRun,
+  onAgentRunRedirect,
+}: ForkAgentRunFromMessageRefInput): Promise<void> {
+  const response = await forkService(runId, agentId, {
+    client_command_id: clientCommandId,
+    fork_point_ref: forkPointRef,
+  });
+  void fetchAndIngestLifecycleRun(response.redirect.run_id);
+  onAgentRunRedirect({
+    runId: response.redirect.run_id,
+    agentId: response.redirect.agent_id,
+  });
 }
 
 function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
@@ -161,6 +212,7 @@ export function useAgentRunWorkspaceCommands(
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState,
     scheduleHookRuntimeRefresh,
+    onAgentRunRedirect,
     resolveExecutorConfig,
     isCompleteExecutorConfig,
     onDraftStarted,
@@ -267,6 +319,12 @@ export function useAgentRunWorkspaceCommands(
       if (response.accepted_refs?.run_ref.run_id) {
         void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
       }
+      const redirect = resolveAgentRunCommandRedirect(response);
+      if (redirect) {
+        void fetchAndIngestLifecycleRun(redirect.runId);
+        onAgentRunRedirect(redirect);
+        return;
+      }
       refreshWorkspaceProjection();
       scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
     } catch (error) {
@@ -288,6 +346,7 @@ export function useAgentRunWorkspaceCommands(
     fetchAndIngestLifecycleRun,
     isCompleteExecutorConfig,
     onDraftStarted,
+    onAgentRunRedirect,
     refreshAfterStaleAgentRunCommandError,
     refreshWorkspaceProjection,
     resolveExecutorConfig,
@@ -455,6 +514,26 @@ export function useAgentRunWorkspaceCommands(
     }
   }, [currentAgentId, currentRunId, refreshWorkspaceProjection]);
 
+  const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {
+    if (!currentRunId || !currentAgentId) {
+      throw new Error("当前 AgentRun 尚未就绪。");
+    }
+    await forkAgentRunFromMessageRef({
+      runId: currentRunId,
+      agentId: currentAgentId,
+      forkPointRef,
+      clientCommandId: newClientCommandId(),
+      forkService: forkAgentRun,
+      fetchAndIngestLifecycleRun,
+      onAgentRunRedirect,
+    });
+  }, [
+    currentAgentId,
+    currentRunId,
+    fetchAndIngestLifecycleRun,
+    onAgentRunRedirect,
+  ]);
+
   const clearRecalledInput = useCallback(() => {
     setRecalledInput(null);
   }, []);
@@ -467,6 +546,7 @@ export function useAgentRunWorkspaceCommands(
     handleResumeMailbox,
     handleRecallMailboxMessage,
     handleMoveMailboxMessage,
+    handleForkFromMessageRef,
     recalledInput,
     clearRecalledInput,
   };

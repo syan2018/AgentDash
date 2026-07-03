@@ -300,7 +300,7 @@ fn parse_domain_input<T: DeserializeOwned>(
 impl StoryMcpServer {
     #[tool(description = "获取当前 Story 的完整上下文信息（声明式来源与容器）")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::View).await?;
+        self.require_project(McpProjectPermission::Use).await?;
         let story = self.load_story().await?;
 
         let result = serde_json::json!({
@@ -326,7 +326,9 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<UpdateStoryContextParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let project = self.require_project(McpProjectPermission::Edit).await?;
+        let project = self
+            .require_project(McpProjectPermission::Configure)
+            .await?;
         let mut story = self.load_story().await?;
 
         if let Some(source_refs) = params.replace_source_refs {
@@ -406,7 +408,8 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<UpdateStoryDetailsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let mut story = self.load_story().await?;
 
         if let Some(title) = params.title {
@@ -453,7 +456,8 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let run_id = Self::parse_uuid("run_id", &params.run_id)?;
         let run = self.load_story_bound_run(run_id).await?;
         let draft = self.build_task_draft(
@@ -485,7 +489,8 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let run_id = Self::parse_uuid("run_id", &params.run_id)?;
         let run = self.load_story_bound_run(run_id).await?;
         let mut created = Vec::new();
@@ -518,7 +523,7 @@ impl StoryMcpServer {
 
     #[tool(description = "查询当前 Story 的 Task projection")]
     async fn list_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::View).await?;
+        self.require_project(McpProjectPermission::Use).await?;
         let projection = agentdash_application::task::plan::build_story_task_projection(
             self.services.lifecycle_run_repo.as_ref(),
             self.services.lifecycle_subject_association_repo.as_ref(),
@@ -540,7 +545,8 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<AdvanceStoryStatusParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.require_project(McpProjectPermission::Edit).await?;
+        self.require_project(McpProjectPermission::Configure)
+            .await?;
         let mut story = self.load_story().await?;
 
         let new_status: agentdash_domain::story::StoryStatus =

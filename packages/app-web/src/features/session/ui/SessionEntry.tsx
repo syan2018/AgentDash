@@ -41,18 +41,33 @@ import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
 export interface SessionEntryProps {
   item: SessionDisplayItem;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
   sessionId?: string | null;
   /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
   followedByMessage?: boolean;
 }
 
-export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sessionId, followedByMessage }: SessionEntryProps) {
+export const SessionEntry = memo(function SessionEntry({
+  item,
+  agentRunTarget,
+  isStreaming,
+  sessionId,
+  followedByMessage,
+}: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
-    return <AggregatedToolGroupEntry group={item} sessionId={sessionId} followedByMessage={followedByMessage} />;
+    return (
+      <AggregatedToolGroupEntry
+        group={item}
+        agentRunTarget={agentRunTarget}
+        sessionId={sessionId}
+        followedByMessage={followedByMessage}
+      />
+    );
   }
 
   if (isAggregatedThinkingGroup(item)) {
@@ -64,7 +79,14 @@ export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sess
   }
 
   if (isDisplayEntry(item)) {
-    return <SingleEntry entry={item} isStreaming={!!isStreaming} sessionId={sessionId} />;
+    return (
+      <SingleEntry
+        entry={item}
+        agentRunTarget={agentRunTarget}
+        isStreaming={!!isStreaming}
+        sessionId={sessionId}
+      />
+    );
   }
 
   return null;
@@ -72,10 +94,12 @@ export const SessionEntry = memo(function SessionEntry({ item, isStreaming, sess
 
 export function SingleEntry({
   entry,
+  agentRunTarget,
   isStreaming = false,
   sessionId,
 }: {
   entry: SessionDisplayEntry;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
   sessionId?: string | null;
 }) {
@@ -117,6 +141,7 @@ export function SingleEntry({
           header={card.header}
           status={card.status}
           isPendingApproval={isPendingApproval}
+          agentRunTarget={agentRunTarget}
           sessionId={sessionId ?? undefined}
           itemId={threadItem.id}
           durationMs={card.durationMs}
@@ -198,10 +223,12 @@ function AggregatedContextFrameGroupEntry({
 
 function AggregatedToolGroupEntry({
   group,
+  agentRunTarget,
   sessionId,
   followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   sessionId?: string | null;
   /** 后续有 agent message 时自动折叠 */
   followedByMessage?: boolean;
@@ -246,7 +273,12 @@ function AggregatedToolGroupEntry({
       {expanded && (
         <div className={ST.itemList}>
           {entries.map((entry) => (
-            <SingleEntry key={entry.id} entry={entry} sessionId={sessionId} />
+            <SingleEntry
+              key={entry.id}
+              entry={entry}
+              agentRunTarget={agentRunTarget}
+              sessionId={sessionId}
+            />
           ))}
         </div>
       )}

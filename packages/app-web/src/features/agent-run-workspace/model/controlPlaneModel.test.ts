@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type {
+  AgentRunOwnershipView,
   ConversationCommandPlacement,
   ConversationCommandView,
   ConversationModelConfigView,
@@ -83,6 +84,12 @@ function sessionMetaEvent(key: string, value: JsonValue): BackboneEvent {
   };
 }
 
+const ownership: AgentRunOwnershipView = {
+  run_created_by_user_id: "owner-user",
+  agent_created_by_user_id: "owner-user",
+  current_user_controls_run: true,
+};
+
 describe("AgentRun control-plane model", () => {
   it("resolves submit intent against runtime conversation commands", () => {
     const submit = command({
@@ -93,6 +100,7 @@ describe("AgentRun control-plane model", () => {
       conversation: {
         execution: { status: "ready" },
         commands: {
+          ownership,
           keyboard: { enter: "cmd-submit" },
           commands: [submit],
         },
@@ -143,6 +151,7 @@ describe("AgentRun control-plane model", () => {
       conversation: {
         execution: { status: "ready" },
         commands: {
+          ownership,
           keyboard: {},
           commands: [],
         },

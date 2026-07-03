@@ -44,7 +44,7 @@ pub async fn respond_companion_gate(
         state.as_ref(),
         &current_user,
         gate_uuid,
-        ProjectPermission::Edit,
+        ProjectPermission::Use,
     )
     .await?;
 

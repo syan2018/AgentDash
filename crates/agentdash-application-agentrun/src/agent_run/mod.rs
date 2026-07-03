@@ -1,9 +1,11 @@
 mod cancel_command;
 pub(crate) mod command_receipt;
+mod conversation_feed;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
 mod effective_capability;
+mod fork;
 pub mod frame;
 pub(crate) mod lifecycle_read_model_facade;
 pub mod mailbox;
@@ -25,11 +27,18 @@ pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };
 pub use command_receipt::AgentRunCommandReceiptView;
+pub use conversation_feed::{
+    AgentConversationContentPartModel, AgentConversationFeedInput,
+    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
+    AgentConversationMessageRefModel, AgentConversationMessageRoleModel,
+    AgentConversationSourceRangeModel, AgentConversationToolCallModel,
+    AgentConversationToolResultModel,
+};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
     AgentConversationSnapshotModel, AgentConversationSnapshotResolver,
-    AgentRunCommandPreconditionModel, ConversationCommandAvailability,
+    AgentRunCommandPreconditionModel, AgentRunOwnershipModel, ConversationCommandAvailability,
     ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
     ConversationCommandKindModel, ConversationCommandModel, ConversationCommandPlacementModel,
     ConversationCommandSetModel, ConversationCommandStaleGuardModel, ConversationDiagnosticModel,
@@ -52,6 +61,9 @@ pub use effective_capability::{
     AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
     agent_run_effective_capability_port, runtime_session_effective_capability_port,
+};
+pub use fork::{
+    AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
 };
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,

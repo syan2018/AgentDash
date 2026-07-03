@@ -6,6 +6,7 @@ import {
   toSessionEventEnvelope,
 } from "./sessionNdjsonEnvelopeValidator";
 import type { SessionEventEnvelope } from "./types";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
 const RETRY_BASE_MS = 800;
 const RETRY_MAX_MS = 8000;
@@ -14,6 +15,7 @@ export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting"
 
 export interface SessionStreamTransportOptions {
   sessionId: string;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   endpoint?: string;
   sinceId?: number;
   onEvent: (event: SessionEventEnvelope) => void;
@@ -27,15 +29,26 @@ export interface SessionStreamTransport {
   close: () => void;
 }
 
-function buildStreamEndpoint(sessionId: string, endpoint?: string): string {
+function buildStreamEndpoint(
+  sessionId: string,
+  endpoint?: string,
+  agentRunTarget?: AgentRunRuntimeTarget | null,
+): string {
   if (endpoint && endpoint.trim().length > 0) {
     return endpoint;
+  }
+  if (agentRunTarget) {
+    return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/runtime/stream/ndjson`;
   }
   return `/api/sessions/${encodeURIComponent(sessionId)}/stream/ndjson`;
 }
 
-function buildNdjsonEndpoint(sessionId: string, endpoint?: string): string {
-  const streamEndpoint = buildStreamEndpoint(sessionId, endpoint);
+function buildNdjsonEndpoint(
+  sessionId: string,
+  endpoint?: string,
+  agentRunTarget?: AgentRunRuntimeTarget | null,
+): string {
+  const streamEndpoint = buildStreamEndpoint(sessionId, endpoint, agentRunTarget);
   const [path, query = ""] = streamEndpoint.split("?");
   const ndjsonPath = path.endsWith("/stream/ndjson")
     ? path
@@ -87,7 +100,11 @@ class FetchNdjsonTransport implements SessionStreamTransport {
 
     try {
       const response = await authenticatedFetch(
-        resolveApiUrl(buildNdjsonEndpoint(this.options.sessionId, this.options.endpoint)),
+        resolveApiUrl(buildNdjsonEndpoint(
+          this.options.sessionId,
+          this.options.endpoint,
+          this.options.agentRunTarget,
+        )),
         {
           method: "GET",
           headers,

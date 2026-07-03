@@ -6,6 +6,11 @@ import type {
   ApproveToolCallResponse,
   RejectToolCallResponse,
 } from "../generated/session-contracts";
+import {
+  approveAgentRunToolCall,
+  rejectAgentRunToolCall,
+  type AgentRunRuntimeTarget,
+} from "./agentRunRuntime";
 
 export type ExecutorProfile = string;
 
@@ -30,6 +35,13 @@ export async function approveToolCall(
   );
 }
 
+export async function approveToolCallForAgentRun(
+  target: AgentRunRuntimeTarget,
+  toolCallId: string,
+): Promise<ApproveToolCallResponse> {
+  return approveAgentRunToolCall(target, toolCallId);
+}
+
 export async function rejectToolCall(
   sessionId: string,
   toolCallId: string,
@@ -39,6 +51,14 @@ export async function rejectToolCall(
     `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
     { reason },
   );
+}
+
+export async function rejectToolCallForAgentRun(
+  target: AgentRunRuntimeTarget,
+  toolCallId: string,
+  reason?: string,
+): Promise<RejectToolCallResponse> {
+  return rejectAgentRunToolCall(target, toolCallId, reason);
 }
 
 export async function respondCompanionRequest(

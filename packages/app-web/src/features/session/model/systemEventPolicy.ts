@@ -39,6 +39,7 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "workspace_module_presented",
   "workspace_module_present_failed",
   "context_frame",
+  "session_branch_forked",
   "session_rewound",
   "session_rebuilt",
   "turn_discarded",

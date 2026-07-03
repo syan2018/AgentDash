@@ -182,29 +182,24 @@ export function SettingsPage() {
   const includeLocalRuntime = !!getDesktopLocalRuntimeClient();
 
   const canManageSystemScope = currentUser?.auth_mode === "personal" || currentUser?.is_admin === true;
+  const effectiveActivePanel = activePanel === "system" && !canManageSystemScope ? "user" : activePanel;
   const scopeRequest = useMemo<SettingsScopeRequest | null>(() => {
-    if (activePanel === "local-runtime") {
+    if (effectiveActivePanel === "local-runtime") {
       return null;
     }
-    if (activePanel === "system") {
+    if (effectiveActivePanel === "system") {
       return canManageSystemScope ? { scope: "system" } : null;
     }
-    if (activePanel === "user") {
+    if (effectiveActivePanel === "user") {
       return { scope: "user" };
     }
     return null;
-  }, [activePanel, canManageSystemScope]);
+  }, [effectiveActivePanel, canManageSystemScope]);
 
   useEffect(() => {
     void fetchBackends();
     void fetchBackendRuntimeSummaries();
   }, [fetchBackends, fetchBackendRuntimeSummaries]);
-
-  useEffect(() => {
-    if (activePanel === "system" && !canManageSystemScope) {
-      setActivePanel("user");
-    }
-  }, [activePanel, canManageSystemScope]);
 
   useEffect(() => {
     if (!scopeRequest) return;
@@ -275,20 +270,20 @@ export function SettingsPage() {
 
         <SectionCard title="Scope">
           <ScopeTabs
-            activePanel={activePanel}
+            activePanel={effectiveActivePanel}
             includeLocalRuntime={includeLocalRuntime}
             includeSystemScope={canManageSystemScope}
             onChange={setActivePanel}
           />
           <div className="space-y-1 text-xs text-muted-foreground">
-            <p>当前 scope：{SETTINGS_PANEL_LABELS[activePanel]}</p>
-            {activePanel === "local-runtime" && (
+            <p>当前 scope：{SETTINGS_PANEL_LABELS[effectiveActivePanel]}</p>
+            {effectiveActivePanel === "local-runtime" && (
               <p>本机运行时是 desktop-only scope，只管理当前桌面端与目标 server 的本机连接、根目录、能力和诊断日志。</p>
             )}
-            {activePanel === "system" && canManageSystemScope && (
+            {effectiveActivePanel === "system" && canManageSystemScope && (
               <p>system scope 仅 personal 模式或管理员可访问，适合放全局执行器、LLM Provider 和系统级 Agent 配置。</p>
             )}
-            {activePanel === "user" && (
+            {effectiveActivePanel === "user" && (
               <p>用户设置绑定当前登录用户，包含个人偏好和本地调试选项，不会影响其他用户。</p>
             )}
           </div>
@@ -300,7 +295,7 @@ export function SettingsPage() {
           </div>
         )}
 
-        {activePanel === "local-runtime" && (
+        {effectiveActivePanel === "local-runtime" && (
           <DesktopLocalRuntimePanel
             backends={backends}
             runtimeSummaries={backendRuntimeSummaries}
@@ -310,7 +305,7 @@ export function SettingsPage() {
           />
         )}
 
-        {activePanel === "system" && canManageSystemScope && (
+        {effectiveActivePanel === "system" && canManageSystemScope && (
           <>
             <BackendSection
               backends={backends}
@@ -325,7 +320,7 @@ export function SettingsPage() {
           </>
         )}
 
-        {activePanel === "user" && scopeRequest && (
+        {effectiveActivePanel === "user" && scopeRequest && (
           <>
             <PiAgentPreferencesSection settings={settings} saving={saving} onSave={handleSave} />
             <UserByokSection onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)} />

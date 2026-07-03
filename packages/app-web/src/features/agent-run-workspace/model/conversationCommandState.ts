@@ -39,6 +39,11 @@ export interface AgentRunSessionCommandState {
 
 function emptyCommandSet(): ConversationCommandSetView {
   return {
+    ownership: {
+      run_created_by_user_id: "system",
+      agent_created_by_user_id: "system",
+      current_user_controls_run: false,
+    },
     commands: [],
     keyboard: {},
   };

@@ -15,7 +15,7 @@
 | `LifecycleSubjectAssociationRepository` 有 `list_by_subject` 和 `list_by_anchor`，schema 有 subject、anchor run、anchor agent 索引，task/routine/permission/frame construction/read model 都用 subject 反查 | `lifecycle_subject_associations` 保留为 indexed association table |
 | `RuntimeSessionExecutionAnchorRepository` 当前仍是 `upsert`，并暴露 `latest_updated_anchor_for_agent`；代码已有 `DeliveryRuntimeSelectionService` 通过 current delivery 而不是 latest anchor 选择 | anchor 改为 immutable create；current delivery 独立为 AgentRun binding/state |
 | `AgentFrameRepository` 暴露 `get_current`、`append_visible_canvas_mount`、`append_visible_workspace_module_ref`；`AgentFrame` 仍有多列 JSON surface 和 runtime 可变 visible refs | AgentFrame 保留 revision table，但 surface 改为 canonical typed document，visible 变更写新 revision |
-| raw `/sessions/*` route 仍有 delete、fork、projection rollback、meta patch、tool approval 等写入口 | raw Session 写入口删除或降级 diagnostic；产品写入口走 AgentRun |
+| raw `/sessions/*` route 当前只保留 meta、runtime-control、state、events、context projection、lineage、audit、stream 等 read/diagnostic surface；产品写操作已从 raw Session route 迁出 | 后续 WI-01/WI-09 聚焦前端 product identity 和 diagnostic 命名，避免 RuntimeSession trace ref 继续作为用户主状态 key |
 | `ProjectAgentRunStartResult` 顶层仍暴露 `runtime_session_id` 和 `turn_id` | 启动返回结果以 `run_ref + agent_ref + initial_message` 为产品事实，runtime ref 降级 diagnostic |
 | 前端 workspace 仍从 `agentRunWorkspaceState.runtime_session_id` 构造 `WorkspaceRuntimeData.sessionId/runtimeSessionId` | 前端 product workspace 不再以 runtime session id 作为主状态 key |
 | mailbox message/state 表当前 `runtime_session_id NOT NULL` 且 FK `sessions(id) ON DELETE CASCADE`，同时具备 claim、recover、order、dedup、payload cleanup | mailbox 保留 child table，但 owner 改为 AgentRun，runtime 只作 delivery ref |
@@ -86,7 +86,7 @@
 
 | 层 | 当前事实 | 执行结论 |
 | --- | --- | --- |
-| raw Session API | `/sessions/{id}` delete、fork、projection rollback、meta patch、tool approval 仍存在 | 产品写入口删除或 internal diagnostic 化；AgentRun scoped route 不复用 raw handler |
+| raw Session API | `/sessions/{id}` 及子路由当前是 read/diagnostic trace surface，包括 meta、runtime-control、state、events、context projection、lineage、audit、stream | 保留 diagnostic trace 访问时必须从 RuntimeSessionExecutionAnchor 回查控制面权限；产品写入口继续收束在 AgentRun scoped API |
 | ProjectAgent start contract | `ProjectAgentRunStartResult` 顶层 `runtime_session_id`、`turn_id` | 移入 diagnostic trace meta 或删除；产品导航只用 `run_ref/agent_ref` |
 | AgentRun workspace DTO | `delivery_runtime_ref`、`delivery_trace_meta`、stale guard runtime id | runtime ref 只作 diagnostic；stale guard 改 snapshot/run/frame/turn/workspace revision |
 | Frontend workspace | `agentRunWorkspaceState.runtime_session_id` 进入 `WorkspaceRuntimeData.sessionId/runtimeSessionId` | 改为 AgentRun target + optional trace meta |
@@ -97,15 +97,14 @@
 
 本 inventory 已把规划开放项变成执行结论。实现启动前不再需要额外产品决策；只需要用户确认进入实现阶段。
 
-执行时的硬顺序：
+后续执行顺序以当前已落地状态为准：
 
-1. WI-01 / WI-09 先清 API/contract/frontend product identity，避免实现期间继续依赖 raw runtime id。
-2. WI-02 / WI-12 并行准备 runtime session table/port rename。
-3. WI-03 / WI-04 建 admission 和 mailbox owner correction。
-4. WI-06 / WI-07 确定 delivery binding 与 AgentFrame surface。
-5. WI-05 集成 accepted boundary。
-6. WI-08 收束 fork lineage。
-7. WI-10 清 Lifecycle redundant state。
-8. WI-11 做 RepositorySet cleanup。
+1. WI-01 / WI-09 清 frontend product identity、DTO 命名和 diagnostic trace surface，确保产品主状态不依赖 raw runtime id。
+2. WI-02 / WI-12 推进 runtime session trace table rename 和剩余窄 store constructor cleanup。
+3. WI-04 / WI-12 推进 mailbox owner schema、delivery attempt 和 queue state 拆分。
+4. WI-07 / WI-05 继续整理 AgentFrame surface、ContextDelivery 和 accepted boundary。
+5. WI-08 继续把 fork baseline 从 runtime-first materialization 收束到 product fork record。
+6. WI-10 清 Lifecycle redundant state。
+7. WI-11 做 RepositorySet cleanup。
 
 若实现中出现新的代码事实推翻本文件结论，必须先回填 `decisions.md`，再修改对应工作项。

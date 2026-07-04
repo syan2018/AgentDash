@@ -42,6 +42,110 @@
 | Phase 9 Lifecycle State And Projection Review | WI-09 Projection Permission API Frontend, WI-10 Lifecycle Storage Gates Subjects |
 | Phase 10 RepositorySet And Composition Root Cleanup | WI-11 Repository Composition Cleanup |
 
+## Current Execution Position
+
+已提交的拆除基线：
+
+- Runtime trace 表已破坏式重命名为 `runtime_session_*`。
+- AgentRun 产品 DTO / application read model / frontend workspace 主链路已移除 `RuntimeSession` 产品 identity 依赖。
+- AgentRun product fork lineage 已删除 parent/child runtime session 字段。
+- anchor 旧测试/支持入口已收束到 immutable create 语义。
+- AgentFrame canonical surface 清点已补齐。
+
+剩余工作不再按“局部打磨”推进，而按拆迁面推进。每个拆迁面先删除错误事实源、错误 owner、错误入口或错误 service-locator 组合，再把必要能力重新耦合到目标事实边界。提交顺序按合流顺序排列；并行 worker 只负责互不重叠的写入集合。
+
+## Aggressive Parallel Demolition Plan
+
+### Batch A: Runtime Substrate And Lifecycle Storage
+
+目标：把 RuntimeSession 彻底留在 trace substrate，清理 Lifecycle 中不满足独立事实资格的存储形态。
+
+并行 worker：
+
+| Worker | WI | 写入范围 | 互斥边界 | 验证 |
+| --- | --- | --- | --- | --- |
+| A1 Runtime store拆分 | WI-02 | `crates/*runtime*`, `crates/agentdash-application-ports/src/**session**`, runtime trace store tests | migration 文件、contracts、frontend、Lifecycle storage | `cargo check` 覆盖 runtime/application-ports/infrastructure；runtime trace store tests |
+| A2 Lifecycle storage拆迁 | WI-10 | Lifecycle repository/service/storage files、`work-items/WI-10*`、必要 migration ledger | runtime session store、AgentRun command/mailbox、contracts/frontend | lifecycle storage tests；`cargo check` 覆盖 lifecycle/infrastructure |
+
+合流顺序：A1 先提交 runtime substrate 拆分；A2 后提交 Lifecycle storage 删除/降级。涉及 migration 的实体文件由主会话串行合流，WI-12 ledger 同步更新。
+
+### Batch B: Command Queue Owner And Admission Boundary
+
+目标：把用户命令链路拆成 `CommandReceipt -> AgentRun queue item -> RuntimeDeliveryOperation`，同时把 start/fork admission 收束成单一用例边界。
+
+并行 worker：
+
+| Worker | WI | 写入范围 | 互斥边界 | 验证 |
+| --- | --- | --- | --- | --- |
+| B1 Mailbox/command拆迁 | WI-04 | AgentRun command、mailbox repository/port/service、mailbox tests、相关 migration ledger | AgentRun start/fork admission、public generated contracts | command/mailbox unit tests；`cargo check` 覆盖 application-agentrun/infrastructure |
+| B2 Admission边界 | WI-03 | AgentRun/ProjectAgent start/fork admission service、API start/fork glue、start/fork tests | mailbox owner migration、delivery accepted boundary | start/fork service tests；API route tests；`cargo check` 覆盖 application-agentrun/api |
+
+合流顺序：B1 先删除 mailbox 对 runtime owner 的残留与三层状态混乱；B2 再把 start/fork 入口接到 admission。若 B2 发现 admission 必须依赖 B1 的新 queue port，先回报主会话，由主会话提交 B1 后再继续 B2。
+
+### Batch C: Delivery Binding, Accepted Boundary, AgentFrame
+
+目标：把 current delivery、accepted turn、frame/context delivery 改成单线提交边界。
+
+并行 worker：
+
+| Worker | WI | 写入范围 | 互斥边界 | 验证 |
+| --- | --- | --- | --- | --- |
+| C1 Delivery binding | WI-06 | delivery binding port/state、anchor read/write 使用点、LifecycleAgent current delivery 清理、相关 migration ledger | AgentFrame canonical surface mutation、accepted turn transaction | delivery binding tests；anchor repository tests |
+| C2 AgentFrame/ContextDelivery | WI-07 | AgentFrame repository/service/surface doc、ContextDelivery input fact、frame/context tests | delivery binding state schema、Lifecycle node advancement | frame/context tests；`cargo check` 覆盖 domain/application/infrastructure |
+
+合流顺序：C1 先提交 current delivery / anchor 拆分；C2 后提交 frame/context delivery。完成后必须派一个跨 WI-06/WI-07 的 `trellis-check`，因为这批决定 accepted boundary 的事实归属。
+
+### Batch D: Accepted Turn And Fork Recomposition
+
+目标：用真实 accepted boundary 重新耦合 command、queue、frame、Lifecycle node，再把 fork 绑定到 AgentRunForkRecord。
+
+并行 worker：
+
+| Worker | WI | 写入范围 | 互斥边界 | 验证 |
+| --- | --- | --- | --- | --- |
+| D1 Accepted boundary | WI-05 | accepted turn transaction、frame commit integration、Lifecycle node started advance、accepted tests | fork lineage materialization | accepted/launch/terminal tests；Lifecycle node tests |
+| D2 Fork recomposition | WI-08 | AgentRunForkRecord、fork replay/materialization、fork DTO/result cache cleanup | accepted transaction internals、runtime trace store | fork service/API tests；lineage repository tests |
+
+合流顺序：D1 提交后，D2 按新的 accepted/baseline 语义补齐 fork。若 D2 需要已提交的 accepted boundary，先让 D1 落地，不保留 fork 的旧 runtime-first 路径。
+
+### Batch E: Product Surface And Repository Composition Cleanup
+
+目标：删除最后的产品面 RuntimeSession 泄漏、projection 混名和业务层大仓储集合。
+
+并行 worker：
+
+| Worker | WI | 写入范围 | 互斥边界 | 验证 |
+| --- | --- | --- | --- | --- |
+| E1 API/frontend/product identity | WI-09 | API product routes/contracts/frontend product state/tests | runtime diagnostic route、repository deps structs | `pnpm run frontend:check`；API tests；contract generation if touched |
+| E2 RepositorySet cleanup | WI-11 | application service constructors、deps structs、composition root wiring/tests | public contracts、migration | `cargo check` affected crates；constructor/service tests |
+
+合流顺序：E1 先删除产品 surface 泄漏；E2 后按稳定 surface 收窄依赖。最后派 full-scope `trellis-check` 覆盖 C-001 到 C-013。
+
+### Batch F: Migration And Final Verification
+
+目标：让 schema、FK/cascade、table qualification 和端到端链路与目标架构一致。
+
+串行收口：
+
+| Step | WI | 内容 | 验证 |
+| --- | --- | --- | --- |
+| F1 Migration ledger | WI-12 | 汇总各批次 migration、冗余表删除/合并/降级结论 | `pnpm run migration:guard`；migration-specific tests |
+| F2 Spec update | 全部 | 把新的事实边界写入 `.trellis/spec/` 中长期有效的规范 | spec diff review |
+| F3 Final check | 全部 | affected packages full-scope check，端到端链路验证 | cargo/pnpm/API/frontend/migration/check diff |
+
+## Execution Discipline
+
+每个批次遵循固定节奏：
+
+1. 主会话确认 clean worktree，写出本批次 worker matrix。
+2. 同时派发互不重叠的 `trellis-implement` worker。
+3. worker 返回后，主会话按合流顺序只读检查 diff 形状。
+4. 对每个主题 diff 立即派同范围 `trellis-check`。
+5. check 通过后立即提交该主题；提交后才合流下一个主题 diff。
+6. 每个批次结束时更新 WI 验收记录和 WI-12 migration ledger。
+
+批次不以文件数量衡量完成度，而以删除结果衡量完成度：旧入口被删除、旧 owner 被替换、旧事实源被降级或合并、旧 service-locator 依赖被收窄，才允许进入下一批。
+
 ## Phase 0: Evidence Inventory And Invariants
 
 - 以 `references/adversarial-first-principles-review.md` 作为当前规划的第一性原理输入。

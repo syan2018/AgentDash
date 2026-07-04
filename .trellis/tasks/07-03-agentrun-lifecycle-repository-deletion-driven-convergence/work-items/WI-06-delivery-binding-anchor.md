@@ -50,3 +50,25 @@ D-003, D-010, D-014, D-017
 - anchor create idempotency 测试。
 - runtime session 轮换后 current delivery selection 测试。
 - `rg "latest_updated_anchor_for_agent|upsert.*anchor"` 无业务选择残留。
+
+## Implementation Record 2026-07-04 / Worker C1
+
+### Delivery Binding / Anchor Boundary
+
+- `RuntimeSessionExecutionAnchor` 保持 launch evidence 语义；fork materialization 的事务写入改为 insert-once，重复写入只在 launch coordinates 完全一致时幂等成功。
+- current delivery 的事实源是 `agent_run_delivery_bindings` 的 `(run_id, agent_id)` binding/state；delivery selection 通过 binding 查 runtime session，再用 anchor 校验 run/agent/frame/node 坐标。
+- `LifecycleAgent` 身份聚合不再携带 current delivery 字段；历史 `current_delivery_*` schema 迁移和删除仍由 0044 记录。
+
+### Code Touchpoints
+
+- `crates/agentdash-infrastructure/src/persistence/postgres/agent_run_lineage_repository.rs`：删除 fork materialization 中 anchor coordinate rewrite，改为 `create_anchor_once_tx`。
+- `crates/agentdash-workspace-module/src/workspace_module/surface.rs` 和 `crates/agentdash-workspace-module/src/workspace_module/tools.rs`：测试 fake repository 与 `RuntimeSessionExecutionAnchorRepository::create_once` 对齐，并移除 latest-updated anchor selector。
+
+### Validation Notes
+
+- `cargo fmt --check` 通过。
+- `cargo check -p agentdash-domain -p agentdash-application-ports -p agentdash-infrastructure -p agentdash-application-lifecycle -p agentdash-application-agentrun -p agentdash-api` 通过。
+- `cargo test -p agentdash-infrastructure agent_run_lineage_row_maps_json_and_refs --lib` 通过，确认 fork materialization 所在 infrastructure crate 的 test build 可用。
+- `cargo test -p agentdash-application-agentrun current_delivery --lib` 和 `cargo test -p agentdash-application-agentrun execution_anchor_create_once --lib` 通过，覆盖 current delivery binding selection、anchor mismatch 拒绝和 create-once idempotent/conflict 语义。
+- `cargo test -p agentdash-application-lifecycle current_delivery --lib` 通过，确认 lifecycle view 从 delivery binding 读取 current delivery status。
+- `cargo test -p agentdash-infrastructure delivery_binding --lib` 通过，确认 delivery binding repository roundtrip。

@@ -1695,7 +1695,10 @@ mod tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for EmptyRuntimeSessionExecutionAnchorRepo {
-        async fn upsert(&self, _anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            _anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -1729,13 +1732,6 @@ mod tests {
             _runtime_session_ids: &[String],
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
             Ok(Vec::new())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            _agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(None)
         }
     }
 

@@ -195,10 +195,14 @@ async fn materialize_forked_agent_run_tx(
         .inspect_err(|error| {
             log_agent_run_fork_materialization_error("insert_agent_frame", &context, error);
         })?;
-    upsert_anchor_tx(&mut tx, &anchor)
+    create_anchor_once_tx(&mut tx, &anchor)
         .await
         .inspect_err(|error| {
-            log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, error);
+            log_agent_run_fork_materialization_error(
+                "create_execution_anchor_once",
+                &context,
+                error,
+            );
         })?;
     upsert_delivery_binding_tx(&mut tx, &delivery_binding)
         .await
@@ -439,24 +443,16 @@ async fn insert_agent_frame_tx(
     Ok(())
 }
 
-async fn upsert_anchor_tx(
+async fn create_anchor_once_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     anchor: &RuntimeSessionExecutionAnchor,
 ) -> Result<(), DomainError> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"INSERT INTO runtime_session_execution_anchors
             (runtime_session_id,run_id,launch_frame_id,agent_id,orchestration_id,node_path,
              node_attempt,created_by_kind,created_at,updated_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           ON CONFLICT (runtime_session_id) DO UPDATE SET
-             run_id=EXCLUDED.run_id,
-             launch_frame_id=EXCLUDED.launch_frame_id,
-             agent_id=EXCLUDED.agent_id,
-             orchestration_id=EXCLUDED.orchestration_id,
-             node_path=EXCLUDED.node_path,
-             node_attempt=EXCLUDED.node_attempt,
-             created_by_kind=EXCLUDED.created_by_kind,
-             updated_at=EXCLUDED.updated_at"#,
+           ON CONFLICT (runtime_session_id) DO NOTHING"#,
     )
     .bind(&anchor.runtime_session_id)
     .bind(anchor.run_id.to_string())
@@ -471,10 +467,83 @@ async fn upsert_anchor_tx(
     .execute(&mut **tx)
     .await
     .map_err(|error| sql_err_for("runtime_session_execution_anchors", error))?;
-    Ok(())
+    if result.rows_affected() > 0 {
+        return Ok(());
+    }
+
+    let existing = select_anchor_by_session_tx(tx, &anchor.runtime_session_id)
+        .await?
+        .ok_or_else(|| DomainError::Database {
+            operation: "create_runtime_session_execution_anchor",
+            message: format!(
+                "runtime_session_id={} conflicted but existing anchor was not visible",
+                anchor.runtime_session_id
+            ),
+        })?;
+    if existing.has_same_launch_coordinates_as(anchor) {
+        return Ok(());
+    }
+    Err(existing.immutable_conflict(anchor))
+}
+
+async fn select_anchor_by_session_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    runtime_session_id: &str,
+) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+    sqlx::query_as::<_, ExecutionAnchorRow>(
+        r#"SELECT runtime_session_id,run_id,launch_frame_id,agent_id,orchestration_id,node_path,
+                  node_attempt,created_by_kind,created_at,updated_at
+           FROM runtime_session_execution_anchors
+           WHERE runtime_session_id = $1"#,
+    )
+    .bind(runtime_session_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| sql_err_for("runtime_session_execution_anchors", error))?
+    .map(TryInto::try_into)
+    .transpose()
 }
 
 const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at";
+
+#[derive(sqlx::FromRow)]
+struct ExecutionAnchorRow {
+    runtime_session_id: String,
+    run_id: String,
+    launch_frame_id: String,
+    agent_id: String,
+    orchestration_id: Option<String>,
+    node_path: Option<String>,
+    node_attempt: Option<i32>,
+    created_by_kind: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl TryFrom<ExecutionAnchorRow> for RuntimeSessionExecutionAnchor {
+    type Error = DomainError;
+
+    fn try_from(row: ExecutionAnchorRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            runtime_session_id: row.runtime_session_id,
+            run_id: parse_uuid(&row.run_id, "runtime_session_execution_anchors.run_id")?,
+            launch_frame_id: parse_uuid(
+                &row.launch_frame_id,
+                "runtime_session_execution_anchors.launch_frame_id",
+            )?,
+            agent_id: parse_uuid(&row.agent_id, "runtime_session_execution_anchors.agent_id")?,
+            orchestration_id: opt_uuid(
+                row.orchestration_id.as_ref(),
+                "runtime_session_execution_anchors.orchestration_id",
+            )?,
+            node_path: row.node_path,
+            node_attempt: row.node_attempt.map(|attempt| attempt as u32),
+            created_by_kind: row.created_by_kind,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
 
 #[derive(sqlx::FromRow)]
 struct AgentRunLineageRow {
@@ -517,6 +586,10 @@ impl TryFrom<AgentRunLineageRow> for AgentRunLineage {
 fn parse_uuid(raw: &str, ctx: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{ctx} invalid uuid `{raw}`: {error}")))
+}
+
+fn opt_uuid(raw: Option<&String>, ctx: &str) -> Result<Option<Uuid>, DomainError> {
+    raw.map(|value| parse_uuid(value, ctx)).transpose()
 }
 
 fn opt_json_str(value: &Option<Value>) -> Result<Option<String>, DomainError> {

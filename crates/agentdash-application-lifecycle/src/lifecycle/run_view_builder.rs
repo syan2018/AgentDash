@@ -4,6 +4,7 @@
 //! 确保 `runtime_trace_refs`、`subject_associations` 等字段始终被正确填充。
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -18,23 +19,34 @@ pub use agentdash_application_ports::lifecycle_read_model::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentLineage, AgentRunDeliveryBinding, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
-    LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
-    LifecycleRunStatus as DomainLifecycleRunStatus,
+    AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentRunDeliveryBinding,
+    AgentRunDeliveryBindingRepository, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind,
+    LifecycleRun, LifecycleRunRepository, LifecycleRunStatus as DomainLifecycleRunStatus,
     LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
-    OrchestrationInstance, RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+    LifecycleSubjectAssociationRepository, OrchestrationInstance, RuntimeNodeState,
+    RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     SubjectRef,
 };
 
-use crate::RepositorySet;
-
 #[derive(Clone)]
 pub struct LifecycleReadModelQueryAdapter {
-    repos: RepositorySet,
+    repos: LifecycleReadModelRepos,
+}
+
+#[derive(Clone)]
+pub struct LifecycleReadModelRepos {
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
 }
 
 impl LifecycleReadModelQueryAdapter {
-    pub fn new(repos: RepositorySet) -> Self {
+    pub fn new(repos: LifecycleReadModelRepos) -> Self {
         Self { repos }
     }
 }
@@ -59,7 +71,7 @@ impl LifecycleReadModelQueryPort for LifecycleReadModelQueryAdapter {
 
 /// 从 LifecycleRun 构建完整的 LifecycleRunView（含 trace refs、subject associations）。
 pub async fn build_lifecycle_run_view(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, DomainError> {
     let agents = repos.lifecycle_agent_repo.list_by_run(run.id).await?;
@@ -68,7 +80,7 @@ pub async fn build_lifecycle_run_view(
 
 /// 使用已加载的 agents 构建 LifecycleRunView，避免重复查询。
 pub async fn build_lifecycle_run_view_with_preloaded(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     run: &LifecycleRun,
     agents: Vec<LifecycleAgent>,
 ) -> Result<LifecycleRunView, DomainError> {
@@ -108,7 +120,7 @@ pub async fn build_lifecycle_run_view_with_preloaded(
 
 /// 为给定 subject 构建 SubjectExecutionView。
 pub async fn build_subject_execution_view(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     subject: SubjectRef,
 ) -> Result<SubjectExecutionView, DomainError> {
     let associations = repos
@@ -161,7 +173,7 @@ pub async fn build_subject_execution_view(
 
 /// 构建项目维度的活跃 agent 聚合视图（仅含非终态 run）。
 pub async fn build_project_active_agents_view(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     project_id: uuid::Uuid,
 ) -> Result<ProjectActiveAgentsView, DomainError> {
     let all_runs = repos.lifecycle_run_repo.list_by_project(project_id).await?;
@@ -198,7 +210,7 @@ pub async fn build_project_active_agents_view(
 // ── Internal async helpers ─────────────────────────────────────
 
 async fn collect_runtime_trace_refs(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     run_id: Uuid,
 ) -> Result<Vec<RuntimeSessionRefView>, DomainError> {
     Ok(repos
@@ -213,7 +225,7 @@ async fn collect_runtime_trace_refs(
 }
 
 async fn subject_runtime_attempt_history(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     associations: &[LifecycleSubjectAssociation],
     runs: &[LifecycleRun],
 ) -> Result<Vec<SubjectRuntimeAttemptView>, DomainError> {
@@ -253,7 +265,7 @@ async fn subject_runtime_attempt_history(
 }
 
 async fn resolve_association_history_agents(
-    repos: &RepositorySet,
+    repos: &LifecycleReadModelRepos,
     association: &LifecycleSubjectAssociation,
 ) -> Result<Vec<LifecycleAgent>, DomainError> {
     if !association_role_can_own_runtime_attempts(&association.role) {

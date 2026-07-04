@@ -18,14 +18,17 @@ use agentdash_application_workflow::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher,
 };
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::workflow::{
-    LifecycleRun, NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
+    AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    NodePortValue, RuntimeNodeError, RuntimeNodeStatus, RuntimeSessionExecutionAnchorRepository,
+    WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use uuid::Uuid;
 
-use crate::{RepositorySet, SharedPlatformConfig};
+use crate::SharedPlatformConfig;
 
 use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
@@ -84,17 +87,27 @@ pub struct AdvanceCurrentNodeResult {
 }
 
 pub struct LifecycleOrchestrator {
-    repos: RepositorySet,
+    deps: LifecycleOrchestratorDeps,
     function_runner: Option<Arc<dyn FunctionRunner>>,
+}
+
+#[derive(Clone)]
+pub struct LifecycleOrchestratorDeps {
+    pub run_repo: Arc<dyn LifecycleRunRepository>,
+    pub agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub inline_file_repo: Arc<dyn InlineFileRepository>,
+    pub orchestration_launcher: OrchestrationExecutorLauncher,
 }
 
 impl LifecycleOrchestrator {
     pub fn new_with_platform_config(
-        repos: RepositorySet,
+        deps: LifecycleOrchestratorDeps,
         _platform_config: SharedPlatformConfig,
     ) -> Self {
         Self {
-            repos,
+            deps,
             function_runner: None,
         }
     }
@@ -129,10 +142,10 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_activity_runtime_association_from_message_stream_trace(
             session_id,
-            self.repos.agent_frame_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-            Some(self.repos.execution_anchor_repo.as_ref()),
+            self.deps.frame_repo.as_ref(),
+            self.deps.agent_repo.as_ref(),
+            self.deps.run_repo.as_ref(),
+            Some(self.deps.anchor_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -183,8 +196,8 @@ impl LifecycleOrchestrator {
         let (run, _outcome) =
             apply_orchestration_event_to_run(association.run, association.orchestration_id, event)
                 .map_err(|error| error.to_string())?;
-        self.repos
-            .lifecycle_run_repo
+        self.deps
+            .run_repo
             .update(&run)
             .await
             .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
@@ -209,10 +222,10 @@ impl LifecycleOrchestrator {
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_runtime_association_from_message_stream_trace(
             &input.runtime_session_id,
-            self.repos.agent_frame_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
-            Some(self.repos.execution_anchor_repo.as_ref()),
+            self.deps.frame_repo.as_ref(),
+            self.deps.agent_repo.as_ref(),
+            self.deps.run_repo.as_ref(),
+            Some(self.deps.anchor_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -283,8 +296,8 @@ impl LifecycleOrchestrator {
             }
             Err(error) => return Err(error.to_string()),
         };
-        self.repos
-            .lifecycle_run_repo
+        self.deps
+            .run_repo
             .update(&updated_run)
             .await
             .map_err(|error| format!("更新 LifecycleRun orchestration 失败: {error}"))?;
@@ -310,8 +323,7 @@ impl LifecycleOrchestrator {
         &self,
         run_id: Uuid,
     ) -> Result<OrchestrationExecutorDrainResult, String> {
-        let mut launcher =
-            OrchestrationExecutorLauncher::new(self.repos.to_workflow_repository_set());
+        let mut launcher = self.deps.orchestration_launcher.clone();
         if let Some(function_runner) = &self.function_runner {
             launcher = launcher.with_function_runner(function_runner.clone());
         }
@@ -355,8 +367,8 @@ impl LifecycleOrchestrator {
     }
 
     async fn load_run(&self, run_id: Uuid) -> Result<LifecycleRun, String> {
-        self.repos
-            .lifecycle_run_repo
+        self.deps
+            .run_repo
             .get_by_id(run_id)
             .await
             .map_err(|e| format!("加载 lifecycle run 失败: {e}"))?
@@ -377,7 +389,7 @@ impl LifecycleOrchestrator {
             attempt,
         };
         let output_map =
-            load_scoped_port_output_map(self.repos.inline_file_repo.as_ref(), &scope).await;
+            load_scoped_port_output_map(self.deps.inline_file_repo.as_ref(), &scope).await;
         output_map
             .into_iter()
             .map(|(port_key, content)| {

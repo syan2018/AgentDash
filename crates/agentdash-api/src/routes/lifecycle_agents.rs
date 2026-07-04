@@ -1503,8 +1503,9 @@ async fn load_agent_run_workspace_snapshot(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
-    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&lifecycle_repos);
+    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+        state.repos.skill_asset_repo.clone(),
+    );
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         agent_run_workspace_query_deps(state),
         agent_run_session_core(state.services.session_core.clone()),
@@ -1597,8 +1598,9 @@ async fn load_agent_run_list_projection(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
-    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&lifecycle_repos);
+    let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+        state.repos.skill_asset_repo.clone(),
+    );
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
         agent_run_workspace_query_deps(state),
         agent_run_session_core(state.services.session_core.clone()),

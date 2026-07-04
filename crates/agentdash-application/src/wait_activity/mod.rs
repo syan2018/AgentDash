@@ -7,5 +7,5 @@ mod tool;
 mod types;
 
 pub use provider::WaitRuntimeToolProvider;
-pub use service::WaitActivityService;
+pub use service::{WaitActivityDeps, WaitActivityRepositories, WaitActivityService};
 pub use types::{WaitActivityItem, WaitActivityRequest, WaitActivityResult, WaitToolContext};

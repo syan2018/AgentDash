@@ -290,15 +290,17 @@ impl AppState {
         let runtime_surface_query_port: Arc<dyn AgentRunRuntimeSurfaceQueryPort> =
             runtime_surface_query.clone();
         let lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort> = Arc::new(
-            LifecycleReadModelQueryAdapter::new(repos.to_lifecycle_repository_set()),
+            LifecycleReadModelQueryAdapter::new(repos.lifecycle_read_model_repos()),
         );
         let resource_surface_query =
             AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
                 anchor_repo: repos.execution_anchor_repo.clone(),
                 surface_query: runtime_surface_query_port.clone(),
-                lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
-                    &repos.to_lifecycle_repository_set(),
-                )),
+                lifecycle_surface_projection: Arc::new(
+                    AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+                        repos.skill_asset_repo.clone(),
+                    ),
+                ),
             });
         let resource_surface_query_port: Arc<dyn AgentRunResourceSurfaceQueryPort> =
             Arc::new(resource_surface_query.clone());

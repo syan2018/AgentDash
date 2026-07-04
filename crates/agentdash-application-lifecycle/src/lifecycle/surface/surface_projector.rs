@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::RepositorySet;
 use crate::lifecycle::ActivityActivation;
 use crate::lifecycle::build_lifecycle_mount_with_node_scope;
 
@@ -451,10 +450,6 @@ pub struct AgentRunLifecycleSurfaceProjector {
 }
 
 impl AgentRunLifecycleSurfaceProjector {
-    pub fn new(repos: &RepositorySet) -> Self {
-        Self::from_skill_asset_repo(repos.skill_asset_repo.clone())
-    }
-
     pub fn from_skill_asset_repo(skill_asset_repo: Arc<dyn SkillAssetRepository>) -> Self {
         Self::from_builtin_skill_bootstrapper(Arc::new(
             SkillAssetServiceBuiltinLifecycleSkillBootstrapper::new(skill_asset_repo),

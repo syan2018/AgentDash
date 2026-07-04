@@ -75,7 +75,7 @@ pub async fn get_lifecycle_run_view(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &run).await?;
     Ok(Json(lifecycle_run_view_to_contract(view)))
 }
@@ -86,7 +86,7 @@ pub async fn get_subject_execution(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view =
         run_view_builder::build_subject_execution_view(&lifecycle_repos, subject.clone()).await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
@@ -146,7 +146,7 @@ pub async fn get_project_active_agents(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view =
         run_view_builder::build_project_active_agents_view(&lifecycle_repos, project_id).await?;
     Ok(Json(project_active_agents_view_to_contract(view)))

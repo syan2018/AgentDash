@@ -34,7 +34,7 @@ pub use execution_log::{
 };
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
-    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
 };
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
@@ -42,7 +42,8 @@ pub use projection::{
 };
 pub use run::select_active_run;
 pub use run_command_service::{
-    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
+    LifecycleRunCommandService,
 };
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,

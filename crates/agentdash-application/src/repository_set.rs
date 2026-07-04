@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::ProjectAgentLifecycleLaunchPort;
-use agentdash_application_lifecycle::LifecycleDispatchFacade;
+use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelRepos;
+use agentdash_application_lifecycle::{
+    LifecycleDispatchFacade, LifecycleOrchestratorDeps, LifecycleRunCommandDeps,
+    LifecycleWorkflowAgentNodeMaterializationAdapter,
+    LifecycleWorkflowAgentNodeMaterializationDeps,
+};
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
 use agentdash_application_ports::hook_workflow_projection::{
@@ -12,7 +17,7 @@ use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_application_shared_library::SharedLibraryRepositorySet;
-use agentdash_application_workflow::WorkflowRepositorySet;
+use agentdash_application_workflow::{OrchestrationExecutorLauncher, WorkflowRepositorySet};
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
@@ -45,6 +50,8 @@ use agentdash_domain::workflow::{
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
+
+use crate::wait_activity::WaitActivityRepositories;
 
 /// 持久化层端口 — 所有 Repository trait 对象的集合
 ///
@@ -104,56 +111,90 @@ pub struct RepositorySet {
 }
 
 impl RepositorySet {
-    pub fn to_lifecycle_repository_set(&self) -> agentdash_application_lifecycle::RepositorySet {
-        agentdash_application_lifecycle::RepositorySet {
-            project_repo: self.project_repo.clone(),
-            canvas_repo: self.canvas_repo.clone(),
-            workspace_repo: self.workspace_repo.clone(),
-            story_repo: self.story_repo.clone(),
-            state_change_repo: self.state_change_repo.clone(),
-            backend_repo: self.backend_repo.clone(),
-            runtime_health_repo: self.runtime_health_repo.clone(),
-            backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
-            project_backend_access_repo: self.project_backend_access_repo.clone(),
-            backend_workspace_inventory_repo: self.backend_workspace_inventory_repo.clone(),
-            auth_session_repo: self.auth_session_repo.clone(),
-            user_directory_repo: self.user_directory_repo.clone(),
-            settings_repo: self.settings_repo.clone(),
-            shared_library_repo: self.shared_library_repo.clone(),
-            extension_package_artifact_repo: self.extension_package_artifact_repo.clone(),
-            project_extension_installation_repo: self.project_extension_installation_repo.clone(),
-            llm_provider_repo: self.llm_provider_repo.clone(),
-            llm_provider_credential_repo: self.llm_provider_credential_repo.clone(),
-            mcp_preset_repo: self.mcp_preset_repo.clone(),
-            skill_asset_repo: self.skill_asset_repo.clone(),
-            project_agent_repo: self.project_agent_repo.clone(),
-            project_vfs_mount_repo: self.project_vfs_mount_repo.clone(),
-            agent_procedure_repo: self.agent_procedure_repo.clone(),
-            workflow_template_install_repo: self.workflow_template_install_repo.clone(),
-            workflow_graph_repo: self.workflow_graph_repo.clone(),
+    pub fn wait_activity_repositories(&self) -> WaitActivityRepositories {
+        WaitActivityRepositories {
+            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
+            agent_frame_repo: self.agent_frame_repo.clone(),
+            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            mailbox_repo: self.agent_run_mailbox_repo.clone(),
+        }
+    }
+
+    pub fn lifecycle_read_model_repos(&self) -> LifecycleReadModelRepos {
+        LifecycleReadModelRepos {
             lifecycle_run_repo: self.lifecycle_run_repo.clone(),
             lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
             agent_frame_repo: self.agent_frame_repo.clone(),
             lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
-            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
             agent_lineage_repo: self.agent_lineage_repo.clone(),
             execution_anchor_repo: self.execution_anchor_repo.clone(),
             agent_run_delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
-            agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
-            agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
+        }
+    }
+
+    pub fn lifecycle_workflow_agent_node_materialization_deps(
+        &self,
+    ) -> LifecycleWorkflowAgentNodeMaterializationDeps {
+        LifecycleWorkflowAgentNodeMaterializationDeps {
+            run_repo: self.lifecycle_run_repo.clone(),
+            workflow_graph_repo: self.workflow_graph_repo.clone(),
+            agent_repo: self.lifecycle_agent_repo.clone(),
+            frame_repo: self.agent_frame_repo.clone(),
+            association_repo: self.lifecycle_subject_association_repo.clone(),
+            gate_repo: self.lifecycle_gate_repo.clone(),
+            lineage_repo: self.agent_lineage_repo.clone(),
+            anchor_repo: self.execution_anchor_repo.clone(),
+            delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
             runtime_session_creator: self.runtime_session_creator.clone(),
-            agent_frame_construction: self.agent_frame_construction.clone(),
+            frame_construction: self.agent_frame_construction.clone(),
             workflow_agent_frame_materialization: self.workflow_agent_frame_materialization.clone(),
-            routine_repo: self.routine_repo.clone(),
-            routine_execution_repo: self.routine_execution_repo.clone(),
+        }
+    }
+
+    pub fn lifecycle_orchestrator_deps(&self) -> LifecycleOrchestratorDeps {
+        LifecycleOrchestratorDeps {
+            run_repo: self.lifecycle_run_repo.clone(),
+            agent_repo: self.lifecycle_agent_repo.clone(),
+            frame_repo: self.agent_frame_repo.clone(),
+            anchor_repo: self.execution_anchor_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),
-            permission_grant_repo: self.permission_grant_repo.clone(),
+            orchestration_launcher: OrchestrationExecutorLauncher::new(
+                self.to_workflow_repository_set(),
+            ),
+        }
+    }
+
+    pub fn lifecycle_run_command_deps(&self) -> LifecycleRunCommandDeps {
+        LifecycleRunCommandDeps {
+            run_repo: self.lifecycle_run_repo.clone(),
+            workflow_graph_repo: self.workflow_graph_repo.clone(),
+            agent_repo: self.lifecycle_agent_repo.clone(),
+            frame_repo: self.agent_frame_repo.clone(),
+            association_repo: self.lifecycle_subject_association_repo.clone(),
+            gate_repo: self.lifecycle_gate_repo.clone(),
+            lineage_repo: self.agent_lineage_repo.clone(),
+            anchor_repo: self.execution_anchor_repo.clone(),
+            delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
+            runtime_session_creator: self.runtime_session_creator.clone(),
+            frame_construction: self.agent_frame_construction.clone(),
+            orchestration_launcher: OrchestrationExecutorLauncher::new(
+                self.to_workflow_repository_set(),
+            ),
         }
     }
 
     pub fn to_workflow_repository_set(&self) -> WorkflowRepositorySet {
-        self.to_lifecycle_repository_set()
-            .to_workflow_repository_set()
+        WorkflowRepositorySet {
+            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
+            workflow_agent_node_materialization: Arc::new(
+                LifecycleWorkflowAgentNodeMaterializationAdapter::new(
+                    self.lifecycle_workflow_agent_node_materialization_deps(),
+                ),
+            ),
+        }
     }
 
     pub fn to_shared_library_repository_set(&self) -> SharedLibraryRepositorySet {

@@ -334,7 +334,7 @@ fn test_service_with_gate_repo(
     terminal_cache: Arc<SessionTerminalCache>,
     gate_repo: Arc<dyn LifecycleGateRepository>,
 ) -> WaitActivityService {
-    WaitActivityService::new(
+    WaitActivityService::from_repositories(
         Arc::new(NoopLifecycleAgentRepo),
         Arc::new(NoopAgentFrameRepo),
         Arc::new(NoopExecutionAnchorRepo),

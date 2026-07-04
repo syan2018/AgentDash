@@ -23,7 +23,21 @@ use super::types::{
     WaitToolContext,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::repository_set::RepositorySet;
+
+#[derive(Clone)]
+pub struct WaitActivityRepositories {
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
+}
+
+#[derive(Clone)]
+pub struct WaitActivityDeps {
+    pub repositories: WaitActivityRepositories,
+    pub terminal_cache: Arc<SessionTerminalCache>,
+}
 
 #[derive(Clone)]
 pub struct WaitActivityService {
@@ -36,22 +50,12 @@ pub struct WaitActivityService {
 }
 
 impl WaitActivityService {
-    pub fn from_repository_set(
-        repos: RepositorySet,
-        terminal_cache: Arc<SessionTerminalCache>,
-    ) -> Self {
-        Self {
-            lifecycle_agent_repo: repos.lifecycle_agent_repo,
-            agent_frame_repo: repos.agent_frame_repo,
-            execution_anchor_repo: repos.execution_anchor_repo,
-            lifecycle_gate_repo: repos.lifecycle_gate_repo,
-            mailbox_repo: repos.agent_run_mailbox_repo,
-            terminal_cache,
-        }
+    pub fn new(deps: WaitActivityDeps) -> Self {
+        Self::from_repository_ports(deps.repositories, deps.terminal_cache)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn from_repositories(
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -65,6 +69,20 @@ impl WaitActivityService {
             execution_anchor_repo,
             lifecycle_gate_repo,
             mailbox_repo,
+            terminal_cache,
+        }
+    }
+
+    pub fn from_repository_ports(
+        repositories: WaitActivityRepositories,
+        terminal_cache: Arc<SessionTerminalCache>,
+    ) -> Self {
+        Self {
+            lifecycle_agent_repo: repositories.lifecycle_agent_repo,
+            agent_frame_repo: repositories.agent_frame_repo,
+            execution_anchor_repo: repositories.execution_anchor_repo,
+            lifecycle_gate_repo: repositories.lifecycle_gate_repo,
+            mailbox_repo: repositories.mailbox_repo,
             terminal_cache,
         }
     }

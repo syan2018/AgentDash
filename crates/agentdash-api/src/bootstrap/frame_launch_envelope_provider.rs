@@ -38,9 +38,11 @@ impl AppStateFrameLaunchEnvelopePort {
             platform_config: state.config.platform_config.clone(),
             audit_bus: state.services.audit_bus.clone(),
             companion_facts: Arc::new(state.services.session_runtime_transition.clone()),
-            lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
-                &state.repos.to_lifecycle_repository_set(),
-            )),
+            lifecycle_surface_projection: Arc::new(
+                AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+                    state.repos.skill_asset_repo.clone(),
+                ),
+            ),
             connector: state.services.connector.clone(),
             extra_skill_dirs: state.services.extra_skill_dirs.clone(),
             skill_discovery_providers: state.services.skill_discovery_providers.clone(),

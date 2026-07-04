@@ -15,7 +15,9 @@ use agentdash_application::runtime_tools::{
     SharedSessionToolServicesHandle, TaskRuntimeToolProvider, VfsRuntimeToolProvider,
     WorkflowRuntimeToolProvider,
 };
-use agentdash_application::wait_activity::{WaitActivityService, WaitRuntimeToolProvider};
+use agentdash_application::wait_activity::{
+    WaitActivityDeps, WaitActivityService, WaitRuntimeToolProvider,
+};
 use agentdash_application_agentrun::agent_run::{
     AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
     AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
@@ -409,7 +411,7 @@ pub(crate) async fn build_session_runtime(
 
     let orchestrator = Arc::new(
         agentdash_application_lifecycle::LifecycleOrchestrator::new_with_platform_config(
-            repos.to_lifecycle_repository_set(),
+            repos.lifecycle_orchestrator_deps(),
             lifecycle_platform_config(&platform_config),
         )
         .with_function_runner(function_runner),
@@ -510,8 +512,10 @@ fn build_session_runtime_tool_composer(
     );
 
     let terminal_cache = deps.terminal_cache.clone();
-    let wait_service =
-        WaitActivityService::from_repository_set(deps.repos.clone(), terminal_cache.clone());
+    let wait_service = WaitActivityService::new(WaitActivityDeps {
+        repositories: deps.repos.wait_activity_repositories(),
+        terminal_cache: terminal_cache.clone(),
+    });
     let vfs_provider = VfsRuntimeToolProvider::new(deps.vfs_service, Some(inline_persister))
         .with_materialization_service(deps.vfs_materialization_service)
         .with_shell_output_registry(deps.shell_output_registry)
@@ -519,7 +523,7 @@ fn build_session_runtime_tool_composer(
             deps.terminal_cache,
         )));
     let workflow_provider = WorkflowRuntimeToolProvider::new(
-        deps.repos.to_lifecycle_repository_set(),
+        deps.repos.lifecycle_orchestrator_deps(),
         agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle,
         lifecycle_platform_config(&deps.platform_config),
         deps.function_runner,

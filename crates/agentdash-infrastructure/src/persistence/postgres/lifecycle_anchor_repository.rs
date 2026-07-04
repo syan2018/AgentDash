@@ -995,21 +995,14 @@ impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
 
 #[async_trait::async_trait]
 impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecutionAnchorRepository {
-    async fn upsert(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-        sqlx::query(
+    async fn create_once(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        let result = sqlx::query(
             r#"INSERT INTO runtime_session_execution_anchors
                 (runtime_session_id, run_id, launch_frame_id, agent_id,
                  orchestration_id, node_path, node_attempt,
                  created_by_kind, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-               ON CONFLICT (runtime_session_id) DO UPDATE SET
-                 run_id = EXCLUDED.run_id,
-                 launch_frame_id = EXCLUDED.launch_frame_id,
-                 agent_id = EXCLUDED.agent_id,
-                 orchestration_id = EXCLUDED.orchestration_id,
-                 node_path = EXCLUDED.node_path,
-                 node_attempt = EXCLUDED.node_attempt,
-                 updated_at = EXCLUDED.updated_at"#,
+               ON CONFLICT (runtime_session_id) DO NOTHING"#,
         )
         .bind(&a.runtime_session_id)
         .bind(a.run_id.to_string())
@@ -1024,7 +1017,24 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
-        Ok(())
+        if result.rows_affected() > 0 {
+            return Ok(());
+        }
+
+        let existing = self
+            .find_by_session(&a.runtime_session_id)
+            .await?
+            .ok_or_else(|| DomainError::Database {
+                operation: "create_runtime_session_execution_anchor",
+                message: format!(
+                    "runtime_session_id={} conflicted but existing anchor was not visible",
+                    a.runtime_session_id
+                ),
+            })?;
+        if existing.has_same_launch_coordinates_as(a) {
+            return Ok(());
+        }
+        Err(existing.immutable_conflict(a))
     }
 
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
@@ -1122,27 +1132,6 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         .into_iter()
         .map(TryInto::try_into)
         .collect()
-    }
-
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE agent_id = $1
-               ORDER BY updated_at DESC
-               LIMIT 1"#,
-        )
-        .bind(agent_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
     }
 }
 

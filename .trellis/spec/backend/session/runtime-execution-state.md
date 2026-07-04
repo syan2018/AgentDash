@@ -35,6 +35,12 @@ AgentRun / Lifecycle current runtime surface query 负责：`runtime_session_id`
 Canvas snapshot、Extension runtime、Terminal target、VFS surface、RuntimeGateway MCP access 都必须
 看到同一份 current surface closure，不能分别从 active turn cache、API helper 或 hub idle branch 拼装。
 
+`RuntimeSessionExecutionAnchor` 是 create-once launch evidence。同一个 `runtime_session_id`
+只能锚定一组 run / agent / launch frame / orchestration node 坐标；重复创建相同坐标是幂等事实确认。
+AgentRun current delivery selection 从 `LifecycleAgent.current_delivery` 出发，再读取对应 anchor 校验
+run、agent、launch frame 与 node coordinate，原因是 current delivery 表达当前业务绑定，而 anchor
+表达 runtime trace 到控制面坐标的不可变证据。
+
 三个查询语义保持分离：
 
 - `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。

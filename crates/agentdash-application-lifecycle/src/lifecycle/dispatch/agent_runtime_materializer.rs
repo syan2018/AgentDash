@@ -88,7 +88,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     agent.id,
                 ),
             };
-            anchor_repo.upsert(&anchor).await?;
+            anchor_repo.create_once(&anchor).await?;
             agent.bind_current_delivery_from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Ready,
@@ -153,7 +153,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
             request.orchestration_binding.node_path.clone(),
             request.orchestration_binding.attempt,
         );
-        anchor_repo.upsert(&anchor).await?;
+        anchor_repo.create_once(&anchor).await?;
         agent.bind_current_delivery_from_anchor(
             &anchor,
             DeliveryBindingStatus::Ready,

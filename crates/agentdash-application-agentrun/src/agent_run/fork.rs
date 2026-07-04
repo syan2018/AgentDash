@@ -1294,7 +1294,7 @@ mod tests {
             );
             frames.create(&launch_frame).await.expect("launch frame");
             frames.create(&parent_frame).await.expect("parent frame");
-            anchors.upsert(&anchor).await.expect("anchor");
+            anchors.create_once(&anchor).await.expect("anchor");
             agents.create(&parent_agent).await.expect("parent agent");
 
             Self {

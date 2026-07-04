@@ -45,7 +45,7 @@ pub use repository::{
     WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
-pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};
+pub use runtime_session_anchor::RuntimeSessionExecutionAnchor;
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivationRule, ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,

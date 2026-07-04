@@ -590,8 +590,21 @@ mod tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-            self.anchors.lock().unwrap().push(anchor.clone());
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors
+                .iter()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.push(anchor.clone());
             Ok(())
         }
 
@@ -657,20 +670,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
-        }
     }
 
     #[tokio::test]
@@ -692,7 +691,7 @@ mod tests {
         let agent_repo = Arc::new(MemoryAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
         let anchor_repo = Arc::new(MemoryAnchorRepo::default());
-        anchor_repo.upsert(&anchor).await.unwrap();
+        anchor_repo.create_once(&anchor).await.unwrap();
 
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo.clone()),
@@ -737,7 +736,7 @@ mod tests {
         let agent_repo = Arc::new(MemoryAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
         let anchor_repo = Arc::new(MemoryAnchorRepo::default());
-        anchor_repo.upsert(&anchor).await.unwrap();
+        anchor_repo.create_once(&anchor).await.unwrap();
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo),
             anchor_repo: Some(anchor_repo),

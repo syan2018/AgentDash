@@ -861,16 +861,21 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items
-                .iter_mut()
+                .iter()
                 .find(|item| item.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                items.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            items.push(anchor.clone());
             Ok(())
         }
 
@@ -935,20 +940,6 @@ mod tests {
                 .filter(|item| runtime_session_ids.contains(&item.runtime_session_id))
                 .cloned()
                 .collect())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.agent_id == agent_id)
-                .max_by_key(|item| item.updated_at)
-                .cloned())
         }
     }
 

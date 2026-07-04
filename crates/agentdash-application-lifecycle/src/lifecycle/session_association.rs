@@ -261,6 +261,7 @@ mod tests {
     };
     use agentdash_spi::Vfs;
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct TestFrameRepo {
@@ -378,16 +379,38 @@ mod tests {
 
     #[derive(Default)]
     struct TestAnchorRepo {
-        anchors: HashMap<String, RuntimeSessionExecutionAnchor>,
+        anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
+    }
+
+    impl TestAnchorRepo {
+        fn seeded(
+            anchors: impl IntoIterator<Item = (String, RuntimeSessionExecutionAnchor)>,
+        ) -> Self {
+            Self {
+                anchors: Mutex::new(anchors.into_iter().collect()),
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
-        async fn upsert(&self, _anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
             Ok(())
         }
 
-        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.anchors.lock().unwrap().remove(runtime_session_id);
             Ok(())
         }
 
@@ -395,7 +418,12 @@ mod tests {
             &self,
             runtime_session_id: &str,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self.anchors.get(runtime_session_id).cloned())
+            Ok(self
+                .anchors
+                .lock()
+                .unwrap()
+                .get(runtime_session_id)
+                .cloned())
         }
 
         async fn list_by_run(
@@ -404,6 +432,8 @@ mod tests {
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
             Ok(self
                 .anchors
+                .lock()
+                .unwrap()
                 .values()
                 .filter(|anchor| anchor.run_id == run_id)
                 .cloned()
@@ -416,6 +446,8 @@ mod tests {
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
             Ok(self
                 .anchors
+                .lock()
+                .unwrap()
                 .values()
                 .filter(|anchor| anchor.agent_id == agent_id)
                 .cloned()
@@ -426,22 +458,11 @@ mod tests {
             &self,
             runtime_session_ids: &[String],
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+            let anchors = self.anchors.lock().unwrap();
             Ok(runtime_session_ids
                 .iter()
-                .filter_map(|id| self.anchors.get(id).cloned())
+                .filter_map(|id| anchors.get(id).cloned())
                 .collect())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
         }
     }
 
@@ -504,9 +525,7 @@ mod tests {
             "implement",
             2,
         );
-        let anchor_repo = TestAnchorRepo {
-            anchors: [("sess-1".to_string(), anchor)].into_iter().collect(),
-        };
+        let anchor_repo = TestAnchorRepo::seeded([("sess-1".to_string(), anchor)]);
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 
@@ -547,9 +566,7 @@ mod tests {
         let run_repo = TestRunRepo {
             runs: [(run_id, run)].into_iter().collect(),
         };
-        let anchor_repo = TestAnchorRepo {
-            anchors: [("sess-anchor".to_string(), anchor)].into_iter().collect(),
-        };
+        let anchor_repo = TestAnchorRepo::seeded([("sess-anchor".to_string(), anchor)]);
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo)
             .with_anchor_repo(&anchor_repo);
 
@@ -610,9 +627,7 @@ mod tests {
             "agent",
             1,
         );
-        let anchor_repo = TestAnchorRepo {
-            anchors: [("sess-vfs".to_string(), anchor)].into_iter().collect(),
-        };
+        let anchor_repo = TestAnchorRepo::seeded([("sess-vfs".to_string(), anchor)]);
 
         let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
             "sess-vfs",
@@ -656,9 +671,7 @@ mod tests {
         };
         let anchor =
             RuntimeSessionExecutionAnchor::new_dispatch("sess-1", run_id, frame_id, agent_id);
-        let anchor_repo = TestAnchorRepo {
-            anchors: [("sess-1".to_string(), anchor)].into_iter().collect(),
-        };
+        let anchor_repo = TestAnchorRepo::seeded([("sess-1".to_string(), anchor)]);
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 

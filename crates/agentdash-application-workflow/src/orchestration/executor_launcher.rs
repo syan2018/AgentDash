@@ -796,9 +796,9 @@ mod launcher_drain_tests {
                 input.orchestration_binding.node_path.clone(),
                 input.orchestration_binding.attempt,
             );
-            self.anchor_repo.upsert(&anchor).await.map_err(|error| {
+            self.anchor_repo.create_once(&anchor).await.map_err(|error| {
                 agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
-                    operation: "upsert_runtime_session_execution_anchor",
+                    operation: "create_runtime_session_execution_anchor",
                     message: error.to_string(),
                 }
             })?;
@@ -880,16 +880,21 @@ mod launcher_drain_tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for InMemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items
-                .iter_mut()
+                .iter()
                 .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                items.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            items.push(anchor.clone());
             Ok(())
         }
 
@@ -957,20 +962,6 @@ mod launcher_drain_tests {
                         .cloned()
                 })
                 .collect())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
         }
     }
 

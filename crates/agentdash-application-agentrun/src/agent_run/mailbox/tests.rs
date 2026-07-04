@@ -564,7 +564,7 @@ impl MailboxSteeringFixture {
         );
         frames.create(&launch_frame).await.expect("launch frame");
         frames.create(&current_frame).await.expect("current frame");
-        anchors.upsert(&anchor).await.expect("anchor");
+        anchors.create_once(&anchor).await.expect("anchor");
         agents.create(&agent).await.expect("agent");
 
         Self {

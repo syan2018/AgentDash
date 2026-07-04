@@ -90,7 +90,11 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - 普通 Agent runtime 默认使用 plain 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
 - 业务 result 不平铺 run / graph / agent / frame / node refs，原因是 run / agent / frame 是通用控制面，而 orchestration/node refs 是显式 workflow binding；统一 envelope 可以让调用方先处理 Agent runtime，再按拓扑决定是否进入 workflow 节点细节。
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
-- `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的索引和 read model projection 来源，原因是运行时 trace 反查需要稳定索引，且不应随 frame revision surface 变化。
+- `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的 create-once launch evidence 和 read
+  model projection 来源，原因是运行时 trace 反查需要稳定索引，且 frame revision surface 变化时 anchor
+  坐标仍保持稳定。AgentRun current delivery selection 从 `LifecycleAgent.current_delivery` 绑定出发，并用
+  anchor 校验 run / agent / launch frame / orchestration node 坐标，原因是 current delivery 表达当前业务绑定，
+  anchor 表达 runtime trace 到控制面坐标的不可变证据。
 - AgentRun conversation snapshot 以 run / agent / current frame / delivery anchor / runtime execution state /
   mailbox projection / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
   lifecycle 控制面、active AgentRunTurn、mailbox envelope、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /

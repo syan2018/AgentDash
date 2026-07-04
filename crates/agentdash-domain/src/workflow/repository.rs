@@ -151,8 +151,10 @@ pub trait AgentRunLineageRepository: Send + Sync {
 /// RuntimeSession → 控制面锚点的 repository。
 #[async_trait::async_trait]
 pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
-    /// 写入或更新 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
-    async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
+    /// 创建 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
+    ///
+    /// 同一 runtime_session_id 已存在且控制面坐标一致时幂等成功；坐标不一致时返回 conflict。
+    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
     /// 按 runtime_session_id 删除锚点。
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
     /// 按 runtime_session_id 查找锚点。
@@ -175,11 +177,4 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         &self,
         runtime_session_ids: &[String],
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 按 `updated_at DESC` 查询 agent 最新写入的 raw anchor row。
-    ///
-    /// 该方法只表达 repository order，不表达 delivery/runtime selection policy。
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;
 }

@@ -562,7 +562,7 @@ mod tests {
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
         let runtime_session_id = "anchored-runtime-session";
         anchor_repo
-            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+            .create_once(&RuntimeSessionExecutionAnchor::new_dispatch(
                 runtime_session_id,
                 uuid::Uuid::new_v4(),
                 uuid::Uuid::new_v4(),

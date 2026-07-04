@@ -60,6 +60,8 @@ pub struct ProjectAgentRunStartCommand {
 pub struct ProjectAgentRunInitialMailboxCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub runtime_session_id: String,
     pub input: Vec<agentdash_agent_protocol::UserInputBlock>,
     pub client_command_id: String,
@@ -73,7 +75,7 @@ impl ProjectAgentRunInitialMailboxCommand {
         AgentRunMailboxUserMessageCommand {
             run_id: self.run_id,
             agent_id: self.agent_id,
-            runtime_session_id: self.runtime_session_id,
+            frame_id: self.frame_id,
             source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::draft_start(),
             schedule_on_submit: false,
             input: self.input,
@@ -540,6 +542,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .accept_initial_mailbox_message(ProjectAgentRunInitialMailboxCommand {
                 run_id: dispatch_result.runtime_refs.run_ref,
                 agent_id: dispatch_result.runtime_refs.agent_ref,
+                frame_id: dispatch_result.runtime_refs.frame_ref,
                 runtime_session_id: runtime_session_id.clone(),
                 input: command.input,
                 client_command_id: format!("{}:initial-message", command.client_command_id),

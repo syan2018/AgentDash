@@ -76,7 +76,7 @@ impl AgentRunMailboxCommandTarget {
 pub struct AgentRunMailboxUserMessageCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub source: MailboxSourceIdentity,
     pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
@@ -92,7 +92,7 @@ pub struct AgentRunMailboxUserMessageCommand {
 pub struct AgentRunMailboxIntakeCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub retain_payload: bool,
@@ -166,7 +166,7 @@ pub fn mailbox_source_identity_dedup_key(source: &MailboxSourceIdentity) -> Opti
 pub struct AgentRunMailboxControlCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub message_id: Option<Uuid>,
     pub after_message_id: Option<Uuid>,
     pub client_command_id: String,

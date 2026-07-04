@@ -854,7 +854,7 @@ pub async fn submit_agent_run_canvas_agent_input(
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id: context.runtime_session_id,
+            frame_id: context.current_agent_frame.id,
             source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::canvas_action(),
             schedule_on_submit: true,
             input: req.input,

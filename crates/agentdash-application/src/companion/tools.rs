@@ -39,8 +39,9 @@ use super::{
 };
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
-    AgentRunMailboxService, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionLaunchService, mailbox_source_identity_dedup_key,
+    AgentRunMailboxService, DeliveryRuntimeSelectionService, SessionControlService,
+    SessionCoreService, SessionEventingService, SessionLaunchService,
+    mailbox_source_identity_dedup_key,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
@@ -492,6 +493,17 @@ async fn deliver_companion_mailbox_message(
     session_launch: SessionLaunchService,
     input: CompanionMailboxDeliveryInput,
 ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+    let agent_run_repos = repos.to_agent_run_repository_set();
+    let delivery = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
+        .select_current_delivery(input.run_id, input.agent_id)
+        .await
+        .map_err(|error| crate::ApplicationError::Conflict(error.to_string()))?;
+    if delivery.runtime_session_id != input.runtime_session_id {
+        return Err(crate::ApplicationError::Conflict(format!(
+            "companion mailbox delivery runtime mismatch: run_id={}, agent_id={}, expected_runtime_session_id={}, current_runtime_session_id={}",
+            input.run_id, input.agent_id, input.runtime_session_id, delivery.runtime_session_id
+        )));
+    }
     let mailbox_result = companion_mailbox_service_from_runtime(
         repos,
         session_core,
@@ -502,7 +514,7 @@ async fn deliver_companion_mailbox_message(
     .accept_intake_message(AgentRunMailboxIntakeCommand {
         run_id: input.run_id,
         agent_id: input.agent_id,
-        runtime_session_id: input.runtime_session_id,
+        frame_id: delivery.current_frame_id,
         origin: MailboxMessageOrigin::Companion,
         source: input.source,
         retain_payload: true,
@@ -993,7 +1005,7 @@ impl CompanionRequestTool {
             .accept_intake_message(AgentRunMailboxIntakeCommand {
                 run_id: dispatch_result.run_ref,
                 agent_id: dispatch_result.agent_ref,
-                runtime_session_id: dispatch_result.delivery_runtime_session_id.clone(),
+                frame_id: dispatch_result.frame_ref,
                 origin: MailboxMessageOrigin::Companion,
                 source,
                 retain_payload: true,

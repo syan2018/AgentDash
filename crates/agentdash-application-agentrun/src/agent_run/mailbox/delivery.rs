@@ -2,7 +2,7 @@ use super::payload::{
     agent_message_to_user_input_blocks, build_input_preview, input_has_images, serialization_error,
 };
 use super::policy::user_message_policy;
-use super::target::{ResolvedAgentRunMailboxCommandTarget, base_refs, ensure_command_target};
+use super::target::{ResolvedAgentRunMailboxCommandTarget, base_refs};
 use super::*;
 use agentdash_application_ports::launch::{
     BackendSelectionInput, BackendSelectionInputMode, LaunchPlanningInput,
@@ -13,16 +13,11 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxUserMessageCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
-        let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-            run.id,
-            agent.id,
-            frame.id,
-            command.runtime_session_id,
-        );
+        let target = AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+            run_id: command.run_id,
+            agent_id: command.agent_id,
+            frame_id: command.frame_id,
+        });
         self.accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
             target,
             origin: MailboxMessageOrigin::User,
@@ -44,16 +39,11 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxIntakeCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
-        let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-            run.id,
-            agent.id,
-            frame.id,
-            command.runtime_session_id,
-        );
+        let target = AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+            run_id: command.run_id,
+            agent_id: command.agent_id,
+            frame_id: command.frame_id,
+        });
         self.accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
             target,
             origin: command.origin,

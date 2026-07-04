@@ -160,6 +160,73 @@ fn mailbox_intake_command_uses_explicit_source_dedup_without_source_refs() {
 }
 
 #[tokio::test]
+async fn mailbox_intake_rejects_stale_frame_target() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+
+    let error = fixture
+        .service()
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: fixture.run.id,
+            agent_id: fixture.agent.id,
+            frame_id: Uuid::new_v4(),
+            origin: MailboxMessageOrigin::Companion,
+            source: MailboxSourceIdentity::new("companion", "result", "agent"),
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("hello"),
+            client_command_id: "stale-frame".to_string(),
+            source_dedup_key: None,
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect_err("stale frame must be rejected");
+
+    assert!(
+        error.to_string().contains("不匹配当前 delivery frame"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn mailbox_target_rejects_stale_message_stream_evidence() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+
+    let error = fixture
+        .service()
+        .accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
+            target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+                fixture.run.id,
+                fixture.agent.id,
+                fixture.current_frame.id,
+                "stale-runtime",
+            ),
+            origin: MailboxMessageOrigin::Companion,
+            source: MailboxSourceIdentity::new("companion", "result", "agent"),
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("hello"),
+            client_command_id: "stale-runtime".to_string(),
+            source_dedup_key: None,
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect_err("stale runtime evidence must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("不匹配当前 delivery runtime_session"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
 async fn companion_dispatch_intake_persists_child_mailbox_wake_envelope() {
     let fixture = MailboxSteeringFixture::new(false).await;
     let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
@@ -176,7 +243,7 @@ async fn companion_dispatch_intake_persists_child_mailbox_wake_envelope() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source,
             retain_payload: true,
@@ -237,7 +304,7 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source: source.clone(),
             retain_payload: true,
@@ -257,7 +324,7 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source,
             retain_payload: true,

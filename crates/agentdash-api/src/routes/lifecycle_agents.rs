@@ -90,6 +90,12 @@ struct AgentRunContext {
     run: LifecycleRun,
     agent: LifecycleAgent,
     delivery_runtime_session_id: Option<String>,
+    delivery_frame_id: Option<Uuid>,
+}
+
+struct AgentRunDeliveryRuntimeContext {
+    runtime_session_id: String,
+    frame_id: Uuid,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -690,6 +696,7 @@ pub async fn submit_agent_run_composer_input(
             context.run.id, context.agent.id
         ))
     })?;
+    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
     diag!(Debug, Subsystem::Api,
 
         run_id = %context.run.id,
@@ -755,7 +762,7 @@ pub async fn submit_agent_run_composer_input(
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id: runtime_session_id.clone(),
+            frame_id,
             source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
             schedule_on_submit: true,
             input: req.input,
@@ -928,6 +935,7 @@ async fn delete_agent_run_mailbox_message(
             context.run.id, context.agent.id
         ))
     })?;
+    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
         .ensure_command_allowed(
@@ -943,7 +951,7 @@ async fn delete_agent_run_mailbox_message(
         .delete_message(AgentRunMailboxControlCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id,
+            frame_id,
             message_id: Some(message_id),
             after_message_id: None,
             client_command_id: body.client_command_id,
@@ -973,6 +981,7 @@ async fn resume_agent_run_mailbox(
             context.run.id, context.agent.id
         ))
     })?;
+    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
         .ensure_command_allowed(
@@ -988,7 +997,7 @@ async fn resume_agent_run_mailbox(
             AgentRunMailboxControlCommand {
                 run_id: context.run.id,
                 agent_id: context.agent.id,
-                runtime_session_id,
+                frame_id,
                 message_id: None,
                 after_message_id: None,
                 client_command_id: body.client_command_id,
@@ -1020,6 +1029,7 @@ async fn promote_agent_run_mailbox_message(
             context.run.id, context.agent.id
         ))
     })?;
+    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
         .ensure_command_allowed(
@@ -1036,7 +1046,7 @@ async fn promote_agent_run_mailbox_message(
             AgentRunMailboxControlCommand {
                 run_id: context.run.id,
                 agent_id: context.agent.id,
-                runtime_session_id,
+                frame_id,
                 message_id: Some(message_id),
                 after_message_id: None,
                 client_command_id: body.client_command_id,
@@ -1068,6 +1078,7 @@ async fn move_agent_run_mailbox_message(
             context.run.id, context.agent.id
         ))
     })?;
+    let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
         .ensure_command_allowed(
@@ -1088,7 +1099,7 @@ async fn move_agent_run_mailbox_message(
         .move_message(AgentRunMailboxControlCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
-            runtime_session_id,
+            frame_id,
             message_id: Some(message_id),
             after_message_id,
             client_command_id: body.client_command_id,
@@ -1434,6 +1445,15 @@ fn delivery_runtime_session_from_agent_run_context(
     })
 }
 
+fn delivery_frame_id_from_agent_run_context(context: &AgentRunContext) -> Result<Uuid, ApiError> {
+    context.delivery_frame_id.ok_or_else(|| {
+        ApiError::Conflict(format!(
+            "AgentRun {} / {} 缺少 current delivery frame",
+            context.run.id, context.agent.id
+        ))
+    })
+}
+
 async fn resolve_agent_run_context(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
@@ -1463,12 +1483,14 @@ async fn resolve_agent_run_context(
             "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
         )));
     }
-    let delivery_runtime_session_id =
-        delivery_runtime_session_for_agent_run(state, run.id, agent.id).await?;
+    let delivery_runtime = delivery_runtime_session_for_agent_run(state, run.id, agent.id).await?;
     Ok(AgentRunContext {
         run,
         agent,
-        delivery_runtime_session_id,
+        delivery_runtime_session_id: delivery_runtime
+            .as_ref()
+            .map(|delivery| delivery.runtime_session_id.clone()),
+        delivery_frame_id: delivery_runtime.map(|delivery| delivery.frame_id),
     })
 }
 
@@ -1476,7 +1498,7 @@ async fn delivery_runtime_session_for_agent_run(
     state: &AppState,
     run_id: Uuid,
     agent_id: Uuid,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
     let agent_run_repos = state.repos.to_agent_run_repository_set();
     delivery_runtime_session_for_agent_run_from_repos(&agent_run_repos, run_id, agent_id).await
 }
@@ -1485,7 +1507,7 @@ async fn delivery_runtime_session_for_agent_run_from_repos(
     repos: &AgentRunRepositorySet,
     run_id: Uuid,
     agent_id: Uuid,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
     delivery_runtime_session_for_agent_run_from_selection(
         DeliveryRuntimeSelectionService::from_repository_set(repos),
         run_id,
@@ -1498,12 +1520,15 @@ async fn delivery_runtime_session_for_agent_run_from_selection(
     selection_service: DeliveryRuntimeSelectionService<'_>,
     run_id: Uuid,
     agent_id: Uuid,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
     match selection_service
         .select_current_delivery(run_id, agent_id)
         .await
     {
-        Ok(selection) => Ok(Some(selection.runtime_session_id)),
+        Ok(selection) => Ok(Some(AgentRunDeliveryRuntimeContext {
+            runtime_session_id: selection.runtime_session_id,
+            frame_id: selection.current_frame_id,
+        })),
         Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
         Err(error) => Err(delivery_runtime_selection_error(error)),
     }
@@ -3052,7 +3077,7 @@ mod tests {
             .await
             .expect("old anchor");
 
-        let runtime_session_id = delivery_runtime_session_for_agent_run_from_selection(
+        let delivery_runtime = delivery_runtime_session_for_agent_run_from_selection(
             fixture.service(),
             run.id,
             agent.id,
@@ -3060,7 +3085,7 @@ mod tests {
         .await
         .expect("selection result");
 
-        assert_eq!(runtime_session_id, None);
+        assert!(delivery_runtime.is_none());
     }
 
     #[tokio::test]
@@ -3119,7 +3144,7 @@ mod tests {
             .await
             .expect("current binding");
 
-        let runtime_session_id = delivery_runtime_session_for_agent_run_from_selection(
+        let delivery_runtime = delivery_runtime_session_for_agent_run_from_selection(
             fixture.service(),
             run.id,
             agent.id,
@@ -3127,7 +3152,9 @@ mod tests {
         .await
         .expect("selection result");
 
-        assert_eq!(runtime_session_id.as_deref(), Some("runtime-current"));
+        let delivery_runtime = delivery_runtime.expect("current delivery");
+        assert_eq!(delivery_runtime.runtime_session_id, "runtime-current");
+        assert_eq!(delivery_runtime.frame_id, current_binding.current_frame_id);
     }
 
     #[test]

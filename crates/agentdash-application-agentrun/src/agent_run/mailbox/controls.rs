@@ -1,6 +1,7 @@
 use super::commands::AgentRunMailboxMoveCommandResult;
 use super::target::{
-    base_refs, ensure_command_target, ensure_message_owner, is_terminal_message_status,
+    ResolvedAgentRunMailboxCommandTarget, base_refs, ensure_message_owner,
+    is_terminal_message_status,
 };
 use super::*;
 
@@ -9,17 +10,12 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxControlCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
         self.delete_message_for_target(AgentRunMailboxControlTargetCommand {
-            target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-                run.id,
-                agent.id,
-                frame.id,
-                command.runtime_session_id,
-            ),
+            target: AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+                run_id: command.run_id,
+                agent_id: command.agent_id,
+                frame_id: command.frame_id,
+            }),
             message_id: command.message_id,
             after_message_id: command.after_message_id,
             client_command_id: command.client_command_id,
@@ -35,6 +31,7 @@ impl<'a> AgentRunMailboxService<'a> {
             WorkflowApplicationError::BadRequest("message_id 不能为空".to_string())
         })?;
         let target = self.resolve_command_target(command.target.clone()).await?;
+        let command = control_command_for_resolved_target(&command, &target);
         let claim = self
             .claim_control_receipt(
                 &command,
@@ -95,18 +92,13 @@ impl<'a> AgentRunMailboxService<'a> {
         command: AgentRunMailboxControlCommand,
         _identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
         self.promote_message_for_target(
             AgentRunMailboxControlTargetCommand {
-                target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-                    run.id,
-                    agent.id,
-                    frame.id,
-                    command.runtime_session_id,
-                ),
+                target: AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+                    run_id: command.run_id,
+                    agent_id: command.agent_id,
+                    frame_id: command.frame_id,
+                }),
                 message_id: command.message_id,
                 after_message_id: command.after_message_id,
                 client_command_id: command.client_command_id,
@@ -125,6 +117,7 @@ impl<'a> AgentRunMailboxService<'a> {
             WorkflowApplicationError::BadRequest("message_id 不能为空".to_string())
         })?;
         let target = self.resolve_command_target(command.target.clone()).await?;
+        let command = control_command_for_resolved_target(&command, &target);
         let claim = self
             .claim_control_receipt(
                 &command,
@@ -192,18 +185,13 @@ impl<'a> AgentRunMailboxService<'a> {
         command: AgentRunMailboxControlCommand,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
         self.resume_mailbox_for_target(
             AgentRunMailboxControlTargetCommand {
-                target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-                    run.id,
-                    agent.id,
-                    frame.id,
-                    command.runtime_session_id,
-                ),
+                target: AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+                    run_id: command.run_id,
+                    agent_id: command.agent_id,
+                    frame_id: command.frame_id,
+                }),
                 message_id: command.message_id,
                 after_message_id: command.after_message_id,
                 client_command_id: command.client_command_id,
@@ -219,6 +207,7 @@ impl<'a> AgentRunMailboxService<'a> {
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
         let target = self.resolve_command_target(command.target.clone()).await?;
+        let command = control_command_for_resolved_target(&command, &target);
         let claim = self
             .claim_control_receipt(
                 &command,
@@ -301,17 +290,12 @@ impl<'a> AgentRunMailboxService<'a> {
         &self,
         command: AgentRunMailboxControlCommand,
     ) -> Result<AgentRunMailboxMoveCommandResult, WorkflowApplicationError> {
-        let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&command.runtime_session_id)
-            .await?;
-        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
         self.move_message_for_target(AgentRunMailboxControlTargetCommand {
-            target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
-                run.id,
-                agent.id,
-                frame.id,
-                command.runtime_session_id,
-            ),
+            target: AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
+                run_id: command.run_id,
+                agent_id: command.agent_id,
+                frame_id: command.frame_id,
+            }),
             message_id: command.message_id,
             after_message_id: command.after_message_id,
             client_command_id: command.client_command_id,
@@ -333,6 +317,7 @@ impl<'a> AgentRunMailboxService<'a> {
             ));
         }
         let command_target = self.resolve_command_target(command.target.clone()).await?;
+        let command = control_command_for_resolved_target(&command, &command_target);
         let claim = self
             .claim_control_receipt(&command, AgentRunCommandKind::MailboxMove, "mailbox_move")
             .await?;
@@ -473,5 +458,17 @@ impl<'a> AgentRunMailboxService<'a> {
                 )
                 .await?,
         ))
+    }
+}
+
+fn control_command_for_resolved_target(
+    command: &AgentRunMailboxControlTargetCommand,
+    target: &ResolvedAgentRunMailboxCommandTarget,
+) -> AgentRunMailboxControlTargetCommand {
+    AgentRunMailboxControlTargetCommand {
+        target: target.command_target(),
+        message_id: command.message_id,
+        after_message_id: command.after_message_id,
+        client_command_id: command.client_command_id.clone(),
     }
 }

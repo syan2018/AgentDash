@@ -148,6 +148,17 @@ impl<'a> AgentRunMailboxService<'a> {
     }
 }
 
+impl ResolvedAgentRunMailboxCommandTarget {
+    pub(super) fn command_target(&self) -> AgentRunMailboxCommandTarget {
+        AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+            self.run.id,
+            self.agent.id,
+            self.frame.id,
+            self.message_stream.runtime_session_id.clone(),
+        )
+    }
+}
+
 pub(super) fn base_refs(
     run: &LifecycleRun,
     agent: &LifecycleAgent,

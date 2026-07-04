@@ -10,7 +10,7 @@ use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
 use agentdash_application_lifecycle::{
-    AgentRunLifecycleSurfaceProjector, SessionPersistenceRuntimeSessionCreator,
+    AgentRunLifecycleSurfaceProjector, SessionMetaStoreRuntimeSessionCreator,
 };
 use agentdash_application_runtime_session::session::SessionStoreSet;
 use agentdash_application_shared_library::{
@@ -66,8 +66,8 @@ pub(crate) async fn build_repositories(
 
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
     let session_stores = SessionStoreSet::from_shared_store(session_repo.clone());
-    let runtime_session_creator = Arc::new(SessionPersistenceRuntimeSessionCreator::new(
-        session_repo.clone(),
+    let runtime_session_creator = Arc::new(SessionMetaStoreRuntimeSessionCreator::new(
+        session_stores.meta.clone(),
     ));
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));

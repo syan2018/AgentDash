@@ -28,22 +28,22 @@ use super::dispatch::{
     OrchestrationReducerBridge, RunOrchestrationStarter, SubjectAssociationWriter,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
+use agentdash_spi::{ExecutionStatus, SessionMeta, SessionMetaStore, TitleSource};
 
 #[derive(Clone)]
-pub struct SessionPersistenceRuntimeSessionCreator {
-    persistence: Arc<dyn SessionPersistence>,
+pub struct SessionMetaStoreRuntimeSessionCreator {
+    session_meta_store: Arc<dyn SessionMetaStore>,
 }
 
-impl SessionPersistenceRuntimeSessionCreator {
-    pub fn new(persistence: Arc<dyn SessionPersistence>) -> Self {
-        Self { persistence }
+impl SessionMetaStoreRuntimeSessionCreator {
+    pub fn new(session_meta_store: Arc<dyn SessionMetaStore>) -> Self {
+        Self { session_meta_store }
     }
 }
 
 #[async_trait]
 impl runtime_session_delivery_port::RuntimeSessionCreationPort
-    for SessionPersistenceRuntimeSessionCreator
+    for SessionMetaStoreRuntimeSessionCreator
 {
     async fn create_runtime_session(
         &self,
@@ -66,7 +66,7 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
             last_terminal_message: None,
             executor_session_id: None,
         };
-        self.persistence
+        self.session_meta_store
             .create_session(&meta)
             .await
             .map_err(|error| {

@@ -23,7 +23,7 @@ pub(crate) use activity_activation::ActivityActivation;
 pub use agentdash_application_workflow::WorkflowApplicationError;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_facade::LifecycleDispatchFacade;
-pub use dispatch_service::{LifecycleDispatchService, SessionPersistenceRuntimeSessionCreator};
+pub use dispatch_service::{LifecycleDispatchService, SessionMetaStoreRuntimeSessionCreator};
 pub use execution_log::{
     RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,

@@ -4,7 +4,7 @@ use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
 use agentdash_spi::{
     PersistedSessionEvent, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
-    SessionCompactionStatus, SessionPersistence,
+    SessionCompactionStatus, SessionCompactionStore,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -159,10 +159,10 @@ pub struct SessionSummaryArchiveEntry {
 }
 
 pub async fn session_summary_archives(
-    persistence: &dyn SessionPersistence,
+    compaction_store: &dyn SessionCompactionStore,
     session_id: &str,
 ) -> JourneyResult<Vec<(SessionSummaryArchiveEntry, SessionCompactionRecord)>> {
-    let mut compactions = persistence
+    let mut compactions = compaction_store
         .list_compactions(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
         .await
         .map_err(|error| {

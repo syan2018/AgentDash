@@ -4,12 +4,11 @@ use std::sync::Arc;
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::vfs_owner_providers::MountProviderRegistryBuilderOwnerExt;
-use agentdash_application_runtime_session::session::SessionToolResultCache;
+use agentdash_application_runtime_session::session::{SessionStoreSet, SessionToolResultCache};
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
-use agentdash_spi::session_persistence::SessionPersistence;
 
 use crate::mount_providers::RelayFsMountProvider;
 use crate::relay::registry::BackendRegistry;
@@ -24,7 +23,7 @@ pub(crate) struct VfsBootstrapOutput {
 
 pub(crate) fn build_vfs_kernel(
     repos: RepositorySet,
-    session_persistence: Arc<dyn SessionPersistence>,
+    session_stores: SessionStoreSet,
     tool_result_cache: Arc<SessionToolResultCache>,
     backend_registry: Arc<BackendRegistry>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
@@ -36,7 +35,9 @@ pub(crate) fn build_vfs_kernel(
             repos.inline_file_repo.clone(),
             repos.routine_execution_repo.clone(),
             repos.skill_asset_repo.clone(),
-            session_persistence,
+            session_stores.meta.clone(),
+            session_stores.events.clone(),
+            session_stores.compactions.clone(),
             tool_result_cache,
         )
         .register(Arc::new(RelayFsMountProvider::new(

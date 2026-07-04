@@ -17,10 +17,12 @@ use uuid::Uuid;
 
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef};
 use crate::lifecycle::{
-    SessionToolResultCache, SessionToolResultCacheRead, SessionToolResultCacheStatus,
-    SessionToolResultCacheStatusKind,
+    SessionToolResultCache, SessionToolResultCacheRead as LocalSessionToolResultCacheRead,
+    SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
 };
-use agentdash_spi::{PersistedSessionEvent, SessionPersistence};
+use agentdash_spi::{
+    PersistedSessionEvent, SessionCompactionStore, SessionEventStore, SessionMetaStore,
+};
 
 pub mod session_items;
 
@@ -57,43 +59,86 @@ impl std::error::Error for LifecycleJourneyError {}
 
 pub struct LifecycleJourneyProjection {
     inline_file_repo: Arc<dyn InlineFileRepository>,
-    session_persistence: Arc<dyn SessionPersistence>,
-    tool_result_cache: Arc<SessionToolResultCache>,
+    session_meta_store: Arc<dyn SessionMetaStore>,
+    session_event_store: Arc<dyn SessionEventStore>,
+    session_compaction_store: Arc<dyn SessionCompactionStore>,
+    tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
+}
+
+pub trait SessionToolResultCacheReader: Send + Sync {
+    fn read_text(&self, session_id: &str, item_id: &str) -> SessionToolResultCacheReadResult;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionToolResultCacheReadResult {
+    Available {
+        text: String,
+        stored_bytes: usize,
+        original_bytes: usize,
+    },
+    Unavailable(SessionToolResultCacheStatus),
+}
+
+impl SessionToolResultCacheReader for SessionToolResultCache {
+    fn read_text(&self, session_id: &str, item_id: &str) -> SessionToolResultCacheReadResult {
+        match SessionToolResultCache::read_text(self, session_id, item_id) {
+            LocalSessionToolResultCacheRead::Available { metadata, text } => {
+                SessionToolResultCacheReadResult::Available {
+                    text,
+                    stored_bytes: metadata.stored_bytes,
+                    original_bytes: metadata.original_bytes,
+                }
+            }
+            LocalSessionToolResultCacheRead::Unavailable(status) => {
+                SessionToolResultCacheReadResult::Unavailable(status)
+            }
+        }
+    }
 }
 
 impl LifecycleJourneyProjection {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         inline_file_repo: Arc<dyn InlineFileRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_event_store: Arc<dyn SessionEventStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
     ) -> Self {
         Self::new_with_tool_result_cache(
             inline_file_repo,
-            session_persistence,
+            session_meta_store,
+            session_event_store,
+            session_compaction_store,
             SessionToolResultCache::new(),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_tool_result_cache(
         inline_file_repo: Arc<dyn InlineFileRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
-        tool_result_cache: Arc<SessionToolResultCache>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_event_store: Arc<dyn SessionEventStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
+        tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
     ) -> Self {
         Self {
             inline_file_repo,
-            session_persistence,
+            session_meta_store,
+            session_event_store,
+            session_compaction_store,
             tool_result_cache,
         }
     }
 
-    pub fn session_persistence(&self) -> &dyn SessionPersistence {
-        self.session_persistence.as_ref()
+    pub fn session_compaction_store(&self) -> &dyn SessionCompactionStore {
+        self.session_compaction_store.as_ref()
     }
 
     pub async fn session_events(
         &self,
         session_id: &str,
     ) -> JourneyResult<Vec<PersistedSessionEvent>> {
-        self.session_persistence
+        self.session_event_store
             .list_all_events(session_id)
             .await
             .map_err(|e| {
@@ -109,7 +154,7 @@ impl LifecycleJourneyProjection {
         match rest {
             ["meta"] => {
                 let meta = self
-                    .session_persistence
+                    .session_meta_store
                     .get_session_meta(session_id)
                     .await
                     .map_err(|e| {
@@ -315,21 +360,27 @@ impl LifecycleJourneyProjection {
             )));
         }
         match self.tool_result_cache.read_text(session_id, item_id) {
-            SessionToolResultCacheRead::Available { text, .. } => Ok(text),
-            SessionToolResultCacheRead::Unavailable(status) => Ok(status.message),
+            SessionToolResultCacheReadResult::Available { text, .. } => Ok(text),
+            SessionToolResultCacheReadResult::Unavailable(status) => Ok(status.message),
         }
     }
 
     fn tool_result_body_status(&self, session_id: &str, item_id: &str) -> SessionLargeBodyStatus {
         match self.tool_result_cache.read_text(session_id, item_id) {
-            SessionToolResultCacheRead::Available { metadata, .. } => SessionLargeBodyStatus {
+            SessionToolResultCacheReadResult::Available {
+                stored_bytes,
+                original_bytes,
+                ..
+            } => SessionLargeBodyStatus {
                 status: "available".to_string(),
                 message: format!(
                     "result body is available from the current session cache ({} bytes stored, {} original bytes).",
-                    metadata.stored_bytes, metadata.original_bytes
+                    stored_bytes, original_bytes
                 ),
             },
-            SessionToolResultCacheRead::Unavailable(status) => tool_result_cache_status(status),
+            SessionToolResultCacheReadResult::Unavailable(status) => {
+                tool_result_cache_status(status)
+            }
         }
     }
 
@@ -455,7 +506,7 @@ impl LifecycleJourneyProjection {
     }
 
     pub async fn read_compaction_summary_index(&self, session_id: &str) -> JourneyResult<String> {
-        let entries = session_summary_archives(self.session_persistence.as_ref(), session_id)
+        let entries = session_summary_archives(self.session_compaction_store.as_ref(), session_id)
             .await?
             .into_iter()
             .map(|(entry, _)| entry)
@@ -470,7 +521,7 @@ impl LifecycleJourneyProjection {
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
         let entries =
-            session_summary_archives(self.session_persistence.as_ref(), session_id).await?;
+            session_summary_archives(self.session_compaction_store.as_ref(), session_id).await?;
         let (_, compaction) = entries
             .into_iter()
             .find(|(entry, _)| {

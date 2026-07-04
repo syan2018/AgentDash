@@ -16,9 +16,9 @@ use uuid::Uuid;
 use crate::lifecycle::SessionToolResultCache;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
-    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
-    group_events_into_turn_summaries, item_file_name, session_summary_archives, to_json_pretty,
-    tool_result_metadata_for_projection,
+    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView,
+    SessionToolResultCacheReader, filter_session_items, group_events_into_turn_summaries,
+    item_file_name, session_summary_archives, to_json_pretty, tool_result_metadata_for_projection,
 };
 use crate::lifecycle::vfs_catalog::lifecycle_root_entries;
 use agentdash_application_vfs::mount::PROVIDER_LIFECYCLE_VFS;
@@ -33,8 +33,8 @@ use agentdash_application_vfs::provider::{
 };
 use agentdash_application_vfs::types::{ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
-use agentdash_spi::SessionPersistence;
 use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_spi::{SessionCompactionStore, SessionEventStore, SessionMetaStore};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -47,30 +47,39 @@ impl LifecycleMountProvider {
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_event_store: Arc<dyn SessionEventStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
     ) -> Self {
         Self::new_with_tool_result_cache(
             lifecycle_run_repo,
             inline_file_repo,
             skill_asset_repo,
-            session_persistence,
+            session_meta_store,
+            session_event_store,
+            session_compaction_store,
             SessionToolResultCache::new(),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_tool_result_cache(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
-        tool_result_cache: Arc<SessionToolResultCache>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_event_store: Arc<dyn SessionEventStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
+        tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             skill_asset_repo,
             journey: LifecycleJourneyProjection::new_with_tool_result_cache(
                 inline_file_repo,
-                session_persistence,
+                session_meta_store,
+                session_event_store,
+                session_compaction_store,
                 tool_result_cache,
             ),
         }
@@ -1314,7 +1323,7 @@ async fn list_session_summary_entries(
     session_id: &str,
     display_root: &str,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
-    let entries = session_summary_archives(journey.session_persistence(), session_id)
+    let entries = session_summary_archives(journey.session_compaction_store(), session_id)
         .await
         .map_err(map_journey_err)?;
     Ok(entries

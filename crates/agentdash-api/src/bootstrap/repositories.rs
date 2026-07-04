@@ -37,11 +37,9 @@ use agentdash_infrastructure::{
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
-use agentdash_spi::session_persistence::SessionPersistence;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
-    pub session_persistence: Arc<dyn SessionPersistence>,
     pub session_stores: SessionStoreSet,
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
@@ -244,7 +242,6 @@ pub(crate) async fn build_repositories(
 
     Ok(RepositoryBootstrapOutput {
         repos,
-        session_persistence: session_repo,
         session_stores,
         auth_session_service,
         extension_package_artifact_storage: Arc::new(

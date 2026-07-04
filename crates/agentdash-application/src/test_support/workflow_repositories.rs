@@ -52,40 +52,6 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned()
             .collect())
     }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_canvas_mount(mount_id);
-        Ok(())
-    }
-
-    async fn append_visible_workspace_module_ref(
-        &self,
-        frame_id: Uuid,
-        module_ref: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_workspace_module_ref(module_ref);
-        Ok(())
-    }
 }
 
 #[derive(Default)]

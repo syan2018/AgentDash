@@ -98,18 +98,6 @@ pub trait AgentFrameRepository: Send + Sync {
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError>;
-    async fn append_visible_workspace_module_ref(
-        &self,
-        _frame_id: Uuid,
-        _module_ref: &str,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]

@@ -417,14 +417,6 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
     async fn list_by_agent(&self, _agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
         Ok(Vec::new())
     }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        _frame_id: Uuid,
-        _mount_id: &str,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 struct NoopExecutionAnchorRepo;

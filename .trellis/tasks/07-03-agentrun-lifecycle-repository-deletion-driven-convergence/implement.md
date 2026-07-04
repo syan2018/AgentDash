@@ -77,10 +77,10 @@
 
 | Worker | WI | 写入范围 | 互斥边界 | 验证 |
 | --- | --- | --- | --- | --- |
-| B1 Mailbox/command拆迁 | WI-04 | AgentRun command、mailbox repository/port/service、mailbox tests、相关 migration ledger | AgentRun start/fork admission、public generated contracts | command/mailbox unit tests；`cargo check` 覆盖 application-agentrun/infrastructure |
-| B2 Admission边界 | WI-03 | AgentRun/ProjectAgent start/fork admission service、API start/fork glue、start/fork tests | mailbox owner migration、delivery accepted boundary | start/fork service tests；API route tests；`cargo check` 覆盖 application-agentrun/api |
+| B1 Admission边界 | WI-03 | AgentRun/ProjectAgent start/fork admission service、API start/fork glue、start/fork tests | mailbox owner migration、delivery accepted boundary | start/fork service tests；API route tests；`cargo check` 覆盖 application-agentrun/api |
+| B2 Mailbox/command拆迁 | WI-04 | AgentRun command、mailbox repository/port/service、mailbox tests、相关 migration ledger | AgentRun start/fork admission internals、public generated contracts | command/mailbox unit tests；`cargo check` 覆盖 application-agentrun/infrastructure |
 
-合流顺序：B1 先删除 mailbox 对 runtime owner 的残留与三层状态混乱；B2 再把 start/fork 入口接到 admission。若 B2 发现 admission 必须依赖 B1 的新 queue port，先回报主会话，由主会话提交 B1 后再继续 B2。
+合流顺序：B1 先稳定 admission 用例边界和 start/fork 合同；B2 再删除 mailbox 对 runtime owner 的残留并接入 admission 后的 command/queue 语义。B2 可以并行准备不触碰 admission internals 的 owner cleanup；一旦需要消费新的 admission port，等待 B1 提交后继续。
 
 ### Batch C: Delivery Binding, Accepted Boundary, AgentFrame
 

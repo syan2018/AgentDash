@@ -880,7 +880,7 @@ mod tests {
         .await
         .expect("insert agent");
         sqlx::query(
-            "INSERT INTO sessions (id,title,created_at,updated_at) VALUES ($1,'mailbox test',0,0)",
+            "INSERT INTO runtime_sessions (id,title,created_at,updated_at) VALUES ($1,'mailbox test',0,0)",
         )
         .bind(session_id)
         .execute(pool)
@@ -1059,7 +1059,7 @@ mod tests {
             Some(session_id.as_str())
         );
 
-        sqlx::query("DELETE FROM sessions WHERE id=$1")
+        sqlx::query("DELETE FROM runtime_sessions WHERE id=$1")
             .bind(&session_id)
             .execute(&pool)
             .await

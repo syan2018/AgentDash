@@ -240,7 +240,7 @@ mod tests {
         .expect("insert agent frame");
 
         sqlx::query(
-            r#"INSERT INTO sessions (id, title, created_at, updated_at, last_delivery_status)
+            r#"INSERT INTO runtime_sessions (id, title, created_at, updated_at, last_delivery_status)
                VALUES ($1,$2,$3,$4,$5)
                ON CONFLICT (id) DO NOTHING"#,
         )
@@ -320,7 +320,7 @@ mod tests {
         .await
         .expect("insert replacement frame");
         sqlx::query(
-            r#"INSERT INTO sessions (id, title, created_at, updated_at, last_delivery_status)
+            r#"INSERT INTO runtime_sessions (id, title, created_at, updated_at, last_delivery_status)
                VALUES ($1,$2,$3,$4,$5)"#,
         )
         .bind(&replacement_session_id)

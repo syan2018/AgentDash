@@ -41,17 +41,17 @@ where
         title: row.get::<String, _>("title"),
         title_source: parse_title_source(
             row.get::<String, _>("title_source"),
-            "sessions.title_source",
+            "runtime_sessions.title_source",
         )?,
         created_at: row.get::<i64, _>("created_at"),
         updated_at: row.get::<i64, _>("updated_at"),
         last_event_seq: parse_non_negative_u64(
             row.get::<i64, _>("last_event_seq"),
-            "sessions.last_event_seq",
+            "runtime_sessions.last_event_seq",
         )?,
         last_delivery_status: parse_execution_status(
             row.get::<String, _>("last_delivery_status"),
-            "sessions.last_delivery_status",
+            "runtime_sessions.last_delivery_status",
         )?,
         last_turn_id: row.get::<Option<String>, _>("last_turn_id"),
         last_terminal_message: row.get::<Option<String>, _>("last_terminal_message"),
@@ -70,7 +70,7 @@ where
     let notification = serde_json::from_str::<BackboneEnvelope>(&notification_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let event_seq_i64 = row.get::<i64, _>("event_seq");
-    let event_seq = parse_non_negative_u64(event_seq_i64, "session_events.event_seq")?;
+    let event_seq = parse_non_negative_u64(event_seq_i64, "runtime_session_events.event_seq")?;
     Ok(persisted_event_from_envelope(
         row.get::<String, _>("session_id"),
         event_seq,
@@ -115,11 +115,11 @@ where
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let terminal_event_seq = parse_non_negative_u64(
         row.get::<i64, _>("terminal_event_seq"),
-        "session_terminal_effects.terminal_event_seq",
+        "runtime_session_terminal_effects.terminal_event_seq",
     )?;
     let attempt_count = parse_non_negative_u32(
         row.get::<i64, _>("attempt_count"),
-        "session_terminal_effects.attempt_count",
+        "runtime_session_terminal_effects.attempt_count",
     )?;
     let payload_json = row.get::<String, _>("payload_json");
     let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
@@ -131,12 +131,12 @@ where
         terminal_event_seq,
         effect_type: parse_terminal_effect_type(
             row.get::<String, _>("effect_type"),
-            "session_terminal_effects.effect_type",
+            "runtime_session_terminal_effects.effect_type",
         )?,
         payload,
         status: parse_terminal_effect_status(
             row.get::<String, _>("status"),
-            "session_terminal_effects.status",
+            "runtime_session_terminal_effects.status",
         )?,
         attempt_count,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
@@ -167,7 +167,7 @@ where
         || delivery.target_frame_id != frame_transition.target_frame_id
     {
         return Err(SessionStoreError::InvalidData(format!(
-            "session_runtime_commands {} delivery 与 agent_frame_transitions {} 不一致",
+            "runtime_session_delivery_commands {} delivery 与 agent_frame_transitions {} 不一致",
             id, frame_transition.id
         )));
     }
@@ -178,7 +178,7 @@ where
         phase_node: row.get::<String, _>("phase_node"),
         status: parse_runtime_command_status(
             row.get::<String, _>("status"),
-            "session_runtime_commands.status",
+            "runtime_session_delivery_commands.status",
         )?,
         delivery,
         frame_transition,
@@ -252,24 +252,24 @@ where
         projection_kind: row.get::<String, _>("projection_kind"),
         projection_version: parse_non_negative_u64(
             row.get::<i64, _>("projection_version"),
-            "session_compactions.projection_version",
+            "runtime_session_compactions.projection_version",
         )?,
         lifecycle_item_id: row.get::<String, _>("lifecycle_item_id"),
         start_event_seq: parse_non_negative_u64(
             row.get::<i64, _>("start_event_seq"),
-            "session_compactions.start_event_seq",
+            "runtime_session_compactions.start_event_seq",
         )?,
         completed_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("completed_event_seq"),
-            "session_compactions.completed_event_seq",
+            "runtime_session_compactions.completed_event_seq",
         )?,
         failed_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("failed_event_seq"),
-            "session_compactions.failed_event_seq",
+            "runtime_session_compactions.failed_event_seq",
         )?,
         status: parse_compaction_status(
             row.get::<String, _>("status"),
-            "session_compactions.status",
+            "runtime_session_compactions.status",
         )?,
         trigger: row.get::<String, _>("trigger"),
         reason: row.get::<Option<String>, _>("reason"),
@@ -278,32 +278,32 @@ where
         budget_scope: row.get::<Option<String>, _>("budget_scope"),
         base_head_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("base_head_event_seq"),
-            "session_compactions.base_head_event_seq",
+            "runtime_session_compactions.base_head_event_seq",
         )?,
         source_start_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("source_start_event_seq"),
-            "session_compactions.source_start_event_seq",
+            "runtime_session_compactions.source_start_event_seq",
         )?,
         source_end_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("source_end_event_seq"),
-            "session_compactions.source_end_event_seq",
+            "runtime_session_compactions.source_end_event_seq",
         )?,
         first_kept_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("first_kept_event_seq"),
-            "session_compactions.first_kept_event_seq",
+            "runtime_session_compactions.first_kept_event_seq",
         )?,
         summary: row.get::<String, _>("summary"),
         replacement_projection_json: parse_json_column(
             row.get::<String, _>("replacement_projection_json"),
-            "session_compactions.replacement_projection_json",
+            "runtime_session_compactions.replacement_projection_json",
         )?,
         token_stats_json: parse_json_column(
             row.get::<String, _>("token_stats_json"),
-            "session_compactions.token_stats_json",
+            "runtime_session_compactions.token_stats_json",
         )?,
         diagnostics_json: parse_json_column(
             row.get::<String, _>("diagnostics_json"),
-            "session_compactions.diagnostics_json",
+            "runtime_session_compactions.diagnostics_json",
         )?,
         created_by: row.get::<Option<String>, _>("created_by"),
         created_at_ms: row.get::<i64, _>("created_at_ms"),
@@ -328,35 +328,35 @@ where
         projection_kind: row.get::<String, _>("projection_kind"),
         projection_version: parse_non_negative_u64(
             row.get::<i64, _>("projection_version"),
-            "session_projection_segments.projection_version",
+            "runtime_session_projection_segments.projection_version",
         )?,
         sort_order: parse_non_negative_u64(
             row.get::<i64, _>("sort_order"),
-            "session_projection_segments.sort_order",
+            "runtime_session_projection_segments.sort_order",
         )?,
         segment_type: row.get::<String, _>("segment_type"),
         origin: row.get::<String, _>("origin"),
         synthetic: row.synthetic_flag(),
         source_start_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("source_start_event_seq"),
-            "session_projection_segments.source_start_event_seq",
+            "runtime_session_projection_segments.source_start_event_seq",
         )?,
         source_end_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("source_end_event_seq"),
-            "session_projection_segments.source_end_event_seq",
+            "runtime_session_projection_segments.source_end_event_seq",
         )?,
         source_refs_json: parse_json_column(
             row.get::<String, _>("source_refs_json"),
-            "session_projection_segments.source_refs_json",
+            "runtime_session_projection_segments.source_refs_json",
         )?,
         generated_by_compaction_id: row.get::<Option<String>, _>("generated_by_compaction_id"),
         content_json: parse_json_column(
             row.get::<String, _>("content_json"),
-            "session_projection_segments.content_json",
+            "runtime_session_projection_segments.content_json",
         )?,
         token_estimate: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("token_estimate"),
-            "session_projection_segments.token_estimate",
+            "runtime_session_projection_segments.token_estimate",
         )?,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
     })
@@ -378,16 +378,16 @@ where
         projection_kind: row.get::<String, _>("projection_kind"),
         projection_version: parse_non_negative_u64(
             row.get::<i64, _>("projection_version"),
-            "session_projection_heads.projection_version",
+            "runtime_session_projection_heads.projection_version",
         )?,
         head_event_seq: parse_non_negative_u64(
             row.get::<i64, _>("head_event_seq"),
-            "session_projection_heads.head_event_seq",
+            "runtime_session_projection_heads.head_event_seq",
         )?,
         active_compaction_id: row.get::<Option<String>, _>("active_compaction_id"),
         updated_by_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("updated_by_event_seq"),
-            "session_projection_heads.updated_by_event_seq",
+            "runtime_session_projection_heads.updated_by_event_seq",
         )?,
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
     })
@@ -407,23 +407,26 @@ where
         parent_session_id: row.get::<String, _>("parent_session_id"),
         relation_kind: parse_lineage_relation_kind(
             row.get::<String, _>("relation_kind"),
-            "session_lineage.relation_kind",
+            "runtime_session_lineage.relation_kind",
         )?,
         fork_point_event_seq: parse_optional_non_negative_u64(
             row.get::<Option<i64>, _>("fork_point_event_seq"),
-            "session_lineage.fork_point_event_seq",
+            "runtime_session_lineage.fork_point_event_seq",
         )?,
         fork_point_ref_json: parse_json_column(
             row.get::<String, _>("fork_point_ref_json"),
-            "session_lineage.fork_point_ref_json",
+            "runtime_session_lineage.fork_point_ref_json",
         )?,
         fork_point_compaction_id: row.get::<Option<String>, _>("fork_point_compaction_id"),
-        status: parse_lineage_status(row.get::<String, _>("status"), "session_lineage.status")?,
+        status: parse_lineage_status(
+            row.get::<String, _>("status"),
+            "runtime_session_lineage.status",
+        )?,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         metadata_json: parse_json_column(
             row.get::<String, _>("metadata_json"),
-            "session_lineage.metadata_json",
+            "runtime_session_lineage.metadata_json",
         )?,
     })
 }
@@ -599,7 +602,7 @@ pub(crate) fn validate_commit_session(
         )));
     }
     let compaction_range = source_range_pair(
-        "session_compactions",
+        "runtime_session_compactions",
         commit.compaction.source_start_event_seq,
         commit.compaction.source_end_event_seq,
     )?;
@@ -623,7 +626,7 @@ pub(crate) fn validate_commit_session(
             )));
         }
         let segment_range = source_range_pair(
-            "session_projection_segments",
+            "runtime_session_projection_segments",
             segment.source_start_event_seq,
             segment.source_end_event_seq,
         )?;
@@ -669,7 +672,7 @@ pub(crate) fn sqlx_to_session_store_error(error: sqlx::Error) -> SessionStoreErr
     SessionStoreError::Database(error.to_string())
 }
 
-/// 从 envelope 推导出需要回写到 `sessions` 行的投影字段。
+/// 从 envelope 推导出需要回写到 `runtime_sessions` 行的投影字段。
 pub(crate) struct SessionProjection {
     pub last_delivery_status: Option<String>,
     pub turn_id: Option<String>,

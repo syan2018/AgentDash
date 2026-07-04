@@ -32,15 +32,15 @@ impl PostgresSessionRepository {
         crate::migration::assert_postgres_tables_ready(
             &self.pool,
             &[
-                "sessions",
-                "session_compactions",
-                "session_events",
-                "session_lineage",
-                "session_projection_heads",
-                "session_projection_segments",
-                "session_terminal_effects",
+                "runtime_sessions",
+                "runtime_session_compactions",
+                "runtime_session_events",
+                "runtime_session_lineage",
+                "runtime_session_projection_heads",
+                "runtime_session_projection_segments",
+                "runtime_session_terminal_effects",
                 "agent_frame_transitions",
-                "session_runtime_commands",
+                "runtime_session_delivery_commands",
             ],
         )
         .await
@@ -57,7 +57,7 @@ impl PostgresSessionRepository {
     ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
-            UPDATE session_terminal_effects
+            UPDATE runtime_session_terminal_effects
             SET status = $1,
                 attempt_count = attempt_count + $2,
                 updated_at_ms = $3,
@@ -99,7 +99,7 @@ impl PostgresSessionRepository {
         let id_strings: Vec<String> = command_ids.iter().map(|id| id.to_string()).collect();
         let result = sqlx::query(
             r#"
-            UPDATE session_runtime_commands
+            UPDATE runtime_session_delivery_commands
             SET status = $1,
                 updated_at_ms = $2,
                 applied_at_ms = COALESCE($3, applied_at_ms),
@@ -157,10 +157,11 @@ fn validate_runtime_delivery_command(
 #[async_trait::async_trait]
 impl SessionMetaStore for PostgresSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
-        let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
+        let last_event_seq =
+            encode_u64_as_i64(meta.last_event_seq, "runtime_sessions.last_event_seq")?;
         sqlx::query(
             r#"
-            INSERT INTO sessions (
+            INSERT INTO runtime_sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_session_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -187,7 +188,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_session_id
-            FROM sessions
+            FROM runtime_sessions
             WHERE id = $1
             "#,
         )
@@ -203,7 +204,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_session_id
-            FROM sessions
+            FROM runtime_sessions
             ORDER BY updated_at DESC
             "#,
         )
@@ -214,10 +215,11 @@ impl SessionMetaStore for PostgresSessionRepository {
     }
 
     async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
-        let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
+        let last_event_seq =
+            encode_u64_as_i64(meta.last_event_seq, "runtime_sessions.last_event_seq")?;
         sqlx::query(
             r#"
-            INSERT INTO sessions (
+            INSERT INTO runtime_sessions (
                 id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_session_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -225,22 +227,22 @@ impl SessionMetaStore for PostgresSessionRepository {
                 title = excluded.title,
                 title_source = excluded.title_source,
                 created_at = excluded.created_at,
-                updated_at = GREATEST(sessions.updated_at, excluded.updated_at),
-                last_event_seq = GREATEST(sessions.last_event_seq, excluded.last_event_seq),
+                updated_at = GREATEST(runtime_sessions.updated_at, excluded.updated_at),
+                last_event_seq = GREATEST(runtime_sessions.last_event_seq, excluded.last_event_seq),
                 last_delivery_status = CASE
-                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                    WHEN excluded.last_event_seq >= runtime_sessions.last_event_seq
                         THEN excluded.last_delivery_status
-                    ELSE sessions.last_delivery_status
+                    ELSE runtime_sessions.last_delivery_status
                 END,
                 last_turn_id = CASE
-                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                    WHEN excluded.last_event_seq >= runtime_sessions.last_event_seq
                         THEN excluded.last_turn_id
-                    ELSE sessions.last_turn_id
+                    ELSE runtime_sessions.last_turn_id
                 END,
                 last_terminal_message = CASE
-                    WHEN excluded.last_event_seq >= sessions.last_event_seq
+                    WHEN excluded.last_event_seq >= runtime_sessions.last_event_seq
                         THEN excluded.last_terminal_message
-                    ELSE sessions.last_terminal_message
+                    ELSE runtime_sessions.last_terminal_message
                 END,
                 executor_session_id = excluded.executor_session_id
             "#,
@@ -267,44 +269,44 @@ impl SessionMetaStore for PostgresSessionRepository {
             .begin()
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_events WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_events WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_terminal_effects WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_terminal_effects WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_runtime_commands WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_delivery_commands WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
         sqlx::query(
-            "DELETE FROM session_lineage WHERE child_session_id = $1 OR parent_session_id = $1",
+            "DELETE FROM runtime_session_lineage WHERE child_session_id = $1 OR parent_session_id = $1",
         )
         .bind(session_id)
         .execute(&mut *tx)
         .await
         .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_projection_heads WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_projection_heads WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_projection_segments WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_projection_segments WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM session_compactions WHERE session_id = $1")
+        sqlx::query("DELETE FROM runtime_session_compactions WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM sessions WHERE id = $1")
+        sqlx::query("DELETE FROM runtime_sessions WHERE id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
@@ -329,7 +331,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let seq_row = sqlx::query(
             r#"
-            UPDATE sessions
+            UPDATE runtime_sessions
             SET last_event_seq = last_event_seq + 1
             WHERE id = $1
             RETURNING last_event_seq
@@ -343,7 +345,7 @@ impl SessionEventStore for PostgresSessionRepository {
         let event_seq_i64: i64 = seq_row
             .try_get("last_event_seq")
             .map_err(sqlx_to_session_store_error)?;
-        let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
+        let event_seq = parse_non_negative_u64(event_seq_i64, "runtime_sessions.last_event_seq")?;
         let projection = projection_from_envelope(envelope);
         let persisted = persisted_event_from_envelope(
             session_id.to_string(),
@@ -353,11 +355,11 @@ impl SessionEventStore for PostgresSessionRepository {
             envelope.clone(),
         );
         let notification_json = json_string(&persisted.notification, "notification_json")?;
-        let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
+        let event_seq_db = encode_u64_as_i64(event_seq, "runtime_session_events.event_seq")?;
 
         sqlx::query(
             r#"
-            INSERT INTO session_events (
+            INSERT INTO runtime_session_events (
                 session_id, event_seq, occurred_at_ms, committed_at_ms, notification_json
             ) VALUES ($1, $2, $3, $4, $5)
             "#,
@@ -373,7 +375,7 @@ impl SessionEventStore for PostgresSessionRepository {
 
         sqlx::query(
             r#"
-            UPDATE sessions
+            UPDATE runtime_sessions
             SET
                 updated_at = $1,
                 last_delivery_status = COALESCE($2, last_delivery_status),
@@ -409,13 +411,13 @@ impl SessionEventStore for PostgresSessionRepository {
         after_seq: u64,
     ) -> SessionStoreResult<SessionEventBacklog> {
         let snapshot_seq = self.require_snapshot_seq(session_id).await?;
-        let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
-        let snapshot_seq_db = encode_u64_as_i64(snapshot_seq, "sessions.last_event_seq")?;
+        let after_seq_db = encode_u64_as_i64(after_seq, "runtime_session_events.after_seq")?;
+        let snapshot_seq_db = encode_u64_as_i64(snapshot_seq, "runtime_sessions.last_event_seq")?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
                    notification_json
-            FROM session_events
+            FROM runtime_session_events
             WHERE session_id = $1 AND event_seq > $2 AND event_seq <= $3
             ORDER BY event_seq ASC
             "#,
@@ -446,14 +448,14 @@ impl SessionEventStore for PostgresSessionRepository {
     ) -> SessionStoreResult<SessionEventPage> {
         let snapshot_seq = self.require_snapshot_seq(session_id).await?;
         let take = limit.max(1);
-        let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
+        let after_seq_db = encode_u64_as_i64(after_seq, "runtime_session_events.after_seq")?;
         let take_usize = usize::try_from(take)
             .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
                    notification_json
-            FROM session_events
+            FROM runtime_session_events
             WHERE session_id = $1 AND event_seq > $2
             ORDER BY event_seq ASC
             LIMIT $3
@@ -491,7 +493,7 @@ impl SessionEventStore for PostgresSessionRepository {
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
                    notification_json
-            FROM session_events
+            FROM runtime_session_events
             WHERE session_id = $1
             ORDER BY event_seq ASC
             "#,
@@ -513,12 +515,12 @@ impl SessionEventStore for PostgresSessionRepository {
         session_id: &str,
         from_seq: u64,
     ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
-        let from_seq_db = encode_u64_as_i64(from_seq, "session_events.from_seq")?;
+        let from_seq_db = encode_u64_as_i64(from_seq, "runtime_session_events.from_seq")?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
                    notification_json
-            FROM session_events
+            FROM runtime_session_events
             WHERE session_id = $1 AND event_seq >= $2
             ORDER BY event_seq ASC
             "#,
@@ -559,12 +561,15 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         };
         let terminal_event_seq = encode_u64_as_i64(
             record.terminal_event_seq,
-            "session_terminal_effects.terminal_event_seq",
+            "runtime_session_terminal_effects.terminal_event_seq",
         )?;
-        let payload_json = json_string(&record.payload, "session_terminal_effects.payload_json")?;
+        let payload_json = json_string(
+            &record.payload,
+            "runtime_session_terminal_effects.payload_json",
+        )?;
         sqlx::query(
             r#"
-            INSERT INTO session_terminal_effects (
+            INSERT INTO runtime_session_terminal_effects (
                 id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
                 status, attempt_count, created_at_ms, updated_at_ms, last_error
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -660,7 +665,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
             r#"
             SELECT id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
                    status, attempt_count, created_at_ms, updated_at_ms, last_error
-            FROM session_terminal_effects
+            FROM runtime_session_terminal_effects
             WHERE status = ANY($1)
             ORDER BY updated_at_ms ASC, created_at_ms ASC
             LIMIT $2
@@ -692,7 +697,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         let now = chrono::Utc::now().timestamp_millis();
         sqlx::query(
             r#"
-            UPDATE session_runtime_commands
+            UPDATE runtime_session_delivery_commands
             SET status = $1,
                 updated_at_ms = $2,
                 failed_at_ms = $3,
@@ -763,10 +768,13 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
             failed_at_ms: None,
             last_error: None,
         };
-        let payload_json = json_string(&record.delivery, "session_runtime_commands.payload_json")?;
+        let payload_json = json_string(
+            &record.delivery,
+            "runtime_session_delivery_commands.payload_json",
+        )?;
         sqlx::query(
             r#"
-            INSERT INTO session_runtime_commands (
+            INSERT INTO runtime_session_delivery_commands (
                 id, session_id, frame_transition_id, phase_node, status, payload_json,
                 created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -807,7 +815,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
                    t.transition_json AS frame_transition_transition_json,
                    t.source_turn_id AS frame_transition_source_turn_id,
                    t.created_at_ms AS frame_transition_created_at_ms
-            FROM session_runtime_commands c
+            FROM runtime_session_delivery_commands c
             JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
             WHERE c.session_id = $1 AND c.status = $2
             ORDER BY c.created_at_ms ASC
@@ -861,7 +869,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
                    t.transition_json AS frame_transition_transition_json,
                    t.source_turn_id AS frame_transition_source_turn_id,
                    t.created_at_ms AS frame_transition_created_at_ms
-            FROM session_runtime_commands c
+            FROM runtime_session_delivery_commands c
             JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
             WHERE c.status = ANY($1)
             ORDER BY c.updated_at_ms ASC, c.created_at_ms ASC
@@ -892,7 +900,7 @@ impl SessionCompactionStore for PostgresSessionRepository {
                    base_head_event_seq, source_start_event_seq, source_end_event_seq,
                    first_kept_event_seq, summary, replacement_projection_json,
                    token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
-            FROM session_compactions
+            FROM runtime_session_compactions
             WHERE session_id = $1 AND id = $2
             "#,
         )
@@ -917,7 +925,7 @@ impl SessionCompactionStore for PostgresSessionRepository {
                    base_head_event_seq, source_start_event_seq, source_end_event_seq,
                    first_kept_event_seq, summary, replacement_projection_json,
                    token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
-            FROM session_compactions
+            FROM runtime_session_compactions
             WHERE session_id = $1 AND projection_kind = $2
             ORDER BY projection_version ASC, created_at_ms ASC
             "#,
@@ -941,7 +949,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
     ) -> SessionStoreResult<Vec<SessionProjectionSegmentRecord>> {
         let projection_version = encode_u64_as_i64(
             projection_version,
-            "session_projection_segments.projection_version",
+            "runtime_session_projection_segments.projection_version",
         )?;
         let rows = sqlx::query(
             r#"
@@ -949,7 +957,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
                    segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
                    source_refs_json, generated_by_compaction_id, content_json, token_estimate,
                    created_at_ms
-            FROM session_projection_segments
+            FROM runtime_session_projection_segments
             WHERE session_id = $1 AND projection_kind = $2 AND projection_version = $3
             ORDER BY sort_order ASC
             "#,
@@ -972,7 +980,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             r#"
             SELECT session_id, projection_kind, projection_version, head_event_seq,
                    active_compaction_id, updated_by_event_seq, updated_at_ms
-            FROM session_projection_heads
+            FROM runtime_session_projection_heads
             WHERE session_id = $1 AND projection_kind = $2
             "#,
         )
@@ -990,19 +998,19 @@ impl SessionProjectionStore for PostgresSessionRepository {
     ) -> SessionStoreResult<()> {
         let projection_version = encode_u64_as_i64(
             head.projection_version,
-            "session_projection_heads.projection_version",
+            "runtime_session_projection_heads.projection_version",
         )?;
         let head_event_seq = encode_u64_as_i64(
             head.head_event_seq,
-            "session_projection_heads.head_event_seq",
+            "runtime_session_projection_heads.head_event_seq",
         )?;
         let updated_by_event_seq = encode_optional_u64_as_i64(
             head.updated_by_event_seq,
-            "session_projection_heads.updated_by_event_seq",
+            "runtime_session_projection_heads.updated_by_event_seq",
         )?;
         sqlx::query(
             r#"
-            INSERT INTO session_projection_heads (
+            INSERT INTO runtime_session_projection_heads (
                 session_id, projection_kind, projection_version, head_event_seq,
                 active_compaction_id, updated_by_event_seq, updated_at_ms
             ) VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -1041,7 +1049,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let seq_row = sqlx::query(
             r#"
-            UPDATE sessions
+            UPDATE runtime_sessions
             SET last_event_seq = last_event_seq + 1
             WHERE id = $1
             RETURNING last_event_seq
@@ -1055,7 +1063,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         let event_seq_i64: i64 = seq_row
             .try_get("last_event_seq")
             .map_err(sqlx_to_session_store_error)?;
-        let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
+        let event_seq = parse_non_negative_u64(event_seq_i64, "runtime_sessions.last_event_seq")?;
         let projection = projection_from_envelope(&commit.completed_event);
         let persisted = persisted_event_from_envelope(
             session_id.to_string(),
@@ -1065,10 +1073,10 @@ impl SessionProjectionStore for PostgresSessionRepository {
             commit.completed_event.clone(),
         );
         let notification_json = json_string(&persisted.notification, "notification_json")?;
-        let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
+        let event_seq_db = encode_u64_as_i64(event_seq, "runtime_session_events.event_seq")?;
         sqlx::query(
             r#"
-            INSERT INTO session_events (
+            INSERT INTO runtime_session_events (
                 session_id, event_seq, occurred_at_ms, committed_at_ms, notification_json
             ) VALUES ($1, $2, $3, $4, $5)
             "#,
@@ -1084,7 +1092,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
 
         sqlx::query(
             r#"
-            UPDATE sessions
+            UPDATE runtime_sessions
             SET
                 updated_at = $1,
                 last_delivery_status = COALESCE($2, last_delivery_status),
@@ -1152,10 +1160,10 @@ impl SessionLineageStore for PostgresSessionRepository {
             WITH RECURSIVE parents(session_id) AS (
                 SELECT $2::TEXT
                 UNION ALL
-                SELECT session_lineage.parent_session_id
-                FROM session_lineage
-                JOIN parents ON session_lineage.child_session_id = parents.session_id
-                WHERE session_lineage.child_session_id <> $1
+                SELECT runtime_session_lineage.parent_session_id
+                FROM runtime_session_lineage
+                JOIN parents ON runtime_session_lineage.child_session_id = parents.session_id
+                WHERE runtime_session_lineage.child_session_id <> $1
             )
             SELECT 1
             FROM parents
@@ -1175,16 +1183,19 @@ impl SessionLineageStore for PostgresSessionRepository {
         }
         let fork_point_event_seq = encode_optional_u64_as_i64(
             record.fork_point_event_seq,
-            "session_lineage.fork_point_event_seq",
+            "runtime_session_lineage.fork_point_event_seq",
         )?;
         let fork_point_ref_json = json_string(
             &record.fork_point_ref_json,
-            "session_lineage.fork_point_ref_json",
+            "runtime_session_lineage.fork_point_ref_json",
         )?;
-        let metadata_json = json_string(&record.metadata_json, "session_lineage.metadata_json")?;
+        let metadata_json = json_string(
+            &record.metadata_json,
+            "runtime_session_lineage.metadata_json",
+        )?;
         sqlx::query(
             r#"
-            INSERT INTO session_lineage (
+            INSERT INTO runtime_session_lineage (
                 child_session_id, parent_session_id, relation_kind,
                 fork_point_event_seq, fork_point_ref_json, fork_point_compaction_id,
                 status, created_at_ms, updated_at_ms, metadata_json
@@ -1226,7 +1237,7 @@ impl SessionLineageStore for PostgresSessionRepository {
             SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
                    fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
                    updated_at_ms, metadata_json
-            FROM session_lineage
+            FROM runtime_session_lineage
             WHERE child_session_id = $1
             "#,
         )
@@ -1248,7 +1259,7 @@ impl SessionLineageStore for PostgresSessionRepository {
             SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
                    fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
                    updated_at_ms, metadata_json
-            FROM session_lineage
+            FROM runtime_session_lineage
             WHERE parent_session_id = $1
               AND ($2 IS NULL OR relation_kind = $2)
               AND ($3 IS NULL OR status = $3)
@@ -1274,14 +1285,14 @@ impl SessionLineageStore for PostgresSessionRepository {
                 SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
                        fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
                        updated_at_ms, metadata_json, 0 AS depth
-                FROM session_lineage
+                FROM runtime_session_lineage
                 WHERE child_session_id = $1
                 UNION ALL
                 SELECT parent.child_session_id, parent.parent_session_id, parent.relation_kind,
                        parent.fork_point_event_seq, parent.fork_point_ref_json,
                        parent.fork_point_compaction_id, parent.status, parent.created_at_ms,
                        parent.updated_at_ms, parent.metadata_json, lineage_path.depth + 1
-                FROM session_lineage parent
+                FROM runtime_session_lineage parent
                 JOIN lineage_path ON parent.child_session_id = lineage_path.parent_session_id
             )
             SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
@@ -1310,7 +1321,7 @@ impl SessionLineageStore for PostgresSessionRepository {
                 SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
                        fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
                        updated_at_ms, metadata_json, 1 AS depth
-                FROM session_lineage
+                FROM runtime_session_lineage
                 WHERE parent_session_id = $1
                   AND ($2 IS NULL OR relation_kind = $2)
                   AND ($3 IS NULL OR status = $3)
@@ -1319,7 +1330,7 @@ impl SessionLineageStore for PostgresSessionRepository {
                        child.fork_point_event_seq, child.fork_point_ref_json,
                        child.fork_point_compaction_id, child.status, child.created_at_ms,
                        child.updated_at_ms, child.metadata_json, lineage_tree.depth + 1
-                FROM session_lineage child
+                FROM runtime_session_lineage child
                 JOIN lineage_tree ON child.parent_session_id = lineage_tree.child_session_id
                 WHERE ($2 IS NULL OR child.relation_kind = $2)
                   AND ($3 IS NULL OR child.status = $3)
@@ -1348,7 +1359,7 @@ impl SessionLineageStore for PostgresSessionRepository {
     ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
-            UPDATE session_lineage
+            UPDATE runtime_session_lineage
             SET status = $1, updated_at_ms = $2
             WHERE child_session_id = $3
             "#,
@@ -1374,51 +1385,51 @@ async fn insert_compaction_row(
 ) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         record.projection_version,
-        "session_compactions.projection_version",
+        "runtime_session_compactions.projection_version",
     )?;
     let start_event_seq = encode_u64_as_i64(
         record.start_event_seq,
-        "session_compactions.start_event_seq",
+        "runtime_session_compactions.start_event_seq",
     )?;
     let completed_event_seq = encode_optional_u64_as_i64(
         record.completed_event_seq,
-        "session_compactions.completed_event_seq",
+        "runtime_session_compactions.completed_event_seq",
     )?;
     let failed_event_seq = encode_optional_u64_as_i64(
         record.failed_event_seq,
-        "session_compactions.failed_event_seq",
+        "runtime_session_compactions.failed_event_seq",
     )?;
     let base_head_event_seq = encode_optional_u64_as_i64(
         record.base_head_event_seq,
-        "session_compactions.base_head_event_seq",
+        "runtime_session_compactions.base_head_event_seq",
     )?;
     let source_start_event_seq = encode_optional_u64_as_i64(
         record.source_start_event_seq,
-        "session_compactions.source_start_event_seq",
+        "runtime_session_compactions.source_start_event_seq",
     )?;
     let source_end_event_seq = encode_optional_u64_as_i64(
         record.source_end_event_seq,
-        "session_compactions.source_end_event_seq",
+        "runtime_session_compactions.source_end_event_seq",
     )?;
     let first_kept_event_seq = encode_optional_u64_as_i64(
         record.first_kept_event_seq,
-        "session_compactions.first_kept_event_seq",
+        "runtime_session_compactions.first_kept_event_seq",
     )?;
     let replacement_projection_json = json_string(
         &record.replacement_projection_json,
-        "session_compactions.replacement_projection_json",
+        "runtime_session_compactions.replacement_projection_json",
     )?;
     let token_stats_json = json_string(
         &record.token_stats_json,
-        "session_compactions.token_stats_json",
+        "runtime_session_compactions.token_stats_json",
     )?;
     let diagnostics_json = json_string(
         &record.diagnostics_json,
-        "session_compactions.diagnostics_json",
+        "runtime_session_compactions.diagnostics_json",
     )?;
     sqlx::query(
         r#"
-        INSERT INTO session_compactions (
+        INSERT INTO runtime_session_compactions (
             id, session_id, projection_kind, projection_version,
             lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
             status, trigger, reason, phase, strategy, budget_scope,
@@ -1472,33 +1483,35 @@ async fn insert_projection_segment_row(
 ) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         segment.projection_version,
-        "session_projection_segments.projection_version",
+        "runtime_session_projection_segments.projection_version",
     )?;
-    let sort_order =
-        encode_u64_as_i64(segment.sort_order, "session_projection_segments.sort_order")?;
+    let sort_order = encode_u64_as_i64(
+        segment.sort_order,
+        "runtime_session_projection_segments.sort_order",
+    )?;
     let source_start_event_seq = encode_optional_u64_as_i64(
         segment.source_start_event_seq,
-        "session_projection_segments.source_start_event_seq",
+        "runtime_session_projection_segments.source_start_event_seq",
     )?;
     let source_end_event_seq = encode_optional_u64_as_i64(
         segment.source_end_event_seq,
-        "session_projection_segments.source_end_event_seq",
+        "runtime_session_projection_segments.source_end_event_seq",
     )?;
     let token_estimate = encode_optional_u64_as_i64(
         segment.token_estimate,
-        "session_projection_segments.token_estimate",
+        "runtime_session_projection_segments.token_estimate",
     )?;
     let source_refs_json = json_string(
         &segment.source_refs_json,
-        "session_projection_segments.source_refs_json",
+        "runtime_session_projection_segments.source_refs_json",
     )?;
     let content_json = json_string(
         &segment.content_json,
-        "session_projection_segments.content_json",
+        "runtime_session_projection_segments.content_json",
     )?;
     sqlx::query(
         r#"
-        INSERT INTO session_projection_segments (
+        INSERT INTO runtime_session_projection_segments (
             id, session_id, projection_kind, projection_version, sort_order,
             segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
             source_refs_json, generated_by_compaction_id, content_json, token_estimate,
@@ -1538,19 +1551,19 @@ async fn upsert_projection_head_row(
 ) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         head.projection_version,
-        "session_projection_heads.projection_version",
+        "runtime_session_projection_heads.projection_version",
     )?;
     let head_event_seq = encode_u64_as_i64(
         head.head_event_seq,
-        "session_projection_heads.head_event_seq",
+        "runtime_session_projection_heads.head_event_seq",
     )?;
     let updated_by_event_seq = encode_optional_u64_as_i64(
         head.updated_by_event_seq,
-        "session_projection_heads.updated_by_event_seq",
+        "runtime_session_projection_heads.updated_by_event_seq",
     )?;
     sqlx::query(
         r#"
-        INSERT INTO session_projection_heads (
+        INSERT INTO runtime_session_projection_heads (
             session_id, projection_kind, projection_version, head_event_seq,
             active_compaction_id, updated_by_event_seq, updated_at_ms
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -1778,8 +1791,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_events_persist_envelope_without_flattened_fact_columns() {
-        let Some(pool) = test_pg_pool("session_events_envelope_schema").await else {
+    async fn runtime_session_events_persist_envelope_without_flattened_fact_columns() {
+        let Some(pool) = test_pg_pool("runtime_session_events_envelope_schema").await else {
             return;
         };
         let repo = PostgresSessionRepository::new(pool.clone());
@@ -1789,13 +1802,13 @@ mod tests {
             r#"
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = 'session_events'
+            WHERE table_name = 'runtime_session_events'
             ORDER BY ordinal_position
             "#,
         )
         .fetch_all(&pool)
         .await
-        .expect("应能读取 session_events schema");
+        .expect("应能读取 runtime_session_events schema");
 
         assert_eq!(
             columns,
@@ -1985,8 +1998,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_lineage_queries_are_stable_and_filterable() {
-        let Some(pool) = test_pg_pool("session_lineage").await else {
+    async fn runtime_session_lineage_queries_are_stable_and_filterable() {
+        let Some(pool) = test_pg_pool("runtime_session_lineage").await else {
             return;
         };
         let repo = PostgresSessionRepository::new(pool);

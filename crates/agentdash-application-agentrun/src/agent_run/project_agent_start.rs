@@ -1,4 +1,5 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use std::marker::PhantomData;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -31,7 +32,7 @@ use async_trait::async_trait;
 use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionMeta};
 use crate::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult,
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
+    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel,
     command_receipt::{
@@ -40,6 +41,7 @@ use crate::agent_run::{
     },
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
+use crate::agent_run::{SessionControlService, SessionEventingService, SessionLaunchService};
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
@@ -205,11 +207,19 @@ impl RuntimeSessionDraftCleanupPort for SessionCoreService {
 }
 
 #[async_trait]
-pub trait ProjectAgentRunInitialMailboxCommandPort: Send + Sync {
+trait ProjectAgentRunInitialMailboxPort: Send + Sync {
     async fn accept_initial_mailbox_message(
         &self,
         command: ProjectAgentRunInitialMailboxCommand,
     ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError>;
+
+    async fn schedule_initial_mailbox_message(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: &str,
+        identity: Option<AuthIdentity>,
+    ) -> Result<(), WorkflowApplicationError>;
 }
 
 #[async_trait]
@@ -221,7 +231,7 @@ pub trait ProjectAgentLifecycleLaunchPort: Send + Sync {
 }
 
 #[async_trait]
-impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
+impl ProjectAgentRunInitialMailboxPort for AgentRunMailboxService<'_> {
     async fn accept_initial_mailbox_message(
         &self,
         command: ProjectAgentRunInitialMailboxCommand,
@@ -229,31 +239,87 @@ impl ProjectAgentRunInitialMailboxCommandPort for AgentRunMailboxService<'_> {
         self.accept_user_message(command.into_mailbox_command())
             .await
     }
+
+    async fn schedule_initial_mailbox_message(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        runtime_session_id: &str,
+        identity: Option<AuthIdentity>,
+    ) -> Result<(), WorkflowApplicationError> {
+        self.schedule(
+            run_id,
+            agent_id,
+            runtime_session_id,
+            AgentRunMailboxScheduleTrigger::UserMessageSubmitted,
+            identity,
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+enum ProjectAgentRunInitialMailboxDeps<'a> {
+    Service {
+        session_core: SessionCoreService,
+        session_control: SessionControlService,
+        session_eventing: SessionEventingService,
+        session_launch: SessionLaunchService,
+        _marker: PhantomData<&'a ()>,
+    },
+    #[cfg(test)]
+    Port(&'a dyn ProjectAgentRunInitialMailboxPort),
 }
 
 pub struct ProjectAgentRunStartService<'a> {
     repos: ProjectAgentRunStartRepos<'a>,
     cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
     lifecycle_launch: &'a dyn ProjectAgentLifecycleLaunchPort,
+    initial_mailbox: ProjectAgentRunInitialMailboxDeps<'a>,
 }
 
 impl<'a> ProjectAgentRunStartService<'a> {
     pub fn new(
         repos: ProjectAgentRunStartRepos<'a>,
         cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
+        session_core: SessionCoreService,
+        session_control: SessionControlService,
+        session_eventing: SessionEventingService,
+        session_launch: SessionLaunchService,
     ) -> Self {
         let lifecycle_launch = repos.project_agent_lifecycle_launch;
         Self {
             repos,
             cleanup,
             lifecycle_launch,
+            initial_mailbox: ProjectAgentRunInitialMailboxDeps::Service {
+                session_core,
+                session_control,
+                session_eventing,
+                session_launch,
+                _marker: PhantomData,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_initial_mailbox_port(
+        repos: ProjectAgentRunStartRepos<'a>,
+        cleanup: &'a dyn RuntimeSessionDraftCleanupPort,
+        initial_mailbox: &'a dyn ProjectAgentRunInitialMailboxPort,
+    ) -> Self {
+        let lifecycle_launch = repos.project_agent_lifecycle_launch;
+        Self {
+            repos,
+            cleanup,
+            lifecycle_launch,
+            initial_mailbox: ProjectAgentRunInitialMailboxDeps::Port(initial_mailbox),
         }
     }
 
     pub async fn start_run(
         &self,
         mut command: ProjectAgentRunStartCommand,
-        initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
         diag!(Info, Subsystem::AgentRun,
 
@@ -469,7 +535,8 @@ impl<'a> ProjectAgentRunStartService<'a> {
             agent_id = %dispatch_result.runtime_refs.agent_ref,
             "ProjectAgent run start accepting initial mailbox message"
         );
-        let initial_message_result = match initial_message
+        let identity_for_initial_schedule = command.identity.clone();
+        let initial_message_result = match self
             .accept_initial_mailbox_message(ProjectAgentRunInitialMailboxCommand {
                 run_id: dispatch_result.runtime_refs.run_ref,
                 agent_id: dispatch_result.runtime_refs.agent_ref,
@@ -556,7 +623,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
             "ProjectAgent run start receipt accepted"
         );
 
-        Ok(ProjectAgentRunStartDispatch {
+        let dispatch = ProjectAgentRunStartDispatch {
             project_agent,
             effective_executor_config,
             runtime_session_id,
@@ -568,7 +635,103 @@ impl<'a> ProjectAgentRunStartService<'a> {
             subject_ref: Some(subject_ref),
             command_receipt: receipt,
             initial_message: initial_message_result,
-        })
+        };
+        self.schedule_queued_initial_mailbox_message(&dispatch, identity_for_initial_schedule)
+            .await;
+        Ok(dispatch)
+    }
+
+    async fn accept_initial_mailbox_message(
+        &self,
+        command: ProjectAgentRunInitialMailboxCommand,
+    ) -> Result<AgentRunMailboxCommandResult, WorkflowApplicationError> {
+        match &self.initial_mailbox {
+            ProjectAgentRunInitialMailboxDeps::Service {
+                session_core,
+                session_control,
+                session_eventing,
+                session_launch,
+                ..
+            } => {
+                let mailbox = self.repos.mailbox_service(
+                    session_core.clone(),
+                    session_control.clone(),
+                    session_eventing.clone(),
+                    session_launch.clone(),
+                );
+                mailbox.accept_initial_mailbox_message(command).await
+            }
+            #[cfg(test)]
+            ProjectAgentRunInitialMailboxDeps::Port(port) => {
+                port.accept_initial_mailbox_message(command).await
+            }
+        }
+    }
+
+    async fn schedule_queued_initial_mailbox_message(
+        &self,
+        dispatch: &ProjectAgentRunStartDispatch,
+        identity: Option<AuthIdentity>,
+    ) {
+        if dispatch.initial_message.outcome != AgentRunMailboxCommandOutcome::Queued
+            || dispatch.initial_message.mailbox_message.is_none()
+        {
+            return;
+        }
+
+        diag!(Info, Subsystem::AgentRun,
+            runtime_session_id = %dispatch.runtime_session_id,
+            run_id = %dispatch.run_id,
+            agent_id = %dispatch.agent_id,
+            "ProjectAgent run start scheduling queued initial mailbox message"
+        );
+        let result = match &self.initial_mailbox {
+            ProjectAgentRunInitialMailboxDeps::Service {
+                session_core,
+                session_control,
+                session_eventing,
+                session_launch,
+                ..
+            } => {
+                let mailbox = self.repos.mailbox_service(
+                    session_core.clone(),
+                    session_control.clone(),
+                    session_eventing.clone(),
+                    session_launch.clone(),
+                );
+                mailbox
+                    .schedule_initial_mailbox_message(
+                        dispatch.run_id,
+                        dispatch.agent_id,
+                        &dispatch.runtime_session_id,
+                        identity,
+                    )
+                    .await
+            }
+            #[cfg(test)]
+            ProjectAgentRunInitialMailboxDeps::Port(port) => {
+                port.schedule_initial_mailbox_message(
+                    dispatch.run_id,
+                    dispatch.agent_id,
+                    &dispatch.runtime_session_id,
+                    identity,
+                )
+                .await
+            }
+        };
+
+        if let Err(error) = result {
+            let diagnostic_context =
+                DiagnosticErrorContext::new("agent_run.project_agent_start", "initial_schedule");
+            diag_error!(Warn, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &error,
+                runtime_session_id = %dispatch.runtime_session_id,
+                run_id = %dispatch.run_id,
+                agent_id = %dispatch.agent_id,
+                "ProjectAgent 初始 mailbox 调度失败"
+            );
+        }
     }
 
     async fn bind_project_agent_to_lifecycle_agent(
@@ -2065,12 +2228,14 @@ mod tests {
         mailbox_repo: &'a MailboxRepo,
         behavior: InitialMailboxBehavior,
         captured: Arc<Mutex<Vec<AgentRunMailboxUserMessageCommand>>>,
+        scheduled: Arc<Mutex<Vec<(Uuid, Uuid, String)>>>,
     }
 
     #[derive(Debug, Clone, Copy)]
     enum InitialMailboxBehavior {
         Launched,
         Failed,
+        Queued,
         WrongRun,
         WrongAgent,
         WrongRuntime,
@@ -2083,6 +2248,7 @@ mod tests {
                 mailbox_repo,
                 behavior,
                 captured: Arc::new(Mutex::new(Vec::new())),
+                scheduled: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -2094,13 +2260,17 @@ mod tests {
             Self::with_behavior(mailbox_repo, InitialMailboxBehavior::Failed)
         }
 
+        fn queued(mailbox_repo: &'a MailboxRepo) -> Self {
+            Self::with_behavior(mailbox_repo, InitialMailboxBehavior::Queued)
+        }
+
         fn missing_turn(mailbox_repo: &'a MailboxRepo) -> Self {
             Self::with_behavior(mailbox_repo, InitialMailboxBehavior::MissingTurn)
         }
     }
 
     #[async_trait]
-    impl ProjectAgentRunInitialMailboxCommandPort for InitialMailboxPort<'_> {
+    impl ProjectAgentRunInitialMailboxPort for InitialMailboxPort<'_> {
         async fn accept_initial_mailbox_message(
             &self,
             command: ProjectAgentRunInitialMailboxCommand,
@@ -2176,6 +2346,29 @@ mod tests {
                 });
             }
 
+            if matches!(self.behavior, InitialMailboxBehavior::Queued) {
+                return Ok(AgentRunMailboxCommandResult {
+                    command_receipt: AgentRunCommandReceiptView {
+                        client_command_id: command.client_command_id,
+                        status: "accepted".to_string(),
+                        duplicate: false,
+                        message: None,
+                    },
+                    outcome: AgentRunMailboxCommandOutcome::Queued,
+                    mailbox_message: Some(message),
+                    accepted_refs: Some(AgentRunAcceptedRefs {
+                        run_id: command.run_id,
+                        agent_id: command.agent_id,
+                        frame_id: None,
+                        frame_revision: None,
+                        runtime_session_id: Some(command.runtime_session_id),
+                        agent_run_turn_id: None,
+                        protocol_turn_id: None,
+                    }),
+                    runtime_state: None,
+                });
+            }
+
             let claim_token = Uuid::new_v4();
             let claimed = self
                 .mailbox_repo
@@ -2236,6 +2429,20 @@ mod tests {
                 runtime_state: None,
             })
         }
+
+        async fn schedule_initial_mailbox_message(
+            &self,
+            run_id: Uuid,
+            agent_id: Uuid,
+            runtime_session_id: &str,
+            _identity: Option<AuthIdentity>,
+        ) -> Result<(), WorkflowApplicationError> {
+            self.scheduled
+                .lock()
+                .unwrap()
+                .push((run_id, agent_id, runtime_session_id.to_string()));
+            Ok(())
+        }
     }
 
     fn runnable_project_agent(project_id: Uuid) -> ProjectAgent {
@@ -2292,8 +2499,11 @@ mod tests {
             }
         }
 
-        fn service(&self) -> ProjectAgentRunStartService<'_> {
-            ProjectAgentRunStartService::new(
+        fn service_with_initial_mailbox<'a>(
+            &'a self,
+            initial_mailbox: &'a dyn ProjectAgentRunInitialMailboxPort,
+        ) -> ProjectAgentRunStartService<'a> {
+            ProjectAgentRunStartService::new_with_initial_mailbox_port(
                 ProjectAgentRunStartRepos {
                     project_agent_repo: &self.project_agent_repo,
                     lifecycle_run_repo: &self.run_repo,
@@ -2313,6 +2523,7 @@ mod tests {
                     project_agent_lifecycle_launch: self,
                 },
                 &self.runtime_creator,
+                initial_mailbox,
             )
         }
 
@@ -2332,10 +2543,10 @@ mod tests {
         async fn start(
             &self,
             command: ProjectAgentRunStartCommand,
-            initial_message: &dyn ProjectAgentRunInitialMailboxCommandPort,
+            initial_message: &dyn ProjectAgentRunInitialMailboxPort,
         ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
-            let service = self.service();
-            service.start_run(command, initial_message).await
+            let service = self.service_with_initial_mailbox(initial_message);
+            service.start_run(command).await
         }
     }
 
@@ -2386,7 +2597,8 @@ mod tests {
             &runtime_creator,
             &frame_repo,
         );
-        let service = ProjectAgentRunStartService::new(
+        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
+        let service = ProjectAgentRunStartService::new_with_initial_mailbox_port(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
@@ -2406,8 +2618,8 @@ mod tests {
                 project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
+            &initial_message,
         );
-        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
 
         let command = || ProjectAgentRunStartCommand {
             project_id,
@@ -2420,20 +2632,14 @@ mod tests {
             identity: None,
         };
 
-        let first = service
-            .start_run(command(), &initial_message)
-            .await
-            .expect("first start");
+        let first = service.start_run(command()).await.expect("first start");
         assert_eq!(first.turn_id, "turn-1");
         {
             let mut messages = mailbox_repo.items.lock().unwrap();
             assert_eq!(messages.len(), 1);
             messages[0].accepted_agent_run_turn_id = Some("inner-replayed-turn".to_string());
         }
-        let second = service
-            .start_run(command(), &initial_message)
-            .await
-            .expect("duplicate start");
+        let second = service.start_run(command()).await.expect("duplicate start");
 
         assert_eq!(first.run_id, second.run_id);
         assert_eq!(first.agent_id, second.agent_id);
@@ -2538,6 +2744,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_initial_mailbox_schedule_is_owned_by_start_service() {
+        let harness = StartHarness::new();
+        let initial_message = InitialMailboxPort::queued(&harness.mailbox_repo);
+
+        let dispatch = harness
+            .start(harness.command("cmd-start-1"), &initial_message)
+            .await
+            .expect("queued initial message should still accept start envelope");
+
+        assert_eq!(
+            dispatch.initial_message.outcome,
+            AgentRunMailboxCommandOutcome::Queued
+        );
+        assert_eq!(initial_message.captured.lock().unwrap().len(), 1);
+        let scheduled = initial_message.scheduled.lock().unwrap();
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].0, dispatch.run_id);
+        assert_eq!(scheduled[0].1, dispatch.agent_id);
+        assert_eq!(scheduled[0].2, dispatch.runtime_session_id);
+    }
+
+    #[tokio::test]
     async fn delivery_failure_records_initial_message_outcome_without_failing_start() {
         let project_id = Uuid::new_v4();
         let project_agent = runnable_project_agent(project_id);
@@ -2565,7 +2793,8 @@ mod tests {
             &runtime_creator,
             &frame_repo,
         );
-        let service = ProjectAgentRunStartService::new(
+        let initial_message = InitialMailboxPort::failed(&mailbox_repo);
+        let service = ProjectAgentRunStartService::new_with_initial_mailbox_port(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
@@ -2585,23 +2814,20 @@ mod tests {
                 project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
+            &initial_message,
         );
-        let initial_message = InitialMailboxPort::failed(&mailbox_repo);
 
         let dispatch = service
-            .start_run(
-                ProjectAgentRunStartCommand {
-                    project_id,
-                    project_agent_id: project_agent.id,
-                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
-                    client_command_id: "cmd-start-1".to_string(),
-                    executor_config: None,
-                    backend_selection: None,
-                    subject_ref: None,
-                    identity: None,
-                },
-                &initial_message,
-            )
+            .start_run(ProjectAgentRunStartCommand {
+                project_id,
+                project_agent_id: project_agent.id,
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-start-1".to_string(),
+                executor_config: None,
+                backend_selection: None,
+                subject_ref: None,
+                identity: None,
+            })
             .await
             .expect("delivery failure should still accept start envelope");
 
@@ -2646,7 +2872,8 @@ mod tests {
             &runtime_creator,
             &frame_repo,
         );
-        let service = ProjectAgentRunStartService::new(
+        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
+        let service = ProjectAgentRunStartService::new_with_initial_mailbox_port(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
@@ -2666,23 +2893,20 @@ mod tests {
                 project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
+            &initial_message,
         );
-        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
 
         let dispatch = service
-            .start_run(
-                ProjectAgentRunStartCommand {
-                    project_id,
-                    project_agent_id: project_agent.id,
-                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
-                    client_command_id: "cmd-start-1".to_string(),
-                    executor_config: Some(AgentConfig::new("PI_AGENT")),
-                    backend_selection: None,
-                    subject_ref: None,
-                    identity: None,
-                },
-                &initial_message,
-            )
+            .start_run(ProjectAgentRunStartCommand {
+                project_id,
+                project_agent_id: project_agent.id,
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-start-1".to_string(),
+                executor_config: Some(AgentConfig::new("PI_AGENT")),
+                backend_selection: None,
+                subject_ref: None,
+                identity: None,
+            })
             .await
             .expect("resolved draft start");
 
@@ -2739,7 +2963,8 @@ mod tests {
             &runtime_creator,
             &frame_repo,
         );
-        let service = ProjectAgentRunStartService::new(
+        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
+        let service = ProjectAgentRunStartService::new_with_initial_mailbox_port(
             ProjectAgentRunStartRepos {
                 project_agent_repo: &project_agent_repo,
                 lifecycle_run_repo: &run_repo,
@@ -2759,23 +2984,20 @@ mod tests {
                 project_agent_lifecycle_launch: &lifecycle_launch,
             },
             &runtime_creator,
+            &initial_message,
         );
-        let initial_message = InitialMailboxPort::launched(&mailbox_repo);
 
         let error = service
-            .start_run(
-                ProjectAgentRunStartCommand {
-                    project_id,
-                    project_agent_id: project_agent.id,
-                    input: agentdash_agent_protocol::text_user_input_blocks("hello"),
-                    client_command_id: "cmd-start-1".to_string(),
-                    executor_config: None,
-                    backend_selection: None,
-                    subject_ref: None,
-                    identity: None,
-                },
-                &initial_message,
-            )
+            .start_run(ProjectAgentRunStartCommand {
+                project_id,
+                project_agent_id: project_agent.id,
+                input: agentdash_agent_protocol::text_user_input_blocks("hello"),
+                client_command_id: "cmd-start-1".to_string(),
+                executor_config: None,
+                backend_selection: None,
+                subject_ref: None,
+                identity: None,
+            })
             .await
             .expect_err("missing model should stop start");
 

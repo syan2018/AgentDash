@@ -124,9 +124,8 @@ pub use project_agent_context::{
     resolve_project_workspace,
 };
 pub use project_agent_start::{
-    ProjectAgentLifecycleLaunchPort, ProjectAgentRunInitialMailboxCommand,
-    ProjectAgentRunInitialMailboxCommandPort, ProjectAgentRunStartCommand,
-    ProjectAgentRunStartDispatch, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    ProjectAgentLifecycleLaunchPort, ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch,
+    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 pub use runtime_capability::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,

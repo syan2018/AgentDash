@@ -11,6 +11,7 @@ D-005, D-006, D-007, D-017
 ## Research Inputs
 
 - `research/command-mailbox-delivery.md`
+- `research/wi-04-command-mailbox-current-state.md`
 - `research/aggregate-ownership.md`
 - `research/database-physical-design.md`
 

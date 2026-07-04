@@ -12,6 +12,7 @@ D-003, D-005, D-010, D-011, D-013, D-016, D-017, D-019
 
 - `research/database-physical-design.md`
 - `research/command-mailbox-delivery.md`
+- `research/wi-04-command-mailbox-current-state.md`
 - `research/runtime-session-internal-model.md`
 - `research/agentframe-context-surface.md`
 - `research/fork-lineage-baseline.md`

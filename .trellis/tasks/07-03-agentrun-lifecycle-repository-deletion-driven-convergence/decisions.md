@@ -22,6 +22,7 @@
 | `research/aggregate-ownership.md` | 作为聚合归属和仓储资格的主证据 | D-001, D-002, D-016, D-017 | WI-00, WI-10, WI-11 |
 | `research/runtime-session-internal-model.md` | 作为 RuntimeSession 内部化、trace store、port 拆分的主证据 | D-003, D-004, D-010, D-015 | WI-01, WI-02, WI-06 |
 | `research/command-mailbox-delivery.md` | 作为 command / mailbox / delivery 三层事实的主证据 | D-005, D-006, D-007, D-008 | WI-03, WI-04, WI-05 |
+| `research/wi-04-command-mailbox-current-state.md` | 作为当前 CommandReceipt、Mailbox、runtime delivery/commands 使用点和 schema owner 偏差的 file:line 清点证据 | D-005, D-006, D-007, D-017 | WI-04, WI-12 |
 | `research/agentframe-context-surface.md` | 作为 AgentFrame surface 和 ContextDelivery 的主证据 | D-011, D-012 | WI-05, WI-07 |
 | `research/fork-lineage-baseline.md` | 作为 fork baseline 和 lineage 收敛的主证据 | D-013 | WI-08 |
 | `research/projection-permission-api-frontend.md` | 作为 product identity、permission、API/frontend cleanup 的主证据 | D-014, D-015 | WI-01, WI-09 |

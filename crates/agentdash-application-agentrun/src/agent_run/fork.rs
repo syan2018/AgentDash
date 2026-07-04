@@ -2,7 +2,6 @@ use agentdash_agent_protocol::UserInputBlock;
 use agentdash_agent_types::MessageRef;
 use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
-    AgentRunForkMaterializationResult,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_application_runtime_session::session::{SessionBranchingService, SessionForkRequest};
@@ -423,7 +422,6 @@ impl<'a> AgentRunForkService<'a> {
         let result_json = fork_result_json(
             &parent_refs,
             &child_refs,
-            &materialized,
             mailbox_outcome,
             mailbox_message.as_ref().map(|message| message.id),
         );
@@ -491,7 +489,17 @@ impl<'a> AgentRunForkService<'a> {
                 record.id
             ))
         })?;
-        let lineage = lineage_from_result_json(result)?;
+        let lineage = self
+            .repos
+            .agent_run_lineage_repo
+            .find_parent(child_refs.run_id, child_refs.agent_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::Internal(format!(
+                    "AgentRun fork canonical lineage missing for child {}:{}",
+                    child_refs.run_id, child_refs.agent_id
+                ))
+            })?;
         let mailbox_message = match record.mailbox_message_id {
             Some(id) => self.repos.agent_run_mailbox_repo.get_message(id).await?,
             None => None,
@@ -718,7 +726,6 @@ fn base_refs(
 fn fork_result_json(
     parent_refs: &AgentRunAcceptedRefs,
     child_refs: &AgentRunAcceptedRefs,
-    materialized: &AgentRunForkMaterializationResult,
     mailbox_outcome: Option<AgentRunMailboxCommandOutcome>,
     mailbox_message_id: Option<Uuid>,
 ) -> Value {
@@ -726,21 +733,6 @@ fn fork_result_json(
         "outcome": "forked",
         "parent": refs_json(parent_refs),
         "child": refs_json(child_refs),
-        "lineage": {
-            "id": materialized.lineage.id,
-            "parent_run_id": materialized.lineage.parent_run_id,
-            "parent_agent_id": materialized.lineage.parent_agent_id,
-            "child_run_id": materialized.lineage.child_run_id,
-            "child_agent_id": materialized.lineage.child_agent_id,
-            "relation_kind": materialized.lineage.relation_kind,
-            "fork_point_event_seq": materialized.lineage.fork_point_event_seq,
-            "fork_point_ref": materialized.lineage.fork_point_ref_json,
-            "parent_runtime_session_id": materialized.lineage.parent_runtime_session_id,
-            "child_runtime_session_id": materialized.lineage.child_runtime_session_id,
-            "forked_by_user_id": materialized.lineage.forked_by_user_id,
-            "metadata": materialized.lineage.metadata_json,
-            "created_at": materialized.lineage.created_at.to_rfc3339(),
-        },
         "mailbox": {
             "outcome": mailbox_outcome.map(|outcome| outcome.as_str()),
             "mailbox_message_id": mailbox_message_id,
@@ -793,48 +785,6 @@ fn accepted_refs_from_result_json(
             .get("protocol_turn_id")
             .and_then(Value::as_str)
             .map(str::to_string),
-    })
-}
-
-fn lineage_from_result_json(result: &Value) -> Result<AgentRunLineage, WorkflowApplicationError> {
-    let value = result.get("lineage").ok_or_else(|| {
-        WorkflowApplicationError::Internal("AgentRun fork result_json 缺少 lineage".to_string())
-    })?;
-    Ok(AgentRunLineage {
-        id: uuid_from_json(value, "id")?,
-        parent_run_id: uuid_from_json(value, "parent_run_id")?,
-        parent_agent_id: uuid_from_json(value, "parent_agent_id")?,
-        child_run_id: uuid_from_json(value, "child_run_id")?,
-        child_agent_id: uuid_from_json(value, "child_agent_id")?,
-        relation_kind: value
-            .get("relation_kind")
-            .and_then(Value::as_str)
-            .unwrap_or("fork")
-            .to_string(),
-        fork_point_event_seq: value.get("fork_point_event_seq").and_then(Value::as_u64),
-        fork_point_ref_json: value.get("fork_point_ref").cloned(),
-        parent_runtime_session_id: value
-            .get("parent_runtime_session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        child_runtime_session_id: value
-            .get("child_runtime_session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        forked_by_user_id: value
-            .get("forked_by_user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("system")
-            .to_string(),
-        metadata_json: value.get("metadata").cloned(),
-        created_at: value
-            .get("created_at")
-            .and_then(Value::as_str)
-            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
-            .map(|value| value.with_timezone(&chrono::Utc))
-            .unwrap_or_else(chrono::Utc::now),
     })
 }
 
@@ -1112,6 +1062,13 @@ mod tests {
             .explicit_fork(command.clone())
             .await
             .expect("first fork");
+        let receipts = fixture.receipts_for_client("fork-replay").await;
+        let result_json = receipts[0]
+            .result_json
+            .as_ref()
+            .expect("stored fork result");
+        assert!(result_json.get("lineage").is_none());
+
         let replay = fixture
             .service()
             .explicit_fork(command)
@@ -1122,6 +1079,68 @@ mod tests {
         assert_eq!(replay.child_refs.run_id, first.child_refs.run_id);
         assert_eq!(replay.child_refs.agent_id, first.child_refs.agent_id);
         assert_eq!(replay.lineage.id, first.lineage.id);
+    }
+
+    #[tokio::test]
+    async fn accepted_duplicate_fork_errors_when_canonical_lineage_is_missing() {
+        let fixture = ForkFixture::new().await;
+        let command = AgentRunForkCommand {
+            parent_run_id: fixture.parent_run.id,
+            parent_agent_id: fixture.parent_agent.id,
+            current_user_id: "user-child".to_string(),
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            client_command_id: "fork-missing-lineage".to_string(),
+        };
+        let receipt = fixture
+            .seed_pending_fork_receipt(
+                &command.current_user_id,
+                &command.client_command_id,
+                AgentRunCommandKind::AgentRunFork,
+                None,
+                None,
+            )
+            .await;
+        let parent_refs = base_refs(
+            &fixture.parent_run,
+            &fixture.parent_agent,
+            Some(&fixture.parent_frame),
+            &fixture.parent_runtime_session_id,
+        );
+        let child_refs = AgentRunAcceptedRefs {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            frame_id: None,
+            frame_revision: None,
+            runtime_session_id: Some("runtime-child-missing-lineage".to_string()),
+            agent_run_turn_id: None,
+            protocol_turn_id: None,
+        };
+        fixture
+            .receipts
+            .mark_accepted(receipt.id, child_refs.clone())
+            .await
+            .expect("mark accepted");
+        fixture
+            .receipts
+            .store_result_json(
+                receipt.id,
+                fork_result_json(&parent_refs, &child_refs, None, None),
+            )
+            .await
+            .expect("store result");
+
+        let error = fixture
+            .service()
+            .explicit_fork(command)
+            .await
+            .expect_err("canonical lineage is required for replay");
+
+        assert!(
+            matches!(error, WorkflowApplicationError::Internal(message) if message.contains("canonical lineage missing"))
+        );
+        assert_eq!(fixture.session_store.created_child_count().await, 0);
     }
 
     #[tokio::test]

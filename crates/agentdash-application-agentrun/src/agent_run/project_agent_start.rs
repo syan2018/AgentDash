@@ -1658,10 +1658,6 @@ mod tests {
                 .filter(|item| {
                     item.run_id == request.run_id
                         && item.agent_id == request.agent_id
-                        && request
-                            .runtime_session_id
-                            .as_ref()
-                            .is_none_or(|session_id| item.runtime_session_id == *session_id)
                         && request.barriers.contains(&item.barrier)
                         && request
                             .drain_mode
@@ -1673,6 +1669,9 @@ mod tests {
                 })
                 .take(limit)
             {
+                if let Some(runtime_session_id) = request.runtime_session_id.clone() {
+                    item.runtime_session_id = Some(runtime_session_id);
+                }
                 item.status = MailboxMessageStatus::Consuming;
                 item.claim_token = Some(request.claim_token);
                 item.claimed_at = Some(Utc::now());
@@ -1790,7 +1789,7 @@ mod tests {
             &self,
             run_id: Uuid,
             agent_id: Uuid,
-            runtime_session_id: String,
+            runtime_session_id: Option<String>,
             reason: String,
             message: Option<String>,
         ) -> Result<AgentRunMailboxState, DomainError> {
@@ -1819,7 +1818,7 @@ mod tests {
             &self,
             run_id: Uuid,
             agent_id: Uuid,
-            runtime_session_id: String,
+            runtime_session_id: Option<String>,
         ) -> Result<AgentRunMailboxState, DomainError> {
             let state = AgentRunMailboxState {
                 run_id,
@@ -1861,7 +1860,7 @@ mod tests {
             &self,
             run_id: Uuid,
             agent_id: Uuid,
-            runtime_session_id: String,
+            runtime_session_id: Option<String>,
             preference: serde_json::Value,
         ) -> Result<AgentRunMailboxState, DomainError> {
             let state = AgentRunMailboxState {
@@ -2112,7 +2111,7 @@ mod tests {
                 .create_message_idempotent(NewAgentRunMailboxMessage {
                     run_id: command.run_id,
                     agent_id: command.agent_id,
-                    runtime_session_id: command.runtime_session_id.clone(),
+                    runtime_session_id: Some(command.runtime_session_id.clone()),
                     origin: MailboxMessageOrigin::User,
                     source: MailboxSourceIdentity::draft_start(),
                     delivery: MailboxDelivery::LaunchOrContinueTurn,

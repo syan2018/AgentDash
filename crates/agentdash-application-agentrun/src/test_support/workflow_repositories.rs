@@ -934,7 +934,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             }
             if message.run_id != request.run_id
                 || message.agent_id != request.agent_id
-                || request.runtime_session_id.as_deref() != Some(&message.runtime_session_id)
                 || !request.barriers.contains(&message.barrier)
                 || request
                     .drain_mode
@@ -945,6 +944,9 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                 )
             {
                 continue;
+            }
+            if let Some(runtime_session_id) = request.runtime_session_id.clone() {
+                message.runtime_session_id = Some(runtime_session_id);
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
@@ -1052,7 +1054,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
@@ -1074,7 +1076,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
@@ -1108,7 +1110,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         preference: serde_json::Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let mut state = self

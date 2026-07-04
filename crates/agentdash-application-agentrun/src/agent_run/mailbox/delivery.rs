@@ -238,7 +238,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .create_message_idempotent(NewAgentRunMailboxMessage {
                 run_id: run.id,
                 agent_id: agent.id,
-                runtime_session_id: runtime_session_id.clone(),
+                runtime_session_id: Some(runtime_session_id.clone()),
                 origin: command.origin,
                 source: command.source,
                 delivery: policy.delivery,
@@ -375,7 +375,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .create_message_idempotent(NewAgentRunMailboxMessage {
                 run_id: run.id,
                 agent_id: agent.id,
-                runtime_session_id: runtime_session_id.to_string(),
+                runtime_session_id: Some(runtime_session_id.to_string()),
                 origin: MailboxMessageOrigin::Hook,
                 source,
                 delivery: MailboxDelivery::ResumeLaunchSource {
@@ -449,7 +449,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 .create_message_idempotent(NewAgentRunMailboxMessage {
                     run_id: run.id,
                     agent_id: agent.id,
-                    runtime_session_id: runtime_session_id.to_string(),
+                    runtime_session_id: Some(runtime_session_id.to_string()),
                     origin: MailboxMessageOrigin::Hook,
                     source: source.clone(),
                     delivery: MailboxDelivery::SteerActiveTurn { stop_effect },
@@ -505,7 +505,7 @@ impl<'a> AgentRunMailboxService<'a> {
                         .set_backend_selection_preference(
                             run_id,
                             agent_id,
-                            runtime_session_id.to_string(),
+                            Some(runtime_session_id.to_string()),
                             preference,
                         )
                         .await?;

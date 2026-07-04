@@ -234,7 +234,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .resume_state(
                 target.run.id,
                 target.agent.id,
-                target.message_stream.runtime_session_id.clone(),
+                Some(target.message_stream.runtime_session_id.clone()),
             )
             .await?;
         let outcomes = self
@@ -467,7 +467,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 .pause_state(
                     anchor.run_id,
                     anchor.agent_id,
-                    runtime_session_id.to_string(),
+                    Some(runtime_session_id.to_string()),
                     reason.into(),
                     message,
                 )

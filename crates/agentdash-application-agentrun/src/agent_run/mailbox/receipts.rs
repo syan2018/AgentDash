@@ -70,14 +70,25 @@ impl<'a> AgentRunMailboxService<'a> {
         let refs = match accepted_refs {
             Some(refs) => refs,
             None => match message {
-                Some(message) => {
-                    self.base_refs_for_runtime(
-                        message.run_id,
-                        message.agent_id,
-                        &message.runtime_session_id,
-                    )
-                    .await?
-                }
+                Some(message) => match message.runtime_session_id.as_deref() {
+                    Some(runtime_session_id) => {
+                        self.base_refs_for_runtime(
+                            message.run_id,
+                            message.agent_id,
+                            runtime_session_id,
+                        )
+                        .await?
+                    }
+                    None => AgentRunAcceptedRefs {
+                        run_id: message.run_id,
+                        agent_id: message.agent_id,
+                        frame_id: None,
+                        frame_revision: None,
+                        runtime_session_id: None,
+                        agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
+                        protocol_turn_id: message.accepted_protocol_turn_id.clone(),
+                    },
+                },
                 None => AgentRunAcceptedRefs {
                     run_id: Uuid::nil(),
                     agent_id: Uuid::nil(),
@@ -157,7 +168,7 @@ impl<'a> AgentRunMailboxService<'a> {
                     agent_id: message.agent_id,
                     frame_id: Some(frame.id),
                     frame_revision: Some(frame.revision),
-                    runtime_session_id: Some(message.runtime_session_id.clone()),
+                    runtime_session_id: message.runtime_session_id.clone(),
                     agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
                     protocol_turn_id: message.accepted_protocol_turn_id.clone(),
                 }),
@@ -165,10 +176,10 @@ impl<'a> AgentRunMailboxService<'a> {
             },
         };
         let runtime_state = match mailbox_message.as_ref() {
-            Some(message) => {
-                self.inspect_state_optional(&message.runtime_session_id)
-                    .await
-            }
+            Some(message) => match message.runtime_session_id.as_deref() {
+                Some(runtime_session_id) => self.inspect_state_optional(runtime_session_id).await,
+                None => None,
+            },
             None => None,
         };
         Ok(AgentRunMailboxCommandResult {

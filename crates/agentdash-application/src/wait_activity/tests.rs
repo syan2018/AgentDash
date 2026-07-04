@@ -562,7 +562,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
         _reason: String,
         _message: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
@@ -573,7 +573,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
@@ -591,7 +591,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
         _preference: Value,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))

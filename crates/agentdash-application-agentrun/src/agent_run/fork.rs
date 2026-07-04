@@ -1054,8 +1054,8 @@ mod tests {
             .await;
         assert_eq!(child_messages.len(), 1);
         assert_eq!(
-            child_messages[0].runtime_session_id,
-            result.lineage.child_runtime_session_id
+            child_messages[0].runtime_session_id.as_deref(),
+            Some(result.lineage.child_runtime_session_id.as_str())
         );
         assert_eq!(child_messages[0].status, MailboxMessageStatus::Dispatched);
         assert_eq!(

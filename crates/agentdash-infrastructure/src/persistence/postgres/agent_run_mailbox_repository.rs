@@ -240,8 +240,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
             "WITH picked AS (\
                  SELECT id FROM agent_run_mailbox_messages \
                  WHERE run_id=$1 AND agent_id=$2 \
-                   AND ($3::text IS NULL OR runtime_session_id=$3) \
-                  AND status = ANY (ARRAY['accepted','queued','ready_to_consume']) \
+                   AND status = ANY (ARRAY['accepted','queued','ready_to_consume']) \
                    AND barrier = ANY($4) \
                    AND ($5::text IS NULL OR drain_mode=$5) \
                  ORDER BY priority DESC, order_key ASC \
@@ -249,6 +248,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                  FOR UPDATE SKIP LOCKED\
              ) \
              UPDATE agent_run_mailbox_messages m SET \
+                 runtime_session_id=COALESCE($3,runtime_session_id),\
                  status=$7,claim_token=$8,claimed_at=$9,claim_expires_at=$10,\
                  attempt_count=attempt_count+1,updated_at=$9,last_error=NULL \
              FROM picked WHERE m.id=picked.id RETURNING {MAILBOX_COLS_M}"
@@ -416,7 +416,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
@@ -465,7 +465,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(db_err)?;
@@ -525,7 +525,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         preference: Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let now = Utc::now();
@@ -681,7 +681,7 @@ struct AgentRunMailboxMessageRow {
     id: String,
     run_id: String,
     agent_id: String,
-    runtime_session_id: String,
+    runtime_session_id: Option<String>,
     origin: String,
     source_namespace: String,
     source_kind: String,
@@ -789,7 +789,7 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
 struct AgentRunMailboxStateRow {
     run_id: String,
     agent_id: String,
-    runtime_session_id: String,
+    runtime_session_id: Option<String>,
     paused: bool,
     pause_reason: Option<String>,
     pause_message: Option<String>,
@@ -899,7 +899,7 @@ mod tests {
         NewAgentRunMailboxMessage {
             run_id,
             agent_id,
-            runtime_session_id: session_id.to_string(),
+            runtime_session_id: Some(session_id.to_string()),
             origin: MailboxMessageOrigin::User,
             source: MailboxSourceIdentity::composer(),
             delivery: MailboxDelivery::LaunchOrContinueTurn,
@@ -982,6 +982,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nullable_runtime_ref_claims_by_agentrun_owner_and_records_delivery_ref() {
+        let Some(pool) = test_pg_pool("agent_run_mailbox_nullable_runtime_claim").await else {
+            return;
+        };
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = format!("mailbox-session-{}", Uuid::new_v4());
+        insert_mailbox_refs(&pool, run_id, agent_id, &session_id).await;
+
+        let mut message = new_message(
+            run_id,
+            agent_id,
+            &session_id,
+            ConsumptionBarrier::ImmediateIfIdle,
+            MailboxDrainMode::One,
+            "nullable-runtime-message",
+        );
+        message.runtime_session_id = None;
+        let created = repo
+            .create_message(message)
+            .await
+            .expect("create message without runtime ref");
+        assert!(created.runtime_session_id.is_none());
+
+        let claimed = repo
+            .claim_next(AgentRunMailboxClaimRequest {
+                run_id,
+                agent_id,
+                runtime_session_id: Some(session_id.clone()),
+                barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+                drain_mode: Some(MailboxDrainMode::One),
+                limit: 1,
+                claim_token: Uuid::new_v4(),
+                claim_expires_at: Utc::now(),
+            })
+            .await
+            .expect("claim nullable-runtime message");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, created.id);
+        assert_eq!(
+            claimed[0].runtime_session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_runtime_session_nulls_ref_without_deleting_mailbox_message() {
+        let Some(pool) = test_pg_pool("agent_run_mailbox_runtime_delete_set_null").await else {
+            return;
+        };
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = format!("mailbox-session-{}", Uuid::new_v4());
+        insert_mailbox_refs(&pool, run_id, agent_id, &session_id).await;
+
+        let created = repo
+            .create_message(new_message(
+                run_id,
+                agent_id,
+                &session_id,
+                ConsumptionBarrier::ImmediateIfIdle,
+                MailboxDrainMode::One,
+                "runtime-delete-message",
+            ))
+            .await
+            .expect("create message with runtime ref");
+        assert_eq!(
+            created.runtime_session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+
+        sqlx::query("DELETE FROM sessions WHERE id=$1")
+            .bind(&session_id)
+            .execute(&pool)
+            .await
+            .expect("delete runtime session");
+
+        let loaded = repo
+            .get_message(created.id)
+            .await
+            .expect("load message after runtime session delete")
+            .expect("mailbox message survives runtime session delete");
+        assert!(loaded.runtime_session_id.is_none());
+    }
+
+    #[tokio::test]
     async fn pause_marks_existing_messages_paused_and_resume_requeues_them() {
         let Some(pool) = test_pg_pool("agent_run_mailbox_pause_resume").await else {
             return;
@@ -1009,7 +1101,7 @@ mod tests {
         repo.pause_state(
             run_id,
             agent_id,
-            session_id.clone(),
+            Some(session_id.clone()),
             "turn_failed".to_string(),
             Some("paused".to_string()),
         )
@@ -1063,7 +1155,7 @@ mod tests {
             .expect("claim fresh message");
         assert_eq!(fresh_claim.len(), 1);
 
-        repo.resume_state(run_id, agent_id, session_id.clone())
+        repo.resume_state(run_id, agent_id, Some(session_id.clone()))
             .await
             .expect("resume");
         let resumed_claim = repo

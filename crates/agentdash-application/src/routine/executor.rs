@@ -386,7 +386,7 @@ impl RoutineExecutor {
             outcome: result.outcome.as_str().to_string(),
             runtime_session_id: accepted_refs
                 .and_then(|refs| refs.runtime_session_id.clone())
-                .or_else(|| Some(message.runtime_session_id.clone())),
+                .or_else(|| message.runtime_session_id.clone()),
             agent_run_turn_id: accepted_refs.and_then(|refs| refs.agent_run_turn_id.clone()),
             protocol_turn_id: accepted_refs.and_then(|refs| refs.protocol_turn_id.clone()),
         };

@@ -48,7 +48,7 @@ pub struct AgentRunMailboxMessage {
     pub id: Uuid,
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -147,6 +147,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 ### 3. Contracts
 
 - Backend envelope/domain/repository 是 AgentRun control-plane fact source。Codex app-server protocol 是优先复用的 `Thread/Turn` 基线；AgentRun-only scheduling 字段必须显式存在于 envelope/domain enum/adapter/projection/test 中。
+- Mailbox message/state 的 durable owner 是 `run_id + agent_id`。`runtime_session_id` 只作为 nullable delivery/runtime trace ref 保存当前或最近一次投递证据，不能作为 mailbox ownership、权限或 cascade 删除边界。
 - `composer-submit` 接收 canonical `Vec<UserInputBlock>`，claim durable command receipt；当当前用户控制该 AgentRun 时创建 mailbox envelope 并调用 scheduler，当当前用户只能使用但不控制 parent AgentRun 时转入 AgentRun fork-submit use case。response 返回 `AgentRunMessageCommandResponse { command_receipt, outcome, mailbox_message?, accepted_refs?, runtime_state?, fork? }`，其中 `fork` 携带 child AgentRun refs 和 redirect。
 - `source` 是开放式 `MailboxSourceIdentity`，用于审计、projection、dedup、correlation 和未来 adapter governance。内置 composer / draft / hook / canvas / routine / companion 只通过 `namespace + kind` 表达来源身份，原因是 mailbox scheduler 的投递策略已经由 `origin`、`delivery`、`barrier`、`drain_mode`、priority 和 runtime state 承载。
 - Platform broker request 本身先落到 broker-owned durable fact，例如 capability grant 使用 `PermissionGrant` 聚合；只有 broker response 需要 AgentRun 继续处理时，才创建 `MailboxSourceIdentity { namespace: "platform", kind: "permission_grant_response", source_ref: permission_grant_id, ... }` 的 mailbox envelope。原因是 permission policy、runtime capability effect 和 AgentRun continuation 是不同事实边界，mailbox 只承担 AgentRun 后续处理的 durable delivery。

@@ -81,7 +81,7 @@ Launch 前必须在 `FrameLaunchEnvelope` 构造边界完成等价 gate：
 - `launch_surface.capability_state.vfs.active` 必须等于 `launch_surface.vfs`。
 - `launch_surface.capability_state.tool.mcp_servers` 必须等于 `launch_surface.mcp_servers`。
 - `FrameLaunchEnvelope` 不保留与 typed surface 并列的 executor/capability/VFS/MCP 字段；launch planner、turn preparation 与 MCP tool assembly 只读取 `FrameLaunchSurface`，原因是 AgentFrame revision 与 construction draft 应成为 launch 面的同一事实闭包。
-- `CapabilityState.tool.mcp_servers` 是 capability/draft projection，用于 runtime command replay、tool policy 关联和工具装配快照；AgentRun 当前可执行 MCP surface 的事实源仍是 `AgentFrame.mcp_surface_json` / `FrameSurfaceDraft.mcp_servers`。
+- `CapabilityState.tool.mcp_servers` 是 capability/draft projection，用于 runtime command replay、tool policy 关联和工具装配快照；AgentRun 当前可执行 MCP surface 的事实源是 `AgentFrame.surface.mcp_surface` / `FrameSurfaceDraft.mcp_servers`。旧 split columns 只作为 repository projection，不能作为新的写源。
 - pending runtime command 的 overlay 由 frame construction 形成 final capability projection；`requested -> applied` 副作用只能在 connector prompt accepted 后提交。
 
 Frame construction 可以消费 runtime facts，但这些 facts 一旦进入 `FrameLaunchEnvelope` 就必须体现在 `resolution_trace` 中。LaunchPlanner 不允许再读取 cached profile、hub default VFS、local relay workspace root 或 source MCP server 来补齐 VFS/MCP/capability/executor facts。
@@ -196,9 +196,15 @@ Contract:
 - Skill baseline 与 guidelines 从 effective VFS 派生。
 - `CapabilityState.vfs.active` 必须等于 `FrameLaunchEnvelope.launch_surface.vfs`。
 - `CapabilityState.tool.mcp_servers` 必须等于 `FrameLaunchEnvelope.launch_surface.mcp_servers`。
-- `runtime_surface` 是 query DTO，只从 `FrameLaunchEnvelope.launch_surface.vfs` / `AgentFrame.vfs_surface_json` 生成。
+- `runtime_surface` 是 query DTO，只从 `FrameLaunchEnvelope.launch_surface.vfs` / `AgentFrame.surface.vfs_surface` 生成；split `agent_frames.*_json` columns 只作为 read projection / migration fallback。
 - `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_draft` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
 - `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的显式交接结构。`FrameLaunchSurface` 是从该 draft 校验得到的 launch-ready typed surface，原因是 construction validation、launch planning、connector projection 和 query surface 必须观察同一份 typed handoff，且 planner 不应读取 optional draft 字段。
+
+## AgentFrame Surface Document
+
+`AgentFrame.surface` 是 AgentFrame revision 的 canonical runtime surface document，包含 capability state、context slice、VFS surface、MCP surface、execution profile、visible canvas mounts 与 visible workspace module refs。Repository 写入时从 `AgentFrameSurfaceDocument` 投影到 split columns；读取时优先使用 `surface`，缺失时才从 split columns 物化 document。这样迁移期可以保留既有查询投影，同时让新的写路径只有一个 surface source。
+
+Frame construction、accepted launch commit、runtime surface update 和 fork materialization 写 AgentFrame revision 时必须调用 surface document / surface draft 写入路径。直接把 `effective_capability_json`、`vfs_surface_json` 或 `mcp_surface_json` 当作并列写源会造成 launch planner、runtime query 和 context delivery 读取不同事实。
 
 ## Scenario: MCP Runtime Binding During Frame Construction
 

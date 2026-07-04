@@ -49,7 +49,7 @@ Agent runtime module baseline：
 
 `agentdash-api/src/bootstrap/` 承载 API 宿主的装配切片。每个 bootstrap 模块接收启动期输入，返回后续装配真实需要的 output struct，让 `AppState::new_with_plugins` 表达高层构造顺序。
 
-Repository bootstrap 负责 PostgreSQL repository 实例化、`RepositorySet` 聚合、session persistence port、auth session service，以及启动期 Shared Library seed。这样 API composition root 依赖的是装配结果，而不是每个 repository 的具体初始化细节。
+Repository bootstrap 负责 PostgreSQL repository 实例化、composition-root `RepositorySet` 聚合、session persistence port、auth session service，以及启动期 Shared Library seed。这样 API 宿主依赖的是启动期装配结果；进入 route helper 或 application service 后，必须拆成具名 use-case deps，而不是继续传递全量 set。
 
 Relay bootstrap 负责创建 backend registry、backend runtime event channel、shell output registry 与 terminal cache。VFS bootstrap 基于 repository ports、session persistence、relay registry 和插件 mount providers 构建 mount provider registry、VFS service、mutation dispatcher、runtime tool provider 与 materializing MCP relay。这样 session runtime 装配只消费 VFS/relay 的明确输出。
 
@@ -75,7 +75,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。
 - Session 事件、terminal effect outbox 与 runtime command store 的持久化 contract 放在 `agentdash-spi::session_persistence`，原因是这些 record 同时服务 application runtime 与 infrastructure adapter，不能把 infrastructure 绑定到 application 编排模块。
-- `RepositorySet` 放在 application 层，原因是应用用例需要组合多个 port，API 层不应直接知道具体 repository 实现。
+- `RepositorySet` 只作为 application/bootstrap composition result 保留，原因是启动期需要统一持有 repository ports；业务用例使用具名 deps struct，原因是 constructor 签名必须暴露真实 aggregate 依赖，避免 service locator 进入 application 逻辑。
 - PostgreSQL migration 与 SQLite 初始化策略分开维护，原因是云端业务库需要统一可审计 schema 历史，本机会话缓存则由本机 runtime 拥有 per-user 初始化生命周期。
 - Project 授权放在 domain，原因是角色、主体 grant 与 template 可见性属于 Project 聚合语义，MCP 与 API 都需要在不反向依赖 application 的情况下复用同一判定。`ProjectAuthorizationContext` 保留认证身份的 `user_id` 与 `subject` 别名，原因是企业目录解析、登录态 claim 与授权持久化可能使用不同但等价的用户标识，Project 角色判定需要在同一领域入口完成身份收束。Backend 授权放在 application，原因是 backend scope 可能需要组合 Backend 与 Project repository，属于跨聚合用例编排。
 - Canvas access projection 放在 domain，原因是 Canvas 管理 API、Workspace Module descriptor、runtime VFS mount 暴露和 Canvas 文件操作都需要消费同一份 view/edit/runtime-write 语义；各 application adapter 只负责提供当前身份与 Project access 上下文。

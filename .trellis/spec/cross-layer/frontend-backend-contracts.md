@@ -837,7 +837,7 @@ Browser-facing projection fields:
 
 ```rust
 AgentRunWorkspaceView {
-    delivery_runtime_ref?: RuntimeSessionRefDto,
+    delivery_trace_meta?: RuntimeSessionTraceMeta,
     frame_runtime?: AgentFrameRuntimeView,
     resource_surface?: ResolvedVfsSurface,
     resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView,
@@ -854,9 +854,16 @@ runtime_session_execution_anchors(
     launch_frame_id text not null
 );
 
-lifecycle_agents.current_delivery_runtime_session_id text;
-lifecycle_agents.current_delivery_launch_frame_id text;
--- lifecycle_agents.current_frame_id is not part of the runtime frame contract.
+agent_run_delivery_bindings(
+    run_id uuid not null,
+    agent_id uuid not null,
+    runtime_session_id text not null,
+    launch_frame_id uuid not null,
+    status text not null,
+    primary key (run_id, agent_id)
+);
+
+-- lifecycle_agents.current_frame_id/current_delivery_* are not part of the runtime frame contract.
 ```
 
 ### 3. Contracts
@@ -865,7 +872,7 @@ lifecycle_agents.current_delivery_launch_frame_id text;
 - `RuntimeSessionExecutionAnchor.launch_frame_id` is launch evidence; it is not the current workspace surface after runtime adoption.
 - `resolve_current_frame_from_delivery_trace_ref` validates anchor -> agent -> run ownership before returning the effective `AgentFrame`.
 - `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-session views. Frontend-facing AgentRun, Canvas, VFS and Session runtime paths must not choose a frame from a raw agent id when a delivery runtime session is available.
-- `LifecycleAgent.current_delivery_*` stores the current delivery binding. `LifecycleAgent.current_frame_id` is not a domain or API contract field.
+- `AgentRunDeliveryBinding` stores the current delivery binding keyed by `run_id + agent_id`. `LifecycleAgent` does not store current delivery or current frame pointers.
 - Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
 
 ### 4. Validation & Error Matrix

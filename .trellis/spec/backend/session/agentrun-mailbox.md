@@ -48,7 +48,7 @@ pub struct AgentRunMailboxMessage {
     pub id: Uuid,
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: Option<String>,
+    pub delivery_runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -147,7 +147,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 ### 3. Contracts
 
 - Backend envelope/domain/repository 是 AgentRun control-plane fact source。Codex app-server protocol 是优先复用的 `Thread/Turn` 基线；AgentRun-only scheduling 字段必须显式存在于 envelope/domain enum/adapter/projection/test 中。
-- Mailbox message/state 的 durable owner 是 `run_id + agent_id`。`runtime_session_id` 只作为 nullable delivery/runtime trace ref 保存当前或最近一次投递证据，不能作为 mailbox ownership、权限或 cascade 删除边界。
+- Mailbox message/state 的 durable owner 是 `run_id + agent_id`。`delivery_runtime_session_id` 只作为 nullable delivery/runtime trace ref 保存当前或最近一次投递证据，不能作为 mailbox ownership、权限或 cascade 删除边界。PostgreSQL columns 使用 `delivery_runtime_session_id`，原因是字段名必须表达 delivery evidence，而不是 RuntimeSession ownership。
 - `composer-submit` 接收 canonical `Vec<UserInputBlock>`，claim durable command receipt；当当前用户控制该 AgentRun 时创建 mailbox envelope 并调用 scheduler，当当前用户只能使用但不控制 parent AgentRun 时转入 AgentRun fork-submit use case。response 返回 `AgentRunMessageCommandResponse { command_receipt, outcome, mailbox_message?, accepted_refs?, runtime_state?, fork? }`，其中 `fork` 携带 child AgentRun refs 和 redirect。
 - `source` 是开放式 `MailboxSourceIdentity`，用于审计、projection、dedup、correlation 和未来 adapter governance。内置 composer / draft / hook / canvas / routine / companion 只通过 `namespace + kind` 表达来源身份，原因是 mailbox scheduler 的投递策略已经由 `origin`、`delivery`、`barrier`、`drain_mode`、priority 和 runtime state 承载。
 - Platform broker request 本身先落到 broker-owned durable fact，例如 capability grant 使用 `PermissionGrant` 聚合；只有 broker response 需要 AgentRun 继续处理时，才创建 `MailboxSourceIdentity { namespace: "platform", kind: "permission_grant_response", source_ref: permission_grant_id, ... }` 的 mailbox envelope。原因是 permission policy、runtime capability effect 和 AgentRun continuation 是不同事实边界，mailbox 只承担 AgentRun 后续处理的 durable delivery。
@@ -160,7 +160,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - `AgentLoopTurnBoundary + SteerActiveTurn + DrainMode::All` 在 AgentLoopTurn 结束后批量注入下一次 AgentLoopTurn，和 PiAgent `QueueMode::All` 语义对齐。
 - `AgentRunTurnBoundary + LaunchOrContinueTurn + DrainMode::One` 在 AgentRunTurn stop/terminal 边界最多消费一条普通 user-origin message。`BeforeStop` 命中时以 steering continuation 继续当前 loop；terminal callback 只作为 fallback。
 - Hook `UserPromptSubmit` 的 block/context injection 仍由 hook runtime 处理。hook 产出的 delivery message，包括 `AfterTurn` steering、`BeforeStop` steering、follow-up 和 anchored auto-resume，必须写入 mailbox envelope，并使用稳定 `source_dedup_key`。
-- Anchored hook auto-resume 是 terminal / exec completion 的 mailbox wake envelope。`source` 使用 `MailboxSourceIdentity::hook_auto_resume()` 并补齐 `source_ref=terminal_effect_id`、`correlation_ref={runtime_session_id}:{source_turn_id}:{terminal_event_seq}`、metadata 中的 `terminal_effect_id` / `terminal_event_seq` / `source_turn_id` / `runtime_session_id`。`source_dedup_key` 来自完整 source identity，原因是 terminal effect replay、process restart 和 terminal callback fallback 都需要落到同一个可审计 envelope，而不是按普通 command receipt 重复创建消息。
+- Anchored hook auto-resume 是 terminal / exec completion 的 mailbox wake envelope。`source` 使用 `MailboxSourceIdentity::hook_auto_resume()` 并补齐 `source_ref=terminal_effect_id`、`correlation_ref={delivery_runtime_session_id}:{source_turn_id}:{terminal_event_seq}`、metadata 中的 `terminal_effect_id` / `terminal_event_seq` / `source_turn_id` / `delivery_runtime_session_id`。`source_dedup_key` 来自完整 source identity，原因是 terminal effect replay、process restart 和 terminal callback fallback 都需要落到同一个可审计 envelope，而不是按普通 command receipt 重复创建消息。
 - Hook `follow_up` 不是 mailbox delivery class；它归一为 `SteerActiveTurn { stop_effect: ContinueOnStop }`。
 - AgentRun Mailbox runtime adapter 在 Agent Loop 中只作为 `RuntimeTurnBoundaryDelegate` 参与组合。`after_turn` 负责把 hook steering / follow-up 归一为 mailbox envelope 并触发 AgentLoopTurnBoundary 调度，`before_stop` 负责 AgentRunTurnBoundary drain 并在有可消费 envelope 时继续当前 loop。压缩、上下文变换、工具策略与 provider request 观测分别由 hook runtime、admission 或对应 runtime facet 拥有，原因是 mailbox 的事实源是 durable delivery envelope 与 boundary drain state，而不是模型上下文、工具授权或 provider telemetry。
 - AgentRun conversation snapshot 的 waiting projection 读取 open `LifecycleGate` / lifecycle wait record，投影到 `ConversationMailboxSnapshotView.waiting_items`。mailbox message 只承载 wake/result envelope；等待事实由 gate/wait record 持有，原因是前端需要展示"正在等什么"，而 scheduler 需要消费"结果已经到达"。`companion_wait` gate 若 payload 含 `request_type`，投影为 `kind="human"`；companion follow-up / blocking review 投影为 `subagent`；`exec_*` gate 投影为 `exec`。

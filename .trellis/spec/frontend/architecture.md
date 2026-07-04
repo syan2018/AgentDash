@@ -166,6 +166,7 @@ type RoundActionModel = {
 - `AgentRunWorkspacePage` owns product identity: route params, workspace snapshot, command submit, fork redirect navigation, and user-visible action state.
 - `SessionChatView` may render runtime feed entries but executes only passed intents. It does not decide whether a submit mutates parent AgentRun or creates a fork.
 - Runtime stream and projection calls from product workspace use AgentRun refs. A runtime session id can appear as a trace ref inside generated DTOs, but browser code does not compose product URLs from it.
+- AgentRun workspace model names product command/control state as AgentRun conversation/workspace state. When a runtime trace id is needed for stream diagnostics or terminal connector lookup, frontend state names it `delivery_trace_session_id` or `traceSessionId` inside runtime/diagnostic data, not `sessionId` as a product identity.
 - Composer submit handles `AgentRunMessageCommandResponse.fork` or equivalent fork outcome by navigating to `redirect.run_id + redirect.agent_id` and refreshing that workspace.
 - Copy action writes only the current conversation round's last readable agent reply. Tool results, user text, earlier assistant chunks, and reasoning-only entries are excluded from that clipboard payload.
 - Fork action sends a backend-provided stable `SessionMessageRefDto` / turn boundary. Frontend disabled state is UX guidance; backend remains the authority for boundary validity.

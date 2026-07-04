@@ -268,6 +268,85 @@ ADD COLUMN orchestrations_json text DEFAULT '[]'::text NOT NULL;
 ADD COLUMN orchestrations text DEFAULT '[]'::text NOT NULL;
 ```
 
+## Scenario: AgentFrame Surface Document And Projection Columns
+
+### 1. Scope / Trigger
+
+- Trigger: AgentFrame capability/context/VFS/MCP/execution/profile surface changes or schema changes around `agent_frames`.
+- Scope: `agent_frames.surface`, split projection columns, repository row mapping, migration backfill, AgentFrame repository tests.
+
+### 2. Signatures
+
+```sql
+ALTER TABLE agent_frames
+    ADD COLUMN IF NOT EXISTS surface text;
+```
+
+```rust
+pub struct AgentFrame {
+    pub surface: Option<AgentFrameSurfaceDocument>,
+    pub effective_capability_json: Option<Value>,
+    pub context_slice_json: Option<Value>,
+    pub vfs_surface_json: Option<Value>,
+    pub mcp_surface_json: Option<Value>,
+    pub execution_profile_json: Option<Value>,
+}
+
+impl AgentFrame {
+    pub fn surface_document(&self) -> AgentFrameSurfaceDocument;
+    pub fn apply_surface_projection(&mut self);
+}
+```
+
+### 3. Contracts
+
+- `agent_frames.surface` 是 frame revision surface 的 canonical document。
+- split columns 是 repository projection columns；写入时从 `surface_document()` 派生，读取时只在 `surface` 缺失时作为 migration fallback。
+- 新 AgentFrame 写入先填充 `surface`，再调用 projection 逻辑后 insert。
+- backfill migration 从既有 split columns 派生 `surface`，让历史 rows 仍可读取。
+- 没有 live repository query 的索引通过新 migration 删除；保留物理表需要有独立查询、独立更新或重建成本理由。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| row has `surface` and stale split columns | mapper 返回 `surface` document，并用它重新投影 split fields |
+| row has no `surface` but has split columns | mapper 从 split columns 物化 `surface` |
+| `surface` JSON is invalid | repository 返回带 `agent_frames.surface` context 的 mapped `DomainError` |
+| split projection serialization fails | repository 在 insert 前返回 mapped `DomainError` |
+| index has no live query path | 通过新 migration 删除，并在工作项 ledger 记录理由 |
+
+### 5. Good/Base/Boundary Cases
+
+- Good: frame construction builds `FrameSurfaceDraft`, writes `AgentFrame.surface`, and repository projects split columns for existing read helpers.
+- Base: old row without `surface` loads through split-column fallback and becomes a complete `AgentFrameSurfaceDocument`.
+- Boundary mismatch: code writes only `vfs_surface_json` and leaves `surface` absent, causing launch/query/context delivery to read different surface facts.
+
+### 6. Tests Required
+
+- Domain tests cover `surface_document()` fallback and `apply_surface_projection()`.
+- PostgreSQL mapper tests cover surface-overrides-split and split-to-surface fallback.
+- Migration guard runs for any `agent_frames` schema change.
+- Repository roundtrip tests assert insert/select preserves canonical surface and projected fields.
+
+### 7. Boundary / Canonical
+
+#### Boundary
+
+```rust
+frame.vfs_surface_json = Some(vfs_json);
+frame.mcp_surface_json = Some(mcp_json);
+repo.insert_frame(&frame).await?;
+```
+
+#### Canonical
+
+```rust
+frame.surface = Some(surface_document);
+frame.apply_surface_projection();
+repo.insert_frame(&frame).await?;
+```
+
 ---
 
 ## PL/pgSQL 迁移脚本要点

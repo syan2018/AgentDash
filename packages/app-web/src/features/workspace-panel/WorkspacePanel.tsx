@@ -37,11 +37,16 @@ registerBuiltinTabTypes();
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
     const { runtimeData, onWorkspaceModuleOpened } = props;
-    const { projectId, sessionId, extensionRuntime } = runtimeData;
+    const { projectId, extensionRuntime } = runtimeData;
+    const agentRunRuntimeTarget = runtimeData.agentRunRuntimeTarget ?? null;
+    const traceSessionId = runtimeData.runtimeSessionId ?? runtimeData.sessionId;
+    const workspaceKey = agentRunRuntimeTarget
+      ? `agentrun:${agentRunRuntimeTarget.runId}:${agentRunRuntimeTarget.agentId}`
+      : null;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
-    const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
+    const storeWorkspaceKey = useWorkspaceTabStore((s) => s.workspaceKey);
     const registrySnapshot = useTabTypeRegistrySnapshot();
     const fetchWorkspaceModules = useWorkspaceModuleStore((s) => s.fetchProject);
     const storedWorkspaceModuleState = useWorkspaceModuleStore(
@@ -73,17 +78,17 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       },
     }), [registrySnapshot]);
 
-    // 首次挂载或 session 切换时初始化 Tab 状态
+    // 首次挂载或 AgentRun workspace 切换时初始化 Tab 状态
     useEffect(() => {
-      if (storeSessionId !== sessionId) {
-        useWorkspaceTabStore.getState().initialize(sessionId, null, tabLayoutOptions);
+      if (storeWorkspaceKey !== workspaceKey) {
+        useWorkspaceTabStore.getState().initialize(workspaceKey, null, tabLayoutOptions);
       }
-    }, [sessionId, storeSessionId, tabLayoutOptions]);
+    }, [storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
 
     useEffect(() => {
-      if (!runtimeCanvasSurfaceReady || storeSessionId !== sessionId) return;
+      if (!runtimeCanvasSurfaceReady || storeWorkspaceKey !== workspaceKey) return;
       useWorkspaceTabStore.getState().pruneInvalidTabs(tabLayoutOptions);
-    }, [runtimeCanvasSurfaceReady, sessionId, storeSessionId, tabLayoutOptions]);
+    }, [runtimeCanvasSurfaceReady, storeWorkspaceKey, tabLayoutOptions, workspaceKey]);
 
     const workspaceModuleState = useMemo(() => {
       if (storedWorkspaceModuleState) return storedWorkspaceModuleState;
@@ -154,7 +159,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       setCanvasOpenError(null);
       try {
         await openUserCanvasModule({
-          runtimeSessionId: sessionId,
           option,
           openOrActivate: (typeId, uri, refreshContent) => {
             const tabId = useWorkspaceTabStore
@@ -175,7 +179,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       }
     }, [
       onWorkspaceModuleOpened,
-      sessionId,
       tabLayoutOptions,
     ]);
 
@@ -230,11 +233,11 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       return type.renderContent({
         uri: activeTab.uri,
         tabId: activeTab.id,
-        sessionId,
+        sessionId: traceSessionId,
         isActive: true,
         refreshRevision: activeTab.refreshRevision,
       });
-    }, [activeTab, registrySnapshot, sessionId]);
+    }, [activeTab, registrySnapshot, traceSessionId]);
 
     return (
       <WorkspaceDataProvider value={workspaceData}>

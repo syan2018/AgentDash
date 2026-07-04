@@ -556,7 +556,6 @@ describe("Canvas workspace module selector and user-open flow", () => {
     const openOrActivate = vi.fn();
 
     await openUserCanvasModule({
-      runtimeSessionId: "session-1",
       option: {
         module_id: "canvas:cvs-mount-a",
         view_key: "preview",
@@ -573,7 +572,7 @@ describe("Canvas workspace module selector and user-open flow", () => {
     );
   });
 
-  it("does not open a tab without a runtime session or concrete Canvas presentation", async () => {
+  it("does not open a tab without a concrete Canvas presentation", async () => {
     const openOrActivate = vi.fn();
     const option = {
       module_id: "canvas:cvs-mount-a",
@@ -583,14 +582,13 @@ describe("Canvas workspace module selector and user-open flow", () => {
     };
 
     await expect(openUserCanvasModule({
-      runtimeSessionId: null,
       option,
       openOrActivate,
-    })).rejects.toThrow("当前 AgentRun 尚未就绪，无法打开 Canvas。");
-    expect(openOrActivate).not.toHaveBeenCalled();
+    })).resolves.toBeUndefined();
+    expect(openOrActivate).toHaveBeenCalledWith("canvas", "canvas://cvs-candidate", true);
 
+    openOrActivate.mockClear();
     await expect(openUserCanvasModule({
-      runtimeSessionId: "session-1",
       option: {
         ...option,
         presentation_uri: "canvas://",

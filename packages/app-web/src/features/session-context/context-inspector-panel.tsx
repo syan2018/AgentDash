@@ -68,7 +68,7 @@ function describeTrigger(trigger: string): string {
 }
 
 interface ContextInspectorPanelProps {
-  sessionId: string;
+  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
 }
 
@@ -89,6 +89,11 @@ export function ContextInspectorPanel({
   const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
 
   const loadEvents = useCallback(async () => {
+    if (!agentRunTarget && !sessionId) {
+      setEvents([]);
+      setError(null);
+      return;
+    }
     try {
       const queryParams = {
         scope: scopeFilter || undefined,
@@ -97,7 +102,9 @@ export function ContextInspectorPanel({
       };
       const list = agentRunTarget
         ? await fetchAgentRunContextAudit(agentRunTarget, queryParams)
-        : await fetchContextAudit(sessionId, queryParams);
+        : sessionId
+          ? await fetchContextAudit(sessionId, queryParams)
+          : [];
       setEvents(list);
       setError(null);
     } catch (err) {

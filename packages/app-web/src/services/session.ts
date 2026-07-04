@@ -7,7 +7,7 @@ import type {
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
 import type { JsonValue } from "../generated/common-contracts";
-import type { SessionTabLayout } from "../features/workspace-runtime";
+import type { WorkspaceTabLayout } from "../features/workspace-runtime";
 
 export type TitleSource = "auto" | "source" | "user";
 
@@ -104,7 +104,7 @@ export async function fetchSessionExecutionState(
 
 // ─── Tab 布局持久化 ──────────────────────────────────
 
-function isSessionTabLayout(value: unknown): value is SessionTabLayout {
+function isWorkspaceTabLayout(value: unknown): value is WorkspaceTabLayout {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -114,38 +114,38 @@ function isSessionTabLayout(value: unknown): value is SessionTabLayout {
 }
 
 /**
- * 保存 Tab 布局到 session meta。
+ * 保存 AgentRun workspace Tab 布局。
  */
-export async function saveSessionTabLayout(
-  sessionId: string,
-  layout: SessionTabLayout,
+export async function saveWorkspaceTabLayout(
+  workspaceKey: string,
+  layout: WorkspaceTabLayout,
 ): Promise<void> {
   await settingsApi.update(
     { scope: "user" },
-    [{ key: sessionTabLayoutSettingKey(sessionId), value: sessionTabLayoutToJson(layout) }],
+    [{ key: workspaceTabLayoutSettingKey(workspaceKey), value: workspaceTabLayoutToJson(layout) }],
   );
 }
 
 /**
- * 从 session meta 加载 Tab 布局。
+ * 加载 AgentRun workspace Tab 布局。
  * 返回 null 表示无已保存布局。
  */
-export async function loadSessionTabLayout(
-  sessionId: string,
-): Promise<SessionTabLayout | null> {
+export async function loadWorkspaceTabLayout(
+  workspaceKey: string,
+): Promise<WorkspaceTabLayout | null> {
   const settings = await settingsApi.list({
     scope: "user",
-    category: sessionTabLayoutSettingKey(sessionId),
+    category: workspaceTabLayoutSettingKey(workspaceKey),
   });
-  const setting = settings.find((entry) => entry.key === sessionTabLayoutSettingKey(sessionId));
-  return isSessionTabLayout(setting?.value) ? setting.value : null;
+  const setting = settings.find((entry) => entry.key === workspaceTabLayoutSettingKey(workspaceKey));
+  return isWorkspaceTabLayout(setting?.value) ? setting.value : null;
 }
 
-function sessionTabLayoutSettingKey(sessionId: string): string {
-  return `ui.session_tab_layout.${sessionId}`;
+function workspaceTabLayoutSettingKey(workspaceKey: string): string {
+  return `ui.agentrun_workspace_tab_layout.${workspaceKey}`;
 }
 
-function sessionTabLayoutToJson(layout: SessionTabLayout): JsonValue {
+function workspaceTabLayoutToJson(layout: WorkspaceTabLayout): JsonValue {
   return {
     tabs: layout.tabs.map((tab) => ({
       type_id: tab.type_id,

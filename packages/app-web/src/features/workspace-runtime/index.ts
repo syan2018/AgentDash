@@ -11,9 +11,9 @@ export {
   type WorkspaceData,
 } from "./model/workspace-data-context";
 export type {
-  SessionTabLayout,
   TabContentRenderProps,
   TabInstance,
   TabTypeDescriptor,
   TabURI,
+  WorkspaceTabLayout,
 } from "./model/tab-types";

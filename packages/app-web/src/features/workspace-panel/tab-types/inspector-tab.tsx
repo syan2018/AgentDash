@@ -11,11 +11,11 @@ import { InspectorIcon } from "./icons";
 
 function InspectorTabContent() {
   const { sessionId, agentRunRuntimeTarget, hookRuntime } = useWorkspaceData();
-  if (!sessionId) {
+  if (!agentRunRuntimeTarget && !sessionId) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
-          需要先建立会话才能查看上下文审计。
+          需要先进入 AgentRun workspace 或诊断会话才能查看上下文审计。
         </p>
       </div>
     );

@@ -167,6 +167,65 @@ shell 服务导航与展示，conversation snapshot 服务可执行控制面。
 authority 来自最新 `AgentConversationSnapshot.commands`；`loading` / `refreshing` / `error` /
 stale projection 状态下上一帧 snapshot 只能用于展示诊断。
 
+## AgentRun Workspace Tab Layout State
+
+### 1. Scope / Trigger
+
+AgentRun workspace 右侧 WorkspacePanel 的 tab layout 是用户工作台偏好状态。它随 `run_id + agent_id`
+稳定存在，而不是随 delivery RuntimeSession 轮换。
+
+### 2. Signatures
+
+```ts
+type WorkspaceKey = `agentrun:${string}:${string}`;
+
+useWorkspaceTabStore.getState().initialize(workspaceKey, savedLayout, options);
+saveWorkspaceTabLayout(workspaceKey, layout);
+loadWorkspaceTabLayout(workspaceKey);
+```
+
+User setting key:
+
+```text
+ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
+```
+
+### 3. Contracts
+
+- `workspaceTabStore.workspaceKey` 表达当前 AgentRun workspace layout identity。
+- WorkspacePanel 从 `WorkspaceRuntimeData.agentRunRuntimeTarget` 构造 `agentrun:{runId}:{agentId}`。
+- `WorkspaceTabLayout` 只保存 tab type、URI、title、pinned 和 active URI；它不保存 runtime trace state。
+- RuntimeSession id 仍可作为 tab content 的 trace/diagnostic prop，例如 terminal event projection、context audit fallback 或 raw session detail。
+- Canvas tab opening uses concrete `presentation_uri` and active resource surface; persisted layout key stays AgentRun scoped.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| AgentRun target changes | WorkspacePanel re-initializes tab layout with the new AgentRun workspace key |
+| Delivery RuntimeSession changes for the same AgentRun | WorkspacePanel keeps the same layout key and refreshes runtime-backed tab content |
+| No AgentRun target is available | WorkspacePanel initializes with no persisted layout key and can render pinned/default local state |
+| Saved tab URI no longer exists in current runtime surface | `pruneInvalidTabs` removes dynamic tabs that cannot be opened in the current surface |
+| Context inspector has AgentRun target | Inspector uses AgentRun scoped audit path even if raw session id is absent |
+| Context inspector only has raw session id | Inspector can still render the diagnostic fallback path |
+
+### 5. Reference Cases
+
+- AgentRun workspace opens, initializes pinned tabs, then restores user dynamic tabs from `ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}`.
+- Same AgentRun receives a new current delivery RuntimeSession; terminal/context tab content refreshes from new runtime refs, while tab order and dynamic URIs remain user layout state.
+- Canvas module presentation opens from `canvas://{canvas_mount_id}`; the layout records that URI, and current resource surface determines whether it remains openable.
+
+### 6. Tests Required
+
+- Store test asserts `workspaceKey` is stored and exported layout remains type/URI based.
+- Session service test asserts `saveWorkspaceTabLayout` and `loadWorkspaceTabLayout` use the AgentRun workspace setting key.
+- Workspace module/panel test asserts Canvas open does not require a RuntimeSession id when a concrete presentation URI is available.
+- Frontend typecheck asserts `WorkspaceTabLayout` exports are consistent across `workspace-runtime`, `workspace-panel`, services and store.
+
+### 7. Canonical Boundary
+
+Workspace layout persistence belongs to the AgentRun workspace key because it represents user navigation preference for that AgentRun. RuntimeSession identity belongs to runtime trace data and is passed only to components that read diagnostic events, projections or terminal event streams.
+
 `session_meta_updated`、`Platform(SessionMetaUpdate)` 与 RuntimeSession event stream 仍是 feed
 和 debug 面板可渲染的事实。工作台标题编辑和状态刷新通过 AgentRun Workspace shell 刷新或后续
 AgentRun shell event 进入 store，原因是用户可见工作台 shell 与 trace metadata 的更新节奏和事实源

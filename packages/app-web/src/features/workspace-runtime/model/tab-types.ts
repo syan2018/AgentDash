@@ -34,7 +34,7 @@ export interface TabInstance {
   refreshRevision: number;
 }
 
-export interface SessionTabLayout {
+export interface WorkspaceTabLayout {
   tabs: Array<{
     type_id: string;
     uri: string;

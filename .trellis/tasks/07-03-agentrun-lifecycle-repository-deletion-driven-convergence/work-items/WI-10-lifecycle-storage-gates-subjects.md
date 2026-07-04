@@ -12,6 +12,7 @@ D-002, D-014, D-016, D-017
 
 - `research/aggregate-ownership.md`
 - `research/database-physical-design.md`
+- `research/wi-10-lifecycle-storage-usage-inventory.md`
 
 ## Scope
 

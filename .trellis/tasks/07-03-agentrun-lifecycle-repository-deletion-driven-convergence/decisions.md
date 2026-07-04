@@ -26,6 +26,7 @@
 | `research/fork-lineage-baseline.md` | 作为 fork baseline 和 lineage 收敛的主证据 | D-013 | WI-08 |
 | `research/projection-permission-api-frontend.md` | 作为 product identity、permission、API/frontend cleanup 的主证据 | D-014, D-015 | WI-01, WI-09 |
 | `research/database-physical-design.md` | 作为 JSONB / child table / independent table 选择规则的主证据 | D-016, D-017 | WI-10, WI-12 |
+| `research/wi-10-lifecycle-storage-usage-inventory.md` | 作为 Lifecycle context、view projection、gates、subjects、lineage、orchestrations、tasks、execution log 的 file:line 清点证据 | Q-001, Q-002, Q-003, D-016, D-017, D-019 | WI-10, WI-12 |
 | `references/adversarial-first-principles-review.md` | 作为 P0/P1 偏离和删除优先级的总证据 | D-001 到 D-019 | 全部工作项 |
 | `inventory.md` | 作为 WI-00 清点结果和执行前开放决策回填 | D-001 到 D-019 | 全部工作项 |
 

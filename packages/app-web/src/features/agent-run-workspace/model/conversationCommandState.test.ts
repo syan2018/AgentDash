@@ -31,7 +31,6 @@ function staleGuard(commandId: string): ConversationCommandStaleGuardView {
     snapshot_id: "snapshot-1",
     run_id: "run-1",
     agent_id: "agent-1",
-    runtime_session_id: "session-1",
     active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
   };
 }

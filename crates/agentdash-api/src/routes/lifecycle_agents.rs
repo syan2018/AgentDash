@@ -2204,7 +2204,6 @@ fn conversation_stale_guard_to_contract(
         run_id: guard.run_id,
         agent_id: guard.agent_id,
         frame_id: guard.frame_id,
-        runtime_session_id: guard.runtime_session_id,
         active_turn_id: guard.active_turn_id,
     }
 }
@@ -2220,7 +2219,6 @@ fn command_precondition_to_application(
             run_id: command.stale_guard.run_id,
             agent_id: command.stale_guard.agent_id,
             frame_id: command.stale_guard.frame_id,
-            runtime_session_id: command.stale_guard.runtime_session_id,
             active_turn_id: command.stale_guard.active_turn_id,
         },
     }
@@ -3154,7 +3152,7 @@ mod tests {
 
         let delivery_runtime = delivery_runtime.expect("current delivery");
         assert_eq!(delivery_runtime.runtime_session_id, "runtime-current");
-        assert_eq!(delivery_runtime.frame_id, current_binding.current_frame_id);
+        assert_eq!(delivery_runtime.frame_id, current_frame.id);
     }
 
     #[test]

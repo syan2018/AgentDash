@@ -1076,9 +1076,6 @@ pub struct ConversationCommandStaleGuardView {
     pub frame_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub runtime_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
     pub active_turn_id: Option<String>,
 }
 

@@ -112,7 +112,6 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
       snapshot_id: `snapshot-${commandId}`,
       run_id: "run-1",
       agent_id: "agent-1",
-      runtime_session_id: "session-1",
       active_turn_id: undefined,
     },
   };
@@ -364,7 +363,6 @@ describe("AgentRun workspace conversation command authority", () => {
         snapshot_id: "snapshot-cmd-submit",
         run_id: "run-1",
         agent_id: "agent-1",
-        runtime_session_id: "session-1",
         active_turn_id: "turn-1",
       },
     };

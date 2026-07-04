@@ -36,7 +36,6 @@ function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRu
       snapshot_id: `snapshot-${kind}`,
       run_id: "run/1",
       agent_id: "agent/1",
-      runtime_session_id: "session-1",
       active_turn_id: kind === "submit_message" ? undefined : "turn-1",
     },
   };

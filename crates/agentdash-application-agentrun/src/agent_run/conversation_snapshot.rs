@@ -144,7 +144,6 @@ pub struct ConversationCommandStaleGuardModel {
     pub run_id: String,
     pub agent_id: String,
     pub frame_id: Option<String>,
-    pub runtime_session_id: Option<String>,
     pub active_turn_id: Option<String>,
 }
 
@@ -525,7 +524,6 @@ impl ConversationCommandAvailabilityResolver {
             input.run_id,
             input.agent_id,
             input.frame_ref,
-            input.delivery_runtime_session_id.as_deref(),
             &input.execution_state,
             input.terminal_agent,
         );
@@ -849,7 +847,6 @@ fn command_view(
             run_id: input.run_id.to_string(),
             agent_id: input.agent_id.to_string(),
             frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-            runtime_session_id: input.delivery_runtime_session_id.clone(),
             active_turn_id: active_turn_id(&input.execution_state),
         },
     }
@@ -859,17 +856,15 @@ pub fn conversation_snapshot_id(
     run_id: Uuid,
     agent_id: Uuid,
     frame_ref: Option<(Uuid, i32)>,
-    delivery_runtime_session_id: Option<&str>,
     execution_state: &SessionExecutionState,
     terminal_agent: bool,
 ) -> String {
     let frame = frame_ref
         .map(|(frame_id, revision)| format!("{frame_id}:{revision}"))
         .unwrap_or_else(|| "none".to_string());
-    let runtime = delivery_runtime_session_id.unwrap_or("none");
     let turn = active_turn_id(execution_state).unwrap_or_else(|| "none".to_string());
     format!(
-        "agentrun:{run_id}:{agent_id}:frame:{frame}:runtime:{runtime}:state:{}:turn:{turn}:terminal:{terminal_agent}",
+        "agentrun:{run_id}:{agent_id}:frame:{frame}:state:{}:turn:{turn}:terminal:{terminal_agent}",
         conversation_execution_state_code(execution_state)
     )
 }
@@ -1341,6 +1336,23 @@ mod tests {
                 .iter()
                 .all(|command| { command.stale_guard.snapshot_id == snapshot.snapshot_id })
         );
+    }
+
+    #[test]
+    fn snapshot_id_ignores_delivery_runtime_session() {
+        let input = ConversationCommandAvailabilityInput::from_snapshot_input(&snapshot_input(
+            SessionExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+        let mut rotated_runtime = input.clone();
+        rotated_runtime.delivery_runtime_session_id = Some("runtime-2".to_string());
+
+        let first = ConversationCommandAvailabilityResolver::resolve(input);
+        let second = ConversationCommandAvailabilityResolver::resolve(rotated_runtime);
+
+        assert_eq!(first.snapshot_id, second.snapshot_id);
+        assert!(!first.snapshot_id.contains(":runtime:"));
     }
 
     #[test]

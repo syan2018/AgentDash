@@ -375,13 +375,11 @@ fn ensure_command_submission_matches_availability(
 ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
     let current_active_turn_id = availability.active_turn_id.clone();
     let current_frame_id = availability.frame_id.clone();
-    let current_runtime_session_id = availability.runtime_session_id.as_deref();
     let stale_detail = |reason: &str| {
         serde_json::json!({
             "reason": reason,
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
-            "runtime_session_id": context.runtime_session_id,
             "state": availability.execution_status,
             "expected_command_kind": expected_kind,
             "submitted_command_kind": command.command_kind,
@@ -418,13 +416,6 @@ fn ensure_command_submission_matches_availability(
             &availability_execution_state(availability),
             is_terminal_availability(availability),
             stale_detail("agent_run_identity_mismatch"),
-        ));
-    }
-    if command.stale_guard.runtime_session_id.as_deref() != current_runtime_session_id {
-        return Err(stale_command_conflict(
-            &availability_execution_state(availability),
-            is_terminal_availability(availability),
-            stale_detail("runtime_session_mismatch"),
         ));
     }
     if command.stale_guard.frame_id != current_frame_id {
@@ -466,7 +457,7 @@ fn ensure_context_targets_current_delivery(
         &SessionExecutionState::Idle,
         false,
         serde_json::json!({
-            "reason": "runtime_session_mismatch",
+            "reason": "delivery_runtime_binding_mismatch",
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
             "expected_runtime_session_id": selection.runtime_session_id,
@@ -821,6 +812,28 @@ mod tests {
         let detail = payload.detail.expect("stale detail");
         assert_eq!(detail["reason"], "snapshot_id_mismatch");
         assert_eq!(detail["snapshot_refresh_required"], true);
+    }
+
+    #[test]
+    fn command_policy_accepts_delivery_runtime_rotation() {
+        let running = SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        };
+        let (run, agent) = test_context();
+        let context = policy_context(&run, &agent);
+        let mut current = availability(context, running);
+        let command =
+            command_from_availability(&current, ConversationCommandKindModel::SubmitMessage);
+
+        current.runtime_session_id = Some("session-2".to_string());
+
+        ensure_command_submission_matches_availability(
+            &command,
+            ConversationCommandKindModel::SubmitMessage,
+            context,
+            &current,
+        )
+        .expect("runtime delivery rotation is not a stale command precondition");
     }
 
     #[test]

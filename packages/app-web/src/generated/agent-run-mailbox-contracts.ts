@@ -58,7 +58,7 @@ export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary
 
 export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "move_mailbox_message" | "resume_mailbox" | "cancel";
 
-export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
+export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, active_turn_id?: string, };
 
 export type LifecycleRunRefDto = { run_id: string, };
 

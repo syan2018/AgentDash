@@ -1190,13 +1190,10 @@ async fn list_agent_run_runtime_events(
 ) -> Result<impl IntoResponse, ApiError> {
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::list_session_events(
-        State(state),
-        CurrentUser(current_user),
-        Path(runtime_session_id),
-        Query(query),
-    )
-    .await
+    Ok(Json(
+        sessions::load_runtime_session_events_page(state.as_ref(), &runtime_session_id, query)
+            .await?,
+    ))
 }
 
 async fn get_agent_run_runtime_context_projection(
@@ -1206,12 +1203,10 @@ async fn get_agent_run_runtime_context_projection(
 ) -> Result<impl IntoResponse, ApiError> {
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::get_session_context_projection(
-        State(state),
-        CurrentUser(current_user),
-        Path(runtime_session_id),
-    )
-    .await
+    Ok(Json(
+        sessions::load_runtime_session_context_projection(state.as_ref(), &runtime_session_id)
+            .await?,
+    ))
 }
 
 async fn get_agent_run_runtime_context_audit(
@@ -1222,13 +1217,10 @@ async fn get_agent_run_runtime_context_audit(
 ) -> Result<impl IntoResponse, ApiError> {
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::get_session_context_audit(
-        State(state),
-        CurrentUser(current_user),
-        Path(runtime_session_id),
-        Query(query),
-    )
-    .await
+    Ok(Json(
+        sessions::load_runtime_session_context_audit(state.as_ref(), &runtime_session_id, query)
+            .await?,
+    ))
 }
 
 async fn agent_run_runtime_stream_ndjson(
@@ -1240,14 +1232,8 @@ async fn agent_run_runtime_stream_ndjson(
 ) -> Result<impl IntoResponse, ApiError> {
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::session_stream_ndjson(
-        State(state),
-        CurrentUser(current_user),
-        Path(runtime_session_id),
-        headers,
-        Query(query),
-    )
-    .await
+    sessions::runtime_session_stream_ndjson(state.as_ref(), runtime_session_id, headers, query)
+        .await
 }
 
 async fn approve_agent_run_tool_call(

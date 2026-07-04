@@ -11,7 +11,7 @@ use axum::{
     body::{Body, Bytes},
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
@@ -548,21 +548,45 @@ pub async fn list_session_events(
         ProjectPermission::Use,
     )
     .await?;
+    Ok(Json(
+        load_runtime_session_events_page(state.as_ref(), &session_id, query).await?,
+    ))
+}
+
+pub(crate) async fn load_runtime_session_events_page(
+    state: &AppState,
+    session_id: &str,
+    query: SessionEventsQuery,
+) -> Result<SessionEventsPageResponse, ApiError> {
+    ensure_runtime_session_trace_exists(state, session_id).await?;
     let after_seq = query.after_seq.unwrap_or(0);
     let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
     let page = state
         .services
         .session_eventing
-        .list_event_page(&session_id, after_seq, limit)
+        .list_event_page(session_id, after_seq, limit)
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(SessionEventsPageResponse {
+    Ok(SessionEventsPageResponse {
         snapshot_seq: page.snapshot_seq,
         events: page.events.into_iter().map(map_session_event).collect(),
         has_more: page.has_more,
         next_after_seq: page.next_after_seq,
-    }))
+    })
+}
+
+async fn ensure_runtime_session_trace_exists(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(), ApiError> {
+    let _meta = state
+        .services
+        .session_core
+        .get_session_meta(session_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -764,14 +788,24 @@ pub async fn get_session_context_projection(
         ProjectPermission::Use,
     )
     .await?;
+    Ok(Json(
+        load_runtime_session_context_projection(state.as_ref(), &session_id).await?,
+    ))
+}
+
+pub(crate) async fn load_runtime_session_context_projection(
+    state: &AppState,
+    session_id: &str,
+) -> Result<SessionProjectionViewResponse, ApiError> {
+    ensure_runtime_session_trace_exists(state, session_id).await?;
     let projection = state
         .services
         .session_eventing
-        .build_context_projection_read_model(&session_id)
+        .build_context_projection_read_model(session_id)
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(session_context_projection_to_response(projection)))
+    Ok(session_context_projection_to_response(projection))
 }
 
 fn session_context_projection_to_response(
@@ -936,6 +970,16 @@ pub async fn session_stream_ndjson(
         ProjectPermission::Use,
     )
     .await?;
+    runtime_session_stream_ndjson(state.as_ref(), session_id, headers, query).await
+}
+
+pub(crate) async fn runtime_session_stream_ndjson(
+    state: &AppState,
+    session_id: String,
+    headers: HeaderMap,
+    query: NdjsonStreamQuery,
+) -> Result<Response, ApiError> {
+    ensure_runtime_session_trace_exists(state, &session_id).await?;
     let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
         .or(query.since_id)
         .unwrap_or(0);
@@ -1052,7 +1096,8 @@ pub async fn session_stream_ndjson(
             (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         Body::from_stream(stream),
-    ))
+    )
+        .into_response())
 }
 
 fn parse_resume_from_header(
@@ -1156,6 +1201,17 @@ pub async fn get_session_context_audit(
         ProjectPermission::Use,
     )
     .await?;
+    Ok(Json(
+        load_runtime_session_context_audit(state.as_ref(), &session_id, query).await?,
+    ))
+}
+
+pub(crate) async fn load_runtime_session_context_audit(
+    state: &AppState,
+    session_id: &str,
+    query: ContextAuditQuery,
+) -> Result<Vec<ContextAuditEventDto>, ApiError> {
+    ensure_runtime_session_trace_exists(state, session_id).await?;
     let scope = match query.scope.as_deref() {
         Some(raw) => match parse_scope_tag(raw) {
             Some(s) => Some(s),
@@ -1171,7 +1227,7 @@ pub async fn get_session_context_audit(
         source_prefix: query.source_prefix.clone(),
     };
 
-    let events = state.services.audit_bus.query(&session_id, &filter);
+    let events = state.services.audit_bus.query(session_id, &filter);
     let dtos: Vec<ContextAuditEventDto> = events
         .into_iter()
         .map(|event| {
@@ -1206,5 +1262,5 @@ pub async fn get_session_context_audit(
         })
         .collect();
 
-    Ok(Json(dtos))
+    Ok(dtos)
 }

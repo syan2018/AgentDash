@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { authenticatedFetch } from "../../../api/client";
-import { invokeProjectExtensionRuntimeChannel } from "../../../services/extensionRuntime";
+import { invokeAgentRunExtensionRuntimeChannel } from "../../../services/extensionRuntime";
 import type {
   CanvasRuntimeSnapshot,
   ExtensionWorkspaceTabProjectionResponse,
@@ -110,7 +110,7 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
               workspaceData,
               tab,
               request,
-              invokeChannel: invokeProjectExtensionRuntimeChannel,
+              invokeChannel: invokeAgentRunExtensionRuntimeChannel,
             })}
         />
       </div>

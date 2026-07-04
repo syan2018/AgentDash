@@ -61,7 +61,7 @@ Validation:
 
 Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
-Extension webview bridge 的 `runtime.invoke_action` 只校验 Project、Session、backend 与 action key 这些宿主上下文，并把 `action_key + input` 交给后端 RuntimeGateway，原因是具体 action 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
+Extension webview bridge 的 `runtime.invoke_action` 与 `extension.invoke_channel` 校验 Project、AgentRun target、backend 与 action/channel key，并把 generated request DTO 交给 AgentRun scoped extension runtime service。后端从 AgentRun current delivery 推导内部 runtime context，原因是具体 action/channel 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决，而产品执行身份属于 AgentRun workspace。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
 
 新增或修改跨层 DTO 时同步运行：
 

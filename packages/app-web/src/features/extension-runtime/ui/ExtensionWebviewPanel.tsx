@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
-  invokeProjectExtensionRuntimeAction,
-  invokeProjectExtensionRuntimeChannel,
+  invokeAgentRunExtensionRuntimeAction,
+  invokeAgentRunExtensionRuntimeChannel,
 } from "../../../services/extensionRuntime";
 import { readSurfaceFile, writeSurfaceFile } from "../../../services/vfs";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
@@ -30,8 +30,8 @@ const webviewBridgeServices: ExtensionWebviewBridgeServices = {
   openTab(typeId, uri) {
     useWorkspaceTabStore.getState().openOrActivate(typeId, uri);
   },
-  invokeAction: invokeProjectExtensionRuntimeAction,
-  invokeChannel: invokeProjectExtensionRuntimeChannel,
+  invokeAction: invokeAgentRunExtensionRuntimeAction,
+  invokeChannel: invokeAgentRunExtensionRuntimeChannel,
   readFile: readSurfaceFile,
   writeFile: writeSurfaceFile,
 };

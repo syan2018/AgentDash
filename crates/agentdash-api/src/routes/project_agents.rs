@@ -32,7 +32,7 @@ use agentdash_contracts::project_agent::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView,
-    ConversationModelConfigSource, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    ConversationModelConfigSource, LifecycleRunRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -257,9 +257,6 @@ pub async fn create_project_agent_run(
                 agent_id: dispatch.agent_id.to_string(),
                 frame_id: dispatch.frame_id.to_string(),
                 revision: Some(dispatch.frame_revision),
-            }),
-            runtime_session_ref: Some(RuntimeSessionRefDto {
-                runtime_session_id: dispatch.runtime_session_id.clone(),
             }),
             turn_id: if dispatch.turn_id.is_empty() {
                 None

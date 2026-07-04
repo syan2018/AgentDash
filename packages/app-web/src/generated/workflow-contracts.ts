@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView, RuntimeSessionRefDto } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
@@ -269,6 +269,8 @@ export type RuntimeNodeView = { node_id: string, node_path: string, kind: string
 export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
 
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
+
+export type RuntimeSessionRefDto = { runtime_session_id: string, };
 
 export type RuntimeSessionTraceMeta = { runtime_session_ref: RuntimeSessionRefDto, last_event_seq: bigint, executor_session_id?: string, trace_title: string, trace_title_source: string, delivery_status: string, last_turn_id?: string, terminal_summary?: string, updated_at: bigint, };
 

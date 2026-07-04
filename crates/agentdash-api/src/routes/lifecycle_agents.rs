@@ -2440,7 +2440,6 @@ fn agent_run_fork_submit_message_response(
         ),
         mailbox_message: result.mailbox_message.map(mailbox_message_view),
         accepted_refs: Some(agent_run_message_accepted_refs(result.child_refs.clone())),
-        runtime_state: None,
         fork: Some(fork),
     }
 }

@@ -2,7 +2,6 @@ export type {
   AgentFrameRefDto,
   AgentRunRefDto,
   LifecycleRunRefDto,
-  RuntimeSessionRefDto,
 } from "../generated/agent-run-mailbox-contracts";
 export type {
   SubjectRefDto,
@@ -24,6 +23,7 @@ export type {
   ProjectActiveAgentsView,
   RuntimeNodeView,
   RuntimeSessionExecutionAnchorDto,
+  RuntimeSessionRefDto,
   RuntimeSessionTraceView,
   SessionRuntimeControlView,
   SessionShellDto,

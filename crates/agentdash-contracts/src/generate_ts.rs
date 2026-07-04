@@ -14,7 +14,7 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunToolCallRejectionResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    RuntimeSessionCommandStateDto, SteeringStopEffect,
+    SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -322,7 +322,6 @@ fn main() {
             export_all::<AgentRunMailboxMessageContentView>(dir);
             export_all::<MailboxStateView>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
-            export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<AgentRunMailboxView>(dir);
         },
     );

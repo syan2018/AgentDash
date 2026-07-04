@@ -581,7 +581,7 @@ mod tests {
             .capabilities
             .insert(ToolCapability::new("workflow_management"));
         let mut frame = frame_with_state(&state);
-        frame.append_visible_workspace_module_ref("canvas:dashboard");
+        frame.visible_workspace_module_refs_json = Some(serde_json::json!(["canvas:dashboard"]));
         let target = target();
 
         let view =
@@ -1062,7 +1062,7 @@ mod tests {
             .capabilities
             .insert(ToolCapability::new("file_read"));
         let mut frame = frame_with_agent_state(agent_id, &state);
-        frame.append_visible_workspace_module_ref("canvas:overview");
+        frame.visible_workspace_module_refs_json = Some(serde_json::json!(["canvas:overview"]));
 
         let anchors = Arc::new(MemoryAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());

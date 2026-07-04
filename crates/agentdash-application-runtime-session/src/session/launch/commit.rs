@@ -53,6 +53,14 @@ impl TurnCommitter {
         )
         .await;
 
+        if let Some(record) = prepared.context_delivery_record.as_ref() {
+            let _ = self
+                .deps
+                .eventing
+                .emit_context_delivery_record(session_id, Some(turn_id), record)
+                .await;
+        }
+
         for frame in &prepared.pending_transition_application.context_frames {
             let _ = self
                 .deps

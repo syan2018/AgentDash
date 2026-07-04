@@ -9,10 +9,10 @@ use agentdash_agent_types::{
     AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, AgentMessage, MessageRef,
 };
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::{
     HookTraceStorageDisposition, hook_trace_payload_storage_disposition,
 };
+use agentdash_spi::hooks::{ContextDeliveryRecord, ContextFrame};
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
@@ -389,6 +389,21 @@ impl SessionEventingService {
             entry_index: None,
         });
 
+        self.persist_notification(session_id, envelope).await
+    }
+
+    pub(crate) async fn emit_context_delivery_record(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        record: &ContextDeliveryRecord,
+    ) -> io::Result<PersistedSessionEvent> {
+        let envelope = build_context_delivery_record_envelope(
+            session_id,
+            turn_id,
+            record,
+            self.connector_source(None),
+        )?;
         self.persist_notification(session_id, envelope).await
     }
 
@@ -888,6 +903,32 @@ impl SessionEventingService {
             executor_id,
         }
     }
+}
+
+fn build_context_delivery_record_envelope(
+    session_id: &str,
+    turn_id: Option<&str>,
+    record: &ContextDeliveryRecord,
+    source: SourceInfo,
+) -> io::Result<BackboneEnvelope> {
+    let value = serde_json::to_value(record).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("context delivery record 序列化失败: {error}"),
+        )
+    })?;
+    Ok(BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "context_delivery_record".to_string(),
+            value,
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: turn_id.map(ToString::to_string),
+        entry_index: None,
+    }))
 }
 
 fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::Value> {
@@ -1723,6 +1764,51 @@ mod tests {
             connector_type: "local_executor".to_string(),
             executor_id: Some("CODEX".to_string()),
         }
+    }
+
+    #[test]
+    fn context_delivery_record_envelope_uses_record_key_and_turn_trace() {
+        let record = agentdash_spi::hooks::ContextDeliveryRecord {
+            record_id: "context-delivery-record-session-1-turn-1".to_string(),
+            runtime_session_id: "session-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            applied_frame: agentdash_spi::hooks::ContextDeliveryAppliedFrame {
+                agent_id: uuid::Uuid::nil(),
+                frame_id: uuid::Uuid::nil(),
+                frame_revision: 1,
+                pending_frame_id: None,
+                pending_frame_revision: None,
+            },
+            connector_input: agentdash_spi::hooks::ContextDeliveryConnectorInput {
+                connector_id: "codex-bridge".to_string(),
+                executor_id: "CODEX".to_string(),
+                working_directory: "F:/workspace".to_string(),
+                target_agent: agentdash_spi::hooks::ContextDeliveryTarget::default(),
+            },
+            delivery_plan_id: Some("plan-1".to_string()),
+            context_frame_ids: vec!["identity-1".to_string()],
+            emitted_context_frame_ids: vec!["identity-1".to_string()],
+            created_at_ms: 1234,
+        };
+
+        let envelope = build_context_delivery_record_envelope(
+            "session-1",
+            Some("turn-1"),
+            &record,
+            test_source_info(),
+        )
+        .expect("record envelope");
+
+        assert_eq!(envelope.trace.turn_id.as_deref(), Some("turn-1"));
+        let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
+            &envelope.event
+        else {
+            panic!("expected session meta update");
+        };
+        assert_eq!(key, "context_delivery_record");
+        let roundtrip: agentdash_spi::hooks::ContextDeliveryRecord =
+            serde_json::from_value(value.clone()).expect("record payload");
+        assert_eq!(roundtrip, record);
     }
 
     fn assistant_delta_envelope(session_id: &str, turn_id: &str, text: &str) -> BackboneEnvelope {

@@ -283,6 +283,49 @@ pub struct ContextDeliveryPlan {
     pub entries: Vec<ContextDeliveryEntry>,
 }
 
+/// ContextFrame emission 的 accepted input fact。
+///
+/// 它把本轮 connector 输入、runtime turn、AgentFrame revision 与后续
+/// `context_frame` emission 串成同一个可审计记录；ContextFrame 本身继续表达
+/// “投递了什么”，这里表达“这些投递基于哪一次已接受输入”。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryRecord {
+    pub record_id: String,
+    pub runtime_session_id: String,
+    pub turn_id: String,
+    pub applied_frame: ContextDeliveryAppliedFrame,
+    pub connector_input: ContextDeliveryConnectorInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_plan_id: Option<String>,
+    #[serde(default)]
+    pub context_frame_ids: Vec<String>,
+    #[serde(default)]
+    pub emitted_context_frame_ids: Vec<String>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryAppliedFrame {
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    pub frame_revision: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_frame_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_frame_revision: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ContextDeliveryConnectorInput {
+    pub connector_id: String,
+    pub executor_id: String,
+    pub working_directory: String,
+    pub target_agent: ContextDeliveryTarget,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextDeliveryTarget {

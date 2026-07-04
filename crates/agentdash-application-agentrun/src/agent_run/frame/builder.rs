@@ -426,7 +426,7 @@ mod tests {
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.append_visible_canvas_mount("cvs-demo");
+        frame1.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-demo"]));
         repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
@@ -455,7 +455,8 @@ mod tests {
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.append_visible_workspace_module_ref("canvas:cvs-dashboard-a");
+        frame1.visible_workspace_module_refs_json =
+            Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
         repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)

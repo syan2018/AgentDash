@@ -2,7 +2,7 @@ use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::HookControlTarget;
 use uuid::Uuid;
 
-use crate::canvas::append_visible_canvas_mounts;
+use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
@@ -144,7 +144,7 @@ pub async fn build_task_session_context(
     if let Some(space) = runtime_vfs.as_mut() {
         let visible_canvas_mount_ids =
             resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
-        if append_visible_canvas_mounts(
+        if project_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
             run.project_id,
             space,

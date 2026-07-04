@@ -40,10 +40,10 @@ pub fn canvas_runtime_mount_access(
     Some(CanvasMountAccess::from(access))
 }
 
-/// 根据会话显式声明的 canvas mount_id 列表，向 VFS 追加可见 canvas。
+/// 根据会话显式声明的 canvas mount_id 列表，重建 VFS 中的可见 canvas 投影。
 ///
-/// 注意：默认不注入任何 canvas。只有会话里记录过的 mount_id 才会被追加。
-pub async fn append_visible_canvas_mounts(
+/// 注意：默认不注入任何 canvas。只有会话里记录过的 mount_id 才会被投影。
+pub async fn project_visible_canvas_mounts(
     canvas_repo: &dyn CanvasRepository,
     project_id: Uuid,
     vfs: &mut Vfs,

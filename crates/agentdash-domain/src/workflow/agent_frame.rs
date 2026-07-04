@@ -21,14 +21,16 @@ pub struct AgentFrame {
     pub mcp_surface_json: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_profile_json: Option<serde_json::Value>,
-    /// 当前可见的 Canvas mount ids（运行时追加，不随 revision 复制）。
+    /// 当前 revision 的 Canvas mount 可见性投影。
+    ///
+    /// 可见性变更通过新的 AgentFrame revision 物化，既有 revision 保持不可变。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_canvas_mount_ids_json: Option<serde_json::Value>,
-    /// 运行时 Accumulate grant，记录当前 frame 可见的动态 WorkspaceModule refs。
+    /// 当前 revision 的动态 WorkspaceModule 可见性投影。
     ///
     /// 声明式 workspace module 可见性来自 `effective_capability_json` 中的
     /// `CapabilityState.workspace_module` 维度；Canvas create / present / user-open 等
-    /// 运行期授权通过本列随 frame revision 累积携带。
+    /// 运行期授权通过新的 frame revision 物化。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_workspace_module_refs_json: Option<serde_json::Value>,
     pub created_by_kind: String,
@@ -79,26 +81,11 @@ impl AgentFrame {
             return Vec::new();
         };
         ids.iter()
-            .filter_map(|v| v.as_str().map(str::to_string))
+            .filter_map(|v| {
+                let value = v.as_str()?.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            })
             .collect()
-    }
-
-    pub fn append_visible_canvas_mount(&mut self, mount_id: &str) {
-        if mount_id.trim().is_empty() {
-            return;
-        }
-        let already = self
-            .visible_canvas_mount_ids()
-            .iter()
-            .any(|existing| existing == mount_id);
-        if already {
-            return;
-        }
-        let next = Value::String(mount_id.to_string());
-        match &mut self.visible_canvas_mount_ids_json {
-            Some(Value::Array(ids)) => ids.push(next),
-            _ => self.visible_canvas_mount_ids_json = Some(Value::Array(vec![next])),
-        }
     }
 
     pub fn visible_workspace_module_refs(&self) -> Vec<String> {
@@ -106,26 +93,11 @@ impl AgentFrame {
             return Vec::new();
         };
         refs.iter()
-            .filter_map(|v| v.as_str().map(str::to_string))
+            .filter_map(|v| {
+                let value = v.as_str()?.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            })
             .collect()
-    }
-
-    pub fn append_visible_workspace_module_ref(&mut self, module_ref: &str) {
-        if module_ref.trim().is_empty() {
-            return;
-        }
-        let already = self
-            .visible_workspace_module_refs()
-            .iter()
-            .any(|existing| existing == module_ref);
-        if already {
-            return;
-        }
-        let next = Value::String(module_ref.to_string());
-        match &mut self.visible_workspace_module_refs_json {
-            Some(Value::Array(refs)) => refs.push(next),
-            _ => self.visible_workspace_module_refs_json = Some(Value::Array(vec![next])),
-        }
     }
 }
 
@@ -141,12 +113,14 @@ mod tests {
     }
 
     #[test]
-    fn append_visible_workspace_module_ref_dedups_and_skips_blank() {
+    fn visible_workspace_module_refs_read_persisted_projection() {
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
-        frame.append_visible_workspace_module_ref("ext:demo");
-        frame.append_visible_workspace_module_ref("ext:demo");
-        frame.append_visible_workspace_module_ref("   ");
-        frame.append_visible_workspace_module_ref("canvas:cvs-dashboard-a");
+        frame.visible_workspace_module_refs_json = Some(serde_json::json!([
+            "ext:demo",
+            "",
+            "canvas:cvs-dashboard-a",
+            42,
+        ]));
         assert_eq!(
             frame.visible_workspace_module_refs(),
             vec!["ext:demo".to_string(), "canvas:cvs-dashboard-a".to_string()]
